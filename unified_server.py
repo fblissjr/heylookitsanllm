@@ -1,37 +1,25 @@
 import argparse
-import asyncio
 import base64
 import gc
-import inspect
 import io
 import json
 import logging
 import platform
-import threading
 import time
-import traceback
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Literal, Optional, Tuple, Union
+from typing import Any, List, Literal, Optional, Union
 
 import mlx.core as mx
-import mlx.nn as nn
 import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
-from mlx_lm.models.cache import make_prompt_cache
-from mlx_lm.sample_utils import make_logits_processors, make_sampler
-from mlx_lm.utils import get_model_path
+# Import directly from the correct location
 from mlx_vlm.prompt_utils import apply_chat_template
-from mlx_vlm.utils import (
-    GenerationResult as VLMGenerationResult,
-)
-from mlx_vlm.utils import (
-    load as vlm_load,
-    stream_generate as vlm_stream_generate,
-)
+from mlx_vlm.utils import load as vlm_load
+from mlx_vlm.utils import stream_generate as vlm_stream_generate
 from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, Field
 
@@ -40,10 +28,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 # --- Global State ---
 model_provider = None
-MAX_CACHE_ENTRIES = 10
-PROMPT_CACHES: Dict[str, Tuple[Any, float]] = {}
-CACHE_ACCESS_ORDER: List[str] = []
-CACHE_LOCK = threading.Lock()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,7 +43,7 @@ async def lifespan(app: FastAPI):
     logging.info("Server is shutting down.")
 
 app = FastAPI(
-    title="unified multimodal mlx server",
+    title="Unified MLX VLM/LLM Server",
     description="An OpenAI-compatible API server for MLX models.",
     version="1.0.0",
     lifespan=lifespan,
@@ -68,22 +52,14 @@ app = FastAPI(
 # --- Image Utilities ---
 def _load_image_universal(source_str: str, timeout: int = 10) -> Image.Image:
     if source_str.startswith("data:image"):
-        try:
-            header, encoded = source_str.split(",", 1)
-            return Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
-        except Exception as e:
-            raise ValueError(f"Failed to decode/load Base64 image: {e}") from e
+        try: header, encoded = source_str.split(",", 1); return Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        except Exception as e: raise ValueError(f"Failed to decode/load Base64 image: {e}") from e
     elif source_str.startswith(("http://", "https://")):
-        try:
-            response = requests.get(source_str, stream=True, timeout=timeout)
-            response.raise_for_status()
-            return Image.open(io.BytesIO(response.content)).convert("RGB")
-        except Exception as e:
-            raise ValueError(f"Failed to load image from URL: {e}") from e
+        try: response = requests.get(source_str, stream=True, timeout=timeout); response.raise_for_status(); return Image.open(io.BytesIO(response.content)).convert("RGB")
+        except Exception as e: raise ValueError(f"Failed to load image from URL: {e}") from e
     else:
         image_path = Path(source_str)
-        if not image_path.is_file():
-            raise FileNotFoundError(f"Image path does not exist: {source_str}")
+        if not image_path.is_file(): raise FileNotFoundError(f"Image path does not exist: {source_str}")
         return ImageOps.exif_transpose(Image.open(image_path)).convert("RGB")
 
 # --- Model Management ---
@@ -91,8 +67,7 @@ class ModelProvider:
     def __init__(self, cli_args: argparse.Namespace):
         self.cli_args = cli_args
         self.model_key, self.model, self.processor = None, None, None
-        if self.cli_args.model:
-            self.load(self.cli_args.model, self.cli_args.adapter_path)
+        if self.cli_args.model: self.load(self.cli_args.model, self.cli_args.adapter_path)
 
     def load(self, model_path: str, adapter_path: Optional[str] = None):
         new_key = (model_path, adapter_path)
@@ -119,7 +94,7 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     top_p: float = Field(0.95, ge=0.0, le=1.0)
-    max_tokens: int = Field(768, gt=0)
+    max_tokens: int = Field(512, gt=0)
     stream: bool = False
 
 # --- API Endpoint ---
@@ -134,16 +109,7 @@ async def chat_completions(request: ChatRequest):
         if msg.role == "system": system_prompt = msg.content
         else: remaining_messages.append(msg)
 
-    cache_key = f"{model_id}:{hash(str(system_prompt))}"
-    prompt_cache = None
     messages_for_prompt = request.messages
-
-    if system_prompt and cache_key in PROMPT_CACHES:
-        logging.info(f"Cache hit for key: {cache_key}"); prompt_cache, _ = PROMPT_CACHES[cache_key]
-        messages_for_prompt = remaining_messages
-    elif system_prompt:
-        logging.info(f"Cache miss for key: {cache_key}")
-
     text_content_messages = []
     for msg in messages_for_prompt:
         if isinstance(msg.content, list):
@@ -157,40 +123,29 @@ async def chat_completions(request: ChatRequest):
     formatted_prompt = apply_chat_template(processor, model.config, text_content_messages, num_images=len(images), add_generation_prompt=True)
     gen_kwargs = request.model_dump(exclude={"model", "messages", "stream"})
 
-    generator = vlm_stream_generate(model, processor, formatted_prompt, images, prompt_cache=prompt_cache, **gen_kwargs)
+    generator = vlm_stream_generate(model, processor, formatted_prompt, images, **gen_kwargs)
 
     if request.stream:
-        return StreamingResponse(stream_response_generator(generator, model_id, cache_key, prompt_cache is None), media_type="text/event-stream")
+        return StreamingResponse(stream_response_generator(generator, model_id), media_type="text/event-stream")
     else:
-        return await non_stream_response(generator, model_id, cache_key, prompt_cache is None)
+        return await non_stream_response(generator, model_id)
 
 # --- Response Generators ---
-def stream_response_generator(generator, model_id, cache_key, is_cache_miss):
+def stream_response_generator(generator, model_id):
     request_id, created_time = f"chatcmpl-{uuid.uuid4()}", int(time.time())
     try:
         # Correctly iterate over the single VLMGenerationResult object
-        for i, result in enumerate(generator):
-            if i == 0 and is_cache_miss and hasattr(generator, '__self__') and hasattr(generator.__self__, 'cache'):
-                with CACHE_LOCK:
-                    if len(PROMPT_CACHES) >= MAX_CACHE_ENTRIES: oldest_key = CACHE_ACCESS_ORDER.pop(0); del PROMPT_CACHES[oldest_key]
-                    PROMPT_CACHES[cache_key] = (generator.__self__.cache, time.time()); CACHE_ACCESS_ORDER.append(cache_key)
-
+        for result in generator:
             response = {"id": request_id, "object": "chat.completion.chunk", "created": created_time, "model": model_id, "choices": [{"index": 0, "delta": {"content": result.text}, "finish_reason": None}]}
             yield f"data: {json.dumps(response)}\n\n"
-
     finally:
         yield f"data: {json.dumps({'id': request_id, 'object': 'chat.completion.chunk', 'created': created_time, 'model': model_id, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
         yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, model_id, cache_key, is_cache_miss):
+async def non_stream_response(generator, model_id):
     full_text, last_response = "", None
     # Correctly iterate over the single VLMGenerationResult object
-    for i, result in enumerate(generator):
-        if i == 0 and is_cache_miss and hasattr(generator, '__self__') and hasattr(generator.__self__, 'cache'):
-            with CACHE_LOCK:
-                if len(PROMPT_CACHES) >= MAX_CACHE_ENTRIES: oldest_key = CACHE_ACCESS_ORDER.pop(0); del PROMPT_CACHES[oldest_key]
-                PROMPT_CACHES[cache_key] = (generator.__self__.cache, time.time()); CACHE_ACCESS_ORDER.append(cache_key)
-
+    for result in generator:
         full_text += result.text
         last_response = result
 
@@ -199,7 +154,7 @@ async def non_stream_response(generator, model_id, cache_key, is_cache_miss):
 
 # --- Server Startup ---
 def parse_args():
-    parser = argparse.ArgumentParser(description="unified multimodal mlx server")
+    parser = argparse.ArgumentParser(description="Unified MLX Server")
     parser.add_argument("--model", type=str, help="Default model path or HF repo.")
     parser.add_argument("--adapter-path", type=str)
     parser.add_argument("--host", type=str, default="0.0.0.0")
