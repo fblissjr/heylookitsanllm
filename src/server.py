@@ -1,15 +1,25 @@
 # src/server.py
-import uvicorn, argparse, logging
+import uvicorn
+import argparse
 
-def parse_args():
+def main():
+    """The main entry point for the edge-llm command-line tool."""
     parser = argparse.ArgumentParser(description="Edge LLM Server")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host to run the server on")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
-    parser.add_argument("--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
-    return parser.parse_args()
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    args = parser.parse_args()
+
+    # Why: We pass the application as a string. Uvicorn's reloader process can
+    # now correctly find `src.api` because `src` is defined as a package root.
+    uvicorn.run(
+        "src.api:app",
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
+        reload=True,
+        reload_dirs=["src"]
+    )
 
 if __name__ == "__main__":
-    args = parse_args()
-    # Why: This command starts the FastAPI application using the uvicorn server.
-    # The string "src.api:app" tells uvicorn where to find the FastAPI instance.
-    uvicorn.run("src.api:app", host=args.host, port=args.port, log_level=args.log_level.lower(), reload=True)
+    main()

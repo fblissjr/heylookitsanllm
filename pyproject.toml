@@ -28,21 +28,14 @@ dependencies = [
     "numpy",
     "llama-cpp-python",
     "pyyaml",
-    "opencv-python",
     "rich",
-    "huggingface-hub",
 ]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-mock"]
 
 [project.scripts]
-edge-llm = "src.server:main"
+edge-llm = "server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-# Why: This ensures that non-Python files, like your Jinja templates,
-# are included when the package is installed.
-[tool.setuptools.package-data]
-"src" = ["*.jinja2"]

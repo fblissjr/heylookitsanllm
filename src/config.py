@@ -2,7 +2,9 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional, Union, Dict
 
-# --- API Request/Response Models ---
+# Why: Defines the strict data structures for API requests and YAML configuration,
+# providing automatic validation and type hints throughout the application.
+
 class ImageUrl(BaseModel): url: str
 class TextContentPart(BaseModel): type: Literal["text"]; text: str
 class ImageContentPart(BaseModel): type: Literal["image_url"]; image_url: ImageUrl
@@ -14,15 +16,12 @@ class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     temperature: float = Field(1.0, ge=0.0, le=2.0)
     top_p: float = Field(0.95, ge=0.0, le=1.0)
-    top_k: int = Field(40, ge=-1, description="Set to -1 to disable.")
-    repetition_penalty: Optional[float] = Field(None, ge=0.0)
-    repetition_context_size: Optional[int] = Field(20, ge=0)
+    repetition_penalty: Optional[float] = Field(1.1)
     max_tokens: int = Field(512, gt=0)
     stream: bool = False
-    # --- New Optional Fields ---
-    include_performance: bool = Field(False, description="Include performance metrics in the response.")
-    draft_model: Optional[str] = Field(None, description="Runtime override for a draft model path (MLX only).")
-    num_draft_tokens: Optional[int] = Field(None, description="Runtime override for number of draft tokens (MLX only).")
+    include_performance: bool = Field(False)
+    draft_model: Optional[str] = None
+    num_draft_tokens: Optional[int] = None
 
 class PerformanceMetrics(BaseModel): prompt_tps: float; generation_tps: float; peak_memory_gb: float
 
@@ -31,7 +30,6 @@ class ChatCompletionResponse(BaseModel):
     choices: List[Dict]; usage: Dict
     performance: Optional[PerformanceMetrics] = None
 
-# --- models.yaml Configuration Models ---
 class MLXModelConfig(BaseModel):
     model_path: str
     draft_model_path: Optional[str] = None
