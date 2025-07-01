@@ -1,0 +1,62 @@
+# ------------------------------------------------------------------------------------
+# This is the central configuration file for all models served by the unified server.
+# ------------------------------------------------------------------------------------
+# - id: A unique name you choose for the model. This is what you will use in API calls.
+# - provider: Must be 'mlx' or 'llama_cpp'.
+# - config: Provider-specific settings.
+# ------------------------------------------------------------------------------------
+
+models:
+  - id: "smolvlm"
+    provider: "mlx"
+    config:
+      # For MLX, the model path is the Hugging Face repo ID or a local directory
+      model_path: "~/Storage/llms/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+
+  - id: "qwen-vl-gguf"
+    provider: "llama_cpp"
+    config:
+      # For llama_cpp, you need paths to the GGUF files
+      model_path: "~/Storage/llms/lmstudio-community/Mistral-Small-3.2-24B-Instruct-2506-GGUF/Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf"
+      # The multimodal projector file is often separate for GGUF
+      mmproj_path: "mmproj-Mistral-Small-3.2-24B-Instruct-2506-F16.gguf"
+      # Using a custom Jinja template file. This will override `chat_format`.
+      chat_format_template: "./templates/Mistral-Small-3.2-24B-Instruct-2506.jinja"
+      # Specify the tokens required by your custom template
+      # eos_token: "</s>"
+      # bos_token: "<s>"
+      n_gpu_layers: -1
+      n_ctx: 4096
+
+  - id: "qwen2.5-vl-72b-inst-gguf"
+    provider: "llama_cpp"
+    config:
+      model_path: "~/Storage/llms/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-q4_0_l.gguf"
+      # The multimodal projector file is often separate for GGUF
+      mmproj_path: "~/Storage/llms/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-mmproj-f16.gguf"
+      # Using a standard, built-in chat format
+      chat_format: "qwen-vl"
+      n_gpu_layers: -1
+      n_ctx: 8192
+
+  # draft model for qwen2.5-vl
+  - id: "qwen2.5-vl-draft"
+    provider: "llama_cpp"
+    config:
+      model_path: "~/Storage/llms/Mungert/Qwen2.5-VL-3B-Instruct-GGUF"
+      chat_format: "qwen-vl"
+      n_gpu_layers: -1
+      n_ctx: 8192
+      # Define a draft model for speculative decoding.
+      # The server will automatically use a simple prompt-lookup decoder.
+      draft_model: true
+
+  - id: "llama-3.2-8b-speculative"
+    provider: "mlx"
+    config:
+      # The main, larger model
+      model_path: "~/Storage/llms/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
+      # The smaller, faster draft model
+      draft_model_path: "~/Storage/llms/mlx-community/gemma-3-1b-it-qat-4bit"
+      # Number of tokens the draft model should predict ahead
+      num_draft_tokens: 5

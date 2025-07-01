@@ -1,0 +1,48 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edge-llm"
+version = "1.0.0"
+authors = [{ name = "Fred Bliss" }]
+description = "A unified, lightweight OpenAI-compatible API server for running MLX and GGUF models on-device, optimized for Apple Silicon devices."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    "mlx-lm",
+    "requests",
+    "Pillow",
+    "numpy",
+    "llama-cpp-python",
+    "pyyaml",
+    "opencv-python",
+    "rich",
+    "huggingface-hub",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-mock"]
+
+[project.scripts]
+edge-llm = "src.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Why: This ensures that non-Python files, like your Jinja templates,
+# are included when the package is installed.
+[tool.setuptools.package-data]
+"src" = ["*.jinja2"]

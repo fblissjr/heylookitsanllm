@@ -1,8 +1,0 @@
-fastapi
-uvicorn[standard]
-python-multipart
-mlx-lm
-mlx-vlm
-requests
-Pillow
-numpy
