@@ -1,8 +1,9 @@
 # src/edge_llm/router.py
-
 import yaml
 import logging
 import threading
+from typing import Optional
+
 from edge_llm.config import AppConfig
 from edge_llm.providers.base import BaseProvider
 from edge_llm.providers.mlx_provider import MLXProvider
@@ -10,15 +11,24 @@ from edge_llm.providers.llama_cpp_provider import LlamaCppProvider
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers."""
-    def __init__(self, config_path: str, log_level: int):
+    def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
         with open(config_path, 'r') as f: self.app_config = AppConfig(**yaml.safe_load(f))
+
         self.providers = {}
         self.current_provider_id = None
         self.log_level = log_level
         self.loading_lock = threading.Lock()
-        if self.app_config.models:
-            self.get_provider(self.app_config.models[0].id)
 
+        # Why: We now only load a model if an initial_model_id is explicitly provided.
+        # This prevents the server from crashing on startup if the first model is invalid.
+        if initial_model_id:
+            try:
+                logging.info(f"Pre-warming initial model: {initial_model_id}")
+                self.get_provider(initial_model_id)
+            except Exception as e:
+                logging.error(f"Failed to pre-warm initial model '{initial_model_id}'. Server will start with no models loaded. Error: {e}")
+
+    # The rest of the ModelRouter class is unchanged.
     def get_provider(self, model_id: str) -> BaseProvider:
         with self.loading_lock:
             if self.current_provider_id == model_id:

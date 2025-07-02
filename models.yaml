@@ -2,16 +2,20 @@
 # All provider-specific settings MUST be nested under a 'config' key.
 
 models:
+  - id: "gemma3n-e4b-it"
+    provider: "mlx"
+    config:
+      model_path: "modelzoo/mlx-community/gemma-3n-E4B-it-bf16-mlx"
+      vision: true
+      # --- Model-specific sampler defaults to override global defaults ---
+      temperature: 1.0
+      top_p: 0.95
+      max_tokens: 512
+
   - id: "smolvlm"
     provider: "mlx"
     config:
       model_path: "./modelzoo/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
-      vision: true
-
-  - id: "gemma3n-e4b-it"
-    provider: "mlx"
-    config:
-      model_path: "./modelzoo/mlx-community/gemma-3n-E4B-it-bf16-mlx/"
       vision: true
 
   - id: "qwen-vl-gguf"
@@ -27,8 +31,8 @@ models:
   - id: "qwen2.5-vl-72b-inst-gguf"
     provider: "llama_cpp"
     config:
-      model_path: "./modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-q4_0_l.gguf"
-      mmproj_path: "./modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-mmproj-f16.gguf"
+      model_path: "modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-q4_0_l.gguf"
+      mmproj_path: "modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-mmproj-f16.gguf"
       chat_format: "qwen-vl"
       n_gpu_layers: -1
       n_ctx: 8192
@@ -37,17 +41,17 @@ models:
   - id: "qwen2.5-vl-draft"
     provider: "llama_cpp"
     config:
-      model_path: "./modelzoo/Mungert/Qwen2.5-VL-3B-Instruct-GGUF"
+      model_path: "modelzoo/Mungert/Qwen2.5-VL-3B-Instruct-GGUF"
       chat_format: "qwen-vl"
       n_gpu_layers: -1
       n_ctx: 8192
       draft_model: true
       vision: true
 
-  - id: "llama-3.2-8b-speculative"
+  - id: "gemma3-27b-dwq"
     provider: "mlx"
     config:
-      model_path: "./modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
-      draft_model_path: "./modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
+      model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
+      draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
       num_draft_tokens: 5
       vision: false

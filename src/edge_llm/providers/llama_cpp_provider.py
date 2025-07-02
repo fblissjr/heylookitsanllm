@@ -1,14 +1,8 @@
 # src/edge_llm/providers/llama_cpp_provider.py
-
 import gc
 import logging
 from typing import Generator, Dict, Any
-
-from llama_cpp import Llama
-# Why: This is the critical fix. We import the specific chat handlers from their
-# correct submodule within the llama-cpp-python package.
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, Llava15ChatHandler
-
 from edge_llm.providers.base import BaseProvider
 
 class LlamaCppProvider(BaseProvider):
