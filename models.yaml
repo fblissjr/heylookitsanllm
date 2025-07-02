@@ -1,45 +1,103 @@
-# This is the central configuration file for all models served by the server.
-# All provider-specific settings MUST be nested under a 'config' key.
+# Enhanced models.yaml configuration with advanced features
+# Global server settings
+default_model: "smolvlm" # Optional: specify default model
+max_concurrent_requests: 5
+request_timeout: 300
+log_level: "INFO"
 
 models:
+  # --- Vision-Language Models ---
   - id: "gemma3n-e4b-it"
     provider: "mlx"
+    description: "Gemma 3 4B Instruct with vision capabilities"
+    tags: ["vision", "instruct", "gemma"]
+    enabled: true
     config:
       model_path: "modelzoo/mlx-community/gemma-3n-E4B-it-bf16-mlx"
       vision: true
-      # --- Model-specific sampler defaults to override global defaults ---
       temperature: 1.0
       top_p: 0.95
-      max_tokens: 512
+      max_tokens: 2048
 
   - id: "smolvlm"
     provider: "mlx"
+    description: "SmolVLM 2.2B - Lightweight vision-language model"
+    tags: ["vision", "lightweight", "efficient"]
+    enabled: true
     config:
       model_path: "./modelzoo/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
       vision: true
+      # Model-specific defaults (override global defaults)
+      temperature: 0.7
+      top_p: 0.9
+      max_tokens: 1024
+      repetition_penalty: 1.05
+      # Advanced cache settings for long conversations
+      max_kv_size: 8192 # Limit cache size to 8K tokens
+      kv_bits: 8 # Quantize cache to 8-bit to save memory
+      quantized_kv_start: 1000 # Start quantizing after 1K tokens
 
-  - id: "qwen-vl-gguf"
-    provider: "llama_cpp"
+  # --- Large Model with Speculative Decoding ---
+  - id: "gemma3-27b-dwq"
+    provider: "mlx"
+    description: "Gemma 3 27B with 1B draft model for faster inference"
+    tags: ["large", "speculative", "fast"]
+    enabled: true
+    log_level: "DEBUG" # This will show detailed generation logs
     config:
-      model_path: "./modelzoo/Mistral-Small-3.2-24B-Instruct-2506-GGUF/Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf"
-      mmproj_path: "./modelzoo/Mistral-Small-3.2-24B-Instruct-2506-GGUF/mmproj-Mistral-Small-3.2-24B-Instruct-2506-F16.gguf"
-      chat_format_template: "./templates/Mistral-Small-3.2-24B-Instruct-2506.jinja"
-      n_gpu_layers: -1
-      n_ctx: 4096
-      vision: true
+      model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
+      draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
+      num_draft_tokens: 8 # More aggressive speculation
+      vision: false
+      temperature: 0.8
+      top_p: 0.95
+      max_tokens: 4096
+      # Memory optimization for large model
+      max_kv_size: 16384
+      kv_bits: 4 # More aggressive quantization
+      quantized_kv_start: 2000
 
+  # --- GGUF Models via llama.cpp ---
   - id: "qwen2.5-vl-72b-inst-gguf"
     provider: "llama_cpp"
+    description: "Qwen2.5-VL 72B Instruct quantized GGUF"
+    tags: ["vision", "large", "gguf", "qwen"]
+    enabled: true
     config:
       model_path: "modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-q4_0_l.gguf"
       mmproj_path: "modelzoo/Mungert/Qwen2.5-VL-72B-Instruct-GGUF/Qwen2.5-VL-72B-Instruct-mmproj-f16.gguf"
       chat_format: "qwen-vl"
-      n_gpu_layers: -1
+      n_gpu_layers: -1 # Use all GPU layers
       n_ctx: 8192
+      n_batch: 256 # Smaller batch for memory efficiency
       vision: true
+      temperature: 0.7
+      top_p: 0.8
+      max_tokens: 2048
 
+  - id: "mistral-small-vision"
+    provider: "llama_cpp"
+    description: "Mistral Small 24B with vision capabilities"
+    tags: ["vision", "mistral", "custom-template"]
+    enabled: true
+    config:
+      model_path: "./modelzoo/Mistral-Small-3.2-24B-Instruct-2506-GGUF/Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf"
+      mmproj_path: "./modelzoo/Mistral-Small-3.2-24B-Instruct-2506-GGUF/mmproj-Mistral-Small-3.2-24B-Instruct-2506-F16.gguf"
+      chat_format_template: "./src/edge_llm/templates/Mistral-Small-3.2-24B-Instruct-2506.jinja2"
+      eos_token: "</s>"
+      bos_token: "<s>"
+      n_gpu_layers: -1
+      n_ctx: 4096
+      vision: true
+      temperature: 0.8
+      repetition_penalty: 1.1
+
+  # --- Draft Models (for speculative decoding) ---
   - id: "qwen2.5-vl-draft"
     provider: "llama_cpp"
+    description: "Qwen2.5-VL 3B - Fast draft model"
+    tags: ["draft", "fast", "qwen"]
+    enabled: true
     config:
       model_path: "modelzoo/Mungert/Qwen2.5-VL-3B-Instruct-GGUF"
       chat_format: "qwen-vl"
@@ -48,10 +106,18 @@ models:
       draft_model: true
       vision: true
 
-  - id: "gemma3-27b-dwq"
+  # --- Text-Only Models ---
+  - id: "llama-3.1-8b-instruct"
     provider: "mlx"
+    description: "Llama 3.1 8B Instruct - General purpose text model"
+    tags: ["text-only", "instruct", "llama"]
+    enabled: false # Disabled by default
     config:
-      model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
-      draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
-      num_draft_tokens: 5
+      model_path: "modelzoo/mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
       vision: false
+      temperature: 0.9
+      top_p: 0.95
+      top_k: 50 # Add top-k sampling
+      min_p: 0.05 # Add min-p filtering
+      max_tokens: 4096
+      repetition_penalty: 1.05

@@ -1,6 +1,28 @@
+# Test with text-only model first
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma3-27b-dwq",
+    "messages": [{"role": "user", "content": "Hello! Can you count to 3?"}],
+    "max_tokens": 50,
+    "temperature": 0.1
+  }'
+
+
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma3-27b-dwq",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 50
+  }'
+
+
+
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "gemma3-27b-dwq",
     "messages": [
       {
         "role": "system",
@@ -21,6 +43,7 @@ curl http://localhost:8080/v1/chat/completions \
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "gemma3-27b-dwq",
     "messages": [
       {
         "role": "system",

@@ -12,49 +12,85 @@ from edge_llm.providers.llama_cpp_provider import LlamaCppProvider
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
-        with open(config_path, 'r') as f: self.app_config = AppConfig(**yaml.safe_load(f))
+        with open(config_path, 'r') as f:
+            self.app_config = AppConfig(**yaml.safe_load(f))
 
         self.providers = {}
         self.current_provider_id = None
         self.log_level = log_level
         self.loading_lock = threading.Lock()
 
-        # Why: We now only load a model if an initial_model_id is explicitly provided.
-        # This prevents the server from crashing on startup if the first model is invalid.
+        # Validate initial model exists in config
+        if initial_model_id:
+            if not self.app_config.get_model_config(initial_model_id):
+                logging.error(f"Initial model '{initial_model_id}' not found in config. Available models: {[m.id for m in self.app_config.models]}")
+                initial_model_id = None
+
+        # If no initial model specified or invalid, use the first enabled model
+        if not initial_model_id:
+            enabled_models = self.app_config.get_enabled_models()
+            if enabled_models:
+                initial_model_id = enabled_models[0].id
+                logging.info(f"No initial model specified, using first enabled model: {initial_model_id}")
+
+        # Try to pre-warm the initial model
         if initial_model_id:
             try:
                 logging.info(f"Pre-warming initial model: {initial_model_id}")
                 self.get_provider(initial_model_id)
+                logging.info(f"Successfully loaded initial model: {initial_model_id}")
             except Exception as e:
-                logging.error(f"Failed to pre-warm initial model '{initial_model_id}'. Server will start with no models loaded. Error: {e}")
+                logging.error(f"Failed to pre-warm initial model '{initial_model_id}': {e}")
+                logging.info("Server will start with no models loaded")
 
-    # The rest of the ModelRouter class is unchanged.
     def get_provider(self, model_id: str) -> BaseProvider:
         with self.loading_lock:
+            # Return current provider if it's the same model
             if self.current_provider_id == model_id:
                 return self.providers.get(model_id)
 
+            # Unload current provider to free memory
             if self.current_provider_id:
-                self.providers.pop(self.current_provider_id, None)
+                old_provider = self.providers.pop(self.current_provider_id, None)
+                if old_provider:
+                    logging.info(f"Unloading model: {self.current_provider_id}")
+                    del old_provider
 
-            model_config_dict = next((m.model_dump() for m in self.app_config.models if m.id == model_id), None)
-            if not model_config_dict:
-                raise ValueError(f"Model '{model_id}' not found in models.yaml.")
+            # Get model config
+            model_config = self.app_config.get_model_config(model_id)
+            if not model_config:
+                available_models = [m.id for m in self.app_config.get_enabled_models()]
+                raise ValueError(f"Model '{model_id}' not found or disabled. Available models: {available_models}")
 
+            # Create provider
             provider_map = {
                 "mlx": MLXProvider,
                 "llama_cpp": LlamaCppProvider
             }
 
-            provider_class = provider_map.get(model_config_dict['provider'])
+            provider_class = provider_map.get(model_config.provider)
             if not provider_class:
-                raise ValueError(f"Unknown provider: {model_config_dict['provider']}")
+                raise ValueError(f"Unknown provider: {model_config.provider}")
 
-            self.providers[model_id] = provider_class(
-                model_config_dict['id'],
-                model_config_dict['config'],
-                self.log_level <= logging.DEBUG
-            )
+            logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'")
 
-            self.current_provider_id = model_id
-            return self.providers[model_id]
+            try:
+                self.providers[model_id] = provider_class(
+                    model_config.id,
+                    model_config.config.model_dump(),
+                    self.log_level <= logging.DEBUG
+                )
+                self.current_provider_id = model_id
+                logging.info(f"Successfully loaded model: {model_id}")
+                return self.providers[model_id]
+            except Exception as e:
+                logging.error(f"Failed to load model '{model_id}': {e}")
+                raise
+
+    def list_available_models(self) -> list[str]:
+        """Return list of available model IDs."""
+        return [m.id for m in self.app_config.get_enabled_models()]
+
+    def get_current_model_id(self) -> Optional[str]:
+        """Return the currently loaded model ID."""
+        return self.current_provider_id
