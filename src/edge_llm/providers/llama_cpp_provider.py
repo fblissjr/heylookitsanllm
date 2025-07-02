@@ -1,13 +1,20 @@
 # src/edge_llm/providers/llama_cpp_provider.py
+
 import gc
 import logging
+from typing import Generator, Dict, Any
+
 from llama_cpp import Llama
-# import the chat handlers from their correct submodule.
+# Why: This is the critical fix. We import the specific chat handlers from their
+# correct submodule within the llama-cpp-python package.
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, Llava15ChatHandler
+
 from edge_llm.providers.base import BaseProvider
 
 class LlamaCppProvider(BaseProvider):
     """Provider for running GGUF models via llama-cpp-python."""
+    # The __init__ is inherited from BaseProvider, no need to redefine it.
+
     def load_model(self, config: dict, verbose: bool):
         logging.info(f"Loading GGUF model: {config['model_path']}")
         chat_handler = None
@@ -33,8 +40,12 @@ class LlamaCppProvider(BaseProvider):
 
     def create_chat_completion(self, request: dict) -> Generator:
         # Why: llama-cpp-python is already OpenAI compatible, so we just pass the request through.
+        # The stream=True argument ensures it returns a generator, which our API handlers expect.
         yield from self.model.create_chat_completion(**request, stream=True)
 
     def __del__(self):
-        if hasattr(self, 'model'): del self.model; gc.collect()
+        """Ensure the Llama.cpp model is released from memory."""
+        if hasattr(self, 'model'):
+            del self.model
+            gc.collect()
         logging.info(f"Unloaded GGUF model: {self.model_id}")
