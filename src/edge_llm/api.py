@@ -31,6 +31,38 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Edge LLM Server", version="1.0.0", lifespan=lifespan)
 
+@app.get("/v1/models")
+async def list_models(request: Request):
+    """List available models in OpenAI format."""
+    router = request.app.state.router_instance
+    try:
+        available_models = router.list_available_models()
+
+        # Format in OpenAI-compatible structure
+        models_data = []
+        for model_id in available_models:
+            model_config = router.app_config.get_model_config(model_id)
+            models_data.append({
+                "id": model_id,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "edge-llm",
+                "permission": [],
+                "root": model_id,
+                "parent": None,
+                # Add metadata about the model
+                "provider": model_config.provider if model_config else "unknown",
+                "vision": getattr(model_config.config, 'vision', False) if model_config else False
+            })
+
+        return {
+            "object": "list",
+            "data": models_data
+        }
+    except Exception as e:
+        logging.error(f"Error listing models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: Request):
     router = request.app.state.router_instance
