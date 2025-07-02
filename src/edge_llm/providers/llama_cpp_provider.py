@@ -1,8 +1,9 @@
 # src/providers/llama_cpp_provider.py
-import gc, logging
+import gc
+import logging
 from llama_cpp import Llama, Llava15ChatHandler
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter
-from .base import BaseProvider
+from edge_llm.providers.base import BaseProvider
 
 class LlamaCppProvider(BaseProvider):
     """Provider for running GGUF models via llama-cpp-python."""

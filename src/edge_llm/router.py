@@ -1,9 +1,16 @@
-# src/router.py
-import yaml, logging, threading
-from src.config import AppConfig
-from src.providers.base import BaseProvider
-from src.providers.mlx_provider import MLXProvider
-from src.providers.llama_cpp_provider import LlamaCppProvider
+# router.py
+import yaml
+import logging
+import threading
+from edge_llm.config import AppConfig
+from edge_llm.providers.base import BaseProvider
+
+from edge_llm.providers import mlx_unified
+from edge_llm.providers.llama_cpp_provider import LlamaCppProvider
+
+def _load_provider(cfg):
+    backend = mlx_unified.load(cfg)    # returns LmBackend or VlmBackend
+    return backend.load(cfg["model_path"], adapter=cfg.get("adapter_path"), **cfg)
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers."""

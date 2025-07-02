@@ -3,9 +3,7 @@
 import base64, io, requests
 from PIL import Image, ImageOps
 from typing import List, Tuple
-
-# Why: We now import apply_chat_template from our local vendored copy.
-from .vendored.mlx_vlm.prompt_utils import apply_chat_template
+from mlx_vlm.prompt_utils import apply_chat_template
 
 def load_image(source_str: str) -> Image.Image:
     if source_str.startswith("data:image"):

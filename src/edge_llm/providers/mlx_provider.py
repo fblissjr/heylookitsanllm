@@ -1,10 +1,17 @@
-# src/providers/mlx_provider.py
-import gc, logging, mlx.core as mx
-from .base import BaseProvider # This relative import is ok, but we'll make it absolute for consistency.
-from src.providers.base import BaseProvider
-from src.utils import process_vlm_messages
-from mlx_lm.utils import load as mlx_load
-from mlx_lm.generate import generate_step, speculative_generate_step
+# providers/mlx_provider.py
+import gc
+import logging
+import mlx.core as mx
+
+from edge_llm.providers.base import BaseProvider
+from edge_llm.utils import process_vlm_messages
+
+# mlx-vlm imports
+import os
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1" # Disable advisory warnings for mlx-vlm import of transformers
+from mlx_vlm.utils import load as vlm_load
+from mlx_vlm.prompt_utils import apply_chat_template
+from mlx_vlm.utils import stream_generate as vlm_stream_generate
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 
 class MLXProvider(BaseProvider):

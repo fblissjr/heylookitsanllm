@@ -1,0 +1,10 @@
+# requirements-min.txt
+mlx
+datasets
+pillow
+tqdm
+transformers
+fastapi
+opencv-python
+scipy
+soundfile

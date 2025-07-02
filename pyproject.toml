@@ -1,41 +1,51 @@
-# pyproject.toml
 [build-system]
-requires = ["setuptools>=61.0"]
+requires      = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "edge-llm"
-version = "1.0.0"
-authors = [{ name = "Fred Bliss" }]
-description = "A unified, lightweight OpenAI-compatible API server for running MLX and GGUF models on-device, optimized for Apple Silicon devices."
-readme = "README.md"
-license = { file = "LICENSE" }
+name            = "edge-llm"
+version         = "1.0.0"
+description     = "Unified, lightweight OpenAI-compatible API server for MLX and GGUF models."
+authors         = [{ name = "Fred Bliss" }]
+readme          = "README.md"
+license         = { file = "LICENSE" }
 requires-python = ">=3.11"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: MacOS",
-    "Operating System :: POSIX :: Linux",
+classifiers     = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
 ]
 
+# -------------------------------------------------------------------
+# Core runtime deps – array of PEP 508 strings (required by spec)
+# -------------------------------------------------------------------
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "python-multipart",
-    "mlx-lm",
-    "requests",
-    "Pillow",
-    "numpy",
-    "llama-cpp-python",
-    "pyyaml",
-    "rich",
+  "fastapi",
+  "uvicorn[standard]",
+  "pydantic",
+  "python-multipart",
+  "pyyaml",
+  "requests",
+  "rich",
+  "numpy",
+  "Pillow",
+  "mlx-lm",
+  "llama-cpp-python",
 ]
 
+# ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
-test = ["pytest", "pytest-mock"]
+test = ["pytest>=8", "pytest-mock>=3"]
 
 [project.scripts]
-edge-llm = "server:main"
+edge-llm = "edge_llm.server:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"edge_llm.templates" = ["*.jinja2", "*.tpl", "*.yaml"]

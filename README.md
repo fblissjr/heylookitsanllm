@@ -1,48 +1,82 @@
 # Unified LLM Server (MLX + Llama.cpp)
 
-A lightweight, unified OpenAI-compatible API server that can run both Apple's MLX models and GGUF models via `llama-cpp-python` in a single, unified interface for on-device inference. Models can be hot swapped between MLX and GGUF models.
+A lightweight, OpenAI-compatible API server that runs Apple MLX models and GGUF models (via `llama-cpp-python`) behind one endpoint.
 
-## 1. Installation
+---
+## 1  Installation
 
-### 1.1. Clone the Repository
+### 1.1  Clone & bootstrap
 ```bash
 git clone https://github.com/fblissjr/edge-llm-server
 cd edge-llm-server
+
+uv pip install -e .
+uv pip install --no-deps mlx-vlm          # skip its mlx-audio chain and gradio
+uv pip install -r requirements-min.txt    # installs minimal dependencies needed
 ```
 
-### 1.2. Install mlx-lm and mlx-vlm
-```
-pip install mlx-lm mlx-vlm
-```
+### 1.2  (Recommended) install a pre-built llama.cpp binary
 
-This project vendors the necessary components from `mlx-vlm` to ensure stability, minimize excessive dependencies, and avoid dependency conflicts (particularly for python 3.13+)
-
-### 1.3. Install llama.cpp
-**For Apple Silicon:**
-You MUST install llama-cpp-python with Metal support.
 ```bash
-CMAKE_ARGS="-DLLAMA_METAL=on" pip install -r requirements.txt --force-reinstall --no-cache-dir
+# macOS / Linux
+brew install llama.cpp
+# Windows
+winget install llama.cpp
 ```
 
-**For NVIDIA / CUDA:**
+Installing the binary first avoids a 10-15 min local C++ build. The official repo recommends these routes.
+
+### 1.3  Build llama-cpp-python with the right flags
+
+# Apple Silicon + Metal
+`CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
+
+# NVIDIA CUDA (12.x shown)
+`CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
+
+If you skipped 1.2, the first pip install already built a CPU wheel; the commands above simply re-compile it in place with GPU support. See upstream docs for the full flag matrix.
+
+### 1.4  Verify
+
+python -c "import llama_cpp; print('llama.cpp version:', llama_cpp.llama_cpp_version())"
+
+You should see a Metal or CUDA line if the compile succeeded.
+
+## 1  Installation
+
+### 1.1  Clone & bootstrap
+
 ```bash
-CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install -r requirements.txt --force-reinstall --no-cache-dir
+# 1  Grab the code
+git clone https://github.com/fblissjr/edge-llm-server
+cd edge-llm-server
+
+# 2  Install the core server
+uv pip install -e .
+
+# 3  Pull mlx-vlm *without* its heavy optional deps
+uv pip install --no-deps mlx-vlm
+
+# 4  Add the few libs mlx-vlm actually needs
+uv pip install -r requirements-min.txt
+
+# 5 Install llama.cpp backend
+uv pip install edge-llm[metal] # macos
+uv pip install edge-llm[cuda] # nvidia
+uv pip install edge-llm[cpu] # cpu only
 ```
 
-**For CPU Only:**
-```bash
-pip install -r requirements.txt
-```
+- need another CUDA version? Change the suffix (cu121, cu122) in the command above.
+- edge-llm[cpu] installs the vanilla llama.cpp wheel; the metal and cuda extras swap in pre-built GPU wheels via --extra-index-url, so you avoid a local CMake build. but if you want to do a cmake (i typically do) check out the [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) repo.
 
 ## 2. Configuration
 
 All models are defined in the **`models.yaml`** file. You **must** edit this file to point to your local models.
 
--   `id`: A unique alias for the model. This is what you'll use in your API calls.
--   `provider`: Must be either `mlx` or `llama_cpp`.
--   `config`: Provider-specific settings (e.g., `model_path`, `mmproj_path`)
-
-For speculative decoding, you can define a draft model by adding `draft_model: true` to the model configuration.
+- `id`: a unique alias for the model - or rather, the short name you’ll hit in API calls
+- `provider`: must be either `mlx` or `llama_cpp`.
+- `config`: provider and model specific settings (e.g., `model_path`, `mmproj_path`)
+- `draft_model`: true – marks a fast “draft” model for speculative decoding
 
 See the provided `models.yaml` for examples.
 
@@ -51,34 +85,28 @@ See the provided `models.yaml` for examples.
 Once configured, start the server from the root `edge-llm-server` directory:
 
 ```bash
-# For standard logging and default host and port
+# defaults to 127.0.0.1:8080
 edge-llm
 
-# for verbose logging and performance metrics
+# verbose logging + perf metrics
 edge-llm --log-level DEBUG
 
-# to change the the host and port:
-edge-llm --host 0.0.0.0 --port 9999
+# custom host / port
+edge-llm --host 0.0.0.0 --port 4242
 ```
 
 The server will be available at `http://127.0.0.1:8080`.
-```
 
 ## 4. Running Tests
-
-This project uses `pytest` and `pytest-mock` for unit testing. The tests are located in the `tests/` directory and use mocks to validate the server's logic without needing to load actual models.
-
 ```bash
 # Apple Silicon (Metal)
-CMAKE_ARGS="-DLLAMA_METAL=on" pip install -e .[test]
+uv pip install -e .[test,metal]
 
 # NVIDIA / CUDA
-CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install -e .[test]
+uv pip install -e .[test,cuda]
 
-# CPU Only
-pip install -e .[test]
-```
+# CPU-only
+uv pip install -e .[test,cpu]
 
-```bash
 python -m pytest
 ```

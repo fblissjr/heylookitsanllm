@@ -1,4 +1,4 @@
-# src/server.py
+# server.py
 import uvicorn
 import argparse
 
@@ -10,16 +10,9 @@ def main():
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
-    # Why: We pass the application as a string. Uvicorn's reloader process can
-    # now correctly find `src.api` because `src` is defined as a package root.
-    uvicorn.run(
-        "src.api:app",
-        host=args.host,
-        port=args.port,
-        log_level=args.log_level.lower(),
-        reload=True,
-        reload_dirs=["src"]
-    )
+    from edge_llm.api import app
+    uvicorn.run(app, host=host, port=port, reload=True, log_level=log_level)
+
 
 if __name__ == "__main__":
     main()

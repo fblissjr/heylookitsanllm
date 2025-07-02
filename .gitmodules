@@ -1,3 +1,0 @@
-[submodule "src/vendored/mlx-vlm"]
-	path = src/vendored/mlx-vlm
-	url = https://github.com/fblissjr/mlx-vlm.git

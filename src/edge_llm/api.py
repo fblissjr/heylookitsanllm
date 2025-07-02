@@ -1,32 +1,16 @@
-# src/api.py
+# api.py
 import json, uuid, time, logging, argparse, sys
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
 from rich.console import Console
 
-# Why: All internal imports are now absolute from the 'src' root package.
-from src.router import ModelRouter
-from src.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
-from src.providers.base import BaseProvider
-from src.providers.mlx_provider import MLXProvider
-from src.providers.llama_cpp_provider import LlamaCppProvider
-
-router_instance = None; console = Console()
-def _parse_app_args():
-    parser = argparse.ArgumentParser(); parser.add_argument("--log-level", default="INFO")
-    return parser.parse_known_args(sys.argv[1:])[0]
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    args = _parse_app_args()
-    log_level = getattr(logging, args.log_level.upper())
-    logging.getLogger().setLevel(log_level)
-    app.state.router_instance = ModelRouter(config_path="models.yaml", log_level=log_level)
-    yield
-    app.state.router_instance = None
-
-app = FastAPI(title="Edge LLM Server", lifespan=lifespan)
+# Why: All imports are now top-level as they reside in the same root directory.
+from edge_llm.router import ModelRouter
+from edge_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
+from edge_llm.providers.base import BaseProvider
+from edge_llm.providers.mlx_provider import MLXProvider
+from edge_llm.providers.llama_cpp_provider import LlamaCppProvider
 
 router_instance = None
 console = Console()
@@ -45,7 +29,7 @@ async def lifespan(app: FastAPI):
     yield
     app.state.router_instance = None
 
-app = FastAPI(title="Edge LLM Server", lifespan=lifespan)
+app = FastAPI(title="Edge LLM Server", version="1.0.0", lifespan=lifespan)
 
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: Request):
@@ -58,10 +42,13 @@ async def create_chat_completion(request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+    provider_name = type(provider).__name__
+    log_level = router.log_level
+
     if chat_request.stream:
-        return StreamingResponse(stream_response_generator(request, generator, provider), media_type="text/event-stream")
+        return StreamingResponse(stream_response_generator(request, generator, provider, log_level), media_type="text/event-stream")
     else:
-        return await non_stream_response(request, generator, provider)
+        return await non_stream_response(request, generator, provider, log_level)
 
 # --- Response Generators and Logging ---
 def _log_performance(start_time, first_token_time, tokens_generated, final_result):
@@ -87,7 +74,7 @@ def _log_performance(start_time, first_token_time, tokens_generated, final_resul
     )
     return PerformanceMetrics(prompt_tps=prompt_tps, generation_tps=tok_per_sec, peak_memory_gb=peak_memory)
 
-def stream_response_generator(generator, request: ChatRequest, provider, log_level: int):
+def stream_response_generator(request: Request, generator, provider, log_level: int):
     """Handles streaming responses, yielding data in the Server-Sent Events (SSE) format."""
     request_id, created = f"chatcmpl-{uuid.uuid4()}", int(time.time())
     start_time, first_token_time, last_result = time.time(), None, None
@@ -119,7 +106,7 @@ def stream_response_generator(generator, request: ChatRequest, provider, log_lev
         if log_level <= logging.DEBUG: console.print() # Final newline for the visualizer
         yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, request: ChatRequest, provider, log_level: int):
+async def non_stream_response(request: Request, generator, provider, log_level: int):
     """Consumes the entire generator to return a single, complete JSON response."""
     start_time = time.time()
     full_text, last_result = "", None
