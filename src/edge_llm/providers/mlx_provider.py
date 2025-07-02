@@ -1,53 +1,111 @@
-# providers/mlx_provider.py
+# src/edge_llm/providers/mlx_provider.py
+
 import gc
 import logging
-import mlx.core as mx
+from typing import Generator, Dict, Any
 
-from edge_llm.providers.base import BaseProvider
+import mlx.core as mx
+from mlx_lm.utils import load as lm_load
+from mlx_lm.generate import stream_generate as lm_stream_generate
+from mlx_vlm.utils import load as vlm_load, prepare_inputs
 from edge_llm.utils import process_vlm_messages
 
-# mlx-vlm imports
-import os
-os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1" # Disable advisory warnings for mlx-vlm import of transformers
-from mlx_vlm.utils import load as vlm_load
-from mlx_vlm.prompt_utils import apply_chat_template
-from mlx_vlm.utils import stream_generate as vlm_stream_generate
-from mlx_lm.sample_utils import make_sampler, make_logits_processors
+from edge_llm.providers.base import BaseProvider
+from edge_llm.providers.common.samplers import build as build_sampler
+from edge_llm.providers.common.cache_helpers import build_or_load_cache
 
 class MLXProvider(BaseProvider):
-    def load_model(self, config: dict, verbose: bool):
-        self.config = config; self.draft_model = None
-        logging.info(f"Loading MLX model from vendored code: {config['model_path']}")
-        self.model, self.processor = vlm_load(config['model_path'])
+    """
+    A unified provider for both MLX Language Models (LLMs) and
+    Vision-Language Models (VLMs).
+    """
+    def __init__(self, model_id: str, config: Dict, verbose: bool):
+        self.model_id = model_id
+        self.config = config
+        self.verbose = verbose
+        self.is_vlm = config.get("vision", False)
 
-        draft_path = config.get('draft_model_path')
+        self.model = None
+        self.processor = None
+        self.draft_model = None
+
+        self.load_model()
+
+    def load_model(self):
+        """Loads the appropriate model and an optional draft model."""
+        model_path = self.config['model_path']
+        adapter_path = self.config.get('adapter_path')
+        draft_path = self.config.get('draft_model_path')
+
+        logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path}")
+
+        load_fn = vlm_load if self.is_vlm else lm_load
+        self.model, self.processor = load_fn(model_path, adapter_path=adapter_path)
+
         if draft_path:
-            logging.info(f"Loading MLX draft model from vendored code: {draft_path}")
-            self.draft_model, _ = vlm_load(draft_path)
+            logging.info(f"Loading draft model: {draft_path}")
+            self.draft_model, _ = lm_load(draft_path)
 
-    def create_chat_completion(self, request: dict) -> Generator:
-        sampler = make_sampler(temp=request.get("temperature", 1.0), top_p=request.get("top_p", 0.95))
-        logits_processors = make_logits_processors(repetition_penalty=request.get("repetition_penalty"))
+        cache_target_model = self.model.language_model if self.is_vlm else self.model
+        self.cache, self.quantize_fn = build_or_load_cache(cache_target_model, self.config)
 
-        images, formatted_prompt = process_vlm_messages(self.processor, self.model.config, request['messages'])
+        logging.info(f"Model '{self.model_id}' loaded successfully.")
 
-        active_draft_model = self.draft_model
-        num_draft_tokens = request.get('num_draft_tokens') or self.config.get('num_draft_tokens', 5)
+    def create_chat_completion(self, request: Dict) -> Generator:
+        """Single entry point for generating completions."""
+        language_model = self.model.language_model if self.is_vlm else self.model
+        tokenizer = self.processor.tokenizer if self.is_vlm else self.processor
 
-        generator_args = {
-            "prompt": formatted_prompt, "model": self.model,
-            "max_tokens": request.get('max_tokens', 512),
-            "sampler": sampler, "logits_processors": logits_processors,
-        }
+        sampler, processors = build_sampler(tokenizer, request)
 
-        if active_draft_model:
-            logging.info(f"Using speculative decoding with {num_draft_tokens} draft tokens.")
-            yield from speculative_generate_step(**generator_args, draft_model=active_draft_model, num_draft_tokens=num_draft_tokens)
+        generator_args = request.copy()
+        generator_args.update({
+            "sampler": sampler,
+            "logits_processors": processors,
+            "prompt_cache": self.cache,
+            "draft_model": self.draft_model
+        })
+
+        if self.is_vlm:
+            images, formatted_prompt = process_vlm_messages(self.processor, self.model.config, request['messages'])
+
+            if images: # Ensure we only do VLM processing if images are present
+                vlm_inputs = prepare_inputs(self.processor, prompts=formatted_prompt, images=images)
+
+                logging.info("Fusing image and text embeddings...")
+                fused_embeddings = self.model.get_input_embeddings(
+                    input_ids=vlm_inputs["input_ids"],
+                    pixel_values=vlm_inputs["pixel_values"]
+                )
+                logging.info("Fusion complete. Handing off to mlx-lm engine.")
+
+                generator_args["input_embeddings"] = fused_embeddings
+                prompt_for_engine = []
+            else: # Fallback to text-only if a VLM model is used without an image
+                prompt_for_engine = tokenizer.encode(formatted_prompt)
+
         else:
-            generator = generate_step(**generator_args)
-            for token, logprobs in generator:
-                yield token, logprobs, False
+            # For text-only models
+            prompt_for_engine = tokenizer.apply_chat_template(request['messages'], tokenize=True, add_generation_prompt=True)
+
+        generator = lm_stream_generate(
+            model=language_model,
+            tokenizer=tokenizer,
+            prompt=prompt_for_engine,
+            **generator_args
+        )
+
+        for result in generator:
+            self.quantize_fn()
+            yield result
 
     def __del__(self):
-        if hasattr(self, 'model'): del self.model, self.processor; gc.collect(); mx.clear_cache()
+        """Clean up resources."""
+        if hasattr(self, 'model'):
+            del self.model
+            del self.processor
+            if self.draft_model:
+                del self.draft_model
+        gc.collect()
+        mx.clear_cache()
         logging.info(f"Unloaded MLX model: {self.model_id}")

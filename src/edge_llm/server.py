@@ -1,4 +1,4 @@
-# server.py
+# src/edge_llm/server.py
 import uvicorn
 import argparse
 
@@ -10,9 +10,13 @@ def main():
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args()
 
-    from edge_llm.api import app
-    uvicorn.run(app, host=host, port=port, reload=True, log_level=log_level)
-
+    uvicorn.run(
+        "edge_llm.api:app",
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
+        reload=True
+    )
 
 if __name__ == "__main__":
     main()

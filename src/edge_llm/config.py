@@ -1,9 +1,6 @@
-# src/config.py
+# src/edge_llm/config.py
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional, Union, Dict
-
-# Why: Defines the strict data structures for API requests and YAML configuration,
-# providing automatic validation and type hints throughout the application.
 
 class ImageUrl(BaseModel): url: str
 class TextContentPart(BaseModel): type: Literal["text"]; text: str
@@ -39,7 +36,9 @@ class LlamaCppModelConfig(BaseModel):
     model_path: str; mmproj_path: Optional[str] = None; chat_format: Optional[str] = None
     chat_format_template: Optional[str] = None; eos_token: Optional[str] = None; bos_token: Optional[str] = None
     n_gpu_layers: int = -1; n_ctx: int = 4096
+    draft_model: bool = False
 
 class ModelConfig(BaseModel):
     id: str; provider: Literal["mlx", "llama_cpp"]; config: Union[MLXModelConfig, LlamaCppModelConfig]
+
 class AppConfig(BaseModel): models: List[ModelConfig]

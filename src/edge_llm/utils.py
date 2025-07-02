@@ -1,10 +1,9 @@
-# src/utils.py
-# src/utils.py
+# src/edge_llm/utils.py
 import base64, io, requests
 from PIL import Image, ImageOps
 from typing import List, Tuple
-from mlx_vlm.prompt_utils import apply_chat_template
 
+# No changes needed here, but provided for completeness.
 def load_image(source_str: str) -> Image.Image:
     if source_str.startswith("data:image"):
         try: header, encoded = source_str.split(",", 1); return Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
@@ -14,6 +13,7 @@ def load_image(source_str: str) -> Image.Image:
     else: return ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
 
 def process_vlm_messages(processor, model_config, messages: List) -> Tuple[List[Image.Image], list]:
+    from mlx_vlm.prompt_utils import apply_chat_template
     images, text_messages = [], []
     for msg in messages:
         if isinstance(msg.get('content'), list):
@@ -24,6 +24,4 @@ def process_vlm_messages(processor, model_config, messages: List) -> Tuple[List[
             text_messages.append({"role": msg['role'], "content": "".join(text_parts)})
         else:
             text_messages.append(msg)
-
-    # Use the apply_chat_template function we imported from our local copy
     return images, apply_chat_template(processor, model_config, text_messages, num_images=len(images))
