@@ -1,37 +1,37 @@
 [build-system]
-requires      = ["setuptools>=70", "wheel"]
+requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name            = "edge-llm"
-version         = "1.0.0"
-description     = "Unified, lightweight OpenAI-compatible API server for MLX and GGUF models."
-authors         = [{ name = "Fred Bliss" }]
-readme          = "README.md"
-license         = { file = "LICENSE" }
+name = "heylookitsanllm"
+version = "1.0.1"
+description = "Unified, lightweight OpenAI-compatible API server for local LLM models, including MLX and GGUF models."
+authors = [{ name = "Fred Bliss" }]
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
-classifiers     = [
-  "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: MacOS",
-  "Operating System :: POSIX :: Linux",
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
 ]
 
 # -------------------------------------------------------------------
 # Core runtime deps – array of PEP 508 strings (required by spec)
 # -------------------------------------------------------------------
 dependencies = [
-  "fastapi",
-  "uvicorn[standard]",
-  "pydantic",
-  "python-multipart",
-  "pyyaml",
-  "requests",
-  "rich",
-  "numpy",
-  "Pillow",
-  "mlx-lm",
-  "llama-cpp-python",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "python-multipart",
+    "pyyaml",
+    "requests",
+    "rich",
+    "numpy",
+    "Pillow",
+    "mlx-lm",
+    "llama-cpp-python",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ dependencies = [
 test = ["pytest>=8", "pytest-mock>=3"]
 
 [project.scripts]
-edge-llm = "edge_llm.server:main"
+heylookllm = "heylook_llm.server:main"
 
 [tool.setuptools.package-dir]
 "" = "src"
@@ -48,4 +48,4 @@ edge-llm = "edge_llm.server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"edge_llm.templates" = ["*.jinja2", "*.tpl", "*.yaml"]
+"heylook_llm.templates" = ["*.jinja2", "*.tpl", "*.yaml"]

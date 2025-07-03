@@ -1,4 +1,4 @@
-# src/edge_llm/utils.py
+# src/heylook_llm/utils.py
 import base64, io, requests
 import logging
 from PIL import Image, ImageOps

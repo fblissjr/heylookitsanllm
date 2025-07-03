@@ -122,7 +122,7 @@ def main():
             print()
             print("💡 To find your server:")
             print("   1. Run this script on the server machine to get its IP")
-            print("   2. Make sure the server is started with: edge-llm --host 0.0.0.0")
+            print("   2. Make sure the server is started with: heylookllm --host 0.0.0.0")
             print("   3. Check firewall settings on both machines")
             print("   4. Use: python test_integration.py --server SERVER_IP:8080")
 

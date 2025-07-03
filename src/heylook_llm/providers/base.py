@@ -1,4 +1,4 @@
-# src/edge_llm/providers/base.py
+# src/heylook_llm/providers/base.py
 from abc import ABC, abstractmethod
 from typing import Generator, Dict
 

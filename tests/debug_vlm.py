@@ -31,7 +31,7 @@ def test_message_processing():
     sys.path.insert(0, os.path.join(parent_dir, 'src'))
 
     try:
-        from edge_llm.utils import process_vlm_messages
+        from heylook_llm.utils import process_vlm_messages
 
         # Create test messages of different types
         test_image = create_test_image()

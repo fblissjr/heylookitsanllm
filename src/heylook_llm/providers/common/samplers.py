@@ -1,4 +1,4 @@
-# src/edge_llm/providers/common/samplers.py
+# src/heylook_llm/providers/common/samplers.py
 """
 Why this file exists:
 This module centralizes the creation of sampler and logits processor functions,

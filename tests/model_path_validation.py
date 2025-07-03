@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Diagnostic script to check model paths and suggest fixes.
-Run this from your edge-llm-server directory.
+Run this from your heylookllm-server directory.
 
 Usage: python check_model_paths.py
 """
@@ -19,7 +19,7 @@ def check_model_paths():
     # Check if models.yaml exists
     if not os.path.exists("models.yaml"):
         print("❌ models.yaml not found in current directory")
-        print("   Make sure you're running this from the edge-llm-server directory")
+        print("   Make sure you're running this from the heylookllm-server directory")
         return False
 
     try:
@@ -116,7 +116,7 @@ def suggest_fixes():
     print()
 
     print("3. **Check directory structure:**")
-    print("   edge-llm-server/")
+    print("   heylookllm-server/")
     print("   ├── models.yaml")
     print("   └── modelzoo/")
     print("       └── mlx-community/")
@@ -138,10 +138,10 @@ def main():
     cwd = os.getcwd()
     print(f"Current directory: {cwd}")
 
-    # Check if this looks like the edge-llm directory
+    # Check if this looks like the heylookllm directory
     if not os.path.exists("models.yaml"):
         print("⚠️  models.yaml not found in current directory")
-        print("   Please run this from your edge-llm-server directory")
+        print("   Please run this from your heylookllm-server directory")
         return False
 
     print()

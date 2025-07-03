@@ -1,4 +1,4 @@
-# src/edge_llm/providers/common/cache_helpers.py
+# src/heylook_llm/providers/common/cache_helpers.py
 """
 Why this file exists:
 This module abstracts away all KV cache logic, replicating the advanced features

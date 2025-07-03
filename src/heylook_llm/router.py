@@ -1,13 +1,13 @@
-# src/edge_llm/router.py
+# src/heylook_llm/router.py
 import yaml
 import logging
 import threading
 from typing import Optional
 
-from edge_llm.config import AppConfig
-from edge_llm.providers.base import BaseProvider
-from edge_llm.providers.mlx_provider import MLXProvider
-from edge_llm.providers.llama_cpp_provider import LlamaCppProvider
+from heylook_llm.config import AppConfig
+from heylook_llm.providers.base import BaseProvider
+from heylook_llm.providers.mlx_provider import MLXProvider
+from heylook_llm.providers.llama_cpp_provider import LlamaCppProvider
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers."""

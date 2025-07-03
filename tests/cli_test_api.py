@@ -276,7 +276,7 @@ def main():
     print(f"📊 Final Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All fixes are working! Your edge-llm server is stable.")
+        print("🎉 All fixes are working! Your heylookllm server is stable.")
         print()
         print("✨ Key fixes validated:")
         print("  ✅ Error handling (no more crashes)")

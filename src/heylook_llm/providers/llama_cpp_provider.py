@@ -1,4 +1,4 @@
-# src/edge_llm/providers/llama_cpp_provider.py
+# src/heylook_llm/providers/llama_cpp_provider.py
 import gc
 import logging
 from typing import Generator, Dict, Any

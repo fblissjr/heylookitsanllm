@@ -1,10 +1,10 @@
-# src/edge_llm/server.py
+# src/heylook_llm/server.py
 import uvicorn
 import argparse
 
 def main():
     """
-    The main entry point for the edge-llm command-line tool.
+    The main entry point for the heylookllm command-line tool.
     This script's ONLY job is to parse uvicorn-related arguments
     and launch the uvicorn server process.
     The application itself will parse its own arguments inside its lifespan.
@@ -12,14 +12,14 @@ def main():
     parser = argparse.ArgumentParser(description="Edge LLM Server")
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
-    # We add other args here so they appear in `edge-llm --help`
+    # We add other args here so they appear in `heylookllm --help`
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--model-id", type=str, default=None, help="Optional ID of a model to load on startup.")
 
     args = parser.parse_args()
 
     uvicorn.run(
-        "edge_llm.api:app",
+        "heylook_llm.api:app",
         host=args.host,
         port=args.port,
         log_level=args.log_level.lower(),

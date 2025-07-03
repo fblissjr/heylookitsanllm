@@ -63,7 +63,7 @@ models:
     config:
       model_path: "modelzoo/mistral/Mistral-Small-3.2-24B-Instruct-2506-GGUF/Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf"
       mmproj_path: "modelzoo/mistral/Mistral-Small-3.2-24B-Instruct-2506-GGUF/mmproj-Mistral-Small-3.2-24B-Instruct-2506-F16.gguf"
-      chat_format_template: "src/edge_llm/templates/Mistral-Small-3.2-24B-Instruct-2506.jinja2"
+      chat_format_template: "templates/Mistral-Small-3.2-24B-Instruct-2506.jinja2"
       eos_token: "</s>"
       bos_token: "<s>"
       n_gpu_layers: -1
