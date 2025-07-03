@@ -19,7 +19,7 @@ def test_config_loading():
     print("📋 Testing configuration loading...")
 
     try:
-        from edge_llm.config import AppConfig
+        from heylook_llm.config import AppConfig
 
         # Load models.yaml
         if not os.path.exists("models.yaml"):
@@ -53,7 +53,7 @@ def test_router_creation(app_config):
     print("🔄 Testing router creation...")
 
     try:
-        from edge_llm.router import ModelRouter
+        from heylook_llm.router import ModelRouter
 
         # Create router without initial model
         router = ModelRouter(

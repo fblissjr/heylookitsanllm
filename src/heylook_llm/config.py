@@ -1,4 +1,4 @@
-# src/edge_llm/config.py
+# src/heylook_llm/config.py
 from pydantic import BaseModel, Field, validator
 from typing import List, Literal, Optional, Union, Dict
 

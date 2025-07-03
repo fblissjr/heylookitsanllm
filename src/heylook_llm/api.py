@@ -1,11 +1,11 @@
-# src/edge_llm/api.py
+# src/heylook_llm/api.py
 import json, uuid, time, logging, argparse, sys
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
 
-from edge_llm.router import ModelRouter
-from edge_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
+from heylook_llm.router import ModelRouter
+from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
 
 def _parse_app_args():
     parser = argparse.ArgumentParser()
@@ -46,7 +46,7 @@ async def list_models(request: Request):
                 "id": model_id,
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "edge-llm",
+                "owned_by": "heylookllm",
                 "permission": [],
                 "root": model_id,
                 "parent": None,

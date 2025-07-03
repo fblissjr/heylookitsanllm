@@ -56,7 +56,7 @@ def ping_host(host):
 
 def main():
     """Run network diagnostics."""
-    print("🌐 Network Diagnostic for Edge-LLM")
+    print("🌐 Network Diagnostic for heylookllm")
     print("=" * 50)
     print()
 
@@ -68,7 +68,7 @@ def main():
     print()
 
     # Check if we're likely the server or client
-    print("🔍 Checking for Edge-LLM server...")
+    print("🔍 Checking for heylookllm server...")
     if check_port_open("localhost", 8080):
         print("✅ Port 8080 is open on localhost - this machine is running the server")
         server_mode = True
@@ -78,7 +78,7 @@ def main():
     print()
 
     if server_mode:
-        print("🖥️  SERVER MODE - Edge-LLM is running here")
+        print("🖥️  SERVER MODE - heylookllm is running here")
         print("   Other machines can connect to this server using:")
         local_ip = get_local_ip()
         print(f"   http://{local_ip}:8080")
@@ -89,7 +89,7 @@ def main():
         print("   Make sure your firewall allows incoming connections on port 8080")
 
     else:
-        print("💻 CLIENT MODE - Looking for Edge-LLM server")
+        print("💻 CLIENT MODE - Looking for heylookllm server")
         print()
 
         # Test common server addresses
@@ -113,16 +113,16 @@ def main():
         print()
 
         if found_servers:
-            print("🎉 Found Edge-LLM server(s):")
+            print("🎉 Found heylookllm server(s):")
             for server in found_servers:
                 print(f"   http://{server}:8080")
                 print(f"   Test with: python test_integration.py --server {server}:8080")
         else:
-            print("❌ No Edge-LLM servers found on common addresses")
+            print("❌ No heylookllm servers found on common addresses")
             print()
             print("💡 To find your server:")
             print("   1. Run this script on the server machine to get its IP")
-            print("   2. Make sure the server is started with: edge-llm --host 0.0.0.0")
+            print("   2. Make sure the server is started with: heylookllm --host 0.0.0.0")
             print("   3. Check firewall settings on both machines")
             print("   4. Use: python test_integration.py --server SERVER_IP:8080")
 

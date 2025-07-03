@@ -107,7 +107,7 @@ def main():
 
     # Test 5: Test URL image
     print("5. Testing URL image...")
-    test_url = "https://httpbin.org/image/png"
+    test_url = "https://upload.wikimedia.org/wikipedia/commons/1/1a/FreePort_Software_banner%2C_inverted.png"
     test_url_image(test_url)
     print()
 

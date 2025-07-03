@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Debug script to test edge-llm functionality step by step.
+Debug script to test heylookllm functionality step by step.
 Run this to identify where issues occur.
 """
 
@@ -17,7 +17,7 @@ def test_config_loading():
     print("=" * 50)
     print("Testing configuration loading...")
     try:
-        from edge_llm.config import AppConfig
+        from heylook_llm.config import AppConfig
         import yaml
 
         with open("models.yaml", 'r') as f:
@@ -50,7 +50,7 @@ def test_model_loading(app_config, model_id=None):
     print(f"Testing model: {model_id}")
 
     try:
-        from edge_llm.router import ModelRouter
+        from heylook_llm.router import ModelRouter
 
         router = ModelRouter("models.yaml", logging.INFO)
         provider = router.get_provider(model_id)
