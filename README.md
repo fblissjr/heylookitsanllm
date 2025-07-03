@@ -11,7 +11,11 @@ i'll aim to make a better install guide, given the dependencies, but hopefully t
 ## 1  Installation
 tldr:
 1. clone repo
-2. uv or pip install -e .
+2. uv or pip install -e . (this will install llama.cpp cpu but you can compile metal or cuda next)
+3. uv or pip install mlx-vlm without dependencies cuz you don't need gradio or some of their audio dependencies
+4. uv or pip install -r requirements-min.txt so you get the mlx-vlm dependencies that you *do* need
+5. decide if you want to compile llama.cpp with metal or cuda (you're probably using metal if you're here for mlx - if so, compile metal)
+
 
 
 ### 1.1  Clone & bootstrap
@@ -54,9 +58,12 @@ If you skipped 1.2, the first pip install already built a CPU wheel; the command
 ### 1.3  trust (but verify)
 
 python -c "import llama_cpp; print('llama.cpp version:', llama_cpp.llama_cpp_version())"
-python -c "import mlx_lm; print('mlx_lm version:', mlx_lm.mlx_lm_version())"
 
 You should see a Metal or CUDA line if the compile succeeded (and you compiled it for that).
+
+python -c "import mlx_lm; print('mlx_lm version:', mlx_lm.__version__())"
+
+
 
 ## 2. Configuration
 
