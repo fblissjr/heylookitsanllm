@@ -8,3 +8,5 @@ fastapi
 opencv-python
 scipy
 soundfile
+torch
+torchvision

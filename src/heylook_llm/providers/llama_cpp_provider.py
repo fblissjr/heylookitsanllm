@@ -1,47 +1,32 @@
 # src/heylook_llm/providers/llama_cpp_provider.py
 import gc
 import logging
-from typing import Generator, Dict, Any
+import traceback
+from typing import Generator
 
+from ..config import ChatRequest
 from .base import BaseProvider
 
 class LlamaCppProvider(BaseProvider):
-    """Provider for running GGUF models via llama-cpp-python."""
-
     def load_model(self, config: dict, verbose: bool):
         try:
-            from llama_cpp import Llama
+            from llama_cpp import Llama, LlamaRAMCache
             from llama_cpp.llama_chat_format import Jinja2ChatFormatter, Llava15ChatHandler
         except ImportError as e:
-            raise ImportError(
-                "llama-cpp-python is not installed. Install it with: "
-                "pip install 'llama-cpp-python[server]'"
-            ) from e
+            raise ImportError("llama-cpp-python is not installed.") from e
 
         logging.info(f"Loading GGUF model: {config['model_path']}")
-        chat_handler = None
 
-        # Handle custom chat templates and vision models
-        if config.get('chat_format_template'):
-            logging.info(f"Loading custom chat template from: {config['chat_format_template']}")
-            try:
-                with open(config['chat_format_template'], 'r') as f:
-                    template = f.read()
-                formatter = Jinja2ChatFormatter(
-                    template=template,
-                    eos_token=config.get('eos_token'),
-                    bos_token=config.get('bos_token')
-                )
-                chat_handler = formatter.to_chat_handler()
-            except Exception as e:
-                logging.error(f"Failed to load chat template: {e}")
-                raise
-        elif config.get("mmproj_path"):
-            # Default handler for LLaVA-style multimodal models
-            chat_handler = Llava15ChatHandler(
-                clip_model_path=config['mmproj_path'],
-                verbose=verbose
-            )
+        chat_handler = None
+        if tpl_path := config.get('chat_format_template'):
+            logging.info(f"Using custom Jinja2 chat template from: {tpl_path}")
+            with open(tpl_path, 'r') as f:
+                template = f.read()
+            formatter = Jinja2ChatFormatter(template=template)
+            chat_handler = formatter.to_chat_handler()
+        elif config.get('mmproj_path'):
+            logging.info(f"Vision model detected. Explicitly using Llava15ChatHandler.")
+            chat_handler = Llava15ChatHandler(clip_model_path=config['mmproj_path'], verbose=verbose)
 
         try:
             self.model = Llama(
@@ -50,31 +35,34 @@ class LlamaCppProvider(BaseProvider):
                 chat_handler=chat_handler,
                 n_ctx=config.get('n_ctx', 4096),
                 n_gpu_layers=config.get('n_gpu_layers', -1),
-                n_batch=config.get('n_batch', 512),
-                n_threads=config.get('n_threads'),
-                verbose=verbose
+                verbose=verbose,
             )
-            logging.info(f"Successfully loaded GGUF model: {config['model_path']}")
+            self.model.set_cache(LlamaRAMCache())
         except Exception as e:
-            logging.error(f"Failed to load GGUF model: {e}")
-            raise
+            raise e
 
-    def create_chat_completion(self, request: dict) -> Generator:
-        """Create chat completion using llama.cpp."""
+    def create_chat_completion(self, request: ChatRequest) -> Generator:
         try:
-            # llama-cpp-python is already OpenAI compatible, so we pass the request through
-            # The stream=True argument ensures it returns a generator
-            yield from self.model.create_chat_completion(**request, stream=True)
-        except Exception as e:
-            logging.error(f"Chat completion failed: {e}")
-            raise
+            # FIX: Use .model_dump() to get a dictionary from the Pydantic object
+            request_dict = request.model_dump(exclude_none=True)
 
-    def __del__(self):
-        """Ensure the Llama.cpp model is released from memory."""
+            params = {
+                "messages": request_dict.get('messages'),
+                "temperature": request_dict.get('temperature', 0.8),
+                "top_p": request_dict.get('top_p', 0.95),
+                "top_k": request_dict.get('top_k', 40),
+                "min_p": request_dict.get('min_p', 0.05),
+                "repeat_penalty": request_dict.get('repetition_penalty', 1.1),
+                "max_tokens": request_dict.get('max_tokens', 512),
+                "stream": True,
+            }
+            yield from self.model.create_chat_completion(**params)
+        except Exception as e:
+            logging.error(f"Llama.cpp model call failed: {e}", exc_info=True)
+            yield {"choices": [{"delta": {"content": f"\n\nError: Llama.cpp generation failed: {str(e)}"}}]}
+
+    def unload(self):
+        logging.info(f"Unloading GGUF model: {self.model_id}")
         if hasattr(self, 'model'):
-            try:
-                del self.model
-                gc.collect()
-                logging.info(f"Unloaded GGUF model: {self.model_id}")
-            except Exception as e:
-                logging.warning(f"Error during model cleanup: {e}")
+            del self.model
+            gc.collect()

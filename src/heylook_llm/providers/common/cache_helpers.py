@@ -1,41 +1,31 @@
 # src/heylook_llm/providers/common/cache_helpers.py
-"""
-Why this file exists:
-This module abstracts away all KV cache logic, replicating the advanced features
-of mlx-lm. It handles the creation of standard, rotating, or quantized caches
-and prepares the quantization hook function that is called during generation,
-ensuring memory efficiency.
-"""
-from __future__ import annotations
+from typing import Any, List
+import mlx.nn as nn
 
-from typing import Tuple, Any, Callable
-from mlx_lm.generate import maybe_quantize_kv_cache
-from mlx_lm.models.cache import make_prompt_cache, load_prompt_cache
+# This relies on mlx_lm being installed.
+from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache
 
-__all__ = ["build_or_load_cache"]
-
-def build_or_load_cache(model, cfg: dict) -> Tuple[list[Any], Callable]:
+def make_cache(model: nn.Module, config: dict) -> List[Any]:
     """
-    Return (prompt_cache, quantize_hook) ready for generate_step.
-
-    Args:
-        model: The MLX model that owns this cache.
-        cfg: Provider-level kwargs. Recognised keys: `prompt_cache_file`,
-             `max_kv_size`, `kv_bits`, `kv_group_size`, `quantized_kv_start`.
+    Construct the model's cache based on the provider's configuration.
     """
-    # 1. (Optional) warm-start from a .safetensors cache file
-    if pc_file := cfg.get("prompt_cache_file"):
-        prompt_cache, _ = load_prompt_cache(pc_file, return_metadata=True)
+    cache_type = config.get("cache_type", "standard")
+
+    # If the model has its own custom cache logic (like RecurrentGemma), let it handle it.
+    if hasattr(model, "make_cache"):
+        return model.make_cache()
+
+    num_layers = len(model.layers)
+
+    if cache_type == "rotating":
+        max_size = config.get("max_kv_size")
+        if not max_size:
+            raise ValueError("'max_kv_size' must be set for 'rotating' cache type.")
+        return [RotatingKVCache(max_size=max_size) for _ in range(num_layers)]
+
+    # For quantized, we start with a standard cache that will be converted later.
+    elif cache_type == "quantized" or cache_type == "standard":
+        return [KVCache() for _ in range(num_layers)]
+
     else:
-        prompt_cache = make_prompt_cache(model, max_kv_size=cfg.get("max_kv_size"))
-
-    # 2. Build a closure that applies quantization after each step
-    def quantize_hook():
-        maybe_quantize_kv_cache(
-            prompt_cache,
-            quantized_kv_start=cfg.get("quantized_kv_start", 5000),
-            kv_group_size=cfg.get("kv_group_size", 64),
-            kv_bits=cfg.get("kv_bits"),
-        )
-
-    return prompt_cache, quantize_hook
+        raise ValueError(f"Unknown cache_type: {cache_type}")

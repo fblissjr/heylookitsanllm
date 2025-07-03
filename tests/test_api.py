@@ -233,7 +233,7 @@ def main():
     print()
 
     # Pick models for testing
-    test_model = models[3]
+    test_model = models[0]
     vision_models = [m for m in models if any(
         keyword in m.lower() for keyword in ["vlm", "vision", "gemma3n"]
     )]

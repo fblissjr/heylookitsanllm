@@ -48,22 +48,26 @@ Installing the binary first avoids a 10-15 min local C++ build. The official rep
 #### 1.2.2  Compiling llama-cpp-python for macOS (metal) or CUDA with the right flags
 
 # macOS / Metal
-`CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
+`CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python`
+
+# CPU only
+`uv pip install --force-reinstall --no-cache-dir llama-cpp-python`
 
 # NVIDIA CUDA (12.x shown)
-`CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
+`CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python`
 
 If you skipped 1.2, the first pip install already built a CPU wheel; the commands above simply re-compile it in place with Metal or GPU support. See upstream docs for the full flag matrix.
 
 ### 1.3  trust (but verify)
 
-python -c "import llama_cpp; print('llama.cpp version:', llama_cpp.llama_cpp_version())"
+# You should see a Metal or CUDA line if the compile succeeded (and you compiled it for that).
+`llama.cpp`: python -c "import llama_cpp; print('llama.cpp version:', llama_cpp.llama_cpp_version())"
 
-You should see a Metal or CUDA line if the compile succeeded (and you compiled it for that).
+# mlx-lm
+`mlx-lm`: python -c "from mlx_lm import __version__; print('mlx_lm version:', __version__)"
 
-python -c "import mlx_lm; print('mlx_lm version:', mlx_lm.__version__())"
-
-
+# mlx-vlm
+`mlx-vlm`: python -c "from mlx_vlm import __version__; print('mlx_vlm version:', __version__)"
 
 ## 2. Configuration
 
