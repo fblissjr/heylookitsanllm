@@ -40,6 +40,12 @@ class ChatRequest(BaseModel):
     num_draft_tokens: Optional[int] = Field(5, ge=1, le=20)
     seed: Optional[int] = None
 
+    @validator('max_tokens')
+    def validate_max_tokens(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError('max_tokens must be greater than 0')
+        return v
+
     # Sampling parameters
     xtc_probability: Optional[float] = Field(0.0, ge=0.0, le=1.0)
     xtc_threshold: Optional[float] = Field(0.0, ge=0.0, le=1.0)

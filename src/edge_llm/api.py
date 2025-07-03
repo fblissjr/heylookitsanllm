@@ -67,51 +67,102 @@ async def list_models(request: Request):
 async def create_chat_completion(request: Request):
     router = request.app.state.router_instance
     body = await request.json()
-    chat_request = ChatRequest(**body)
 
     try:
+        chat_request = ChatRequest(**body)
+    except Exception as e:
+        # Handle Pydantic validation errors gracefully
+        logging.error(f"Request validation failed: {e}")
+        error_detail = str(e)
+
+        # Provide more helpful error messages
+        if "Messages list cannot be empty" in error_detail:
+            error_detail = "Messages list cannot be empty. Please provide at least one message."
+        elif "Input should be greater than 0" in error_detail and "max_tokens" in error_detail:
+            error_detail = "max_tokens must be greater than 0."
+        elif "Value error" in error_detail:
+            error_detail = f"Invalid request: {error_detail}"
+
+        raise HTTPException(status_code=422, detail=error_detail)
+
+    try:
+        # Get the provider - this is where the error occurs
         provider = router.get_provider(chat_request.model)
+
+        # Double-check that we got a valid provider
+        if provider is None:
+            available_models = router.list_available_models()
+            raise ValueError(f"Failed to load provider for model '{chat_request.model}'. Available models: {available_models}")
+
+        # Create the generator
         generator = provider.create_chat_completion(chat_request.model_dump())
+
+        # Validate that generator is not None
+        if generator is None:
+            raise ValueError(f"Provider for model '{chat_request.model}' returned None generator")
+
     except ValueError as e:
+        # Model not found or provider creation failed
+        logging.error(f"Model/provider error: {e}")
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        # Other errors during provider/generator creation
+        logging.error(f"Failed to create generator: {e}")
+        import traceback
+        logging.debug(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
     log_level = router.log_level
 
-    if chat_request.stream:
-        return StreamingResponse(
-            stream_response_generator(chat_request, generator, provider, log_level),
-            media_type="text/event-stream"
-        )
-    else:
-        return await non_stream_response(chat_request, generator, provider, log_level)
+    try:
+        if chat_request.stream:
+            return StreamingResponse(
+                stream_response_generator(chat_request, generator, provider, log_level),
+                media_type="text/event-stream"
+            )
+        else:
+            return await non_stream_response(chat_request, generator, provider, log_level)
+    except Exception as e:
+        logging.error(f"Error during response generation: {e}")
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(e)}")
 
 def _log_performance(start_time, first_token_time, tokens_generated, final_result):
     """Log performance metrics based on the final result object."""
-    end_time = time.time()
-    total_time = end_time - start_time
-    ttft = first_token_time - start_time if first_token_time else total_time
-    gen_time = end_time - (first_token_time or start_time)
-    tok_per_sec = (tokens_generated - 1) / gen_time if gen_time > 0 and tokens_generated > 1 else 0.0
+    try:
+        end_time = time.time()
+        total_time = end_time - start_time
+        ttft = (first_token_time - start_time) if first_token_time else total_time
+        gen_time = end_time - (first_token_time or start_time)
+        tok_per_sec = (tokens_generated - 1) / gen_time if gen_time > 0 and tokens_generated > 1 else 0.0
 
-    # Extract metrics from the result object (works for both MLX and llama.cpp)
-    if hasattr(final_result, 'prompt_tps'):  # MLX GenerationResponse
-        prompt_tps = getattr(final_result, 'prompt_tps', 0.0)
-        peak_memory = getattr(final_result, 'peak_memory', 0.0)
-    else:
-        # llama.cpp style response
-        usage = final_result.get("usage", {})
-        prompt_tps = usage.get("prompt_tokens", 0) / max(ttft, 0.001)  # Avoid division by zero
-        peak_memory = 0.0  # llama.cpp doesn't provide this
+        # Extract metrics from the result object (works for both MLX and llama.cpp)
+        prompt_tps = 0.0
+        peak_memory = 0.0
 
-    logging.info(
-        f"\n--- Request Performance ---\n"
-        f"  - Time to First Token: {ttft:.3f} s\n"
-        f"  - Prompt TPS:          {prompt_tps:.2f} tok/s\n"
-        f"  - Generation TPS:      {tok_per_sec:.2f} tok/s\n"
-        f"  - Peak Memory:         {peak_memory:.3f} GB\n"
-        f"---------------------------\n"
-    )
-    return PerformanceMetrics(prompt_tps=prompt_tps, generation_tps=tok_per_sec, peak_memory_gb=peak_memory)
+        if final_result:
+            if hasattr(final_result, 'prompt_tps'):  # MLX GenerationResponse
+                prompt_tps = getattr(final_result, 'prompt_tps', 0.0)
+                peak_memory = getattr(final_result, 'peak_memory', 0.0)
+            elif isinstance(final_result, dict):  # llama.cpp style response
+                usage = final_result.get("usage", {})
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                prompt_tps = prompt_tokens / max(ttft, 0.001) if prompt_tokens > 0 else 0.0
+                peak_memory = 0.0  # llama.cpp doesn't provide this
+
+        logging.info(
+            f"\n--- Request Performance ---\n"
+            f"  - Time to First Token: {ttft:.3f} s\n"
+            f"  - Prompt TPS:          {prompt_tps:.2f} tok/s\n"
+            f"  - Generation TPS:      {tok_per_sec:.2f} tok/s\n"
+            f"  - Peak Memory:         {peak_memory:.3f} GB\n"
+            f"---------------------------\n"
+        )
+        return PerformanceMetrics(prompt_tps=prompt_tps, generation_tps=tok_per_sec, peak_memory_gb=peak_memory)
+
+    except Exception as e:
+        logging.warning(f"Performance logging failed: {e}")
+        # Return minimal metrics to avoid further errors
+        return PerformanceMetrics(prompt_tps=0.0, generation_tps=0.0, peak_memory_gb=0.0)
 
 def stream_response_generator(chat_request: ChatRequest, generator, provider, log_level: int):
     """Handles streaming responses, yielding data in the Server-Sent Events (SSE) format."""

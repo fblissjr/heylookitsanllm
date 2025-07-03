@@ -1,41 +1,22 @@
 # Enhanced models.yaml configuration with advanced features
 # Global server settings
-default_model: "smolvlm" # Optional: specify default model
-max_concurrent_requests: 5
+default_model: "gemma3n-e4b-it" # Optional: specify default model
+max_concurrent_requests: 2
 request_timeout: 300
-log_level: "INFO"
+log_level: "DEBUG"
 
 models:
-  # --- Vision-Language Models ---
   - id: "gemma3n-e4b-it"
     provider: "mlx"
     description: "Gemma 3 4B Instruct with vision capabilities"
     tags: ["vision", "instruct", "gemma"]
     enabled: true
     config:
-      model_path: "modelzoo/mlx-community/gemma-3n-E4B-it-bf16-mlx"
+      model_path: "modelzoo/google/gemma-3n-E4B-it-bf16-mlx"
       vision: true
       temperature: 1.0
       top_p: 0.95
       max_tokens: 2048
-
-  - id: "smolvlm"
-    provider: "mlx"
-    description: "SmolVLM 2.2B - Lightweight vision-language model"
-    tags: ["vision", "lightweight", "efficient"]
-    enabled: true
-    config:
-      model_path: "./modelzoo/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
-      vision: true
-      # Model-specific defaults (override global defaults)
-      temperature: 0.7
-      top_p: 0.9
-      max_tokens: 1024
-      repetition_penalty: 1.05
-      # Advanced cache settings for long conversations
-      max_kv_size: 8192 # Limit cache size to 8K tokens
-      kv_bits: 8 # Quantize cache to 8-bit to save memory
-      quantized_kv_start: 1000 # Start quantizing after 1K tokens
 
   # --- Large Model with Speculative Decoding ---
   - id: "gemma3-27b-dwq"
@@ -43,7 +24,6 @@ models:
     description: "Gemma 3 27B with 1B draft model for faster inference"
     tags: ["large", "speculative", "fast"]
     enabled: true
-    log_level: "DEBUG" # This will show detailed generation logs
     config:
       model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
       draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"

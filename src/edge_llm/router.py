@@ -44,23 +44,47 @@ class ModelRouter:
                 logging.info("Server will start with no models loaded")
 
     def get_provider(self, model_id: str) -> BaseProvider:
+        """Get or create a provider for the specified model."""
+
+        # Handle None or empty model_id
+        if not model_id or model_id.strip() == "":
+            available_models = self.list_available_models()
+            if available_models:
+                model_id = available_models[0]
+                logging.info(f"No model specified, using default: {model_id}")
+            else:
+                raise ValueError("No model specified and no models available")
+
         with self.loading_lock:
             # Return current provider if it's the same model
-            if self.current_provider_id == model_id:
-                return self.providers.get(model_id)
+            if self.current_provider_id == model_id and model_id in self.providers:
+                logging.debug(f"Reusing existing provider for model: {model_id}")
+                return self.providers[model_id]
 
             # Unload current provider to free memory
-            if self.current_provider_id:
+            if self.current_provider_id and self.current_provider_id in self.providers:
                 old_provider = self.providers.pop(self.current_provider_id, None)
                 if old_provider:
                     logging.info(f"Unloading model: {self.current_provider_id}")
-                    del old_provider
+                    try:
+                        del old_provider
+                    except Exception as e:
+                        logging.warning(f"Error during model cleanup: {e}")
 
             # Get model config
             model_config = self.app_config.get_model_config(model_id)
             if not model_config:
                 available_models = [m.id for m in self.app_config.get_enabled_models()]
-                raise ValueError(f"Model '{model_id}' not found or disabled. Available models: {available_models}")
+                error_msg = f"Model '{model_id}' not found or disabled. Available models: {available_models}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Check if model is enabled
+            if not model_config.enabled:
+                available_models = [m.id for m in self.app_config.get_enabled_models()]
+                error_msg = f"Model '{model_id}' is disabled. Available models: {available_models}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
 
             # Create provider
             provider_map = {
@@ -75,17 +99,29 @@ class ModelRouter:
             logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'")
 
             try:
-                self.providers[model_id] = provider_class(
+                # Create the provider
+                new_provider = provider_class(
                     model_config.id,
                     model_config.config.model_dump(),
                     self.log_level <= logging.DEBUG
                 )
+
+                # Only update state if provider creation was successful
+                self.providers[model_id] = new_provider
                 self.current_provider_id = model_id
                 logging.info(f"Successfully loaded model: {model_id}")
-                return self.providers[model_id]
+                return new_provider
+
             except Exception as e:
-                logging.error(f"Failed to load model '{model_id}': {e}")
-                raise
+                # Clean up on failure
+                if model_id in self.providers:
+                    del self.providers[model_id]
+                if self.current_provider_id == model_id:
+                    self.current_provider_id = None
+
+                error_msg = f"Failed to load model '{model_id}': {str(e)}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
 
     def list_available_models(self) -> list[str]:
         """Return list of available model IDs."""

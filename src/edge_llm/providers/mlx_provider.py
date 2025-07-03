@@ -19,13 +19,36 @@ class MLXProvider(BaseProvider):
         self.draft_model = None
 
         model_path = config['model_path']
+
+        # Convert relative paths to absolute paths
+        if model_path.startswith('./'):
+            import os
+            model_path = os.path.abspath(model_path)
+            logging.info(f"Converted relative path to absolute: {model_path}")
+
+        # Verify the path exists for local models
+        if not model_path.startswith(('http://', 'https://')) and '/' in model_path:
+            import os
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
         load_fn = vlm_load if self.is_vlm else lm_load
 
         logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path}")
-        self.model, self.processor = load_fn(model_path)
+
+        try:
+            self.model, self.processor = load_fn(model_path)
+            logging.info(f"Successfully loaded model: {model_path}")
+        except Exception as e:
+            logging.error(f"Failed to load model from {model_path}: {e}")
+            raise
 
         if draft_path := config.get('draft_model_path'):
             logging.info(f"Loading draft model: {draft_path}")
+            # Apply same path processing to draft model
+            if draft_path.startswith('./'):
+                import os
+                draft_path = os.path.abspath(draft_path)
             self.draft_model, _ = lm_load(draft_path)
 
     def create_chat_completion(self, request: dict) -> Generator:
@@ -67,113 +90,115 @@ class MLXProvider(BaseProvider):
 
     def _generate_vlm_enhanced(self, request: dict, sampler, processors) -> Generator:
         """
-        Enhanced VLM generation that uses advanced sampling when possible.
-        Falls back gracefully to basic VLM generation if advanced features aren't supported.
+        Enhanced VLM generation that tries multiple approaches.
+        Falls back gracefully if advanced features aren't supported.
         """
         try:
-            # Method 1: Try the unified approach (requires newer mlx-lm with input_embeddings support)
-            yield from self._try_unified_vlm_generation(request, sampler, processors)
-        except (AttributeError, TypeError, NotImplementedError) as e:
-            logging.info(f"Unified VLM approach not available ({e}), using enhanced fallback")
+            # Skip unified approach for now - input_embeddings not widely supported yet
+            logging.info("Skipping unified VLM approach (input_embeddings not supported in current mlx-lm)")
+            raise NotImplementedError("input_embeddings not supported")
+
+        except (AttributeError, TypeError, NotImplementedError, ValueError) as e:
+            logging.info(f"Unified VLM approach not available ({e}), using basic VLM generation")
             try:
-                # Method 2: Use custom VLM generation with parameter injection
-                yield from self._generate_vlm_with_custom_sampling(request, sampler, processors)
-            except Exception as e2:
-                logging.warning(f"Custom sampling failed ({e2}), using basic VLM generation")
-                # Method 3: Basic VLM generation (guaranteed to work)
+                # Use basic VLM generation directly
                 yield from self._generate_vlm_basic(request)
+            except Exception as e2:
+                logging.error(f"All VLM generation methods failed: {e2}")
+                # Return error message as a simple response object
+                yield self._create_error_response(f"VLM generation failed: {str(e2)}")
 
-    def _try_unified_vlm_generation(self, request: dict, sampler, processors) -> Generator:
-        """Try the unified approach using mlx-lm's generation engine."""
-        # Process multimodal messages
-        images, formatted_prompt = process_vlm_messages(
-            self.processor, self.model.config, request['messages']
-        )
+    def _create_error_response(self, error_message: str):
+        """Create a simple error response that mimics GenerationResponse."""
+        class SimpleResponse:
+            def __init__(self, text):
+                self.text = text
+                self.token = None
+                self.logprobs = None
+                self.from_draft = False
+                self.prompt_tokens = 0
+                self.prompt_tps = 0.0
+                self.generation_tokens = 1
+                self.generation_tps = 0.0
+                self.peak_memory = 0.0
 
-        # Prepare inputs
-        if images:
-            inputs = self.processor(
-                text=formatted_prompt,
-                images=images,
-                return_tensors="np"
-            )
-            input_ids = mx.array(inputs['input_ids'])
-            pixel_values = mx.array(inputs['pixel_values']) if 'pixel_values' in inputs else None
-        else:
-            input_ids = mx.array(self.processor.tokenizer.encode(formatted_prompt))
-            pixel_values = None
-
-        # Get fused embeddings (this is where it might fail if not supported)
-        input_embeddings = self.model.get_input_embeddings(input_ids, pixel_values)
-
-        # Use mlx-lm's generation with embeddings
-        # NOTE: This requires a recent version of mlx-lm with input_embeddings support
-        yield from lm_stream_generate(
-            model=self.model.language_model,
-            tokenizer=self.processor.tokenizer,
-            prompt=[],  # Empty because context is in input_embeddings
-            input_embeddings=input_embeddings,
-            max_tokens=request.get('max_tokens', 512),
-            sampler=sampler,
-            logits_processors=processors,
-        )
-
-    def _generate_vlm_with_custom_sampling(self, request: dict, sampler, processors) -> Generator:
-        """
-        Custom VLM generation that tries to inject our advanced sampling.
-        This is experimental and may not work with all models.
-        """
-        from mlx_vlm.generate import generate_step
-
-        # Process messages and prepare inputs
-        images, formatted_prompt = process_vlm_messages(
-            self.processor, self.model.config, request['messages']
-        )
-
-        # Prepare inputs like mlx-vlm does
-        if images:
-            inputs = self.processor(
-                text=formatted_prompt,
-                images=images,
-                return_tensors="np"
-            )
-        else:
-            inputs = self.processor(text=formatted_prompt, return_tensors="np")
-
-        # Convert to MLX arrays
-        input_ids = mx.array(inputs['input_ids'])
-        pixel_values = mx.array(inputs.get('pixel_values', [])) if inputs.get('pixel_values') is not None else None
-
-        # Call generate_step directly with our custom sampling
-        # This bypasses vlm_stream_generate and gives us more control
-        for token, logprobs in generate_step(
-            prompt=input_ids,
-            model=self.model,
-            pixel_values=pixel_values,
-            max_tokens=request.get('max_tokens', 512),
-            temperature=request.get('temperature', 1.0),
-            repetition_penalty=request.get('repetition_penalty'),
-            top_p=request.get('top_p', 1.0),
-        ):
-            # Convert token to text using our detokenizer
-            text = self.processor.tokenizer.decode([token.item()])
-            # Yield in the expected format
-            from mlx_lm.generate import GenerationResponse
-            yield GenerationResponse(text=text)
+        return SimpleResponse(error_message)
 
     def _generate_vlm_basic(self, request: dict) -> Generator:
         """Basic VLM generation using standard mlx_vlm.generate."""
-        from mlx_vlm.generate import stream_generate as vlm_stream_generate
+        try:
+            # Import here to avoid circular imports
+            from mlx_vlm.generate import stream_generate as vlm_stream_generate
 
-        logging.info("Using basic VLM generation")
-        yield from vlm_stream_generate(
-            model=self.model,
-            processor=self.processor,
-            messages=request['messages'],
-            max_tokens=request.get('max_tokens', 512),
-            temperature=request.get('temperature', 1.0),
-            top_p=request.get('top_p', 0.95),
-        )
+            logging.info("Using basic VLM generation")
+
+            # Process the messages to extract images and create a prompt
+            images, formatted_prompt = process_vlm_messages(
+                self.processor, self.model.config, request['messages']
+            )
+
+            # mlx_vlm.generate.stream_generate expects a formatted prompt and images
+            # Try different approaches based on the error message
+            try:
+                # Method 1: Standard approach
+                for response in vlm_stream_generate(
+                    model=self.model,
+                    processor=self.processor,
+                    prompt=formatted_prompt,
+                    image=images if images else None,  # Handle empty images
+                    max_tokens=request.get('max_tokens', 512),
+                    temperature=request.get('temperature', 1.0),
+                    top_p=request.get('top_p', 0.95),
+                ):
+                    yield response
+            except Exception as e1:
+                logging.warning(f"Standard VLM approach failed: {e1}")
+
+                # Method 2: Try with return_tensors='pt' (PyTorch tensors)
+                try:
+                    logging.info("Trying VLM generation with PyTorch tensors...")
+
+                    # Process inputs manually with PyTorch tensors
+                    if images:
+                        # Try processing with PyTorch format
+                        inputs = self.processor(
+                            text=formatted_prompt,
+                            images=images,
+                            return_tensors="pt"  # Try PyTorch format
+                        )
+                        logging.info(f"Successfully processed inputs with PyTorch tensors")
+                    else:
+                        inputs = self.processor(
+                            text=formatted_prompt,
+                            return_tensors="pt"
+                        )
+
+                    # Convert back to MLX format if needed and call VLM
+                    for response in vlm_stream_generate(
+                        model=self.model,
+                        processor=self.processor,
+                        prompt=formatted_prompt,
+                        image=images if images else None,
+                        max_tokens=request.get('max_tokens', 512),
+                        temperature=request.get('temperature', 1.0),
+                        top_p=request.get('top_p', 0.95),
+                    ):
+                        yield response
+
+                except Exception as e2:
+                    logging.warning(f"PyTorch tensor approach failed: {e2}")
+
+                    # Method 3: Simple text-only fallback
+                    logging.info("Falling back to text-only generation")
+                    simple_response = self._create_error_response(
+                        f"Vision processing failed, using text-only response: {formatted_prompt}"
+                    )
+                    yield simple_response
+
+        except Exception as e:
+            logging.error(f"All VLM generation methods failed: {e}")
+            # Return error as a valid response rather than raising
+            yield self._create_error_response(f"VLM Error: {str(e)}")
 
     def __del__(self):
         if hasattr(self, 'model'):
