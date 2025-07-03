@@ -2,10 +2,16 @@
 
 a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs both vision and text Apple MLX models and GGUF models (via `llama-cpp-python`) behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way.
 
-i'll aim to make a better install guide, given the dependencies, but hopefully this is fairly smooth sailing for now:
+i'll aim to make a better install guide, given the dependencies, but hopefully this is fairly smooth sailing for now.
+
+*note*: llama-cpp-python will by default install the cpu binary, but you can compile it yourself by following the instructions in the llama.cpp repo.
 
 ---
 ## 1  Installation
+tldr:
+1. clone repo
+2. uv or pip install -e .
+
 
 ### 1.1  Clone & bootstrap
 ```bash
@@ -17,30 +23,37 @@ uv pip install --no-deps mlx-vlm          # skip its mlx-audio chain and gradio
 uv pip install -r requirements-min.txt    # installs minimal dependencies needed
 ```
 
-### 1.2  (Recommended) install a pre-built llama.cpp binary
+### 1.2 Decide what flavor of llama.cpp you want
+Install a pre-built llama.cpp binary or compile (my tip: compile if you're on macos/metal or CUDA).
+
+#### 1.2.1 Install a pre-built CPU-only llama.cpp binary
+
+Here's how to install the cpu binary:
 
 ```bash
 # macOS / Linux
 brew install llama.cpp
+
 # Windows
 winget install llama.cpp
 ```
 
 Installing the binary first avoids a 10-15 min local C++ build. The official repo recommends these routes.
 
-### 1.3  Build llama-cpp-python with the right flags
+#### 1.2.2  Compiling llama-cpp-python for macOS (metal) or CUDA with the right flags
 
-# Apple Silicon + Metal
+# macOS / Metal
 `CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
 
 # NVIDIA CUDA (12.x shown)
 `CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 pip install --force-reinstall --no-cache-dir llama-cpp-python`
 
-If you skipped 1.2, the first pip install already built a CPU wheel; the commands above simply re-compile it in place with GPU support. See upstream docs for the full flag matrix.
+If you skipped 1.2, the first pip install already built a CPU wheel; the commands above simply re-compile it in place with Metal or GPU support. See upstream docs for the full flag matrix.
 
-### 1.4  Verify
+### 1.3  trust (but verify)
 
 python -c "import llama_cpp; print('llama.cpp version:', llama_cpp.llama_cpp_version())"
+python -c "import mlx_lm; print('mlx_lm version:', mlx_lm.mlx_lm_version())"
 
 You should see a Metal or CUDA line if the compile succeeded (and you compiled it for that).
 

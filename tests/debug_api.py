@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple test to isolate the API issue.
-Tests the exact request that's failing.
-
-Usage: python simple_api_test.py [SERVER_URL]
+Simple API test to test simple things. Super simple things. Like models not loading.
 """
 
 import requests

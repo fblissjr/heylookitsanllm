@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Final test script that validates all API fixes work correctly.
-Run this after applying all the fixes.
+Holistic and sorta-regression-test script that validates all API changes work correctly.
 
-Usage: python test_final_fixes.py [SERVER_URL]
+Usage: python cli_test_api.py [SERVER_URL]
 """
 
 import requests
