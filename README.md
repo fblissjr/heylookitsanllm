@@ -1,4 +1,5 @@
-# hey look its an LLM! (unified VLM and multimodal server for mlx + llama.cpp + more later on)
+# heylookitsanllm
+_unified VLM and multimodal server for mlx + llama.cpp + more later on_
 
 a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs both vision and text Apple MLX models and GGUF models (via `llama-cpp-python`) behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way.
 
