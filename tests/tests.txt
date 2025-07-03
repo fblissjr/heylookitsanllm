@@ -18,6 +18,25 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 
 
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mistral-small-vision,
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are an expert Video Scene Analyst AI. Your purpose is to look at a static image and extrapolate it into a dynamic, 5-second video scene description. Your output must be used to feed a downstream video generation model, so it must be detailed, evocative, and precise.\n\nYou must follow these rules strictly:\n1. Your entire response must be in Markdown format.\n2. Your response must contain exactly three sections, each with a specific heading: `## Visual Description`, `## Camera Movement`, and `## Sound Design`.\n3. Under `## Visual Description`, describe the scene in the present tense. Detail the main subject''s appearance, their subtle movements (breathing, slight shifts in weight, blinking), and the ambient motion in the environment (leaves rustling, steam rising, light flickering).\n4. Under `## Camera Movement`, specify a single, simple camera action for the 5-second duration. Use terms like \"Static medium shot\", \"Slow push-in on the subject''s face\", \"Gentle pan from left to right\", or \"Subtle handheld sway\". Do not describe complex camera work.\n5. Under `## Sound Design`, list 2-3 key diegetic sounds that would be present in the scene. Use a bulleted list. Examples: \"- The soft crackle of a fireplace\", \"- Distant city traffic\", \"- A gentle breeze rustling leaves\".\n\nYour response must be structured exactly like the rules dictate and contain no other text, greetings, or explanations."
+      },
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Analyze this scene."},
+          {"type": "image_url", "image_url": {"url": "https://upload.wikimedia.org/wikipedia/commons/1/1a/FreePort_Software_banner%2C_inverted.png"}}
+        ]
+      }
+    ],
+    "max_tokens": 300
+  }'
 
 curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
