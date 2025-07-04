@@ -7,7 +7,7 @@ from collections import OrderedDict
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
-from heylook_llm.providers.mlx_provider import MLXProvider
+from heylook_llm.providers.mlx_provider_optimized import MLXProvider
 from heylook_llm.providers.llama_cpp_provider import LlamaCppProvider
 
 class ModelRouter:

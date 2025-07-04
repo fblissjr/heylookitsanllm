@@ -103,8 +103,12 @@ DEFAULT_USER_TEMPLATES: Dict[str, Any] = {
         {"type": "text", "text": "Analyze this scene."},
         {"type": "image_url", "image_url": {"url": "@image_path_or_url"}},
     ],
+    "whats_happening_here": [
+        {"type": "text", "text": "Give me a vivid description of what's going on in this image so I can visualize it internally."},
+        {"type": "image_url", "image_url": {"url": "@image_path_or_url"}},
+    ],
     "caption_image": [
-        {"type": "text", "text": "Provide a one‑sentence caption for this image."},
+        {"type": "text", "text": "Provide a vivid caption for this image."},
         {"type": "image_url", "image_url": {"url": "@image_path_or_url"}},
     ],
     "detect_objects": [
@@ -257,8 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--user-text", help="Raw string for user text message")
 
     # Template mode (defaults)
-    p.add_argument("--system-template", choices=DEFAULT_SYSTEM_TEMPLATES.keys(), default="video_scene_analyst")
-    p.add_argument("--user-template", choices=DEFAULT_USER_TEMPLATES.keys(), default="analyze_scene")
+    p.add_argument("--system-template", choices=DEFAULT_SYSTEM_TEMPLATES.keys(), default="image_captioner")
+    p.add_argument("--user-template", choices=DEFAULT_USER_TEMPLATES.keys(), default="whats_happening_here")
 
     # Images
     p.add_argument("--image", action="append", default=[], help="Image URL or local file path (repeatable)")
