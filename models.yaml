@@ -18,12 +18,12 @@ models:
     provider: "mlx"
     description: "Gemma 3 27B with a 1B draft model and optimized caching"
     tags: ["large", "speculative", "fast", "text-only"]
-    enabled: true
+    enabled: false
     config:
       model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
       draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
       num_draft_tokens: 6
-      vision: false
+      vision: true
       cache_type: "quantized"
       kv_bits: 4
 

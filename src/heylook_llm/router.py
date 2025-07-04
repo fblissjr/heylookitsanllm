@@ -45,6 +45,9 @@ class ModelRouter:
             raise ValueError("model_id cannot be empty.")
 
         with self.loading_lock:
+            if self.log_level <= logging.DEBUG:
+                logging.debug(f"Router cache state before access: {list(self.providers.keys())}")
+
             if model_id in self.providers:
                 logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
                 self.providers.move_to_end(model_id)
@@ -72,6 +75,7 @@ class ModelRouter:
                 model_config.config.model_dump(),
                 self.log_level <= logging.DEBUG
             )
+            new_provider.load_model()
             self.providers[model_id] = new_provider
             logging.info(f"Successfully loaded model: {model_id}")
             return new_provider

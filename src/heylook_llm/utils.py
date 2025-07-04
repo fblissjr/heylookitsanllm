@@ -21,11 +21,15 @@ def load_image(source_str: str) -> Image.Image:
                 logging.error(f"Failed to decode base64 image: {e}", exc_info=True)
                 return Image.new('RGB', (1, 1), color='red')
         elif source_str.startswith("http"):
-            response = requests.get(source_str, stream=True, timeout=10)
+            headers = {
+                'User-Agent': 'heylookitsanllm/1.0 (https://github.com/fblissjr/heylookitsanllm) Image processing bot'
+            }
+            response = requests.get(source_str, headers=headers, stream=True, timeout=10)
             response.raise_for_status()
             return Image.open(response.raw).convert("RGB")
         else:
             return ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
     except Exception as e:
         logging.error(f"Failed to load image from {source_str[:100]}...: {e}", exc_info=True)
-        return Image.new('RGB', (64, 64), color='gray')
+        # Return a small red image to indicate failure
+        return Image.new('RGB', (64, 64), color='red')

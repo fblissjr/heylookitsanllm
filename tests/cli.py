@@ -261,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--user-template", choices=DEFAULT_USER_TEMPLATES.keys(), default="analyze_scene")
 
     # Images
-    p.add_argument("--image", action="append", default=["https://upload.wikimedia.org/wikipedia/commons/1/1a/FreePort_Software_banner%2C_inverted.png"], help="Image URL or local file path (repeatable)")
+    p.add_argument("--image", action="append", default=[], help="Image URL or local file path (repeatable)")
 
     # Generation params group
     g = p.add_argument_group("generation")

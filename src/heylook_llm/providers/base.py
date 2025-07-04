@@ -8,10 +8,10 @@ class BaseProvider(ABC):
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         self.model_id = model_id
         self.config = config
-        self.load_model(config, verbose)
+        self.verbose = verbose
 
     @abstractmethod
-    def load_model(self, config: Dict, verbose: bool):
+    def load_model(self):
         raise NotImplementedError
 
     @abstractmethod

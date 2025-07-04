@@ -12,10 +12,12 @@ modelzoo/*
 # But DO NOT ignore the .gitkeep file
 !modelzoo/.gitkeep
 
+
 # archive
 archive/
 artifacts/
 GEMINI.md
+docs/
 
 # Distribution / packaging
 .Python
