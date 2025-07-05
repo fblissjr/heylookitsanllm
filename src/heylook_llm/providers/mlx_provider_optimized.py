@@ -20,6 +20,7 @@ from ..config import ChatRequest
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.performance_monitor import time_mlx_operation, performance_monitor
+from .common.enhanced_vlm_generation import enhanced_vlm_stream_generate, create_enhanced_vlm_generator
 from ..utils import load_image
 
 
@@ -35,13 +36,12 @@ class OptimizedLanguageModelWrapper(nn.Module):
     
     def __init__(self, language_model):
         super().__init__()
-        self.language_model = language_model
-        
-        # Cache frequently accessed attributes to avoid repeated lookups
-        self._cached_layers = None
-        self._cached_config = None
-        self._cached_head_dim = None
-        self._cache_populated = False
+        # Use object.__setattr__ to avoid triggering __getattr__ during initialization
+        object.__setattr__(self, 'language_model', language_model)
+        object.__setattr__(self, '_cached_layers', None)
+        object.__setattr__(self, '_cached_config', None)
+        object.__setattr__(self, '_cached_head_dim', None)
+        object.__setattr__(self, '_cache_populated', False)
         
     def _populate_cache(self):
         """Populate attribute cache on first access."""
@@ -95,8 +95,11 @@ class OptimizedLanguageModelWrapper(nn.Module):
     
     def __getattr__(self, name):
         """Fast forwarding for any other attributes."""
-        # Forward all other attribute access to the wrapped model
-        return getattr(self.language_model, name)
+        # Only forward if language_model exists to avoid recursion
+        if 'language_model' in self.__dict__:
+            return getattr(self.language_model, name)
+        else:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
 
 class GenerationStrategy(Protocol):
@@ -136,13 +139,31 @@ class TextOnlyStrategy:
 
 
 class VLMTextOnlyStrategy:
-    """Strategy for VLM text-only requests (using mlx-lm path)."""
+    """Strategy for VLM text-only requests (using mlx-lm path with speculative decoding)."""
     
-    def __init__(self):
+    def __init__(self, draft_model=None):
         self._cached_wrapper = None
+        self._cached_generator = None
+        self.draft_model = draft_model
     
     @time_mlx_operation("generation", "vlm_text")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        
+        # Check if we can use speculative decoding
+        if self.draft_model is not None:
+            # Use speculative decoding with enhanced sampling
+            yield from self._generate_with_speculative_decoding(
+                request, effective_request, model, processor, sampler, processors
+            )
+        else:
+            # Use standard enhanced text-only generation
+            yield from self._generate_standard_enhanced(
+                request, effective_request, model, processor, sampler, processors
+            )
+    
+    def _generate_with_speculative_decoding(self, request, effective_request, model, processor, sampler, processors):
+        """Generate with speculative decoding support."""
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         
         # Cache the wrapper model to avoid recreation
@@ -152,6 +173,29 @@ class VLMTextOnlyStrategy:
         # Prepare VLM inputs but extract only the text prompt
         images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config)
         
+        # Use mlx-lm with speculative decoding
+        yield from lm_stream_generate(
+            model=self._cached_wrapper,
+            tokenizer=tokenizer,
+            prompt=formatted_prompt,
+            sampler=sampler,
+            logits_processors=processors,
+            max_tokens=effective_request['max_tokens'],
+            draft_model=self.draft_model
+        )
+    
+    def _generate_standard_enhanced(self, request, effective_request, model, processor, sampler, processors):
+        """Generate with standard enhanced sampling (no speculative decoding)."""
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        
+        # Cache the wrapper model to avoid recreation
+        if self._cached_wrapper is None:
+            self._cached_wrapper = OptimizedLanguageModelWrapper(model.language_model)
+        
+        # Prepare VLM inputs but extract only the text prompt
+        images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config)
+        
+        # Use mlx-lm with advanced sampling
         yield from lm_stream_generate(
             model=self._cached_wrapper,
             tokenizer=tokenizer,
@@ -186,21 +230,29 @@ class VLMTextOnlyStrategy:
 
 
 class VLMVisionStrategy:
-    """Strategy for VLM requests with images."""
+    """Strategy for VLM requests with images - Enhanced with mlx-lm sampling."""
+    
+    def __init__(self):
+        self._cached_generator = None
     
     @time_mlx_operation("generation", "vlm_vision")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+        # Create enhanced generator (cached)
+        if self._cached_generator is None:
+            self._cached_generator = create_enhanced_vlm_generator(model, processor)
+        
         # Prepare VLM inputs
         images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config)
         
-        yield from vlm_stream_generate(
-            model=model,
-            processor=processor,
+        # Use enhanced generation with mlx-lm quality sampling
+        yield from self._cached_generator.stream_generate_enhanced(
             prompt=formatted_prompt,
             image=images,
-            temperature=effective_request['temperature'],
+            sampler=sampler,
+            processors=processors,
             max_tokens=effective_request['max_tokens'],
-            top_p=effective_request['top_p']
+            temperature=effective_request.get('temperature', 0.1),
+            top_p=effective_request.get('top_p', 1.0)
         )
     
     def _prepare_vlm_inputs(self, messages: List, processor, config) -> Tuple[List[Image.Image], str, bool]:
@@ -252,28 +304,186 @@ class MLXProvider(BaseProvider):
     @time_mlx_operation("model_loading")
     def load_model(self):
         model_path = self.config['model_path']
-        load_fn = vlm_load if self.is_vlm else lm_load
-        logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path} using {'mlx_vlm' if self.is_vlm else 'mlx_lm'} loader.")
+        
+        logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path}")
         
         try:
-            self.model, self.processor = load_fn(model_path)
+            if self.is_vlm:
+                # Load VLM model with fallback strategies for common issues
+                logging.info("Loading VLM model using resilient MLX VLM loading")
+                self.model, self.processor = self._load_vlm_with_fallback(model_path)
+            else:
+                # Load text-only model with MLX LM
+                logging.info("Loading text-only model using MLX LM")
+                self.model, self.processor = lm_load(model_path)
+            
+            logging.info(f"✅ Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
+            
         except Exception as e:
+            logging.error(f"Failed to load model: {e}")
             raise e
         
         # Load draft model if specified
         if draft_path := self.config.get('draft_model_path'):
-            if self.is_vlm:
-                logging.warning("Speculative decoding is not currently supported for VLM models.")
-            else:
+            logging.info(f"Loading draft model for speculative decoding: {draft_path}")
+            try:
+                # Draft models are always text-only
                 self.draft_model, _ = lm_load(draft_path)
+                logging.info("✅ Draft model loaded successfully for speculative decoding")
+            except Exception as e:
+                logging.warning(f"Failed to load draft model: {e}")
+                self.draft_model = None
         
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
     
+    def _load_vlm_with_fallback(self, model_path):
+        """Load VLM model with fallback strategies for common issues."""
+        
+        # Strategy 1: Try with skip_audio=True (most common fix)
+        try:
+            logging.debug("Attempting VLM load with skip_audio=True")
+            return vlm_load(model_path, skip_audio=True)
+        except Exception as e:
+            logging.debug(f"VLM load with skip_audio failed: {e}")
+        
+        # Strategy 2: Try standard loading 
+        try:
+            logging.debug("Attempting standard VLM load")
+            return vlm_load(model_path)
+        except Exception as e:
+            logging.debug(f"Standard VLM load failed: {e}")
+            
+            # Strategy 3: Handle specific weight mismatch errors
+            if "language_model.lm_head.weight" in str(e):
+                logging.info("Detected language_model.lm_head.weight error, applying model-specific fix")
+                return self._load_vlm_with_weight_fix(model_path)
+            else:
+                raise e
+    
+    def _load_vlm_with_weight_fix(self, model_path):
+        """Handle specific weight mismatch issues."""
+        import mlx_vlm.utils
+        import importlib
+        
+        try:
+            # Strategy 3a: Try loading with strict=False directly in vlm_load
+            logging.debug("Attempting VLM load with strict=False")
+            
+            # Try to call vlm_load with strict=False if it supports it
+            try:
+                return vlm_load(model_path, strict=False)
+            except TypeError:
+                # vlm_load doesn't support strict parameter
+                pass
+            
+            # Strategy 3b: Try patching the load_model function
+            logging.debug("Attempting VLM load with patched load_model")
+            
+            original_load_model = mlx_vlm.utils.load_model
+            
+            def patched_load_model(model_path, **kwargs):
+                try:
+                    return original_load_model(model_path, **kwargs)
+                except Exception as e:
+                    if "language_model.lm_head.weight" in str(e):
+                        logging.debug("Applying weight mismatch fix by setting strict=False")
+                        # Try loading without strict weight matching
+                        kwargs['strict'] = False
+                        return original_load_model(model_path, **kwargs)
+                    else:
+                        raise e
+            
+            # Apply the patch
+            mlx_vlm.utils.load_model = patched_load_model
+            
+            try:
+                result = vlm_load(model_path)
+                return result
+            finally:
+                # Restore original function
+                mlx_vlm.utils.load_model = original_load_model
+                
+        except Exception as e:
+            logging.debug(f"Weight fix strategy failed: {e}")
+            
+            # Strategy 3c: Try loading model components separately
+            try:
+                logging.debug("Attempting alternative model loading approach")
+                return self._alternative_vlm_load(model_path)
+            except Exception as e2:
+                logging.error(f"All VLM loading strategies failed. Last error: {e2}")
+                raise e2
+    
+    def _alternative_vlm_load(self, model_path):
+        """Alternative loading approach for problematic models."""
+        from pathlib import Path
+        import json
+        
+        try:
+            # Check if this is a model conversion issue
+            config_path = Path(model_path) / "config.json"
+            if config_path.exists():
+                with open(config_path) as f:
+                    config = json.load(f)
+                
+                model_type = config.get('model_type', 'unknown')
+                logging.debug(f"Detected model type: {model_type}")
+                
+                # For gemma models, this might be a version compatibility issue
+                if 'gemma' in model_type.lower():
+                    logging.info(f"Gemma model detected. This error suggests the model weights ")
+                    logging.info(f"don't match the expected MLX VLM structure for {model_type}.")
+                    logging.info(f"This could be due to:")
+                    logging.info(f"1. Model was converted with an incompatible MLX VLM version")
+                    logging.info(f"2. Model weights are from a different architecture variant")
+                    logging.info(f"3. Model files are corrupted or incomplete")
+                    
+                    # Try one last approach with minimal loading
+                    logging.debug("Attempting minimal VLM loading")
+                    
+                    # Import here to avoid circular imports
+                    from mlx_vlm import load as vlm_load_function
+                    
+                    # Try loading with all optional parameters disabled
+                    try:
+                        return vlm_load_function(model_path, trust_remote_code=False)
+                    except Exception as e:
+                        logging.debug(f"Minimal loading failed: {e}")
+                        
+                        # Final attempt: try loading as a different model type
+                        logging.debug("Final attempt: trying to load with model type override")
+                        
+                        # This is a last-ditch effort - we can't actually fix the weight mismatch
+                        # but we can provide a clear error message
+                        raise Exception(
+                            f"Model '{model_path}' has incompatible weights. "
+                            f"The model appears to be missing 'language_model.lm_head.weight' or has "
+                            f"a weight shape mismatch. This typically indicates: \n"
+                            f"1. The model was converted with an incompatible MLX VLM version\n"
+                            f"2. The model files are corrupted or incomplete\n"
+                            f"3. This specific model variant is not supported by the current MLX VLM version\n\n"
+                            f"Suggested fixes:\n"
+                            f"- Try downloading a different variant of the model\n"
+                            f"- Re-convert the model with the current MLX VLM version\n"
+                            f"- Use a different model that's known to work (e.g., qwen2.5-vl-72b-inst-gguf)\n"
+                        )
+            
+            # If we can't determine the model type, give a generic error
+            raise Exception(
+                f"Failed to load VLM model at '{model_path}'. "
+                f"All loading strategies failed with weight mismatch errors."
+            )
+            
+        except Exception as e:
+            logging.error(f"Alternative VLM loading failed: {e}")
+            raise e
+    
     def _compile_strategies(self):
         """Pre-compile generation strategies to avoid runtime branching."""
         if self.is_vlm:
-            self._strategies['vlm_text'] = VLMTextOnlyStrategy()
+            # Pass draft model to VLM text strategy for speculative decoding
+            self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model)
             self._strategies['vlm_vision'] = VLMVisionStrategy()
         else:
             self._strategies['text_only'] = TextOnlyStrategy(self.draft_model)

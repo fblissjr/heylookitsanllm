@@ -1,5 +1,5 @@
 # --- Global Server Settings ---
-default_model: "gemma3n-e4b-it"
+default_model: "qwen2.5-vl-72b-mlx"
 max_loaded_models: 2
 
 # --- Model Definitions ---
@@ -9,21 +9,27 @@ models:
     provider: "mlx"
     description: "Gemma 3 4B Instruct with vision capabilities"
     tags: ["vision", "instruct", "gemma"]
-    enabled: true
+    enabled: false
     config:
       model_path: "modelzoo/google/gemma-3n-E4B-it-bf16-mlx"
       vision: true
+      temperature: 0.8
+      top_p: 0.95
+      top_k: 40
+      min_p: 0.05
+      repetition_penalty: 1.15
+      repetition_context_size: 25
 
-  - id: "gemma3-27b-dwq"
+  - id: "qwen2.5-vl-72-mlx"
     provider: "mlx"
-    description: "Gemma 3 27B with a 1B draft model and optimized caching"
-    tags: ["large", "speculative", "fast", "text-only"]
+    description: "Qwen2.5 VL Instruct mlx 72b"
+    tags: ["large"]
     enabled: true
     config:
-      model_path: "modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx"
-      draft_model_path: "modelzoo/mlx-community/gemma-3-1b-it-qat-4bit"
-      num_draft_tokens: 6
+      model_path: "modelzoo/Qwen/Qwen2.5-VL-72B-Instruct-mlx-4bit"
       vision: true
+      temperature: 1.0
+      top_p: 0.95
       cache_type: "quantized"
       kv_bits: 4
 

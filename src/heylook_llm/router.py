@@ -37,8 +37,11 @@ class ModelRouter:
             try:
                 logging.info(f"Pre-warming initial model: {initial_model_to_load}")
                 self.get_provider(initial_model_to_load)
+                logging.info(f"Successfully pre-warmed model: {initial_model_to_load}")
             except Exception as e:
-                logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}", exc_info=True)
+                logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
+                logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
+                # Don't crash - just continue without pre-warming
 
     def get_provider(self, model_id: str) -> BaseProvider:
         if not model_id:
