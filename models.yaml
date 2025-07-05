@@ -5,6 +5,19 @@ max_loaded_models: 2
 # --- Model Definitions ---
 models:
   # --- MLX Models ---
+  - id: "qwen2.5-vl-72-mlx"
+    provider: "mlx"
+    description: "Qwen2.5 VL Instruct mlx 72b"
+    tags: ["large"]
+    enabled: true
+    config:
+      model_path: "modelzoo/Qwen/Qwen2.5-VL-72B-Instruct-mlx-4bit"
+      vision: true
+      temperature: 1.0
+      top_p: 0.95
+      cache_type: "quantized"
+      kv_bits: 4
+
   - id: "gemma3n-e4b-it"
     provider: "mlx"
     description: "Gemma 3 4B Instruct with vision capabilities"
@@ -19,19 +32,6 @@ models:
       min_p: 0.05
       repetition_penalty: 1.15
       repetition_context_size: 25
-
-  - id: "qwen2.5-vl-72-mlx"
-    provider: "mlx"
-    description: "Qwen2.5 VL Instruct mlx 72b"
-    tags: ["large"]
-    enabled: true
-    config:
-      model_path: "modelzoo/Qwen/Qwen2.5-VL-72B-Instruct-mlx-4bit"
-      vision: true
-      temperature: 1.0
-      top_p: 0.95
-      cache_type: "quantized"
-      kv_bits: 4
 
   # --- GGUF Models via llama.cpp ---
   - id: "qwen2.5-vl-72b-inst-gguf"

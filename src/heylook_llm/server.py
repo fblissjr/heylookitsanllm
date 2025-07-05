@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on (default: 11434, Ollama standard)")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument("--model-id", type=str, default=None, help="Optional ID of a model to load on startup.")
-    parser.add_argument("--api", default="both", choices=["openai", "ollama", "openai"],
+    parser.add_argument("--api", default="both", choices=["openai", "ollama", "both"],
                        help="Which API to serve: openai, ollama, or both (default: both) - selecting ollama only will run on port 11434 unless specified explicitly")
     args = parser.parse_args()
 
