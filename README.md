@@ -7,6 +7,20 @@ i'll aim to make a better install guide, given the dependencies, but hopefully t
 
 *note*: llama-cpp-python will by default install the cpu binary, but you can compile it yourself by following the instructions in the llama.cpp repo.
 
+## 0.1 Quick Usage and Updates
+You can now run mlx, mlx-vlm, and gguf/llama.cpp models, all hot swappable as before, in openai mode (default), ollama compatibility mode (middleware to translate requetss from ollama api format to openai format) which runs on the ollama default port, or both together.
+
+```bash
+
+# openai mode
+heylookitsanllm --api "openai" --log-level DEBUG
+
+# ollama mode, defaults to 11434 port
+heylookitsanllm --api "ollama" --log-level DEBUG
+
+# both together, but you can only run one port at a time here. not ideal, but future todo.
+heylookitsanllm --api "both" --api "ollama" --log-level DEBUG --port 8080
+```
 ---
 ## 1  Installation
 tldr:
@@ -15,7 +29,6 @@ tldr:
 3. uv or pip install mlx-vlm without dependencies cuz you don't need gradio or some of their audio dependencies
 4. uv or pip install -r requirements-min.txt so you get the mlx-vlm dependencies that you *do* need
 5. decide if you want to compile llama.cpp with metal or cuda (you're probably using metal if you're here for mlx - if so, compile metal)
-
 
 
 ### 1.1  Clone & bootstrap
