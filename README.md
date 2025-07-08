@@ -1,7 +1,7 @@
-# heylookitsanllm
-_unified VLM and multimodal server for mlx + llama.cpp + more later on_
+# Hey Look, It's an LLM (!)
+OpenAI API *and* ollama API compatible LLM and Vision LLM (VLM) / multimodal server for mlx + llama.cpp
 
-a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs both vision and text Apple MLX models and GGUF models (via `llama-cpp-python`) behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way.
+a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs both vision and text Apple MLX models (text via `mlx-lm`, and vision via `mlx-vlm`, with some `mlx` stitching) and GGUF models (via `llama-cpp-python`) behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way. allows for running in openai api mode, ollama mode, or both together.
 
 i'll aim to make a better install guide, given the dependencies, but hopefully this is fairly smooth sailing for now.
 

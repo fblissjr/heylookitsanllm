@@ -5,7 +5,7 @@ max_loaded_models: 2
 # --- Model Definitions ---
 models:
   # --- MLX Models ---
-  - id: "qwen2.5-vl-72-mlx"
+  - id: "qwen2.5-vl-72b-mlx"
     provider: "mlx"
     description: "Qwen2.5 VL Instruct mlx 72b"
     tags: ["large"]
@@ -22,7 +22,7 @@ models:
     provider: "mlx"
     description: "Gemma 3 4B Instruct with vision capabilities"
     tags: ["vision", "instruct", "gemma"]
-    enabled: false
+    enabled: true
     config:
       model_path: "modelzoo/google/gemma-3n-E4B-it-bf16-mlx"
       vision: true

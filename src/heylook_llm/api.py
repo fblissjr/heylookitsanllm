@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
 from heylook_llm.middleware.ollama import OllamaTranslator
+from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug
 
 
 
@@ -41,7 +42,7 @@ async def create_chat_completion(request: Request):
         provider = router.get_provider(chat_request.model)
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
-            logging.debug(f"ChatRequest: {chat_request.model_dump_json(indent=2)}")
+            logging.debug(f"ChatRequest: {sanitize_request_for_debug(chat_request)}")
         generator = provider.create_chat_completion(chat_request)
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
@@ -114,7 +115,7 @@ async def ollama_chat(request: Request):
 
     try:
         body = await request.json()
-        logging.debug(f"Received Ollama chat request: {json.dumps(body, indent=2)}")
+        logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
 
         # Translate Ollama request to OpenAI format
         openai_request_data = ollama_translator.translate_ollama_chat_to_openai(body)
@@ -173,7 +174,7 @@ async def ollama_generate(request: Request):
 
     try:
         body = await request.json()
-        logging.debug(f"Received Ollama generate request: {json.dumps(body, indent=2)}")
+        logging.debug(f"Received Ollama generate request: {sanitize_dict_for_debug(body)}")
 
         # Translate Ollama request to OpenAI format
         openai_request_data = ollama_translator.translate_ollama_generate_to_openai(body)
