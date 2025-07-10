@@ -2,6 +2,7 @@
 import yaml
 import logging
 import threading
+import time
 from typing import Optional
 from collections import OrderedDict
 
@@ -29,7 +30,7 @@ class ModelRouter:
             logging.error("No enabled models found in models.yaml. Server cannot serve requests.")
             return
 
-        if not self.app_config.get_model_config(initial_model_to_load):
+        if initial_model_to_load and not self.app_config.get_model_config(initial_model_to_load):
             logging.warning(f"Initial model '{initial_model_to_load}' not found or disabled. Loading first available model.")
             initial_model_to_load = enabled_models[0].id
 
@@ -56,9 +57,12 @@ class ModelRouter:
                 self.providers.move_to_end(model_id)
                 return self.providers[model_id]
 
+            # Model loading progress logging
+            load_start_time = time.time()
+
             if len(self.providers) >= self.max_loaded_models:
                 lru_id, lru_provider = self.providers.popitem(last=False)
-                logging.info(f"Cache full. Evicting model: {lru_id} to make space for {model_id}.")
+                logging.info(f"🗑️  Cache full. Evicting model: {lru_id} to make space for {model_id}.")
                 lru_provider.unload()
                 del lru_provider
 
@@ -72,16 +76,37 @@ class ModelRouter:
             if not provider_class:
                 raise ValueError(f"Unknown provider: {model_config.provider}")
 
-            logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'...")
-            new_provider = provider_class(
-                model_config.id,
-                model_config.config.model_dump(),
-                self.log_level <= logging.DEBUG
-            )
-            new_provider.load_model()
-            self.providers[model_id] = new_provider
-            logging.info(f"Successfully loaded model: {model_id}")
-            return new_provider
+            logging.info(f"😮 Loading model '{model_id}' with provider '{model_config.provider}'...")
+
+            # Enhanced loading progress
+            model_path = model_config.config.model_path if hasattr(model_config.config, 'model_path') else 'unknown'
+            logging.info(f"Model path: {model_path}")
+
+            try:
+                new_provider = provider_class(
+                    model_config.id,
+                    model_config.config.model_dump(),
+                    self.log_level <= logging.DEBUG
+                )
+
+                logging.info(f"😅 Initializing {model_config.provider.upper()} provider...")
+                new_provider.load_model()
+
+                load_time = time.time() - load_start_time
+                self.providers[model_id] = new_provider
+
+                logging.info(f"😅 Successfully loaded model: {model_id} in {load_time:.2f}s")
+
+                # Log cache state after loading
+                if self.log_level <= logging.DEBUG:
+                    logging.debug(f"Router cache state after loading: {list(self.providers.keys())}")
+
+                return new_provider
+
+            except Exception as e:
+                load_time = time.time() - load_start_time
+                logging.error(f"❌ Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
+                raise e
 
     def list_available_models(self) -> list[str]:
         return [m.id for m in self.app_config.get_enabled_models()]

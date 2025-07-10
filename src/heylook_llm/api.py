@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
 from heylook_llm.middleware.ollama import OllamaTranslator
-from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug
+from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete
 
 
 
@@ -31,6 +31,8 @@ async def list_models(request: Request):
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: Request):
     router = request.app.state.router_instance
+    request_id = f"req-{uuid.uuid4()}"
+
     try:
         body = await request.json()
         chat_request = ChatRequest(**body)
@@ -38,61 +40,95 @@ async def create_chat_completion(request: Request):
         logging.warning(f"Request validation failed: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
+    # Start real-time logging
+    log_request_start(request_id, chat_request.model)
+
     try:
+        log_request_stage(request_id, "routing")
         provider = router.get_provider(chat_request.model)
+
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
             logging.debug(f"ChatRequest: {sanitize_request_for_debug(chat_request)}")
+
+        log_request_stage(request_id, "generating")
         generator = provider.create_chat_completion(chat_request)
+
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
+        log_request_complete(request_id, success=False, error_msg=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator(generator, chat_request.model),
+            stream_response_generator(generator, chat_request.model, request_id),
             media_type="text/event-stream"
         )
     else:
-        return await non_stream_response(generator, chat_request, router)
+        return await non_stream_response(generator, chat_request, router, request_id)
 
-def stream_response_generator(generator, model_id):
-    request_id = f"chatcmpl-{uuid.uuid4()}"
+def stream_response_generator(generator, model_id, request_id):
+    response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
+    token_count = 0
+
+    log_request_stage(request_id, "streaming")
+
     for chunk in generator:
         if not chunk.text:
             continue
+
+        token_count += 1
+
+        # Update token count periodically
+        if token_count % 10 == 0:  # Update every 10 tokens for streaming
+            from heylook_llm.utils import log_token_update
+            log_token_update(request_id, token_count)
+
         response = {
-            "id": request_id,
+            "id": response_id,
             "object": "chat.completion.chunk",
             "created": created_time,
             "model": model_id,
             "choices": [{"delta": {"content": chunk.text}}]
         }
         yield f"data: {json.dumps(response)}\n\n"
+
+    # Log completion
+    log_request_complete(request_id, success=True)
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id):
     full_text = ""
     prompt_tokens = 0
     completion_tokens = 0
+    token_count = 0
+
+    log_request_stage(request_id, "processing_response")
 
     for chunk in generator:
         full_text += chunk.text
+        token_count += 1
+
+        # Update token count periodically for long responses
+        if token_count % 25 == 0:
+            from heylook_llm.utils import log_token_update
+            log_token_update(request_id, token_count)
+
         prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
         completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
 
     usage_dict = {
         "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens
+        "completion_tokens": completion_tokens or token_count,  # Fallback to our count
+        "total_tokens": (prompt_tokens or 0) + (completion_tokens or token_count)
     }
 
     response = ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4()}",
         object="chat.completion",
         created=int(time.time()),
-        model=chat_request.model,
+        model=chat_request.model or "unknown",
         choices=[{"message": {"role": "assistant", "content": full_text}}],
         usage=usage_dict
     )
@@ -101,6 +137,8 @@ async def non_stream_response(generator, chat_request: ChatRequest, router):
     if router.log_level <= logging.DEBUG:
         logging.debug(f"Full non-stream response: {response.model_dump_json(indent=2)}")
 
+    # Log successful completion
+    log_request_complete(request_id, success=True)
     return response
 
 # =============================================================================

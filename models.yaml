@@ -24,7 +24,7 @@ models:
     tags: ["vision", "instruct", "gemma"]
     enabled: true
     config:
-      model_path: "modelzoo/google/gemma-3n-E4B-it-bf16-mlx"
+      model_path: "modelzoo/google/gemma-3n-E4B-it-mlx-q4_8"
       vision: true
       temperature: 0.8
       top_p: 0.95

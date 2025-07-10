@@ -20,12 +20,12 @@ class LlamaCppProvider(BaseProvider):
         logging.info(f"Loading GGUF model: {self.config['model_path']}")
 
         chat_handler = None
-        
+
         # First, check if we need vision support
         if self.config.get('mmproj_path'):
             logging.info(f"Vision model detected. Explicitly using Llava15ChatHandler.")
             chat_handler = Llava15ChatHandler(clip_model_path=self.config['mmproj_path'], verbose=self.verbose)
-        
+
         # Load the model first
         try:
             self.model = Llama(
@@ -39,7 +39,7 @@ class LlamaCppProvider(BaseProvider):
             self.model.set_cache(LlamaRAMCache())
         except Exception as e:
             raise e
-            
+
         # Now handle custom chat template if specified (and not already using vision handler)
         if tpl_path := self.config.get('chat_format_template'):
             if not chat_handler:  # Only if we haven't already set a vision handler
@@ -47,20 +47,20 @@ class LlamaCppProvider(BaseProvider):
                 try:
                     with open(tpl_path, 'r') as f:
                         template = f.read()
-                    
+
                     # Get tokens from the loaded model's tokenizer
                     eos_token = self.model._model.token_get_text(self.model._model.token_eos())
                     bos_token = self.model._model.token_get_text(self.model._model.token_bos())
-                    
+
                     chat_handler = Jinja2ChatFormatter(
                         template=template,
                         eos_token=eos_token,
                         bos_token=bos_token
                     )
-                    
+
                     # Update the model with the new chat handler
                     self.model.chat_handler = chat_handler
-                    
+
                 except FileNotFoundError:
                     logging.error(f"Custom chat template not found at: {tpl_path}", exc_info=True)
                     raise
@@ -79,6 +79,10 @@ class LlamaCppProvider(BaseProvider):
                 self.generation_tokens = usage.get("completion_tokens", 0) if usage else 0
 
         try:
+            # Check if model is loaded
+            if self.model is None:
+                raise RuntimeError("Model not loaded. Call load_model() first.")
+
             request_dict = request.model_dump(exclude_none=True)
             params = {
                 "messages": request_dict.get('messages'),
@@ -90,13 +94,26 @@ class LlamaCppProvider(BaseProvider):
                 "max_tokens": request_dict.get('max_tokens', 512),
                 "stream": True,
             }
-            
+
             if self.verbose:
-                logging.debug(f"Calling Llama.cpp with params: {json.dumps(params, indent=2)}")
+                # Log only the parameters, not the messages (which may contain base64 images)
+                safe_params = {k: v for k, v in params.items() if k != 'messages'}
+                safe_params['message_count'] = len(params.get('messages', []))
+                logging.debug(f"Calling Llama.cpp with params: {json.dumps(safe_params, indent=2)}")
 
             for chunk in self.model.create_chat_completion(**params):
-                text = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
-                usage = chunk.get('usage')
+                text = ''
+                usage = None
+
+                # Safely extract text from chunk
+                if isinstance(chunk, dict):
+                    choices = chunk.get('choices', [])
+                    if choices and isinstance(choices[0], dict):
+                        delta = choices[0].get('delta', {})
+                        if isinstance(delta, dict):
+                            text = delta.get('content', '')
+                    usage = chunk.get('usage')
+
                 yield LlamaCppStreamChunk(text=text, usage=usage)
 
         except Exception as e:
