@@ -8,6 +8,7 @@ from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
 from heylook_llm.middleware.ollama import OllamaTranslator
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
+from heylook_llm.api_batch import BatchChatRequests, create_batch_chat_completions
 
 
 

@@ -530,27 +530,75 @@ class BatchProcessor:
         Split messages into groups for sequential processing.
         
         Strategy:
-        - Each user message (with optional subsequent system messages) forms a group
+        - Split on ___CONVERSATION_BOUNDARY___ markers
+        - If no boundaries, each user message forms a group
         - Assistant messages are not processed as separate groups
         """
         groups = []
-        current_group = []
         
-        for i, message in enumerate(messages):
-            if message.role == "user":
-                # Start new group with user message
-                if current_group:
-                    groups.append(MessageGroup(current_group, include_context))
-                current_group = [message]
-            elif message.role in ["system", "tool"]:
-                # Add to current group
-                current_group.append(message)
-            elif message.role == "assistant":
-                # Skip assistant messages - they'll be generated
-                continue
+        # First, check if we have conversation boundaries in the content
+        has_boundaries = False
+        for message in messages:
+            if isinstance(message.content, str) and "___CONVERSATION_BOUNDARY___" in message.content:
+                has_boundaries = True
+                break
         
-        # Add final group
-        if current_group:
-            groups.append(MessageGroup(current_group, include_context))
+        if has_boundaries:
+            # Split based on conversation boundaries
+            logging.info(f"Processing messages with conversation boundaries")
+            current_conversation = []
+            
+            for message in messages:
+                if isinstance(message.content, str) and "___CONVERSATION_BOUNDARY___" in message.content:
+                    # Split the content on boundaries
+                    parts = message.content.split("___CONVERSATION_BOUNDARY___")
+                    
+                    for i, part in enumerate(parts):
+                        part = part.strip()
+                        if part:  # Skip empty parts
+                            # Add the part to current conversation
+                            msg_copy = ChatMessage(
+                                role=message.role,
+                                content=part,
+                                name=message.name,
+                                tool_call_id=message.tool_call_id,
+                                tool_calls=message.tool_calls
+                            )
+                            current_conversation.append(msg_copy)
+                            
+                            # If not the last part, finalize this conversation
+                            if i < len(parts) - 1:
+                                groups.append(MessageGroup(current_conversation, include_context))
+                                current_conversation = []
+                else:
+                    # Regular message without boundaries
+                    current_conversation.append(message)
+            
+            # Add any remaining conversation
+            if current_conversation:
+                groups.append(MessageGroup(current_conversation, include_context))
+            
+            logging.info(f"Created {len(groups)} message groups from boundaries")
+        
+        else:
+            # No boundaries - use original logic
+            current_group = []
+            
+            for i, message in enumerate(messages):
+                if message.role == "user":
+                    # Start new group with user message
+                    if current_group:
+                        groups.append(MessageGroup(current_group, include_context))
+                    current_group = [message]
+                elif message.role in ["system", "tool"]:
+                    # Add to current group
+                    current_group.append(message)
+                elif message.role == "assistant":
+                    # Skip assistant messages - they'll be generated
+                    continue
+            
+            # Add final group
+            if current_group:
+                groups.append(MessageGroup(current_group, include_context))
         
         return groups
