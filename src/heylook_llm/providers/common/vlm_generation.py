@@ -100,6 +100,12 @@ class EnhancedVLMGenerator:
             **kwargs: Additional arguments
         """
         
+        # Ensure clean state before generation
+        try:
+            mx.eval()  # Synchronize any pending MLX operations
+        except:
+            pass
+        
         if image is None or len(image) == 0:
             # Text-only VLM request - use optimized path with advanced sampling
             yield from self._stream_generate_text_only_enhanced(
@@ -170,6 +176,17 @@ class EnhancedVLMGenerator:
         
         # Use standard VLM generation - the main optimization benefit
         # comes from the text-only path using mlx-lm
+        
+        # For Qwen models, we need to handle grid_thw
+        model_type = str(type(self.model)).lower()
+        if 'qwen' in model_type and image is not None:
+            # Qwen models need grid_thw for image processing
+            # Calculate grid dimensions based on number of images
+            num_images = len(image) if isinstance(image, list) else 1
+            # Standard grid for static images: [time=1, height=24, width=24] for 336x336 images
+            image_grid_thw = mx.array([[1, 24, 24]] * num_images, dtype=mx.int32)
+            kwargs['image_grid_thw'] = image_grid_thw
+        
         yield from vlm_stream_generate(
             model=self.model,
             processor=self.processor,

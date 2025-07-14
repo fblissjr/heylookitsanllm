@@ -1,4 +1,8 @@
 # src/heylook_llm/server.py
+import os
+# Disable tokenizers parallelism to avoid fork warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import sys
 import uvicorn
 import argparse

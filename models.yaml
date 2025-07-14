@@ -1,6 +1,6 @@
 # --- Global Server Settings ---
-default_model: "qwen2.5-vl-72b-mlx"
-max_loaded_models: 2
+default_model: "gemma3n-e4b-it"
+max_loaded_models: 1
 
 # --- Model Definitions ---
 models:
@@ -20,18 +20,25 @@ models:
 
   - id: "gemma3n-e4b-it"
     provider: "mlx"
-    description: "Gemma 3 4B Instruct with vision capabilities"
+    description: "Gemma 3n"
     tags: ["vision", "instruct", "gemma"]
     enabled: true
     config:
-      model_path: "modelzoo/google/gemma-3n-E4B-it-mlx-q4_8"
+      model_path: "modelzoo/google/gemma-3n-E4B-it-4bit-mlx-vision"
       vision: true
       temperature: 0.8
       top_p: 0.95
-      top_k: 40
-      min_p: 0.05
-      repetition_penalty: 1.15
-      repetition_context_size: 25
+
+  - id: "gemma3-vision"
+    provider: "mlx"
+    description: "Gemma 3 vision"
+    tags: ["vision", "instruct", "gemma"]
+    enabled: true
+    config:
+      model_path: "modelzoo/google/gemma3-vision"
+      vision: true
+      temperature: 1.0
+      top_p: 0.95
 
   # --- GGUF Models via llama.cpp ---
   - id: "qwen2.5-vl-72b-inst-gguf"

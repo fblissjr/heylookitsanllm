@@ -8,7 +8,7 @@ from collections import OrderedDict
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
-from heylook_llm.providers.mlx_provider_optimized import MLXProvider
+from heylook_llm.providers.mlx_provider import MLXProvider
 from heylook_llm.providers.llama_cpp_provider import LlamaCppProvider
 
 class ModelRouter:
@@ -62,7 +62,7 @@ class ModelRouter:
 
             if len(self.providers) >= self.max_loaded_models:
                 lru_id, lru_provider = self.providers.popitem(last=False)
-                logging.info(f"🗑️  Cache full. Evicting model: {lru_id} to make space for {model_id}.")
+                logging.info(f"Cache full. Evicting model: {lru_id} to make space for {model_id}.")
                 lru_provider.unload()
                 del lru_provider
 
@@ -76,7 +76,7 @@ class ModelRouter:
             if not provider_class:
                 raise ValueError(f"Unknown provider: {model_config.provider}")
 
-            logging.info(f"😮 Loading model '{model_id}' with provider '{model_config.provider}'...")
+            logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'...")
 
             # Enhanced loading progress
             model_path = model_config.config.model_path if hasattr(model_config.config, 'model_path') else 'unknown'
@@ -89,13 +89,13 @@ class ModelRouter:
                     self.log_level <= logging.DEBUG
                 )
 
-                logging.info(f"😅 Initializing {model_config.provider.upper()} provider...")
+                logging.info(f"Initializing {model_config.provider.upper()} provider...")
                 new_provider.load_model()
 
                 load_time = time.time() - load_start_time
                 self.providers[model_id] = new_provider
 
-                logging.info(f"😅 Successfully loaded model: {model_id} in {load_time:.2f}s")
+                logging.info(f"Successfully loaded model: {model_id} in {load_time:.2f}s")
 
                 # Log cache state after loading
                 if self.log_level <= logging.DEBUG:
@@ -105,7 +105,7 @@ class ModelRouter:
 
             except Exception as e:
                 load_time = time.time() - load_start_time
-                logging.error(f"❌ Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
+                logging.error(f"Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
                 raise e
 
     def list_available_models(self) -> list[str]:

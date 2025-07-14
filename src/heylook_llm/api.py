@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
 from heylook_llm.middleware.ollama import OllamaTranslator
-from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete
+from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 
 
 
@@ -33,15 +33,69 @@ async def create_chat_completion(request: Request):
     router = request.app.state.router_instance
     request_id = f"req-{uuid.uuid4()}"
 
+    request_start_time = time.time()
+    
     try:
         body = await request.json()
         chat_request = ChatRequest(**body)
+        # Add start time for processing time calculation
+        chat_request._start_time = request_start_time
     except Exception as e:
         logging.warning(f"Request validation failed: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
+    # Check if this is a batch processing request
+    if chat_request.processing_mode and chat_request.processing_mode != "conversation":
+        # Use batch processor for non-conversation modes
+        from heylook_llm.batch_processor import BatchProcessor, ProcessingMode
+        
+        logging.info(f"Processing batch request with mode: {chat_request.processing_mode}")
+        batch_processor = BatchProcessor(router)
+        
+        # Convert to batch request format
+        from heylook_llm.batch_processor import BatchChatRequest
+        batch_request = BatchChatRequest(
+            model=chat_request.model,
+            messages=chat_request.messages,
+            temperature=chat_request.temperature,
+            top_p=chat_request.top_p,
+            top_k=chat_request.top_k,
+            min_p=chat_request.min_p,
+            repetition_penalty=chat_request.repetition_penalty,
+            repetition_context_size=chat_request.repetition_context_size,
+            max_tokens=chat_request.max_tokens,
+            stream=False,  # Batch doesn't support streaming
+            seed=chat_request.seed,
+            processing_mode=ProcessingMode(chat_request.processing_mode),
+            return_individual=chat_request.return_individual if chat_request.return_individual is not None else True,
+            include_timing=chat_request.include_timing if chat_request.include_timing is not None else False
+        )
+        
+        # Process batch and return
+        batch_response = await batch_processor.process_batch_request(batch_request)
+        return batch_response.model_dump()
+
+    # Standard processing for conversation mode or no processing_mode specified
     # Start real-time logging
     log_request_start(request_id, chat_request.model)
+
+    # Analyze request for image metadata
+    request_dict = chat_request.model_dump()
+    from heylook_llm.utils import _analyze_images_in_request
+    image_stats = _analyze_images_in_request(request_dict)
+    
+    # Log enhanced request summary
+    log_request_summary(
+        request_id, 
+        chat_request.model, 
+        has_images=image_stats['count'] > 0,
+        image_count=image_stats['count'],
+        total_image_size=image_stats['total_size']
+    )
+    
+    # Log full request details if DEBUG level
+    if router.log_level <= logging.DEBUG:
+        log_full_request_details(request_id, chat_request)
 
     try:
         log_request_stage(request_id, "routing")
@@ -49,7 +103,6 @@ async def create_chat_completion(request: Request):
 
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
-            logging.debug(f"ChatRequest: {sanitize_request_for_debug(chat_request)}")
 
         log_request_stage(request_id, "generating")
         generator = provider.create_chat_completion(chat_request)
@@ -65,7 +118,7 @@ async def create_chat_completion(request: Request):
             media_type="text/event-stream"
         )
     else:
-        return await non_stream_response(generator, chat_request, router, request_id)
+        return await non_stream_response(generator, chat_request, router, request_id, request_start_time)
 
 def stream_response_generator(generator, model_id, request_id):
     response_id = f"chatcmpl-{uuid.uuid4()}"
@@ -98,7 +151,7 @@ def stream_response_generator(generator, model_id, request_id):
     log_request_complete(request_id, success=True)
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router, request_id):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time):
     full_text = ""
     prompt_tokens = 0
     completion_tokens = 0
@@ -133,8 +186,20 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         usage=usage_dict
     )
 
-    # Optional debug logging
+    # Calculate processing time
+    processing_time = time.time() - request_start_time
+    
+    # Log response summary
+    log_response_summary(
+        request_id, 
+        len(full_text), 
+        token_count=completion_tokens or token_count,
+        processing_time=processing_time
+    )
+    
+    # Log full response details if DEBUG level
     if router.log_level <= logging.DEBUG:
+        log_full_request_details(request_id, chat_request, full_text)
         logging.debug(f"Full non-stream response: {response.model_dump_json(indent=2)}")
 
     # Log successful completion
@@ -153,7 +218,15 @@ async def ollama_chat(request: Request):
 
     try:
         body = await request.json()
-        logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
+        
+        # Analyze request for image metadata before translation
+        from heylook_llm.utils import _analyze_images_in_dict
+        image_stats = _analyze_images_in_dict(body)
+        
+        # Enhanced logging with image info
+        logging.info(f"📥 OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
+        if router.log_level <= logging.DEBUG:
+            logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
 
         # Translate Ollama request to OpenAI format
         openai_request_data = ollama_translator.translate_ollama_chat_to_openai(body)
@@ -197,7 +270,13 @@ async def ollama_chat(request: Request):
             request_start_time
         )
 
-        logging.debug(f"Returning Ollama chat response: {json.dumps(ollama_response, indent=2)}")
+        # Enhanced response logging
+        processing_time = time.time() - request_start_time
+        response_length = len(full_text)
+        logging.info(f"📤 OLLAMA CHAT RESPONSE | {response_length} chars | {processing_time:.2f}s")
+        
+        if router.log_level <= logging.DEBUG:
+            logging.debug(f"Returning Ollama chat response: {json.dumps(ollama_response, indent=2)}")
         return JSONResponse(content=ollama_response)
 
     except Exception as e:
@@ -212,7 +291,15 @@ async def ollama_generate(request: Request):
 
     try:
         body = await request.json()
-        logging.debug(f"Received Ollama generate request: {sanitize_dict_for_debug(body)}")
+        
+        # Analyze request for image metadata before translation
+        from heylook_llm.utils import _analyze_images_in_dict
+        image_stats = _analyze_images_in_dict(body)
+        
+        # Enhanced logging with image info
+        logging.info(f"📥 OLLAMA GENERATE REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
+        if router.log_level <= logging.DEBUG:
+            logging.debug(f"Received Ollama generate request: {sanitize_dict_for_debug(body)}")
 
         # Translate Ollama request to OpenAI format
         openai_request_data = ollama_translator.translate_ollama_generate_to_openai(body)
@@ -256,7 +343,13 @@ async def ollama_generate(request: Request):
             request_start_time
         )
 
-        logging.debug(f"Returning Ollama generate response: {json.dumps(ollama_response, indent=2)}")
+        # Enhanced response logging
+        processing_time = time.time() - request_start_time
+        response_length = len(full_text)
+        logging.info(f"📤 OLLAMA GENERATE RESPONSE | {response_length} chars | {processing_time:.2f}s")
+        
+        if router.log_level <= logging.DEBUG:
+            logging.debug(f"Returning Ollama generate response: {json.dumps(ollama_response, indent=2)}")
         return JSONResponse(content=ollama_response)
 
     except Exception as e:

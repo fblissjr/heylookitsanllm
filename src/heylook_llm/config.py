@@ -35,6 +35,11 @@ class ChatRequest(BaseModel):
     stream: bool = False
     include_performance: bool = False
     seed: Optional[int] = None
+    
+    # Batch processing extensions
+    processing_mode: Optional[str] = Field(None, description="conversation|sequential|sequential_with_context")
+    return_individual: Optional[bool] = Field(None, description="Return individual responses vs combined")
+    include_timing: Optional[bool] = Field(None, description="Include timing information")
 
     @validator('messages')
     def validate_messages(cls, v):

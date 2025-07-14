@@ -59,6 +59,9 @@ def sanitize_request_for_debug(chat_request) -> str:
     # Convert to dict for manipulation
     request_dict = chat_request.model_dump()
 
+    # Track image metadata for summary
+    image_stats = _analyze_images_in_request(request_dict)
+
     # Process messages to handle image content
     if 'messages' in request_dict:
         for message in request_dict['messages']:
@@ -71,6 +74,15 @@ def sanitize_request_for_debug(chat_request) -> str:
 
                         url = content_part['image_url']['url']
                         content_part['image_url']['url'] = _truncate_image_url(url)
+
+    # Add image summary to the top of the request for easy visibility
+    if image_stats['count'] > 0:
+        request_dict['_debug_image_summary'] = {
+            'image_count': image_stats['count'],
+            'total_size': image_stats['total_size'],
+            'avg_size': image_stats['avg_size'],
+            'sizes': image_stats['sizes']
+        }
 
     return json.dumps(request_dict, indent=2)
 
@@ -86,8 +98,20 @@ def sanitize_dict_for_debug(data: Dict[str, Any]) -> str:
     import copy
     sanitized = copy.deepcopy(data)
 
+    # Track image metadata for summary
+    image_stats = _analyze_images_in_dict(sanitized)
+
     # Handle different API formats that might contain images
     _sanitize_dict_recursive(sanitized)
+
+    # Add image summary to the top for easy visibility
+    if image_stats['count'] > 0:
+        sanitized['_debug_image_summary'] = {
+            'image_count': image_stats['count'],
+            'total_size': image_stats['total_size'],
+            'avg_size': image_stats['avg_size'],
+            'sizes': image_stats['sizes']
+        }
 
     return json.dumps(sanitized, indent=2)
 
@@ -115,6 +139,85 @@ def _sanitize_dict_recursive(obj: Any) -> None:
     elif isinstance(obj, list):
         for item in obj:
             _sanitize_dict_recursive(item)
+
+def _analyze_images_in_request(request_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze images in a ChatRequest structure and return metadata.
+    Returns count, sizes, and total size info.
+    """
+    image_stats = {'count': 0, 'sizes': [], 'total_size': '0B', 'avg_size': '0B'}
+    total_bytes = 0
+    
+    if 'messages' in request_dict:
+        for message in request_dict['messages']:
+            if isinstance(message.get('content'), list):
+                for content_part in message['content']:
+                    if (content_part.get('type') == 'image_url' and
+                        'image_url' in content_part and
+                        'url' in content_part['image_url']):
+                        
+                        url = content_part['image_url']['url']
+                        if url.startswith('data:image'):
+                            try:
+                                _, encoded = url.split(',', 1)
+                                # Base64 to bytes approximation: len * 3/4
+                                bytes_size = (len(encoded) * 3) // 4
+                                total_bytes += bytes_size
+                                image_stats['count'] += 1
+                                image_stats['sizes'].append(_format_bytes(bytes_size))
+                            except Exception:
+                                pass
+    
+    if image_stats['count'] > 0:
+        image_stats['total_size'] = _format_bytes(total_bytes)
+        image_stats['avg_size'] = _format_bytes(total_bytes // image_stats['count'])
+    
+    return image_stats
+
+def _analyze_images_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze images in any dictionary structure (Ollama, OpenAI, etc.) and return metadata.
+    """
+    image_stats = {'count': 0, 'sizes': [], 'total_size': '0B', 'avg_size': '0B'}
+    total_bytes = 0
+    
+    def count_images_recursive(obj):
+        nonlocal total_bytes
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in ['url', 'image'] and isinstance(value, str) and value.startswith('data:image'):
+                    try:
+                        _, encoded = value.split(',', 1)
+                        bytes_size = (len(encoded) * 3) // 4
+                        total_bytes += bytes_size
+                        image_stats['count'] += 1
+                        image_stats['sizes'].append(_format_bytes(bytes_size))
+                    except Exception:
+                        pass
+                elif key == 'images' and isinstance(value, list):
+                    for img in value:
+                        if isinstance(img, str) and img.startswith('data:image'):
+                            try:
+                                _, encoded = img.split(',', 1)
+                                bytes_size = (len(encoded) * 3) // 4
+                                total_bytes += bytes_size
+                                image_stats['count'] += 1
+                                image_stats['sizes'].append(_format_bytes(bytes_size))
+                            except Exception:
+                                pass
+                else:
+                    count_images_recursive(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                count_images_recursive(item)
+    
+    count_images_recursive(data)
+    
+    if image_stats['count'] > 0:
+        image_stats['total_size'] = _format_bytes(total_bytes)
+        image_stats['avg_size'] = _format_bytes(total_bytes // image_stats['count'])
+    
+    return image_stats
 
 def _truncate_image_url(url: str, max_chars: int = 100) -> str:
     """
@@ -208,7 +311,7 @@ class RealTimeLogger:
         # Log request start with system info
         memory_info = self._get_memory_info()
         logging.info(
-            f"👀 Request {request_id[:8]} started | Model: {model_id} | "
+            f"Request {request_id[:8]} started | Model: {model_id} | "
             f"Memory: {memory_info['used_gb']:.1f}GB/{memory_info['total_gb']:.1f}GB "
             f"({memory_info['percent']:.1f}%)"
         )
@@ -230,19 +333,19 @@ class RealTimeLogger:
 
         # Stage-specific logging
         if stage == "model_loading":
-            logging.info(f"⚡ Request {request_id[:8]} | Loading model... | {elapsed:.2f}s")
+            logging.info(f"Request {request_id[:8]} | Loading model... | {elapsed:.2f}s")
         elif stage == "prompt_processing":
             prompt_tokens = kwargs.get('prompt_tokens', metrics.prompt_tokens)
             logging.info(
-                f"🙏 Request {request_id[:8]} | Processing prompt | {prompt_tokens} tokens | {elapsed:.2f}s"
+                f"Request {request_id[:8]} | Processing prompt | {prompt_tokens} tokens | {elapsed:.2f}s"
             )
         elif stage == "generating":
-            logging.info(f"✨ Request {request_id[:8]} | Generating response... | {elapsed:.2f}s")
+            logging.info(f"Request {request_id[:8]} | Generating response... | {elapsed:.2f}s")
         elif stage == "streaming":
             tokens = metrics.generated_tokens
             tps = metrics.tokens_per_second()
             logging.info(
-                f"🤔 Request {request_id[:8]} | Streaming | {tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
+                f"Request {request_id[:8]} | Streaming | {tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
             )
 
     def update_tokens(self, request_id: str, generated_tokens: int):
@@ -258,7 +361,7 @@ class RealTimeLogger:
             tps = metrics.tokens_per_second()
             elapsed = metrics.elapsed_time()
             logging.debug(
-                f"😙 Request {request_id[:8]} | {generated_tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
+                f"Request {request_id[:8]} | {generated_tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
             )
 
     def complete_request(self, request_id: str, success: bool = True, error_msg: Optional[str] = None):
@@ -271,10 +374,10 @@ class RealTimeLogger:
         tps = metrics.tokens_per_second()
 
         if success:
-            status_icon = "😅"
+            status_icon = "[SUCCESS]"
             status_msg = "completed"
         else:
-            status_icon = "❌"
+            status_icon = "[ERROR]"
             status_msg = f"failed: {error_msg or 'unknown error'}"
 
         logging.info(
@@ -290,12 +393,12 @@ class RealTimeLogger:
         if not self.active_requests:
             return
 
-        logging.info(f"😀 Active requests: {len(self.active_requests)}")
+        logging.info(f"Active requests: {len(self.active_requests)}")
         for request_id, metrics in self.active_requests.items():
             elapsed = metrics.elapsed_time()
             tps = metrics.tokens_per_second()
             logging.info(
-                f"👀 {request_id[:8]} | {metrics.stage} | {metrics.model_id} | "
+                f"{request_id[:8]} | {metrics.stage} | {metrics.model_id} | "
                 f"{metrics.generated_tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
             )
 
@@ -338,3 +441,43 @@ def log_token_update(request_id: str, generated_tokens: int):
 def log_request_complete(request_id: str, success: bool = True, error_msg: Optional[str] = None):
     """Log request completion."""
     rt_logger.complete_request(request_id, success, error_msg)
+
+def log_full_request_details(request_id: str, chat_request, response_text: str = None):
+    """
+    Log complete request and response details for full visibility.
+    Includes sanitized request structure and response preview.
+    """
+    logging.info(f"REQUEST {request_id[:8]} DETAILS:")
+    logging.info(f"Model: {chat_request.model}")
+    logging.info(f"Temperature: {getattr(chat_request, 'temperature', 'default')}")
+    logging.info(f"Max tokens: {getattr(chat_request, 'max_tokens', 'unlimited')}")
+    logging.info(f"Stream: {getattr(chat_request, 'stream', False)}")
+    
+    # Log sanitized request structure
+    sanitized_request = sanitize_request_for_debug(chat_request)
+    logging.debug(f"Full request structure:\n{sanitized_request}")
+    
+    # Log response preview if available
+    if response_text:
+        response_preview = response_text[:200] + "..." if len(response_text) > 200 else response_text
+        logging.info(f"RESPONSE {request_id[:8]} PREVIEW ({len(response_text)} chars):")
+        logging.info(f"{response_preview}")
+
+def log_request_summary(request_id: str, model_id: str, has_images: bool = False, image_count: int = 0, total_image_size: str = "0B"):
+    """
+    Log a concise request summary for easy scanning.
+    """
+    image_info = ""
+    if has_images:
+        image_info = f" | {image_count} images ({total_image_size})"
+    
+    logging.info(f"REQUEST {request_id[:8]} SUMMARY | Model: {model_id}{image_info}")
+
+def log_response_summary(request_id: str, response_length: int, token_count: int = 0, processing_time: float = 0.0):
+    """
+    Log a concise response summary.
+    """
+    tokens_info = f" | {token_count} tokens" if token_count > 0 else ""
+    time_info = f" | {processing_time:.2f}s" if processing_time > 0 else ""
+    
+    logging.info(f"RESPONSE {request_id[:8]} SUMMARY | {response_length} chars{tokens_info}{time_info}")
