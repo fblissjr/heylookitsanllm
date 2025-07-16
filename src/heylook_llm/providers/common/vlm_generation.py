@@ -1,6 +1,6 @@
-# src/heylook_llm/providers/common/enhanced_vlm_generation.py
+# src/heylook_llm/providers/common/vlm_generation.py
 """
-Enhanced VLM generation with feature backporting from mlx-lm.
+VLM generation with mlx-lm feature integration.
 
 Why this exists:
 - Backports advanced sampling from mlx-lm to mlx-vlm path
@@ -18,14 +18,14 @@ from mlx_vlm.generate import stream_generate as vlm_stream_generate
 from .performance_monitor import time_mlx_operation
 
 
-class EnhancedVLMGenerator:
+class VLMGeneratorWithSampling:
     """
-    Enhanced VLM generator with mlx-lm feature backporting.
+    VLM generator that integrates mlx-lm sampling features.
     
     Key features:
-    - Advanced sampling (top-k, repetition penalty, min-p)
+    - mlx-lm sampling (top-k, repetition penalty, min-p)
     - Speculative decoding support for text-only VLM requests
-    - Better quality sampling on vision path
+    - Unified sampling interface for vision and text paths
     - Maintains compatibility with existing mlx-vlm interface
     """
     
@@ -78,8 +78,8 @@ class EnhancedVLMGenerator:
         
         return token
     
-    @time_mlx_operation("enhanced_vlm_generation", "vision_enhanced")
-    def stream_generate_enhanced(
+    @time_mlx_operation("vlm_generation", "vision_with_sampling")
+    def stream_generate_with_sampling(
         self,
         prompt: str,
         image: Union[List, None] = None,
@@ -89,7 +89,7 @@ class EnhancedVLMGenerator:
         **kwargs
     ) -> Generator[Any, None, None]:
         """
-        Enhanced VLM stream generation with advanced sampling.
+        VLM stream generation with mlx-lm sampling integration.
         
         Args:
             prompt: Text prompt
@@ -100,11 +100,7 @@ class EnhancedVLMGenerator:
             **kwargs: Additional arguments
         """
         
-        # Ensure clean state before generation
-        try:
-            mx.eval()  # Synchronize any pending MLX operations
-        except:
-            pass
+        # No synchronization needed here - MLX handles it internally
         
         if image is None or len(image) == 0:
             # Text-only VLM request - use optimized path with advanced sampling
@@ -126,16 +122,16 @@ class EnhancedVLMGenerator:
         **kwargs
     ) -> Generator[Any, None, None]:
         """
-        Enhanced text-only generation for VLM models.
+        Text-only generation for VLM models using mlx-lm.
         
         Uses mlx-lm's advanced sampling with the VLM's language model component.
         """
         try:
             # Use the language model component with advanced sampling
-            from ..mlx_provider_optimized import OptimizedLanguageModelWrapper
+            from ..mlx_provider import LanguageModelLogitsWrapper
             
             # Create optimized wrapper if not already done
-            language_model = OptimizedLanguageModelWrapper(self.model.language_model)
+            language_model = LanguageModelLogitsWrapper(self.model.language_model)
             
             # Use mlx-lm's stream generation with advanced sampling
             yield from lm_stream_generate(
@@ -167,7 +163,7 @@ class EnhancedVLMGenerator:
         **kwargs
     ) -> Generator[Any, None, None]:
         """
-        Enhanced vision generation with advanced sampling.
+        Vision generation with mlx-lm sampling features.
         
         For now, this falls back to the standard mlx-vlm generation since
         the complex custom sampling loop needs more robust implementation.
@@ -202,7 +198,7 @@ class EnhancedVLMGenerator:
         return True
 
 
-def create_enhanced_vlm_generator(model, processor) -> EnhancedVLMGenerator:
+def create_vlm_generator_with_sampling(model, processor) -> VLMGeneratorWithSampling:
     """
     Factory function to create enhanced VLM generator.
     
@@ -211,13 +207,13 @@ def create_enhanced_vlm_generator(model, processor) -> EnhancedVLMGenerator:
         processor: VLM processor
         
     Returns:
-        EnhancedVLMGenerator instance
+        VLMGeneratorWithSampling instance
     """
-    return EnhancedVLMGenerator(model, processor)
+    return VLMGeneratorWithSampling(model, processor)
 
 
 # Convenience function for backwards compatibility
-def enhanced_vlm_stream_generate(
+def vlm_stream_generate_with_sampling(
     model,
     processor,
     prompt: str,
@@ -228,11 +224,11 @@ def enhanced_vlm_stream_generate(
     **kwargs
 ) -> Generator[Any, None, None]:
     """
-    Enhanced VLM stream generation function.
+    VLM stream generation with mlx-lm sampling features.
     
     This is the main entry point for enhanced VLM generation with feature backporting.
     """
-    generator = create_enhanced_vlm_generator(model, processor)
+    generator = create_vlm_generator_with_sampling(model, processor)
     
     yield from generator.stream_generate_enhanced(
         prompt=prompt,

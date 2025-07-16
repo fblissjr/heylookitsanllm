@@ -78,7 +78,7 @@ class ModelRouter:
 
             logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'...")
 
-            # Enhanced loading progress
+            # Show loading progress
             model_path = model_config.config.model_path if hasattr(model_config.config, 'model_path') else 'unknown'
             logging.info(f"Model path: {model_path}")
 

@@ -20,19 +20,19 @@ from ..config import ChatRequest
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.performance_monitor import time_mlx_operation, performance_monitor
-from .common.vlm_generation import enhanced_vlm_stream_generate, create_enhanced_vlm_generator
+from .common.vlm_generation import vlm_stream_generate_with_sampling, create_vlm_generator_with_sampling
 from .mlx_batch_vision import BatchVisionEncoder, BatchVisionStrategy
 from ..utils import load_image
 
 
-class OptimizedLanguageModelWrapper(nn.Module):
+class LanguageModelLogitsWrapper(nn.Module):
     """
-    Optimized wrapper for VLM language models to use with mlx-lm.
+    Wrapper for VLM language models to extract logits directly.
 
     Why this exists:
-    - Caches frequently accessed attributes for better performance
-    - Provides direct logits extraction without object creation overhead
-    - Maintains mlx-lm compatibility for text-only VLM requests
+    - Provides direct logits extraction for mlx-lm compatibility
+    - Caches frequently accessed attributes
+    - Enables VLM models to work with mlx-lm's text generation pipeline
     """
 
     def __init__(self, language_model):
@@ -169,7 +169,7 @@ class VLMTextOnlyStrategy:
 
         # Cache the wrapper model to avoid recreation
         if self._cached_wrapper is None:
-            self._cached_wrapper = OptimizedLanguageModelWrapper(model.language_model)
+            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
 
         # Prepare VLM inputs but extract only the text prompt
         images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config, model)
@@ -191,7 +191,7 @@ class VLMTextOnlyStrategy:
 
         # Cache the wrapper model to avoid recreation
         if self._cached_wrapper is None:
-            self._cached_wrapper = OptimizedLanguageModelWrapper(model.language_model)
+            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
 
         # Prepare VLM inputs but extract only the text prompt
         images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config, model)
@@ -249,7 +249,7 @@ class VLMTextOnlyStrategy:
 
 
 class VLMVisionStrategy:
-    """Strategy for VLM requests with images - Enhanced with mlx-lm sampling."""
+    """Strategy for VLM requests with images using mlx-lm sampling."""
 
     def __init__(self):
         self._cached_generator = None
@@ -257,9 +257,9 @@ class VLMVisionStrategy:
 
     @time_mlx_operation("generation", "vlm_vision")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
-        # Create enhanced generator (cached)
+        # Create generator with sampling (cached)
         if self._cached_generator is None:
-            self._cached_generator = create_enhanced_vlm_generator(model, processor)
+            self._cached_generator = create_vlm_generator_with_sampling(model, processor)
 
         # Initialize batch encoder if needed
         if self._batch_encoder is None and len(request.messages) > 1:
@@ -276,8 +276,8 @@ class VLMVisionStrategy:
             # Note: This requires modification to enhanced_vlm_generator
             # For now, we'll fall back to sequential
 
-        # Use enhanced generation with mlx-lm quality sampling
-        yield from self._cached_generator.stream_generate_enhanced(
+        # Use generation with mlx-lm sampling
+        yield from self._cached_generator.stream_generate_with_sampling(
             prompt=formatted_prompt,
             image=images,
             sampler=sampler,
@@ -331,12 +331,12 @@ class VLMVisionStrategy:
 
 class MLXProvider(BaseProvider):
     """
-    Optimized MLX Provider with dual-path architecture.
+    MLX Provider with dual-path architecture for VLM and text-only generation.
 
     Key optimizations:
     1. Pre-compiled path decision logic using strategy pattern
     2. Cached generation strategies to avoid object creation
-    3. Optimized LanguageModelWrapper with attribute caching
+    3. LanguageModelLogitsWrapper for mlx-lm compatibility
     4. Single-pass content scanning for path decisions
     """
 
@@ -360,7 +360,7 @@ class MLXProvider(BaseProvider):
         try:
             if self.is_vlm:
                 # Load VLM model with fallback strategies for common issues
-                logging.info("Loading VLM model using resilient MLX VLM loading")
+                logging.info("Loading VLM model with fallback strategies")
                 self.model, self.processor = self._load_vlm_with_fallback(model_path)
             else:
                 # Load text-only model with MLX LM
@@ -502,7 +502,7 @@ class MLXProvider(BaseProvider):
     @time_mlx_operation("path_decision")
     def _detect_images_optimized(self, messages: List) -> bool:
         """
-        Optimized image detection with single-pass scanning.
+        Detect images in messages with single-pass scanning.
 
         Why this optimization matters:
         - Avoids multiple passes over message content
@@ -558,7 +558,7 @@ class MLXProvider(BaseProvider):
     @time_mlx_operation("chat_completion")
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """
-            Optimized chat completion with strategy pattern.
+            Create chat completion using appropriate generation strategy.
 
             Path decision logic is pre-compiled and cached to minimize runtime overhead.
             """
@@ -635,7 +635,7 @@ class MLXProvider(BaseProvider):
             logging.debug(f"Failed to log performance summary: {e}")
 
     def unload(self):
-        """Enhanced cleanup with cache clearing and performance logging."""
+        """Cleanup with cache clearing and performance logging."""
         logging.info(f"Unloading MLX model: {self.model_id}")
 
         # Log performance summary before cleanup

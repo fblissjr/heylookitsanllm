@@ -98,6 +98,14 @@ Both streaming and non-streaming responses are supported. Streaming uses Server-
 - Import order: standard → third-party → local (separated by blank lines)
 - Use existing logging setup, not bare `print()` statements
 
+### Naming Conventions
+- NEVER use vague marketing terms like "Enhanced", "Optimized", "Improved", "Resilient" in class/function names or log messages
+- Use descriptive technical names that explain what the code does
+- Instead of "OptimizedLanguageModelWrapper", use "LanguageModelLogitsWrapper" or similar
+- Instead of "EnhancedVLMGenerator", use "VLMGeneratorWithSampling" or similar
+- Instead of "resilient loading", use "loading with fallback strategies" or similar
+- Names and messages should describe the technical behavior, not claim superiority or robustness
+
 ### Error Handling
 - Raise `HTTPException` for API errors
 - Log errors with appropriate levels (DEBUG, INFO, WARNING, ERROR)

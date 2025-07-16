@@ -18,7 +18,7 @@ from .common.performance_monitor import time_mlx_operation
 
 class BatchVisionEncoder:
     """
-    Optimized batch vision encoding for MLX VLMs.
+    Batch vision encoding for MLX VLMs.
     
     Key optimizations:
     1. Batch multiple images into single forward pass

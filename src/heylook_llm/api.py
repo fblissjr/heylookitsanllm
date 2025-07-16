@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
+from heylook_llm.providers.common.performance_monitor import performance_monitor
 from heylook_llm.middleware.ollama import OllamaTranslator
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 
@@ -223,7 +224,7 @@ async def ollama_chat(request: Request):
         from heylook_llm.utils import _analyze_images_in_dict
         image_stats = _analyze_images_in_dict(body)
         
-        # Enhanced logging with image info
+        # Log request details including image info
         logging.info(f"📥 OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
@@ -270,7 +271,7 @@ async def ollama_chat(request: Request):
             request_start_time
         )
 
-        # Enhanced response logging
+        # Log response details
         processing_time = time.time() - request_start_time
         response_length = len(full_text)
         logging.info(f"📤 OLLAMA CHAT RESPONSE | {response_length} chars | {processing_time:.2f}s")
@@ -296,7 +297,7 @@ async def ollama_generate(request: Request):
         from heylook_llm.utils import _analyze_images_in_dict
         image_stats = _analyze_images_in_dict(body)
         
-        # Enhanced logging with image info
+        # Log request details including image info
         logging.info(f"📥 OLLAMA GENERATE REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Received Ollama generate request: {sanitize_dict_for_debug(body)}")
@@ -343,7 +344,7 @@ async def ollama_generate(request: Request):
             request_start_time
         )
 
-        # Enhanced response logging
+        # Log response details
         processing_time = time.time() - request_start_time
         response_length = len(full_text)
         logging.info(f"📤 OLLAMA GENERATE RESPONSE | {response_length} chars | {processing_time:.2f}s")
@@ -624,6 +625,14 @@ async def ollama_blob_upload(digest: str, request: Request):
     """Ollama upload blob endpoint - Not implemented yet"""
     # For now, return not implemented
     raise HTTPException(status_code=501, detail="Blob management not implemented yet")
+
+@app.get("/v1/performance")
+async def performance_metrics():
+    """Get performance metrics from all providers."""
+    return {
+        "metrics": performance_monitor.get_metrics(),
+        "summary": performance_monitor.get_performance_summary()
+    }
 
 @app.get("/")
 async def root():
