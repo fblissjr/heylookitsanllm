@@ -1,8 +1,9 @@
 # src/heylook_llm/api.py
 import json, uuid, time, logging, argparse, sys
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
+from typing import Dict, List
 
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
@@ -18,27 +19,50 @@ async def lifespan(app: FastAPI):
     yield
     logging.info("Server shut down.")
 
-app = FastAPI(title="Hey Look It's an LLM Server", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Hey Look It's an LLM Server",
+    version="1.0.0",
+    description="A high-performance local LLM server with OpenAI and Ollama API compatibility",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
 
 # Initialize Ollama translator
 ollama_translator = OllamaTranslator()
 
-@app.get("/v1/models")
+@app.get("/v1/models",
+    summary="List available models",
+    description="Returns a list of all available language models that can be used for chat completions.",
+    response_description="List of available models",
+    tags=["OpenAI API"]
+)
 async def list_models(request: Request):
+    """
+    Get the list of available models.
+    
+    This endpoint is compatible with the OpenAI API format and returns
+    all models currently configured and enabled in the server.
+    """
     router = request.app.state.router_instance
     models_data = [{"id": model_id, "object": "model", "owned_by": "user"} for model_id in router.list_available_models()]
     return {"object": "list", "data": models_data}
 
-@app.post("/v1/chat/completions")
-async def create_chat_completion(request: Request):
+@app.post("/v1/chat/completions",
+    summary="Create chat completion",
+    description="Creates a completion for the provided chat messages. Compatible with OpenAI's chat completions API.",
+    response_model=ChatCompletionResponse,
+    response_description="Chat completion response",
+    tags=["OpenAI API"]
+)
+async def create_chat_completion(request: Request, chat_request: ChatRequest):
     router = request.app.state.router_instance
     request_id = f"req-{uuid.uuid4()}"
 
     request_start_time = time.time()
     
     try:
-        body = await request.json()
-        chat_request = ChatRequest(**body)
         # Add start time for processing time calculation
         chat_request._start_time = request_start_time
     except Exception as e:
