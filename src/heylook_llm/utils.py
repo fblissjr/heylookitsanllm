@@ -21,15 +21,22 @@ except ImportError:
 
 def load_image(source_str: str) -> Image.Image:
     """Load an image from various sources: file path, URL, or base64 data."""
+    start_time = time.time()
     try:
         if source_str.startswith("data:image"):
             try:
                 _, encoded = source_str.split(",", 1)
                 if len(encoded) < 10: raise ValueError("Base64 data too short")
+                base64_size = len(encoded)
                 image_data = base64.b64decode(encoded)
                 if len(image_data) < 10: raise ValueError("Decoded image data too short")
                 image = Image.open(io.BytesIO(image_data)).convert("RGB")
-                logging.debug(f"Successfully loaded base64 image: {image.size}")
+                load_time = time.time() - start_time
+                
+                # Log detailed image loading info
+                logging.info(f"[IMAGE LOAD] Base64 image loaded | Size: {image.size} | "
+                           f"Base64: {_format_bytes((base64_size * 3) // 4)} | "
+                           f"Load time: {load_time*1000:.1f}ms")
                 return image
             except Exception as e:
                 logging.error(f"Failed to decode base64 image: {e}", exc_info=True)
@@ -40,9 +47,25 @@ def load_image(source_str: str) -> Image.Image:
             }
             response = requests.get(source_str, headers=headers, stream=True, timeout=10)
             response.raise_for_status()
-            return Image.open(io.BytesIO(response.content)).convert("RGB")
+            content_size = len(response.content)
+            image = Image.open(io.BytesIO(response.content)).convert("RGB")
+            load_time = time.time() - start_time
+            
+            # Log detailed image loading info
+            logging.info(f"[IMAGE LOAD] URL image loaded | Size: {image.size} | "
+                       f"Download: {_format_bytes(content_size)} | "
+                       f"Load time: {load_time*1000:.1f}ms | "
+                       f"URL: {source_str[:100]}...")
+            return image
         else:
-            return ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
+            image = ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
+            load_time = time.time() - start_time
+            
+            # Log detailed image loading info
+            logging.info(f"[IMAGE LOAD] File image loaded | Size: {image.size} | "
+                       f"Load time: {load_time*1000:.1f}ms | "
+                       f"Path: {source_str}")
+            return image
     except Exception as e:
         logging.error(f"Failed to load image from {source_str[:100]}...: {e}", exc_info=True)
         # Return a small red image to indicate failure

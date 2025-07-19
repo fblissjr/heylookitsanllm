@@ -1,0 +1,27 @@
+# Performance optimization dependencies
+
+# Fast image processing
+pillow-simd>=9.0.0  # Drop-in Pillow replacement with SIMD
+PyTurboJPEG>=1.7.0  # Ultra-fast JPEG decoding
+imagecodecs>=2023.1.23  # Hardware-accelerated codecs
+
+# Fast hashing
+xxhash>=3.4.0  # Ultra-fast non-cryptographic hash
+blake3>=0.3.0  # Fastest cryptographic hash
+
+# Caching
+cachetools>=5.3.0  # Advanced caching decorators
+diskcache>=5.6.0  # Persistent disk cache
+
+# Fast serialization
+orjson>=3.9.0  # Fastest JSON library
+msgpack>=1.0.0  # Binary serialization
+
+# Async optimizations
+uvloop>=0.19.0  # Fast event loop
+aiofiles>=23.2.0  # Async file I/O
+aiocache>=0.12.0  # Async caching
+
+# Profiling (optional)
+py-spy>=0.3.14  # Sampling profiler
+memray>=1.10.0  # Memory profiler

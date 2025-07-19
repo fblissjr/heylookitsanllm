@@ -23,6 +23,7 @@ from .common.performance_monitor import time_mlx_operation, performance_monitor
 from .common.vlm_generation import vlm_stream_generate_with_sampling, create_vlm_generator_with_sampling
 from .mlx_batch_vision import BatchVisionEncoder, BatchVisionStrategy
 from ..utils import load_image
+from .common.batch_vision import BatchVisionProcessor
 
 
 class LanguageModelLogitsWrapper(nn.Module):
@@ -254,6 +255,7 @@ class VLMVisionStrategy:
     def __init__(self):
         self._cached_generator = None
         self._batch_encoder = None
+        self._batch_vision_processor = None
 
     @time_mlx_operation("generation", "vlm_vision")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
@@ -262,19 +264,36 @@ class VLMVisionStrategy:
             self._cached_generator = create_vlm_generator_with_sampling(model, processor)
 
         # Initialize batch encoder if needed
-        if self._batch_encoder is None and len(request.messages) > 1:
+        if self._batch_encoder is None:
             self._batch_encoder = BatchVisionEncoder(model, processor)
 
-        # Prepare VLM inputs
-        images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config, model)
+        # Initialize batch vision processor for parallel image loading
+        if self._batch_vision_processor is None:
+            self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
+
+        # Prepare VLM inputs with parallel image loading
+        images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(request.messages, processor, model.config, model)
+        
+        # Log image details before sending to model
+        logging.info(f"[VLM PROCESSING] Sending {len(images)} images to model")
+        for i, img in enumerate(images):
+            logging.info(f"[VLM PROCESSING] Image {i+1}: size={img.size}, mode={img.mode}")
+        
+        # Check if processor has expected image size
+        if hasattr(processor, 'image_processor'):
+            img_proc = processor.image_processor
+            if hasattr(img_proc, 'size'):
+                expected_size = img_proc.size
+                logging.info(f"[VLM PROCESSING] Model expects images at: {expected_size}")
+            elif hasattr(img_proc, 'crop_size'):
+                expected_size = img_proc.crop_size
+                logging.info(f"[VLM PROCESSING] Model expects images at: {expected_size}")
         
         # Use batch encoding if multiple images
-        if self._batch_encoder and len(images) > 1:
-            # Batch encode all images at once
-            vision_features = self._batch_encoder.encode_batch(images)
-            # Pass pre-encoded features to generator
-            # Note: This requires modification to enhanced_vlm_generator
-            # For now, we'll fall back to sequential
+        if len(images) > 1:
+            # For now, mlx-vlm processes images within the generation loop
+            # Future optimization: pre-encode all images and modify generator
+            pass
 
         # Use generation with mlx-lm sampling
         yield from self._cached_generator.stream_generate_with_sampling(
@@ -286,6 +305,54 @@ class VLMVisionStrategy:
             temperature=effective_request.get('temperature', 0.1),
             top_p=effective_request.get('top_p', 1.0)
         )
+    
+    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
+        """Prepare VLM inputs with parallel image loading."""
+        image_urls = []
+        text_messages = []
+        has_images = False
+        image_counter = 0
+
+        # First pass: collect image URLs and build text structure
+        for msg in messages:
+            content = msg.content
+            if isinstance(content, list):
+                text_parts = []
+                
+                for part in content:
+                    if part.type == 'text':
+                        text_parts.append(part.text)
+                    elif part.type == 'image_url':
+                        image_urls.append(part.image_url.url)
+                        has_images = True
+                        image_counter += 1
+                        
+                        # Add image placeholder to maintain position
+                        model_type = str(type(model)).lower() if model else ""
+                        if 'gemma' not in model_type:
+                            if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                text_parts.append(processor.tokenizer.image_token)
+                            else:
+                                text_parts.append(f"[Image {image_counter}]")
+                
+                # Combine text parts
+                combined_content = " ".join(text_parts) if text_parts else ""
+                text_messages.append({"role": msg.role, "content": combined_content})
+            elif isinstance(content, str):
+                text_messages.append({"role": msg.role, "content": content})
+
+        # Load all images in parallel
+        if image_urls:
+            images = self._batch_vision_processor.load_images_parallel(image_urls)
+        else:
+            images = []
+
+        # Format prompt
+        formatted_prompt = vlm_apply_chat_template(
+            processor, config, text_messages, num_images=len(images)
+        )
+        
+        return images, formatted_prompt, has_images
 
     def _prepare_vlm_inputs(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs - extracted for reuse."""
@@ -350,6 +417,10 @@ class MLXProvider(BaseProvider):
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
         self._content_cache = {}  # Cache for image detection results
+        
+        # Add generation lock to prevent Metal command buffer conflicts
+        import threading
+        self._generation_lock = threading.Lock()
 
     @time_mlx_operation("model_loading")
     def load_model(self):
@@ -368,6 +439,37 @@ class MLXProvider(BaseProvider):
                 self.model, self.processor = lm_load(model_path)
 
             logging.info(f"😅 Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
+            
+            # Debug model structure for KV cache optimization
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                logging.debug("=== Model Structure Debug ===")
+                if hasattr(self.model, '__dict__'):
+                    logging.debug(f"Model attributes: {list(self.model.__dict__.keys())[:10]}...")
+                if hasattr(self.model, 'config'):
+                    logging.debug(f"Config type: {type(self.model.config)}")
+                    if hasattr(self.model.config, '__dict__'):
+                        logging.debug(f"Config attributes: {list(self.model.config.__dict__.keys())[:10]}...")
+                    if hasattr(self.model.config, 'text_config'):
+                        logging.debug(f"Text config type: {type(self.model.config.text_config)}")
+                        if hasattr(self.model.config.text_config, '__dict__'):
+                            text_attrs = list(self.model.config.text_config.__dict__.keys())
+                            logging.debug(f"Text config attributes: {text_attrs[:15]}...")
+                            # Log specific KV cache related attributes
+                            tc = self.model.config.text_config
+                            logging.debug(f"Text config details: num_hidden_layers={getattr(tc, 'num_hidden_layers', 'N/A')}, "
+                                        f"num_attention_heads={getattr(tc, 'num_attention_heads', 'N/A')}, "
+                                        f"hidden_size={getattr(tc, 'hidden_size', 'N/A')}")
+                if hasattr(self.model, 'args'):
+                    logging.debug(f"Args type: {type(self.model.args)}")
+                    if hasattr(self.model.args, '__dict__'):
+                        logging.debug(f"Args attributes: {list(self.model.args.__dict__.keys())[:10]}...")
+                if hasattr(self.model, 'model_args'):
+                    logging.debug(f"Model args: {self.model.model_args}")
+                if hasattr(self.model, 'layers'):
+                    logging.debug(f"Number of layers: {len(self.model.layers)}")
+                    if len(self.model.layers) > 0:
+                        logging.debug(f"First layer type: {type(self.model.layers[0])}")
+                logging.debug("===========================")
 
         except Exception as e:
             logging.error(f"Failed to load model: {e}")
@@ -384,6 +486,54 @@ class MLXProvider(BaseProvider):
                 logging.warning(f"Failed to load draft model: {e}")
                 self.draft_model = None
 
+        # Apply Metal optimizations if available
+        try:
+            from ..optimizations.mlx_metal_tuning import apply_all_metal_optimizations, optimize_large_model_for_metal
+            
+            # Get model size estimate from config or calculate
+            model_size_gb = self.config.get('model_size_gb')
+            if not model_size_gb:
+                try:
+                    # Estimate size: params * bytes_per_param / 1GB
+                    num_params = 0
+                    if hasattr(self.model, 'parameters'):
+                        for p in self.model.parameters():
+                            if hasattr(p, 'size'):
+                                num_params += p.size
+                    
+                    if num_params > 0:
+                        bytes_per_param = 2 if self.config.get('quantization', '').startswith('4bit') else 4
+                        model_size_gb = (num_params * bytes_per_param) / 1e9
+                    else:
+                        model_size_gb = 1.0  # Default estimate
+                except Exception as e:
+                    logging.debug(f"Could not estimate model size: {e}")
+                    model_size_gb = 1.0
+            
+            # Apply optimizations
+            optimization_config = {
+                'model_size_gb': model_size_gb or 1.0,
+                'max_length': self.config.get('max_tokens', 2048),
+                'batch_size': 1,  # Single request for now
+                'use_paged_kv_cache': True,
+                'max_batch_size': 4,
+                'max_seq_length': self.config.get('max_tokens', 2048)
+            }
+            
+            self.model = apply_all_metal_optimizations(self.model, optimization_config)
+            
+            # Apply large model optimizations if > 30GB
+            if model_size_gb and model_size_gb > 30:
+                self.model = optimize_large_model_for_metal(self.model, model_size_gb)
+                logging.info(f"Applied Metal optimizations for large model ({model_size_gb:.1f}GB)")
+            else:
+                logging.info("Applied Metal optimizations for model")
+                
+        except ImportError:
+            logging.debug("Metal optimizations not available - continuing without them")
+        except Exception as e:
+            logging.warning(f"Failed to apply Metal optimizations: {e}")
+        
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
 
@@ -566,60 +716,81 @@ class MLXProvider(BaseProvider):
                 def __init__(self, text):
                     self.text = text
 
-            effective_request = self._apply_model_defaults(request)
-
-            if self.verbose:
-                logging.debug(f"MLX effective request params: {json.dumps(effective_request, indent=2)}")
-
-            # Add null check for processor before accessing tokenizer
-            if self.processor is None:
-                yield MLXErrorChunk(text=f"Error: Model processor not loaded for '{self.model_id}'")
-                return
-
-            tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
-            sampler, processors = build_sampler(tokenizer, effective_request)
-
+            # Use generation lock to prevent Metal command buffer conflicts
+            lock_acquired = self._generation_lock.acquire(blocking=False)
+            if not lock_acquired:
+                logging.warning(f"[MLX GENERATION] Waiting for another request to complete on {self.model_id} (Metal concurrency protection)")
+                self._generation_lock.acquire(blocking=True)
+                
             try:
-                if not self.is_vlm:
-                    # Text-only model path
-                    if self._detect_images_optimized(request.messages):
-                        yield MLXErrorChunk(text=f"Error: Model '{self.model_id}' is text-only and cannot process images. Please use a vision model for image inputs.")
-                        return
+                effective_request = self._apply_model_defaults(request)
 
-                    # Use pre-compiled text-only strategy
-                    strategy = self._strategies['text_only']
-                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+                if self.verbose:
+                    logging.debug(f"MLX effective request params: {json.dumps(effective_request, indent=2)}")
+
+                # Add null check for processor before accessing tokenizer
+                if self.processor is None:
+                    yield MLXErrorChunk(text=f"Error: Model processor not loaded for '{self.model_id}'")
                     return
 
-                # VLM model path - decide between text-only and vision
-                has_images = self._detect_images_optimized(request.messages)
+                tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+                sampler, processors = build_sampler(tokenizer, effective_request)
 
-                if has_images:
-                    # Use pre-compiled vision strategy
-                    strategy = self._strategies['vlm_vision']
-                else:
-                    # Use pre-compiled text-only VLM strategy (faster mlx-lm path)
-                    strategy = self._strategies['vlm_text']
-
-                yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
-
-            except Exception as e:
-                logging.error(f"MLX model call failed: {e}", exc_info=True)
-                
-                # Reset MLX state on error to prevent stream context issues
                 try:
-                    import gc
-                    gc.collect()
-                    mx.eval()  # Synchronize any pending operations
-                    
-                    # Clear any cached state in strategies
-                    for strategy in self._strategies.values():
-                        if hasattr(strategy, '_cached_generator'):
-                            strategy._cached_generator = None
-                except Exception as cleanup_error:
-                    logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
+                    if not self.is_vlm:
+                        # Text-only model path
+                        if self._detect_images_optimized(request.messages):
+                            yield MLXErrorChunk(text=f"Error: Model '{self.model_id}' is text-only and cannot process images. Please use a vision model for image inputs.")
+                            return
 
-                yield MLXErrorChunk(text=f"Error: MLX generation failed: {str(e)}")
+                        # Use pre-compiled text-only strategy
+                        strategy = self._strategies['text_only']
+                        yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+                        return
+
+                    # VLM model path - decide between text-only and vision
+                    has_images = self._detect_images_optimized(request.messages)
+                    
+                    # Count images for detailed logging
+                    image_count = 0
+                    if has_images:
+                        for msg in request.messages:
+                            if isinstance(msg.content, list):
+                                for part in msg.content:
+                                    if hasattr(part, 'type') and part.type == 'image_url':
+                                        image_count += 1
+
+                    if has_images:
+                        # Use pre-compiled vision strategy
+                        strategy = self._strategies['vlm_vision']
+                        logging.info(f"[MLX STRATEGY] Using VLM vision strategy for {image_count} images | Model: {self.model_id}")
+                    else:
+                        # Use pre-compiled text-only VLM strategy (faster mlx-lm path)
+                        strategy = self._strategies['vlm_text']
+                        logging.info(f"[MLX STRATEGY] Using VLM text-only strategy (no images) | Model: {self.model_id}")
+
+                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+
+                except Exception as e:
+                    logging.error(f"MLX model call failed: {e}", exc_info=True)
+                    
+                    # Reset MLX state on error to prevent stream context issues
+                    try:
+                        import gc
+                        gc.collect()
+                        mx.eval()  # Synchronize any pending operations
+                        
+                        # Clear any cached state in strategies
+                        for strategy in self._strategies.values():
+                            if hasattr(strategy, '_cached_generator'):
+                                strategy._cached_generator = None
+                    except Exception as cleanup_error:
+                        logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
+
+                    yield MLXErrorChunk(text=f"Error: MLX generation failed: {str(e)}")
+            finally:
+                # Always release the generation lock
+                self._generation_lock.release()
 
     def log_performance_summary(self):
         """Log current performance metrics."""

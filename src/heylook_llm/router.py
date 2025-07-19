@@ -3,13 +3,22 @@ import yaml
 import logging
 import threading
 import time
-from typing import Optional
+import gc
+from typing import Optional, Dict
 from collections import OrderedDict
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
 from heylook_llm.providers.mlx_provider import MLXProvider
 from heylook_llm.providers.llama_cpp_provider import LlamaCppProvider
+
+# Try to import mlx for cache clearing
+try:
+    import mlx.core as mx
+    HAS_MLX = True
+except ImportError:
+    HAS_MLX = False
+
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
@@ -22,7 +31,11 @@ class ModelRouter:
         logging.info(f"Router configured to keep up to {self.max_loaded_models} models in memory.")
 
         self.log_level = log_level
-        self.loading_lock = threading.Lock()
+        
+        # Fine-grained locking: separate locks for cache access and model loading
+        self.cache_lock = threading.RLock()  # For quick cache operations
+        self.loading_locks: Dict[str, threading.Lock] = {}  # Per-model loading locks
+        self.loading_locks_lock = threading.Lock()  # Protect loading_locks dict
 
         initial_model_to_load = initial_model_id or self.app_config.default_model
         enabled_models = self.app_config.get_enabled_models()
@@ -42,30 +55,73 @@ class ModelRouter:
             except Exception as e:
                 logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
-                # Don't crash - just continue without pre-warming
+
+    def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
+        """Get or create a loading lock for a specific model."""
+        with self.loading_locks_lock:
+            if model_id not in self.loading_locks:
+                self.loading_locks[model_id] = threading.Lock()
+            return self.loading_locks[model_id]
+
+    def _check_cache(self, model_id: str) -> Optional[BaseProvider]:
+        """Check if model is in cache. Uses fine-grained locking."""
+        with self.cache_lock:
+            if model_id in self.providers:
+                if self.log_level <= logging.DEBUG:
+                    logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
+                self.providers.move_to_end(model_id)
+                return self.providers[model_id]
+            return None
+
+    def _evict_lru_model(self):
+        """Evict least recently used model. Must be called with cache_lock held."""
+        lru_id, lru_provider = self.providers.popitem(last=False)
+        logging.info(f"Cache full. Evicting model: {lru_id}")
+        
+        # Check if it's an MLX model before unloading
+        is_mlx_model = False
+        if hasattr(lru_provider, 'provider'):
+            is_mlx_model = lru_provider.provider == 'mlx'
+        
+        # Release cache lock during unloading
+        self.cache_lock.release()
+        try:
+            lru_provider.unload()
+            del lru_provider
+            
+            # Force garbage collection to free memory immediately
+            gc.collect()
+            
+            # Clear MLX cache if available
+            if HAS_MLX and is_mlx_model:
+                mx.clear_cache()
+                
+        finally:
+            self.cache_lock.acquire()
 
     def get_provider(self, model_id: str) -> BaseProvider:
         if not model_id:
             raise ValueError("model_id cannot be empty.")
 
-        with self.loading_lock:
-            if self.log_level <= logging.DEBUG:
-                logging.debug(f"Router cache state before access: {list(self.providers.keys())}")
+        # Fast path: check cache first
+        provider = self._check_cache(model_id)
+        if provider:
+            return provider
 
-            if model_id in self.providers:
-                logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
-                self.providers.move_to_end(model_id)
-                return self.providers[model_id]
+        # Get model-specific loading lock
+        loading_lock = self._get_or_create_loading_lock(model_id)
+        
+        # Acquire loading lock for this specific model
+        with loading_lock:
+            # Double-check cache after acquiring lock (another thread might have loaded it)
+            provider = self._check_cache(model_id)
+            if provider:
+                return provider
 
-            # Model loading progress logging
+            # Model needs to be loaded
             load_start_time = time.time()
-
-            if len(self.providers) >= self.max_loaded_models:
-                lru_id, lru_provider = self.providers.popitem(last=False)
-                logging.info(f"Cache full. Evicting model: {lru_id} to make space for {model_id}.")
-                lru_provider.unload()
-                del lru_provider
-
+            
+            # Get model config
             model_config = self.app_config.get_model_config(model_id)
             if not model_config:
                 available = [m.id for m in self.app_config.get_enabled_models()]
@@ -77,12 +133,13 @@ class ModelRouter:
                 raise ValueError(f"Unknown provider: {model_config.provider}")
 
             logging.info(f"Loading model '{model_id}' with provider '{model_config.provider}'...")
-
+            
             # Show loading progress
             model_path = model_config.config.model_path if hasattr(model_config.config, 'model_path') else 'unknown'
             logging.info(f"Model path: {model_path}")
 
             try:
+                # Create provider instance
                 new_provider = provider_class(
                     model_config.id,
                     model_config.config.model_dump(),
@@ -90,16 +147,26 @@ class ModelRouter:
                 )
 
                 logging.info(f"Initializing {model_config.provider.upper()} provider...")
+                
+                # Load model (this is the expensive operation)
                 new_provider.load_model()
+                
+                # Add to cache with cache lock
+                with self.cache_lock:
+                    # Check if we need to evict
+                    if len(self.providers) >= self.max_loaded_models:
+                        self._evict_lru_model()
+                    
+                    # Add new provider to cache
+                    self.providers[model_id] = new_provider
 
                 load_time = time.time() - load_start_time
-                self.providers[model_id] = new_provider
-
                 logging.info(f"Successfully loaded model: {model_id} in {load_time:.2f}s")
 
                 # Log cache state after loading
                 if self.log_level <= logging.DEBUG:
-                    logging.debug(f"Router cache state after loading: {list(self.providers.keys())}")
+                    with self.cache_lock:
+                        logging.debug(f"Router cache state after loading: {list(self.providers.keys())}")
 
                 return new_provider
 

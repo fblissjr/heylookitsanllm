@@ -135,3 +135,45 @@ Both streaming and non-streaming responses are supported. Streaming uses Server-
 - Automatic validation of vision capabilities per model
 
 This architecture enables efficient local LLM serving with dual API compatibility and intelligent resource management.
+
+## OpenAPI/Swagger Documentation
+
+### Interactive API Documentation
+The server provides built-in OpenAPI documentation:
+- **Swagger UI**: `http://localhost:8080/docs` - Interactive API testing interface
+- **ReDoc**: `http://localhost:8080/redoc` - Alternative documentation UI
+- **OpenAPI Schema**: `http://localhost:8080/openapi.json` - Machine-readable API specification
+
+### Client SDK Generation
+Generate client libraries using the OpenAPI schema:
+```bash
+# Download schema
+curl http://localhost:8080/openapi.json > openapi.json
+
+# Generate Python client
+openapi-generator generate -i openapi.json -g python -o ./python-client
+
+# Generate TypeScript client
+openapi-generator generate -i openapi.json -g typescript-axios -o ./ts-client
+```
+
+### Client Integration Resources
+- **`CLIENT_INTEGRATION_GUIDE.md`** - Comprehensive guide for integrating with the API
+- **`CLAUDE_APP_QUICK_REFERENCE.md`** - Quick reference for client applications
+- **`src/heylook_llm/openapi_examples.py`** - Example requests/responses for documentation
+
+### Key API Features for Clients
+1. **Dual API Support**: OpenAI and Ollama compatible endpoints
+2. **Vision Model Support**: Process images with vision-capable models
+3. **Streaming Responses**: Real-time token generation with SSE
+4. **Batch Processing**: Process multiple prompts efficiently
+5. **No Authentication**: Local server requires no API keys
+
+### Example Client Usage
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="not-needed")
+response = client.chat.completions.create(
+    model="qwen2.5-coder-1.5b-instruct-4bit",
+    messages=[{"role": "user", "content": "Hello!"}]
+)

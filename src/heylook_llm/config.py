@@ -40,6 +40,13 @@ class ChatRequest(BaseModel):
     processing_mode: Optional[str] = Field(None, description="conversation|sequential|sequential_with_context")
     return_individual: Optional[bool] = Field(None, description="Return individual responses vs combined")
     include_timing: Optional[bool] = Field(None, description="Include timing information")
+    
+    # Image resizing parameters (from multipart endpoint)
+    resize_max: Optional[int] = Field(None, description="Resize images to max dimension (e.g., 512, 768, 1024)")
+    resize_width: Optional[int] = Field(None, description="Resize images to specific width")
+    resize_height: Optional[int] = Field(None, description="Resize images to specific height")
+    image_quality: Optional[int] = Field(None, ge=1, le=100, description="JPEG quality for resized images")
+    preserve_alpha: Optional[bool] = Field(None, description="Preserve alpha channel (outputs PNG)")
 
     @validator('messages')
     def validate_messages(cls, v):

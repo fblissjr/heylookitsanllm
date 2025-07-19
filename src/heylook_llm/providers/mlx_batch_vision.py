@@ -114,8 +114,12 @@ class BatchVisionEncoder:
     
     def _manual_preprocess(self, image: Image.Image) -> mx.array:
         """Manual image preprocessing fallback."""
+        original_size = image.size
         # Resize
         image = image.resize((self._image_size, self._image_size), Image.LANCZOS)
+        
+        if original_size != (self._image_size, self._image_size):
+            logging.info(f"[MLX BATCH VISION] Resized image from {original_size} to {self._image_size}x{self._image_size}")
         
         # Convert to RGB if needed
         if image.mode != 'RGB':

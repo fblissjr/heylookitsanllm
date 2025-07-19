@@ -536,6 +536,25 @@ class BatchProcessor:
         """
         groups = []
         
+        # Debug logging
+        logging.info(f"[BATCH PROCESSOR] Creating message groups from {len(messages)} messages")
+        for idx, msg in enumerate(messages):
+            if isinstance(msg.content, str):
+                content_preview = str(msg.content)[:100]
+            elif isinstance(msg.content, list):
+                # For list content (like images), show more detail
+                parts_info = []
+                for part in msg.content:
+                    if hasattr(part, 'type'):
+                        if part.type == 'text':
+                            parts_info.append(f"text: '{part.text[:50]}...'" if len(part.text) > 50 else f"text: '{part.text}'")
+                        elif part.type == 'image_url':
+                            parts_info.append("image_url")
+                content_preview = f"[List with {len(msg.content)} parts: {', '.join(parts_info)}]"
+            else:
+                content_preview = f"[{type(msg.content).__name__}]"
+            logging.info(f"[BATCH PROCESSOR] Message {idx}: role={msg.role}, content={content_preview}")
+        
         # First, check if we have conversation boundaries in the content
         has_boundaries = False
         for message in messages:
@@ -550,12 +569,22 @@ class BatchProcessor:
             
             for message in messages:
                 if isinstance(message.content, str) and "___CONVERSATION_BOUNDARY___" in message.content:
-                    # Split the content on boundaries
-                    parts = message.content.split("___CONVERSATION_BOUNDARY___")
+                    # If we have accumulated messages, create a group
+                    if current_conversation:
+                        groups.append(MessageGroup(current_conversation, include_context))
+                        current_conversation = []
                     
-                    for i, part in enumerate(parts):
-                        part = part.strip()
-                        if part:  # Skip empty parts
+                    # Check if this is JUST a boundary marker or has additional content
+                    content_without_boundary = message.content.replace("___CONVERSATION_BOUNDARY___", "").strip()
+                    if content_without_boundary:
+                        # There's additional content beyond the boundary marker
+                        # Split the content on boundaries and process each part
+                        parts = message.content.split("___CONVERSATION_BOUNDARY___")
+                        
+                        # Filter out empty parts first
+                        non_empty_parts = [p.strip() for p in parts if p.strip()]
+                        
+                        for i, part in enumerate(non_empty_parts):
                             # Add the part to current conversation
                             msg_copy = ChatMessage(
                                 role=message.role,
@@ -567,9 +596,10 @@ class BatchProcessor:
                             current_conversation.append(msg_copy)
                             
                             # If not the last part, finalize this conversation
-                            if i < len(parts) - 1:
+                            if i < len(non_empty_parts) - 1:
                                 groups.append(MessageGroup(current_conversation, include_context))
                                 current_conversation = []
+                    # If it's just a boundary marker, we already handled creating the group above
                 else:
                     # Regular message without boundaries
                     current_conversation.append(message)
@@ -579,26 +609,42 @@ class BatchProcessor:
                 groups.append(MessageGroup(current_conversation, include_context))
             
             logging.info(f"Created {len(groups)} message groups from boundaries")
+            for idx, group in enumerate(groups):
+                logging.debug(f"Group {idx + 1}: {len(group.messages)} messages")
         
         else:
             # No boundaries - use original logic
-            current_group = []
+            # For sequential processing, we want to group system/tool messages with the next user message
+            system_messages = []
             
             for i, message in enumerate(messages):
                 if message.role == "user":
-                    # Start new group with user message
-                    if current_group:
-                        groups.append(MessageGroup(current_group, include_context))
-                    current_group = [message]
+                    # Create a group with any accumulated system messages + this user message
+                    group_messages = system_messages + [message]
+                    groups.append(MessageGroup(group_messages, include_context))
+                    system_messages = []  # Reset for next group
                 elif message.role in ["system", "tool"]:
-                    # Add to current group
-                    current_group.append(message)
+                    # Accumulate system/tool messages for the next user message
+                    system_messages.append(message)
                 elif message.role == "assistant":
                     # Skip assistant messages - they'll be generated
                     continue
             
-            # Add final group
-            if current_group:
-                groups.append(MessageGroup(current_group, include_context))
+            # If there are leftover system messages without a user message, create a group
+            # (This should be rare but handles edge cases)
+            if system_messages:
+                logging.warning(f"[BATCH PROCESSOR] Found {len(system_messages)} system/tool messages without a user message")
+                groups.append(MessageGroup(system_messages, include_context))
         
+        logging.info(f"[BATCH PROCESSOR] Total groups created: {len(groups)}")
+        for idx, group in enumerate(groups):
+            logging.info(f"[BATCH PROCESSOR] Group {idx}: {len(group.messages)} messages")
+            for msg_idx, msg in enumerate(group.messages):
+                if isinstance(msg.content, str):
+                    content_preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
+                elif isinstance(msg.content, list):
+                    content_preview = f"[{len(msg.content)} parts]"
+                else:
+                    content_preview = str(type(msg.content))
+                logging.info(f"[BATCH PROCESSOR]   - Message {msg_idx}: {msg.role} - {content_preview}")
         return groups
