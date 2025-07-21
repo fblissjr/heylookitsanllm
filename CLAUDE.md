@@ -36,15 +36,29 @@ python tests/test_api.py
 
 ### Installation & Setup
 ```bash
-# Install package in development mode
+# Install package in development mode (includes all dependencies)
 uv pip install -e .
 
-# Install minimal MLX-VLM dependencies
-uv pip install --no-deps mlx-vlm
-uv pip install -r requirements-min.txt
+# Install with performance optimizations (orjson, xxhash, turbojpeg, uvloop)
+uv pip install -e .[performance]
 
 # Compile llama-cpp-python for Metal (macOS)
 CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+```
+
+### Model Import
+```bash
+# Import models from a directory
+heylookllm import --folder ~/modelzoo --output my_models.yaml
+
+# Scan HuggingFace cache
+heylookllm import --hf-cache --profile fast
+
+# Import with specific profile (fast, balanced, quality, memory, interactive)
+heylookllm import --folder ./models --profile quality
+
+# Import with custom overrides
+heylookllm import --folder ~/models --profile fast --override temperature=0.5 --override max_tokens=1024
 ```
 
 ## Project Architecture
@@ -73,7 +87,7 @@ Models are defined in `models.yaml` with the following key fields:
 - `config` - Provider-specific settings (model_path, vision capabilities, etc.)
 
 ### API Compatibility
-- **OpenAI API** - `/v1/models`, `/v1/chat/completions`
+- **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`
 - **Ollama API** - `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`, `/api/embed`
 
 ## Key Design Patterns
@@ -168,6 +182,9 @@ openapi-generator generate -i openapi.json -g typescript-axios -o ./ts-client
 3. **Streaming Responses**: Real-time token generation with SSE
 4. **Batch Processing**: Process multiple prompts efficiently
 5. **No Authentication**: Local server requires no API keys
+6. **Image Resizing**: Server-side image resizing to optimize token usage
+7. **Multipart Upload**: Fast image upload endpoint (57ms faster per image)
+8. **Performance Monitoring**: Real-time performance metrics and optimization status
 
 ### Example Client Usage
 ```python

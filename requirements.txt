@@ -1,4 +1,4 @@
-# requirements-min.txt
+# requirements.txt
 mlx
 datasets
 pillow

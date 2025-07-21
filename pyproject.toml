@@ -31,11 +31,28 @@ dependencies = [
     "numpy",
     "Pillow",
     "mlx-lm",
+    "mlx-vlm",
+    "mlx",
+    "datasets",
+    "tqdm",
+    "transformers",
+    "opencv-python",
+    "scipy",
+    "soundfile",
+    "torch",
+    "torchvision",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-mock>=3"]
+performance = [
+    "orjson>=3.9.0",         # Fast JSON parsing
+    "xxhash>=3.4.0",         # Fast hashing for caching
+    "PyTurboJPEG>=1.7.0",    # Fast JPEG encoding/decoding
+    "uvloop>=0.19.0",        # Fast async event loop
+    "cachetools>=5.3.0",     # Advanced caching
+]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"

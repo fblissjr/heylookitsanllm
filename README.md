@@ -26,8 +26,6 @@ heylookitsanllm --api "both" --api "ollama" --log-level DEBUG --port 8080
 tldr:
 1. clone repo
 2. uv or pip install -e . (this will install llama.cpp cpu but you can compile metal or cuda next)
-3. uv or pip install mlx-vlm without dependencies cuz you don't need gradio or some of their audio dependencies
-4. uv or pip install -r requirements-min.txt so you get the mlx-vlm dependencies that you *do* need
 5. decide if you want to compile llama.cpp with metal or cuda (you're probably using metal if you're here for mlx - if so, compile metal)
 
 
@@ -36,10 +34,20 @@ tldr:
 git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 
+# basic install (includes all needed dependencies now)
 uv pip install -e .
-uv pip install --no-deps mlx-vlm          # skip its mlx-audio chain and gradio
-uv pip install -r requirements-min.txt    # installs minimal dependencies needed
+
+# or, if you want the performance goodies (see [macOS Performance Guide](MACOS_PERFORMANCE.md) for details)
+uv pip install -e .[performance]
 ```
+
+the `[performance]` option gives you:
+- **orjson**: 3-10x faster JSON operations (matters when you're sending images)
+- **xxhash**: 50x faster image hashing for deduplication
+- **turbojpeg**: 4-10x faster JPEG encoding/decoding
+- **uvloop**: faster async event loop (linux/macos only)
+
+these are optional but recommended if you're doing anything serious with vision models or high throughput.
 
 ### 1.2 Decide what flavor of llama.cpp you want
 Install a pre-built llama.cpp binary or compile (my tip: compile if you're on macos/metal or CUDA).
@@ -107,9 +115,66 @@ heylookllm
 heylookllm --log-level DEBUG
 
 # custom host / port
-heylookllm--host 0.0.0.0 --port 4242
+heylookllm --host 0.0.0.0 --port 4242
 ```
+
+### 3.1 Model Import (new!)
+
+tired of manually editing models.yaml? we got you. the import command scans directories and generates model configs with smart defaults:
+
+```bash
+# scan a directory (follows symlinks)
+heylookllm import --folder ~/modelzoo
+
+# scan huggingface cache
+heylookllm import --hf-cache
+
+# use profiles for different use cases
+heylookllm import --folder ~/models --profile fast      # speed optimized
+heylookllm import --folder ~/models --profile quality   # quality optimized
+heylookllm import --folder ~/models --profile memory    # low memory usage
+
+# fine-tune with overrides
+heylookllm import --folder ~/models --profile fast --override temperature=0.5
+```
+
+profiles:
+- `fast`: aggressive sampling, quantized cache for speed
+- `balanced`: default, good middle ground
+- `quality`: conservative sampling, standard cache
+- `memory`: maximum memory savings
+- `interactive`: optimized for chat use
+
+the importer detects:
+- model size from filenames or file sizes
+- vision support (mmproj files, config flags)
+- quantization (4bit, 8bit, etc)
+- model family (llama, qwen, gemma, mistral)
+
+all imported models start disabled, so you can review before enabling.
 
 ## 4. Running Tests
 
 For now, lots of debug tests in the `tests` directory that you can run manually.
+
+## 5. Coming Soon
+
+working on some cool stuff:
+
+### 5.1 DuckDB Integration
+- **request/response logging**: full conversation history in a queryable database
+- **eval tracking**: compare model outputs, track quality over time
+- **analytics**: token usage, response times, model performance metrics
+- **sql your llm**: `SELECT response FROM chats WHERE model='qwen2.5' AND tokens/second > 5`
+
+### 5.2 Example Client Apps
+- **comfyui nodes**: already have [shrug-prompter](https://github.com/heylookitsanllm/shrug-prompter), but now even better with multipart support
+- **native macOS app**: swift UI with model switcher, image drag-n-drop, conversation history
+- **web dashboard**: react app with real-time streaming, model comparison, batch processing
+
+
+### 5.3 Other Goodies
+- **model recommendations**: based on your hardware and use case
+- **automatic model downloads**: point at huggingface, get the right format
+- **performance profiler**: see exactly where time is spent in your requests
+- **fine-tuning integration**: use your conversations to improve models
