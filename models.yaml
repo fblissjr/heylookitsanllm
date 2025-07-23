@@ -5,7 +5,7 @@ max_loaded_models: 1 # For most use cases running on a single machine, set at 1 
 # --- Model Definitions ---
 models:
   # --- MLX Models ---
-  - id: "qwen2.5-vl-72b-mlx"
+  - id: qwen2.5-vl-72b-mlx
     provider: "mlx"
     description: "Qwen2.5 VL Instruct mlx 72b - Massive model, needs optimization"
     tags: ["large", "vision", "72b"]
@@ -238,6 +238,24 @@ models:
     enabled: true
     config:
       model_path: modelzoo/google/medgemma-27b-text-it-8bit-mlx
+      vision: false
+      temperature: 0.9
+      cache_type: quantized
+      kv_bits: 8
+      kv_group_size: 64
+      quantized_kv_start: 1024
+      top_k: 40
+      min_p: 0.05
+      max_tokens: 512
+      repetition_penalty: 1.05
+      repetition_context_size: 20
+
+  - id: qwen3-235B-mlx
+    provider: mlx
+    description: Auto-imported MLX model with vision (27B)
+    enabled: true
+    config:
+      model_path: modelzoo/Qwen/Qwen3-235B-A22B-Instruct-2507-4bit-mlx
       vision: false
       temperature: 0.9
       cache_type: quantized

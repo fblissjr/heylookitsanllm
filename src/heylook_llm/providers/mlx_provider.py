@@ -71,8 +71,22 @@ class LanguageModelLogitsWrapper(nn.Module):
     def __call__(self, *args, **kwargs):
         """Direct logits extraction - the core optimization."""
         # Direct logits extraction avoids creating intermediate objects
-        result = self.language_model(*args, **kwargs)
-        return result.logits if hasattr(result, 'logits') else result
+        try:
+            result = self.language_model(*args, **kwargs)
+            # Check if result has logits attribute
+            if hasattr(result, 'logits'):
+                return result.logits
+            # If result is already logits (tensor), return it
+            elif hasattr(result, 'shape'):
+                return result
+            # Otherwise try to extract logits
+            else:
+                # Log for debugging
+                logging.debug(f"LanguageModelLogitsWrapper: Unexpected result type: {type(result)}")
+                return result
+        except Exception as e:
+            logging.error(f"LanguageModelLogitsWrapper error: {e}")
+            raise
 
     @property
     def layers(self):
@@ -170,13 +184,10 @@ class VLMTextOnlyStrategy:
 
     @time_mlx_operation("generation", "vlm_text")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
-
-        # For text-only requests on VLM models, use the same path as regular text models
-        # This ensures we use the well-tuned mlx_lm path
+        # For VLM models doing text-only generation, we need to use the VLM generation path
+        # with empty images to avoid the LanguageModelOutput subscript error
         
-        # Apply chat template once
-        # Ensure text-only models get string content, not lists
+        # Prepare messages for VLM format
         messages_for_template = []
         for msg in request.messages:
             msg_dict = msg.model_dump(exclude_none=True)
@@ -186,22 +197,28 @@ class VLMTextOnlyStrategy:
                 msg_dict['content'] = ' '.join(text_parts)
             messages_for_template.append(msg_dict)
         
-        prompt = tokenizer.apply_chat_template(
+        # Apply VLM chat template with no images
+        prompt = vlm_apply_chat_template(
+            processor, 
+            model.config,
             messages_for_template,
-            tokenize=False,
-            add_generation_prompt=True
+            num_images=0
         )
-
+        
+        # Use VLM stream generate with empty images
+        images = []  # No images for text-only generation
+        
         # Stream tokens and handle potential leading space issue
         first_token = True
-        for response in lm_stream_generate(
-            model=model.language_model if hasattr(model, 'language_model') else model,
-            tokenizer=tokenizer,
+        for response in vlm_stream_generate(
+            model=model,
+            processor=processor,
             prompt=prompt,
-            sampler=sampler,
-            logits_processors=processors,
+            image=images,
             max_tokens=effective_request['max_tokens'],
-            draft_model=self.draft_model
+            temperature=effective_request.get('temperature', 0.0),
+            top_p=effective_request.get('top_p', 1.0),
+            repetition_penalty=effective_request.get('repetition_penalty', 1.0)
         ):
             # Clean up leading space on first token for models with add_prefix_space
             if first_token and response.text.startswith(' '):
@@ -212,48 +229,6 @@ class VLMTextOnlyStrategy:
             
             yield response
 
-    def _generate_with_speculative_decoding(self, request, effective_request, model, processor, sampler, processors):
-        """Generate with speculative decoding support."""
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
-
-        # Cache the wrapper model to avoid recreation
-        if self._cached_wrapper is None:
-            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
-
-        # Prepare VLM inputs but extract only the text prompt
-        images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config, model)
-
-        # Use mlx-lm with speculative decoding
-        yield from lm_stream_generate(
-            model=self._cached_wrapper,
-            tokenizer=tokenizer,
-            prompt=formatted_prompt,
-            sampler=sampler,
-            logits_processors=processors,
-            max_tokens=effective_request['max_tokens'],
-            draft_model=self.draft_model
-        )
-
-    def _generate_standard_enhanced(self, request, effective_request, model, processor, sampler, processors):
-        """Generate with standard enhanced sampling (no speculative decoding)."""
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
-
-        # Cache the wrapper model to avoid recreation
-        if self._cached_wrapper is None:
-            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
-
-        # Prepare VLM inputs but extract only the text prompt
-        images, formatted_prompt, _ = self._prepare_vlm_inputs(request.messages, processor, model.config, model)
-
-        # Use mlx-lm with advanced sampling
-        yield from lm_stream_generate(
-            model=self._cached_wrapper,
-            tokenizer=tokenizer,
-            prompt=formatted_prompt,
-            sampler=sampler,
-            logits_processors=processors,
-            max_tokens=effective_request['max_tokens']
-        )
 
     def _prepare_vlm_inputs(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs - extracted for reuse."""
@@ -817,6 +792,11 @@ class MLXProvider(BaseProvider):
                         strategy = self._strategies['vlm_text']
                         logging.info(f"[MLX STRATEGY] Using VLM text-only strategy (no images) | Model: {self.model_id}")
 
+                    # Log model type for debugging
+                    logging.debug(f"Model type for {self.model_id}: {type(self.model)}")
+                    if hasattr(self.model, 'language_model'):
+                        logging.debug(f"Language model type: {type(self.model.language_model)}")
+                    
                     yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
 
                 except Exception as e:
