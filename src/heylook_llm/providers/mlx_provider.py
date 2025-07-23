@@ -123,13 +123,25 @@ class TextOnlyStrategy:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
         # Apply chat template once
+        # Ensure text-only models get string content, not lists
+        messages_for_template = []
+        for msg in request.messages:
+            msg_dict = msg.model_dump(exclude_none=True)
+            # If content is a list (multimodal format), extract the text
+            if isinstance(msg_dict.get('content'), list):
+                text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
+                msg_dict['content'] = ' '.join(text_parts)
+            messages_for_template.append(msg_dict)
+        
         prompt = tokenizer.apply_chat_template(
-            [msg.model_dump(exclude_none=True) for msg in request.messages],
+            messages_for_template,
             tokenize=False,
             add_generation_prompt=True
         )
 
-        yield from lm_stream_generate(
+        # Stream tokens and handle potential leading space issue
+        first_token = True
+        for response in lm_stream_generate(
             model=model,
             tokenizer=tokenizer,
             prompt=prompt,
@@ -137,7 +149,15 @@ class TextOnlyStrategy:
             logits_processors=processors,
             max_tokens=effective_request['max_tokens'],
             draft_model=self.draft_model
-        )
+        ):
+            # Clean up leading space on first token for models with add_prefix_space
+            if first_token and response.text.startswith(' '):
+                response.text = response.text.lstrip()
+                first_token = False
+            elif first_token:
+                first_token = False
+            
+            yield response
 
 
 class VLMTextOnlyStrategy:
@@ -152,17 +172,45 @@ class VLMTextOnlyStrategy:
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
-        # Check if we can use speculative decoding
-        if self.draft_model is not None:
-            # Use speculative decoding with enhanced sampling
-            yield from self._generate_with_speculative_decoding(
-                request, effective_request, model, processor, sampler, processors
-            )
-        else:
-            # Use standard enhanced text-only generation
-            yield from self._generate_standard_enhanced(
-                request, effective_request, model, processor, sampler, processors
-            )
+        # For text-only requests on VLM models, use the same path as regular text models
+        # This ensures we use the well-tuned mlx_lm path
+        
+        # Apply chat template once
+        # Ensure text-only models get string content, not lists
+        messages_for_template = []
+        for msg in request.messages:
+            msg_dict = msg.model_dump(exclude_none=True)
+            # If content is a list (multimodal format), extract the text
+            if isinstance(msg_dict.get('content'), list):
+                text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
+                msg_dict['content'] = ' '.join(text_parts)
+            messages_for_template.append(msg_dict)
+        
+        prompt = tokenizer.apply_chat_template(
+            messages_for_template,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        # Stream tokens and handle potential leading space issue
+        first_token = True
+        for response in lm_stream_generate(
+            model=model.language_model if hasattr(model, 'language_model') else model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            sampler=sampler,
+            logits_processors=processors,
+            max_tokens=effective_request['max_tokens'],
+            draft_model=self.draft_model
+        ):
+            # Clean up leading space on first token for models with add_prefix_space
+            if first_token and response.text.startswith(' '):
+                response.text = response.text.lstrip()
+                first_token = False
+            elif first_token:
+                first_token = False
+            
+            yield response
 
     def _generate_with_speculative_decoding(self, request, effective_request, model, processor, sampler, processors):
         """Generate with speculative decoding support."""

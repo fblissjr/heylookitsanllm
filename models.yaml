@@ -41,6 +41,27 @@ models:
       draft_model_path: "modelzoo/Qwen/Qwen2.5-0.5B-Instruct-MLX-4bit"
       num_draft_tokens: 4 # Conservative for large model
 
+  - id: dolphin-mistral
+    provider: mlx
+    description: dolphin mistral venice edition
+    tags:
+      - dolphin
+      - mistral
+    enabled: true
+    config:
+      model_path: modelzoo/Dolphin/Mistral-24B-Venice-Edition-DWQ
+      vision: false
+      temperature: 1.0
+      cache_type: quantized
+      kv_bits: 8
+      kv_group_size: 64
+      quantized_kv_start: 1024
+      top_k: 40
+      min_p: 0.05
+      max_tokens: 512
+      repetition_penalty: 1.05
+      repetition_context_size: 20
+
   - id: "gemma3n-e4b-it"
     provider: "mlx"
     description: "Gemma 3n - Fast small model"
@@ -167,3 +188,64 @@ models:
       n_gpu_layers: -1
       n_ctx: 8192
       vision: false
+
+  - id: SmolVLM2-2.2B-Instruct
+    provider: mlx
+    description: Auto-imported MLX model with vision (2B)
+    tags:
+      - vision
+      - small
+      - instruct
+    enabled: true
+    config:
+      model_path: "/modelzoo/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+      vision: true
+      temperature: 0.7
+      cache_type: standard
+      top_k: 50
+      top_p: 0.95
+      max_tokens: 512
+      repetition_penalty: 1.05
+      repetition_context_size: 20
+
+  - id: gemma3-27b-it-4bit-DWQ-mlx
+    provider: mlx
+    description: Auto-imported MLX model (27B)
+    tags:
+      - quantized
+      - gemma
+    enabled: true
+    config:
+      model_path: modelzoo/mlx-community/gemma3-27b-it-4bit-DWQ-mlx
+      vision: false
+      temperature: 0.9
+      cache_type: quantized
+      kv_bits: 8
+      kv_group_size: 64
+      quantized_kv_start: 1024
+      top_k: 40
+      min_p: 0.05
+      max_tokens: 512
+      repetition_penalty: 1.05
+      repetition_context_size: 20
+
+  - id: medgemma-27b-text-it-8bit-mlx
+    provider: mlx
+    description: Auto-imported MLX model (27B)
+    tags:
+      - quantized
+      - gemma
+    enabled: true
+    config:
+      model_path: modelzoo/google/medgemma-27b-text-it-8bit-mlx
+      vision: false
+      temperature: 0.9
+      cache_type: quantized
+      kv_bits: 8
+      kv_group_size: 64
+      quantized_kv_start: 1024
+      top_k: 40
+      min_p: 0.05
+      max_tokens: 512
+      repetition_penalty: 1.05
+      repetition_context_size: 20
