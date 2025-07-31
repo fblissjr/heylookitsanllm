@@ -1,7 +1,8 @@
 # src/heylook_llm/api.py
 import uuid, time, logging, argparse, sys, asyncio
-from fastapi import FastAPI, HTTPException, Request, Body
+from fastapi import FastAPI, HTTPException, Request, Body, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import Dict, List, AsyncGenerator
 
@@ -17,6 +18,8 @@ from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionRe
 from heylook_llm.providers.common.performance_monitor import performance_monitor
 from heylook_llm.middleware.ollama import OllamaTranslator
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
+from heylook_llm.metrics_db_wrapper import get_metrics_db, init_metrics_db
+from heylook_llm.analytics_config import analytics_config
 
 
 
@@ -40,7 +43,7 @@ app = FastAPI(
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
         },
         {
-            "name": "Ollama API", 
+            "name": "Ollama API",
             "description": "Ollama-compatible endpoints for drop-in replacement of Ollama server"
         },
         {
@@ -48,6 +51,15 @@ app = FastAPI(
             "description": "Performance monitoring and server status endpoints"
         }
     ]
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize Ollama translator
@@ -83,12 +95,12 @@ async def list_models(request: Request):
 Generate text completions from chat messages using the specified model.
 
 **Key Features:**
-- 🚀 Automatic model loading with LRU cache (max 2 models)
-- 📸 Vision model support with base64 images
-- 🌊 Streaming responses (Server-Sent Events)
-- 🎯 Batch processing for multiple prompts
-- 🎲 Reproducible generation with seed parameter
-- ⚡ Metal-optimized inference for MLX models
+- Automatic model loading with LRU cache (max 2 models)
+- Vision model support with base64 images
+- Streaming responses (Server-Sent Events)
+- Batch processing for multiple prompts
+- Reproducible generation with seed parameter
+- Metal-optimized inference for MLX models
 
 **Special Parameters:**
 - `processing_mode`: Control batch behavior ("sequential", "parallel", "conversation")
@@ -110,7 +122,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     request_id = f"req-{uuid.uuid4()}"
 
     request_start_time = time.time()
-    
+
     try:
         # Add start time for processing time calculation
         chat_request._start_time = request_start_time
@@ -122,20 +134,20 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     if chat_request.processing_mode and chat_request.processing_mode != "conversation":
         # Use batch processor for non-conversation modes
         from heylook_llm.batch_processor import BatchProcessor, ProcessingMode
-        
+
         logging.info(f"[API] Processing batch request with mode: {chat_request.processing_mode}")
         logging.info(f"[API] Number of messages in request: {len(chat_request.messages)}")
-        
+
         # Check for any resize parameters in the request
         has_resize_params = any([chat_request.resize_max, chat_request.resize_width, chat_request.resize_height])
         if has_resize_params:
             logging.info(f"[API] Resize parameters found: max={chat_request.resize_max}, "
                        f"width={chat_request.resize_width}, height={chat_request.resize_height}, "
                        f"quality={chat_request.image_quality}, preserve_alpha={chat_request.preserve_alpha}")
-            
+
             # Apply resizing to images in messages
             from heylook_llm.utils_resize import process_image_url_with_resize
-            
+
             for msg in chat_request.messages:
                 if isinstance(msg.content, list):
                     for part in msg.content:
@@ -152,7 +164,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                             if resized_url != original_url:
                                 part.image_url.url = resized_url
                                 logging.info(f"[API] Image resized before processing")
-        
+
         for idx, msg in enumerate(chat_request.messages):
             if isinstance(msg.content, list):
                 parts_info = []
@@ -165,9 +177,9 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                 logging.info(f"[API] Message {idx}: {msg.role} - [{', '.join(parts_info)}]")
             else:
                 logging.info(f"[API] Message {idx}: {msg.role} - {str(msg.content)[:50]}...")
-        
+
         batch_processor = BatchProcessor(router)
-        
+
         # Convert to batch request format
         from heylook_llm.batch_processor import BatchChatRequest
         batch_request = BatchChatRequest(
@@ -186,7 +198,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             return_individual=chat_request.return_individual if chat_request.return_individual is not None else True,
             include_timing=chat_request.include_timing if chat_request.include_timing is not None else False
         )
-        
+
         # Process batch and return
         batch_response = await batch_processor.process_batch_request(batch_request)
         return batch_response.model_dump()
@@ -197,10 +209,10 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     if has_resize_params:
         logging.info(f"[API] Resize parameters found in standard mode: max={chat_request.resize_max}, "
                    f"width={chat_request.resize_width}, height={chat_request.resize_height}")
-        
+
         # Apply resizing to images
         from heylook_llm.utils_resize import process_image_url_with_resize
-        
+
         for msg in chat_request.messages:
             if isinstance(msg.content, list):
                 for part in msg.content:
@@ -216,7 +228,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                         )
                         if resized_url != original_url:
                             part.image_url.url = resized_url
-    
+
     # Start real-time logging
     log_request_start(request_id, chat_request.model)
 
@@ -224,16 +236,16 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     request_dict = chat_request.model_dump()
     from heylook_llm.utils import _analyze_images_in_request
     image_stats = _analyze_images_in_request(request_dict)
-    
+
     # Log enhanced request summary
     log_request_summary(
-        request_id, 
-        chat_request.model, 
+        request_id,
+        chat_request.model,
         has_images=image_stats['count'] > 0,
         image_count=image_stats['count'],
         total_image_size=image_stats['total_size']
     )
-    
+
     # Log detailed image processing info if images are present
     if image_stats['count'] > 0:
         logging.info(f"[IMAGE PROCESSING] Request {request_id[:8]} contains {image_stats['count']} base64 images | "
@@ -241,7 +253,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                    f"Processing via: {'BATCH' if chat_request.processing_mode else 'STANDARD'} API")
         if image_stats['sizes']:
             logging.info(f"[IMAGE PROCESSING] Individual sizes: {', '.join(image_stats['sizes'])}")
-    
+
     # Log full request details if DEBUG level
     if router.log_level <= logging.DEBUG:
         log_full_request_details(request_id, chat_request)
@@ -261,6 +273,26 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
+
+        # Log error to metrics database
+        db = get_metrics_db()
+        if db and db.enabled:
+            try:
+                metrics = {
+                    'timestamp': datetime.now(),
+                    'request_id': request_id,
+                    'model': chat_request.model,
+                    'provider': 'mlx' if 'mlx' in chat_request.model else 'llama_cpp',
+                    'request_type': 'chat_completion',
+                    'total_time_ms': int((time.time() - request_start_time) * 1000),
+                    'success': False,
+                    'error_type': type(e).__name__,
+                    'error_message': str(e)
+                }
+                db.log_request(metrics)
+            except Exception as log_e:
+                logging.error(f"Failed to log error metrics: {log_e}")
+
         raise HTTPException(status_code=500, detail=str(e))
 
     if chat_request.stream:
@@ -313,14 +345,14 @@ async def stream_response_generator_async(generator, model_id, request_id):
     # Create async wrapper for the synchronous generator
     async def chunk_generator():
         loop = asyncio.get_event_loop()
-        
+
         # Convert the synchronous generator to async by running in thread
         def get_next_chunk():
             try:
                 return next(generator)
             except StopIteration:
                 return None
-        
+
         while True:
             chunk = await loop.run_in_executor(None, get_next_chunk)
             if chunk is None:
@@ -373,7 +405,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
             prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
             completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-    
+
     await asyncio.to_thread(consume_generator)
 
     usage_dict = {
@@ -393,15 +425,15 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     # Calculate processing time
     processing_time = time.time() - request_start_time
-    
+
     # Log response summary
     log_response_summary(
-        request_id, 
-        len(full_text), 
+        request_id,
+        len(full_text),
         token_count=completion_tokens or token_count,
         processing_time=processing_time
     )
-    
+
     # Log full response details if DEBUG level
     if router.log_level <= logging.DEBUG:
         log_full_request_details(request_id, chat_request, full_text)
@@ -409,6 +441,34 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     # Log successful completion
     log_request_complete(request_id, success=True)
+
+    # Log to metrics database if enabled
+    db = get_metrics_db()
+    if db and db.enabled:
+        try:
+            metrics = {
+                'timestamp': datetime.now(),
+                'request_id': request_id,
+                'model': chat_request.model,
+                'provider': 'mlx' if 'mlx' in chat_request.model else 'llama_cpp',
+                'request_type': 'chat_completion',
+                'total_time_ms': int(processing_time * 1000),
+                'first_token_ms': 0,  # TODO: track this properly
+                'prompt_tokens': prompt_tokens or 0,
+                'completion_tokens': completion_tokens or token_count,
+                'tokens_per_second': (completion_tokens or token_count) / processing_time if processing_time > 0 else 0,
+                'success': True
+            }
+
+            # Add request/response content based on storage level
+            if analytics_config.should_log_content():
+                metrics['messages'] = chat_request.messages
+                metrics['response_text'] = full_text
+
+            db.log_request(metrics)
+        except Exception as e:
+            logging.error(f"Failed to log metrics: {e}")
+
     return response
 
 # =============================================================================
@@ -449,11 +509,11 @@ async def ollama_chat(request: Request):
 
     try:
         body = await request.json()
-        
+
         # Analyze request for image metadata before translation
         from heylook_llm.utils import _analyze_images_in_dict
         image_stats = _analyze_images_in_dict(body)
-        
+
         # Log request details including image info
         logging.info(f"📥 OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
         if router.log_level <= logging.DEBUG:
@@ -481,7 +541,7 @@ async def ollama_chat(request: Request):
                 full_text += chunk.text
                 prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
                 completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        
+
         await asyncio.to_thread(consume_generator)
 
         # Create OpenAI-style response
@@ -509,7 +569,7 @@ async def ollama_chat(request: Request):
         processing_time = time.time() - request_start_time
         response_length = len(full_text)
         logging.info(f"📤 OLLAMA CHAT RESPONSE | {response_length} chars | {processing_time:.2f}s")
-        
+
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Returning Ollama chat response: {json.dumps(ollama_response, indent=2)}")
         return JSONResponse(content=ollama_response)
@@ -526,11 +586,11 @@ async def ollama_generate(request: Request):
 
     try:
         body = await request.json()
-        
+
         # Analyze request for image metadata before translation
         from heylook_llm.utils import _analyze_images_in_dict
         image_stats = _analyze_images_in_dict(body)
-        
+
         # Log request details including image info
         logging.info(f"📥 OLLAMA GENERATE REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
         if router.log_level <= logging.DEBUG:
@@ -558,7 +618,7 @@ async def ollama_generate(request: Request):
                 full_text += chunk.text
                 prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
                 completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        
+
         await asyncio.to_thread(consume_generator)
 
         # Create OpenAI-style response
@@ -586,7 +646,7 @@ async def ollama_generate(request: Request):
         processing_time = time.time() - request_start_time
         response_length = len(full_text)
         logging.info(f"📤 OLLAMA GENERATE RESPONSE | {response_length} chars | {processing_time:.2f}s")
-        
+
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Returning Ollama generate response: {json.dumps(ollama_response, indent=2)}")
         return JSONResponse(content=ollama_response)
@@ -921,6 +981,1249 @@ async def performance_metrics():
     }
 
 
+@app.get("/v1/data/summary",
+    summary="Get Analytics Summary",
+    description="""
+Get pre-computed analytics summary for dashboards.
+
+**Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true
+
+**Returns:**
+- total_requests: Total number of requests
+- avg_response_time: Average response time in ms
+- tokens_per_second: Average tokens per second
+- error_rate: Error rate as percentage
+- model_usage: Request count by model
+- recent_activity: Time-series data for charts
+    """,
+    response_description="Analytics summary data",
+    tags=["Monitoring"]
+)
+async def data_summary():
+    """Get analytics summary for dashboard."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        return {
+            "error": "Analytics not enabled",
+            "message": "Set HEYLOOK_ANALYTICS_ENABLED=true to enable analytics"
+        }
+
+    db = get_metrics_db()
+    if not db:
+        return {"error": "Metrics database not initialized"}
+
+    try:
+        # Get summary metrics
+        summary_query = """
+            SELECT
+                COUNT(*) as total_requests,
+                AVG(total_time_ms) as avg_response_time,
+                AVG(tokens_per_second) as avg_tokens_per_second,
+                SUM(CASE WHEN success = false THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as error_rate
+            FROM request_logs
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+        """
+
+        summary_result = db.execute_query(summary_query)
+        if "error" in summary_result:
+            return summary_result
+
+        # Get model usage
+        model_query = """
+            SELECT
+                model,
+                COUNT(*) as count
+            FROM request_logs
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+            GROUP BY model
+            ORDER BY count DESC
+        """
+
+        model_result = db.execute_query(model_query)
+
+        # Get time series data for charts
+        timeseries_query = """
+            SELECT
+                DATE_TRUNC('minute', timestamp) as time,
+                COUNT(*) as requests,
+                AVG(total_time_ms) as avg_response_time
+            FROM request_logs
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
+            GROUP BY time
+            ORDER BY time
+        """
+
+        timeseries_result = db.execute_query(timeseries_query)
+
+        # Format response
+        summary_data = summary_result.get("data", [[0, 0, 0, 0]])[0] if summary_result.get("data") else [0, 0, 0, 0]
+
+        return {
+            "total_requests": int(summary_data[0]) if len(summary_data) > 0 else 0,
+            "avg_response_time": float(summary_data[1]) if len(summary_data) > 1 else 0,
+            "tokens_per_second": float(summary_data[2]) if len(summary_data) > 2 else 0,
+            "error_rate": float(summary_data[3]) if len(summary_data) > 3 else 0,
+            "model_usage": [
+                {"name": row[0], "value": row[1]}
+                for row in model_result.get("data", [])
+            ],
+            "time_series": [
+                {"time": row[0], "requests": row[1], "responseTime": row[2]}
+                for row in timeseries_result.get("data", [])
+            ]
+        }
+
+    except Exception as e:
+        logging.error(f"Error getting analytics summary: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/v1/data/query",
+    summary="Execute Analytics Query",
+    description="""
+Execute SQL queries against the analytics database.
+
+**Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true
+
+**Request body:**
+- query: SQL query to execute
+- limit: Maximum rows to return (default: 1000)
+
+**Returns:**
+- columns: List of column names
+- data: Query results as list of rows
+- row_count: Number of rows returned
+
+**Available tables:**
+- request_logs: Detailed request/response metrics
+- model_switches: Model loading/unloading events
+- performance_summary: Aggregated performance data
+
+**Example queries:**
+- `SELECT * FROM request_logs WHERE total_time_ms > 1000`
+- `SELECT model, AVG(tokens_per_second) FROM request_logs GROUP BY model`
+    """,
+    response_description="Query results with columns and data",
+    tags=["Monitoring"]
+)
+async def data_query(request: Request):
+    """Execute SQL query against analytics database."""
+    try:
+        body = await request.json()
+        query = body.get("query", "")
+        limit = body.get("limit", 1000)
+
+        if not query:
+            raise HTTPException(status_code=400, detail="Query parameter is required")
+
+        # Check if analytics is enabled
+        if not analytics_config.enabled:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "Analytics not enabled",
+                    "message": "Set HEYLOOK_ANALYTICS_ENABLED=true to enable analytics"
+                }
+            )
+
+        # Get metrics database
+        db = get_metrics_db()
+        if not db:
+            raise HTTPException(
+                status_code=503,
+                detail="Metrics database not initialized"
+            )
+
+        # Execute query
+        result = db.execute_query(query, limit)
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error executing query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/data/request/{request_id}",
+    summary="Get Request Details",
+    description="""
+Get detailed information about a specific request by ID.
+
+**Note:** Analytics must be enabled with storage_level=full for complete data
+
+**Returns:**
+- Full request details including messages
+- Response content
+- Timing breakdown
+- Token counts
+- Error information (if any)
+    """,
+    response_description="Complete request details",
+    tags=["Monitoring"]
+)
+async def get_request_details(request_id: str):
+    """Get detailed information about a specific request."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        # Get request details
+        request_data = db.get_request_by_id(request_id)
+
+        if not request_data:
+            raise HTTPException(status_code=404, detail=f"Request {request_id} not found")
+
+        # Convert to JSON-serializable format
+        # Handle messages which might be stored as JSON string
+        messages = request_data.get("messages")
+        if isinstance(messages, str):
+            try:
+                import json
+                messages = json.loads(messages)
+            except:
+                messages = None
+
+        result = {
+            "request_id": request_data.get("request_id"),
+            "timestamp": str(request_data.get("timestamp")) if request_data.get("timestamp") else None,
+            "model": request_data.get("model"),
+            "provider": request_data.get("provider"),
+            "request_type": request_data.get("request_type"),
+            "messages": messages,
+            "response_text": request_data.get("response_text"),
+            "num_images": request_data.get("num_images", 0),
+            "num_messages": request_data.get("num_messages"),
+            "max_tokens": request_data.get("max_tokens"),
+            "temperature": request_data.get("temperature"),
+            "timing": {
+                "total_ms": request_data.get("total_time_ms"),
+                "queue_ms": request_data.get("queue_time_ms"),
+                "model_load_ms": request_data.get("model_load_time_ms"),
+                "image_processing_ms": request_data.get("image_processing_ms"),
+                "token_generation_ms": request_data.get("token_generation_ms"),
+                "first_token_ms": request_data.get("first_token_ms")
+            },
+            "tokens": {
+                "prompt": request_data.get("prompt_tokens"),
+                "completion": request_data.get("completion_tokens"),
+                "total": (request_data.get("prompt_tokens", 0) or 0) + (request_data.get("completion_tokens", 0) or 0),
+                "per_second": request_data.get("tokens_per_second")
+            },
+            "resources": {
+                "memory_gb": request_data.get("memory_used_gb"),
+                "gpu_utilization": request_data.get("gpu_utilization")
+            },
+            "status": {
+                "success": request_data.get("success"),
+                "error_type": request_data.get("error_type"),
+                "error_message": request_data.get("error_message")
+            }
+        }
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching request details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/replay/{request_id}",
+    summary="Replay Request",
+    description="""
+Replay a previous request with optional parameter modifications.
+
+**Note:** Analytics must be enabled for request history
+
+**Request body (optional):**
+- model: Override the original model
+- temperature: Override temperature
+- max_tokens: Override max tokens
+- system_message: Add/override system message
+
+**Returns:**
+- Original request details
+- Modified parameters
+- New response
+- Comparison metrics
+    """,
+    response_description="Replay results with comparison",
+    tags=["Monitoring"]
+)
+async def replay_request(request_id: str, request: Request):
+    """Replay a previous request with modifications."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        # Get original request
+        original_request = db.get_request_by_id(request_id)
+
+        if not original_request:
+            raise HTTPException(status_code=404, detail=f"Request {request_id} not found")
+
+        # Parse messages if stored as JSON string
+        messages = original_request.get("messages")
+        if isinstance(messages, str):
+            import json
+            messages = json.loads(messages)
+
+        if not messages:
+            raise HTTPException(status_code=400, detail="Original request has no messages")
+
+        # Get modification parameters
+        body = await request.json() if request.body else {}
+
+        # Build modified request
+        modified_model = body.get("model", original_request.get("model"))
+        modified_temperature = body.get("temperature", original_request.get("temperature", 0.7))
+        modified_max_tokens = body.get("max_tokens", original_request.get("max_tokens", 1000))
+
+        # Add system message if provided
+        if "system_message" in body:
+            # Check if first message is already a system message
+            if messages[0].get("role") == "system":
+                messages[0]["content"] = body["system_message"]
+            else:
+                messages.insert(0, {"role": "system", "content": body["system_message"]})
+
+        # Create chat request
+        chat_request = ChatRequest(
+            model=modified_model,
+            messages=messages,
+            temperature=modified_temperature,
+            max_tokens=modified_max_tokens,
+            stream=False
+        )
+
+        # Get router from app state
+        router = request.app.state.router
+
+        # Record start time
+        start_time = time.time()
+
+        # Process the request using the same flow as chat completions
+        provider = router.get_provider(chat_request.model)
+        generator = provider.create_chat_completion(chat_request)
+
+        # Collect the response
+        full_text = ""
+        token_count = 0
+        for chunk in generator:
+            if chunk.text:
+                full_text += chunk.text
+                token_count += 1
+
+        # Calculate processing time
+        processing_time = time.time() - start_time
+
+        # Build comparison result
+        result = {
+            "original": {
+                "request_id": original_request.get("request_id"),
+                "model": original_request.get("model"),
+                "temperature": original_request.get("temperature"),
+                "max_tokens": original_request.get("max_tokens"),
+                "response_text": original_request.get("response_text"),
+                "total_time_ms": original_request.get("total_time_ms"),
+                "tokens_per_second": original_request.get("tokens_per_second")
+            },
+            "replay": {
+                "model": modified_model,
+                "temperature": modified_temperature,
+                "max_tokens": modified_max_tokens,
+                "response_text": full_text,
+                "total_time_ms": int(processing_time * 1000),
+                "tokens_per_second": token_count / processing_time if processing_time > 0 else 0,
+                "total_tokens": token_count
+            },
+            "modifications": {
+                "model_changed": modified_model != original_request.get("model"),
+                "temperature_changed": modified_temperature != original_request.get("temperature"),
+                "max_tokens_changed": modified_max_tokens != original_request.get("max_tokens"),
+                "system_message_added": "system_message" in body
+            }
+        }
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error replaying request: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/eval/create",
+    summary="Create Evaluation Set",
+    description="""
+Create a new evaluation set for model testing.
+
+**Request body:**
+- name: Evaluation set name
+- description: Optional description
+- prompts: Array of evaluation prompts
+  - prompt: The test prompt
+  - expected_contains: Optional array of strings that should appear in response
+  - expected_format: Optional format validation (json, code, markdown)
+  - tags: Optional tags for categorization
+
+**Returns:**
+- eval_id: Unique evaluation set ID
+- created_at: Creation timestamp
+- prompt_count: Number of test prompts
+    """,
+    response_description="Created evaluation set details",
+    tags=["Evaluation"]
+)
+async def create_eval_set(request: Request):
+    """Create a new evaluation set."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        body = await request.json()
+
+        # Validate required fields
+        if not body.get("name"):
+            raise HTTPException(status_code=400, detail="Evaluation set name is required")
+
+        if not body.get("prompts") or not isinstance(body.get("prompts"), list):
+            raise HTTPException(status_code=400, detail="Prompts array is required")
+
+        import uuid
+        import json
+        from datetime import datetime
+
+        eval_id = str(uuid.uuid4())
+
+        # Store evaluation set
+        db.conn.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_sets (
+                eval_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                prompts TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        db.conn.execute("""
+            INSERT INTO evaluation_sets (eval_id, name, description, prompts)
+            VALUES (?, ?, ?, ?)
+        """, [
+            eval_id,
+            body.get("name"),
+            body.get("description", ""),
+            json.dumps(body.get("prompts"))
+        ])
+
+        return {
+            "eval_id": eval_id,
+            "name": body.get("name"),
+            "description": body.get("description", ""),
+            "prompt_count": len(body.get("prompts")),
+            "created_at": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error creating evaluation set: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/eval/run",
+    summary="Run Evaluation",
+    description="""
+Run an evaluation set against one or more models.
+
+**Request body:**
+- eval_id: Evaluation set ID
+- models: Array of model IDs to test
+- iterations: Number of iterations per prompt (default: 1)
+- parameters: Optional generation parameters
+  - temperature: Override temperature
+  - max_tokens: Override max tokens
+
+**Returns:**
+- run_id: Unique run ID
+- status: Run status
+- progress: Progress information
+    """,
+    response_description="Evaluation run details",
+    tags=["Evaluation"]
+)
+async def run_evaluation(request: Request, background_tasks: BackgroundTasks):
+    """Run an evaluation set against models."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        body = await request.json()
+
+        # Validate required fields
+        if not body.get("eval_id"):
+            raise HTTPException(status_code=400, detail="eval_id is required")
+
+        if not body.get("models") or not isinstance(body.get("models"), list):
+            raise HTTPException(status_code=400, detail="Models array is required")
+
+        # Get evaluation set
+        result = db.conn.execute("""
+            SELECT prompts FROM evaluation_sets WHERE eval_id = ?
+        """, [body.get("eval_id")]).fetchone()
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Evaluation set not found")
+
+        import json
+        prompts = json.loads(result[0])
+
+        import uuid
+        run_id = str(uuid.uuid4())
+
+        # Create evaluation run table
+        db.conn.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_runs (
+                run_id TEXT PRIMARY KEY,
+                eval_id TEXT NOT NULL,
+                models TEXT NOT NULL,
+                iterations INTEGER DEFAULT 1,
+                parameters TEXT,
+                status TEXT DEFAULT 'running',
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                results TEXT,
+                progress INTEGER DEFAULT 0,
+                total INTEGER
+            )
+        """)
+
+        # Insert run record
+        db.conn.execute("""
+            INSERT INTO evaluation_runs (run_id, eval_id, models, iterations, parameters, total)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [
+            run_id,
+            body.get("eval_id"),
+            json.dumps(body.get("models")),
+            body.get("iterations", 1),
+            json.dumps(body.get("parameters", {})),
+            len(prompts) * len(body.get("models")) * body.get("iterations", 1)
+        ])
+
+        # Run evaluation in background
+        background_tasks.add_task(
+            _run_evaluation_async,
+            run_id,
+            body.get("eval_id"),
+            prompts,
+            body.get("models"),
+            body.get("iterations", 1),
+            body.get("parameters", {})
+        )
+
+        return {
+            "run_id": run_id,
+            "eval_id": body.get("eval_id"),
+            "models": body.get("models"),
+            "status": "running",
+            "progress": {
+                "completed": 0,
+                "total": len(prompts) * len(body.get("models")) * body.get("iterations", 1)
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error running evaluation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _run_evaluation_async(run_id, eval_id, prompts, models, iterations, parameters):
+    """Run evaluation asynchronously."""
+    db = get_metrics_db()
+    if not db:
+        return
+
+    import json
+    import time
+    results = {}
+    completed = 0
+
+    try:
+        for model_id in models:
+            results[model_id] = []
+
+            for prompt_data in prompts:
+                prompt_results = []
+
+                for i in range(iterations):
+                    try:
+                        # Build request
+                        messages = [{"role": "user", "content": prompt_data.get("prompt")}]
+
+                        # Run completion
+                        start_time = time.time()
+
+                        # Use existing chat completion logic
+                        from .router import router
+                        response = await router.create_chat_completion(
+                            model=model_id,
+                            messages=messages,
+                            temperature=parameters.get("temperature", 0.7),
+                            max_tokens=parameters.get("max_tokens", 1000),
+                            stream=False
+                        )
+
+                        end_time = time.time()
+                        response_text = response.choices[0].message.content
+
+                        # Check expected contains
+                        passed_checks = []
+                        if prompt_data.get("expected_contains"):
+                            for expected in prompt_data.get("expected_contains", []):
+                                passed_checks.append({
+                                    "type": "contains",
+                                    "expected": expected,
+                                    "passed": expected.lower() in response_text.lower()
+                                })
+
+                        prompt_results.append({
+                            "iteration": i + 1,
+                            "response": response_text,
+                            "time_ms": int((end_time - start_time) * 1000),
+                            "tokens": response.usage.total_tokens if hasattr(response, 'usage') else None,
+                            "checks": passed_checks,
+                            "passed": all(check.get("passed", True) for check in passed_checks)
+                        })
+
+                    except Exception as e:
+                        prompt_results.append({
+                            "iteration": i + 1,
+                            "error": str(e),
+                            "passed": False
+                        })
+
+                    completed += 1
+
+                    # Update progress
+                    db.conn.execute("""
+                        UPDATE evaluation_runs
+                        SET progress = ?
+                        WHERE run_id = ?
+                    """, [completed, run_id])
+
+                results[model_id].append({
+                    "prompt": prompt_data.get("prompt"),
+                    "tags": prompt_data.get("tags", []),
+                    "results": prompt_results,
+                    "summary": {
+                        "avg_time_ms": sum(r.get("time_ms", 0) for r in prompt_results if "time_ms" in r) / len(prompt_results) if prompt_results else 0,
+                        "success_rate": sum(1 for r in prompt_results if r.get("passed", False)) / len(prompt_results) if prompt_results else 0
+                    }
+                })
+
+        # Update run as completed
+        db.conn.execute("""
+            UPDATE evaluation_runs
+            SET status = 'completed',
+                completed_at = CURRENT_TIMESTAMP,
+                results = ?
+            WHERE run_id = ?
+        """, [json.dumps(results), run_id])
+
+    except Exception as e:
+        # Mark as failed
+        db.conn.execute("""
+            UPDATE evaluation_runs
+            SET status = 'failed',
+                completed_at = CURRENT_TIMESTAMP,
+                results = ?
+            WHERE run_id = ?
+        """, [json.dumps({"error": str(e)}), run_id])
+
+
+@app.get("/v1/eval/run/{run_id}",
+    summary="Get Evaluation Run Status",
+    description="""
+Get the status and results of an evaluation run.
+
+**Returns:**
+- run_id: Run ID
+- status: Current status (running, completed, failed)
+- progress: Progress information
+- results: Results by model (when completed)
+    """,
+    response_description="Evaluation run status and results",
+    tags=["Evaluation"]
+)
+async def get_evaluation_run(run_id: str):
+    """Get evaluation run status and results."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        result = db.conn.execute("""
+            SELECT eval_id, models, iterations, parameters, status,
+                   started_at, completed_at, results, progress, total
+            FROM evaluation_runs
+            WHERE run_id = ?
+        """, [run_id]).fetchone()
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Evaluation run not found")
+
+        import json
+
+        response = {
+            "run_id": run_id,
+            "eval_id": result[0],
+            "models": json.loads(result[1]),
+            "iterations": result[2],
+            "parameters": json.loads(result[3]) if result[3] else {},
+            "status": result[4],
+            "started_at": str(result[5]) if result[5] else None,
+            "completed_at": str(result[6]) if result[6] else None,
+            "progress": {
+                "completed": result[8] or 0,
+                "total": result[9] or 0
+            }
+        }
+
+        # Include results if completed
+        if result[4] == "completed" and result[7]:
+            response["results"] = json.loads(result[7])
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting evaluation run: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/eval/list",
+    summary="List Evaluation Sets",
+    description="""
+List all available evaluation sets.
+
+**Returns:**
+Array of evaluation sets with:
+- eval_id: Unique ID
+- name: Evaluation set name
+- description: Description
+- prompt_count: Number of prompts
+- created_at: Creation timestamp
+    """,
+    response_description="List of evaluation sets",
+    tags=["Evaluation"]
+)
+async def list_evaluation_sets():
+    """List all evaluation sets."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        # Create table if not exists
+        db.conn.execute("""
+            CREATE TABLE IF NOT EXISTS evaluation_sets (
+                eval_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                prompts TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        results = db.conn.execute("""
+            SELECT eval_id, name, description, prompts, created_at
+            FROM evaluation_sets
+            ORDER BY created_at DESC
+        """).fetchall()
+
+        import json
+
+        eval_sets = []
+        for row in results:
+            prompts = json.loads(row[3])
+            eval_sets.append({
+                "eval_id": row[0],
+                "name": row[1],
+                "description": row[2] or "",
+                "prompt_count": len(prompts),
+                "created_at": str(row[4]) if row[4] else None
+            })
+
+        return {"evaluation_sets": eval_sets}
+
+    except Exception as e:
+        logging.error(f"Error listing evaluation sets: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/performance/profile/{time_range}",
+    summary="Get Performance Profile",
+    description="""
+Get detailed performance profiling data for the specified time range.
+
+**Path parameters:**
+- time_range: Time range (1h, 6h, 24h, 7d)
+
+**Returns:**
+- Timing breakdowns by operation type
+- Resource utilization over time
+- Bottleneck analysis
+- Performance trends
+    """,
+    response_description="Performance profiling data",
+    tags=["Monitoring"]
+)
+async def get_performance_profile(time_range: str):
+    """Get performance profiling data."""
+    # Check if analytics is enabled
+    if not analytics_config.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics not enabled. Set HEYLOOK_ANALYTICS_ENABLED=true"
+        )
+
+    db = get_metrics_db()
+    if not db:
+        raise HTTPException(status_code=500, detail="Metrics database not initialized")
+
+    try:
+        # Convert time range to hours
+        hours_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+        hours = hours_map.get(time_range, 1)
+
+        # Get timing breakdown
+        timing_breakdown = db.conn.execute("""
+            SELECT
+                CASE
+                    WHEN queue_time_ms > 0 THEN 'queue'
+                    WHEN model_load_time_ms > 0 THEN 'model_load'
+                    WHEN image_processing_ms > 0 THEN 'image_processing'
+                    WHEN token_generation_ms > 0 THEN 'token_generation'
+                    ELSE 'other'
+                END as operation,
+                AVG(CASE
+                    WHEN queue_time_ms > 0 THEN queue_time_ms
+                    WHEN model_load_time_ms > 0 THEN model_load_time_ms
+                    WHEN image_processing_ms > 0 THEN image_processing_ms
+                    WHEN token_generation_ms > 0 THEN token_generation_ms
+                    ELSE total_time_ms
+                END) as avg_time_ms,
+                COUNT(*) as count
+            FROM request_logs
+            WHERE timestamp > datetime('now', '-' || ? || ' hours')
+            GROUP BY operation
+        """, [hours]).fetchall()
+
+        # Get resource utilization over time
+        resource_timeline = db.conn.execute("""
+            SELECT
+                strftime('%Y-%m-%d %H:00:00', timestamp) as hour,
+                AVG(memory_used_gb) as avg_memory_gb,
+                AVG(gpu_utilization) as avg_gpu_percent,
+                AVG(tokens_per_second) as avg_tps,
+                COUNT(*) as requests
+            FROM request_logs
+            WHERE timestamp > datetime('now', '-' || ? || ' hours')
+            GROUP BY hour
+            ORDER BY hour
+        """, [hours]).fetchall()
+
+        # Get bottleneck analysis
+        bottlenecks = db.conn.execute("""
+            SELECT
+                model,
+                AVG(total_time_ms) as avg_total_ms,
+                AVG(queue_time_ms) as avg_queue_ms,
+                AVG(model_load_time_ms) as avg_load_ms,
+                AVG(image_processing_ms) as avg_image_ms,
+                AVG(token_generation_ms) as avg_generation_ms,
+                AVG(first_token_ms) as avg_first_token_ms,
+                COUNT(*) as request_count
+            FROM request_logs
+            WHERE timestamp > datetime('now', '-' || ? || ' hours')
+            GROUP BY model
+            ORDER BY avg_total_ms DESC
+        """, [hours]).fetchall()
+
+        # Get performance trends
+        trends = db.conn.execute("""
+            WITH hourly_stats AS (
+                SELECT
+                    strftime('%Y-%m-%d %H:00:00', timestamp) as hour,
+                    AVG(total_time_ms) as avg_response_time,
+                    AVG(tokens_per_second) as avg_tps,
+                    COUNT(*) as requests,
+                    SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as errors
+                FROM request_logs
+                WHERE timestamp > datetime('now', '-' || ? || ' hours')
+                GROUP BY hour
+            )
+            SELECT
+                hour,
+                avg_response_time,
+                avg_tps,
+                requests,
+                errors,
+                LAG(avg_response_time) OVER (ORDER BY hour) as prev_response_time,
+                LAG(avg_tps) OVER (ORDER BY hour) as prev_tps
+            FROM hourly_stats
+            ORDER BY hour
+        """, [hours]).fetchall()
+
+        return {
+            "time_range": time_range,
+            "timing_breakdown": [
+                {
+                    "operation": row[0],
+                    "avg_time_ms": row[1],
+                    "count": row[2],
+                    "percentage": 0  # Will calculate client-side
+                }
+                for row in timing_breakdown
+            ],
+            "resource_timeline": [
+                {
+                    "timestamp": row[0],
+                    "memory_gb": row[1],
+                    "gpu_percent": row[2],
+                    "tokens_per_second": row[3],
+                    "requests": row[4]
+                }
+                for row in resource_timeline
+            ],
+            "bottlenecks": [
+                {
+                    "model": row[0],
+                    "avg_total_ms": row[1],
+                    "breakdown": {
+                        "queue": row[2] or 0,
+                        "model_load": row[3] or 0,
+                        "image_processing": row[4] or 0,
+                        "token_generation": row[5] or 0,
+                        "first_token": row[6] or 0
+                    },
+                    "request_count": row[7]
+                }
+                for row in bottlenecks
+            ],
+            "trends": [
+                {
+                    "hour": row[0],
+                    "response_time_ms": row[1],
+                    "tokens_per_second": row[2],
+                    "requests": row[3],
+                    "errors": row[4],
+                    "response_time_change": (row[1] - row[5]) / row[5] * 100 if row[5] else 0,
+                    "tps_change": (row[2] - row[6]) / row[6] * 100 if row[6] else 0
+                }
+                for row in trends
+            ]
+        }
+
+    except Exception as e:
+        logging.error(f"Error getting performance profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/batch/process",
+    summary="Batch Process Prompts",
+    description="""
+Process multiple prompts in batch with progress tracking.
+
+**Request body:**
+- prompts: Array of prompt objects containing:
+  - id: Unique identifier for the prompt
+  - content: The prompt text
+  - model: Model to use (optional, uses default if not specified)
+  - temperature: Temperature override (optional)
+  - max_tokens: Max tokens override (optional)
+  - metadata: Any additional metadata (optional)
+- defaults: Default parameters for all prompts
+  - model: Default model to use
+  - temperature: Default temperature
+  - max_tokens: Default max tokens
+- batch_config: Batch processing configuration
+  - parallelism: Number of concurrent requests (default: 3)
+  - retry_failed: Whether to retry failed requests (default: true)
+  - max_retries: Maximum retry attempts (default: 2)
+
+**Returns:**
+- batch_id: Unique batch processing ID
+- status: Current batch status
+- progress: Progress information
+    """,
+    response_description="Batch processing status",
+    tags=["Batch Processing"]
+)
+async def batch_process(request: Request, background_tasks: BackgroundTasks):
+    """Process multiple prompts in batch."""
+    try:
+        body = await request.json()
+
+        # Validate required fields
+        if not body.get("prompts") or not isinstance(body.get("prompts"), list):
+            raise HTTPException(status_code=400, detail="Prompts array is required")
+
+        # Get defaults
+        defaults = body.get("defaults", {})
+        if not defaults.get("model"):
+            # Try to get from first prompt or use default
+            first_model = next((p.get("model") for p in body["prompts"] if p.get("model")), None)
+            if not first_model:
+                raise HTTPException(status_code=400, detail="Default model is required")
+            defaults["model"] = first_model
+
+        # Get batch config
+        batch_config = body.get("batch_config", {})
+        parallelism = min(batch_config.get("parallelism", 3), 10)  # Cap at 10
+        retry_failed = batch_config.get("retry_failed", True)
+        max_retries = batch_config.get("max_retries", 2)
+
+        import uuid
+        from datetime import datetime
+
+        batch_id = str(uuid.uuid4())
+
+        # Store batch status in memory (in production, use Redis or DB)
+        if not hasattr(app.state, "batch_jobs"):
+            app.state.batch_jobs = {}
+
+        app.state.batch_jobs[batch_id] = {
+            "batch_id": batch_id,
+            "status": "processing",
+            "created_at": datetime.utcnow().isoformat(),
+            "total": len(body["prompts"]),
+            "completed": 0,
+            "failed": 0,
+            "results": [],
+            "errors": []
+        }
+
+        # Start background processing
+        background_tasks.add_task(
+            _process_batch_async,
+            batch_id,
+            body["prompts"],
+            defaults,
+            parallelism,
+            retry_failed,
+            max_retries
+        )
+
+        return {
+            "batch_id": batch_id,
+            "status": "processing",
+            "progress": {
+                "total": len(body["prompts"]),
+                "completed": 0,
+                "failed": 0,
+                "percent": 0
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error starting batch processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/batch/{batch_id}",
+    summary="Get Batch Status",
+    description="""Get the status and results of a batch processing job.""",
+    response_description="Batch processing status and results",
+    tags=["Batch Processing"]
+)
+async def get_batch_status(batch_id: str):
+    """Get batch processing status."""
+    if not hasattr(app.state, "batch_jobs") or batch_id not in app.state.batch_jobs:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    batch_job = app.state.batch_jobs[batch_id]
+
+    return {
+        "batch_id": batch_id,
+        "status": batch_job["status"],
+        "created_at": batch_job["created_at"],
+        "progress": {
+            "total": batch_job["total"],
+            "completed": batch_job["completed"],
+            "failed": batch_job["failed"],
+            "percent": (batch_job["completed"] / batch_job["total"] * 100) if batch_job["total"] > 0 else 0
+        },
+        "results": batch_job["results"] if batch_job["status"] == "completed" else [],
+        "errors": batch_job["errors"]
+    }
+
+
+async def _process_batch_async(batch_id, prompts, defaults, parallelism, retry_failed, max_retries):
+    """Process batch requests asynchronously."""
+    import asyncio
+    import aiohttp
+    from datetime import datetime
+
+    batch_job = app.state.batch_jobs[batch_id]
+
+    async def process_prompt(session, prompt, attempt=0):
+        """Process a single prompt."""
+        prompt_id = prompt.get("id", f"prompt_{prompts.index(prompt)}")
+
+        try:
+            # Merge defaults with prompt-specific settings
+            model = prompt.get("model", defaults.get("model"))
+            temperature = prompt.get("temperature", defaults.get("temperature", 0.7))
+            max_tokens = prompt.get("max_tokens", defaults.get("max_tokens", 1000))
+
+            # Build request
+            request_data = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt["content"]}],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False
+            }
+
+            start_time = datetime.utcnow()
+
+            # Make request to local server
+            async with session.post(
+                "http://localhost:8080/v1/chat/completions",
+                json=request_data
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    end_time = datetime.utcnow()
+
+                    return {
+                        "prompt_id": prompt_id,
+                        "status": "success",
+                        "model": model,
+                        "response": result["choices"][0]["message"]["content"],
+                        "usage": result.get("usage", {}),
+                        "duration_ms": int((end_time - start_time).total_seconds() * 1000),
+                        "metadata": prompt.get("metadata", {})
+                    }
+                else:
+                    error_text = await response.text()
+                    raise Exception(f"HTTP {response.status}: {error_text}")
+
+        except Exception as e:
+            error_msg = str(e)
+
+            # Retry logic
+            if retry_failed and attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                return await process_prompt(session, prompt, attempt + 1)
+
+            return {
+                "prompt_id": prompt_id,
+                "status": "failed",
+                "error": error_msg,
+                "attempts": attempt + 1,
+                "metadata": prompt.get("metadata", {})
+            }
+
+    async def process_batch():
+        """Process all prompts with controlled parallelism."""
+        connector = aiohttp.TCPConnector(limit=parallelism)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            tasks = []
+
+            for i in range(0, len(prompts), parallelism):
+                batch = prompts[i:i + parallelism]
+                batch_tasks = [process_prompt(session, prompt) for prompt in batch]
+
+                # Process batch and update progress
+                results = await asyncio.gather(*batch_tasks)
+
+                for result in results:
+                    if result["status"] == "success":
+                        batch_job["completed"] += 1
+                        batch_job["results"].append(result)
+                    else:
+                        batch_job["failed"] += 1
+                        batch_job["errors"].append(result)
+
+                # Update progress
+                app.state.batch_jobs[batch_id] = batch_job
+
+    try:
+        await process_batch()
+        batch_job["status"] = "completed"
+        batch_job["completed_at"] = datetime.utcnow().isoformat()
+    except Exception as e:
+        batch_job["status"] = "failed"
+        batch_job["error"] = str(e)
+
+    # Final update
+    app.state.batch_jobs[batch_id] = batch_job
+
+
 @app.get("/v1/capabilities",
     summary="Get Server Capabilities",
     description="""
@@ -951,10 +2254,10 @@ Clients should query this endpoint on startup to discover:
 async def get_capabilities(request: Request):
     """Get server capabilities and optimization options."""
     from heylook_llm.optimizations.status import get_optimization_summary
-    
+
     # Get optimization status
     optimizations = get_optimization_summary()
-    
+
     # Check Metal availability
     try:
         import mlx.core as mx
@@ -970,7 +2273,7 @@ async def get_capabilities(request: Request):
             metal_info = {"available": False}
     except:
         metal_info = {"available": False}
-    
+
     capabilities = {
         "server_version": "1.0.1",
         "optimizations": optimizations,
@@ -1057,12 +2360,12 @@ async def get_capabilities(request: Request):
             "timeout_seconds": 300
         }
     }
-    
+
     return capabilities
 
 # Import and register multipart endpoint
 from heylook_llm.api_multipart import create_chat_multipart
-app.post("/v1/chat/completions/multipart", 
+app.post("/v1/chat/completions/multipart",
     summary="Create Chat Completion with Raw Images (Fast)",
     description="""
 High-performance vision endpoint that accepts raw image uploads instead of base64.
@@ -1205,7 +2508,7 @@ def custom_openapi():
     """Generate custom OpenAPI schema with enhanced documentation."""
     if app.openapi_schema:
         return app.openapi_schema
-    
+
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -1263,7 +2566,7 @@ data = {
         ]
     }])
 }
-response = requests.post('http://localhost:8080/v1/chat/completions/multipart', 
+response = requests.post('http://localhost:8080/v1/chat/completions/multipart',
                         files=files, data=data)
 ```
 
@@ -1307,7 +2610,7 @@ This enables:
         """,
         routes=app.routes,
     )
-    
+
     # Add server information
     openapi_schema["servers"] = [
         {
@@ -1315,24 +2618,24 @@ This enables:
             "description": "Default server (OpenAI-compatible)"
         },
         {
-            "url": "http://localhost:11434", 
+            "url": "http://localhost:11434",
             "description": "Ollama-compatible port"
         }
     ]
-    
+
     # Add external documentation
     openapi_schema["externalDocs"] = {
         "description": "GitHub Repository",
         "url": "https://github.com/yourusername/heylookitsanllm"
     }
-    
+
     # Enhanced component schemas
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
-    
+
     if "schemas" not in openapi_schema["components"]:
         openapi_schema["components"]["schemas"] = {}
-    
+
     # Add example schemas
     openapi_schema["components"]["examples"] = {
         "simple_text_request": {
@@ -1371,7 +2674,7 @@ This enables:
             }
         }
     }
-    
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 

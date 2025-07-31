@@ -8,6 +8,8 @@ __pycache__/
 
 # Ignore all content in the modelzoo directory
 modelzoo/*
+models.yaml
+.env
 
 # But DO NOT ignore the .gitkeep file
 !modelzoo/.gitkeep
@@ -38,6 +40,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+node_modules/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

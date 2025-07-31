@@ -1,3 +1,4 @@
+# Example models.yaml
 # --- Global Server Settings ---
 default_model: "gemma3n-e4b-it"
 max_loaded_models: 1 # For most use cases running on a single machine, set at 1 to minimize memory pressure and model swapping
@@ -116,28 +117,6 @@ models:
       # Vision support for GGUF (if using llava format)
       # mmproj_path: "path/to/mmproj-model.gguf"
 
-  - id: "gemma3n-e4b"
-    provider: "mlx"
-    description: "Gemma 3n"
-    tags: ["vision", "instruct", "gemma"]
-    enabled: true
-    config:
-      model_path: "modelzoo/google/gemma-3n-E4B-bf16-mlx"
-      vision: true
-      temperature: 1.0
-      top_p: 0.95
-
-  - id: "gemma3-vision"
-    provider: "mlx"
-    description: "Gemma 3 vision"
-    tags: ["vision", "instruct", "gemma"]
-    enabled: true
-    config:
-      model_path: "modelzoo/google/gemma3-vision"
-      vision: true
-      temperature: 1.0
-      top_p: 0.95
-
   # --- GGUF Models via llama.cpp ---
   - id: "qwen2.5-vl-72b-inst-gguf"
     provider: "llama_cpp"
@@ -188,25 +167,6 @@ models:
       n_gpu_layers: -1
       n_ctx: 8192
       vision: false
-
-  - id: SmolVLM2-2.2B-Instruct
-    provider: mlx
-    description: Auto-imported MLX model with vision (2B)
-    tags:
-      - vision
-      - small
-      - instruct
-    enabled: true
-    config:
-      model_path: "/modelzoo/HuggingFaceTB/SmolVLM2-2.2B-Instruct"
-      vision: true
-      temperature: 0.7
-      cache_type: standard
-      top_k: 50
-      top_p: 0.95
-      max_tokens: 512
-      repetition_penalty: 1.05
-      repetition_context_size: 20
 
   - id: gemma3-27b-it-4bit-DWQ-mlx
     provider: mlx

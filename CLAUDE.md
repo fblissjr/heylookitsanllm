@@ -36,14 +36,35 @@ python tests/test_api.py
 
 ### Installation & Setup
 ```bash
-# Install package in development mode (includes all dependencies)
+# Option 1: Automated setup (recommended)
+./setup.sh
+
+# Option 2: Manual installation
+# Install package in development mode (minimal core dependencies only)
 uv pip install -e .
+
+# Install with specific backends
+uv pip install -e .[mlx]          # For MLX models (macOS)
+uv pip install -e .[llama-cpp]    # For GGUF models via llama.cpp
+uv pip install -e .[mlx,llama-cpp] # Both backends
+
+# Note: MLX installation includes scipy for mlx-vlm. On macOS, if you get scipy build errors:
+# brew install gcc  # Installs gfortran needed for scipy
 
 # Install with performance optimizations (orjson, xxhash, turbojpeg, uvloop)
 uv pip install -e .[performance]
 
-# Compile llama-cpp-python for Metal (macOS)
+# Install with analytics support
+uv pip install -e .[analytics]
+
+# Install everything
+uv pip install -e .[all]
+
+# GPU acceleration for llama-cpp (optional, after installing [llama-cpp])
+# macOS Metal:
 CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+# NVIDIA CUDA:
+CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
 ### Model Import
@@ -114,11 +135,10 @@ Both streaming and non-streaming responses are supported. Streaming uses Server-
 
 ### Naming Conventions
 - NEVER use vague marketing terms like "Enhanced", "Optimized", "Improved", "Resilient" in class/function names or log messages
-- Use descriptive technical names that explain what the code does
-- Instead of "OptimizedLanguageModelWrapper", use "LanguageModelLogitsWrapper" or similar
-- Instead of "EnhancedVLMGenerator", use "VLMGeneratorWithSampling" or similar
-- Instead of "resilient loading", use "loading with fallback strategies" or similar
+- Use descriptive business logic names that explain what the code does
+- Avoid overhyping or mishyping
 - Names and messages should describe the technical behavior, not claim superiority or robustness
+- Never use emojis in code or in markdown files or in any documentation or analysis
 
 ### Error Handling
 - Raise `HTTPException` for API errors
@@ -194,3 +214,17 @@ response = client.chat.completions.create(
     model="qwen2.5-coder-1.5b-instruct-4bit",
     messages=[{"role": "user", "content": "Hello!"}]
 )
+```
+
+## Documentation and Configuration Management
+
+### Configuration Tracking
+- Always document endpoint or configuration changes
+- Update OpenAPI documentation for API-related modifications
+- Maintain clear tracking of configuration updates in relevant documentation
+- Ensure configuration changes are traceable and reproducible
+
+### Documentation Best Practices
+- Keep documentation updated and synchronized with code changes
+- Use clear, concise language when describing configurations and endpoints
+- Include context and rationale for significant configuration updates

@@ -8,6 +8,7 @@ import uvicorn
 import argparse
 import logging
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from heylook_llm.router import ModelRouter
 from heylook_llm.api import app
 
@@ -22,10 +23,19 @@ except ImportError:
 
 def create_openai_only_app():
     """Create app with only OpenAI API endpoints"""
-    from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics
+    from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics, data_query, data_summary
     from heylook_llm.api_multipart import create_chat_multipart
 
     openai_app = FastAPI(title="OpenAI-Compatible LLM Server", version="1.0.0")
+    
+    # Add CORS middleware
+    openai_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for development
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Add OpenAI endpoints
     openai_app.get("/v1/models")(list_models)
@@ -33,6 +43,8 @@ def create_openai_only_app():
     openai_app.get("/v1/capabilities")(get_capabilities)
     openai_app.get("/v1/performance")(performance_metrics)
     openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
+    openai_app.post("/v1/data/query")(data_query)
+    openai_app.get("/v1/data/summary")(data_summary)
 
     @openai_app.get("/")
     async def root():
@@ -43,7 +55,9 @@ def create_openai_only_app():
                 "chat": "/v1/chat/completions",
                 "capabilities": "/v1/capabilities",
                 "performance": "/v1/performance",
-                "multipart": "/v1/chat/completions/multipart"
+                "multipart": "/v1/chat/completions/multipart",
+                "data_query": "/v1/data/query",
+                "data_summary": "/v1/data/summary"
             }
         }
 
@@ -54,6 +68,15 @@ def create_ollama_only_app():
     from heylook_llm.api import ollama_chat, ollama_generate, ollama_tags, ollama_show, ollama_version, ollama_ps, ollama_embed
 
     ollama_app = FastAPI(title="Ollama-Compatible LLM Server", version="1.0.0")
+    
+    # Add CORS middleware
+    ollama_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins for development
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Add Ollama endpoints
     ollama_app.post("/api/chat")(ollama_chat)
@@ -176,18 +199,31 @@ def main():
     from heylook_llm.optimizations.status import log_all_optimization_status
     log_all_optimization_status()
 
+    # Initialize metrics database (will auto-detect if enabled)
+    from heylook_llm.metrics_db_wrapper import init_metrics_db
+    init_metrics_db()
+    
     # Initialize the router and store it in the app's state
     router = ModelRouter(
         config_path="models.yaml",
         log_level=log_level,
         initial_model_id=args.model_id
     )
+    
+    # Check if any providers are available
+    from heylook_llm.router import HAS_MLX, HAS_LLAMA_CPP
+    if not HAS_MLX and not HAS_LLAMA_CPP:
+        logging.error("No model providers available! Please install at least one provider:")
+        logging.error("  - For MLX models: pip install heylookitsanllm[mlx]")
+        logging.error("  - For GGUF models: pip install heylookitsanllm[llama-cpp]")
+        logging.error("  - For both: pip install heylookitsanllm[all]")
+        sys.exit(1)
 
     # Choose which app to run based on API selection
     if args.api == "openai":
         selected_app = create_openai_only_app()
         print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print(f"Available endpoints: /v1/models, /v1/chat/completions, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart")
+        print(f"Available endpoints: /v1/models, /v1/chat/completions, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
     elif args.api == "ollama":
         selected_app = create_ollama_only_app()
         print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")

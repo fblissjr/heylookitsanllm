@@ -146,7 +146,7 @@ class TextOnlyStrategy:
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
             messages_for_template.append(msg_dict)
-        
+
         prompt = tokenizer.apply_chat_template(
             messages_for_template,
             tokenize=False,
@@ -170,7 +170,7 @@ class TextOnlyStrategy:
                 first_token = False
             elif first_token:
                 first_token = False
-            
+
             yield response
 
 
@@ -186,7 +186,7 @@ class VLMTextOnlyStrategy:
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
         # For VLM models doing text-only generation, we need to use the VLM generation path
         # with empty images to avoid the LanguageModelOutput subscript error
-        
+
         # Prepare messages for VLM format
         messages_for_template = []
         for msg in request.messages:
@@ -196,18 +196,18 @@ class VLMTextOnlyStrategy:
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
             messages_for_template.append(msg_dict)
-        
+
         # Apply VLM chat template with no images
         prompt = vlm_apply_chat_template(
-            processor, 
+            processor,
             model.config,
             messages_for_template,
             num_images=0
         )
-        
+
         # Use VLM stream generate with empty images
         images = []  # No images for text-only generation
-        
+
         # Stream tokens and handle potential leading space issue
         first_token = True
         for response in vlm_stream_generate(
@@ -226,7 +226,7 @@ class VLMTextOnlyStrategy:
                 first_token = False
             elif first_token:
                 first_token = False
-            
+
             yield response
 
 
@@ -240,7 +240,7 @@ class VLMTextOnlyStrategy:
             if isinstance(content, list):
                 text_parts = []
                 message_has_images = False
-                
+
                 for part in content:
                     if part.type == 'text':
                         text_parts.append(part.text)
@@ -259,7 +259,7 @@ class VLMTextOnlyStrategy:
                             else:
                                 # Fallback for models without explicit image tokens
                                 text_parts.append(f"[Image {image_counter}]")
-                
+
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
                 text_messages.append({"role": msg.role, "content": combined_content})
@@ -296,12 +296,12 @@ class VLMVisionStrategy:
 
         # Prepare VLM inputs with parallel image loading
         images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(request.messages, processor, model.config, model)
-        
+
         # Log image details before sending to model
         logging.info(f"[VLM PROCESSING] Sending {len(images)} images to model")
         for i, img in enumerate(images):
             logging.info(f"[VLM PROCESSING] Image {i+1}: size={img.size}, mode={img.mode}")
-        
+
         # Check if processor has expected image size
         if hasattr(processor, 'image_processor'):
             img_proc = processor.image_processor
@@ -311,7 +311,7 @@ class VLMVisionStrategy:
             elif hasattr(img_proc, 'crop_size'):
                 expected_size = img_proc.crop_size
                 logging.info(f"[VLM PROCESSING] Model expects images at: {expected_size}")
-        
+
         # Use batch encoding if multiple images
         if len(images) > 1:
             # For now, mlx-vlm processes images within the generation loop
@@ -328,7 +328,7 @@ class VLMVisionStrategy:
             temperature=effective_request.get('temperature', 0.1),
             top_p=effective_request.get('top_p', 1.0)
         )
-    
+
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs with parallel image loading."""
         image_urls = []
@@ -341,7 +341,7 @@ class VLMVisionStrategy:
             content = msg.content
             if isinstance(content, list):
                 text_parts = []
-                
+
                 for part in content:
                     if part.type == 'text':
                         text_parts.append(part.text)
@@ -349,7 +349,7 @@ class VLMVisionStrategy:
                         image_urls.append(part.image_url.url)
                         has_images = True
                         image_counter += 1
-                        
+
                         # Add image placeholder to maintain position
                         model_type = str(type(model)).lower() if model else ""
                         if 'gemma' not in model_type:
@@ -357,7 +357,7 @@ class VLMVisionStrategy:
                                 text_parts.append(processor.tokenizer.image_token)
                             else:
                                 text_parts.append(f"[Image {image_counter}]")
-                
+
                 # Combine text parts
                 combined_content = " ".join(text_parts) if text_parts else ""
                 text_messages.append({"role": msg.role, "content": combined_content})
@@ -371,10 +371,35 @@ class VLMVisionStrategy:
             images = []
 
         # Format prompt
-        formatted_prompt = vlm_apply_chat_template(
-            processor, config, text_messages, num_images=len(images)
-        )
-        
+        try:
+            # Ensure all content is strings (some templates have bugs with non-string content)
+            safe_messages = []
+            for msg in text_messages:
+                safe_msg = {
+                    "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
+                    "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"]
+                }
+                safe_messages.append(safe_msg)
+                
+            formatted_prompt = vlm_apply_chat_template(
+                processor, config, safe_messages, num_images=len(images)
+            )
+        except Exception as e:
+            logging.error(f"Chat template error: {e}")
+            logging.error(f"Text messages: {text_messages}")
+            # Fallback: Try without num_images parameter
+            try:
+                formatted_prompt = vlm_apply_chat_template(
+                    processor, config, text_messages
+                )
+            except Exception as fallback_error:
+                logging.error(f"Fallback template error: {fallback_error}")
+                # Final fallback: manually format messages
+                formatted_prompt = "\n".join([
+                    f"{msg['role']}: {msg['content']}"
+                    for msg in text_messages
+                ])
+
         return images, formatted_prompt, has_images
 
     def _prepare_vlm_inputs(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
@@ -387,7 +412,7 @@ class VLMVisionStrategy:
             if isinstance(content, list):
                 text_parts = []
                 message_has_images = False
-                
+
                 for part in content:
                     if part.type == 'text':
                         text_parts.append(part.text)
@@ -406,7 +431,7 @@ class VLMVisionStrategy:
                             else:
                                 # Fallback for models without explicit image tokens
                                 text_parts.append(f"[Image {image_counter}]")
-                
+
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
                 text_messages.append({"role": msg.role, "content": combined_content})
@@ -440,7 +465,7 @@ class MLXProvider(BaseProvider):
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
         self._content_cache = {}  # Cache for image detection results
-        
+
         # Add generation lock to prevent Metal command buffer conflicts
         import threading
         self._generation_lock = threading.Lock()
@@ -462,7 +487,7 @@ class MLXProvider(BaseProvider):
                 self.model, self.processor = lm_load(model_path)
 
             logging.info(f"😅 Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
-            
+
             # Debug model structure for KV cache optimization
             if logging.getLogger().isEnabledFor(logging.DEBUG):
                 logging.debug("=== Model Structure Debug ===")
@@ -512,7 +537,7 @@ class MLXProvider(BaseProvider):
         # Apply Metal optimizations if available
         try:
             from ..optimizations.mlx_metal_tuning import apply_all_metal_optimizations, optimize_large_model_for_metal
-            
+
             # Get model size estimate from config or calculate
             model_size_gb = self.config.get('model_size_gb')
             if not model_size_gb:
@@ -523,7 +548,7 @@ class MLXProvider(BaseProvider):
                         for p in self.model.parameters():
                             if hasattr(p, 'size'):
                                 num_params += p.size
-                    
+
                     if num_params > 0:
                         bytes_per_param = 2 if self.config.get('quantization', '').startswith('4bit') else 4
                         model_size_gb = (num_params * bytes_per_param) / 1e9
@@ -532,7 +557,7 @@ class MLXProvider(BaseProvider):
                 except Exception as e:
                     logging.debug(f"Could not estimate model size: {e}")
                     model_size_gb = 1.0
-            
+
             # Apply optimizations
             optimization_config = {
                 'model_size_gb': model_size_gb or 1.0,
@@ -542,21 +567,21 @@ class MLXProvider(BaseProvider):
                 'max_batch_size': 4,
                 'max_seq_length': self.config.get('max_tokens', 2048)
             }
-            
+
             self.model = apply_all_metal_optimizations(self.model, optimization_config)
-            
+
             # Apply large model optimizations if > 30GB
             if model_size_gb and model_size_gb > 30:
                 self.model = optimize_large_model_for_metal(self.model, model_size_gb)
                 logging.info(f"Applied Metal optimizations for large model ({model_size_gb:.1f}GB)")
             else:
                 logging.info("Applied Metal optimizations for model")
-                
+
         except ImportError:
             logging.debug("Metal optimizations not available - continuing without them")
         except Exception as e:
             logging.warning(f"Failed to apply Metal optimizations: {e}")
-        
+
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
 
@@ -744,7 +769,7 @@ class MLXProvider(BaseProvider):
             if not lock_acquired:
                 logging.warning(f"[MLX GENERATION] Waiting for another request to complete on {self.model_id} (Metal concurrency protection)")
                 self._generation_lock.acquire(blocking=True)
-                
+
             try:
                 effective_request = self._apply_model_defaults(request)
 
@@ -773,7 +798,7 @@ class MLXProvider(BaseProvider):
 
                     # VLM model path - decide between text-only and vision
                     has_images = self._detect_images_optimized(request.messages)
-                    
+
                     # Count images for detailed logging
                     image_count = 0
                     if has_images:
@@ -796,18 +821,18 @@ class MLXProvider(BaseProvider):
                     logging.debug(f"Model type for {self.model_id}: {type(self.model)}")
                     if hasattr(self.model, 'language_model'):
                         logging.debug(f"Language model type: {type(self.model.language_model)}")
-                    
+
                     yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
 
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)
-                    
+
                     # Reset MLX state on error to prevent stream context issues
                     try:
                         import gc
                         gc.collect()
                         mx.eval()  # Synchronize any pending operations
-                        
+
                         # Clear any cached state in strategies
                         for strategy in self._strategies.values():
                             if hasattr(strategy, '_cached_generator'):

@@ -1,12 +1,33 @@
 # requirements.txt
+# Core dependencies for heylookitsanllm
+
+# Web framework and server
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# MLX models support
 mlx
+mlx-lm
+mlx-vlm
+
+# ML and data processing
 datasets
 pillow
 tqdm
 transformers
-fastapi
 opencv-python
 scipy
 soundfile
 torch
 torchvision
+numpy
+
+# Configuration and utilities
+pyyaml
+requests
+rich
+
+# Note: Analytics dependencies (duckdb) are optional
+# Install with: pip install heylookitsanllm[analytics]
