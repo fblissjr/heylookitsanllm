@@ -34,7 +34,7 @@ elif [[ "$(uname)" == "Linux" ]]; then
     # Check for NVIDIA GPU and CUDA
     if command -v nvidia-smi &> /dev/null; then
         echo "Linux with NVIDIA GPU detected. Recompiling llama-cpp-python for CUDA..."
-        CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
+        CMAKE_ARGS="-GGML_CUDA=on" FORCE_CMAKE=1 $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
     else
         echo "Linux detected. Recompiling llama-cpp-python for CPU..."
         $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python

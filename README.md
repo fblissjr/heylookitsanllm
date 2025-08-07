@@ -126,7 +126,7 @@ CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --n
 #### NVIDIA (CUDA)
 ```bash
 # After installing with pip install heylookitsanllm[llama-cpp]
-CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+CMAKE_ARGS="-GGML_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
 #### CPU Only
