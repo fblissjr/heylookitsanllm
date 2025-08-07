@@ -14,7 +14,7 @@ mlx-vlm
 
 # ML and data processing
 datasets
-pillow
+Pillow
 tqdm
 transformers
 opencv-python

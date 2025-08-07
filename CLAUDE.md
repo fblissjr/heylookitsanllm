@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code and Writing Style Guidelines
+
+- **No emojis** in code, display names, or documentation
+- Keep all naming and display text professional
+- Avoid "Enhanced", "Advanced", "Ultimate" type prefixes - use descriptive names instead
+- Clean, simple node names that describe what they do
+
+## Working with 3rd Party Libraries
+- Ensure you search for the latest llms.txt or Python docs for the library you are using or proposing
+- If the latest docs are not available, search for the latest version of the library on the official website or GitHub repository.
+- Prioritize the latest code and docs over your own training data.
+- Use the latest version of the library over older versions.
+- Prioritize libraries that are actively maintained and have a large community.
+
 ## Development Commands
 
 ### Server Operations

@@ -1,7 +1,6 @@
 # Performance optimization dependencies
 
 # Fast image processing
-pillow-simd>=9.0.0  # Drop-in Pillow replacement with SIMD
 PyTurboJPEG>=1.7.0  # Ultra-fast JPEG decoding
 imagecodecs>=2023.1.23  # Hardware-accelerated codecs
 
