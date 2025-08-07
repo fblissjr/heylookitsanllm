@@ -23,7 +23,7 @@ except ImportError:
 
 def create_openai_only_app():
     """Create app with only OpenAI API endpoints"""
-    from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics, data_query, data_summary
+    from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, restart_server, reload_models
     from heylook_llm.api_multipart import create_chat_multipart
 
     openai_app = FastAPI(title="OpenAI-Compatible LLM Server", version="1.0.0")
@@ -40,11 +40,16 @@ def create_openai_only_app():
     # Add OpenAI endpoints
     openai_app.get("/v1/models")(list_models)
     openai_app.post("/v1/chat/completions")(create_chat_completion)
+    openai_app.post("/v1/embeddings")(create_embeddings_endpoint)
     openai_app.get("/v1/capabilities")(get_capabilities)
     openai_app.get("/v1/performance")(performance_metrics)
     openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
     openai_app.post("/v1/data/query")(data_query)
     openai_app.get("/v1/data/summary")(data_summary)
+    
+    # Add admin endpoints
+    openai_app.post("/v1/admin/restart")(restart_server)
+    openai_app.post("/v1/admin/reload")(reload_models)
 
     @openai_app.get("/")
     async def root():
@@ -53,6 +58,7 @@ def create_openai_only_app():
             "endpoints": {
                 "models": "/v1/models",
                 "chat": "/v1/chat/completions",
+                "embeddings": "/v1/embeddings",
                 "capabilities": "/v1/capabilities",
                 "performance": "/v1/performance",
                 "multipart": "/v1/chat/completions/multipart",
@@ -223,7 +229,7 @@ def main():
     if args.api == "openai":
         selected_app = create_openai_only_app()
         print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print(f"Available endpoints: /v1/models, /v1/chat/completions, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
+        print(f"Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
     elif args.api == "ollama":
         selected_app = create_ollama_only_app()
         print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")
@@ -231,7 +237,7 @@ def main():
     else:  # both
         selected_app = app
         print(f"Starting combined API server on {args.host}:{args.port}")
-        print(f"OpenAI endpoints: /v1/models, /v1/chat/completions")
+        print(f"OpenAI endpoints: /v1/models, /v1/chat/completions, /v1/embeddings")
         print(f"Ollama endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
 
     selected_app.state.router_instance = router

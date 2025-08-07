@@ -122,8 +122,9 @@ Models are defined in `models.yaml` with the following key fields:
 - `config` - Provider-specific settings (model_path, vision capabilities, etc.)
 
 ### API Compatibility
-- **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`
+- **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`
 - **Ollama API** - `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`, `/api/embed`
+- **Admin API** - `/v1/admin/restart`, `/v1/admin/reload` (for development use)
 
 ## Key Design Patterns
 
@@ -219,15 +220,63 @@ openapi-generator generate -i openapi.json -g typescript-axios -o ./ts-client
 6. **Image Resizing**: Server-side image resizing to optimize token usage
 7. **Multipart Upload**: Fast image upload endpoint (57ms faster per image)
 8. **Performance Monitoring**: Real-time performance metrics and optimization status
+9. **Embeddings API**: Extract real model embeddings for semantic search and similarity
 
 ### Example Client Usage
+
+#### Chat Completions
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8080/v1", api_key="not-needed")
 response = client.chat.completions.create(
-    model="qwen2.5-coder-1.5b-instruct-4bit",
+    model="dolphin-mistral",
     messages=[{"role": "user", "content": "Hello!"}]
 )
+```
+
+#### Embeddings
+```python
+# Generate embeddings for semantic search
+response = client.embeddings.create(
+    input="Your text here",
+    model="dolphin-mistral"
+)
+embedding = response.data[0].embedding
+
+# Batch processing
+response = client.embeddings.create(
+    input=["text1", "text2", "text3"],
+    model="dolphin-mistral"
+)
+embeddings = [d.embedding for d in response.data]
+```
+
+## Embeddings API
+
+### Overview
+The `/v1/embeddings` endpoint provides real model embeddings extraction for both MLX and llama.cpp models. Unlike approaches that ask LLMs to generate embedding arrays (which produces meaningless random numbers), this endpoint extracts actual embeddings from the model's internal representations.
+
+### Key Features
+- **Real Embeddings**: Extracts actual model embeddings from internal representations
+- **Multi-Provider Support**: Works with both MLX and llama.cpp backends
+- **Vision Model Support**: Can extract embeddings from vision-language models
+- **Batch Processing**: Process multiple texts in a single request
+- **Dimension Truncation**: Optionally truncate embeddings to specific dimensions
+- **Normalized Output**: Embeddings are L2-normalized by default
+
+### Implementation Details
+- **MLX Models**: Extracts embeddings from token embeddings layer or hidden states
+- **Llama.cpp Models**: Uses built-in `create_embedding` method (requires `embedding=True` during model init)
+- **TokenizerWrapper**: Properly handles MLX's TokenizerWrapper by accessing `_tokenizer` attribute
+- **Pooling Strategies**: Supports mean, cls, last, and max pooling (MLX only)
+
+### Testing
+```bash
+# Test embeddings endpoint
+python tests/test_embeddings.py
+
+# Test without server
+python tests/test_embeddings_direct.py
 ```
 
 ## Documentation and Configuration Management

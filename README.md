@@ -265,6 +265,7 @@ The server provides interactive API documentation at:
 
 - `/v1/models` - List available models
 - `/v1/chat/completions` - OpenAI-compatible chat endpoint
+- `/v1/embeddings` - Extract real model embeddings for semantic search
 - `/v1/chat/completions/multipart` - Fast multipart upload for images (57ms faster per image)
 - `/v1/capabilities` - Server capabilities and optimization status
 - `/v1/performance` - Real-time performance metrics
@@ -282,6 +283,7 @@ client = OpenAI(
     api_key="not-needed"
 )
 
+# Chat completion
 response = client.chat.completions.create(
     model="qwen2.5-coder-1.5b-instruct-4bit",
     messages=[{"role": "user", "content": "Hello!"}],
@@ -290,6 +292,13 @@ response = client.chat.completions.create(
 
 for chunk in response:
     print(chunk.choices[0].delta.content, end="")
+
+# Embeddings for semantic search
+embeddings = client.embeddings.create(
+    input="Your text here",
+    model="qwen2.5-coder-1.5b-instruct-4bit"
+)
+vector = embeddings.data[0].embedding
 ```
 
 **curl:**
@@ -439,10 +448,6 @@ lsof -i :8080
 # Use a different port
 heylookllm --port 8081
 ```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 

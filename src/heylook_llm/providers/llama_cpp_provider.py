@@ -34,6 +34,7 @@ class LlamaCppProvider(BaseProvider):
                 chat_handler=chat_handler,
                 n_ctx=self.config.get('n_ctx', 4096),
                 n_gpu_layers=self.config.get('n_gpu_layers', -1),
+                embedding=True,  # Enable embedding support
                 verbose=self.verbose,
             )
             self.model.set_cache(LlamaRAMCache())
@@ -84,8 +85,35 @@ class LlamaCppProvider(BaseProvider):
                 raise RuntimeError("Model not loaded. Call load_model() first.")
 
             request_dict = request.model_dump(exclude_none=True)
+            
+            # Process messages to ensure correct format
+            messages = request_dict.get('messages', [])
+            processed_messages = []
+            
+            # Check if this is a vision model
+            has_vision = self.config.get('mmproj_path') is not None
+            
+            for msg in messages:
+                msg_copy = msg.copy()
+                # If content is a list (multimodal format)
+                if isinstance(msg_copy.get('content'), list):
+                    if has_vision:
+                        # Keep multimodal format for vision models
+                        processed_messages.append(msg_copy)
+                    else:
+                        # Extract only text parts for non-vision models
+                        text_parts = []
+                        for part in msg_copy['content']:
+                            if isinstance(part, dict) and part.get('type') == 'text':
+                                text_parts.append(part.get('text', ''))
+                        msg_copy['content'] = ' '.join(text_parts)
+                        processed_messages.append(msg_copy)
+                else:
+                    # Content is already a string, keep as is
+                    processed_messages.append(msg_copy)
+            
             params = {
-                "messages": request_dict.get('messages'),
+                "messages": processed_messages,
                 "temperature": request_dict.get('temperature', 0.8),
                 "top_p": request_dict.get('top_p', 0.95),
                 "top_k": request_dict.get('top_k', 40),

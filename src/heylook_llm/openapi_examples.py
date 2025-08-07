@@ -121,3 +121,87 @@ ollama_generate_example = {
         }
     }
 }
+
+# Embeddings endpoint examples
+embeddings_examples = {
+    "single_text": {
+        "summary": "Single text embedding",
+        "description": "Generate embedding for a single text",
+        "value": {
+            "input": "The quick brown fox jumps over the lazy dog",
+            "model": "dolphin-mistral"
+        }
+    },
+    "batch_embeddings": {
+        "summary": "Batch text embeddings",
+        "description": "Generate embeddings for multiple texts",
+        "value": {
+            "input": [
+                "Machine learning is fascinating",
+                "Deep learning and neural networks",
+                "Natural language processing"
+            ],
+            "model": "dolphin-mistral"
+        }
+    },
+    "truncated_embeddings": {
+        "summary": "Embeddings with dimension truncation",
+        "description": "Generate embeddings truncated to specific dimensions",
+        "value": {
+            "input": "Text to embed with truncation",
+            "model": "dolphin-mistral",
+            "dimensions": 512
+        }
+    }
+}
+
+embeddings_response_example = {
+    "single_response": {
+        "summary": "Single embedding response",
+        "description": "Response for a single text embedding",
+        "value": {
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "embedding": [0.0234, -0.1567, 0.8901, "... (768 dimensions total)"],
+                    "index": 0
+                }
+            ],
+            "model": "dolphin-mistral",
+            "usage": {
+                "prompt_tokens": 10,
+                "total_tokens": 10
+            }
+        }
+    },
+    "batch_response": {
+        "summary": "Batch embeddings response",
+        "description": "Response for multiple text embeddings",
+        "value": {
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "embedding": [0.0234, -0.1567, "..."],
+                    "index": 0
+                },
+                {
+                    "object": "embedding", 
+                    "embedding": [0.1234, -0.2567, "..."],
+                    "index": 1
+                },
+                {
+                    "object": "embedding",
+                    "embedding": [0.3234, -0.4567, "..."],
+                    "index": 2
+                }
+            ],
+            "model": "dolphin-mistral",
+            "usage": {
+                "prompt_tokens": 24,
+                "total_tokens": 24
+            }
+        }
+    }
+}

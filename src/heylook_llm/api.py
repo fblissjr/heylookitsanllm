@@ -471,6 +471,154 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     return response
 
+@app.post("/v1/admin/restart",
+    summary="Restart Server",
+    description="""
+Restart the server to reload configuration and code changes.
+
+**WARNING**: This will interrupt all active connections!
+
+**Security Note**: This endpoint should be disabled in production or protected with authentication.
+    """,
+    tags=["Admin"]
+)
+async def restart_server(request: Request, background_tasks: BackgroundTasks):
+    """Restart the server process."""
+    import os
+    import sys
+    import signal
+    
+    def restart():
+        """Restart the current process."""
+        try:
+            # Give time for response to be sent
+            import time
+            time.sleep(0.5)
+            
+            # Use exec to replace the current process
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            logging.error(f"Failed to restart: {e}")
+            # Fallback: just exit and rely on process manager to restart
+            os._exit(1)
+    
+    # Schedule restart in background
+    background_tasks.add_task(restart)
+    
+    return {
+        "status": "restarting",
+        "message": "Server will restart in 0.5 seconds"
+    }
+
+@app.post("/v1/admin/reload",
+    summary="Reload Models",
+    description="""
+Reload model configuration and clear model cache without restarting the server.
+
+This will:
+- Clear the loaded model cache
+- Reload models.yaml configuration
+- Keep the server running
+    """,
+    tags=["Admin"]
+)
+async def reload_models(request: Request):
+    """Reload model configuration without restarting."""
+    try:
+        router = request.app.state.router_instance
+        
+        # Clear model cache
+        router.clear_cache()
+        
+        # Reload configuration
+        router.reload_config()
+        
+        return {
+            "status": "success",
+            "message": "Model configuration reloaded",
+            "cache_cleared": True,
+            "models_available": router.list_available_models()
+        }
+    except Exception as e:
+        logging.error(f"Failed to reload models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/embeddings",
+    summary="Create Embeddings",
+    description="""
+Generate embeddings for text using the specified model.
+
+**Key Features:**
+- Extract actual model embeddings (not hallucinated numbers)
+- Support for both text-only and vision models
+- Multiple pooling strategies (mean, cls, last, max)
+- Optional dimension truncation
+- Batch processing support
+
+**Use Cases:**
+- Text similarity search
+- Semantic clustering
+- Cross-modal alignment
+- Prompt interpolation
+- Document retrieval
+
+**Request Body:**
+- `input` (string | array[string]): Text(s) to embed
+- `model` (string): Model ID to use
+- `dimensions` (integer, optional): Truncate to N dimensions
+- `encoding_format` (string, optional): "float" or "base64"
+- `user` (string, optional): User identifier
+    """,
+    response_description="Embeddings in OpenAI-compatible format",
+    tags=["OpenAI API"],
+    responses={
+        200: {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "single": {
+                            "summary": "Single embedding",
+                            "value": {
+                                "object": "list",
+                                "data": [{
+                                    "object": "embedding",
+                                    "embedding": [0.0234, -0.1567, 0.8901],
+                                    "index": 0
+                                }],
+                                "model": "dolphin-mistral",
+                                "usage": {"prompt_tokens": 10, "total_tokens": 10}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
+async def create_embeddings_endpoint(
+    request: Request,
+    embedding_request: dict = Body(...)
+):
+    """Create embeddings for the given input text(s)."""
+    from heylook_llm.embeddings import EmbeddingRequest, create_embeddings
+    
+    try:
+        # Parse request
+        req = EmbeddingRequest(**embedding_request)
+        
+        # Get router
+        router = request.app.state.router_instance
+        
+        # Create embeddings
+        response = await create_embeddings(req, router)
+        
+        return response.model_dump()
+        
+    except Exception as e:
+        logging.error(f"Error creating embeddings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # =============================================================================
 # Ollama API Compatibility Endpoints
 # =============================================================================

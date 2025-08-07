@@ -235,3 +235,31 @@ class ModelRouter:
 
     def list_available_models(self) -> list[str]:
         return [m.id for m in self.app_config.get_enabled_models()]
+    
+    def clear_cache(self):
+        """Clear all loaded models from cache."""
+        with self.cache_lock:
+            # Unload all models
+            for model_id in list(self.models.keys()):
+                provider = self.models[model_id]
+                try:
+                    provider.unload_model()
+                    logging.info(f"Unloaded model: {model_id}")
+                except Exception as e:
+                    logging.error(f"Error unloading model {model_id}: {e}")
+            
+            # Clear the cache
+            self.models.clear()
+            self.model_usage_order.clear()
+            logging.info("Model cache cleared")
+    
+    def reload_config(self):
+        """Reload model configuration from file."""
+        try:
+            # Reload the configuration
+            from .config import ModelConfig
+            self.app_config = ModelConfig()
+            logging.info("Model configuration reloaded")
+        except Exception as e:
+            logging.error(f"Failed to reload configuration: {e}")
+            raise
