@@ -242,23 +242,51 @@ class VLMTextOnlyStrategy:
                 message_has_images = False
 
                 for part in content:
-                    if part.type == 'text':
-                        text_parts.append(part.text)
-                    elif part.type == 'image_url':
-                        images.append(load_image(part.image_url.url))
-                        has_images = True
-                        message_has_images = True
-                        image_counter += 1
-                        # Add image placeholder to maintain position
-                        # Note: Some models (like Gemma) handle image tokens automatically
-                        # in their chat template, so we shouldn't add them manually
-                        model_type = str(type(model)).lower() if model else ""
-                        if 'gemma' not in model_type:
-                            if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                text_parts.append(processor.tokenizer.image_token)
+                    # Handle both object and dict formats
+                    if hasattr(part, 'type'):
+                        # Object format (ContentPart)
+                        if part.type == 'text':
+                            text_parts.append(part.text)
+                        elif part.type == 'image_url':
+                            images.append(load_image(part.image_url.url))
+                            has_images = True
+                            message_has_images = True
+                            image_counter += 1
+                            # Add image placeholder to maintain position
+                            # Note: Some models (like Gemma) handle image tokens automatically
+                            # in their chat template, so we shouldn't add them manually
+                            model_type = str(type(model)).lower() if model else ""
+                            if 'gemma' not in model_type:
+                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                    text_parts.append(processor.tokenizer.image_token)
+                                else:
+                                    # Fallback for models without explicit image tokens
+                                    text_parts.append(f"[Image {image_counter}]")
+                    elif isinstance(part, dict):
+                        # Dict format
+                        if part.get('type') == 'text':
+                            text_parts.append(part.get('text', ''))
+                        elif part.get('type') == 'image_url':
+                            image_url = part.get('image_url', {})
+                            if isinstance(image_url, dict):
+                                url = image_url.get('url', '')
                             else:
-                                # Fallback for models without explicit image tokens
-                                text_parts.append(f"[Image {image_counter}]")
+                                url = image_url.url if hasattr(image_url, 'url') else ''
+                            if url:
+                                images.append(load_image(url))
+                                has_images = True
+                                message_has_images = True
+                                image_counter += 1
+                                # Add image placeholder to maintain position
+                                # Note: Some models (like Gemma) handle image tokens automatically
+                                # in their chat template, so we shouldn't add them manually
+                                model_type = str(type(model)).lower() if model else ""
+                                if 'gemma' not in model_type:
+                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                        text_parts.append(processor.tokenizer.image_token)
+                                    else:
+                                        # Fallback for models without explicit image tokens
+                                        text_parts.append(f"[Image {image_counter}]")
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
@@ -343,20 +371,43 @@ class VLMVisionStrategy:
                 text_parts = []
 
                 for part in content:
-                    if part.type == 'text':
-                        text_parts.append(part.text)
-                    elif part.type == 'image_url':
-                        image_urls.append(part.image_url.url)
-                        has_images = True
-                        image_counter += 1
-
-                        # Add image placeholder to maintain position
-                        model_type = str(type(model)).lower() if model else ""
-                        if 'gemma' not in model_type:
-                            if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                text_parts.append(processor.tokenizer.image_token)
+                    # Handle both object and dict formats
+                    if hasattr(part, 'type'):
+                        # Object format (ContentPart)
+                        if part.type == 'text':
+                            text_parts.append(part.text)
+                        elif part.type == 'image_url':
+                            image_urls.append(part.image_url.url)
+                            has_images = True
+                            image_counter += 1
+                            # Add image placeholder to maintain position
+                            model_type = str(type(model)).lower() if model else ""
+                            if 'gemma' not in model_type:
+                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                    text_parts.append(processor.tokenizer.image_token)
+                                else:
+                                    text_parts.append(f"[Image {image_counter}]")
+                    elif isinstance(part, dict):
+                        # Dict format
+                        if part.get('type') == 'text':
+                            text_parts.append(part.get('text', ''))
+                        elif part.get('type') == 'image_url':
+                            image_url = part.get('image_url', {})
+                            if isinstance(image_url, dict):
+                                url = image_url.get('url', '')
                             else:
-                                text_parts.append(f"[Image {image_counter}]")
+                                url = image_url.url if hasattr(image_url, 'url') else ''
+                            if url:
+                                image_urls.append(url)
+                                has_images = True
+                                image_counter += 1
+                                # Add image placeholder to maintain position
+                                model_type = str(type(model)).lower() if model else ""
+                                if 'gemma' not in model_type:
+                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                        text_parts.append(processor.tokenizer.image_token)
+                                    else:
+                                        text_parts.append(f"[Image {image_counter}]")
 
                 # Combine text parts
                 combined_content = " ".join(text_parts) if text_parts else ""
@@ -414,23 +465,51 @@ class VLMVisionStrategy:
                 message_has_images = False
 
                 for part in content:
-                    if part.type == 'text':
-                        text_parts.append(part.text)
-                    elif part.type == 'image_url':
-                        images.append(load_image(part.image_url.url))
-                        has_images = True
-                        message_has_images = True
-                        image_counter += 1
-                        # Add image placeholder to maintain position
-                        # Note: Some models (like Gemma) handle image tokens automatically
-                        # in their chat template, so we shouldn't add them manually
-                        model_type = str(type(model)).lower() if model else ""
-                        if 'gemma' not in model_type:
-                            if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                text_parts.append(processor.tokenizer.image_token)
+                    # Handle both object and dict formats
+                    if hasattr(part, 'type'):
+                        # Object format (ContentPart)
+                        if part.type == 'text':
+                            text_parts.append(part.text)
+                        elif part.type == 'image_url':
+                            images.append(load_image(part.image_url.url))
+                            has_images = True
+                            message_has_images = True
+                            image_counter += 1
+                            # Add image placeholder to maintain position
+                            # Note: Some models (like Gemma) handle image tokens automatically
+                            # in their chat template, so we shouldn't add them manually
+                            model_type = str(type(model)).lower() if model else ""
+                            if 'gemma' not in model_type:
+                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                    text_parts.append(processor.tokenizer.image_token)
+                                else:
+                                    # Fallback for models without explicit image tokens
+                                    text_parts.append(f"[Image {image_counter}]")
+                    elif isinstance(part, dict):
+                        # Dict format
+                        if part.get('type') == 'text':
+                            text_parts.append(part.get('text', ''))
+                        elif part.get('type') == 'image_url':
+                            image_url = part.get('image_url', {})
+                            if isinstance(image_url, dict):
+                                url = image_url.get('url', '')
                             else:
-                                # Fallback for models without explicit image tokens
-                                text_parts.append(f"[Image {image_counter}]")
+                                url = image_url.url if hasattr(image_url, 'url') else ''
+                            if url:
+                                images.append(load_image(url))
+                                has_images = True
+                                message_has_images = True
+                                image_counter += 1
+                                # Add image placeholder to maintain position
+                                # Note: Some models (like Gemma) handle image tokens automatically
+                                # in their chat template, so we shouldn't add them manually
+                                model_type = str(type(model)).lower() if model else ""
+                                if 'gemma' not in model_type:
+                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
+                                        text_parts.append(processor.tokenizer.image_token)
+                                    else:
+                                        # Fallback for models without explicit image tokens
+                                        text_parts.append(f"[Image {image_counter}]")
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
@@ -718,9 +797,18 @@ class MLXProvider(BaseProvider):
         for msg in messages:
             if isinstance(msg.content, list):
                 for part in msg.content:
-                    if part.type == 'image_url':
-                        has_images = True
-                        break
+                    # Debug logging
+                    if hasattr(part, 'type'):
+                        if part.type == 'image_url':
+                            has_images = True
+                            logging.debug(f"[MLX] Found image in message")
+                            break
+                    else:
+                        # Part is a dict, not an object
+                        if isinstance(part, dict) and part.get('type') == 'image_url':
+                            has_images = True
+                            logging.debug(f"[MLX] Found image in message (dict format)")
+                            break
                 if has_images:
                     break
 

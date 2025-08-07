@@ -109,7 +109,7 @@ heylookllm import --folder ~/models --profile fast --override temperature=0.5 --
 
 ### Provider System
 The server supports two backend providers:
-- **MLX Provider** (`mlx_provider_optimized.py`) - For Apple Silicon MLX models (text + vision)
+- **MLX Provider** (`mlx_provider.py`) - For Apple Silicon MLX models (text + vision)
 - **Llama.cpp Provider** (`llama_cpp_provider.py`) - For GGUF models via llama-cpp-python
 
 Both providers implement the `BaseProvider` interface with `load_model()` and `create_chat_completion()` methods.
