@@ -320,8 +320,8 @@ The server offers two independent logging systems for different needs:
 | Use Case | Solution | Command |
 |----------|----------|---------|
 | **Debugging issues** | File logging | `heylookllm --file-log-level DEBUG` |
-| **Performance analysis** | Analytics DB | `export HEYLOOK_ANALYTICS_ENABLED=true && heylookllm` |
-| **Production monitoring** | Both | `python setup_logging.py && python start_with_logging.py` |
+| **Performance analysis** | Analytics DB | `python setup_analytics.py && export HEYLOOK_ANALYTICS_ENABLED=true && heylookllm` |
+| **Production monitoring** | Both | Use both file logging and analytics together |
 | **Quick testing** | Neither | `heylookllm` |
 
 ### File Logging (Text Logs)
@@ -351,11 +351,14 @@ heylookllm --log-level WARNING --file-log-level DEBUG
 
 ```bash
 # Quick setup
-python setup_logging.py  # Creates analytics_config.json
+python setup_analytics.py  # Creates analytics_config.json and analyze_logs.py
 
 # Enable analytics
 export HEYLOOK_ANALYTICS_ENABLED=true
 heylookllm --api openai
+
+# Analyze data
+python analyze_logs.py
 ```
 
 ### Installation

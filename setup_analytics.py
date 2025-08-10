@@ -46,72 +46,14 @@ HEYLOOK_ANALYTICS_EXPORT_FORMATS=json,csv,parquet
     
     print("✓ Created .env file with analytics settings")
 
-def setup_file_logging():
-    """Create a logging configuration that saves to files."""
+def setup_directories():
+    """Create necessary directories."""
     
     # Create logs directory
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
     
-    # Create a startup script with file logging
-    startup_script = """#!/usr/bin/env python3
-\"\"\"
-Enhanced server startup with file logging.
-Use this instead of 'heylookllm' to get persistent logs.
-\"\"\"
-
-import sys
-import logging
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
-from pathlib import Path
-
-# Create logs directory
-logs_dir = Path("logs")
-logs_dir.mkdir(exist_ok=True)
-
-# Set up file logging
-log_file = logs_dir / f"heylookllm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-# Configure root logger
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.DEBUG)
-
-# File handler with rotation
-file_handler = RotatingFileHandler(
-    log_file,
-    maxBytes=100*1024*1024,  # 100MB per file
-    backupCount=10
-)
-file_formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-file_handler.setFormatter(file_formatter)
-root_logger.addHandler(file_handler)
-
-# Console handler
-console_handler = logging.StreamHandler()
-console_formatter = logging.Formatter(
-    '%(asctime)s - %(levelname)s - %(message)s'
-)
-console_handler.setFormatter(console_formatter)
-root_logger.addHandler(console_handler)
-
-print(f"Logging to: {log_file}")
-print(f"Analytics database: logs/analytics.db")
-
-# Now import and run the server
-from heylook_llm.server import main
-main()
-"""
-    
-    with open("start_with_logging.py", "w") as f:
-        f.write(startup_script)
-    
-    # Make it executable
-    os.chmod("start_with_logging.py", 0o755)
-    
-    print("✓ Created start_with_logging.py")
+    print("✓ Created logs directory")
     
 def create_analysis_scripts():
     """Create helper scripts for analyzing logs."""
@@ -211,29 +153,33 @@ if __name__ == "__main__":
     print("✓ Created analyze_logs.py")
 
 def main():
-    print("Setting up logging and analytics for heylookitsanllm...")
+    print("Setting up analytics for heylookitsanllm...")
     print()
     
     setup_analytics()
-    setup_file_logging()
+    setup_directories()
     create_analysis_scripts()
     
     print()
     print("Setup complete! To use:")
     print()
-    print("1. Start server with file logging:")
-    print("   python start_with_logging.py --api openai --log-level DEBUG")
-    print()
-    print("2. Or set environment and use regular command:")
+    print("1. For analytics only:")
     print("   export HEYLOOK_ANALYTICS_ENABLED=true")
-    print("   heylookllm --api openai --log-level DEBUG")
+    print("   heylookllm --api openai")
     print()
-    print("3. Analyze logs after running:")
+    print("2. For file logging only:")
+    print("   heylookllm --api openai --file-log-level DEBUG")
+    print()
+    print("3. For both analytics and file logging:")
+    print("   export HEYLOOK_ANALYTICS_ENABLED=true")
+    print("   heylookllm --api openai --file-log-level DEBUG")
+    print()
+    print("4. Analyze analytics data after running:")
     print("   python analyze_logs.py")
     print()
-    print("Logs will be saved to:")
-    print("  - Text logs: logs/heylookllm_*.log")
-    print("  - Analytics DB: logs/analytics.db")
+    print("Output locations:")
+    print("  - Text logs: logs/heylookllm_*.log (when using --file-log-level)")
+    print("  - Analytics DB: logs/analytics.db (when analytics enabled)")
 
 if __name__ == "__main__":
     main()

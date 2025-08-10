@@ -105,7 +105,7 @@ heylookllm --log-level INFO --file-log-level DEBUG --log-dir logs
 **Analytics DB** (performance/metrics):
 ```bash
 # Setup and enable
-python setup_logging.py
+python setup_analytics.py
 export HEYLOOK_ANALYTICS_ENABLED=true
 heylookllm --api openai
 
@@ -115,8 +115,9 @@ python analyze_logs.py
 
 **Both** (production):
 ```bash
-python setup_logging.py
-python start_with_logging.py --api openai --log-level DEBUG
+python setup_analytics.py
+export HEYLOOK_ANALYTICS_ENABLED=true
+heylookllm --api openai --file-log-level DEBUG
 ```
 
 Output locations:
