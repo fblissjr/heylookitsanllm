@@ -34,7 +34,7 @@ class LlamaCppProvider(BaseProvider):
                 chat_handler=chat_handler,
                 n_ctx=self.config.get('n_ctx', 4096),
                 n_gpu_layers=self.config.get('n_gpu_layers', -1),
-                embedding=True,  # Enable embedding support
+                embedding=False,  # Disable embedding to fix segfault
                 verbose=self.verbose,
             )
             self.model.set_cache(LlamaRAMCache())

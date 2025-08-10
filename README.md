@@ -326,16 +326,32 @@ uv pip install -e .[performance,analytics]
 
 ### Configuration
 
-Analytics is **disabled by default** for privacy. To enable, set environment variables:
+Analytics is **disabled by default** for privacy. To enable with persistent logging:
 
 ```bash
-# Copy example config
-cp .env.analytics.example .env
+# Quick setup for logging and analytics
+python setup_logging.py
 
-# Edit .env and set:
-HEYLOOK_ANALYTICS_ENABLED=true
-HEYLOOK_ANALYTICS_STORAGE_LEVEL=basic  # Options: none, basic, requests, full
+# This creates:
+# - analytics_config.json with full logging
+# - .env with environment variables
+# - start_with_logging.py for file logging
+# - analyze_logs.py for log analysis
 ```
+
+Then start the server with logging:
+```bash
+# Option 1: Use the logging wrapper
+python start_with_logging.py --api openai --log-level DEBUG
+
+# Option 2: Set environment and use regular command
+export HEYLOOK_ANALYTICS_ENABLED=true
+heylookllm --api openai --log-level DEBUG
+```
+
+Logs are saved to:
+- **Text logs**: `logs/heylookllm_*.log` (rotating, 100MB per file)
+- **Analytics DB**: `logs/analytics.db` (DuckDB with full metrics)
 
 Configuration options:
 - `HEYLOOK_ANALYTICS_ENABLED` - Enable/disable analytics (default: false)
@@ -380,6 +396,11 @@ SELECT model, error_type, COUNT(*) as count
 FROM request_logs
 WHERE success = false
 GROUP BY model, error_type;
+```
+
+Analyze logs after running:
+```bash
+python analyze_logs.py  # Generates performance reports and exports to CSV
 ```
 
 ### HeylookAnalytics Dashboard

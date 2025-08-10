@@ -81,6 +81,22 @@ CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --n
 CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
+### Logging & Analytics Setup
+```bash
+# Enable persistent logging and analytics
+python setup_logging.py
+
+# Start server with file logging
+python start_with_logging.py --api openai --log-level DEBUG
+
+# Analyze logs after running
+python analyze_logs.py
+
+# Logs saved to:
+# - logs/heylookllm_*.log (text logs with rotation)
+# - logs/analytics.db (DuckDB metrics database)
+```
+
 ### Model Import
 ```bash
 # Import models from a directory
@@ -130,6 +146,12 @@ Models are defined in `models.yaml` with the following key fields:
 
 ### LRU Model Caching
 The `ModelRouter` maintains an LRU cache of loaded models (default max: 2). When cache is full, the least recently used model is unloaded to make space for new models.
+
+### Default Max Tokens
+- MLX Provider: 512 tokens (src/heylook_llm/providers/mlx_provider.py:826)
+- Llama.cpp Provider: 512 tokens (src/heylook_llm/providers/llama_cpp_provider.py:122)
+- API fallback: 1000 tokens (various places in api.py)
+- Can be overridden in models.yaml or per-request
 
 ### Middleware Translation
 Ollama API requests are translated to OpenAI format via `OllamaTranslator` middleware, processed through the same backend providers, then translated back to Ollama response format.
@@ -291,3 +313,46 @@ python tests/test_embeddings_direct.py
 - Keep documentation updated and synchronized with code changes
 - Use clear, concise language when describing configurations and endpoints
 - Include context and rationale for significant configuration updates
+
+## HeylookPlayground Apps
+
+### HeylookPlayground-web (Primary - Desktop Web App)
+**Location**: `apps/HeylookPlayground-web/`  
+**Documentation**: See `apps/HeylookPlayground-web/README.md` for complete setup and development guide
+
+A clean, desktop-first web application for interacting with heylookitsanllm server.
+
+#### Quick Start
+```bash
+cd apps/HeylookPlayground-web
+npm install
+npm run dev         # Start development server on http://localhost:3000
+npm run test:visual # Run Playwright visual tests
+```
+
+#### Key Features
+- **Desktop-optimized interface**: Fixed sidebar navigation, proper layouts
+- **Chat Interface**: Real-time chat with model selection
+- **Visual Testing**: Playwright integration for automated UI testing
+- **Pure Web Stack**: Vite + React + TypeScript (no React Native)
+
+#### Tech Stack
+- **Build Tool**: Vite for fast development
+- **Framework**: React with TypeScript
+- **Styling**: CSS modules with custom styles
+- **Testing**: Playwright for visual regression testing
+- **API Client**: Axios for heylookitsanllm server communication
+
+---
+
+### HeylookPlayground (Legacy - React Native)
+**Location**: `apps/HeylookPlayground/`  
+**Status**: Deprecated - Replaced by HeylookPlayground-web due to web platform issues
+
+Previous React Native + Expo attempt at cross-platform app. Encountered issues with:
+- Platform detection not working properly for web
+- Mobile UI components showing on desktop
+- React Native Paper deprecation warnings
+- Poor desktop experience
+
+See `apps/HeylookPlayground/PLAYGROUND_DEVELOPMENT.md` for historical context and lessons learned.

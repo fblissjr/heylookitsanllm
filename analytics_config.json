@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "storage_level": "full",
+  "db_path": "logs/analytics.db",
+  "retention_days": 30,
+  "max_db_size_mb": 5000,
+  "log_images": false,
+  "anonymize_content": false,
+  "export_formats": ["json", "parquet"]
+}
