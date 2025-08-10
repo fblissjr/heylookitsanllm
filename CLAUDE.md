@@ -57,6 +57,10 @@ cd tests && pytest -m integration
 
 # Run specific test file
 python tests/test_api.py
+
+# Test GGUF concurrent request handling
+python test_mutex_simple.py        # Basic mutex test
+python test_parallel_stress.py 10  # Stress test with 10 parallel requests
 ```
 
 ### Installation & Setup
@@ -168,6 +172,20 @@ Models are defined in `models.yaml` with the following key fields:
 - **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`
 - **Ollama API** - `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`, `/api/embed`
 - **Admin API** - `/v1/admin/restart`, `/v1/admin/reload` (for development use)
+
+## GGUF/llama.cpp Provider Details
+
+### Concurrent Request Handling
+The GGUF provider uses a mutex lock to serialize requests because llama-cpp-python's KV cache is not thread-safe. Key implementation:
+- `threading.Lock()` ensures only one request uses the model at a time
+- `model.reset()` clears KV cache before each request to prevent corruption
+- Broken models are automatically marked and reloaded
+- See `guides/LLAMA_CPP_PROVIDER.md` for full technical details
+
+### Known Limitations
+- No true parallel processing for GGUF models (serialized via mutex)
+- KV cache corruption if mutex is disabled
+- Single model instance per model ID (memory constraint)
 
 ## Key Design Patterns
 

@@ -6,5 +6,9 @@
   "max_db_size_mb": 5000,
   "log_images": false,
   "anonymize_content": false,
-  "export_formats": ["json", "parquet"]
+  "export_formats": [
+    "json",
+    "csv",
+    "parquet"
+  ]
 }

@@ -96,7 +96,7 @@ class LlamaCppModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp"]
+    provider: Literal["mlx", "llama_cpp", "gguf"]  # Support both gguf and llama_cpp
     config: Union[MLXModelConfig, LlamaCppModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)

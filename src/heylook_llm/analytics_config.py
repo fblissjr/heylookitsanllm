@@ -83,42 +83,58 @@ class AnalyticsConfig:
     
     def _load_config(self):
         """Load configuration from environment variables and config files"""
-        # Check if analytics is enabled
-        self.enabled = os.getenv("HEYLOOK_ANALYTICS_ENABLED", "false").lower() == "true"
+        # First, check for config file (takes precedence)
+        config_path = Path("analytics_config.json")
+        file_config = {}
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    file_config = json.load(f)
+                    logger.debug(f"Loaded analytics config from {config_path}")
+            except Exception as e:
+                logger.error(f"Failed to load analytics config file: {e}")
+        
+        # Check if analytics is enabled (env var first, then file config)
+        env_enabled = os.getenv("HEYLOOK_ANALYTICS_ENABLED", "").lower() == "true"
+        file_enabled = file_config.get("enabled", False)
+        
+        # Environment variable takes precedence if set, otherwise use file config
+        if os.getenv("HEYLOOK_ANALYTICS_ENABLED"):
+            self.enabled = env_enabled
+        elif file_config:
+            self.enabled = file_enabled
+        else:
+            self.enabled = False
         
         if not self.enabled:
-            logger.info("Analytics disabled (set HEYLOOK_ANALYTICS_ENABLED=true to enable)")
+            logger.info("Analytics disabled (enable via HEYLOOK_ANALYTICS_ENABLED=true or analytics_config.json)")
             return
         
-        # Load storage level
-        storage_level_str = os.getenv("HEYLOOK_ANALYTICS_STORAGE_LEVEL", "none").lower()
+        # Load storage level (env vars first, then file config)
+        storage_level_str = os.getenv("HEYLOOK_ANALYTICS_STORAGE_LEVEL", 
+                                     file_config.get("storage_level", "none")).lower()
         try:
             self.storage_level = StorageLevel(storage_level_str)
         except ValueError:
             logger.warning(f"Invalid storage level: {storage_level_str}, using 'none'")
             self.storage_level = StorageLevel.NONE
         
-        # Load other settings
-        self.db_path = os.getenv("HEYLOOK_ANALYTICS_DB_PATH", "analytics.db")
-        self.retention_days = int(os.getenv("HEYLOOK_ANALYTICS_RETENTION_DAYS", "30"))
-        self.max_db_size_mb = int(os.getenv("HEYLOOK_ANALYTICS_MAX_DB_SIZE_MB", "1000"))
-        self.log_images = os.getenv("HEYLOOK_ANALYTICS_LOG_IMAGES", "false").lower() == "true"
-        self.anonymize_content = os.getenv("HEYLOOK_ANALYTICS_ANONYMIZE_CONTENT", "false").lower() == "true"
+        # Load other settings (env vars take precedence over file config)
+        self.db_path = os.getenv("HEYLOOK_ANALYTICS_DB_PATH", 
+                                 file_config.get("db_path", "analytics.db"))
+        self.retention_days = int(os.getenv("HEYLOOK_ANALYTICS_RETENTION_DAYS", 
+                                            file_config.get("retention_days", 30)))
+        self.max_db_size_mb = int(os.getenv("HEYLOOK_ANALYTICS_MAX_DB_SIZE_MB", 
+                                            file_config.get("max_db_size_mb", 1000)))
+        self.log_images = os.getenv("HEYLOOK_ANALYTICS_LOG_IMAGES", 
+                                   str(file_config.get("log_images", False))).lower() == "true"
+        self.anonymize_content = os.getenv("HEYLOOK_ANALYTICS_ANONYMIZE_CONTENT", 
+                                          str(file_config.get("anonymize_content", False))).lower() == "true"
         
         # Parse export formats
-        export_formats_str = os.getenv("HEYLOOK_ANALYTICS_EXPORT_FORMATS", "json,csv")
+        export_formats_str = os.getenv("HEYLOOK_ANALYTICS_EXPORT_FORMATS", 
+                                      ",".join(file_config.get("export_formats", ["json", "csv"])))
         self.export_formats = [fmt.strip() for fmt in export_formats_str.split(",")]
-        
-        # Also check for config file
-        config_path = Path("analytics_config.json")
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    file_config = json.load(f)
-                    # File config takes precedence over env vars
-                    self._merge_config(file_config)
-            except Exception as e:
-                logger.error(f"Failed to load analytics config file: {e}")
         
         logger.info(f"Analytics enabled with storage level: {self.storage_level.value}")
         logger.info(f"Database path: {self.db_path}, retention: {self.retention_days} days")

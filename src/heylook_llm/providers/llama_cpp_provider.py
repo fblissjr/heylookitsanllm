@@ -4,9 +4,10 @@ import logging
 import traceback
 import json
 import errno
+import threading
 from typing import Generator, Dict
 
-from llama_cpp import Llama, LlamaRAMCache
+from llama_cpp import Llama, LlamaRAMCache, llama_cpp
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, Llava15ChatHandler
 
 from ..config import ChatRequest
@@ -17,6 +18,7 @@ class LlamaCppProvider(BaseProvider):
         super().__init__(model_id, config, verbose)
         self.model = None
         self._model_broken = False
+        self._generation_lock = threading.Lock()  # Mutex for thread-safe generation
 
     def load_model(self):
         logging.info(f"Loading GGUF model: {self.config['model_path']}")
@@ -51,7 +53,14 @@ class LlamaCppProvider(BaseProvider):
                 embedding=enable_embeddings,  # Use config value
                 verbose=self.verbose,
             )
-            self.model.set_cache(LlamaRAMCache())
+            
+            # Set cache if enabled (following llama-cpp-python server pattern)
+            # By default, enable cache for better performance with repeated prompts
+            if self.config.get('cache', True):
+                cache_size = self.config.get('cache_size', 2 << 30)  # Default 2GB
+                self.model.set_cache(LlamaRAMCache(capacity_bytes=cache_size))
+                logging.debug(f"Set RAM cache with size {cache_size} bytes")
+            
         except Exception as e:
             raise e
 
@@ -93,100 +102,114 @@ class LlamaCppProvider(BaseProvider):
                 self.prompt_tokens = usage.get("prompt_tokens", 0) if usage else 0
                 self.generation_tokens = usage.get("completion_tokens", 0) if usage else 0
 
-        try:
-            # Check if model is loaded or broken
-            if self.model is None or self._model_broken:
-                if self._model_broken:
-                    logging.warning("Model was marked as broken, attempting to reload...")
-                    self.load_model()
-                else:
-                    raise RuntimeError("Model not loaded. Call load_model() first.")
-
-            request_dict = request.model_dump(exclude_none=True)
-            
-            # Process messages to ensure correct format
-            messages = request_dict.get('messages', [])
-            processed_messages = []
-            
-            # Check if this is a vision model
-            has_vision = self.config.get('mmproj_path') is not None
-            
-            for msg in messages:
-                msg_copy = msg.copy()
-                # If content is a list (multimodal format)
-                if isinstance(msg_copy.get('content'), list):
-                    if has_vision:
-                        # Keep multimodal format for vision models
-                        processed_messages.append(msg_copy)
+        # Use lock to ensure thread safety (following llama-cpp-python server pattern)
+        # Don't clear cache - let llama-cpp handle prefix matching for performance
+        with self._generation_lock:
+            try:
+                # Check if model is loaded or broken
+                if self.model is None or self._model_broken:
+                    if self._model_broken:
+                        logging.warning("Model was marked as broken, attempting to reload...")
+                        # Clean up the broken model first
+                        if self.model is not None:
+                            try:
+                                if hasattr(self.model, '_cache'):
+                                    self.model._cache = None
+                                del self.model
+                                self.model = None
+                                gc.collect()
+                            except:
+                                pass
+                        self._model_broken = False
+                        self.load_model()
                     else:
-                        # Extract only text parts for non-vision models
-                        text_parts = []
-                        for part in msg_copy['content']:
-                            if isinstance(part, dict) and part.get('type') == 'text':
-                                text_parts.append(part.get('text', ''))
-                        msg_copy['content'] = ' '.join(text_parts)
+                        raise RuntimeError("Model not loaded. Call load_model() first.")
+
+                request_dict = request.model_dump(exclude_none=True)
+                
+                # Process messages to ensure correct format
+                messages = request_dict.get('messages', [])
+                processed_messages = []
+                
+                # Check if this is a vision model
+                has_vision = self.config.get('mmproj_path') is not None
+                
+                for msg in messages:
+                    msg_copy = msg.copy()
+                    # If content is a list (multimodal format)
+                    if isinstance(msg_copy.get('content'), list):
+                        if has_vision:
+                            # Keep multimodal format for vision models
+                            processed_messages.append(msg_copy)
+                        else:
+                            # Extract only text parts for non-vision models
+                            text_parts = []
+                            for part in msg_copy['content']:
+                                if isinstance(part, dict) and part.get('type') == 'text':
+                                    text_parts.append(part.get('text', ''))
+                            msg_copy['content'] = ' '.join(text_parts)
+                            processed_messages.append(msg_copy)
+                    else:
+                        # Content is already a string, keep as is
                         processed_messages.append(msg_copy)
-                else:
-                    # Content is already a string, keep as is
-                    processed_messages.append(msg_copy)
-            
-            # Build parameters for generation
-            params = {
-                "messages": processed_messages,
-                "temperature": request_dict.get('temperature', 0.8),
-                "top_p": request_dict.get('top_p', 0.95),
-                "top_k": request_dict.get('top_k', 40),
-                "min_p": request_dict.get('min_p', 0.05),
-                "repeat_penalty": request_dict.get('repetition_penalty', 1.1),
-                "max_tokens": request_dict.get('max_tokens', 512),
-                "stream": True,
-            }
-            
-            # Add stop tokens - prioritize request, fallback to config
-            if 'stop' in request_dict:
-                params['stop'] = request_dict['stop']
-            elif 'stop' in self.config:
-                params['stop'] = self.config['stop']
+                
+                # Build parameters for generation
+                params = {
+                    "messages": processed_messages,
+                    "temperature": request_dict.get('temperature', 0.8),
+                    "top_p": request_dict.get('top_p', 0.95),
+                    "top_k": request_dict.get('top_k', 40),
+                    "min_p": request_dict.get('min_p', 0.05),
+                    "repeat_penalty": request_dict.get('repetition_penalty', 1.1),
+                    "max_tokens": request_dict.get('max_tokens', 512),
+                    "stream": True,
+                }
+                
+                # Add stop tokens - prioritize request, fallback to config
+                if 'stop' in request_dict:
+                    params['stop'] = request_dict['stop']
+                elif 'stop' in self.config:
+                    params['stop'] = self.config['stop']
 
-            if self.verbose:
-                # Log only the parameters, not the messages (which may contain base64 images)
-                safe_params = {k: v for k, v in params.items() if k != 'messages'}
-                safe_params['message_count'] = len(params.get('messages', []))
-                logging.debug(f"Calling Llama.cpp with params: {json.dumps(safe_params, indent=2)}")
+                if self.verbose:
+                    # Log only the parameters, not the messages (which may contain base64 images)
+                    safe_params = {k: v for k, v in params.items() if k != 'messages'}
+                    safe_params['message_count'] = len(params.get('messages', []))
+                    logging.debug(f"Calling Llama.cpp with params: {json.dumps(safe_params, indent=2)}")
 
-            for chunk in self.model.create_chat_completion(**params):
-                text = ''
-                usage = None
+                for chunk in self.model.create_chat_completion(**params):
+                    text = ''
+                    usage = None
 
-                # Safely extract text from chunk
-                if isinstance(chunk, dict):
-                    choices = chunk.get('choices', [])
-                    if choices and isinstance(choices[0], dict):
-                        delta = choices[0].get('delta', {})
-                        if isinstance(delta, dict):
-                            text = delta.get('content', '')
-                    usage = chunk.get('usage')
+                    # Safely extract text from chunk
+                    if isinstance(chunk, dict):
+                        choices = chunk.get('choices', [])
+                        if choices and isinstance(choices[0], dict):
+                            delta = choices[0].get('delta', {})
+                            if isinstance(delta, dict):
+                                text = delta.get('content', '')
+                        usage = chunk.get('usage')
 
-                yield LlamaCppStreamChunk(text=text, usage=usage)
+                    yield LlamaCppStreamChunk(text=text, usage=usage)
 
-        except BrokenPipeError as e:
-            # Handle broken pipe specifically
-            logging.error(f"Llama.cpp connection lost (Broken pipe): {e}")
-            # Mark model as broken to force reload on next request
-            self._model_broken = True
-            yield LlamaCppStreamChunk(text=f"\n\nError: Connection to llama.cpp lost. Please retry your request.")
-        except OSError as e:
-            # Handle other OS-level errors (including EPIPE)
-            if e.errno == errno.EPIPE:  # EPIPE (32)
-                logging.error(f"Llama.cpp pipe disconnected: {e}")
+            except BrokenPipeError as e:
+                # Handle broken pipe specifically
+                logging.error(f"Llama.cpp connection lost (Broken pipe): {e}")
+                # Mark model as broken to force reload on next request
                 self._model_broken = True
                 yield LlamaCppStreamChunk(text=f"\n\nError: Connection to llama.cpp lost. Please retry your request.")
-            else:
-                logging.error(f"Llama.cpp OS error: {e}", exc_info=True)
-                yield LlamaCppStreamChunk(text=f"\n\nError: System error occurred: {str(e)}")
-        except Exception as e:
-            logging.error(f"Llama.cpp model call failed: {e}", exc_info=True)
-            yield LlamaCppStreamChunk(text=f"\n\nError: Llama.cpp generation failed: {str(e)}")
+            except OSError as e:
+                # Handle other OS-level errors (including EPIPE)
+                if e.errno == errno.EPIPE:  # EPIPE (32)
+                    logging.error(f"Llama.cpp pipe disconnected: {e}")
+                    self._model_broken = True
+                    yield LlamaCppStreamChunk(text=f"\n\nError: Connection to llama.cpp lost. Please retry your request.")
+                else:
+                    logging.error(f"Llama.cpp OS error: {e}", exc_info=True)
+                    yield LlamaCppStreamChunk(text=f"\n\nError: System error occurred: {str(e)}")
+            except Exception as e:
+                logging.error(f"Llama.cpp model call failed: {e}", exc_info=True)
+                yield LlamaCppStreamChunk(text=f"\n\nError: Llama.cpp generation failed: {str(e)}")
 
     def unload(self):
         logging.info(f"Unloading GGUF model: {self.model_id}")

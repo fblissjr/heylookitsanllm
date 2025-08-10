@@ -92,7 +92,11 @@ class MetricsDB:
                 -- Error tracking
                 success BOOLEAN DEFAULT true,
                 error_type VARCHAR,
-                error_message VARCHAR
+                error_message VARCHAR,
+                
+                -- Full content storage (when enabled)
+                messages JSON,
+                response_text VARCHAR
             )
         """)
 
@@ -239,10 +243,15 @@ class MetricsDB:
 
                 try:
                     for table, data in to_write:
-                        columns = ', '.join(data.keys())
-                        placeholders = ', '.join(['?' for _ in data])
+                        # Convert messages to JSON if present
+                        processed_data = data.copy()
+                        if 'messages' in processed_data and processed_data['messages'] is not None:
+                            processed_data['messages'] = json.dumps(processed_data['messages'])
+                        
+                        columns = ', '.join(processed_data.keys())
+                        placeholders = ', '.join(['?' for _ in processed_data])
                         query = f"INSERT INTO {table} ({columns}) VALUES ({placeholders})"
-                        write_conn.execute(query, list(data.values()))
+                        write_conn.execute(query, list(processed_data.values()))
                     write_conn.commit()
                 except Exception as e:
                     logging.error(f"Failed to write metrics: {e}")

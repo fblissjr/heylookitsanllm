@@ -1,5 +1,6 @@
 # src/heylook_llm/api.py
 import uuid, time, logging, argparse, sys, asyncio
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Body, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -270,6 +271,36 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         # Run model generation in thread pool
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
+    except RuntimeError as e:
+        # Check if this is a MODEL_BUSY error
+        if "MODEL_BUSY" in str(e):
+            logging.warning(f"Model busy for request {request_id[:8]}: {e}")
+            log_request_complete(request_id, success=False, error_msg="Model busy")
+            
+            # Return 503 Service Unavailable with retry headers
+            # This tells OpenAI client to retry automatically
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "message": "The server is currently processing another request. Please retry in a moment.",
+                        "type": "server_error",
+                        "code": "model_overloaded"
+                    }
+                },
+                headers={
+                    "Retry-After": "1",  # Suggest retry after 1 second
+                    "X-RateLimit-Limit": "1",  # We can handle 1 concurrent request
+                    "X-RateLimit-Remaining": "0",  # No capacity right now
+                    "X-RateLimit-Reset": str(int(time.time() + 1))  # Reset in 1 second
+                }
+            )
+        else:
+            # Other runtime errors
+            logging.error(f"Runtime error: {e}", exc_info=True)
+            log_request_complete(request_id, success=False, error_msg=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+    
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
@@ -462,7 +493,8 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
             # Add request/response content based on storage level
             if analytics_config.should_log_content():
-                metrics['messages'] = chat_request.messages
+                # Convert Pydantic models to dictionaries for DuckDB storage
+                metrics['messages'] = [msg.dict() for msg in chat_request.messages]
                 metrics['response_text'] = full_text
 
             db.log_request(metrics)
