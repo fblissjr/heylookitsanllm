@@ -185,7 +185,7 @@ All models are defined in the **`models.yaml`** file. You **must** edit this fil
 Here's some of the key fields:
 
 - `id`: unique model identifier for API calls
-- `provider`: must be either `mlx` or `llama_cpp`
+- `provider`: must be either `mlx` or `gguf` (also accepts `llama_cpp` for backwards compatibility)
 - `enabled`: boolean to enable/disable models
 - `config`: provider-specific settings (model_path, vision capabilities, etc.)
 

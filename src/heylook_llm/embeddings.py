@@ -334,7 +334,7 @@ def create_embedding_extractor(provider_type: str, model: Any, processor: Any = 
         if processor is None:
             raise ValueError("MLX models require a processor/tokenizer")
         return MLXEmbeddingExtractor(model, processor)
-    elif provider_type == "llama_cpp":
+    elif provider_type in ["llama_cpp", "gguf"]:
         return LlamaCppEmbeddingExtractor(model)
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")

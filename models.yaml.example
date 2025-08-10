@@ -1,3 +1,77 @@
+# models.yaml Configuration Reference
+# =====================================
+#
+# PARAMETER DOCUMENTATION
+# -----------------------
+#
+# MLX Provider Parameters (Apple Silicon optimized):
+# ---------------------------------------------------
+# REQUIRED:
+#   model_path: string          # Path to MLX model directory
+#   provider: "mlx"             # Must be "mlx" for MLX models
+#
+# OPTIONAL - Model Loading:
+#   vision: boolean             # Enable vision capabilities (default: false)
+#   trust_remote_code: boolean  # Allow remote code execution (default: false)
+#
+# OPTIONAL - Memory Management (critical for large models):
+#   cache_type: string          # "standard" or "quantized" (default: "standard")
+#                              # Use "quantized" for models > 30B params
+#   kv_bits: integer           # Bits for KV cache: 4, 8 (default: 8)
+#                              # 4-bit saves 75% memory, slight quality loss
+#   kv_group_size: integer     # Quantization group size: 32-128 (default: 64)
+#                              # Lower = faster, higher = better quality
+#   quantized_kv_start: integer # Token position to start quantizing (default: 1024)
+#                              # Keep first N tokens at full precision
+#   max_kv_size: integer       # Maximum KV cache size in tokens (default: unlimited)
+#                              # Limit to prevent OOM on large models
+#
+# OPTIONAL - Generation:
+#   temperature: float         # 0.0-2.0, controls randomness (default: 0.7)
+#   max_tokens: integer        # 1-32768, max generation length (default: 512)
+#   top_p: float              # 0.0-1.0, nucleus sampling (default: 0.95)
+#   top_k: integer            # 1-100, top-k sampling (default: 50)
+#   min_p: float              # 0.0-1.0, min-p sampling (default: 0.05)
+#                             # Often faster than top_p, disable top_p when using
+#   repetition_penalty: float  # 1.0-2.0, penalize repetition (default: 1.0)
+#   repetition_context_size: integer # Tokens to consider for repetition (default: 20)
+#
+# OPTIONAL - Optimization:
+#   use_flash_attention: boolean # Enable Flash Attention (default: true)
+#   batch_size: integer         # Batch size for processing (default: 1)
+#   model_size_gb: integer      # Hint for Metal optimizer (actual model size)
+#   draft_model_path: string    # Path to smaller draft model for speculative decoding
+#   num_draft_tokens: integer   # Tokens to generate with draft model: 2-8 (default: 4)
+#
+# GGUF Provider Parameters (llama.cpp backend):
+# ---------------------------------------------
+# REQUIRED:
+#   model_path: string          # Path to .gguf file
+#   provider: "gguf"            # Use "gguf" (or "llama_cpp" for backwards compatibility)
+#
+# OPTIONAL - Model Loading:
+#   mmproj_path: string         # Path to vision projection .gguf (for multimodal)
+#   chat_format: string         # Chat template: "chatml", "llama-2", "qwen", etc.
+#   chat_format_template: string # Path to custom Jinja2 template file
+#   embedding: boolean          # Enable embeddings extraction (default: false)
+#
+# OPTIONAL - Memory/GPU:
+#   n_gpu_layers: integer       # GPU layers to offload: -1 for all (default: -1)
+#                              # For M2 Ultra: -1 recommended for full GPU
+#   n_ctx: integer             # Context window size: 512-32768 (default: 4096)
+#                              # M2 Ultra can handle 32768 for smaller models
+#   n_batch: integer           # Batch size: 1-2048 (default: 512)
+#                              # Higher = faster prompt processing, more memory
+#   use_mmap: boolean          # Memory-mapped file loading (default: true)
+#                              # Faster loading, recommended for M2 Ultra
+#   use_mlock: boolean         # Lock model in RAM (default: false)
+#                              # Set true if you have spare RAM (M2 Ultra: yes)
+#   n_threads: integer         # CPU threads: 1-64 (default: system/2)
+#                              # M2 Ultra: 16-24 threads optimal
+#
+# OPTIONAL - Generation (same as MLX):
+#   temperature, max_tokens, top_p, top_k, repeat_penalty
+
 # Example models.yaml
 # --- Global Server Settings ---
 default_model: "gemma3n-e4b-it"
@@ -95,7 +169,7 @@ models:
 
   # --- GGUF Models (for comparison) ---
   - id: "qwen2.5-vl-72b-gguf"
-    provider: "llama_cpp"
+    provider: "gguf"
     description: "Qwen2.5 VL 72B GGUF version"
     tags: ["large", "gguf"]
     enabled: false # Enable when you have the file
@@ -119,7 +193,7 @@ models:
 
   # --- GGUF Models via llama.cpp ---
   - id: "qwen2.5-vl-72b-inst-gguf"
-    provider: "llama_cpp"
+    provider: "gguf"
     description: "Qwen2.5-VL 72B Instruct quantized GGUF"
     tags: ["vision", "large", "gguf", "qwen"]
     enabled: true
@@ -133,7 +207,7 @@ models:
       cache_type: "standard"
 
   - id: "mistral-small-vision"
-    provider: "llama_cpp"
+    provider: "gguf"
     description: "Mistral Small 24B with vision capabilities and custom template"
     tags: ["vision", "mistral", "custom-template"]
     enabled: true
@@ -157,7 +231,7 @@ models:
       kv_bits: 4
 
   - id: "llama-3.1-8b-instruct"
-    provider: "llama_cpp"
+    provider: "gguf"
     description: "Llama 3.1 8B Instruct - GGUF version"
     tags: ["text-only", "instruct", "llama"]
     enabled: true

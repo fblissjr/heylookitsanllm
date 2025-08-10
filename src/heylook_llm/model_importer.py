@@ -173,7 +173,7 @@ def get_smart_defaults(model_info: Dict[str, Any]) -> Dict[str, Any]:
     defaults['repetition_context_size'] = 20
     
     # Provider-specific
-    if provider == 'llama_cpp':
+    if provider in ['llama_cpp', 'gguf']:  # Support both names
         defaults['n_gpu_layers'] = -1
         defaults['n_ctx'] = 8192 if size_gb > 30 else 4096
         defaults['n_batch'] = 512
@@ -497,7 +497,7 @@ class ModelImporter:
         # Build model info for smart defaults
         model_info = {
             'name': model_id,
-            'provider': 'llama_cpp',
+            'provider': 'gguf',  # Use the simpler name
             'is_quantized': is_quantized,
             'is_vision': is_vision,
             'size_gb': size_gb or 0
@@ -557,7 +557,7 @@ class ModelImporter:
         
         entry = {
             "id": model_id,
-            "provider": "llama_cpp",
+            "provider": "gguf",  # Use the simpler name
             "description": f"Auto-imported GGUF model ({quant}){' with vision' if is_vision else ''}{f' ({size_gb:.1f}GB)' if size_gb else ''}",
             "tags": tags,
             "enabled": False,
@@ -570,7 +570,7 @@ class ModelImporter:
         """Generate models.yaml content from discovered models."""
         # Group by provider
         mlx_models = [m for m in models if m['provider'] == 'mlx']
-        gguf_models = [m for m in models if m['provider'] == 'llama_cpp']
+        gguf_models = [m for m in models if m['provider'] in ['llama_cpp', 'gguf']]
         
         # Build the structure
         config = {

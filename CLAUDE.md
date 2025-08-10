@@ -153,14 +153,14 @@ heylookllm import --folder ~/models --profile fast --override temperature=0.5 --
 ### Provider System
 The server supports two backend providers:
 - **MLX Provider** (`mlx_provider.py`) - For Apple Silicon MLX models (text + vision)
-- **Llama.cpp Provider** (`llama_cpp_provider.py`) - For GGUF models via llama-cpp-python
+- **GGUF Provider** (`llama_cpp_provider.py`) - For GGUF models via llama-cpp-python
 
 Both providers implement the `BaseProvider` interface with `load_model()` and `create_chat_completion()` methods.
 
 ### Model Configuration
 Models are defined in `models.yaml` with the following key fields:
 - `id` - Unique model identifier for API calls
-- `provider` - Either "mlx" or "llama_cpp"
+- `provider` - Either "mlx" or "gguf" (also accepts "llama_cpp" for backwards compatibility)
 - `enabled` - Boolean to enable/disable models
 - `config` - Provider-specific settings (model_path, vision capabilities, etc.)
 
@@ -228,7 +228,7 @@ Both streaming and non-streaming responses are supported. Streaming uses Server-
 - Pre-warming of default model on server startup
 
 ### Vision Model Support
-- Both MLX and llama.cpp providers support vision models
+- Both MLX and GGUF providers support vision models
 - Image inputs via base64 encoding or URLs
 - Automatic validation of vision capabilities per model
 
@@ -307,7 +307,7 @@ The `/v1/embeddings` endpoint provides real model embeddings extraction for both
 
 ### Key Features
 - **Real Embeddings**: Extracts actual model embeddings from internal representations
-- **Multi-Provider Support**: Works with both MLX and llama.cpp backends
+- **Multi-Provider Support**: Works with both MLX and GGUF backends
 - **Vision Model Support**: Can extract embeddings from vision-language models
 - **Batch Processing**: Process multiple texts in a single request
 - **Dimension Truncation**: Optionally truncate embeddings to specific dimensions
@@ -315,7 +315,7 @@ The `/v1/embeddings` endpoint provides real model embeddings extraction for both
 
 ### Implementation Details
 - **MLX Models**: Extracts embeddings from token embeddings layer or hidden states
-- **Llama.cpp Models**: Uses built-in `create_embedding` method (requires `embedding=True` during model init)
+- **GGUF Models**: Uses built-in `create_embedding` method (requires `embedding=True` during model init)
 - **TokenizerWrapper**: Properly handles MLX's TokenizerWrapper by accessing `_tokenizer` attribute
 - **Pooling Strategies**: Supports mean, cls, last, and max pooling (MLX only)
 

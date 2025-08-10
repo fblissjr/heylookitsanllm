@@ -76,7 +76,7 @@ class ModelRouter:
             elif model_config.provider == "mlx" and not HAS_MLX:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires MLX provider which is not installed.")
                 initial_model_to_load = None
-            elif model_config.provider == "llama_cpp" and not HAS_LLAMA_CPP:
+            elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires llama.cpp provider which is not installed.")
                 initial_model_to_load = None
 
@@ -87,9 +87,9 @@ class ModelRouter:
                     initial_model_to_load = model.id
                     logging.info(f"Selected MLX model '{initial_model_to_load}' as initial model.")
                     break
-                elif model.provider == "llama_cpp" and HAS_LLAMA_CPP:
+                elif model.provider in ["llama_cpp", "gguf"] and HAS_LLAMA_CPP:
                     initial_model_to_load = model.id
-                    logging.info(f"Selected llama.cpp model '{initial_model_to_load}' as initial model.")
+                    logging.info(f"Selected GGUF model '{initial_model_to_load}' as initial model.")
                     break
 
             if not initial_model_to_load:
@@ -180,13 +180,14 @@ class ModelRouter:
                 provider_map["mlx"] = MLXProvider
             if LlamaCppProvider:
                 provider_map["llama_cpp"] = LlamaCppProvider
+                provider_map["gguf"] = LlamaCppProvider  # Support both names
 
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:
                 if model_config.provider == "mlx" and not HAS_MLX:
                     raise ValueError(f"MLX provider requested but not installed. Install with: pip install heylookitsanllm[mlx]")
-                elif model_config.provider == "llama_cpp" and not HAS_LLAMA_CPP:
-                    raise ValueError(f"Llama.cpp provider requested but not installed. Install with: pip install heylookitsanllm[llama-cpp]")
+                elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
+                    raise ValueError(f"GGUF provider requested but not installed. Install with: pip install heylookitsanllm[llama-cpp]")
                 else:
                     raise ValueError(f"Unknown provider: {model_config.provider}")
 

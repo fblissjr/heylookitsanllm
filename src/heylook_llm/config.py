@@ -107,7 +107,7 @@ class ModelConfig(BaseModel):
         provider = values.get('provider')
         if provider == 'mlx':
             return MLXModelConfig(**v)
-        elif provider == 'llama_cpp':
+        elif provider in ['llama_cpp', 'gguf']:  # Support both names
             return LlamaCppModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
 

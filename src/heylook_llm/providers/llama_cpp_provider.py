@@ -3,6 +3,7 @@ import gc
 import logging
 import traceback
 import json
+import errno
 from typing import Generator, Dict
 
 from llama_cpp import Llama, LlamaRAMCache
@@ -15,9 +16,13 @@ class LlamaCppProvider(BaseProvider):
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         super().__init__(model_id, config, verbose)
         self.model = None
+        self._model_broken = False
 
     def load_model(self):
         logging.info(f"Loading GGUF model: {self.config['model_path']}")
+        
+        # Reset broken flag when loading
+        self._model_broken = False
 
         chat_handler = None
 
@@ -28,13 +33,22 @@ class LlamaCppProvider(BaseProvider):
 
         # Load the model first
         try:
+            # Enable embeddings if specified in config (default False for safety)
+            enable_embeddings = self.config.get('embedding', False)
+            if enable_embeddings:
+                logging.info("Embeddings extraction enabled for this model")
+            
             self.model = Llama(
                 model_path=self.config['model_path'],
                 chat_format=self.config.get('chat_format'),
                 chat_handler=chat_handler,
                 n_ctx=self.config.get('n_ctx', 4096),
                 n_gpu_layers=self.config.get('n_gpu_layers', -1),
-                embedding=False,  # Disable embedding to fix segfault
+                n_batch=self.config.get('n_batch', 512),
+                n_threads=self.config.get('n_threads', None),  # None = auto-detect
+                use_mmap=self.config.get('use_mmap', True),
+                use_mlock=self.config.get('use_mlock', False),
+                embedding=enable_embeddings,  # Use config value
                 verbose=self.verbose,
             )
             self.model.set_cache(LlamaRAMCache())
@@ -80,9 +94,13 @@ class LlamaCppProvider(BaseProvider):
                 self.generation_tokens = usage.get("completion_tokens", 0) if usage else 0
 
         try:
-            # Check if model is loaded
-            if self.model is None:
-                raise RuntimeError("Model not loaded. Call load_model() first.")
+            # Check if model is loaded or broken
+            if self.model is None or self._model_broken:
+                if self._model_broken:
+                    logging.warning("Model was marked as broken, attempting to reload...")
+                    self.load_model()
+                else:
+                    raise RuntimeError("Model not loaded. Call load_model() first.")
 
             request_dict = request.model_dump(exclude_none=True)
             
@@ -112,6 +130,7 @@ class LlamaCppProvider(BaseProvider):
                     # Content is already a string, keep as is
                     processed_messages.append(msg_copy)
             
+            # Build parameters for generation
             params = {
                 "messages": processed_messages,
                 "temperature": request_dict.get('temperature', 0.8),
@@ -122,6 +141,12 @@ class LlamaCppProvider(BaseProvider):
                 "max_tokens": request_dict.get('max_tokens', 512),
                 "stream": True,
             }
+            
+            # Add stop tokens - prioritize request, fallback to config
+            if 'stop' in request_dict:
+                params['stop'] = request_dict['stop']
+            elif 'stop' in self.config:
+                params['stop'] = self.config['stop']
 
             if self.verbose:
                 # Log only the parameters, not the messages (which may contain base64 images)
@@ -144,12 +169,37 @@ class LlamaCppProvider(BaseProvider):
 
                 yield LlamaCppStreamChunk(text=text, usage=usage)
 
+        except BrokenPipeError as e:
+            # Handle broken pipe specifically
+            logging.error(f"Llama.cpp connection lost (Broken pipe): {e}")
+            # Mark model as broken to force reload on next request
+            self._model_broken = True
+            yield LlamaCppStreamChunk(text=f"\n\nError: Connection to llama.cpp lost. Please retry your request.")
+        except OSError as e:
+            # Handle other OS-level errors (including EPIPE)
+            if e.errno == errno.EPIPE:  # EPIPE (32)
+                logging.error(f"Llama.cpp pipe disconnected: {e}")
+                self._model_broken = True
+                yield LlamaCppStreamChunk(text=f"\n\nError: Connection to llama.cpp lost. Please retry your request.")
+            else:
+                logging.error(f"Llama.cpp OS error: {e}", exc_info=True)
+                yield LlamaCppStreamChunk(text=f"\n\nError: System error occurred: {str(e)}")
         except Exception as e:
             logging.error(f"Llama.cpp model call failed: {e}", exc_info=True)
             yield LlamaCppStreamChunk(text=f"\n\nError: Llama.cpp generation failed: {str(e)}")
 
     def unload(self):
         logging.info(f"Unloading GGUF model: {self.model_id}")
-        if hasattr(self, 'model'):
-            del self.model
+        try:
+            if hasattr(self, 'model') and self.model is not None:
+                # Clear the cache first
+                if hasattr(self.model, '_cache'):
+                    self.model._cache = None
+                # Delete the model
+                del self.model
+                self.model = None
+        except Exception as e:
+            logging.warning(f"Error during model unload: {e}")
+        finally:
+            # Always collect garbage
             gc.collect()
