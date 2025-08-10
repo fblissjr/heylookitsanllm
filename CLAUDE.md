@@ -31,6 +31,17 @@ heylookllm --api both --port 8080 --log-level DEBUG
 
 # Custom host/port
 heylookllm --host 0.0.0.0 --port 4242
+
+# Enable file logging with different levels for console and file
+heylookllm --log-level INFO --file-log-level DEBUG --log-dir logs
+
+# Full logging options
+heylookllm --api openai \
+  --log-level WARNING \           # Console shows warnings and errors only
+  --file-log-level DEBUG \         # File logs everything
+  --log-dir custom_logs \          # Custom log directory
+  --log-rotate-mb 200 \            # Rotate at 200MB
+  --log-rotate-count 5             # Keep 5 rotated files
 ```
 
 ### Testing
@@ -81,21 +92,36 @@ CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --n
 CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
-### Logging & Analytics Setup
+### Logging & Analytics
+
+Two independent systems for different needs:
+
+**File Logging** (debugging/troubleshooting):
 ```bash
-# Enable persistent logging and analytics
-python setup_logging.py
-
-# Start server with file logging
-python start_with_logging.py --api openai --log-level DEBUG
-
-# Analyze logs after running
-python analyze_logs.py
-
-# Logs saved to:
-# - logs/heylookllm_*.log (text logs with rotation)
-# - logs/analytics.db (DuckDB metrics database)
+# Separate console and file log levels
+heylookllm --log-level INFO --file-log-level DEBUG --log-dir logs
 ```
+
+**Analytics DB** (performance/metrics):
+```bash
+# Setup and enable
+python setup_logging.py
+export HEYLOOK_ANALYTICS_ENABLED=true
+heylookllm --api openai
+
+# Analyze after running
+python analyze_logs.py
+```
+
+**Both** (production):
+```bash
+python setup_logging.py
+python start_with_logging.py --api openai --log-level DEBUG
+```
+
+Output locations:
+- Text logs: `logs/heylookllm_*.log` (with --file-log-level)
+- Analytics: `logs/analytics.db` (when enabled via config)
 
 ### Model Import
 ```bash

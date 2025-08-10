@@ -165,7 +165,15 @@ def main():
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on (default: 11434, Ollama standard)")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                       help="Console logging level")
+    parser.add_argument("--file-log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                       help="File logging level (if not set, file logging is disabled)")
+    parser.add_argument("--log-dir", default="logs", help="Directory for log files (default: logs)")
+    parser.add_argument("--log-rotate-mb", type=int, default=100, 
+                       help="Max size in MB per log file before rotation (default: 100)")
+    parser.add_argument("--log-rotate-count", type=int, default=10,
+                       help="Number of rotated log files to keep (default: 10)")
     parser.add_argument("--model-id", type=str, default=None, help="Optional ID of a model to load on startup.")
     parser.add_argument("--api", default="both", choices=["openai", "ollama", "both"],
                        help="Which API to serve: openai, ollama, or both (default: both) - selecting ollama only will run on port 11434 unless specified explicitly")
@@ -191,9 +199,52 @@ def main():
     elif args.port is None:
         args.port = 8080
 
-    # Set up logging
-    log_level = getattr(logging, args.log_level.upper())
-    logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+    # Set up logging with separate console and file handlers
+    import logging.handlers
+    from pathlib import Path
+    from datetime import datetime
+    
+    # Get the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Set to lowest level, handlers will filter
+    
+    # Clear any existing handlers
+    root_logger.handlers.clear()
+    
+    # Console handler
+    console_level = getattr(logging, args.log_level.upper())
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(console_level)
+    console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler (optional)
+    if args.file_log_level:
+        # Create log directory if it doesn't exist
+        log_dir = Path(args.log_dir)
+        log_dir.mkdir(exist_ok=True)
+        
+        # Create log file with timestamp
+        log_file = log_dir / f"heylookllm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        
+        # Set up rotating file handler
+        file_level = getattr(logging, args.file_log_level.upper())
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=args.log_rotate_mb * 1024 * 1024,  # Convert MB to bytes
+            backupCount=args.log_rotate_count
+        )
+        file_handler.setLevel(file_level)
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(file_formatter)
+        root_logger.addHandler(file_handler)
+        
+        logging.info(f"File logging enabled: {log_file} (level: {args.file_log_level})")
+    else:
+        logging.info("File logging disabled (use --file-log-level to enable)")
     
     # Log uvloop status
     if HAS_UVLOOP:
@@ -212,7 +263,7 @@ def main():
     # Initialize the router and store it in the app's state
     router = ModelRouter(
         config_path="models.yaml",
-        log_level=log_level,
+        log_level=console_level,  # Use console log level for router
         initial_model_id=args.model_id
     )
     

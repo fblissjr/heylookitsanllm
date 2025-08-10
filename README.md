@@ -311,47 +311,62 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-## Analytics & Metrics
+## Analytics & Logging
+
+The server offers two independent logging systems for different needs:
+
+### Quick Decision Guide
+
+| Use Case | Solution | Command |
+|----------|----------|---------|
+| **Debugging issues** | File logging | `heylookllm --file-log-level DEBUG` |
+| **Performance analysis** | Analytics DB | `export HEYLOOK_ANALYTICS_ENABLED=true && heylookllm` |
+| **Production monitoring** | Both | `python setup_logging.py && python start_with_logging.py` |
+| **Quick testing** | Neither | `heylookllm` |
+
+### File Logging (Text Logs)
+**Best for:** Debugging, troubleshooting, error tracking
+- Real-time tailing with `tail -f`
+- Grep-able text format
+- Stack traces and error details
+- Server internals and execution flow
+
+```bash
+# Enable file logging with separate console/file levels
+heylookllm --log-level WARNING --file-log-level DEBUG
+
+# Options:
+# --file-log-level    Set file log level (DEBUG/INFO/WARNING/ERROR)
+# --log-dir           Directory for logs (default: logs)
+# --log-rotate-mb     Max MB per file (default: 100)
+# --log-rotate-count  Rotated files to keep (default: 10)
+```
+
+### Analytics Database (DuckDB)
+**Best for:** Performance metrics, model comparison, usage analysis
+- SQL queries for complex analysis
+- Request/response history
+- Token usage and latency tracking
+- Model A/B testing
+
+```bash
+# Quick setup
+python setup_logging.py  # Creates analytics_config.json
+
+# Enable analytics
+export HEYLOOK_ANALYTICS_ENABLED=true
+heylookllm --api openai
+```
 
 ### Installation
 
-Analytics requires the optional analytics dependencies:
 ```bash
-# Install with analytics support
+# Analytics support (includes DuckDB)
 uv pip install -e .[analytics]
 
-# Or with everything
+# With performance optimizations
 uv pip install -e .[performance,analytics]
 ```
-
-### Configuration
-
-Analytics is **disabled by default** for privacy. To enable with persistent logging:
-
-```bash
-# Quick setup for logging and analytics
-python setup_logging.py
-
-# This creates:
-# - analytics_config.json with full logging
-# - .env with environment variables
-# - start_with_logging.py for file logging
-# - analyze_logs.py for log analysis
-```
-
-Then start the server with logging:
-```bash
-# Option 1: Use the logging wrapper
-python start_with_logging.py --api openai --log-level DEBUG
-
-# Option 2: Set environment and use regular command
-export HEYLOOK_ANALYTICS_ENABLED=true
-heylookllm --api openai --log-level DEBUG
-```
-
-Logs are saved to:
-- **Text logs**: `logs/heylookllm_*.log` (rotating, 100MB per file)
-- **Analytics DB**: `logs/analytics.db` (DuckDB with full metrics)
 
 Configuration options:
 - `HEYLOOK_ANALYTICS_ENABLED` - Enable/disable analytics (default: false)
