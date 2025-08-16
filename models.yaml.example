@@ -43,6 +43,11 @@
 #   draft_model_path: string    # Path to smaller draft model for speculative decoding
 #   num_draft_tokens: integer   # Tokens to generate with draft model: 2-8 (default: 4)
 #
+# OPTIONAL - Queue Configuration:
+#   enable_queue: boolean       # Enable request queuing for this model (default: false)
+#   queue_batch_size: integer   # Max requests to batch together (default: 1)
+#   queue_timeout_ms: integer   # Max wait time for batching (default: 100)
+#
 # GGUF Provider Parameters (llama.cpp backend):
 # ---------------------------------------------
 # REQUIRED:
@@ -71,11 +76,42 @@
 #
 # OPTIONAL - Generation (same as MLX):
 #   temperature, max_tokens, top_p, top_k, repeat_penalty
-
-# Example models.yaml
+#
+# M2 Ultra Optimization Recommendations (192GB RAM):
+# --------------------------------------------------
+# For MLX models:
+#   - Models up to 30B: Use standard cache_type
+#   - Models 30B-70B: Use quantized cache (kv_bits: 4-8)
+#   - max_loaded_models: 1-2 (depending on model sizes)
+#   - batch_size: 1 (streaming is typically single-request)
+#   - use_flash_attention: true (always)
+#
+# For Llama.cpp models:
+#   - n_gpu_layers: -1 (use all GPU layers)
+#   - n_ctx: up to 32768 for models < 30B
+#   - n_batch: 1024-2048 (leverage high memory)
+#   - use_mlock: true (lock model in RAM)
+#   - n_threads: 20-24 (optimal for M2 Ultra)
+#
+# Memory Usage Estimates:
+#   - 7B model: ~7-14GB (4-bit to 8-bit)
+#   - 13B model: ~13-26GB
+#   - 30B model: ~30-60GB
+#   - 70B model: ~70-140GB (use 4-bit quantization)
+#
 # --- Global Server Settings ---
-default_model: "gemma3n-e4b-it"
+default_model: "mistral-small-mlx"
 max_loaded_models: 1 # For most use cases running on a single machine, set at 1 to minimize memory pressure and model swapping
+
+# --- Queue Configuration (Optional) ---
+# Enable request queuing and batching for improved throughput
+queue_config:
+  enabled: true # Set to true to enable queue manager
+  max_batch_size: 4 # Maximum requests to batch together
+  max_concurrent_batches: 2 # Maximum parallel batch processes
+  batch_timeout_ms: 100 # Max wait time for batch formation
+  max_queue_size: 100 # Maximum pending requests in queue
+  enable_dynamic_batching: true # Adjust batch size based on load
 
 # --- Model Definitions ---
 models:

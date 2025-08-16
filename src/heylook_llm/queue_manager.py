@@ -65,8 +65,9 @@ class QueueManager:
     - Request status tracking
     """
     
-    def __init__(self, config: BatchConfig = None):
+    def __init__(self, config: BatchConfig = None, router=None):
         self.config = config or BatchConfig()
+        self.router = router  # Reference to ModelRouter for provider access
         self.queue: List[QueuedRequest] = []
         self.processing: Dict[str, QueuedRequest] = {}
         self.completed: Dict[str, QueuedRequest] = {}
@@ -329,24 +330,36 @@ class QueueManager:
             logging.error(f"Batch processing error: {e}", exc_info=True)
     
     def _process_single_request(self, req: QueuedRequest):
-        """Process a single request (placeholder - integrate with router)."""
-        # This is where we'd integrate with the actual inference
-        # For now, just simulate
-        logging.info(f"Processing request {req.id}")
-        time.sleep(0.1)  # Simulate processing
+        """Process a single request using the router's provider."""
+        if not self.router:
+            raise RuntimeError("QueueManager requires router reference for processing")
         
-        # Mock response
-        req.result = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": req.request.model,
-            "choices": [{"message": {"role": "assistant", "content": "Mock response"}}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-        }
+        logging.info(f"Processing request {req.id} for model {req.request.model}")
         
-        req.status = RequestStatus.COMPLETED
-        req.completed_at = time.time()
+        try:
+            # Get provider from router
+            provider = self.router.get_provider(req.request.model)
+            
+            # Process request through provider
+            generator = provider.create_chat_completion(req.request)
+            
+            # Collect results from generator
+            if req.request.stream:
+                # For streaming, collect all chunks
+                result = list(generator)
+            else:
+                # For non-streaming, get complete response
+                result = next(generator) if generator else None
+            
+            req.result = result
+            req.status = RequestStatus.COMPLETED
+            req.completed_at = time.time()
+            
+            logging.info(f"Request {req.id} completed in {req.completed_at - req.started_at:.2f}s")
+            
+        except Exception as e:
+            logging.error(f"Error processing request {req.id}: {e}")
+            raise
         
         # Set future result
         if req.future and not req.future.done():

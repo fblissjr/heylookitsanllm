@@ -261,15 +261,35 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     try:
         log_request_stage(request_id, "routing")
-        # Run CPU-bound operations in thread pool
-        provider = await asyncio.to_thread(router.get_provider, chat_request.model)
+        
+        # Check if request should use queue manager
+        if router.should_use_queue(chat_request.model, chat_request):
+            logging.info(f"[QUEUE] Request {request_id[:8]} using queue manager for model '{chat_request.model}'")
+            log_request_stage(request_id, "queuing")
+            
+            # Process through queue manager
+            result = await router.process_with_queue(chat_request.model, chat_request)
+            
+            # Queue manager returns completed result, not a generator
+            # Convert to generator format for consistency
+            def queue_result_generator():
+                if hasattr(result, '__iter__'):
+                    yield from result
+                else:
+                    yield result
+            
+            generator = queue_result_generator()
+        else:
+            # Direct processing (existing path)
+            # Run CPU-bound operations in thread pool
+            provider = await asyncio.to_thread(router.get_provider, chat_request.model)
 
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
+            if router.log_level <= logging.DEBUG:
+                logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
 
-        log_request_stage(request_id, "generating")
-        # Run model generation in thread pool
-        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
+            log_request_stage(request_id, "generating")
+            # Run model generation in thread pool
+            generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
     except RuntimeError as e:
         # Check if this is a MODEL_BUSY error

@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
+from heylook_llm.queue_manager import QueueManager, BatchConfig
 
 # Try to import MLX provider
 try:
@@ -39,6 +40,10 @@ class ModelRouter:
         self.providers = OrderedDict()
         self.max_loaded_models = self.app_config.max_loaded_models
         logging.info(f"Router configured to keep up to {self.max_loaded_models} models in memory.")
+        
+        # Initialize queue manager if queuing is enabled
+        self.queue_manager = None
+        self._init_queue_manager()
 
         # Log available providers
         if HAS_MLX:
@@ -103,6 +108,26 @@ class ModelRouter:
             except Exception as e:
                 logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
+    
+    def _init_queue_manager(self):
+        """Initialize queue manager based on configuration."""
+        # Check if queuing is enabled in app config
+        queue_config = getattr(self.app_config, 'queue_config', None)
+        
+        if queue_config and queue_config.get('enabled', False):
+            batch_config = BatchConfig(
+                max_batch_size=queue_config.get('max_batch_size', 1),
+                max_concurrent_batches=queue_config.get('max_concurrent_batches', 1),
+                batch_timeout_ms=queue_config.get('batch_timeout_ms', 100),
+                max_queue_size=queue_config.get('max_queue_size', 100),
+                enable_dynamic_batching=queue_config.get('enable_dynamic_batching', True)
+            )
+            
+            self.queue_manager = QueueManager(batch_config, router=self)
+            logging.info(f"Queue manager initialized with batch_size={batch_config.max_batch_size}, "
+                        f"concurrent_batches={batch_config.max_concurrent_batches}")
+        else:
+            logging.debug("Queue manager not enabled in configuration")
 
     def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
         """Get or create a loading lock for a specific model."""
@@ -236,6 +261,59 @@ class ModelRouter:
 
     def list_available_models(self) -> list[str]:
         return [m.id for m in self.app_config.get_enabled_models()]
+    
+    def should_use_queue(self, model_id: str, request) -> bool:
+        """Determine if request should go through queue manager."""
+        if not self.queue_manager:
+            return False
+        
+        # Get model config to check capabilities
+        model_config = self.app_config.get_model_config(model_id)
+        if not model_config:
+            return False
+        
+        # Check if model/provider supports queuing
+        # For now, only enable for specific conditions:
+        # 1. Multiple images in a vision request (benefit from batch preprocessing)
+        # 2. Explicit batch processing request
+        # 3. Provider indicates queue support in config
+        
+        # Check for batch processing mode
+        if hasattr(request, 'processing_mode') and request.processing_mode:
+            return True
+        
+        # Check for multiple images in vision request
+        if hasattr(request, 'messages'):
+            image_count = 0
+            for msg in request.messages:
+                if isinstance(getattr(msg, 'content', None), list):
+                    for part in msg.content:
+                        if hasattr(part, 'type') and part.type == 'image_url':
+                            image_count += 1
+            
+            # Use queue for multiple images to benefit from parallel loading
+            if image_count > 1:
+                logging.debug(f"Using queue for request with {image_count} images")
+                return True
+        
+        # Check if model config explicitly enables queuing
+        if model_config.config and model_config.config.get('enable_queue', False):
+            return True
+        
+        return False
+    
+    async def process_with_queue(self, model_id: str, request):
+        """Process request through queue manager."""
+        if not self.queue_manager:
+            raise RuntimeError("Queue manager not initialized")
+        
+        # Submit request to queue
+        request_id = await self.queue_manager.submit_request(request)
+        
+        # Wait for result
+        result = await self.queue_manager.get_result(request_id)
+        
+        return result
     
     def clear_cache(self):
         """Clear all loaded models from cache."""
