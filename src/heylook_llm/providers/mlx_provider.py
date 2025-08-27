@@ -3,6 +3,8 @@ import gc
 import logging
 import traceback
 import json
+import threading
+import time
 from typing import Generator, Dict, List, Tuple, Protocol
 from abc import ABC, abstractmethod
 
@@ -24,6 +26,17 @@ from .common.vlm_generation import vlm_stream_generate_with_sampling, create_vlm
 from .mlx_batch_vision import BatchVisionEncoder, BatchVisionStrategy
 from ..utils import load_image
 from .common.batch_vision import BatchVisionProcessor
+from .common.prompt_cache import get_global_cache_manager, process_prompt_with_cache
+from .common.cache_helpers import make_cache
+
+
+class KeepaliveChunk:
+    """Special chunk type for SSE keepalive messages during prompt processing."""
+    def __init__(self, processed: int, total: int):
+        self.is_keepalive = True
+        self.processed = processed
+        self.total = total
+        self.text = None  # Not a regular text chunk
 
 
 class LanguageModelLogitsWrapper(nn.Module):
@@ -129,8 +142,10 @@ class GenerationStrategy(Protocol):
 class TextOnlyStrategy:
     """Strategy for text-only LLM requests."""
 
-    def __init__(self, draft_model=None):
+    def __init__(self, draft_model=None, model_id=None):
         self.draft_model = draft_model
+        self.model_id = model_id
+        self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "text_only")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
@@ -152,17 +167,53 @@ class TextOnlyStrategy:
             tokenize=False,
             add_generation_prompt=True
         )
+        
+        # Tokenize the prompt
+        if isinstance(prompt, str):
+            prompt_tokens = tokenizer.encode(prompt)
+        else:
+            prompt_tokens = prompt
+            
+        # Get or create prompt cache for this model
+        if self.model_id:
+            # Extract cache configuration from effective_request
+            cache_config = {
+                'cache_type': effective_request.get('cache_type', 'standard'),
+                'kv_bits': effective_request.get('kv_bits', 8),
+                'kv_group_size': effective_request.get('kv_group_size', 64),
+                'max_kv_size': effective_request.get('max_kv_size')
+            }
+            prompt_cache = self.cache_manager.get_or_create_cache(self.model_id, model, cache_config)
+            # Process prompt with cache
+            tokens_to_process, updated_cache = process_prompt_with_cache(
+                prompt_cache, prompt_tokens, model, cache_config
+            )
+            # Use the updated cache for generation
+            generation_cache = updated_cache.cache
+            logging.info(f"Using prompt cache: processing {len(tokens_to_process)}/{len(prompt_tokens)} tokens")
+        else:
+            # No caching if model_id not provided
+            tokens_to_process = prompt_tokens
+            generation_cache = None
 
+        # Create a keepalive callback for long prompt processing
+        def prompt_progress_callback(processed: int, total: int):
+            """Callback to track prompt processing progress."""
+            logging.debug(f"Prompt processing: {processed}/{total} tokens")
+            # The callback itself doesn't yield, mlx-lm handles this internally
+        
         # Stream tokens and handle potential leading space issue
         first_token = True
         for response in lm_stream_generate(
             model=model,
             tokenizer=tokenizer,
-            prompt=prompt,
+            prompt=tokens_to_process,  # Use the reduced prompt
             sampler=sampler,
             logits_processors=processors,
             max_tokens=effective_request['max_tokens'],
-            draft_model=self.draft_model
+            draft_model=self.draft_model,
+            prompt_progress_callback=prompt_progress_callback,
+            prompt_cache=generation_cache if generation_cache else None
         ):
             # Clean up leading space on first token for models with add_prefix_space
             if first_token and response.text.startswith(' '):
@@ -177,10 +228,12 @@ class TextOnlyStrategy:
 class VLMTextOnlyStrategy:
     """Strategy for VLM text-only requests (using mlx-lm path with speculative decoding)."""
 
-    def __init__(self, draft_model=None):
+    def __init__(self, draft_model=None, model_id=None):
         self._cached_wrapper = None
         self._cached_generator = None
         self.draft_model = draft_model
+        self.model_id = model_id
+        self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "vlm_text")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
@@ -771,10 +824,10 @@ class MLXProvider(BaseProvider):
         """Pre-compile generation strategies to avoid runtime branching."""
         if self.is_vlm:
             # Pass draft model to VLM text strategy for speculative decoding
-            self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model)
+            self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
             self._strategies['vlm_vision'] = VLMVisionStrategy()
         else:
-            self._strategies['text_only'] = TextOnlyStrategy(self.draft_model)
+            self._strategies['text_only'] = TextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
 
     @time_mlx_operation("path_decision")
     def _detect_images_optimized(self, messages: List) -> bool:

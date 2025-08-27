@@ -133,6 +133,9 @@ class VLMGeneratorWithSampling:
             # Create optimized wrapper if not already done
             language_model = LanguageModelLogitsWrapper(self.model.language_model)
             
+            # Extract the prompt_progress_callback if provided
+            prompt_progress_callback = kwargs.pop('prompt_progress_callback', None)
+            
             # Use mlx-lm's stream generation with advanced sampling
             yield from lm_stream_generate(
                 model=language_model,
@@ -140,7 +143,8 @@ class VLMGeneratorWithSampling:
                 prompt=prompt,
                 sampler=sampler,
                 logits_processors=processors,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                prompt_progress_callback=prompt_progress_callback
             )
             
         except Exception as e:

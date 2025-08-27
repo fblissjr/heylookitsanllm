@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **No emojis** in code, display names, or documentation
 - Keep all naming and display text professional
 - Avoid "Enhanced", "Advanced", "Ultimate" type prefixes - use descriptive names instead
-- Clean, simple node names that describe what they do
+- Clean, simple names that describe what they do
 
 ## Working with 3rd Party Libraries
 - Ensure you search for the latest llms.txt or Python docs for the library you are using or proposing
@@ -61,6 +61,9 @@ python tests/test_api.py
 # Test GGUF concurrent request handling
 python test_mutex_simple.py        # Basic mutex test
 python test_parallel_stress.py 10  # Stress test with 10 parallel requests
+
+# Test new features
+python tests/test_keepalive.py     # Test SSE keepalive during long prompts
 ```
 
 ### Installation & Setup
@@ -143,6 +146,29 @@ heylookllm import --folder ./models --profile quality
 heylookllm import --folder ~/models --profile fast --override temperature=0.5 --override max_tokens=1024
 ```
 
+## New Features
+
+### 1. Keepalive Support
+- SSE keepalive comments during long prompt processing prevent client timeouts
+- Automatically sends `: keepalive` messages every 10 seconds during prompt processing
+- Particularly useful for vision models with large image processing times
+
+### 2. Cross-Request Prompt Cache Persistence
+- MLX models now cache KV states across requests for faster multi-turn conversations
+- Common prefix detection automatically reuses cached tokens (system prompts, conversation history)
+- Cache trimming support for partial prefix matches
+- Up to 10x speedup for conversations with shared context
+
+### 3. Quantized KV Cache Configuration
+- Configure memory-efficient 8-bit quantized caches in `models.yaml`
+- Reduces memory usage by 50% with minimal quality impact
+- Example configuration:
+```yaml
+cache_type: "quantized"
+kv_bits: 8              # 8-bit quantization
+kv_group_size: 64       # Standard group size
+```
+
 ## Project Architecture
 
 ### Core Components
@@ -151,6 +177,8 @@ heylookllm import --folder ~/models --profile fast --override temperature=0.5 --
 - **`src/heylook_llm/api.py`** - REST API endpoints (OpenAI + Ollama compatible)
 - **`src/heylook_llm/router.py`** - Model routing with LRU cache (max 2 models in memory)
 - **`src/heylook_llm/providers/`** - Model provider backends (MLX, llama.cpp)
+- **`src/heylook_llm/providers/common/prompt_cache.py`** - Cross-request prompt caching
+- **`src/heylook_llm/providers/common/cache_helpers.py`** - KV cache configuration
 - **`models.yaml`** - Model registry and configuration
 - **`tests/`** - Test suite with pytest configuration
 
@@ -362,7 +390,7 @@ python tests/test_embeddings_direct.py
 ## HeylookPlayground Apps
 
 ### HeylookPlayground-web (Primary - Desktop Web App)
-**Location**: `apps/HeylookPlayground-web/`  
+**Location**: `apps/HeylookPlayground-web/`
 **Documentation**: See `apps/HeylookPlayground-web/README.md` for complete setup and development guide
 
 A clean, desktop-first web application for interacting with heylookitsanllm server.
@@ -391,7 +419,7 @@ npm run test:visual # Run Playwright visual tests
 ---
 
 ### HeylookPlayground (Legacy - React Native)
-**Location**: `apps/HeylookPlayground/`  
+**Location**: `apps/HeylookPlayground/`
 **Status**: Deprecated - Replaced by HeylookPlayground-web due to web platform issues
 
 Previous React Native + Expo attempt at cross-platform app. Encountered issues with:

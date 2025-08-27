@@ -261,15 +261,15 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     try:
         log_request_stage(request_id, "routing")
-        
+
         # Check if request should use queue manager
         if router.should_use_queue(chat_request.model, chat_request):
             logging.info(f"[QUEUE] Request {request_id[:8]} using queue manager for model '{chat_request.model}'")
             log_request_stage(request_id, "queuing")
-            
+
             # Process through queue manager
             result = await router.process_with_queue(chat_request.model, chat_request)
-            
+
             # Queue manager returns completed result, not a generator
             # Convert to generator format for consistency
             def queue_result_generator():
@@ -277,7 +277,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                     yield from result
                 else:
                     yield result
-            
+
             generator = queue_result_generator()
         else:
             # Direct processing (existing path)
@@ -296,7 +296,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         if "MODEL_BUSY" in str(e):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
-            
+
             # Return 503 Service Unavailable with retry headers
             # This tells OpenAI client to retry automatically
             return JSONResponse(
@@ -320,7 +320,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             logging.error(f"Runtime error: {e}", exc_info=True)
             log_request_complete(request_id, success=False, error_msg=str(e))
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
@@ -390,6 +390,8 @@ async def stream_response_generator_async(generator, model_id, request_id):
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
+    last_keepalive_time = time.time()
+    keepalive_interval = 10.0  # Send keepalive every 10 seconds
 
     log_request_stage(request_id, "streaming")
 
@@ -411,6 +413,12 @@ async def stream_response_generator_async(generator, model_id, request_id):
             yield chunk
 
     async for chunk in chunk_generator():
+        # Check if this is a keepalive message
+        if hasattr(chunk, 'is_keepalive') and chunk.is_keepalive:
+            # Send SSE comment for keepalive (invisible to clients but keeps connection alive)
+            yield f": keepalive prompt_processing {chunk.processed}/{chunk.total}\n\n"
+            continue
+
         if not chunk.text:
             continue
 
@@ -429,6 +437,9 @@ async def stream_response_generator_async(generator, model_id, request_id):
             "choices": [{"delta": {"content": chunk.text}}]
         }
         yield f"data: {json.dumps(response)}\n\n"
+
+        # Update last keepalive time since we sent actual content
+        last_keepalive_time = time.time()
 
     # Log completion
     log_request_complete(request_id, success=True)
@@ -539,24 +550,24 @@ async def restart_server(request: Request, background_tasks: BackgroundTasks):
     import os
     import sys
     import signal
-    
+
     def restart():
         """Restart the current process."""
         try:
             # Give time for response to be sent
             import time
             time.sleep(0.5)
-            
+
             # Use exec to replace the current process
             os.execv(sys.executable, [sys.executable] + sys.argv)
         except Exception as e:
             logging.error(f"Failed to restart: {e}")
             # Fallback: just exit and rely on process manager to restart
             os._exit(1)
-    
+
     # Schedule restart in background
     background_tasks.add_task(restart)
-    
+
     return {
         "status": "restarting",
         "message": "Server will restart in 0.5 seconds"
@@ -578,13 +589,13 @@ async def reload_models(request: Request):
     """Reload model configuration without restarting."""
     try:
         router = request.app.state.router_instance
-        
+
         # Clear model cache
         router.clear_cache()
-        
+
         # Reload configuration
         router.reload_config()
-        
+
         return {
             "status": "success",
             "message": "Model configuration reloaded",
@@ -654,19 +665,19 @@ async def create_embeddings_endpoint(
 ):
     """Create embeddings for the given input text(s)."""
     from heylook_llm.embeddings import EmbeddingRequest, create_embeddings
-    
+
     try:
         # Parse request
         req = EmbeddingRequest(**embedding_request)
-        
+
         # Get router
         router = request.app.state.router_instance
-        
+
         # Create embeddings
         response = await create_embeddings(req, router)
-        
+
         return response.model_dump()
-        
+
     except Exception as e:
         logging.error(f"Error creating embeddings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -687,17 +698,10 @@ Ollama-compatible chat endpoint for seamless migration from Ollama.
 4. Translates response back to Ollama format
 
 **Supports:**
-- ✅ All Ollama chat parameters
-- ✅ Streaming responses
-- ✅ Image inputs (base64)
-- ✅ Same models as OpenAI endpoints
-
-**Compatible with:**
-- Ollama CLI
-- Ollama Python/JS libraries
-- Continue.dev
-- Open WebUI
-- Any Ollama-compatible tool
+- Ollama chat parameters
+- Streaming responses
+- Image inputs (base64)
+- Same models as OpenAI endpoints
     """,
     response_description="Ollama-format chat response",
     tags=["Ollama API"]
@@ -715,7 +719,7 @@ async def ollama_chat(request: Request):
         image_stats = _analyze_images_in_dict(body)
 
         # Log request details including image info
-        logging.info(f"📥 OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
+        logging.info(f"OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
 
@@ -2729,12 +2733,12 @@ A unified, high-performance API server for local LLM inference with dual OpenAI 
 - **Vision Models**: Process images with vision-language models
 
 ### Performance Features
-- 🚀 **Smart Model Caching**: LRU cache keeps 2 models in memory
-- ⚡ **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image
-- 🔄 **Async Processing**: Non-blocking request handling
-- 📊 **Performance Monitoring**: Real-time metrics at `/v1/performance`
+- **Smart Model Caching**: LRU cache keeps 2 models in memory
+- **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image
+- **Async Processing**: Non-blocking request handling
+- **Performance Monitoring**: Real-time metrics at `/v1/performance`
 
-## 🚦 Quick Start
+## Quick Start
 
 ### 1. Check Available Models
 ```bash
@@ -2803,10 +2807,10 @@ pip install heylookllm[performance]
 ```
 
 This enables:
-- ⚡ uvloop for faster async
-- 🚀 orjson for 10x faster JSON
-- 🖼️ TurboJPEG for fast image processing
-- #️⃣ xxHash for ultra-fast caching
+- uvloop for faster async
+- orjson for 10x faster JSON
+- TurboJPEG for fast image processing
+- xxHash for ultra-fast caching
         """,
         routes=app.routes,
     )
