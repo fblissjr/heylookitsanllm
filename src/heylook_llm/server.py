@@ -27,7 +27,7 @@ def create_openai_only_app():
     from heylook_llm.api_multipart import create_chat_multipart
 
     openai_app = FastAPI(title="OpenAI-Compatible LLM Server", version="1.0.0")
-    
+
     # Add CORS middleware
     openai_app.add_middleware(
         CORSMiddleware,
@@ -46,7 +46,7 @@ def create_openai_only_app():
     openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
     openai_app.post("/v1/data/query")(data_query)
     openai_app.get("/v1/data/summary")(data_summary)
-    
+
     # Add admin endpoints
     openai_app.post("/v1/admin/restart")(restart_server)
     openai_app.post("/v1/admin/reload")(reload_models)
@@ -74,7 +74,7 @@ def create_ollama_only_app():
     from heylook_llm.api import ollama_chat, ollama_generate, ollama_tags, ollama_show, ollama_version, ollama_ps, ollama_embed
 
     ollama_app = FastAPI(title="Ollama-Compatible LLM Server", version="1.0.0")
-    
+
     # Add CORS middleware
     ollama_app.add_middleware(
         CORSMiddleware,
@@ -117,10 +117,10 @@ def main():
     and launches the uvicorn server process.
     """
     parser = argparse.ArgumentParser(description="Hey Look It's an LLM Server")
-    
+
     # Create subcommands
     subparsers = parser.add_subparsers(dest='command', help='Commands')
-    
+
     # Import command
     import_parser = subparsers.add_parser('import', help='Import models from directories or HF cache')
     import_parser.add_argument(
@@ -161,7 +161,7 @@ def main():
         default="INFO",
         help="Logging level"
     )
-    
+
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on (default: 11434, Ollama standard)")
@@ -170,22 +170,23 @@ def main():
     parser.add_argument("--file-log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="File logging level (if not set, file logging is disabled)")
     parser.add_argument("--log-dir", default="logs", help="Directory for log files (default: logs)")
-    parser.add_argument("--log-rotate-mb", type=int, default=100, 
+    parser.add_argument("--log-rotate-mb", type=int, default=100,
                        help="Max size in MB per log file before rotation (default: 100)")
     parser.add_argument("--log-rotate-count", type=int, default=10,
                        help="Number of rotated log files to keep (default: 10)")
     parser.add_argument("--model-id", type=str, default=None, help="Optional ID of a model to load on startup.")
     parser.add_argument("--api", default="both", choices=["openai", "ollama", "both"],
                        help="Which API to serve: openai, ollama, or both (default: both) - selecting ollama only will run on port 11434 unless specified explicitly")
-    
+
     args = parser.parse_args()
-    
+
     # Handle import command
     if args.command == 'import':
         # Set up logging for import
-        log_level = getattr(logging, args.log_level.upper())
-        logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
-        
+        import logging as log_module
+        log_level = getattr(log_module, args.log_level.upper())
+        log_module.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
         from heylook_llm.model_importer import import_models
         import_models(args)
         return
@@ -203,14 +204,14 @@ def main():
     import logging.handlers
     from pathlib import Path
     from datetime import datetime
-    
+
     # Get the root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)  # Set to lowest level, handlers will filter
-    
+
     # Clear any existing handlers
     root_logger.handlers.clear()
-    
+
     # Console handler
     console_level = getattr(logging, args.log_level.upper())
     console_handler = logging.StreamHandler()
@@ -218,16 +219,16 @@ def main():
     console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(console_formatter)
     root_logger.addHandler(console_handler)
-    
+
     # File handler (optional)
     if args.file_log_level:
         # Create log directory if it doesn't exist
         log_dir = Path(args.log_dir)
         log_dir.mkdir(exist_ok=True)
-        
+
         # Create log file with timestamp
         log_file = log_dir / f"heylookllm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        
+
         # Set up rotating file handler
         file_level = getattr(logging, args.file_log_level.upper())
         file_handler = logging.handlers.RotatingFileHandler(
@@ -241,17 +242,17 @@ def main():
         )
         file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
-        
+
         logging.info(f"File logging enabled: {log_file} (level: {args.file_log_level})")
     else:
         logging.info("File logging disabled (use --file-log-level to enable)")
-    
+
     # Log uvloop status
     if HAS_UVLOOP:
         logging.info("Using uvloop for improved async performance")
     else:
         logging.info("uvloop not available - using standard asyncio event loop")
-    
+
     # Log all optimization statuses
     from heylook_llm.optimizations.status import log_all_optimization_status
     log_all_optimization_status()
@@ -259,14 +260,14 @@ def main():
     # Initialize metrics database (will auto-detect if enabled)
     from heylook_llm.metrics_db_wrapper import init_metrics_db
     init_metrics_db()
-    
+
     # Initialize the router and store it in the app's state
     router = ModelRouter(
         config_path="models.yaml",
         log_level=console_level,  # Use console log level for router
         initial_model_id=args.model_id
     )
-    
+
     # Check if any providers are available
     from heylook_llm.router import HAS_MLX, HAS_LLAMA_CPP
     if not HAS_MLX and not HAS_LLAMA_CPP:
@@ -280,16 +281,16 @@ def main():
     if args.api == "openai":
         selected_app = create_openai_only_app()
         print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print(f"Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
+        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
     elif args.api == "ollama":
         selected_app = create_ollama_only_app()
         print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")
-        print(f"Available endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
+        print("Available endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
     else:  # both
         selected_app = app
         print(f"Starting combined API server on {args.host}:{args.port}")
-        print(f"OpenAI endpoints: /v1/models, /v1/chat/completions, /v1/embeddings")
-        print(f"Ollama endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
+        print("OpenAI endpoints: /v1/models, /v1/chat/completions, /v1/embeddings")
+        print("Ollama endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
 
     selected_app.state.router_instance = router
 

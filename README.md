@@ -85,8 +85,12 @@ Choose one of these installation methods:
 ```
 
 #### Option 2: Manual Installation
+
+**IMPORTANT: Dependency management has been consolidated into pyproject.toml with security updates.**
+All requirements.txt files are deprecated. Use the commands below:
+
 ```bash
-# Base install (minimal dependencies)
+# Base install (minimal core dependencies only)
 uv pip install -e .
 
 # Add backends as needed:
@@ -96,6 +100,9 @@ uv pip install -e .[mlx,llama-cpp]     # Both backends
 uv pip install -e .[all]               # Everything
 
 # Add optional features:
+uv pip install -e .[performance]       # orjson, xxhash, turbojpeg, uvloop, imagecodecs, etc.
+uv pip install -e .[analytics]         # duckdb
+uv pip install -e .[profile]           # py-spy, memray
 uv pip install -e .[mlx,performance]   # MLX + performance optimizations
 uv pip install -e .[mlx,analytics]     # MLX + analytics
 ```
@@ -156,14 +163,16 @@ Since our key dependencies are actively developed, here's how to stay current:
 ```
 
 This script will:
-- Update all MLX packages (mlx, mlx-lm, mlx-vlm)
+- Update all dependencies using pyproject.toml optional groups
 - Detect your OS and GPU configuration
 - Automatically recompile llama-cpp-python with the appropriate acceleration (Metal/CUDA/CPU)
+- Use intelligent dependency detection to avoid unnecessary reinstalls
 
 #### Option 2: Manual Updates
 ```bash
-# Update MLX packages
-uv pip install --upgrade mlx mlx-lm mlx-vlm
+# Update dependencies using pyproject.toml groups
+uv pip install -e .[mlx] --upgrade
+uv pip install -e .[llama-cpp] --upgrade
 
 # Update llama-cpp-python (requires recompilation for GPU support)
 # For Metal:

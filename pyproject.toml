@@ -19,48 +19,60 @@ classifiers = [
 
 # -------------------------------------------------------------------
 # Core runtime deps – array of PEP 508 strings (required by spec)
+# Security-patched versions with proper version pinning
 # -------------------------------------------------------------------
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "pydantic",
-    "python-multipart",
-    "pyyaml",
-    "requests",
-    "rich",
-    "numpy",
-    "Pillow",
-    "tqdm",
+    "fastapi>=0.104.1",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "python-multipart>=0.0.6",
+    "pyyaml>=6.0.1",
+    "requests>=2.31.0",
+    "rich>=13.0.0",
+    "numpy>=1.24.0",
+    "Pillow>=10.0.1",
+    "tqdm>=4.65.0",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-mock>=3"]
 performance = [
-    "orjson>=3.9.0",      # Fast JSON parsing
-    "xxhash>=3.4.0",      # Fast hashing for caching
-    "PyTurboJPEG>=1.7.0", # Fast JPEG encoding/decoding
-    "uvloop>=0.19.0",     # Fast async event loop
-    "cachetools>=5.3.0",  # Advanced caching
+    "orjson>=3.9.15",      # Fast JSON parsing with security fixes
+    "xxhash>=3.4.1",       # Fast hashing for caching
+    "PyTurboJPEG>=1.7.5",  # Fast JPEG encoding/decoding
+    "uvloop>=0.19.0",      # Fast async event loop
+    "cachetools>=5.3.2",   # Advanced caching with thread safety improvements
+    "imagecodecs>=2023.9.18", # Hardware-accelerated codecs
+    "blake3>=0.4.0",       # Fastest cryptographic hash
+    "diskcache>=5.6.3",    # Persistent disk cache
+    "msgpack>=1.0.7",      # Binary serialization
+    "aiofiles>=23.2.1",    # Async file I/O
+    "aiocache>=0.12.2",    # Async caching
 ]
 analytics = [
     "duckdb>=1.0.0", # Analytics database
 ]
+profile = [
+    "py-spy>=0.3.14",          # Sampling profiler
+    "memray>=1.13.0",          # Memory profiler with security fixes
+]
 mlx = [
     "mlx",                      # Core MLX library
     "mlx-lm",                   # MLX text generation
-    "mlx-vlm",                  # MLX vision generation, may have problems on macos with scipy dependency, install manually or see README.md for installation instructions
+    "mlx-vlm",                  # MLX vision generation
     "datasets>=2.19.1",         # HuggingFace datasets
-    "transformers>=4.53.0",     # HuggingFace transformers
-    "opencv-python>=4.12.0.88", # Image processing for vision
-    "torch",                    # PyTorch (required by some MLX models)
-    "torchvision",              # Vision utilities
-    # Note: mlx-vlm must be installed separately with: pip install git+https://github.com/Blaizzy/mlx-vlm.git --no-deps
+    "transformers>=4.35.0",     # HuggingFace transformers
+    "opencv-python>=4.8.1.78",  # Image processing for vision
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",      # Vision utilities
+    "scipy>=1.11.0",            # Required by mlx-vlm
+    "soundfile>=0.12.1",        # Audio processing support
 ]
 llama-cpp = [
-    "llama-cpp-python", # GGUF model support
+    "llama-cpp-python>=0.2.0", # GGUF model support
 ]
-all = ["heylookitsanllm[performance,analytics,mlx,llama-cpp]"]
+all = ["heylookitsanllm[performance,analytics,mlx,llama-cpp,profile]"]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"

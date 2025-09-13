@@ -56,7 +56,7 @@ echo "What would you like to install?"
 echo "1) MLX backend only (macOS, for MLX models)"
 echo "2) Llama.cpp backend only (for GGUF models)"
 echo "3) Both backends"
-echo "4) Everything (all backends + performance + analytics)"
+echo "4) Everything (all backends + performance + analytics + profiling)"
 echo ""
 read -p "Enter your choice (1-4): " choice
 
