@@ -72,7 +72,13 @@ mlx = [
 llama-cpp = [
     "llama-cpp-python>=0.2.0", # GGUF model support
 ]
-all = ["heylookitsanllm[performance,analytics,mlx,llama-cpp,profile]"]
+stt = [
+    "coremltools>=9.0b1",       # CoreML model support
+    "librosa>=0.10.0",          # Audio processing
+    "soundfile>=0.12.1",        # Audio file I/O
+    "torch>=2.0.0",             # PyTorch for tensor operations
+]
+all = ["heylookitsanllm[performance,analytics,mlx,llama-cpp,stt,profile]"]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"

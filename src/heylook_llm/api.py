@@ -66,6 +66,10 @@ app.add_middleware(
 # Initialize Ollama translator
 ollama_translator = OllamaTranslator()
 
+# Import and include STT router
+from heylook_llm.stt_api import stt_router
+app.include_router(stt_router)
+
 @app.get("/v1/models",
     summary="List Available Models",
     description="""

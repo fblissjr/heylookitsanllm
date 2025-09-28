@@ -1,7 +1,7 @@
 # Hey Look, It's an LLM (!)
-OpenAI API and ollama API compatible LLM and Vision LLM (VLM) / multimodal server for mlx + llama.cpp
+OpenAI API and ollama API compatible LLM, Vision LLM (VLM) / multimodal, and Speech-to-Text (STT) server for mlx + llama.cpp + CoreML
 
-a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs both vision and text Apple MLX models (text via `mlx-lm`, and vision via `mlx-vlm`, with some `mlx` stitching) and GGUF models (via `llama-cpp-python`) behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way. allows for running in openai api mode, ollama mode, or both together. also (optionally) includes an analytics / eval app and embedded duckdb database for monitoring and evaluating model performance.
+a lightweight (and lighthearted, but still aiming for quality), OpenAI-compatible API server that runs text Apple MLX models (via `mlx-lm`), vision models (via `mlx-vlm`), GGUF models (via `llama-cpp-python`), and CoreML STT models behind one endpoint, with live on-the-fly model swapping via API calls. trying to take the best of what's out locally and put it under one roof in a smart, performant way. allows for running in openai api mode, ollama mode, or both together. also (optionally) includes an analytics / eval app and embedded duckdb database for monitoring and evaluating model performance.
 
 *note*: llama-cpp-python will by default install the cpu binary, but you can compile it yourself by following the instructions in the llama.cpp repo.
 
@@ -39,8 +39,9 @@ uv pip install -e .
 # Install with your preferred backend(s)
 uv pip install -e .[mlx]           # For MLX models (macOS)
 uv pip install -e .[llama-cpp]     # For GGUF models via llama.cpp
-uv pip install -e .[mlx,llama-cpp] # Both backends
-uv pip install -e .[all]           # Everything (default)
+uv pip install -e .[stt]           # For CoreML STT models
+uv pip install -e .[mlx,llama-cpp,stt] # All backends
+uv pip install -e .[all]           # Everything (all backends + performance + analytics)
 
 # Configure models (edit models.yaml with your paths)
 cp models.yaml.example models.yaml
@@ -65,8 +66,8 @@ heylookllm --api both --port 8080 --log-level DEBUG
 ## Installation
 
 ### Prerequisites
-- Python 3.9+
-- macOS (for MLX models) or Linux/Windows (for GGUF models)
+- Python 3.11+
+- macOS (for MLX/CoreML models) or Linux/Windows (for GGUF models)
 - 8GB+ RAM recommended otherwise you're limited to models that are no fun and even 8GB is pushing it
 - Metal (macOS) or CUDA (NVIDIA) for GPU acceleration
 
@@ -96,7 +97,8 @@ uv pip install -e .
 # Add backends as needed:
 uv pip install -e .[mlx]               # MLX models (macOS)
 uv pip install -e .[llama-cpp]         # GGUF models
-uv pip install -e .[mlx,llama-cpp]     # Both backends
+uv pip install -e .[stt]               # CoreML STT models
+uv pip install -e .[mlx,llama-cpp,stt] # All backends
 uv pip install -e .[all]               # Everything
 
 # Add optional features:
@@ -194,9 +196,9 @@ All models are defined in the **`models.yaml`** file. You **must** edit this fil
 Here's some of the key fields:
 
 - `id`: unique model identifier for API calls
-- `provider`: must be either `mlx` or `gguf` (also accepts `llama_cpp` for backwards compatibility)
+- `provider`: must be `mlx`, `gguf`/`llama_cpp`, or `coreml_stt`
 - `enabled`: boolean to enable/disable models
-- `config`: provider-specific settings (model_path, vision capabilities, etc.)
+- `config`: provider-specific settings (model_path, vision/audio capabilities, etc.)
 
 Example model configuration:
 ```yaml
@@ -275,6 +277,8 @@ The server provides interactive API documentation at:
 - `/v1/models` - List available models
 - `/v1/chat/completions` - OpenAI-compatible chat endpoint
 - `/v1/embeddings` - Extract real model embeddings for semantic search
+- `/v1/audio/transcriptions` - OpenAI Whisper-compatible STT endpoint
+- `/v1/stt/models` - List available STT models
 - `/v1/chat/completions/multipart` - Fast multipart upload for images (57ms faster per image)
 - `/v1/capabilities` - Server capabilities and optimization status
 - `/v1/performance` - Real-time performance metrics
@@ -308,6 +312,14 @@ embeddings = client.embeddings.create(
     model="qwen2.5-coder-1.5b-instruct-4bit"
 )
 vector = embeddings.data[0].embedding
+
+# Speech-to-text transcription
+with open("audio.wav", "rb") as f:
+    transcript = client.audio.transcriptions.create(
+        model="parakeet-tdt-v3",
+        file=f
+    )
+print(transcript.text)
 ```
 
 **curl:**

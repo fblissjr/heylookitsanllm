@@ -75,4 +75,10 @@ if $PIP_CMD list | grep -q "py-spy"; then
     $PIP_CMD install --upgrade -e ".[profile]"
 fi
 
+# Update STT packages if installed
+if $PIP_CMD list | grep -q "coremltools"; then
+    echo "Updating STT (Speech-to-Text) packages..."
+    $PIP_CMD install --upgrade -e ".[stt]"
+fi
+
 echo "Done! Verify with: heylookllm --version"

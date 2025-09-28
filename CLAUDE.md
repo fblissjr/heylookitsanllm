@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Code and Writing Style Guidelines
 
@@ -64,9 +64,16 @@ python test_parallel_stress.py 10  # Stress test with 10 parallel requests
 
 # Test new features
 python tests/test_keepalive.py     # Test SSE keepalive during long prompts
+
+# Test STT integration
+python tests/test_stt_integration.py  # Test Speech-to-Text with Parakeet model
 ```
 
 ### Installation & Setup
+
+**IMPORTANT: Dependency management has been consolidated into pyproject.toml with security updates.**
+All requirements.txt files are now deprecated. Use the commands below or the automated setup script.
+
 ```bash
 # Option 1: Automated setup (recommended)
 ./setup.sh
@@ -78,19 +85,23 @@ uv pip install -e .
 # Install with specific backends
 uv pip install -e .[mlx]          # For MLX models (macOS)
 uv pip install -e .[llama-cpp]    # For GGUF models via llama.cpp
-uv pip install -e .[mlx,llama-cpp] # Both backends
+uv pip install -e .[stt]           # For CoreML STT models (Speech-to-Text)
+uv pip install -e .[mlx,llama-cpp,stt] # All backends
 
 # Note: MLX installation includes scipy for mlx-vlm. On macOS, if you get scipy build errors:
 # brew install gcc  # Installs gfortran needed for scipy
 
-# Install with performance optimizations (orjson, xxhash, turbojpeg, uvloop)
-uv pip install -e .[performance]
+# Install with performance optimizations
+uv pip install -e .[performance]  # orjson, xxhash, turbojpeg, uvloop, imagecodecs, etc.
 
 # Install with analytics support
-uv pip install -e .[analytics]
+uv pip install -e .[analytics]    # duckdb
+
+# Install with profiling tools
+uv pip install -e .[profile]      # py-spy, memray
 
 # Install everything
-uv pip install -e .[all]
+uv pip install -e .[all]          # includes all optional dependencies
 
 # GPU acceleration for llama-cpp (optional, after installing [llama-cpp])
 # macOS Metal:
@@ -169,6 +180,25 @@ kv_bits: 8              # 8-bit quantization
 kv_group_size: 64       # Standard group size
 ```
 
+### 4. Speech-to-Text (STT) Support
+- CoreML-based STT provider for on-device speech recognition
+- OpenAI Whisper-compatible API endpoints
+- Support for Parakeet TDT v3 (0.6B) model with Neural Engine acceleration
+- API Endpoints:
+  - `/v1/audio/transcriptions` - Transcribe audio files (WAV, MP3, M4A, FLAC, OGG, WebM)
+  - `/v1/stt/models` - List available STT models
+  - `/v1/stt/stream` - WebSocket for real-time streaming transcription
+- Configuration in `models.yaml`:
+```yaml
+- id: parakeet-tdt-v3
+  provider: "coreml_stt"
+  config:
+    model_path: ~/Storage/parakeet_coreml
+    compute_units: "ALL"  # Use Neural Engine
+    sample_rate: 16000
+    max_audio_seconds: 15
+```
+
 ## Project Architecture
 
 ### Core Components
@@ -183,22 +213,25 @@ kv_group_size: 64       # Standard group size
 - **`tests/`** - Test suite with pytest configuration
 
 ### Provider System
-The server supports two backend providers:
+The server supports three backend providers:
 - **MLX Provider** (`mlx_provider.py`) - For Apple Silicon MLX models (text + vision)
 - **GGUF Provider** (`llama_cpp_provider.py`) - For GGUF models via llama-cpp-python
+- **CoreML STT Provider** (`coreml_stt_provider.py`) - For CoreML speech-to-text models
 
-Both providers implement the `BaseProvider` interface with `load_model()` and `create_chat_completion()` methods.
+LLM providers implement the `BaseProvider` interface with `load_model()` and `create_chat_completion()` methods.
+The STT provider implements `load_model()` and `transcribe()` methods for audio processing.
 
 ### Model Configuration
 Models are defined in `models.yaml` with the following key fields:
 - `id` - Unique model identifier for API calls
-- `provider` - Either "mlx" or "gguf" (also accepts "llama_cpp" for backwards compatibility)
+- `provider` - "mlx", "gguf"/"llama_cpp", or "coreml_stt"
 - `enabled` - Boolean to enable/disable models
-- `config` - Provider-specific settings (model_path, vision capabilities, etc.)
+- `config` - Provider-specific settings (model_path, vision capabilities, audio settings, etc.)
 
 ### API Compatibility
-- **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`
+- **OpenAI API** - `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/capabilities`, `/v1/performance`, `/v1/chat/completions/multipart`, `/v1/audio/transcriptions`
 - **Ollama API** - `/api/tags`, `/api/chat`, `/api/generate`, `/api/show`, `/api/version`, `/api/ps`, `/api/embed`
+- **STT API** - `/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/stt/models`, `/v1/stt/stream`
 - **Admin API** - `/v1/admin/restart`, `/v1/admin/reload` (for development use)
 
 ## GGUF/llama.cpp Provider Details
@@ -415,17 +448,4 @@ npm run test:visual # Run Playwright visual tests
 - **Styling**: CSS modules with custom styles
 - **Testing**: Playwright for visual regression testing
 - **API Client**: Axios for heylookitsanllm server communication
-
----
-
-### HeylookPlayground (Legacy - React Native)
-**Location**: `apps/HeylookPlayground/`
-**Status**: Deprecated - Replaced by HeylookPlayground-web due to web platform issues
-
-Previous React Native + Expo attempt at cross-platform app. Encountered issues with:
-- Platform detection not working properly for web
-- Mobile UI components showing on desktop
-- React Native Paper deprecation warnings
-- Poor desktop experience
-
-See `apps/HeylookPlayground/PLAYGROUND_DEVELOPMENT.md` for historical context and lessons learned.
+- When I'm trying to do something that makes no sense, or is just flat out dumb or a bad idea, or you *know* it's a dead end, push back on me and challenge me and propose alternatives - don't just go down the path knowing it won't work.

@@ -152,42 +152,6 @@ models:
       draft_model_path: "modelzoo/Qwen/Qwen2.5-0.5B-Instruct-MLX-4bit"
       num_draft_tokens: 4 # Conservative for large model
 
-  - id: dolphin-mistral
-    provider: mlx
-    description: dolphin mistral venice edition
-    tags:
-      - dolphin
-      - mistral
-    enabled: true
-    config:
-      model_path: modelzoo/Dolphin/Mistral-24B-Venice-Edition-DWQ
-      vision: false
-      temperature: 1.0
-      cache_type: quantized
-      kv_bits: 8
-      kv_group_size: 64
-      quantized_kv_start: 1024
-      top_k: 40
-      min_p: 0.05
-      max_tokens: 512
-      repetition_penalty: 1.05
-      repetition_context_size: 20
-
-  - id: "gemma3n-e4b-it"
-    provider: "mlx"
-    description: "Gemma 3n - Fast small model"
-    tags: ["vision", "instruct", "gemma", "fast"]
-    enabled: true
-    config:
-      model_path: "modelzoo/google/gemma-3n-E4B-it-4bit-mlx-vision"
-      vision: true
-      temperature: 0.8
-      top_p: 0.95
-      top_k: 50
-      cache_type: "standard"
-      use_flash_attention: true
-      batch_size: 1
-
   - id: "mistral-small-mlx"
     provider: "mlx"
     description: "Mistral Small - Good balance"
@@ -337,3 +301,33 @@ models:
       max_tokens: 512
       repetition_penalty: 1.05
       repetition_context_size: 20
+
+  # --- Speech-to-Text Models ---
+  - id: parakeet-tdt-v3
+    provider: "coreml_stt"
+    description: "NVIDIA Parakeet TDT v3 (0.6B) - CoreML STT model for fast on-device transcription"
+    tags:
+      - stt
+      - coreml
+      - streaming
+      - speech
+    enabled: true
+    config:
+      model_path: modelzoo/parakeet_coreml
+
+      # CoreML settings
+      compute_units: "ALL"  # CPU_ONLY, CPU_AND_NE, or ALL (uses Neural Engine)
+
+      # Audio settings
+      sample_rate: 16000
+      max_audio_seconds: 15  # Fixed 15-second window for CoreML export
+
+      # Model architecture
+      vocab_size: 128
+      blank_id: 127
+      num_layers: 12
+      hidden_size: 320
+
+      # Decoding settings
+      max_symbols_per_timestep: 10
+      durations: [0, 1, 2, 3, 4]  # RNNT duration buckets

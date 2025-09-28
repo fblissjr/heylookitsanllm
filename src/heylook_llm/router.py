@@ -30,6 +30,21 @@ except ImportError:
     LlamaCppProvider = None
     HAS_LLAMA_CPP = False
 
+# Try to import CoreML STT provider
+try:
+    from heylook_llm.providers.coreml_stt_provider import CoreMLSTTProvider
+    HAS_COREML_STT = True
+except ImportError as e:
+    CoreMLSTTProvider = None
+    HAS_COREML_STT = False
+    # Store the error for logging but don't fail startup
+    COREML_IMPORT_ERROR = str(e)
+except Exception as e:
+    # Catch any other errors (like coremltools compatibility issues)
+    CoreMLSTTProvider = None
+    HAS_COREML_STT = False
+    COREML_IMPORT_ERROR = f"CoreML STT provider failed to load: {e}"
+
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
@@ -58,6 +73,11 @@ class ModelRouter:
             logging.debug("Llama.cpp provider is available")
         else:
             logging.debug("Llama.cpp provider not available. Install with: uv pip install heylookitsanllm[llama-cpp]")
+
+        if HAS_COREML_STT:
+            logging.debug("CoreML STT provider is available")
+        else:
+            logging.debug("CoreML STT provider not available. Install coremltools and dependencies.")
 
         self.log_level = log_level
 
@@ -206,6 +226,8 @@ class ModelRouter:
             if LlamaCppProvider:
                 provider_map["llama_cpp"] = LlamaCppProvider
                 provider_map["gguf"] = LlamaCppProvider  # Support both names
+            if CoreMLSTTProvider:
+                provider_map["coreml_stt"] = CoreMLSTTProvider
 
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:
@@ -213,6 +235,8 @@ class ModelRouter:
                     raise ValueError(f"MLX provider requested but not installed. Install with: pip install heylookitsanllm[mlx]")
                 elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
                     raise ValueError(f"GGUF provider requested but not installed. Install with: pip install heylookitsanllm[llama-cpp]")
+                elif model_config.provider == "coreml_stt" and not HAS_COREML_STT:
+                    raise ValueError(f"CoreML STT provider requested but not installed. Install coremltools and dependencies.")
                 else:
                     raise ValueError(f"Unknown provider: {model_config.provider}")
 
@@ -261,6 +285,13 @@ class ModelRouter:
 
     def list_available_models(self) -> list[str]:
         return [m.id for m in self.app_config.get_enabled_models()]
+
+    def get_stt_provider(self, model_id: str):
+        """Get an STT provider instance."""
+        provider = self.get_provider(model_id)
+        if not isinstance(provider, CoreMLSTTProvider):
+            raise ValueError(f"Model '{model_id}' is not an STT model")
+        return provider
     
     def should_use_queue(self, model_id: str, request) -> bool:
         """Determine if request should go through queue manager."""

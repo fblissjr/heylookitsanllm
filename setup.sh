@@ -55,10 +55,12 @@ echo ""
 echo "What would you like to install?"
 echo "1) MLX backend only (macOS, for MLX models)"
 echo "2) Llama.cpp backend only (for GGUF models)"
-echo "3) Both backends"
-echo "4) Everything (all backends + performance + analytics + profiling)"
+echo "3) STT backend only (CoreML Speech-to-Text)"
+echo "4) MLX + Llama.cpp backends"
+echo "5) All backends (MLX + Llama.cpp + STT)"
+echo "6) Everything (all backends + STT + performance + analytics + profiling)"
 echo ""
-read -p "Enter your choice (1-4): " choice
+read -p "Enter your choice (1-6): " choice
 
 # Base installation
 echo ""
@@ -118,11 +120,20 @@ case $choice in
         ;;
     3)
         echo ""
-        echo "Installing both backends..."
+        echo "Installing STT backend..."
+        echo "Note: This requires CoreML tools for Speech-to-Text support"
+        $PIP_CMD install -e ".[stt]"
+
+        echo ""
+        echo "STT backend installed successfully!"
+        echo "Configure your Parakeet model in models.yaml with provider: 'coreml_stt'"
+        ;;
+    4)
+        echo ""
+        echo "Installing MLX and Llama.cpp backends..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
         $PIP_CMD install -e ".[mlx,llama-cpp]"
-        
-        
+
         # Ask about GPU acceleration for llama.cpp
         echo ""
         echo "Would you like to enable GPU acceleration for llama.cpp?"
@@ -130,7 +141,7 @@ case $choice in
             echo "1) Yes, compile with Metal support"
             echo "2) No, use CPU only"
             read -p "Enter your choice (1-2): " gpu_choice
-            
+
             if [[ "$gpu_choice" == "1" ]]; then
                 echo ""
                 echo "Recompiling llama-cpp-python with Metal support..."
@@ -144,7 +155,7 @@ case $choice in
             echo "1) Yes, compile with CUDA support (NVIDIA)"
             echo "2) No, use CPU only"
             read -p "Enter your choice (1-2): " gpu_choice
-            
+
             if [[ "$gpu_choice" == "1" ]]; then
                 echo ""
                 echo "Recompiling llama-cpp-python with CUDA support..."
@@ -155,17 +166,59 @@ case $choice in
                 fi
             fi
         fi
-        
+
         echo ""
-        echo "Both backends installed successfully!"
+        echo "MLX and Llama.cpp backends installed successfully!"
         ;;
-    4)
+    5)
+        echo ""
+        echo "Installing all backends (MLX, Llama.cpp, STT)..."
+        echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
+        $PIP_CMD install -e ".[mlx,llama-cpp,stt]"
+
+        # Ask about GPU acceleration for llama.cpp
+        echo ""
+        echo "Would you like to enable GPU acceleration for llama.cpp?"
+        if [[ "$OS" == "macos" ]]; then
+            echo "1) Yes, compile with Metal support"
+            echo "2) No, use CPU only"
+            read -p "Enter your choice (1-2): " gpu_choice
+
+            if [[ "$gpu_choice" == "1" ]]; then
+                echo ""
+                echo "Recompiling llama-cpp-python with Metal support..."
+                if [[ "$USE_UV" == "true" ]]; then
+                    CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+                else
+                    CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir llama-cpp-python
+                fi
+            fi
+        elif [[ "$OS" == "linux" ]]; then
+            echo "1) Yes, compile with CUDA support (NVIDIA)"
+            echo "2) No, use CPU only"
+            read -p "Enter your choice (1-2): " gpu_choice
+
+            if [[ "$gpu_choice" == "1" ]]; then
+                echo ""
+                echo "Recompiling llama-cpp-python with CUDA support..."
+                if [[ "$USE_UV" == "true" ]]; then
+                    CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
+                else
+                    CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 $PYTHON_CMD -m pip install --force-reinstall --no-cache-dir llama-cpp-python
+                fi
+            fi
+        fi
+
+        echo ""
+        echo "All backends installed successfully!"
+        echo "Configure your STT models in models.yaml with provider: 'coreml_stt'"
+        ;;
+    6)
         echo ""
         echo "Installing everything..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
         $PIP_CMD install -e ".[all]"
-        
-        
+
         # Ask about GPU acceleration for llama.cpp
         echo ""
         echo "Would you like to enable GPU acceleration for llama.cpp?"
@@ -173,7 +226,7 @@ case $choice in
             echo "1) Yes, compile with Metal support"
             echo "2) No, use CPU only"
             read -p "Enter your choice (1-2): " gpu_choice
-            
+
             if [[ "$gpu_choice" == "1" ]]; then
                 echo ""
                 echo "Recompiling llama-cpp-python with Metal support..."
@@ -187,7 +240,7 @@ case $choice in
             echo "1) Yes, compile with CUDA support (NVIDIA)"
             echo "2) No, use CPU only"
             read -p "Enter your choice (1-2): " gpu_choice
-            
+
             if [[ "$gpu_choice" == "1" ]]; then
                 echo ""
                 echo "Recompiling llama-cpp-python with CUDA support..."
@@ -198,9 +251,10 @@ case $choice in
                 fi
             fi
         fi
-        
+
         echo ""
         echo "Everything installed successfully!"
+        echo "Configure your STT models in models.yaml with provider: 'coreml_stt'"
         ;;
     *)
         echo "ERROR: Invalid choice"

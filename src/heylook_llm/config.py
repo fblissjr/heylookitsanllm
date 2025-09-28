@@ -94,10 +94,22 @@ class LlamaCppModelConfig(BaseModel):
     n_ctx: int = 4096
     vision: bool = False
 
+class CoreMLSTTModelConfig(BaseModel):
+    model_path: str
+    compute_units: Literal["CPU_ONLY", "CPU_AND_NE", "ALL"] = "ALL"
+    sample_rate: int = 16000
+    max_audio_seconds: int = 15
+    vocab_size: int = 128
+    blank_id: int = 127
+    num_layers: int = 12
+    hidden_size: int = 320
+    max_symbols_per_timestep: int = 10
+    durations: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp", "gguf"]  # Support both gguf and llama_cpp
-    config: Union[MLXModelConfig, LlamaCppModelConfig]
+    provider: Literal["mlx", "llama_cpp", "gguf", "coreml_stt"]  # Support all providers
+    config: Union[MLXModelConfig, LlamaCppModelConfig, CoreMLSTTModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -109,6 +121,8 @@ class ModelConfig(BaseModel):
             return MLXModelConfig(**v)
         elif provider in ['llama_cpp', 'gguf']:  # Support both names
             return LlamaCppModelConfig(**v)
+        elif provider == 'coreml_stt':
+            return CoreMLSTTModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
 
 class AppConfig(BaseModel):
