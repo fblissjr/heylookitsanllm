@@ -14,16 +14,37 @@ import os
 import json
 import yaml
 import logging
+import platform
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 import re
 from dataclasses import dataclass, field
-# Common HF cache paths
-HF_CACHE_PATHS = [
-    "~/.cache/huggingface/hub",
-    "~/Library/Caches/huggingface/hub",
-    "~/.huggingface/hub"
-]
+
+
+def get_hf_cache_paths():
+    """Get platform-specific HuggingFace cache paths."""
+    if platform.system() == "Windows":
+        # Windows uses %USERPROFILE%\.cache\huggingface\hub or AppData
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/AppData/Local/huggingface/hub"),
+        ]
+    elif platform.system() == "Darwin":
+        # macOS specific paths
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/Library/Caches/huggingface/hub"),
+        ]
+    else:
+        # Linux and other Unix-like systems
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/.huggingface/hub"),
+        ]
+
+
+# Common HF cache paths (platform-specific)
+HF_CACHE_PATHS = get_hf_cache_paths()
 
 @dataclass
 class ModelProfile:

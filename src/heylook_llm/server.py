@@ -25,6 +25,7 @@ def create_openai_only_app():
     """Create app with only OpenAI API endpoints"""
     from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, restart_server, reload_models
     from heylook_llm.api_multipart import create_chat_multipart
+    from heylook_llm.stt_api import stt_router
 
     openai_app = FastAPI(title="OpenAI-Compatible LLM Server", version="1.0.0")
 
@@ -46,6 +47,9 @@ def create_openai_only_app():
     openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
     openai_app.post("/v1/data/query")(data_query)
     openai_app.get("/v1/data/summary")(data_summary)
+
+    # Add STT endpoints
+    openai_app.include_router(stt_router)
 
     # Add admin endpoints
     openai_app.post("/v1/admin/restart")(restart_server)
@@ -281,7 +285,7 @@ def main():
     if args.api == "openai":
         selected_app = create_openai_only_app()
         print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
+        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
     elif args.api == "ollama":
         selected_app = create_ollama_only_app()
         print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")

@@ -106,10 +106,20 @@ class CoreMLSTTModelConfig(BaseModel):
     max_symbols_per_timestep: int = 10
     durations: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
 
+class MLXSTTModelConfig(BaseModel):
+    """Configuration for MLX STT models (parakeet-mlx)."""
+    model_path: str = "mlx-community/parakeet-tdt-0.6b-v3"  # HF repo or local path
+    chunk_duration: int = 120  # Chunk duration in seconds (0 to disable)
+    overlap_duration: int = 15  # Overlap duration in seconds
+    use_local_attention: bool = False
+    local_attention_context: int = 256
+    fp32: bool = False  # Use fp32 instead of bf16
+    cache_dir: Optional[str] = None  # HuggingFace cache directory
+
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp", "gguf", "coreml_stt"]  # Support all providers
-    config: Union[MLXModelConfig, LlamaCppModelConfig, CoreMLSTTModelConfig]
+    provider: Literal["mlx", "llama_cpp", "gguf", "coreml_stt", "mlx_stt"]  # Support all providers
+    config: Union[MLXModelConfig, LlamaCppModelConfig, CoreMLSTTModelConfig, MLXSTTModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True

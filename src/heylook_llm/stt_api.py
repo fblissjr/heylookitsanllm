@@ -5,7 +5,7 @@ import uuid
 from typing import Optional, Union
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, WebSocket
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -161,7 +161,7 @@ async def translate_audio(
 
 
 @stt_router.websocket("/stt/stream")
-async def stream_transcription(websocket):
+async def stream_transcription(websocket: WebSocket):
     """WebSocket endpoint for real-time streaming transcription."""
     await websocket.accept()
 

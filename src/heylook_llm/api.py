@@ -2725,6 +2725,11 @@ def custom_openapi():
 
 A unified, high-performance API server for local LLM inference with dual OpenAI and Ollama compatibility.
 
+**Platform Support**: macOS, Linux, and Windows
+- macOS: All backends (MLX, llama.cpp, CoreML STT)
+- Linux: llama.cpp backend
+- Windows: llama.cpp backend with CUDA, Vulkan, or CPU
+
 ## 🎯 Key Features
 
 ### Dual API Support
@@ -2732,15 +2737,17 @@ A unified, high-performance API server for local LLM inference with dual OpenAI 
 - **Ollama API**: Drop-in replacement for Ollama server
 
 ### Model Support
-- **MLX Models**: Optimized for Apple Silicon with Metal acceleration
-- **GGUF Models**: Support via llama.cpp for broad compatibility
+- **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)
+- **GGUF Models**: Support via llama.cpp for broad compatibility (all platforms)
 - **Vision Models**: Process images with vision-language models
+- **Speech-to-Text**: CoreML STT models (macOS only)
 
 ### Performance Features
 - **Smart Model Caching**: LRU cache keeps 2 models in memory
 - **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image
 - **Async Processing**: Non-blocking request handling
 - **Performance Monitoring**: Real-time metrics at `/v1/performance`
+- **GPU Acceleration**: Metal (macOS), CUDA (NVIDIA), Vulkan (AMD/Intel)
 
 ## Quick Start
 
@@ -2834,7 +2841,7 @@ This enables:
     # Add external documentation
     openapi_schema["externalDocs"] = {
         "description": "GitHub Repository",
-        "url": "https://github.com/yourusername/heylookitsanllm"
+        "url": "https://github.com/fblissjr/heylookitsanllm"
     }
 
     # Enhanced component schemas

@@ -15,6 +15,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
 ]
 
 # -------------------------------------------------------------------
@@ -32,6 +33,7 @@ dependencies = [
     "numpy>=1.24.0",
     "Pillow>=10.0.1",
     "tqdm>=4.65.0",
+    "parakeet-mlx>=0.3.7",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────

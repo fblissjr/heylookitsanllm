@@ -45,6 +45,15 @@ except Exception as e:
     HAS_COREML_STT = False
     COREML_IMPORT_ERROR = f"CoreML STT provider failed to load: {e}"
 
+# Try to import MLX STT provider
+try:
+    from heylook_llm.providers.mlx_stt_provider import MLXSTTProvider
+    HAS_MLX_STT = True
+except ImportError as e:
+    MLXSTTProvider = None
+    HAS_MLX_STT = False
+    MLX_STT_IMPORT_ERROR = str(e)
+
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
@@ -228,6 +237,8 @@ class ModelRouter:
                 provider_map["gguf"] = LlamaCppProvider  # Support both names
             if CoreMLSTTProvider:
                 provider_map["coreml_stt"] = CoreMLSTTProvider
+            if MLXSTTProvider:
+                provider_map["mlx_stt"] = MLXSTTProvider
 
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:
@@ -289,7 +300,15 @@ class ModelRouter:
     def get_stt_provider(self, model_id: str):
         """Get an STT provider instance."""
         provider = self.get_provider(model_id)
-        if not isinstance(provider, CoreMLSTTProvider):
+        # Check if it's either CoreML or MLX STT provider
+        # Build tuple of available STT provider classes
+        stt_providers = []
+        if CoreMLSTTProvider:
+            stt_providers.append(CoreMLSTTProvider)
+        if MLXSTTProvider:
+            stt_providers.append(MLXSTTProvider)
+
+        if not stt_providers or not isinstance(provider, tuple(stt_providers)):
             raise ValueError(f"Model '{model_id}' is not an STT model")
         return provider
     
