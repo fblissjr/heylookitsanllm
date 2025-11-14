@@ -73,7 +73,7 @@ class ModelProfile:
 PROFILES = {
     "fast": ModelProfile(
         name="fast",
-        description="Optimized for speed - aggressive settings",
+        description="Optimized for speed - low latency, short responses",
         defaults={
             "temperature": 0.3,
             "top_k": 10,
@@ -85,7 +85,7 @@ PROFILES = {
     ),
     "balanced": ModelProfile(
         name="balanced",
-        description="Balance between speed and quality",
+        description="Balance between speed and quality - default recommended",
         defaults={
             "temperature": 0.7,
             "top_k": 40,
@@ -97,7 +97,7 @@ PROFILES = {
     ),
     "quality": ModelProfile(
         name="quality",
-        description="Optimized for quality - conservative settings",
+        description="Optimized for quality - broader sampling, longer responses",
         defaults={
             "temperature": 0.8,
             "top_p": 0.95,
@@ -107,12 +107,70 @@ PROFILES = {
             "cache_type": "standard"
         }
     ),
+    "performance": ModelProfile(
+        name="performance",
+        description="Maximum performance and accuracy - no KV cache quantization, large context",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 50,
+            "top_p": 0.95,
+            "max_tokens": 2048,
+            "repetition_penalty": 1.05,
+            "repetition_context_size": 20,
+            "cache_type": "standard",  # Never quantize for max accuracy
+            # For GGUF models
+            "n_ctx": lambda m: 16384 if m.get('size_gb', 0) > 30 else 8192,
+            "n_batch": 1024,  # Larger batch for throughput
+            "use_mmap": True,
+            "use_mlock": False
+        }
+    ),
+    "max_quality": ModelProfile(
+        name="max_quality",
+        description="Maximum quality - no quantization, full precision KV cache, unlimited context",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 100,  # Very broad sampling
+            "top_p": 0.98,
+            "max_tokens": 4096,  # Long responses
+            "repetition_penalty": 1.05,
+            "repetition_context_size": 20,
+            "cache_type": "standard",  # No quantization ever
+            # For GGUF models
+            "n_ctx": lambda m: 32768 if m.get('size_gb', 0) > 30 else 16384,
+            "n_batch": 2048,  # Maximum batch
+            "use_mmap": True,
+            "use_mlock": True  # Lock memory for max performance
+        }
+    ),
+    "background": ModelProfile(
+        name="background",
+        description="Minimal resource usage for 24/7 operation - aggressive memory optimization",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 20,
+            "min_p": 0.1,
+            "max_tokens": 256,  # Short responses to minimize compute
+            "repetition_penalty": 1.0,
+            "repetition_context_size": 10,  # Smaller context window
+            "cache_type": "quantized",  # Always quantize to save memory
+            "kv_bits": 8,  # 8-bit minimum to avoid quality degradation
+            "kv_group_size": 32,
+            "quantized_kv_start": 256,  # Start quantizing after initial prompt
+            "max_kv_size": 1024,  # Limit KV cache size
+            # For GGUF models
+            "n_ctx": 2048,  # Smaller context
+            "n_batch": 256,  # Smaller batch
+            "use_mmap": True,  # Use mmap for memory efficiency
+            "use_mlock": False  # Don't lock memory (allows swapping)
+        }
+    ),
     "memory": ModelProfile(
         name="memory",
-        description="Optimized for low memory usage",
+        description="Optimized for low memory usage - moderate resource constraints",
         defaults={
             "cache_type": "quantized",
-            "kv_bits": 4,
+            "kv_bits": 8,  # 8-bit minimum recommended
             "kv_group_size": 32,
             "quantized_kv_start": 256,
             "max_kv_size": 1024,
@@ -121,7 +179,7 @@ PROFILES = {
     ),
     "interactive": ModelProfile(
         name="interactive",
-        description="Optimized for chat/interactive use",
+        description="Optimized for chat/interactive use - responsive and conversational",
         defaults={
             "temperature": 0.7,
             "top_k": 30,
@@ -152,10 +210,11 @@ def get_smart_defaults(model_info: Dict[str, Any]) -> Dict[str, Any]:
         defaults['temperature'] = 0.9  # Base models can be more creative
 
     # Cache strategy based on size
+    # Note: 8-bit is minimum recommended for KV cache to avoid quality degradation
     if provider == 'mlx':
         if size_gb > 30:
             defaults['cache_type'] = 'quantized'
-            defaults['kv_bits'] = 4
+            defaults['kv_bits'] = 8  # 8-bit minimum recommended
             defaults['kv_group_size'] = 32
             defaults['quantized_kv_start'] = 512
             defaults['max_kv_size'] = 2048
@@ -484,7 +543,7 @@ class ModelImporter:
             "provider": "mlx",
             "description": f"Auto-imported MLX model{' with vision' if is_vision else ''}{f' ({size_str})' if size_str else ''}",
             "tags": tags,
-            "enabled": False,  # Default to disabled
+            "enabled": True,  # Default to enabled
             "config": config
         }
 
@@ -580,7 +639,7 @@ class ModelImporter:
             "provider": "gguf",  # Use the simpler name
             "description": f"Auto-imported GGUF model ({quant}){' with vision' if is_vision else ''}{f' ({size_gb:.1f}GB)' if size_gb else ''}",
             "tags": tags,
-            "enabled": False,
+            "enabled": True,  # Default to enabled
             "config": config
         }
 

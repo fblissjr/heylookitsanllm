@@ -68,6 +68,43 @@ class ChatCompletionResponse(BaseModel):
     usage: Dict
     performance: Optional[PerformanceMetrics] = None
 
+
+class BatchChatRequest(BaseModel):
+    """Request for batch chat completions."""
+    requests: List[ChatRequest]
+    processing_mode: str = "batch"
+
+    # Batch-specific parameters
+    completion_batch_size: Optional[int] = Field(32, description="Max concurrent generations")
+    prefill_batch_size: Optional[int] = Field(8, description="Max prefill parallelism")
+    prefill_step_size: Optional[int] = Field(2048, description="Chunk size for prefill")
+
+    @validator('requests')
+    def validate_requests(cls, v):
+        if not v:
+            raise ValueError("Requests list cannot be empty")
+        if len(v) < 2:
+            raise ValueError("Batch requests must contain at least 2 requests")
+        return v
+
+
+class BatchStats(BaseModel):
+    """Statistics for batch processing."""
+    total_requests: int
+    elapsed_seconds: float
+    throughput_req_per_sec: float
+    throughput_tok_per_sec: float
+    prefill_time: float
+    generation_time: float
+    memory_peak_mb: float
+
+
+class BatchChatResponse(BaseModel):
+    """Response for batch chat completions."""
+    object: str = "list"
+    data: List[ChatCompletionResponse]
+    batch_stats: BatchStats
+
 class MLXModelConfig(BaseModel):
     model_path: str
     draft_model_path: Optional[str] = None

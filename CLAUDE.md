@@ -81,9 +81,10 @@ src/heylook_llm/
 - Provider selection based on `models.yaml` configuration
 
 ### API Compatibility
-- **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`
+- **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/batch/chat/completions`
 - **Ollama**: `/api/tags`, `/api/chat`, `/api/generate`, `/api/embed`
 - **Admin**: `/v1/admin/restart`, `/v1/admin/reload`
+- **Batch**: `/v1/batch/chat/completions` - Batch text generation (2-4x throughput, text-only models)
 
 ### Provider System
 - **BaseProvider**: Abstract interface for LLM providers
@@ -233,3 +234,65 @@ Challenge the user when:
 - Platform incompatibility ignored
 
 Propose alternatives and explain reasoning.
+- When searching the codebase, always use `ripgrep` (`rg`) instead of `grep` for better performance and respecting `.gitignore`.
+
+## Documentation Index
+
+### User Documentation (docs/)
+
+**Getting Started**
+- `README.md` - Project overview and quick start
+- `docs/WINDOWS_INSTALL.md` - Complete Windows setup guide
+- `docs/WINDOWS_QUICK_REFERENCE.md` - Windows command reference
+- `docs/CLAUDE_APP_QUICK_REFERENCE.md` - Quick command reference
+
+**API Integration**
+- `docs/CLIENT_INTEGRATION_GUIDE.md` - Complete API integration guide
+- `docs/CLIENT_DEVELOPER_GUIDE.md` - Developer guide for API consumers
+- `docs/CLIENT_CAPABILITY_DETECTION.md` - Feature detection guide
+- `docs/COMFYUI_INTEGRATION_GUIDE.md` - ComfyUI integration guide
+- `docs/OPENAPI_DOCUMENTATION_UPDATE.md` - API documentation changelog
+
+**API Endpoints & Features**
+- Swagger UI: `http://localhost:8080/docs`
+- ReDoc: `http://localhost:8080/redoc`
+- `docs/embeddings_api.md` - Embeddings API documentation
+- `docs/heylookllm_embeddings_spec.md` - Embeddings specification
+- `docs/BATCH_PROCESSING.md` - Batch processing reference
+
+**Testing & Development**
+- `docs/TESTING_GUIDE.md` - Testing guide for developers
+- `docs/QUEUE_INTEGRATION.md` - Queue integration reference
+
+### Internal Documentation (internal/)
+
+**Architecture & Design**
+- `internal/01_architecture_overview.md` - System architecture overview
+- `internal/02_provider_mlx.md` - MLX provider design
+- `internal/03_provider_llama_cpp.md` - Llama.cpp provider design
+- `internal/04_provider_unification_strategy.md` - Provider unification strategy
+- `internal/LOG.md` - Project development history
+- `internal/MLX_CODE_REVIEW_2025.md` - Latest MLX compatibility and performance review (2025-01-14)
+
+**Implementation Plans**
+- `internal/WINDOWS_SUPPORT_DESIGN_AND_PLAN.md` - Windows support design
+- `internal/QWEN3_VL_MLX_IMPLEMENTATION.md` - Vision model implementation
+- `internal/BATCH_VISION_IMPLEMENTATION_PLAN.md` - Batch vision processing
+- `internal/BATCH_TEXT_IMPLEMENTATION_PLAN.md` - Batch text generation (2025-01-14)
+- `internal/LLAMA_CPP_ROADMAP.md` - Llama.cpp roadmap
+
+**Performance & Optimization**
+- `internal/DUAL_PATH.md` - Dual-path optimization design
+- `internal/PERFORMANCE_OPTIMIZATION_GUIDE.md` - Performance notes
+- `internal/IMAGE_TRANSFER_OPTIMIZATION.md` - Image optimization details
+- `internal/IMPLEMENTATION_COMPLETE_2025-01-14.md` - Latest implementation summary (wired_limit + batch text)
+
+**Analytics & Monitoring**
+- `internal/HEYLOOK_ANALYTICS_TECH_SPEC.md` - Analytics technical spec
+- `internal/HEYLOOK_ANALYTICS_TEST_GUIDE.md` - Analytics testing
+- `internal/dependency_analysis_report.md` - Dependency analysis
+
+### Configuration Files
+- `CLAUDE.md` - Claude AI assistant guidelines (this file)
+- `models.yaml` - Model configuration
+- `pyproject.toml` - Python package configuration

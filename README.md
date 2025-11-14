@@ -115,6 +115,7 @@ See [Client Integration Guide](docs/CLIENT_INTEGRATION_GUIDE.md) for detailed AP
 **OpenAI Compatible**
 - `GET /v1/models` - List available models
 - `POST /v1/chat/completions` - Chat completion
+- `POST /v1/batch/chat/completions` - **Batch processing (2-4x throughput)**
 - `POST /v1/embeddings` - Extract embeddings
 - `POST /v1/audio/transcriptions` - Speech-to-text (macOS)
 - `POST /v1/chat/completions/multipart` - Fast image upload
@@ -156,6 +157,53 @@ with open("audio.wav", "rb") as f:
     )
 ```
 
+### Batch Processing
+
+Process multiple requests efficiently with 2-4x throughput improvement:
+
+```python
+import requests
+
+# Batch multiple prompts
+response = requests.post(
+    "http://localhost:8080/v1/batch/chat/completions",
+    json={
+        "requests": [
+            {
+                "model": "qwen-14b",
+                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "max_tokens": 50
+            },
+            {
+                "model": "qwen-14b",
+                "messages": [{"role": "user", "content": "What is the capital of France?"}],
+                "max_tokens": 50
+            },
+            {
+                "model": "qwen-14b",
+                "messages": [{"role": "user", "content": "Name a primary color."}],
+                "max_tokens": 50
+            }
+        ]
+    }
+)
+
+result = response.json()
+print(f"Processed {len(result['data'])} requests")
+print(f"Throughput: {result['batch_stats']['throughput_req_per_sec']:.2f} req/s")
+
+# See examples/batch_processing_example.py for more examples
+```
+
+**Requirements:**
+- Text-only models (no VLM support yet)
+- All requests must use the same model
+- Streaming not supported (batch is inherently blocking)
+- Minimum 2 requests (recommended 3+ for best performance)
+
+**See:** `examples/batch_processing_example.py` for comprehensive examples
+```
+
 ## Features
 
 ### Model Management
@@ -169,6 +217,7 @@ with open("audio.wav", "rb") as f:
 - Async request processing
 - Fast multipart image endpoint (57ms faster per image)
 - Cross-request prompt caching (MLX)
+- **Batch text processing (2-4x throughput for concurrent requests)**
 
 ### Analytics (Optional)
 

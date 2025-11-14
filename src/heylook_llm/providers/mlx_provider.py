@@ -13,10 +13,8 @@ import mlx.nn as nn
 from PIL import Image
 
 from mlx_lm.utils import load as lm_load
-from mlx_lm.generate import stream_generate as lm_stream_generate
-from mlx_vlm.utils import load as vlm_load
-from mlx_vlm.generate import stream_generate as vlm_stream_generate
-from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
+from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
+from mlx_vlm.utils import load as vlm_load, generate as vlm_generate
 
 from ..config import ChatRequest
 from .base import BaseProvider
@@ -28,6 +26,33 @@ from ..utils import load_image
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager, process_prompt_with_cache
 from .common.cache_helpers import make_cache
+
+# Create dedicated generation stream for better Metal utilization
+# This allows async evaluation and improves pipeline performance
+generation_stream = mx.new_stream(mx.default_device())
+
+
+def vlm_apply_chat_template(processor, config, messages, num_images=None):
+    """
+    Apply chat template using the processor's tokenizer.
+
+    This is a simple wrapper around processor.apply_chat_template that was previously
+    provided by mlx_vlm.prompt_utils but has been removed.
+
+    Args:
+        processor: The model processor (contains tokenizer)
+        config: Model config (not used, kept for compatibility)
+        messages: List of message dicts with 'role' and 'content'
+        num_images: Number of images (not used, kept for compatibility)
+
+    Returns:
+        str: Formatted prompt string
+    """
+    return processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
 
 
 class KeepaliveChunk:
@@ -201,28 +226,31 @@ class TextOnlyStrategy:
             """Callback to track prompt processing progress."""
             logging.debug(f"Prompt processing: {processed}/{total} tokens")
             # The callback itself doesn't yield, mlx-lm handles this internally
-        
-        # Stream tokens and handle potential leading space issue
-        first_token = True
-        for response in lm_stream_generate(
-            model=model,
-            tokenizer=tokenizer,
-            prompt=tokens_to_process,  # Use the reduced prompt
-            sampler=sampler,
-            logits_processors=processors,
-            max_tokens=effective_request['max_tokens'],
-            draft_model=self.draft_model,
-            prompt_progress_callback=prompt_progress_callback,
-            prompt_cache=generation_cache if generation_cache else None
-        ):
-            # Clean up leading space on first token for models with add_prefix_space
-            if first_token and response.text.startswith(' '):
-                response.text = response.text.lstrip()
-                first_token = False
-            elif first_token:
-                first_token = False
 
-            yield response
+        # Wrap generation in wired_limit context manager for optimal Metal memory management
+        # This is critical for large models and ensures proper synchronization
+        with wired_limit(model, [generation_stream]):
+            # Stream tokens and handle potential leading space issue
+            first_token = True
+            for response in lm_stream_generate(
+                model=model,
+                tokenizer=tokenizer,
+                prompt=tokens_to_process,  # Use the reduced prompt
+                sampler=sampler,
+                logits_processors=processors,
+                max_tokens=effective_request['max_tokens'],
+                draft_model=self.draft_model,
+                prompt_progress_callback=prompt_progress_callback,
+                prompt_cache=generation_cache if generation_cache else None
+            ):
+                # Clean up leading space on first token for models with add_prefix_space
+                if first_token and response.text.startswith(' '):
+                    response.text = response.text.lstrip()
+                    first_token = False
+                elif first_token:
+                    first_token = False
+
+                yield response
 
 
 class VLMTextOnlyStrategy:
@@ -261,26 +289,28 @@ class VLMTextOnlyStrategy:
         # Use VLM stream generate with empty images
         images = []  # No images for text-only generation
 
-        # Stream tokens and handle potential leading space issue
-        first_token = True
-        for response in vlm_stream_generate(
-            model=model,
-            processor=processor,
-            prompt=prompt,
-            image=images,
-            max_tokens=effective_request['max_tokens'],
-            temperature=effective_request.get('temperature', 0.0),
-            top_p=effective_request.get('top_p', 1.0),
-            repetition_penalty=effective_request.get('repetition_penalty', 1.0)
-        ):
-            # Clean up leading space on first token for models with add_prefix_space
-            if first_token and response.text.startswith(' '):
-                response.text = response.text.lstrip()
-                first_token = False
-            elif first_token:
-                first_token = False
+        # Wrap generation in wired_limit context manager for optimal Metal memory management
+        with wired_limit(model, [generation_stream]):
+            # Stream tokens and handle potential leading space issue
+            first_token = True
+            for response in vlm_stream_generate(
+                model=model,
+                processor=processor,
+                prompt=prompt,
+                image=images,
+                max_tokens=effective_request['max_tokens'],
+                temperature=effective_request.get('temperature', 0.0),
+                top_p=effective_request.get('top_p', 1.0),
+                repetition_penalty=effective_request.get('repetition_penalty', 1.0)
+            ):
+                # Clean up leading space on first token for models with add_prefix_space
+                if first_token and response.text.startswith(' '):
+                    response.text = response.text.lstrip()
+                    first_token = False
+                elif first_token:
+                    first_token = False
 
-            yield response
+                yield response
 
 
     def _prepare_vlm_inputs(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
@@ -399,16 +429,18 @@ class VLMVisionStrategy:
             # Future optimization: pre-encode all images and modify generator
             pass
 
-        # Use generation with mlx-lm sampling
-        yield from self._cached_generator.stream_generate_with_sampling(
-            prompt=formatted_prompt,
-            image=images,
-            sampler=sampler,
-            processors=processors,
-            max_tokens=effective_request['max_tokens'],
-            temperature=effective_request.get('temperature', 0.1),
-            top_p=effective_request.get('top_p', 1.0)
-        )
+        # Wrap generation in wired_limit context manager for optimal Metal memory management
+        with wired_limit(model, [generation_stream]):
+            # Use generation with mlx-lm sampling
+            yield from self._cached_generator.stream_generate_with_sampling(
+                prompt=formatted_prompt,
+                image=images,
+                sampler=sampler,
+                processors=processors,
+                max_tokens=effective_request['max_tokens'],
+                temperature=effective_request.get('temperature', 0.1),
+                top_p=effective_request.get('top_p', 1.0)
+            )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs with parallel image loading."""
@@ -597,6 +629,9 @@ class MLXProvider(BaseProvider):
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
         self._content_cache = {}  # Cache for image detection results
+
+        # Batch text processor (lazy-initialized)
+        self._batch_processor = None
 
         # Add generation lock to prevent Metal command buffer conflicts
         import threading
@@ -893,6 +928,103 @@ class MLXProvider(BaseProvider):
         merged_config.update(request_params)
 
         return merged_config
+
+    def _get_batch_processor(self):
+        """Lazy-initialize batch text processor."""
+        if self._batch_processor is None:
+            from .mlx_batch_text import TextBatchProcessor
+
+            tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+
+            # Get batch configuration from model config
+            batch_config = self.config.get('batch', {})
+            completion_batch_size = batch_config.get('completion_batch_size', 32)
+            prefill_batch_size = batch_config.get('prefill_batch_size', 8)
+            prefill_step_size = batch_config.get('prefill_step_size', 2048)
+
+            self._batch_processor = TextBatchProcessor(
+                model=self.model,
+                tokenizer=tokenizer,
+                max_tokens=self.config.get('max_tokens', 512),
+                completion_batch_size=completion_batch_size,
+                prefill_batch_size=prefill_batch_size,
+                prefill_step_size=prefill_step_size
+            )
+
+            logging.info(
+                f"[BATCH] Initialized batch processor for {self.model_id}: "
+                f"completion_batch_size={completion_batch_size}, "
+                f"prefill_batch_size={prefill_batch_size}"
+            )
+
+        return self._batch_processor
+
+    def create_batch_chat_completion(self, requests: List[ChatRequest]) -> List[Dict]:
+        """
+        Process batch of chat completion requests.
+
+        This uses mlx-lm's BatchGenerator for efficient parallel processing.
+        Only works for text-only models without streaming.
+
+        Args:
+            requests: List of ChatRequest objects
+
+        Returns:
+            List of completion dictionaries
+        """
+        if self.is_vlm:
+            raise ValueError("Batch processing is currently only supported for text-only models")
+
+        # Check all requests are compatible with batching
+        if any(req.stream for req in requests):
+            raise ValueError("Batch processing does not support streaming requests")
+
+        # Prepare all prompts
+        prompts = []
+        max_tokens_list = []
+
+        tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+
+        for req in requests:
+            # Apply chat template
+            messages_for_template = []
+            for msg in req.messages:
+                msg_dict = msg.model_dump(exclude_none=True)
+                # If content is a list, extract text
+                if isinstance(msg_dict.get('content'), list):
+                    text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
+                    msg_dict['content'] = ' '.join(text_parts)
+                messages_for_template.append(msg_dict)
+
+            prompt = tokenizer.apply_chat_template(
+                messages_for_template,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            tokens = tokenizer.encode(prompt)
+            prompts.append(tokens)
+            max_tokens_list.append(req.max_tokens or self.config.get('max_tokens', 512))
+
+        # Process batch
+        processor = self._get_batch_processor()
+
+        with self._generation_lock:
+            results = processor.process_batch(prompts, max_tokens_list)
+
+        # Convert to API response format
+        completions = []
+        for result in results:
+            completion = {
+                'text': result.text,
+                'finish_reason': result.finish_reason,
+                'prompt_tokens': result.prompt_tokens,
+                'completion_tokens': result.generation_tokens,
+                'total_tokens': result.prompt_tokens + result.generation_tokens
+            }
+            completions.append(completion)
+
+        return completions
 
     @time_mlx_operation("chat_completion")
     def create_chat_completion(self, request: ChatRequest) -> Generator:

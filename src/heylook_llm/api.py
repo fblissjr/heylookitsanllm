@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from heylook_llm.router import ModelRouter
-from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse
+from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse, BatchChatRequest, BatchChatResponse, BatchStats
 from heylook_llm.providers.common.performance_monitor import performance_monitor
 from heylook_llm.middleware.ollama import OllamaTranslator
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
@@ -537,6 +537,146 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             logging.error(f"Failed to log metrics: {e}")
 
     return response
+
+
+@app.post("/v1/batch/chat/completions",
+    summary="Batch Chat Completions",
+    description="""
+Process multiple chat completion requests in a single batch for improved throughput.
+
+**Performance Benefits:**
+- 2-4x throughput improvement vs sequential processing
+- Efficient handling of variable-length prompts via left-padding
+- Optimized Metal memory management
+
+**Requirements:**
+- All requests must use the same text-only model
+- Streaming is not supported (batch processing is inherently blocking)
+- Minimum 2 requests per batch (recommended 3+ for best performance)
+
+**Batch Parameters:**
+- `completion_batch_size`: Max concurrent generations (default: 32)
+- `prefill_batch_size`: Max prefill parallelism (default: 8)
+- `prefill_step_size`: Chunk size for memory efficiency (default: 2048)
+
+**Performance Notes:**
+- Best performance with similar-length prompts (reduces padding waste)
+- Larger batch sizes provide better throughput but higher latency
+- Monitor batch_stats in response for throughput metrics
+    """,
+    response_model=BatchChatResponse,
+    response_description="Batch completion results with statistics",
+    tags=["OpenAI API"]
+)
+async def create_batch_chat_completion(request: Request, batch_request: BatchChatRequest):
+    router = request.app.state.router_instance
+    request_id = f"batch-req-{uuid.uuid4()}"
+
+    start_time = time.time()
+
+    logging.info(f"[BATCH API] Processing batch of {len(batch_request.requests)} requests")
+
+    try:
+        # Validate all requests use same model
+        models = {req.model for req in batch_request.requests}
+        if len(models) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"All requests must use the same model. Found: {list(models)}"
+            )
+
+        model_id = models.pop()
+
+        # Check for streaming requests
+        if any(req.stream for req in batch_request.requests):
+            raise HTTPException(
+                status_code=400,
+                detail="Batch processing does not support streaming requests"
+            )
+
+        # Get provider (loads model if needed)
+        provider = await asyncio.to_thread(router.get_provider, model_id)
+
+        # Check if provider supports batching
+        if not hasattr(provider, 'create_batch_chat_completion'):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_id}' does not support batch processing"
+            )
+
+        logging.info(f"[BATCH API] Using provider: {provider.__class__.__name__}")
+
+        # Process batch
+        prefill_start = time.time()
+        completions = await asyncio.to_thread(
+            provider.create_batch_chat_completion,
+            batch_request.requests
+        )
+        prefill_time = time.time() - prefill_start
+
+        elapsed = time.time() - start_time
+
+        # Build response objects
+        responses = []
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+
+        for i, (req, completion) in enumerate(zip(batch_request.requests, completions)):
+            response = ChatCompletionResponse(
+                id=f"chatcmpl-batch-{uuid.uuid4()}",
+                object="chat.completion",
+                created=int(time.time()),
+                model=model_id,
+                choices=[{
+                    "index": i,
+                    "message": {
+                        "role": "assistant",
+                        "content": completion['text']
+                    },
+                    "finish_reason": completion.get('finish_reason', 'stop')
+                }],
+                usage={
+                    "prompt_tokens": completion.get('prompt_tokens', 0),
+                    "completion_tokens": completion.get('completion_tokens', 0),
+                    "total_tokens": completion.get('total_tokens', 0)
+                }
+            )
+            responses.append(response)
+
+            total_prompt_tokens += completion.get('prompt_tokens', 0)
+            total_completion_tokens += completion.get('completion_tokens', 0)
+
+        # Calculate statistics
+        total_tokens = total_prompt_tokens + total_completion_tokens
+        batch_stats = BatchStats(
+            total_requests=len(batch_request.requests),
+            elapsed_seconds=elapsed,
+            throughput_req_per_sec=len(batch_request.requests) / elapsed,
+            throughput_tok_per_sec=total_tokens / elapsed if total_tokens > 0 else 0,
+            prefill_time=prefill_time,
+            generation_time=elapsed - prefill_time,
+            memory_peak_mb=0  # Placeholder - provider should provide this
+        )
+
+        logging.info(
+            f"[BATCH API] Completed batch: {batch_stats.total_requests} requests in {batch_stats.elapsed_seconds:.2f}s "
+            f"({batch_stats.throughput_req_per_sec:.1f} req/s, {batch_stats.throughput_tok_per_sec:.1f} tok/s)"
+        )
+
+        return BatchChatResponse(
+            data=responses,
+            batch_stats=batch_stats
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"[BATCH API] Error processing batch: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Batch processing failed: {str(e)}"
+        )
+
 
 @app.post("/v1/admin/restart",
     summary="Restart Server",

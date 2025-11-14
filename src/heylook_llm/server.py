@@ -23,7 +23,7 @@ except ImportError:
 
 def create_openai_only_app():
     """Create app with only OpenAI API endpoints"""
-    from heylook_llm.api import list_models, create_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, restart_server, reload_models
+    from heylook_llm.api import list_models, create_chat_completion, create_batch_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, restart_server, reload_models
     from heylook_llm.api_multipart import create_chat_multipart
     from heylook_llm.stt_api import stt_router
 
@@ -41,6 +41,7 @@ def create_openai_only_app():
     # Add OpenAI endpoints
     openai_app.get("/v1/models")(list_models)
     openai_app.post("/v1/chat/completions")(create_chat_completion)
+    openai_app.post("/v1/batch/chat/completions")(create_batch_chat_completion)
     openai_app.post("/v1/embeddings")(create_embeddings_endpoint)
     openai_app.get("/v1/capabilities")(get_capabilities)
     openai_app.get("/v1/performance")(performance_metrics)
@@ -62,6 +63,7 @@ def create_openai_only_app():
             "endpoints": {
                 "models": "/v1/models",
                 "chat": "/v1/chat/completions",
+                "batch_chat": "/v1/batch/chat/completions",
                 "embeddings": "/v1/embeddings",
                 "capabilities": "/v1/capabilities",
                 "performance": "/v1/performance",
@@ -146,8 +148,8 @@ def main():
     )
     import_parser.add_argument(
         "--profile",
-        choices=["fast", "balanced", "quality", "memory", "interactive"],
-        help="Apply a predefined profile for model defaults"
+        choices=["fast", "balanced", "quality", "performance", "max_quality", "background", "memory", "interactive"],
+        help="Apply a predefined profile for model defaults (max_quality=no quantization, performance=high throughput, background=24/7 low resource)"
     )
     import_parser.add_argument(
         "--override",
@@ -285,7 +287,7 @@ def main():
     if args.api == "openai":
         selected_app = create_openai_only_app()
         print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/embeddings, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
+        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/batch/chat/completions, /v1/embeddings, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
     elif args.api == "ollama":
         selected_app = create_ollama_only_app()
         print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")
