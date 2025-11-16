@@ -14,7 +14,8 @@ from PIL import Image
 
 from mlx_lm.utils import load as lm_load
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
-from mlx_vlm.utils import load as vlm_load, generate as vlm_generate
+from mlx_vlm.utils import load as vlm_load
+from mlx_vlm import generate as vlm_generate
 
 from ..config import ChatRequest
 from .base import BaseProvider

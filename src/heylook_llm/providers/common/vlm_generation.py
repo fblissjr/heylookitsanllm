@@ -13,7 +13,9 @@ import mlx.core as mx
 import mlx.nn as nn
 from typing import Generator, List, Optional, Union, Any, NamedTuple
 from mlx_lm.generate import stream_generate as lm_stream_generate
-from mlx_vlm.utils import generate as vlm_generate, generate_step, prepare_inputs
+from mlx_vlm import generate as vlm_generate
+from mlx_vlm.generate import generate_step
+from mlx_vlm.utils import prepare_inputs
 
 from .performance_monitor import time_mlx_operation
 

@@ -62,9 +62,10 @@ profile = [
 mlx = [
     "mlx",                      # Core MLX library
     "mlx-lm",                   # MLX text generation
-    "mlx-vlm",                  # MLX vision generation
+    "mlx-vlm>=0.3.4",           # MLX vision generation (Qwen3-VL support requires >=0.3.4)
     "datasets>=2.19.1",         # HuggingFace datasets
     "transformers>=4.35.0",     # HuggingFace transformers
+    "huggingface-hub>=0.34.0,<1.0",  # Required by transformers (version constraint)
     "opencv-python>=4.8.1.78",  # Image processing for vision
     "torch>=2.0.0",
     "torchvision>=0.15.0",      # Vision utilities
