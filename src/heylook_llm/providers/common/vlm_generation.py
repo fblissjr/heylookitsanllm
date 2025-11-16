@@ -230,6 +230,7 @@ class VLMGeneratorWithSampling:
                 model=self.model,
                 processor=self.processor,
                 prompt=prompt,
+                audio=None,  # Explicitly set to None to avoid feature_extractor access
                 max_tokens=max_tokens,
                 **kwargs
             )
@@ -269,6 +270,7 @@ class VLMGeneratorWithSampling:
             processor=self.processor,
             prompt=prompt,
             image=image,
+            audio=None,  # Explicitly set to None to avoid feature_extractor access
             max_tokens=max_tokens,
             **kwargs
         )

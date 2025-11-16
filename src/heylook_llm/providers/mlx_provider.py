@@ -15,7 +15,7 @@ from PIL import Image
 from mlx_lm.utils import load as lm_load
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_vlm.utils import load as vlm_load
-from mlx_vlm import generate as vlm_generate
+from mlx_vlm import generate as vlm_generate, stream_generate as vlm_stream_generate
 
 from ..config import ChatRequest
 from .base import BaseProvider
@@ -299,6 +299,7 @@ class VLMTextOnlyStrategy:
                 processor=processor,
                 prompt=prompt,
                 image=images,
+                audio=None,  # Explicitly set to None to avoid feature_extractor access
                 max_tokens=effective_request['max_tokens'],
                 temperature=effective_request.get('temperature', 0.0),
                 top_p=effective_request.get('top_p', 1.0),
