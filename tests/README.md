@@ -1,198 +1,384 @@
-# MLX Provider Optimization Tests
+# Test Suite
 
-This directory contains comprehensive tests for the MLX provider optimizations. All tests are designed to run with `heylookllm` server running on port 8080.
+Reorganized: 2025-11-17
 
-## 🚀 Quick Start
+## Overview
+
+This test suite has been aggressively reorganized from 69 files to 10 focused tests. The goal is a maintainable, clear test structure that covers core functionality without duplication or one-off debug scripts.
+
+## Organization
+
+```
+tests/
+├── unit/              # Fast isolated tests, no server required (3 tests)
+├── integration/       # Tests requiring running server (7 tests)
+├── fixtures/          # Shared test data and helpers
+├── input/             # Test input files (images, audio)
+├── archive/           # Old/superseded tests (62 files)
+├── README.md          # This file
+└── run_tests.sh       # Test runner script
+```
+
+### Unit Tests (tests/unit/)
+
+Fast, isolated tests that don't require a running server:
+
+- **test_config.py** (6 lines, 0 test functions)
+  - Basic config loading validation
+  - Issue: Not using proper test framework
+
+- **test_llama_cpp_provider.py** (99 lines, 4 test functions)
+  - LlamaCppProvider unit tests with mocking
+  - Uses unittest framework
+
+- **test_router.py** (165 lines, 5 test functions)
+  - ModelRouter LRU cache tests
+  - Provider loading/unloading
+  - Uses unittest framework
+
+### Integration Tests (tests/integration/)
+
+Tests requiring a running heylookllm server:
+
+- **test_api_integration.py** (410 lines, 4 test functions)
+  - Comprehensive API endpoint testing
+  - MLX provider optimization validation
+  - Uses pytest
+
+- **test_batch_integration.py** (199 lines, 1 test function)
+  - Batch text processing endpoint
+  - Recent (Nov 2025)
+  - Uses requests directly
+
+- **test_embeddings_integration.py** (105 lines, 1 test function)
+  - Embeddings API endpoint testing
+  - Starts/stops server
+  - Uses requests directly
+
+- **test_keepalive.py** (62 lines, 1 test function)
+  - Keepalive and prompt caching
+  - Uses requests directly
+
+- **test_ollama_integration.py** (734 lines, 11 test functions)
+  - Comprehensive Ollama API compatibility
+  - Most complete integration test
+  - Uses pytest
+
+- **test_queue_integration.py** (198 lines, 5 test functions)
+  - Request queuing system
+  - Uses pytest
+
+- **test_stt_integration.py** (186 lines, 3 test functions)
+  - Speech-to-text API endpoint
+  - Recent (Sept 2025)
+  - Uses requests directly
+
+### Fixtures (tests/fixtures/)
+
+Shared test data and helpers:
+- `__init__.py` - Module initialization
+
+### Input Data (tests/input/)
+
+Test input files (images, audio, etc.)
+
+### Archive (tests/archive/)
+
+62 archived files - see `archive/README.md` for details.
+
+## Running Tests
 
 ### Prerequisites
-1. Start the heylookllm server:
-   ```bash
-   python -m heylook_llm.server --port 8080
-   ```
 
-2. Run all tests:
-   ```bash
-   python tests/test_runner.py
-   ```
-
-## 📁 Test Files
-
-### Unit Tests (No Server Required)
-- **`test_optimizations_unit.py`** - Component validation tests
-- **`test_phase2_features.py`** - Phase 2 feature testing
-
-### Integration Tests (Server Required)
-- **`test_api_quick.py`** - Quick API validation
-- **`test_api_integration.py`** - Comprehensive API testing
-
-### Test Runner
-- **`test_runner.py`** - Runs all tests in correct order
-- **`test_server_connectivity.py`** - Server connectivity validation
-- **`run_tests.sh`** - Shell script for easy test execution
-
-## 🧪 Individual Test Usage
-
-### Unit Tests
+For integration tests, start the server:
 ```bash
-# Test core optimizations
-python tests/test_optimizations_unit.py
-
-# Test Phase 2 features
-python tests/test_phase2_features.py
+heylookllm --api openai --port 8080
 ```
 
-### API Tests (Requires Server)
+### Run All Tests
+
 ```bash
-# Quick API test
-python tests/test_api_quick.py
+# Using pytest
+cd tests && pytest
 
-# Full integration test
-python tests/test_api_integration.py
-```
-
-### Complete Test Suite
-```bash
-# Run everything
-python tests/test_runner.py
-
-# Or use shell script
+# Using shell script
 ./tests/run_tests.sh
-# or
-bash tests/run_tests.sh
 ```
 
-### Server Connectivity
+### Run Specific Categories
+
 ```bash
-# Test server connectivity
-python tests/test_server_connectivity.py
+# Unit tests only (no server needed)
+cd tests && pytest unit/
+
+# Integration tests (requires server)
+cd tests && pytest integration/
+
+# Specific test file
+cd tests && pytest integration/test_api_integration.py
+
+# Verbose output
+cd tests && pytest -v
+
+# Show print statements
+cd tests && pytest -s
 ```
 
-## 🎯 What Each Test Validates
-
-### Unit Tests (`test_optimizations_unit.py`)
-- ✅ Import validation
-- ✅ Config structure
-- ✅ Performance monitor
-- ✅ Optimization components
-- ✅ Provider initialization
-
-### Phase 2 Features (`test_phase2_features.py`)
-- ✅ Enhanced VLM generation
-- ✅ Advanced sampling integration
-- ✅ Speculative decoding support
-- ✅ Strategy enhancements
-- ✅ Provider integration
-- ✅ Backwards compatibility
-
-### API Quick Test (`test_api_quick.py`)
-- ✅ VLM text-only path optimization
-- ✅ VLM vision path functionality
-- ✅ Text-only model performance
-- ✅ Path comparison analysis
-
-### API Integration (`test_api_integration.py`)
-- ✅ VLM path optimization validation
-- ✅ Advanced sampling features
-- ✅ Performance monitoring
-- ✅ Real-world performance analysis
-
-## 📊 Expected Results
-
-### Performance Improvements
-- **10-20% faster** text-only VLM requests
-- **15-30% better** text quality
-- **Feature parity** between paths
-- **Comprehensive monitoring**
-
-### Success Indicators
-- VLM text-only path faster than vision path
-- Performance metrics included in API responses
-- All sampling parameters working
-- Error handling functioning correctly
-
-## 🔧 Running with pytest
-
-You can also run tests using pytest:
+### Run Individual Tests
 
 ```bash
-# Install pytest if not already installed
-pip install pytest
+# Unit tests
+python tests/unit/test_router.py
+python -m unittest tests.unit.test_llama_cpp_provider
 
-# Run all tests
-pytest tests/
+# Integration tests (server must be running)
+python tests/integration/test_api_integration.py
+python tests/integration/test_batch_integration.py
+```
 
-# Run specific test file
-pytest tests/test_optimizations_unit.py
+## Test Coverage Matrix
+
+| Feature Area | Current Coverage | Test Files | Quality | Gaps | Priority |
+|--------------|------------------|------------|---------|------|----------|
+| **Model Loading** | Good | test_router.py | Good (unittest) | No edge case tests for LRU eviction | Medium |
+| **Model Routing** | Good | test_router.py | Good (unittest) | No concurrent access tests | Medium |
+| **API Endpoints** | Excellent | test_api_integration.py, test_ollama_integration.py | Excellent (pytest) | None identified | Low |
+| **Batch Processing** | Good | test_batch_integration.py | Fair (no framework) | No error handling tests | High |
+| **Embeddings** | Basic | test_embeddings_integration.py | Fair (no framework) | No multi-model tests | Medium |
+| **STT (Speech-to-Text)** | Good | test_stt_integration.py | Fair (no framework) | No format validation tests | Medium |
+| **Queueing** | Good | test_queue_integration.py | Good (pytest) | No stress tests | Medium |
+| **Keepalive/Caching** | Basic | test_keepalive.py | Fair (no framework) | No cache invalidation tests | High |
+| **Llama.cpp Provider** | Good | test_llama_cpp_provider.py | Good (unittest) | No vision support tests | Low |
+| **MLX Provider** | None | None | N/A | No unit tests for MLX provider | High |
+| **CoreML STT Provider** | None | None | N/A | No unit tests for STT provider | High |
+| **Config/YAML** | Minimal | test_config.py | Poor (no framework) | No validation tests | Medium |
+| **Error Handling** | Poor | Scattered | N/A | No dedicated error tests | High |
+| **Performance** | None | None | N/A | No performance regression tests | Medium |
+| **Vision Models** | Basic | test_api_integration.py | Fair | No multimodal edge cases | Medium |
+
+## Quality Assessment
+
+### Test Quality Issues
+
+| File | Issues | Recommendations |
+|------|--------|-----------------|
+| test_config.py | No test framework, just a script | Convert to pytest, add validation tests |
+| test_batch_integration.py | No framework, no assertions | Add pytest, proper assertions, error cases |
+| test_embeddings_integration.py | Server management in test, no framework | Use pytest fixtures for server |
+| test_keepalive.py | No framework, minimal coverage | Add pytest, test cache invalidation |
+| test_stt_integration.py | No framework, generates audio in test | Move audio generation to fixtures |
+
+### Good Practices Found
+
+| File | Good Practices |
+|------|----------------|
+| test_router.py | Proper unittest, mocking, good coverage |
+| test_llama_cpp_provider.py | Proper unittest, comprehensive mocking |
+| test_api_integration.py | Good pytest usage, comprehensive |
+| test_ollama_integration.py | Excellent pytest usage, 11 test functions |
+| test_queue_integration.py | Good pytest usage, proper fixtures |
+
+### Testing Anti-Patterns Identified
+
+1. **No Framework**: Several tests are raw scripts without pytest/unittest
+2. **No Fixtures**: Shared setup code duplicated across tests
+3. **Server Management**: Tests manually start/stop server (should use fixtures)
+4. **No Assertions**: Some tests print results but don't assert correctness
+5. **Inline Data**: Test data generated inline instead of in fixtures
+6. **No Error Tests**: Very few tests validate error handling
+
+## High-Priority Gaps to Fill
+
+### Critical (Highest Priority)
+
+1. **MLX Provider Unit Tests** - Core provider has no unit tests
+2. **CoreML STT Provider Unit Tests** - STT provider has no unit tests
+3. **Error Handling Tests** - No dedicated error scenario testing
+4. **Keepalive Cache Tests** - Cache invalidation not tested
+
+### High Priority
+
+5. **Batch Error Handling** - Batch endpoint needs error tests
+6. **Provider Edge Cases** - Vision model edge cases (multi-image, large images)
+7. **Config Validation** - models.yaml validation not tested
+8. **LRU Cache Edge Cases** - Concurrent eviction scenarios
+
+### Medium Priority
+
+9. **Performance Regression Tests** - Track performance over time
+10. **Multi-Model Embeddings** - Test different embedding models
+11. **STT Format Validation** - Test various audio formats
+12. **Router Concurrency** - Stress test model loading under load
+
+## Testing Guidelines
+
+When writing new tests:
+
+### DO
+
+- Use pytest for new tests (preferred) or unittest
+- Create fixtures for shared test data
+- Use proper assertions (assert, self.assertEqual, etc.)
+- Test error cases, not just happy path
+- Mock external dependencies in unit tests
+- Keep unit tests fast (< 100ms each)
+- Document what each test validates
+- Use descriptive test names: `test_router_evicts_lru_model_when_cache_full`
+
+### DON'T
+
+- Create standalone scripts without test framework
+- Print results instead of asserting
+- Duplicate test setup across files
+- Start/stop server in test code (use fixtures)
+- Test multiple unrelated things in one test
+- Leave debug print statements
+- Create one-off test files for investigations (use archive/)
+
+### Test Structure Template
+
+```python
+#!/usr/bin/env python3
+"""
+Brief description of what this test file validates.
+
+Requires: server running / no server / etc.
+"""
+
+import pytest
+# other imports
+
+@pytest.fixture
+def setup_test_data():
+    """Fixture for shared test data."""
+    # setup
+    yield data
+    # teardown
+
+def test_specific_behavior(setup_test_data):
+    """Test that X behaves correctly when Y."""
+    # Arrange
+    input_data = setup_test_data
+
+    # Act
+    result = function_under_test(input_data)
+
+    # Assert
+    assert result == expected_value
+    assert result.status == "success"
+```
+
+## Pytest Configuration
+
+Create `pytest.ini` for test discovery:
+
+```ini
+[pytest]
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+markers =
+    unit: Unit tests (no server required)
+    integration: Integration tests (server required)
+    slow: Slow tests (> 1s)
+```
+
+Mark tests with:
+```python
+@pytest.mark.unit
+def test_router_loads_model():
+    pass
+
+@pytest.mark.integration
+def test_api_endpoint():
+    pass
+```
+
+Run specific markers:
+```bash
+pytest -m unit        # Only unit tests
+pytest -m integration # Only integration tests
+```
+
+## Coverage Reporting
+
+Install pytest-cov:
+```bash
+uv pip install pytest-cov
+```
+
+Run with coverage:
+```bash
+cd tests && pytest --cov=heylook_llm --cov-report=html
+open htmlcov/index.html
+```
+
+## Next Steps
+
+1. **Add pytest.ini** - Configure test discovery and markers
+2. **Convert Raw Scripts** - Convert test_config.py, test_batch_integration.py to pytest
+3. **Add MLX Provider Tests** - Critical gap in coverage
+4. **Add Error Tests** - Dedicated error scenario testing
+5. **Add Fixtures** - Create conftest.py with shared fixtures
+6. **Performance Tests** - Add performance regression tracking
+7. **CI/CD Integration** - Add GitHub Actions for automated testing
+
+## Troubleshooting
+
+### Server Not Running
+
+```bash
+# Check if server is running
+curl http://localhost:8080/health
+
+# Start server
+heylookllm --api openai --port 8080
+```
+
+### Import Errors
+
+```bash
+# Ensure package is installed in editable mode
+uv pip install -e .
+
+# For MLX support (macOS only)
+uv pip install -e .[mlx]
+
+# For llama.cpp support
+uv pip install -e .[llama-cpp]
+```
+
+### Test Collection Issues
+
+```bash
+# Verify pytest can find tests
+pytest --collect-only
 
 # Run with verbose output
-pytest -v tests/
+pytest -v
 
-# Run with output capture disabled
-pytest -s tests/
+# Show why tests are skipped
+pytest -v -rs
 ```
 
-## 🛠️ Configuration
+### Port Conflicts
 
-### Server Configuration
-Tests expect the server to be running on:
-- **Host**: `localhost`
-- **Port**: `8080`
-- **Health endpoint**: `/health`
-- **API endpoint**: `/v1/chat/completions`
-
-### Model Configuration
-Tests use these models from your `models.yaml`:
-- **VLM Model**: `gemma3n-e4b-it`
-- **Text Model**: `llama-3.1-8b-instruct`
-
-If these models aren't available, tests will use the first available model.
-
-## 📈 Performance Monitoring
-
-### API Response Format
-Tests verify that API responses include performance metrics:
-```json
-{
-  "choices": [...],
-  "performance": {
-    "prompt_tps": 150.5,
-    "generation_tps": 45.2,
-    "peak_memory_gb": 8.3
-  }
-}
-```
-
-### Performance Comparison
-Tests compare response times between:
-- VLM text-only path (optimized)
-- VLM vision path (standard)
-- Text-only model (baseline)
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-**"Server not running"**
-- Ensure server is started: `python -m heylook_llm.server --port 8080`
-- Check port 8080 is not in use by another service
-- Verify server health: `curl http://localhost:8080/health`
-
-**"No models available"**
-- Check `models.yaml` configuration
-- Ensure model files exist in `modelzoo/`
-- Verify models are enabled in configuration
-
-**"Tests timeout"**
-- Increase timeout values in test files
-- Check server logs for errors
-- Verify sufficient system resources
-
-### Debug Mode
-Run tests with debug output:
+If port 8080 is in use:
 ```bash
-# Unit tests with debug
-python tests/test_optimizations_unit.py 2>&1 | tee test_debug.log
+# Find process using port
+lsof -i :8080
 
-# API tests with debug
-python tests/test_api_quick.py 2>&1 | tee api_debug.log
+# Kill process
+kill -9 <PID>
+
+# Or use different port
+heylookllm --api openai --port 8081
 ```
+
+## Related Documentation
+
+- `/docs/TESTING_GUIDE.md` - MLX provider optimization testing guide (older, pre-reorganization)
+- `/tests/archive/README.md` - Details on archived tests
+- `/internal/BATCH_TEXT_IMPLEMENTATION_PLAN.md` - Batch processing implementation
+- `/docs/CLIENT_INTEGRATION_GUIDE.md` - API integration guide

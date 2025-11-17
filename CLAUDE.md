@@ -112,10 +112,27 @@ src/heylook_llm/
 
 ## Testing Strategy
 
-- Unit tests: `@pytest.mark.unit` - no server required
-- Integration tests: `@pytest.mark.integration` - server must be running
-- Use pytest fixtures and parametrization
-- Performance tests validate optimizations
+**Test Organization:**
+- `tests/unit/` - Fast isolated tests (3 tests)
+- `tests/integration/` - Server-dependent tests (7 tests)
+- `tests/fixtures/` - Shared test data
+- `tests/archive/` - Old/superseded tests (58 archived)
+
+**Running Tests:**
+```bash
+cd tests && pytest                # All tests
+cd tests && pytest unit/          # Unit only
+cd tests && pytest integration/   # Integration (requires server)
+cd tests && pytest -m unit        # By marker
+```
+
+**Critical Test Gaps (High Priority):**
+- MLX Provider unit tests (no coverage)
+- CoreML STT Provider unit tests (no coverage)
+- Error handling tests (minimal coverage)
+- LRU cache edge cases
+
+See `tests/README.md` for complete test documentation and coverage matrix.
 
 ## Documentation
 
@@ -131,8 +148,7 @@ src/heylook_llm/
 - OpenAPI schema: `http://localhost:8080/openapi.json`
 
 ### Internal Design Docs
-- `internal/WINDOWS_SUPPORT_DESIGN_AND_PLAN.md` - Windows implementation plan
-- `docs/OPENAPI_DOCUMENTATION_UPDATE.md` - API doc changelog
+See comprehensive internal documentation in `internal/` directory - use `internal/00_README.md` as navigation hub.
 
 ## Working with Dependencies
 
@@ -256,7 +272,6 @@ Propose alternatives and explain reasoning.
 - `docs/CLIENT_INTEGRATION_GUIDE.md` - Complete API integration guide
 - `docs/CLIENT_DEVELOPER_GUIDE.md` - Developer guide for API consumers
 - `docs/CLIENT_CAPABILITY_DETECTION.md` - Feature detection guide
-- `docs/COMFYUI_INTEGRATION_GUIDE.md` - ComfyUI integration guide
 - `docs/OPENAPI_DOCUMENTATION_UPDATE.md` - API documentation changelog
 
 **API Endpoints & Features**
@@ -270,40 +285,89 @@ Propose alternatives and explain reasoning.
 - `docs/TESTING_GUIDE.md` - Testing guide for developers
 - `docs/QUEUE_INTEGRATION.md` - Queue integration reference
 
+**Archives**
+- `docs/archive/` - 29 archived files (3+ months old, superseded by current docs)
+
 ### Internal Documentation (internal/)
 
-- `internal/MLX_CODE_REVIEW_2025.md` - MLX provider architecture and best practices
+**Navigation Hub**
+- `internal/00_README.md` - Documentation index with question-based navigation
 
-**Known Issues & Lessons Learned**
-- `internal/VLM_VISION_BUG_2025-11-17.md` - **READ FIRST**: VLM vision bug caused by reimplementing library functions. Critical: Don't reimplement library functionality. Use mlx-vlm's built-in APIs.
-
-**Architecture & Design**
-- `internal/01_architecture_overview.md` - System architecture overview
+**Core Architecture** (Complete 01-07 sequence - start here)
+- `internal/00_CODEBASE_STRUCTURE.md` - Complete module map
+- `internal/01_architecture_overview.md` - System architecture
 - `internal/02_provider_mlx.md` - MLX provider design
-- `internal/03_provider_llama_cpp.md` - Llama.cpp provider design
-- `internal/04_provider_unification_strategy.md` - Provider unification strategy
-- `internal/LOG.md` - Project development history
-- `internal/MLX_CODE_REVIEW_2025.md` - Latest MLX compatibility and performance review (2025-01-14)
+- `internal/03_provider_llama_cpp.md` - llama.cpp provider design
+- `internal/04_provider_unification_strategy.md` - Provider abstraction
+- `internal/05_API_ARCHITECTURE.md` - FastAPI and all endpoints
+- `internal/06_ROUTER_SYSTEM.md` - Model caching and routing
+- `internal/07_CONFIGURATION.md` - Configuration system
 
-**Implementation Plans**
-- `internal/WINDOWS_SUPPORT_DESIGN_AND_PLAN.md` - Windows support design
+**Critical Lessons Learned** (READ BEFORE MAKING CHANGES)
+- `internal/VLM_VISION_BUG_2025-11-17.md` - CRITICAL: Don't reimplement library functionality
+- `internal/MLX_CODE_REVIEW_2025.md` - MLX compatibility review
+
+**Features & Capabilities**
 - `internal/QWEN3_VL_MLX_IMPLEMENTATION.md` - Vision model implementation
+- `internal/BATCH_TEXT_IMPLEMENTATION_PLAN.md` - Batch text generation
 - `internal/BATCH_VISION_IMPLEMENTATION_PLAN.md` - Batch vision processing
-- `internal/BATCH_TEXT_IMPLEMENTATION_PLAN.md` - Batch text generation (2025-01-14)
-- `internal/LLAMA_CPP_ROADMAP.md` - Llama.cpp roadmap
+- `internal/DUAL_PATH.md` - Dual-path optimization design
+- `internal/IMAGE_TRANSFER_OPTIMIZATION.md` - Image optimization
+
+**Platform Support**
+- `internal/WINDOWS_SUPPORT_DESIGN_AND_PLAN.md` - Windows implementation
+- `internal/LLAMA_CPP_ROADMAP.md` - Cross-platform llama.cpp
 
 **Performance & Optimization**
-- `internal/DUAL_PATH.md` - Dual-path optimization design
 - `internal/PERFORMANCE_OPTIMIZATION_GUIDE.md` - Performance notes
-- `internal/IMAGE_TRANSFER_OPTIMIZATION.md` - Image optimization details
-- `internal/IMPLEMENTATION_COMPLETE_2025-11-14.md` - Latest implementation summary (wired_limit + batch text)
+- `internal/IMPLEMENTATION_COMPLETE_2025-11-14.md` - Implementation summary
 
 **Analytics & Monitoring**
 - `internal/HEYLOOK_ANALYTICS_TECH_SPEC.md` - Analytics technical spec
 - `internal/HEYLOOK_ANALYTICS_TEST_GUIDE.md` - Analytics testing
 - `internal/dependency_analysis_report.md` - Dependency analysis
 
+**Project History**
+- `internal/LOG.md` - Development timeline
+
+**How to Use Internal Documentation**
+- New to codebase? Start with `00_README.md` → `00_CODEBASE_STRUCTURE.md` → `01_architecture_overview.md`
+- Adding an endpoint? Read `05_API_ARCHITECTURE.md`
+- Working with models? Read `06_ROUTER_SYSTEM.md` and `07_CONFIGURATION.md`
+- Touching VLM code? Read `VLM_VISION_BUG_2025-11-17.md` first
+- Need specific info? Use question-based navigation in `00_README.md`
+
 ### Configuration Files
 - `CLAUDE.md` - Claude AI assistant guidelines (this file)
 - `models.yaml` - Model configuration
 - `pyproject.toml` - Python package configuration
+
+## Living Documentation Philosophy
+
+This project follows living documentation principles:
+
+**internal/ - Design Documentation (Always Current)**
+- Architecture decisions and their rationale
+- Provider implementation details
+- Critical bug postmortems with lessons learned
+- Performance optimization strategies
+- Implementation plans and reviews
+
+**docs/ - User-Facing Documentation**
+- Installation and setup guides
+- API integration guides
+- Feature documentation
+- Quick reference guides
+
+**When to Update Documentation:**
+- After completing features → Document in internal/, create user guide in docs/
+- After fixing critical bugs → Write postmortem in internal/
+- After design decisions → Document rationale in internal/
+- After API changes → Update docs/ guides
+
+**Archive Policy:**
+- Content 3+ months old → Archive to docs/archive/ or tests/archive/
+- internal/ does NOT archive - living docs stay current via updates
+- Archive READMEs explain what was archived and why
+
+See `internal/DOCUMENTATION_PRINCIPLES.md` for complete methodology.
