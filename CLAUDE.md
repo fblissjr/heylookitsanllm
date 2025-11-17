@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
+## Internal Documentation - READ FIRST
+
+**IMPORTANT**: Before making changes to provider code, MLX integration, or VLM functionality, check the `internal/` directory for known issues and lessons learned:
+
+**Key Rule**: Always use library high-level APIs (mlx-vlm's `stream_generate`, mlx-lm's `stream_generate`) instead of reimplementing with low-level functions. If something seems broken in a library, verify it's actually broken before implementing a workaround.
+
 ## Code Style Guidelines
 
 - No emojis in code, display names, or documentation
@@ -266,6 +272,11 @@ Propose alternatives and explain reasoning.
 
 ### Internal Documentation (internal/)
 
+- `internal/MLX_CODE_REVIEW_2025.md` - MLX provider architecture and best practices
+
+**Known Issues & Lessons Learned**
+- `internal/VLM_VISION_BUG_2025-11-17.md` - **READ FIRST**: VLM vision bug caused by reimplementing library functions. Critical: Don't reimplement library functionality. Use mlx-vlm's built-in APIs.
+
 **Architecture & Design**
 - `internal/01_architecture_overview.md` - System architecture overview
 - `internal/02_provider_mlx.md` - MLX provider design
@@ -285,7 +296,7 @@ Propose alternatives and explain reasoning.
 - `internal/DUAL_PATH.md` - Dual-path optimization design
 - `internal/PERFORMANCE_OPTIMIZATION_GUIDE.md` - Performance notes
 - `internal/IMAGE_TRANSFER_OPTIMIZATION.md` - Image optimization details
-- `internal/IMPLEMENTATION_COMPLETE_2025-01-14.md` - Latest implementation summary (wired_limit + batch text)
+- `internal/IMPLEMENTATION_COMPLETE_2025-11-14.md` - Latest implementation summary (wired_limit + batch text)
 
 **Analytics & Monitoring**
 - `internal/HEYLOOK_ANALYTICS_TECH_SPEC.md` - Analytics technical spec

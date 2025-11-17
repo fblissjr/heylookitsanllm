@@ -11,88 +11,11 @@ Why this exists:
 
 import mlx.core as mx
 import mlx.nn as nn
-from typing import Generator, List, Optional, Union, Any, NamedTuple
+from typing import Generator, List, Optional, Union, Any
 from mlx_lm.generate import stream_generate as lm_stream_generate
-from mlx_vlm import generate as vlm_generate
-from mlx_vlm.generate import generate_step
-from mlx_vlm.utils import prepare_inputs
+from mlx_vlm.generate import stream_generate as vlm_stream_generate
 
 from .performance_monitor import time_mlx_operation
-
-
-class StreamResponse(NamedTuple):
-    """Response object for streaming generation."""
-    text: str
-    token: mx.array = None
-    prob: float = None
-
-
-def vlm_stream_generate(
-    model,
-    processor,
-    prompt: str,
-    image=None,
-    max_tokens: int = 100,
-    temperature: float = 0.0,
-    top_p: float = 1.0,
-    repetition_penalty: float = 1.0,
-    repetition_context_size: int = 20,
-    **kwargs
-) -> Generator[StreamResponse, None, None]:
-    """
-    Streaming generation for VLM models.
-
-    This recreates the streaming interface that was removed from mlx-vlm,
-    wrapping the lower-level generate_step function.
-
-    Yields:
-        StreamResponse objects with .text attribute containing generated tokens
-    """
-    # Tokenize prompt
-    if hasattr(processor, 'tokenizer'):
-        tokenizer = processor.tokenizer
-        prompt_tokens = mx.array(tokenizer.encode(prompt))
-    else:
-        tokenizer = processor
-        prompt_tokens = mx.array(processor.encode(prompt))
-
-    # Prepare inputs with image if provided
-    if image is not None and len(image) > 0:
-        image_token_index = model.config.image_token_index
-        input_ids, pixel_values, mask = prepare_inputs(
-            processor.image_processor if hasattr(processor, 'image_processor') else None,
-            processor,
-            image[0] if isinstance(image, list) else image,
-            prompt,
-            image_token_index
-        )
-        # Initial forward pass with image
-        logits, cache = model(input_ids, pixel_values, mask)
-    else:
-        # Text-only: no image processing
-        prompt_tokens_2d = prompt_tokens.reshape(1, -1)
-        mask = mx.ones_like(prompt_tokens_2d, dtype=mx.int32)
-        logits, cache = model(prompt_tokens_2d, None, mask)
-        prompt_tokens = prompt_tokens_2d[0]
-
-    # Stream generation using generate_step
-    for (token, prob) in generate_step(
-        model=model,
-        prompt=prompt_tokens,
-        mask=mask,
-        cache=cache,
-        temp=temperature,
-        repetition_penalty=repetition_penalty if repetition_penalty != 1.0 else None,
-        repetition_context_size=repetition_context_size,
-        top_p=top_p
-    ):
-        if token.item() == tokenizer.eos_token_id:
-            break
-
-        # Decode token to text
-        text = tokenizer.decode([token.item()])
-
-        yield StreamResponse(text=text, token=token, prob=prob)
 
 
 class VLMGeneratorWithSampling:
@@ -313,7 +236,7 @@ def vlm_stream_generate_with_sampling(
     """
     generator = create_vlm_generator_with_sampling(model, processor)
     
-    yield from generator.stream_generate_enhanced(
+    yield from generator.stream_generate_with_sampling(
         prompt=prompt,
         image=image,
         sampler=sampler,
