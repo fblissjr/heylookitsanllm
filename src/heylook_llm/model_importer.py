@@ -1,6 +1,6 @@
 # src/heylook_llm/model_importer.py
 """
-Model importer for scanning directories and HuggingFace cache to auto-generate models.yaml entries.
+Model importer for scanning directories and HuggingFace cache to auto-generate models.toml entries.
 
 Supports:
 - MLX models (detects by mlx_config.json or model.safetensors.index.json)
@@ -13,6 +13,7 @@ Supports:
 import os
 import json
 import yaml
+import tomli_w
 import logging
 import platform
 from pathlib import Path
@@ -48,17 +49,42 @@ HF_CACHE_PATHS = get_hf_cache_paths()
 
 @dataclass
 class ModelProfile:
-    """Profile with smart defaults for different model types."""
+    """Profile with smart defaults for different model types.
+
+    Automatically filters provider-specific parameters.
+    """
     name: str
     description: str
     defaults: Dict[str, Any] = field(default_factory=dict)
 
-    def apply(self, config: Dict[str, Any], model_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply profile defaults to config."""
-        result = config.copy()
+    # Provider-specific parameter sets
+    GGUF_ONLY_PARAMS = {
+        'n_ctx', 'n_batch', 'n_threads', 'n_gpu_layers',
+        'use_mmap', 'use_mlock', 'chat_format', 'chat_format_template',
+        'mmproj_path', 'parallel_slots'
+    }
+    MLX_ONLY_PARAMS = {
+        'cache_type', 'kv_bits', 'kv_group_size', 'quantized_kv_start',
+        'max_kv_size', 'draft_model_path', 'num_draft_tokens'
+    }
 
-        # Apply defaults
+    def apply(self, config: Dict[str, Any], model_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply profile defaults to config, filtering provider-specific params."""
+        result = config.copy()
+        provider = model_info.get('provider', 'mlx')
+
+        # Normalize provider names
+        is_gguf = provider in ['llama_cpp', 'gguf', 'llama_server']
+        is_mlx = provider == 'mlx'
+
+        # Apply defaults with provider filtering
         for key, value in self.defaults.items():
+            # Skip if parameter doesn't match provider
+            if is_mlx and key in self.GGUF_ONLY_PARAMS:
+                continue
+            if is_gguf and key in self.MLX_ONLY_PARAMS:
+                continue
+
             if key not in result:
                 # Handle dynamic values
                 if callable(value):
@@ -117,8 +143,9 @@ PROFILES = {
             "max_tokens": 2048,
             "repetition_penalty": 1.05,
             "repetition_context_size": 20,
+            # MLX-specific
             "cache_type": "standard",  # Never quantize for max accuracy
-            # For GGUF models
+            # GGUF-specific (auto-filtered for MLX models)
             "n_ctx": lambda m: 16384 if m.get('size_gb', 0) > 30 else 8192,
             "n_batch": 1024,  # Larger batch for throughput
             "use_mmap": True,
@@ -135,8 +162,9 @@ PROFILES = {
             "max_tokens": 4096,  # Long responses
             "repetition_penalty": 1.05,
             "repetition_context_size": 20,
+            # MLX-specific
             "cache_type": "standard",  # No quantization ever
-            # For GGUF models
+            # GGUF-specific (auto-filtered for MLX models)
             "n_ctx": lambda m: 32768 if m.get('size_gb', 0) > 30 else 16384,
             "n_batch": 2048,  # Maximum batch
             "use_mmap": True,
@@ -153,12 +181,13 @@ PROFILES = {
             "max_tokens": 256,  # Short responses to minimize compute
             "repetition_penalty": 1.0,
             "repetition_context_size": 10,  # Smaller context window
+            # MLX-specific
             "cache_type": "quantized",  # Always quantize to save memory
             "kv_bits": 8,  # 8-bit minimum to avoid quality degradation
             "kv_group_size": 32,
             "quantized_kv_start": 256,  # Start quantizing after initial prompt
             "max_kv_size": 1024,  # Limit KV cache size
-            # For GGUF models
+            # GGUF-specific (auto-filtered for MLX models)
             "n_ctx": 2048,  # Smaller context
             "n_batch": 256,  # Smaller batch
             "use_mmap": True,  # Use mmap for memory efficiency
@@ -169,11 +198,13 @@ PROFILES = {
         name="memory",
         description="Optimized for low memory usage - moderate resource constraints",
         defaults={
+            # MLX-specific (auto-filtered for GGUF models)
             "cache_type": "quantized",
             "kv_bits": 8,  # 8-bit minimum recommended
             "kv_group_size": 32,
             "quantized_kv_start": 256,
             "max_kv_size": 1024,
+            # Shared
             "max_tokens": 256
         }
     ),
@@ -308,10 +339,10 @@ class ModelImporter:
                     models.append(model)
                     logging.info(f"Added MLX model: {model['id']}")
 
-            # Check for GGUF models
-            gguf_files = [f for f in files if f.endswith('.gguf')]
+            # Check for GGUF models (skip mmproj files)
+            gguf_files = [f for f in files if f.endswith('.gguf') and not self._is_mmproj_file(Path(f))]
             if gguf_files:
-                logging.info(f"Found {len(gguf_files)} GGUF files in: {rel_path}")
+                logging.info(f"Found {len(gguf_files)} GGUF model files in: {rel_path}")
                 files_found += len(gguf_files)
 
             for gguf_file in gguf_files:
@@ -363,8 +394,12 @@ class ModelImporter:
                     model['config']['model_path'] = str(snapshot_path)
                 models.append(model)
 
-        # Check for GGUF files
+        # Check for GGUF files (skip mmproj files)
         for gguf_file in snapshot_path.glob("*.gguf"):
+            # Skip vision projector files
+            if self._is_mmproj_file(gguf_file):
+                continue
+
             model = self._create_gguf_entry(gguf_file)
             if model:
                 # Extract org/name from path
@@ -376,6 +411,15 @@ class ModelImporter:
                 models.append(model)
 
         return models
+
+    def _is_mmproj_file(self, filepath: Path) -> bool:
+        """Check if a GGUF file is a vision projector (not a standalone model).
+
+        Vision projectors (mmproj files) should not be imported as separate models.
+        They are specified via mmproj_path config for their parent model.
+        """
+        filename_lower = filepath.name.lower()
+        return 'mmproj' in filename_lower or 'vision' in filename_lower and 'proj' in filename_lower
 
     def _is_mlx_model(self, path: Path) -> bool:
         """Check if a directory contains an MLX model."""
@@ -645,15 +689,14 @@ class ModelImporter:
 
         return entry
 
-    def generate_yaml(self, models: List[Dict], output_file: Optional[str] = None) -> str:
-        """Generate models.yaml content from discovered models."""
+    def generate_toml(self, models: List[Dict], output_file: Optional[str] = None) -> str:
+        """Generate models.toml content from discovered models."""
         # Group by provider
         mlx_models = [m for m in models if m['provider'] == 'mlx']
-        gguf_models = [m for m in models if m['provider'] in ['llama_cpp', 'gguf']]
+        gguf_models = [m for m in models if m['provider'] in ['llama_cpp', 'gguf', 'llama_server']]
 
         # Build the structure
         config = {
-            "# Auto-generated models configuration": None,
             "default_model": models[0]['id'] if models else "none",
             "max_loaded_models": 1,
             "models": []
@@ -661,28 +704,81 @@ class ModelImporter:
 
         # Add MLX models
         if mlx_models:
-            config["models"].append({"# --- MLX Models ---": None})
             config["models"].extend(mlx_models)
 
         # Add GGUF models
         if gguf_models:
-            config["models"].append({"# --- GGUF Models ---": None})
             config["models"].extend(gguf_models)
 
-        # Generate YAML
-        yaml_content = yaml.dump(config, default_flow_style=False, sort_keys=False)
+        # Generate TOML with comments
+        toml_lines = [
+            "# Auto-generated models configuration",
+            "# Edit with: heylookllm models config",
+            "",
+            f'default_model = "{config["default_model"]}"',
+            f'max_loaded_models = {config["max_loaded_models"]}',
+            "",
+        ]
 
-        # Clean up the output
-        yaml_content = yaml_content.replace("'# ", "# ")
-        yaml_content = yaml_content.replace(": null", "")
-        yaml_content = yaml_content.replace("- # ", "\n  # ")
+        # Add MLX models section
+        if mlx_models:
+            toml_lines.append("# --- MLX Models ---")
+            toml_lines.append("")
+
+        for model in mlx_models:
+            toml_lines.extend(self._model_to_toml_lines(model))
+            toml_lines.append("")
+
+        # Add GGUF models section
+        if gguf_models:
+            toml_lines.append("# --- GGUF Models ---")
+            toml_lines.append("")
+
+        for model in gguf_models:
+            toml_lines.extend(self._model_to_toml_lines(model))
+            toml_lines.append("")
+
+        toml_content = "\n".join(toml_lines)
 
         if output_file:
             with open(output_file, 'w') as f:
-                f.write(yaml_content)
+                f.write(toml_content)
             logging.info(f"Wrote configuration to {output_file}")
 
-        return yaml_content
+        return toml_content
+
+    def _model_to_toml_lines(self, model: Dict) -> List[str]:
+        """Convert a model dict to TOML table lines."""
+        lines = ["[[models]]"]
+
+        # Add top-level fields
+        lines.append(f'id = "{model["id"]}"')
+        lines.append(f'provider = "{model["provider"]}"')
+
+        if 'description' in model:
+            lines.append(f'description = "{model["description"]}"')
+
+        if 'tags' in model:
+            tags_str = ", ".join(f'"{tag}"' for tag in model['tags'])
+            lines.append(f'tags = [{tags_str}]')
+
+        lines.append(f'enabled = {str(model.get("enabled", True)).lower()}')
+        lines.append("")
+
+        # Add config section
+        if 'config' in model:
+            lines.append("  [models.config]")
+            config = model['config']
+
+            # Use tomli_w for proper TOML formatting of the config dict
+            config_toml = tomli_w.dumps({"config": config})
+            # Extract just the config section and indent it
+            config_lines = config_toml.split('\n')[1:]  # Skip [config] header
+            for line in config_lines:
+                if line.strip():
+                    lines.append(f"  {line}")
+
+        return lines
 
 
 def import_models(args):
@@ -726,9 +822,9 @@ def import_models(args):
         logging.warning("No models found!")
         return
 
-    # Generate YAML
-    output_file = args.output or "models_imported.yaml"
-    yaml_content = importer.generate_yaml(models, output_file)
+    # Generate TOML
+    output_file = args.output or "models_imported.toml"
+    toml_content = importer.generate_toml(models, output_file)
 
     print(f"\nFound {len(models)} models:")
     for model in models:

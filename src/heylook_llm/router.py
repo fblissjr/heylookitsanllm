@@ -1,11 +1,13 @@
 # src/heylook_llm/router.py
 import yaml
+import tomllib
 import logging
 import threading
 import time
 import gc
 from typing import Optional, Dict
 from collections import OrderedDict
+from pathlib import Path
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
@@ -58,8 +60,9 @@ except ImportError as e:
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
-        with open(config_path, 'r') as f:
-            self.app_config = AppConfig(**yaml.safe_load(f))
+        # Load config (supports both YAML and TOML)
+        config_data = self._load_config(config_path)
+        self.app_config = AppConfig(**config_data)
 
         self.providers = OrderedDict()
         self.max_loaded_models = self.app_config.max_loaded_models
@@ -137,7 +140,52 @@ class ModelRouter:
             except Exception as e:
                 logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
-    
+
+    def _load_config(self, config_path: str) -> dict:
+        """Load configuration from YAML or TOML file.
+
+        Supports both formats for backward compatibility.
+        Priority: .toml > .yaml
+        Auto-migrates YAML to TOML if models.yaml exists but models.toml doesn't.
+        """
+        config_file = Path(config_path)
+
+        # If user specified exact file, use it
+        if config_file.suffix in ['.toml', '.yaml', '.yml']:
+            if not config_file.exists():
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+
+            if config_file.suffix == '.toml':
+                with open(config_file, 'rb') as f:
+                    return tomllib.load(f)
+            else:  # .yaml or .yml
+                logging.warning(
+                    f"YAML config format is deprecated. Consider migrating to TOML format. "
+                    f"Run 'heylookllm import' to generate models.toml from your existing setup."
+                )
+                with open(config_file, 'r') as f:
+                    return yaml.safe_load(f)
+
+        # If no extension, try .toml first, then .yaml
+        toml_path = config_file.with_suffix('.toml')
+        yaml_path = config_file.with_suffix('.yaml')
+
+        if toml_path.exists():
+            with open(toml_path, 'rb') as f:
+                return tomllib.load(f)
+        elif yaml_path.exists():
+            logging.warning(
+                f"YAML config format is deprecated. Consider migrating to TOML format. "
+                f"Run 'heylookllm import' to generate models.toml from your existing setup."
+            )
+            with open(yaml_path, 'r') as f:
+                return yaml.safe_load(f)
+        else:
+            raise FileNotFoundError(
+                f"Config file not found. Tried: {toml_path}, {yaml_path}. "
+                f"Run 'heylookllm import' to create configuration."
+            )
+
     def _init_queue_manager(self):
         """Initialize queue manager based on configuration."""
         # Check if queuing is enabled in app config
