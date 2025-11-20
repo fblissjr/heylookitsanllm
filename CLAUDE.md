@@ -8,6 +8,17 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **Key Rule**: Always use library high-level APIs (mlx-vlm's `stream_generate`, mlx-lm's `stream_generate`) instead of reimplementing with low-level functions. If something seems broken in a library, verify it's actually broken before implementing a workaround.
 
+## Ongoing Work - CHECK FIRST
+
+**ACTIVE DEVELOPMENT**: If there is a `NEXT_STEPS.md` file in the root directory, **READ IT FIRST** before making any changes. It contains:
+- Current work in progress
+- What's been completed
+- What needs to be done next
+- Important notes and gotchas
+- Clear continuation instructions
+
+This ensures continuity across sessions and prevents duplicate work.
+
 ## Code Style Guidelines
 
 - No emojis in code, display names, or documentation
@@ -60,8 +71,9 @@ python tests/test_stt_integration.py
 ### Model Import
 
 ```bash
-heylookllm import --folder ~/models --output models.yaml
+heylookllm import --folder ~/models --output models.toml
 heylookllm import --hf-cache --profile fast
+heylookllm import --folder ~/models --interactive  # Interactive configuration wizard
 ```
 
 ## Project Structure
@@ -95,13 +107,15 @@ src/heylook_llm/
 ### Provider System
 - **BaseProvider**: Abstract interface for LLM providers
 - **MLXProvider**: Text + vision models on Apple Silicon
-- **LlamaCppProvider**: GGUF models via llama-cpp-python (thread-safe with mutex)
+- **LlamaCppProvider**: GGUF models via llama-cpp-python (legacy, thread-safe with mutex)
+- **LlamaServerProvider**: GGUF models via llama-server subprocess (recommended, in development)
 - **CoreMLSTTProvider**: Speech-to-text via CoreML
 
 ### Configuration
-- `models.yaml` defines all available models
-- Fields: `id`, `provider` (mlx/llama_cpp/coreml_stt), `enabled`, `config`
+- `models.toml` (or `models.yaml` for backward compatibility) defines all available models
+- Fields: `id`, `provider` (mlx/llama_cpp/llama_server/coreml_stt), `enabled`, `config`
 - Models load on-demand when requested via API
+- TOML is the preferred format; YAML is deprecated but still supported
 
 ## Error Handling
 
@@ -339,8 +353,11 @@ Propose alternatives and explain reasoning.
 
 ### Configuration Files
 - `CLAUDE.md` - Claude AI assistant guidelines (this file)
-- `models.yaml` - Model configuration
+- `models.toml` - Model configuration (TOML format, preferred)
+- `models.yaml` - Legacy model configuration (deprecated, still supported)
+- `models.toml.example` - Example TOML configuration with full documentation
 - `pyproject.toml` - Python package configuration
+- `NEXT_STEPS.md` - Ongoing work tracker (check if exists)
 
 ## Living Documentation Philosophy
 
