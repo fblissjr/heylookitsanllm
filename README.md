@@ -2,22 +2,43 @@
 
 OpenAI-compatible API server for local LLM inference with MLX, llama.cpp, and CoreML.
 
-A lightweight API server for running Apple MLX models, GGUF models, and CoreML STT behind OpenAI-compatible endpoints, with on-the-fly model swapping and optional analytics.
+A lightweight API server for running Apple MLX models, GGUF models, and a bunch of quality of life additions, using a modified OpenAI endpoint (can't really say it's fully compatible anymore given the additions), with on-the-fly model swapping and optional analytics.
 
-**Platform Support**
-- macOS: All backends (MLX, llama.cpp, CoreML STT)
-- Linux: llama.cpp backend
-- Windows: llama.cpp backend (CUDA, Vulkan, CPU)
+## Key Features
+
+- **OpenAI-Compatible API**: Works with existing OpenAI client libraries - Anthropic API compatible functionality coming soon
+- **Multi-Provider**:
+  - **MLX**: Optimized for Apple Silicon (with additional Metal acceleration)
+      - Huge thanks to both the [MLX team](https://github.com/ml-explore) for [mlx-lm](https://github.com/ml-explore/mlx-lm) and [Blaizzy](https://github.com/Blaizzy) for [mlx-vlm](https://github.com/Blaizzy/mlx-vlm). Nothing here would work without them.
+  - **llama.cpp**: Cross-platform support for GGUF models (CUDA, Vulkan, CPU)
+      - Grateful for the continuous work put in by the core maintainers of [llama.cpp](https://github.com/ggerganov/llama.cpp), who've been pushing ahead since the first llama model.
+  - **CoreML**: *Experimental* Speech-to-Text on Apple Silicon (Neural Engine)
+- **Vision Models**: Process images with vision-language models (VLM), with support to push down / resize from the client
+- **Performance Optimized**:
+  - Metal acceleration on macOS
+  - Async processing and smart caching
+  - Fast multipart image endpoint
+  - Batch processing for 2-4x throughput
+- **Hot Swapping**: Change models on the fly without restarting, specified in the request body
+- **Analytics**: Optional tracking and performance metrics
+
+## Platform Support
+
+- **macOS**: Both backends (MLX, llama.cpp)
+- **Linux**: llama.cpp backend (CUDA, CPU)
+- **Windows**: llama.cpp backend (CUDA, Vulkan, CPU)
 
 ## Quick Start
 
 ### Installation
 
+**macOS/Linux**:
 ```bash
-# macOS/Linux: Run setup wizard
 ./setup.sh
+```
 
-# Windows: Run PowerShell setup
+**Windows**:
+```powershell
 .\setup.ps1
 ```
 
@@ -32,16 +53,17 @@ cd heylookitsanllm
 # Base install
 uv pip install -e .
 
-# Add backends
+# Add specific backends
 uv pip install -e .[mlx]           # macOS only
 uv pip install -e .[llama-cpp]     # All platforms
-uv pip install -e .[stt]           # macOS only
-uv pip install -e .[all]           # Everything
+uv pip install -e .[stt]           # macOS only (CoreML) - very experimental
+uv pip install -e .[all]           # Install everything
 ```
 
 ### GPU Acceleration
 
 **macOS (Metal)**
+Included by default with `mlx`. For `llama-cpp`, run:
 ```bash
 CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
@@ -51,76 +73,51 @@ CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --n
 # Linux
 CMAKE_ARGS="-DGGML_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
 
-# Windows
+# Windows (PowerShell)
 $env:CMAKE_ARGS = "-DGGML_CUDA=on"
 $env:FORCE_CMAKE = "1"
 python -m pip install --force-reinstall --no-cache-dir llama-cpp-python
 ```
 
-**Windows (Vulkan - AMD/Intel)**
-```powershell
-$env:CMAKE_ARGS = "-DGGML_VULKAN=on"
-$env:FORCE_CMAKE = "1"
-python -m pip install --force-reinstall --no-cache-dir llama-cpp-python
-```
-
-See [Windows Installation Guide](docs/WINDOWS_INSTALL.md) for Visual Studio Build Tools and SDK setup.
-
 ### Start Server
 
 ```bash
-# Configure models
+# Configure models first
 cp models.toml.example models.toml
 # Edit models.toml with your model paths
 
 # Start server
-heylookllm --log-level DEBUG
+heylookllm --log-level INFO
 heylookllm --port 8080
 ```
 
-## Configuration
+### Automatic Import
 
-Edit `models.toml` to define your models:
-
-```toml
-[[models]]
-id = "qwen2.5-coder-1.5b"
-provider = "mlx"                    # or llama_cpp, coreml_stt
-enabled = true
-
-[models.config]
-model_path = "models/qwen-mlx"
-max_tokens = 512
-temperature = 0.7
-```
-
-Or use automatic import:
+Scan directories for models and auto-generate configuration:
 
 ```bash
 heylookllm import --folder ~/models --output models.toml
 heylookllm import --hf-cache --profile fast
 ```
 
-## API Documentation
+## 📚 API Documentation
 
-Interactive API docs available when server is running:
+Interactive docs available when server is running:
 - **Swagger UI**: http://localhost:8080/docs
 - **ReDoc**: http://localhost:8080/redoc
 - **OpenAPI Schema**: http://localhost:8080/openapi.json
 
-See [Client Integration Guide](docs/CLIENT_INTEGRATION_GUIDE.md) for detailed API usage.
-
 ### Key Endpoints
 
-**OpenAI Compatible**
-- `GET /v1/models` - List available models
-- `POST /v1/chat/completions` - Chat completion
-- `POST /v1/batch/chat/completions` - **Batch processing (2-4x throughput)**
-- `POST /v1/embeddings` - Extract embeddings
-- `POST /v1/audio/transcriptions` - Speech-to-text (macOS)
-- `POST /v1/chat/completions/multipart` - Fast image upload
+**OpenAI Compatible** (`/v1`)
+- `GET /v1/models`: List available models
+- `POST /v1/chat/completions`: Chat completion (text & vision)
+- `POST /v1/batch/chat/completions`: Batch processing
+- `POST /v1/embeddings`: Generate embeddings
+- `POST /v1/audio/transcriptions`: Speech-to-text (macOS)
+- `POST /v1/chat/completions/multipart`: Fast raw image upload
 
-### Example Usage
+### Example Usage (Python)
 
 ```python
 from openai import OpenAI
@@ -137,18 +134,8 @@ response = client.chat.completions.create(
     stream=True
 )
 
-# Embeddings
-embedding = client.embeddings.create(
-    input="Your text here",
-    model="qwen2.5-coder-1.5b"
-)
-
-# Speech-to-text (macOS only)
-with open("audio.wav", "rb") as f:
-    transcript = client.audio.transcriptions.create(
-        model="parakeet-tdt-v3",
-        file=f
-    )
+for chunk in response:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
 ### Batch Processing
@@ -158,112 +145,44 @@ Process multiple requests efficiently with 2-4x throughput improvement:
 ```python
 import requests
 
-# Batch multiple prompts
 response = requests.post(
     "http://localhost:8080/v1/batch/chat/completions",
     json={
         "requests": [
             {
                 "model": "qwen-14b",
-                "messages": [{"role": "user", "content": "What is 2+2?"}],
+                "messages": [{"role": "user", "content": "Prompt 1"}],
                 "max_tokens": 50
             },
             {
                 "model": "qwen-14b",
-                "messages": [{"role": "user", "content": "What is the capital of France?"}],
-                "max_tokens": 50
-            },
-            {
-                "model": "qwen-14b",
-                "messages": [{"role": "user", "content": "Name a primary color."}],
+                "messages": [{"role": "user", "content": "Prompt 2"}],
                 "max_tokens": 50
             }
         ]
     }
 )
-
-result = response.json()
-print(f"Processed {len(result['data'])} requests")
-print(f"Throughput: {result['batch_stats']['throughput_req_per_sec']:.2f} req/s")
-
-# See examples/batch_processing_example.py for more examples
 ```
 
-**Requirements:**
-- Text-only models (no VLM support yet)
-- All requests must use the same model
-- Streaming not supported (batch is inherently blocking)
-- Minimum 2 requests (recommended 3+ for best performance)
+## Analytics (Optional)
 
-**See:** `examples/batch_processing_example.py` for comprehensive examples
-```
+Track performance metrics and request history.
 
-## Features
+1. **Setup**: `python setup_analytics.py`
+2. **Enable**: Set `HEYLOOK_ANALYTICS_ENABLED=true`
+3. **Analyze**: `python analyze_logs.py`
 
-### Model Management
-- LRU cache holds 2 models in memory
-- Automatic model loading/unloading
-- Hot-swap models without restart
-
-### Performance
-- Metal acceleration (macOS)
-- CUDA/Vulkan acceleration (Linux/Windows)
-- Async request processing
-- Fast multipart image endpoint (57ms faster per image)
-- Cross-request prompt caching (MLX)
-- **Batch text processing (2-4x throughput for concurrent requests)**
-
-### Analytics (Optional)
-
-```bash
-# Setup
-python setup_analytics.py
-export HEYLOOK_ANALYTICS_ENABLED=true
-uv pip install -e .[analytics]
-
-# Run server
-heylookllm --api openai
-
-# Analyze
-python analyze_logs.py
-```
-
-See analytics configuration in [README Analytics section](https://github.com/fblissjr/heylookitsanllm#analytics--logging).
-
-## Platform-Specific Notes
-
-### macOS
-- MLX requires Apple Silicon (M1/M2/M3)
-- CoreML STT uses Neural Engine
-- Install gfortran for scipy: `brew install gcc`
-
-### Linux
-- Only llama.cpp backend
-- CUDA requires CUDA Toolkit
-
-### Windows
-- Only llama.cpp backend
-- Requires Visual Studio Build Tools
-- See [Windows Installation Guide](docs/WINDOWS_INSTALL.md)
-- See [Windows Quick Reference](docs/WINDOWS_QUICK_REFERENCE.md)
-
-## Troubleshooting
+## 🛠️ Troubleshooting
 
 **Model not loading**
 ```bash
 heylookllm --log-level DEBUG
 ```
 
-**GPU not working**
-```bash
-python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
-```
-
 **Port in use**
 ```bash
 # macOS/Linux
 lsof -i :8080
-
 # Windows
 Get-NetTCPConnection -LocalPort 8080
 
@@ -271,21 +190,11 @@ Get-NetTCPConnection -LocalPort 8080
 heylookllm --port 8081
 ```
 
-**Windows scipy build errors (macOS)**
+**GPU not working**
 ```bash
-brew install gcc
+python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
 ```
-
-See platform-specific guides for detailed troubleshooting:
-- [Windows Installation Guide](docs/WINDOWS_INSTALL.md)
-- [Client Integration Guide](docs/CLIENT_INTEGRATION_GUIDE.md)
-
-## Documentation
-
-- [Windows Installation Guide](docs/WINDOWS_INSTALL.md) - Complete Windows setup
-- [Windows Quick Reference](docs/WINDOWS_QUICK_REFERENCE.md) - Windows commands
-- [Client Integration Guide](docs/CLIENT_INTEGRATION_GUIDE.md) - API integration
 
 ## License
 
-MIT License - see LICENSE file
+MIT License - see [LICENSE](LICENSE) file
