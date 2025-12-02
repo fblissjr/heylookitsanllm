@@ -55,9 +55,8 @@ uv pip install -e .[stt]          # macOS only
 ### Server
 
 ```bash
-heylookllm --api openai --log-level DEBUG
-heylookllm --api ollama --log-level DEBUG
-heylookllm --api both --port 8080
+heylookllm --log-level DEBUG
+heylookllm --port 8080
 ```
 
 ### Testing
@@ -81,7 +80,7 @@ heylookllm import --folder ~/models --interactive  # Interactive configuration w
 ```
 src/heylook_llm/
 ├── server.py           # CLI entry point
-├── api.py              # OpenAI/Ollama endpoints
+├── api.py              # OpenAI-compatible endpoints
 ├── stt_api.py          # Speech-to-Text endpoints
 ├── router.py           # Model routing with LRU cache
 ├── config.py           # Pydantic models
@@ -96,11 +95,10 @@ src/heylook_llm/
 ### Model Routing
 - LRU cache holds max 2 models in memory
 - Automatic loading/unloading based on API requests
-- Provider selection based on `models.yaml` configuration
+- Provider selection based on `models.toml` configuration
 
 ### API Compatibility
-- **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/batch/chat/completions`
-- **Ollama**: `/api/tags`, `/api/chat`, `/api/generate`, `/api/embed`
+- **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/batch/chat/completions`, `/v1/hidden_states`
 - **Admin**: `/v1/admin/restart`, `/v1/admin/reload`
 - **Batch**: `/v1/batch/chat/completions` - Batch text generation (2-4x throughput, text-only models)
 

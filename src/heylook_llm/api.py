@@ -17,7 +17,6 @@ from fastapi.openapi.utils import get_openapi
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse, BatchChatRequest, BatchChatResponse, BatchStats
 from heylook_llm.providers.common.performance_monitor import performance_monitor
-from heylook_llm.middleware.ollama import OllamaTranslator
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.metrics_db_wrapper import get_metrics_db, init_metrics_db
 from heylook_llm.analytics_config import analytics_config
@@ -33,7 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="HeylookLLM - High-Performance Local LLM Server",
     version="1.0.1",
-    description="A unified, high-performance API server for local LLM inference with dual OpenAI and Ollama compatibility",
+    description="A high-performance API server for local LLM inference with OpenAI-compatible endpoints",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -42,10 +41,6 @@ app = FastAPI(
         {
             "name": "OpenAI API",
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
-        },
-        {
-            "name": "Ollama API",
-            "description": "Ollama-compatible endpoints for drop-in replacement of Ollama server"
         },
         {
             "name": "Monitoring",
@@ -62,9 +57,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize Ollama translator
-ollama_translator = OllamaTranslator()
 
 # Import and include STT router
 from heylook_llm.stt_api import stt_router
@@ -826,471 +818,108 @@ async def create_embeddings_endpoint(
         logging.error(f"Error creating embeddings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# =============================================================================
-# Ollama API Compatibility Endpoints
-# =============================================================================
 
-@app.post("/api/chat",
-    summary="Ollama Chat API",
+@app.post("/v1/hidden_states",
+    summary="Extract Hidden States",
     description="""
-Ollama-compatible chat endpoint for seamless migration from Ollama.
+Extract raw hidden states from a specific layer of an LLM model.
 
-**Translation Process:**
-1. Receives Ollama-format request
-2. Translates to OpenAI format internally
-3. Uses same model routing and inference pipeline
-4. Translates response back to Ollama format
-
-**Supports:**
-- Ollama chat parameters
-- Streaming responses
-- Image inputs (base64)
-- Same models as OpenAI endpoints
-    """,
-    response_description="Ollama-format chat response",
-    tags=["Ollama API"]
-)
-async def ollama_chat(request: Request):
-    """Ollama chat completions endpoint - translates to OpenAI format"""
-    router = request.app.state.router_instance
-    request_start_time = time.time()
-
-    try:
-        body = await request.json()
-
-        # Analyze request for image metadata before translation
-        from heylook_llm.utils import _analyze_images_in_dict
-        image_stats = _analyze_images_in_dict(body)
-
-        # Log request details including image info
-        logging.info(f"OLLAMA CHAT REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Received Ollama chat request: {sanitize_dict_for_debug(body)}")
-
-        # Translate Ollama request to OpenAI format
-        openai_request_data = ollama_translator.translate_ollama_chat_to_openai(body)
-        chat_request = ChatRequest(**openai_request_data)
-
-        # Use existing OpenAI logic with thread pool
-        provider = await asyncio.to_thread(router.get_provider, chat_request.model)
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Dispatching Ollama request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
-
-        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
-
-        # Get non-streaming response in thread pool
-        full_text = ""
-        prompt_tokens = 0
-        completion_tokens = 0
-
-        def consume_generator():
-            nonlocal full_text, prompt_tokens, completion_tokens
-            for chunk in generator:
-                full_text += chunk.text
-                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-
-        await asyncio.to_thread(consume_generator)
-
-        # Create OpenAI-style response
-        openai_response = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": chat_request.model,
-            "choices": [{"message": {"role": "assistant", "content": full_text}}],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens
-            }
-        }
-
-        # Translate back to Ollama format
-        ollama_response = ollama_translator.translate_openai_to_ollama_chat(
-            openai_response,
-            body.get("model", "default"),
-            request_start_time
-        )
-
-        # Log response details
-        processing_time = time.time() - request_start_time
-        response_length = len(full_text)
-        logging.info(f"📤 OLLAMA CHAT RESPONSE | {response_length} chars | {processing_time:.2f}s")
-
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Returning Ollama chat response: {json.dumps(ollama_response, indent=2)}")
-        return JSONResponse(content=ollama_response)
-
-    except Exception as e:
-        logging.error(f"Error in Ollama chat endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/generate")
-async def ollama_generate(request: Request):
-    """Ollama generate endpoint - translates to OpenAI format"""
-    router = request.app.state.router_instance
-    request_start_time = time.time()
-
-    try:
-        body = await request.json()
-
-        # Analyze request for image metadata before translation
-        from heylook_llm.utils import _analyze_images_in_dict
-        image_stats = _analyze_images_in_dict(body)
-
-        # Log request details including image info
-        logging.info(f"📥 OLLAMA GENERATE REQUEST | Images: {image_stats['count']} ({image_stats['total_size']})")
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Received Ollama generate request: {sanitize_dict_for_debug(body)}")
-
-        # Translate Ollama request to OpenAI format
-        openai_request_data = ollama_translator.translate_ollama_generate_to_openai(body)
-        chat_request = ChatRequest(**openai_request_data)
-
-        # Use existing OpenAI logic with thread pool
-        provider = await asyncio.to_thread(router.get_provider, chat_request.model)
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Dispatching Ollama request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
-
-        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
-
-        # Get non-streaming response in thread pool
-        full_text = ""
-        prompt_tokens = 0
-        completion_tokens = 0
-
-        def consume_generator():
-            nonlocal full_text, prompt_tokens, completion_tokens
-            for chunk in generator:
-                full_text += chunk.text
-                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-
-        await asyncio.to_thread(consume_generator)
-
-        # Create OpenAI-style response
-        openai_response = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": chat_request.model,
-            "choices": [{"message": {"role": "assistant", "content": full_text}}],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens
-            }
-        }
-
-        # Translate back to Ollama format
-        ollama_response = ollama_translator.translate_openai_to_ollama_generate(
-            openai_response,
-            body.get("model", "default"),
-            request_start_time
-        )
-
-        # Log response details
-        processing_time = time.time() - request_start_time
-        response_length = len(full_text)
-        logging.info(f"📤 OLLAMA GENERATE RESPONSE | {response_length} chars | {processing_time:.2f}s")
-
-        if router.log_level <= logging.DEBUG:
-            logging.debug(f"Returning Ollama generate response: {json.dumps(ollama_response, indent=2)}")
-        return JSONResponse(content=ollama_response)
-
-    except Exception as e:
-        logging.error(f"Error in Ollama generate endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/tags",
-    summary="List Models (Ollama Format)",
-    description="""
-Get available models in Ollama-compatible format.
-
-**Equivalent to:** `ollama list`
-
-**Returns:**
-- Model names and tags
-- Model sizes
-- Modification times
-- Model families
+**Key Differences from /v1/embeddings:**
+- Returns full sequence [seq_len, hidden_dim], not pooled
+- Extracts from specific layer (default: -2, second-to-last)
+- Filters out padding tokens via attention mask
+- Designed for use as text encoder backend for image generation
 
 **Use Cases:**
-- Check available models before running
-- Verify model installation
-- Get model metadata for Ollama clients
+- Text encoder for DiT-based image generation (Z-Image, etc.)
+- Model interpretability and analysis
+- Cross-modal alignment with per-token embeddings
+
+**Request Body:**
+- `input` (string | array[string]): Text(s) to encode (with chat template applied)
+- `model` (string): Model ID to use
+- `layer` (integer, optional): Layer to extract from (default: -2)
+- `max_length` (integer, optional): Max sequence length (default: 512)
+- `return_attention_mask` (boolean, optional): Include attention mask
+- `encoding_format` (string, optional): "float" (default) or "base64"
+
+**Note:** Currently only supported for MLX models. llama.cpp models will
+return an error as intermediate layer access is not available.
     """,
-    response_description="List of models in Ollama format",
-    tags=["Ollama API"]
-)
-async def ollama_tags(request: Request):
-    """Ollama list models endpoint - translates to OpenAI format"""
-    router = request.app.state.router_instance
-
-    try:
-        # Get models from router
-        models_data = [{"id": model_id, "object": "model", "owned_by": "user"} for model_id in router.list_available_models()]
-        openai_response = {"object": "list", "data": models_data}
-
-        # Translate to Ollama format
-        ollama_response = ollama_translator.translate_openai_models_to_ollama(openai_response)
-
-        logging.debug(f"Returning Ollama tags response: {json.dumps(ollama_response, indent=2)}")
-        return JSONResponse(content=ollama_response)
-
-    except Exception as e:
-        logging.error(f"Error in Ollama tags endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/show")
-async def ollama_show(request: Request):
-    """Ollama show model information endpoint"""
-    router = request.app.state.router_instance
-
-    try:
-        body = await request.json()
-        model_name = body.get("model")
-        verbose = body.get("verbose", False)
-
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Missing required parameter 'model'")
-
-        # Check if model exists
-        available_models = router.list_available_models()
-        if model_name not in available_models:
-            raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
-
-        # Get model config
-        model_config = router.app_config.get_model_config(model_name)
-
-        # Build Ollama show response
-        show_response = {
-            "modelfile": f"# Modelfile for {model_name}\nFROM {model_config.config.model_path}\n",
-            "parameters": "",  # We don't expose internal parameters
-            "template": "",    # We don't use custom templates
-            "details": {
-                "parent_model": "",
-                "format": "mlx" if model_config.provider == "mlx" else "gguf",
-                "family": "unknown",
-                "families": [],
-                "parameter_size": "unknown",
-                "quantization_level": "unknown"
-            },
-            "model_info": {
-                "general.architecture": "unknown",
-                "general.file_type": 0,
-                "general.parameter_count": 0
-            },
-            "capabilities": ["completion"]
-        }
-
-        # Add vision capability if it's a vision model
-        if hasattr(model_config.config, 'vision') and getattr(model_config.config, 'vision', False):
-            show_response["capabilities"].append("vision")
-
-        # Add verbose info if requested
-        if verbose:
-            show_response["model_info"].update({
-                "tokenizer.ggml.tokens": [],
-                "tokenizer.ggml.merges": [],
-                "tokenizer.ggml.token_type": []
-            })
-
-        logging.debug(f"Returning Ollama show response for {model_name}: {json.dumps(show_response, indent=2)}")
-        return JSONResponse(content=show_response)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama show endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/version")
-async def ollama_version():
-    """Ollama version endpoint"""
-    return JSONResponse(content={"version": "0.5.1"})
-
-@app.get("/api/ps")
-async def ollama_ps(request: Request):
-    """Ollama list running models endpoint"""
-    router = request.app.state.router_instance
-
-    try:
-        # Get currently loaded models from router cache
-        running_models = []
-
-        # Check which models are currently loaded in the router cache
-        for model_id in router.providers.keys():
-            try:
-                model_config = router.app_config.get_model_config(model_id)
-                if model_config:
-                    running_model = {
-                        "name": f"{model_id}:latest",
-                        "model": f"{model_id}:latest",
-                        "size": 0,  # We don't track actual size
-                        "digest": "unknown",
-                        "details": {
-                            "parent_model": "",
-                            "format": "mlx" if model_config.provider == "mlx" else "gguf",
-                            "family": "unknown",
-                            "families": [],
-                            "parameter_size": "unknown",
-                            "quantization_level": "unknown"
+    response_description="Hidden states with shape metadata",
+    tags=["OpenAI API"],
+    responses={
+        200: {
+            "description": "Hidden states extracted successfully",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "float_format": {
+                            "summary": "Float format response",
+                            "value": {
+                                "hidden_states": [[0.123, -0.456], [0.789, 0.012]],
+                                "shape": [2, 2560],
+                                "model": "Qwen3-4B-mxfp4-mlx",
+                                "layer": -2,
+                                "dtype": "bfloat16"
+                            }
                         },
-                        "expires_at": "2024-12-31T23:59:59Z",  # Placeholder
-                        "size_vram": 0
+                        "base64_format": {
+                            "summary": "Base64 format response",
+                            "value": {
+                                "hidden_states": "SGVsbG8gV29ybGQ=",
+                                "shape": [21, 2560],
+                                "model": "Qwen3-4B-mxfp4-mlx",
+                                "layer": -2,
+                                "dtype": "bfloat16",
+                                "encoding_format": "base64"
+                            }
+                        }
                     }
-                    running_models.append(running_model)
-            except Exception as e:
-                logging.warning(f"Error getting config for loaded model {model_id}: {e}")
-                continue
-
-        return JSONResponse(content={"models": running_models})
-
-    except Exception as e:
-        logging.error(f"Error in Ollama ps endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/embed")
-async def ollama_embed(request: Request):
-    """Ollama generate embeddings endpoint"""
-    try:
-        body = await request.json()
-        model_name = body.get("model")
-        input_text = body.get("input")
-
-        if not model_name or not input_text:
-            raise HTTPException(status_code=422, detail="Missing required parameters 'model' and 'input'")
-
-        # For now, return a placeholder response since we don't have embedding models
-        # In the future, this could be extended to support actual embedding generation
-        placeholder_embedding = [0.0] * 384  # Common embedding dimension
-
-        embed_response = {
-            "model": model_name,
-            "embeddings": [placeholder_embedding] if isinstance(input_text, str) else [placeholder_embedding] * len(input_text),
-            "total_duration": 1000000,  # 1ms in nanoseconds
-            "load_duration": 0,
-            "prompt_eval_count": len(input_text) if isinstance(input_text, str) else sum(len(t) for t in input_text)
+                }
+            }
+        },
+        422: {
+            "description": "Model doesn't support hidden state extraction",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Hidden state extraction from llama.cpp is not supported."
+                    }
+                }
+            }
         }
+    }
+)
+async def extract_hidden_states_endpoint(
+    request: Request,
+    hidden_states_request: dict = Body(...)
+):
+    """Extract hidden states from the specified layer of an LLM."""
+    from heylook_llm.hidden_states import HiddenStatesRequest, create_hidden_states
 
-        return JSONResponse(content=embed_response)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama embed endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/create")
-async def ollama_create(request: Request):
-    """Ollama create model endpoint - Not implemented yet"""
     try:
-        body = await request.json()
-        model_name = body.get("model")
+        # Parse request
+        req = HiddenStatesRequest(**hidden_states_request)
 
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Missing required parameter 'model'")
+        # Get router
+        router = request.app.state.router_instance
 
-        # For now, return a not implemented response
-        # This would need to integrate with the model creation system
-        raise HTTPException(status_code=501, detail="Model creation not implemented yet")
+        # Extract hidden states
+        response = await create_hidden_states(req, router)
 
-    except HTTPException:
-        raise
+        return response.model_dump(exclude_none=True)
+
+    except NotImplementedError as e:
+        # Model doesn't support hidden state extraction
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        # Invalid request parameters
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logging.error(f"Error in Ollama create endpoint: {e}", exc_info=True)
+        logging.error(f"Error extracting hidden states: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/copy")
-async def ollama_copy(request: Request):
-    """Ollama copy model endpoint - Not implemented yet"""
-    try:
-        body = await request.json()
-        source = body.get("source")
-        destination = body.get("destination")
-
-        if not source or not destination:
-            raise HTTPException(status_code=422, detail="Missing required parameters 'source' and 'destination'")
-
-        # For now, return a not implemented response
-        raise HTTPException(status_code=501, detail="Model copying not implemented yet")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama copy endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/delete")
-async def ollama_delete(request: Request):
-    """Ollama delete model endpoint - Not implemented yet"""
-    try:
-        body = await request.json()
-        model_name = body.get("model")
-
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Missing required parameter 'model'")
-
-        # For now, return a not implemented response
-        raise HTTPException(status_code=501, detail="Model deletion not implemented yet")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama delete endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/pull")
-async def ollama_pull(request: Request):
-    """Ollama pull model endpoint - Not implemented yet"""
-    try:
-        body = await request.json()
-        model_name = body.get("model")
-
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Missing required parameter 'model'")
-
-        # For now, return a not implemented response
-        raise HTTPException(status_code=501, detail="Model pulling not implemented yet")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama pull endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/push")
-async def ollama_push(request: Request):
-    """Ollama push model endpoint - Not implemented yet"""
-    try:
-        body = await request.json()
-        model_name = body.get("model")
-
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Missing required parameter 'model'")
-
-        # For now, return a not implemented response
-        raise HTTPException(status_code=501, detail="Model pushing not implemented yet")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in Ollama push endpoint: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.head("/api/blobs/{digest}")
-async def ollama_blob_exists(digest: str):
-    """Ollama check blob exists endpoint - Not implemented yet"""
-    # For now, return not found
-    raise HTTPException(status_code=404, detail="Blob management not implemented yet")
-
-@app.post("/api/blobs/{digest}")
-async def ollama_blob_upload(digest: str, request: Request):
-    """Ollama upload blob endpoint - Not implemented yet"""
-    # For now, return not implemented
-    raise HTTPException(status_code=501, detail="Blob management not implemented yet")
 
 @app.get("/v1/performance",
     summary="Get Performance Metrics",
@@ -2812,28 +2441,6 @@ async def root():
                     "performance": {"method": "GET", "path": "/v1/performance"},
                     "capabilities": {"method": "GET", "path": "/v1/capabilities", "note": "Discover optimizations"}
                 }
-            },
-            "ollama": {
-                "description": "Ollama-compatible API for drop-in replacement",
-                "endpoints": {
-                    "core": {
-                        "list_models": {"method": "GET", "path": "/api/tags"},
-                        "chat": {"method": "POST", "path": "/api/chat"},
-                        "generate": {"method": "POST", "path": "/api/generate"},
-                        "show_model": {"method": "POST", "path": "/api/show"},
-                        "version": {"method": "GET", "path": "/api/version"},
-                        "running_models": {"method": "GET", "path": "/api/ps"},
-                        "embeddings": {"method": "POST", "path": "/api/embed"}
-                    },
-                    "model_management": {
-                        "note": "Not implemented - use models.yaml configuration",
-                        "create": "/api/create",
-                        "copy": "/api/copy",
-                        "delete": "/api/delete",
-                        "pull": "/api/pull",
-                        "push": "/api/push"
-                    }
-                }
             }
         },
         "features": {
@@ -2863,7 +2470,7 @@ def custom_openapi():
         description="""
 # HeylookLLM API Documentation 🚀
 
-A unified, high-performance API server for local LLM inference with dual OpenAI and Ollama compatibility.
+A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
 
 **Platform Support**: macOS, Linux, and Windows
 - macOS: All backends (MLX, llama.cpp, CoreML STT)
@@ -2872,9 +2479,8 @@ A unified, high-performance API server for local LLM inference with dual OpenAI 
 
 ## 🎯 Key Features
 
-### Dual API Support
+### API Compatibility
 - **OpenAI API**: Full compatibility with OpenAI clients and libraries
-- **Ollama API**: Drop-in replacement for Ollama server
 
 ### Model Support
 - **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)
@@ -2937,18 +2543,9 @@ response = client.chat.completions.create(
 )
 ```
 
-### Ollama Python SDK
-```python
-import ollama
-ollama.Client(host="http://localhost:8080").chat(
-    model="qwen2.5-coder-1.5b-instruct-4bit",
-    messages=[{"role": "user", "content": "Hello!"}]
-)
-```
+## Configuration
 
-## 🛠️ Configuration
-
-Models are configured in `models.yaml`. The server automatically loads models on demand and manages memory with LRU eviction.
+Models are configured in `models.toml`. The server automatically loads models on demand and manages memory with LRU eviction.
 
 ## 📈 Performance Optimization
 
@@ -2970,11 +2567,7 @@ This enables:
     openapi_schema["servers"] = [
         {
             "url": "http://localhost:8080",
-            "description": "Default server (OpenAI-compatible)"
-        },
-        {
-            "url": "http://localhost:11434",
-            "description": "Ollama-compatible port"
+            "description": "Default server"
         }
     ]
 

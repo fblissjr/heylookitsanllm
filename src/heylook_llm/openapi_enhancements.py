@@ -99,31 +99,7 @@ Generate completions with raw image uploads (no base64 encoding required).
         """,
         "response_description": "Standard chat completion response"
     },
-    
-    "ollama_chat": {
-        "summary": "Ollama Chat API",
-        "description": """
-Ollama-compatible chat endpoint that translates to OpenAI format internally.
 
-**Purpose**: Drop-in compatibility for Ollama clients and tools.
-
-**Translation Process**:
-1. Receives Ollama-format request
-2. Translates to OpenAI ChatRequest
-3. Processes through same inference pipeline
-4. Translates response back to Ollama format
-
-**Supports**:
-- ✅ Streaming with Ollama's format
-- ✅ All Ollama chat parameters
-- ✅ Image inputs (base64)
-- ✅ Compatible with Ollama CLI/SDK
-
-**Note**: Uses the same model routing and caching as OpenAI endpoints.
-        """,
-        "response_description": "Ollama-format chat response"
-    },
-    
     "performance_metrics": {
         "summary": "Performance Metrics",
         "description": """
@@ -293,11 +269,11 @@ def get_custom_openapi_schema(app) -> Dict[str, Any]:
         description="""
 # HeylookLLM API Documentation
 
-A unified, high-performance API server for local LLM inference with dual OpenAI and Ollama compatibility.
+A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
 
-## 🚀 Key Features
+## Key Features
 
-- **Dual API Support**: OpenAI and Ollama compatible endpoints
+- **OpenAI API Compatible**: Drop-in replacement for OpenAI API calls
 - **Multi-Provider**: Supports MLX (Apple Silicon) and GGUF models
 - **Vision Models**: Process images with vision-language models
 - **Performance Optimized**: Metal acceleration, async processing, smart caching
@@ -321,7 +297,6 @@ A unified, high-performance API server for local LLM inference with dual OpenAI 
 
 Compatible with:
 - OpenAI Python SDK
-- Ollama Python/JS clients
 - Any OpenAI-compatible tool
 - ComfyUI via custom nodes
 
@@ -336,10 +311,6 @@ No authentication required for local deployment. Add your own auth layer if expo
                 "description": "OpenAI-compatible endpoints for maximum compatibility"
             },
             {
-                "name": "Ollama API",
-                "description": "Ollama-compatible endpoints for drop-in replacement"
-            },
-            {
                 "name": "Monitoring",
                 "description": "Performance monitoring and server status"
             }
@@ -349,7 +320,6 @@ No authentication required for local deployment. Add your own auth layer if expo
     # Add server information
     openapi_schema["servers"] = [
         {"url": "http://localhost:8080", "description": "Default local server"},
-        {"url": "http://localhost:11434", "description": "Ollama-compatible port"},
     ]
     
     # Add external documentation

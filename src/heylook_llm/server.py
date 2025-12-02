@@ -23,7 +23,7 @@ except ImportError:
 
 def create_openai_only_app():
     """Create app with only OpenAI API endpoints"""
-    from heylook_llm.api import list_models, create_chat_completion, create_batch_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, restart_server, reload_models
+    from heylook_llm.api import list_models, create_chat_completion, create_batch_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, extract_hidden_states_endpoint, restart_server, reload_models
     from heylook_llm.api_multipart import create_chat_multipart
     from heylook_llm.stt_api import stt_router
 
@@ -43,6 +43,7 @@ def create_openai_only_app():
     openai_app.post("/v1/chat/completions")(create_chat_completion)
     openai_app.post("/v1/batch/chat/completions")(create_batch_chat_completion)
     openai_app.post("/v1/embeddings")(create_embeddings_endpoint)
+    openai_app.post("/v1/hidden_states")(extract_hidden_states_endpoint)
     openai_app.get("/v1/capabilities")(get_capabilities)
     openai_app.get("/v1/performance")(performance_metrics)
     openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
@@ -65,6 +66,7 @@ def create_openai_only_app():
                 "chat": "/v1/chat/completions",
                 "batch_chat": "/v1/batch/chat/completions",
                 "embeddings": "/v1/embeddings",
+                "hidden_states": "/v1/hidden_states",
                 "capabilities": "/v1/capabilities",
                 "performance": "/v1/performance",
                 "multipart": "/v1/chat/completions/multipart",
@@ -75,46 +77,6 @@ def create_openai_only_app():
 
     return openai_app
 
-def create_ollama_only_app():
-    """Create app with only Ollama API endpoints"""
-    from heylook_llm.api import ollama_chat, ollama_generate, ollama_tags, ollama_show, ollama_version, ollama_ps, ollama_embed
-
-    ollama_app = FastAPI(title="Ollama-Compatible LLM Server", version="1.0.0")
-
-    # Add CORS middleware
-    ollama_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins for development
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # Add Ollama endpoints
-    ollama_app.post("/api/chat")(ollama_chat)
-    ollama_app.post("/api/generate")(ollama_generate)
-    ollama_app.get("/api/tags")(ollama_tags)
-    ollama_app.post("/api/show")(ollama_show)
-    ollama_app.get("/api/version")(ollama_version)
-    ollama_app.get("/api/ps")(ollama_ps)
-    ollama_app.post("/api/embed")(ollama_embed)
-
-    @ollama_app.get("/")
-    async def root():
-        return {
-            "message": "Ollama-Compatible LLM Server",
-            "endpoints": {
-                "models": "/api/tags",
-                "chat": "/api/chat",
-                "generate": "/api/generate",
-                "show": "/api/show",
-                "version": "/api/version",
-                "ps": "/api/ps",
-                "embed": "/api/embed"
-            }
-        }
-
-    return ollama_app
 
 def main():
     """
@@ -143,8 +105,8 @@ def main():
         "--output",
         "-o",
         type=str,
-        default="models_imported.yaml",
-        help="Output file for generated configuration (default: models_imported.yaml)"
+        default="models.toml",
+        help="Output file for generated configuration (default: models.toml)"
     )
     import_parser.add_argument(
         "--profile",
@@ -170,7 +132,7 @@ def main():
 
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
-    parser.add_argument("--port", type=int, default=8080, help="Port to run the server on (default: 11434, Ollama standard)")
+    parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                        help="Console logging level")
     parser.add_argument("--file-log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -181,8 +143,6 @@ def main():
     parser.add_argument("--log-rotate-count", type=int, default=10,
                        help="Number of rotated log files to keep (default: 10)")
     parser.add_argument("--model-id", type=str, default=None, help="Optional ID of a model to load on startup.")
-    parser.add_argument("--api", default="both", choices=["openai", "ollama", "both"],
-                       help="Which API to serve: openai, ollama, or both (default: both) - selecting ollama only will run on port 11434 unless specified explicitly")
 
     args = parser.parse_args()
 
@@ -197,13 +157,8 @@ def main():
         import_models(args)
         return
 
-    # Check if --port was explicitly provided
-    port_provided = "--port" in sys.argv or any(arg.startswith("--port=") for arg in sys.argv)
-
-    # Set to 11434 if only ollama and no port was provided
-    if args.api == "ollama" and not port_provided:
-        args.port = 11434
-    elif args.port is None:
+    # Default port if not provided
+    if args.port is None:
         args.port = 8080
 
     # Set up logging with separate console and file handlers
@@ -268,8 +223,9 @@ def main():
     init_metrics_db()
 
     # Initialize the router and store it in the app's state
+    # Pass "models" without extension - router will try .toml first, then .yaml
     router = ModelRouter(
-        config_path="models.yaml",
+        config_path="models",
         log_level=console_level,  # Use console log level for router
         initial_model_id=args.model_id
     )
@@ -283,20 +239,10 @@ def main():
         logging.error("  - For both: pip install heylookitsanllm[all]")
         sys.exit(1)
 
-    # Choose which app to run based on API selection
-    if args.api == "openai":
-        selected_app = create_openai_only_app()
-        print(f"Starting OpenAI-compatible API server on {args.host}:{args.port}")
-        print("Available endpoints: /v1/models, /v1/chat/completions, /v1/batch/chat/completions, /v1/embeddings, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
-    elif args.api == "ollama":
-        selected_app = create_ollama_only_app()
-        print(f"Starting Ollama-compatible API server on {args.host}:{args.port}")
-        print("Available endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
-    else:  # both
-        selected_app = app
-        print(f"Starting combined API server on {args.host}:{args.port}")
-        print("OpenAI endpoints: /v1/models, /v1/chat/completions, /v1/embeddings")
-        print("Ollama endpoints: /api/tags, /api/chat, /api/generate, /api/show, /api/version, /api/ps, /api/embed")
+    # Create and configure the app
+    selected_app = create_openai_only_app()
+    print(f"Starting API server on {args.host}:{args.port}")
+    print("Available endpoints: /v1/models, /v1/chat/completions, /v1/batch/chat/completions, /v1/embeddings, /v1/hidden_states, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
 
     selected_app.state.router_instance = router
 

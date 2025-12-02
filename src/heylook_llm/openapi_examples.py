@@ -98,29 +98,6 @@ data: {"id":"chatcmpl-xyz","object":"chat.completion.chunk","created":1704326400
 data: [DONE]"""
 }
 
-ollama_chat_example = {
-    "summary": "Ollama chat request",
-    "value": {
-        "model": "qwen2.5-coder-1.5b-instruct-4bit",
-        "messages": [
-            {"role": "user", "content": "Hello, how are you?"}
-        ],
-        "stream": False
-    }
-}
-
-ollama_generate_example = {
-    "summary": "Ollama generate request",
-    "value": {
-        "model": "qwen2.5-coder-1.5b-instruct-4bit",
-        "prompt": "The meaning of life is",
-        "stream": False,
-        "options": {
-            "temperature": 0.8,
-            "top_p": 0.9
-        }
-    }
-}
 
 # Embeddings endpoint examples
 embeddings_examples = {

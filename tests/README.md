@@ -59,11 +59,6 @@ Tests requiring a running heylookllm server:
   - Keepalive and prompt caching
   - Uses requests directly
 
-- **test_ollama_integration.py** (734 lines, 11 test functions)
-  - Comprehensive Ollama API compatibility
-  - Most complete integration test
-  - Uses pytest
-
 - **test_queue_integration.py** (198 lines, 5 test functions)
   - Request queuing system
   - Uses pytest
@@ -142,7 +137,7 @@ python tests/integration/test_batch_integration.py
 |--------------|------------------|------------|---------|------|----------|
 | **Model Loading** | Good | test_router.py | Good (unittest) | No edge case tests for LRU eviction | Medium |
 | **Model Routing** | Good | test_router.py | Good (unittest) | No concurrent access tests | Medium |
-| **API Endpoints** | Excellent | test_api_integration.py, test_ollama_integration.py | Excellent (pytest) | None identified | Low |
+| **API Endpoints** | Excellent | test_api_integration.py | Excellent (pytest) | None identified | Low |
 | **Batch Processing** | Good | test_batch_integration.py | Fair (no framework) | No error handling tests | High |
 | **Embeddings** | Basic | test_embeddings_integration.py | Fair (no framework) | No multi-model tests | Medium |
 | **STT (Speech-to-Text)** | Good | test_stt_integration.py | Fair (no framework) | No format validation tests | Medium |
@@ -175,7 +170,6 @@ python tests/integration/test_batch_integration.py
 | test_router.py | Proper unittest, mocking, good coverage |
 | test_llama_cpp_provider.py | Proper unittest, comprehensive mocking |
 | test_api_integration.py | Good pytest usage, comprehensive |
-| test_ollama_integration.py | Excellent pytest usage, 11 test functions |
 | test_queue_integration.py | Good pytest usage, proper fixtures |
 
 ### Testing Anti-Patterns Identified

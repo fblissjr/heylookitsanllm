@@ -1,8 +1,8 @@
 # Hey Look, It's an LLM
 
-OpenAI and Ollama compatible API server for local LLM inference with MLX, llama.cpp, and CoreML.
+OpenAI-compatible API server for local LLM inference with MLX, llama.cpp, and CoreML.
 
-A lightweight API server for running Apple MLX models, GGUF models, and CoreML STT behind OpenAI/Ollama compatible endpoints, with on-the-fly model swapping and optional analytics.
+A lightweight API server for running Apple MLX models, GGUF models, and CoreML STT behind OpenAI-compatible endpoints, with on-the-fly model swapping and optional analytics.
 
 **Platform Support**
 - macOS: All backends (MLX, llama.cpp, CoreML STT)
@@ -70,34 +70,34 @@ See [Windows Installation Guide](docs/WINDOWS_INSTALL.md) for Visual Studio Buil
 
 ```bash
 # Configure models
-cp models.yaml.example models.yaml
-# Edit models.yaml with your model paths
+cp models.toml.example models.toml
+# Edit models.toml with your model paths
 
 # Start server
-heylookllm --api openai --log-level DEBUG
-heylookllm --api ollama --log-level DEBUG
-heylookllm --api both --port 8080
+heylookllm --log-level DEBUG
+heylookllm --port 8080
 ```
 
 ## Configuration
 
-Edit `models.yaml` to define your models:
+Edit `models.toml` to define your models:
 
-```yaml
-models:
-  - id: qwen2.5-coder-1.5b
-    provider: mlx                    # or llama_cpp, coreml_stt
-    enabled: true
-    config:
-      model_path: models/qwen-mlx
-      max_tokens: 512
-      temperature: 0.7
+```toml
+[[models]]
+id = "qwen2.5-coder-1.5b"
+provider = "mlx"                    # or llama_cpp, coreml_stt
+enabled = true
+
+[models.config]
+model_path = "models/qwen-mlx"
+max_tokens = 512
+temperature = 0.7
 ```
 
 Or use automatic import:
 
 ```bash
-heylookllm import --folder ~/models --output models.yaml
+heylookllm import --folder ~/models --output models.toml
 heylookllm import --hf-cache --profile fast
 ```
 
@@ -119,12 +119,6 @@ See [Client Integration Guide](docs/CLIENT_INTEGRATION_GUIDE.md) for detailed AP
 - `POST /v1/embeddings` - Extract embeddings
 - `POST /v1/audio/transcriptions` - Speech-to-text (macOS)
 - `POST /v1/chat/completions/multipart` - Fast image upload
-
-**Ollama Compatible**
-- `GET /api/tags` - List models
-- `POST /api/chat` - Chat endpoint
-- `POST /api/generate` - Text generation
-- `POST /api/embed` - Generate embeddings
 
 ### Example Usage
 

@@ -823,7 +823,7 @@ def import_models(args):
         return
 
     # Generate TOML
-    output_file = args.output or "models_imported.toml"
+    output_file = args.output or "models.toml"
     toml_content = importer.generate_toml(models, output_file)
 
     print(f"\nFound {len(models)} models:")
@@ -839,9 +839,9 @@ def import_models(args):
     print(f"\nConfiguration written to: {output_file}")
 
     if args.merge:
-        print("\nTo merge with existing models.yaml, review the file and copy desired entries.")
+        print("\nTo merge with existing models.toml, review the file and copy desired entries.")
     else:
-        print("\nTo use this configuration, replace your models.yaml or copy desired entries.")
+        print("\nTo use this configuration, rename to models.toml or copy desired entries.")
 
     # Show profile options if no profile was used
     if not hasattr(args, 'profile') or not args.profile:

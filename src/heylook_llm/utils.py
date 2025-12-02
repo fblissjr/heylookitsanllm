@@ -149,10 +149,10 @@ def _sanitize_dict_recursive(obj: Any) -> None:
                 # Direct URL field with base64 image
                 obj[key] = _truncate_image_url(value)
             elif key == 'image' and isinstance(value, str) and value.startswith('data:image'):
-                # Ollama format image field
+                # Alternative image field format
                 obj[key] = _truncate_image_url(value)
             elif key == 'images' and isinstance(value, list):
-                # Ollama format images array
+                # Alternative images array format
                 for i, img in enumerate(value):
                     if isinstance(img, str) and img.startswith('data:image'):
                         value[i] = _truncate_image_url(img)
@@ -199,7 +199,7 @@ def _analyze_images_in_request(request_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 def _analyze_images_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Analyze images in any dictionary structure (Ollama, OpenAI, etc.) and return metadata.
+    Analyze images in any dictionary structure and return metadata.
     """
     image_stats = {'count': 0, 'sizes': [], 'total_size': '0B', 'avg_size': '0B'}
     total_bytes = 0
