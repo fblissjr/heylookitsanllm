@@ -100,7 +100,7 @@ heylookllm import --folder ~/models --output models.toml
 heylookllm import --hf-cache --profile fast
 ```
 
-## 📚 API Documentation
+## API Documentation
 
 Interactive docs available when server is running:
 - **Swagger UI**: http://localhost:8080/docs
@@ -109,13 +109,26 @@ Interactive docs available when server is running:
 
 ### Key Endpoints
 
-**OpenAI Compatible** (`/v1`)
-- `GET /v1/models`: List available models
-- `POST /v1/chat/completions`: Chat completion (text & vision)
-- `POST /v1/batch/chat/completions`: Batch processing
-- `POST /v1/embeddings`: Generate embeddings
-- `POST /v1/audio/transcriptions`: Speech-to-text (macOS)
-- `POST /v1/chat/completions/multipart`: Fast raw image upload
+**Core Endpoints** (`/v1`)
+- `GET /v1/models` - List available models
+- `POST /v1/chat/completions` - Chat completion (text and vision)
+- `POST /v1/chat/completions/multipart` - Fast raw image upload (57ms faster per image)
+- `POST /v1/batch/chat/completions` - Batch processing (2-4x throughput)
+- `POST /v1/embeddings` - Generate embeddings
+- `POST /v1/hidden_states` - Extract hidden states from intermediate layers (MLX only)
+
+**Speech-to-Text** (macOS only)
+- `POST /v1/audio/transcriptions` - Transcribe audio
+- `POST /v1/audio/translations` - Translate audio to English
+- `GET /v1/stt/models` - List STT models
+
+**Analytics and Admin**
+- `GET /v1/capabilities` - Discover server capabilities and optimizations
+- `GET /v1/performance` - Real-time performance metrics
+- `GET /v1/data/summary` - Analytics summary (requires analytics enabled)
+- `POST /v1/data/query` - Query analytics data
+- `POST /v1/admin/restart` - Restart server
+- `POST /v1/admin/reload` - Reload model configuration
 
 ### Example Usage (Python)
 
@@ -136,6 +149,33 @@ response = client.chat.completions.create(
 
 for chunk in response:
     print(chunk.choices[0].delta.content or "", end="")
+
+# Embeddings
+embedding = client.embeddings.create(
+    input="Your text here",
+    model="qwen2.5-coder-1.5b"
+)
+print(embedding.data[0].embedding[:5])  # First 5 dimensions
+```
+
+### Hidden States (MLX only)
+
+Extract intermediate layer hidden states for use with diffusion models:
+
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8080/v1/hidden_states",
+    json={
+        "model": "Qwen/Qwen3-4B",
+        "input": "A photo of a cat",
+        "layer_index": -2,  # Second-to-last layer
+        "encoding_format": "base64"  # or "float" for JSON array
+    }
+)
+result = response.json()
+print(f"Shape: {result['data'][0]['shape']}")  # [seq_len, hidden_dim]
 ```
 
 ### Batch Processing
@@ -172,27 +212,11 @@ Track performance metrics and request history.
 2. **Enable**: Set `HEYLOOK_ANALYTICS_ENABLED=true`
 3. **Analyze**: `python analyze_logs.py`
 
-## 🛠️ Troubleshooting
+## Troubleshooting
 
 **Model not loading**
 ```bash
 heylookllm --log-level DEBUG
-```
-
-**Port in use**
-```bash
-# macOS/Linux
-lsof -i :8080
-# Windows
-Get-NetTCPConnection -LocalPort 8080
-
-# Use different port
-heylookllm --port 8081
-```
-
-**GPU not working**
-```bash
-python -c "import llama_cpp; print(llama_cpp.llama_supports_gpu_offload())"
 ```
 
 ## License
