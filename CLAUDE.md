@@ -50,6 +50,7 @@ uv sync                           # Base install
 uv sync --extra mlx               # macOS only
 uv sync --extra llama-cpp         # All platforms
 uv sync --extra stt               # macOS only
+uv sync --extra analytics         # DuckDB analytics
 
 # Alternative: pip-style install (doesn't use lockfile)
 uv pip install -e .[mlx,llama-cpp]

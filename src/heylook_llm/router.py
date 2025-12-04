@@ -77,14 +77,14 @@ class ModelRouter:
             logging.debug("MLX provider is available")
         else:
             if 'MLX_IMPORT_ERROR' in globals() and 'mlx_vlm' in MLX_IMPORT_ERROR:
-                logging.warning("MLX provider not available: mlx-vlm not installed. This should have been installed with uv pip install heylookitsanllm[mlx]")
+                logging.warning("MLX provider not available: mlx-vlm not installed. Run: uv sync --extra mlx")
             else:
-                logging.debug("MLX provider not available. Install with: uv pip install heylookitsanllm[mlx]")
+                logging.debug("MLX provider not available. Install with: uv sync --extra mlx")
 
         if HAS_LLAMA_CPP:
             logging.debug("Llama.cpp provider is available")
         else:
-            logging.debug("Llama.cpp provider not available. Install with: uv pip install heylookitsanllm[llama-cpp]")
+            logging.debug("Llama.cpp provider not available. Install with: uv sync --extra llama-cpp")
 
         if HAS_COREML_STT:
             logging.debug("CoreML STT provider is available")
@@ -291,9 +291,9 @@ class ModelRouter:
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:
                 if model_config.provider == "mlx" and not HAS_MLX:
-                    raise ValueError(f"MLX provider requested but not installed. Install with: pip install heylookitsanllm[mlx]")
+                    raise ValueError(f"MLX provider requested but not installed. Run: uv sync --extra mlx")
                 elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
-                    raise ValueError(f"GGUF provider requested but not installed. Install with: pip install heylookitsanllm[llama-cpp]")
+                    raise ValueError(f"GGUF provider requested but not installed. Run: uv sync --extra llama-cpp")
                 elif model_config.provider == "coreml_stt" and not HAS_COREML_STT:
                     raise ValueError(f"CoreML STT provider requested but not installed. Install coremltools and dependencies.")
                 else:

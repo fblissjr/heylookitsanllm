@@ -234,9 +234,9 @@ def main():
     from heylook_llm.router import HAS_MLX, HAS_LLAMA_CPP
     if not HAS_MLX and not HAS_LLAMA_CPP:
         logging.error("No model providers available! Please install at least one provider:")
-        logging.error("  - For MLX models: pip install heylookitsanllm[mlx]")
-        logging.error("  - For GGUF models: pip install heylookitsanllm[llama-cpp]")
-        logging.error("  - For both: pip install heylookitsanllm[all]")
+        logging.error("  - For MLX models: uv sync --extra mlx")
+        logging.error("  - For GGUF models: uv sync --extra llama-cpp")
+        logging.error("  - For both: uv sync --extra all")
         sys.exit(1)
 
     # Create and configure the app
