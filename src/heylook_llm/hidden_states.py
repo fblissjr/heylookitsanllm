@@ -272,19 +272,34 @@ class MLXHiddenStatesExtractor(HiddenStatesExtractor):
                 f"Layer index {layer_idx} out of range for model with {n_layers} layers"
             )
 
+        # Create attention mask - this is CRITICAL for correct hidden state values!
+        # Without a proper causal mask, attention computes incorrectly and values
+        # can be ~30x smaller than expected.
+        try:
+            from mlx_lm.models.base import create_attention_mask
+            mask = create_attention_mask(hidden, cache=None)
+        except ImportError:
+            # Fallback: create a simple causal mask manually
+            seq_len = hidden.shape[1]
+            # Create causal mask: lower triangular with -inf for masked positions
+            mask = mx.triu(mx.full((seq_len, seq_len), float("-inf")), k=1)
+            mask = mask.reshape(1, 1, seq_len, seq_len)
+
         # Pass through layers up to target
         for i, layer_module in enumerate(self._layers):
-            # MLX transformer layers typically take hidden states and return hidden states
-            # Some may also take/return cache, mask, etc. - try common signatures
+            # MLX transformer layers take (hidden, mask, cache)
+            # We must pass the attention mask for correct computation
             try:
-                hidden = layer_module(hidden)
+                hidden = layer_module(hidden, mask=mask, cache=None)
             except TypeError:
-                # Try with mask argument
+                # Fallback for layers with different signatures
                 try:
-                    hidden = layer_module(hidden, mask=None)
+                    hidden = layer_module(hidden, mask=mask)
                 except TypeError:
-                    # Try with cache argument
-                    hidden, _ = layer_module(hidden, cache=None)
+                    try:
+                        hidden = layer_module(hidden)
+                    except TypeError:
+                        hidden, _ = layer_module(hidden, cache=None)
 
             if i == target_idx:
                 return hidden
