@@ -219,12 +219,35 @@ PROFILES = {
             "repetition_penalty": 1.05,
             "repetition_context_size": 20
         }
+    ),
+    "encoder": ModelProfile(
+        name="encoder",
+        description="Optimized for hidden states extraction (text encoding for image generation)",
+        defaults={
+            # High max_tokens to allow long prompts (though hidden states uses per-request max_length)
+            "max_tokens": 2048,
+            # No cache quantization - maximum precision for embeddings
+            "cache_type": "standard",
+            # Generation params are ignored for hidden states, but set sensible defaults
+            "temperature": 0.7,
+            "top_k": 50,
+            "top_p": 0.95,
+            "repetition_penalty": 1.0,
+        }
     )
 }
 
 # Smart defaults based on model characteristics
 def get_smart_defaults(model_info: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate smart defaults based on model characteristics."""
+    """Generate smart defaults based on model characteristics.
+
+    NOTE: These defaults are optimized for text GENERATION use cases.
+    For text ENCODING (hidden states extraction for Z-Image, etc.):
+    - max_tokens does NOT limit hidden states (request-level max_length does)
+    - Temperature, top_k, etc. are ignored (no generation happens)
+    - Only quantization level affects hidden state precision
+    - Use --profile encoder for encoder-focused defaults
+    """
     defaults = {}
 
     size_gb = model_info.get('size_gb', 0)

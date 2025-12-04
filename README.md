@@ -50,14 +50,16 @@ See [Windows Installation Guide](docs/WINDOWS_INSTALL.md) for detailed Windows s
 git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 
-# Base install
-uv pip install -e .
+# Recommended: use uv sync for proper dependency resolution
+uv sync                            # Base install
+uv sync --extra mlx                # macOS only
+uv sync --extra llama-cpp          # All platforms
+uv sync --extra stt                # macOS only (CoreML) - very experimental
+uv sync --extra all                # Install everything
 
-# Add specific backends
-uv pip install -e .[mlx]           # macOS only
-uv pip install -e .[llama-cpp]     # All platforms
-uv pip install -e .[stt]           # macOS only (CoreML) - very experimental
-uv pip install -e .[all]           # Install everything
+# Alternative: pip-style install (doesn't use lockfile)
+uv pip install -e .
+uv pip install -e .[mlx,llama-cpp]
 ```
 
 ### GPU Acceleration

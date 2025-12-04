@@ -42,14 +42,30 @@ echo ""
 # Check for uv (optional but recommended)
 USE_UV=false
 if command_exists uv; then
-    PIP_CMD="uv pip"
     USE_UV=true
+    PIP_CMD="uv pip"
     echo "Using uv for faster installation"
 else
     PIP_CMD="$PYTHON_CMD -m pip"
     echo "Using pip (install uv for faster installs: pip install uv)"
 fi
 echo ""
+
+# Function to install with uv sync (uses lockfile, properly resolves dependencies)
+# Usage: uv_sync_install "extra1" "extra2" ...
+uv_sync_install() {
+    echo "Updating lockfile to get latest versions..."
+    uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>/dev/null || uv lock
+    if [[ $# -eq 0 ]] || [[ -z "$1" ]]; then
+        uv sync
+    else
+        local extra_args=""
+        for extra in "$@"; do
+            extra_args="$extra_args --extra $extra"
+        done
+        uv sync $extra_args
+    fi
+}
 
 # Ask user what to install
 echo "What would you like to install?"
@@ -65,23 +81,35 @@ read -p "Enter your choice (1-6): " choice
 # Base installation
 echo ""
 echo "Installing base package..."
-$PIP_CMD install -e .
+if [[ "$USE_UV" == "true" ]]; then
+    uv_sync_install ""
+else
+    $PIP_CMD install -e .
+fi
 
 case $choice in
     1)
         echo ""
         echo "Installing MLX backend..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        $PIP_CMD install -e ".[mlx]"
-        
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "mlx"
+        else
+            $PIP_CMD install -e ".[mlx]"
+        fi
+
         echo ""
         echo "MLX backend installed successfully!"
         ;;
     2)
         echo ""
         echo "Installing llama.cpp backend..."
-        $PIP_CMD install -e ".[llama-cpp]"
-        
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "llama-cpp"
+        else
+            $PIP_CMD install -e ".[llama-cpp]"
+        fi
+
         # Ask about GPU acceleration
         echo ""
         echo "Would you like to enable GPU acceleration for llama.cpp?"
@@ -122,7 +150,11 @@ case $choice in
         echo ""
         echo "Installing STT backend..."
         echo "Note: This requires CoreML tools for Speech-to-Text support"
-        $PIP_CMD install -e ".[stt]"
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "stt"
+        else
+            $PIP_CMD install -e ".[stt]"
+        fi
 
         echo ""
         echo "STT backend installed successfully!"
@@ -132,7 +164,11 @@ case $choice in
         echo ""
         echo "Installing MLX and Llama.cpp backends..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        $PIP_CMD install -e ".[mlx,llama-cpp]"
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "mlx" "llama-cpp"
+        else
+            $PIP_CMD install -e ".[mlx,llama-cpp]"
+        fi
 
         # Ask about GPU acceleration for llama.cpp
         echo ""
@@ -174,7 +210,11 @@ case $choice in
         echo ""
         echo "Installing all backends (MLX, Llama.cpp, STT)..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        $PIP_CMD install -e ".[mlx,llama-cpp,stt]"
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "mlx" "llama-cpp" "stt"
+        else
+            $PIP_CMD install -e ".[mlx,llama-cpp,stt]"
+        fi
 
         # Ask about GPU acceleration for llama.cpp
         echo ""
@@ -217,7 +257,11 @@ case $choice in
         echo ""
         echo "Installing everything..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        $PIP_CMD install -e ".[all]"
+        if [[ "$USE_UV" == "true" ]]; then
+            uv_sync_install "all"
+        else
+            $PIP_CMD install -e ".[all]"
+        fi
 
         # Ask about GPU acceleration for llama.cpp
         echo ""

@@ -39,17 +39,20 @@ This ensures continuity across sessions and prevents duplicate work.
 ### Installation
 
 ```bash
-# macOS/Linux
+# macOS/Linux (recommended - uses uv sync for proper dependency resolution)
 ./setup.sh
 
 # Windows
 .\setup.ps1
 
-# Manual
-uv pip install -e .
-uv pip install -e .[mlx]          # macOS only
-uv pip install -e .[llama-cpp]    # All platforms
-uv pip install -e .[stt]          # macOS only
+# Manual with uv sync (recommended)
+uv sync                           # Base install
+uv sync --extra mlx               # macOS only
+uv sync --extra llama-cpp         # All platforms
+uv sync --extra stt               # macOS only
+
+# Alternative: pip-style install (doesn't use lockfile)
+uv pip install -e .[mlx,llama-cpp]
 ```
 
 ### Server
@@ -173,7 +176,7 @@ Dependencies are in `pyproject.toml` with optional groups:
 - `[profile]` - py-spy, memray
 - `[all]` - Everything
 
-Always use `uv pip install -e .[group]` for installation.
+Use `uv sync --extra <group>` for installation (preferred), or `uv pip install -e .[group]` as alternative.
 
 ## Git Workflow
 

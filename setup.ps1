@@ -92,11 +92,29 @@ Write-Host "2) Everything (llama.cpp + performance + analytics + profiling)" -Fo
 Write-Host ""
 $choice = Read-Host "Enter your choice (1-2)"
 
+# Helper function for uv sync installation
+function Invoke-UvSyncInstall {
+    param([string[]]$Extras)
+
+    Write-Host "Updating lockfile to get latest versions..." -ForegroundColor Yellow
+    & uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & uv lock
+    }
+
+    if ($Extras.Count -gt 0) {
+        $extraArgs = $Extras | ForEach-Object { "--extra"; $_ }
+        & uv sync @extraArgs
+    } else {
+        & uv sync
+    }
+}
+
 # Base installation
 Write-Host ""
 Write-Host "Installing base package..." -ForegroundColor Yellow
 if ($use_uv) {
-    & uv pip install -e .
+    Invoke-UvSyncInstall
 } else {
     & $python -m pip install -e .
 }
@@ -111,7 +129,7 @@ switch ($choice) {
         Write-Host ""
         Write-Host "Installing llama.cpp backend..." -ForegroundColor Yellow
         if ($use_uv) {
-            & uv pip install -e ".[llama-cpp]"
+            Invoke-UvSyncInstall -Extras @("llama-cpp")
         } else {
             & $python -m pip install -e ".[llama-cpp]"
         }
@@ -189,7 +207,7 @@ switch ($choice) {
         Write-Host ""
         Write-Host "Installing everything..." -ForegroundColor Yellow
         if ($use_uv) {
-            & uv pip install -e ".[llama-cpp,performance,analytics,profile]"
+            Invoke-UvSyncInstall -Extras @("llama-cpp", "performance", "analytics", "profile")
         } else {
             & $python -m pip install -e ".[llama-cpp,performance,analytics,profile]"
         }

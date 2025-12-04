@@ -81,7 +81,35 @@ max_queue_size = 100 # Maximum pending requests in queue
 enable_dynamic_batching = true # Adjust batch size based on load
 
 # --- Model Definitions ---
-# MLX Models
+
+# --- Encoder Models (for hidden states / text encoding) ---
+# These models are optimized for the /v1/hidden_states endpoint used by
+# image generation pipelines (Z-Image, etc.) that need text embeddings.
+#
+# NOTE: For hidden states extraction:
+# - max_tokens does NOT limit hidden states (request's max_length does)
+# - Temperature, top_k, etc. are IGNORED (no generation happens)
+# - Only quantization level affects embedding precision
+# - Use --profile encoder when importing models for this use case
+
+[[models]]
+id = "qwen3-4b-encoder"
+provider = "mlx"
+description = "Qwen3-4B optimized for hidden states extraction (Z-Image text encoder)"
+tags = ["encoder", "qwen", "z-image"]
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/Qwen/Qwen3-4B-mlx"
+  vision = false
+  cache_type = "standard"  # No quantization for maximum embedding precision
+  max_tokens = 2048  # High limit (not used for hidden states, but allows long prompts if needed)
+  # Note: Generation params below are ignored for /v1/hidden_states endpoint
+  temperature = 0.7
+  top_k = 50
+  top_p = 0.95
+
+# --- MLX Models ---
 [[models]]
 id = "qwen2.5-vl-72b-mlx"
 provider = "mlx"

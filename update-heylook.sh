@@ -6,8 +6,10 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Detect pip command to use
+# Detect package manager
+USE_UV=false
 if command_exists uv; then
+    USE_UV=true
     PIP_CMD="uv pip"
     echo "Using uv for package management"
 else
@@ -24,61 +26,95 @@ else
 fi
 
 echo "Updating heylookitsanllm and dependencies..."
-# Update the package and its dependencies using pyproject.toml
-$PIP_CMD install --upgrade -e .
+
+# With uv, use sync which properly resolves dependencies from lockfile
+if [[ "$USE_UV" == "true" ]]; then
+    echo "Updating lockfile to get latest mlx-lm and mlx-vlm..."
+    uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>/dev/null || uv lock --upgrade
+else
+    # Update the package and its dependencies using pyproject.toml
+    $PIP_CMD install --upgrade -e .
+fi
 
 # Check which optional dependencies are installed and update them
 echo "Checking for optional dependencies to update..."
 
-# Check if llama-cpp is installed and update with GPU support if needed
-if $PIP_CMD list | grep -q "llama-cpp-python"; then
-    echo "Updating llama-cpp backend with GPU support..."
+# Build list of extras to sync
+EXTRAS=""
+
+# Check if llama-cpp is installed
+if $PIP_CMD list 2>/dev/null | grep -q "llama-cpp-python"; then
+    echo "Found llama-cpp backend..."
+    EXTRAS="$EXTRAS llama-cpp"
+
+    # GPU recompilation still needs pip for CMAKE_ARGS
+    echo "Recompiling llama-cpp-python with GPU support..."
     if [[ "$(uname)" == "Darwin" ]]; then
-        echo "macOS detected. Recompiling llama-cpp-python for Metal..."
+        echo "macOS detected. Recompiling for Metal..."
         CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
     elif [[ "$(uname)" == "Linux" ]]; then
-        # Check for NVIDIA GPU and CUDA
         if command -v nvidia-smi &> /dev/null; then
-            echo "Linux with NVIDIA GPU detected. Recompiling llama-cpp-python for CUDA..."
+            echo "Linux with NVIDIA GPU detected. Recompiling for CUDA..."
             CMAKE_ARGS="-DLLAMA_CUDA=on" FORCE_CMAKE=1 $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
         else
-            echo "Linux detected. Recompiling llama-cpp-python for CPU..."
+            echo "Linux detected. Recompiling for CPU..."
             $PIP_CMD install --upgrade --force-reinstall --no-cache-dir llama-cpp-python
         fi
     else
-        echo "Unsupported OS. Updating llama-cpp-python without GPU acceleration."
+        echo "Updating llama-cpp-python without GPU acceleration."
         $PIP_CMD install --upgrade llama-cpp-python
     fi
 fi
 
-# Update MLX packages if installed
-if $PIP_CMD list | grep -q "mlx"; then
-    echo "Updating MLX backend..."
-    $PIP_CMD install --upgrade -e ".[mlx]"
+# Check if MLX is installed
+if $PIP_CMD list 2>/dev/null | grep -q "^mlx "; then
+    echo "Found MLX backend..."
+    EXTRAS="$EXTRAS mlx"
 fi
 
-# Update performance packages if installed
-if $PIP_CMD list | grep -q "orjson"; then
-    echo "Updating performance packages..."
-    $PIP_CMD install --upgrade -e ".[performance]"
+# Check if performance packages are installed
+if $PIP_CMD list 2>/dev/null | grep -q "orjson"; then
+    echo "Found performance packages..."
+    EXTRAS="$EXTRAS performance"
 fi
 
-# Update analytics packages if installed
-if $PIP_CMD list | grep -q "duckdb"; then
-    echo "Updating analytics packages..."
-    $PIP_CMD install --upgrade -e ".[analytics]"
+# Check if analytics packages are installed
+if $PIP_CMD list 2>/dev/null | grep -q "duckdb"; then
+    echo "Found analytics packages..."
+    EXTRAS="$EXTRAS analytics"
 fi
 
-# Update profiling packages if installed
-if $PIP_CMD list | grep -q "py-spy"; then
-    echo "Updating profiling packages..."
-    $PIP_CMD install --upgrade -e ".[profile]"
+# Check if profiling packages are installed
+if $PIP_CMD list 2>/dev/null | grep -q "py-spy"; then
+    echo "Found profiling packages..."
+    EXTRAS="$EXTRAS profile"
 fi
 
-# Update STT packages if installed
-if $PIP_CMD list | grep -q "coremltools"; then
-    echo "Updating STT (Speech-to-Text) packages..."
-    $PIP_CMD install --upgrade -e ".[stt]"
+# Check if STT packages are installed
+if $PIP_CMD list 2>/dev/null | grep -q "coremltools"; then
+    echo "Found STT packages..."
+    EXTRAS="$EXTRAS stt"
+fi
+
+# Sync with uv or update with pip
+if [[ "$USE_UV" == "true" ]]; then
+    if [[ -n "$EXTRAS" ]]; then
+        echo "Syncing packages with extras:$EXTRAS"
+        EXTRA_ARGS=""
+        for extra in $EXTRAS; do
+            EXTRA_ARGS="$EXTRA_ARGS --extra $extra"
+        done
+        uv sync $EXTRA_ARGS
+    else
+        echo "Syncing base packages..."
+        uv sync
+    fi
+else
+    # Fallback to pip for each extra
+    for extra in $EXTRAS; do
+        echo "Updating $extra packages..."
+        $PIP_CMD install --upgrade -e ".[$extra]"
+    done
 fi
 
 echo "Done! Verify with: heylookllm --version"

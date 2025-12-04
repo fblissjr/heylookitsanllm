@@ -71,29 +71,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ""
-Write-Host "Updating base package..." -ForegroundColor Yellow
+Write-Host "Updating packages..." -ForegroundColor Yellow
 if ($use_uv) {
-    & uv pip install -e . --upgrade
+    # Use uv sync for proper dependency resolution
+    Write-Host "Updating lockfile to get latest versions..." -ForegroundColor Yellow
+    & uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & uv lock --upgrade
+    }
+    Write-Host "Syncing with llama-cpp backend..." -ForegroundColor Yellow
+    & uv sync --extra llama-cpp
 } else {
     & $python -m pip install -e . --upgrade
-}
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Base package update failed" -ForegroundColor Red
-    exit 1
-}
-
-# Update llama-cpp backend
-Write-Host ""
-Write-Host "Updating llama.cpp backend..." -ForegroundColor Yellow
-if ($use_uv) {
-    & uv pip install -e ".[llama-cpp]" --upgrade
-} else {
     & $python -m pip install -e ".[llama-cpp]" --upgrade
 }
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: llama.cpp update failed" -ForegroundColor Red
+    Write-Host "ERROR: Package update failed" -ForegroundColor Red
     exit 1
 }
 

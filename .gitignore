@@ -22,6 +22,9 @@ docs/
 internal/
 logs/
 
+# configs
+model.toml
+
 # Distribution / packaging
 .Python
 build/

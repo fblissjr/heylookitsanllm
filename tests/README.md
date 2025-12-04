@@ -333,14 +333,14 @@ heylookllm --api openai --port 8080
 ### Import Errors
 
 ```bash
-# Ensure package is installed in editable mode
-uv pip install -e .
+# Ensure package is installed (recommended: uv sync)
+uv sync
 
 # For MLX support (macOS only)
-uv pip install -e .[mlx]
+uv sync --extra mlx
 
 # For llama.cpp support
-uv pip install -e .[llama-cpp]
+uv sync --extra llama-cpp
 ```
 
 ### Test Collection Issues
