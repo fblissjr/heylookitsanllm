@@ -402,6 +402,7 @@ python test_parallel_stress.py   # Stress test
 ## Related Documentation
 
 - [`LLAMA_CPP_PROVIDER.md`](LLAMA_CPP_PROVIDER.md) - GGUF provider details
+- [`SERVICE_SECURITY.md`](SERVICE_SECURITY.md) - Background service setup and security (macOS/Linux)
 - [`../CLAUDE.md`](../CLAUDE.md) - Development guidelines
 - [`../README.md`](../README.md) - Project overview
 - [`../models.yaml`](../models.yaml) - Model configuration
