@@ -94,6 +94,27 @@ heylookllm --log-level INFO
 heylookllm --port 8080
 ```
 
+### Run as Background Service (macOS/Linux)
+
+Run the server as a persistent service that survives SSH disconnects:
+
+```bash
+# Install service (localhost only by default)
+heylookllm service install
+
+# Install for LAN access (behind VPN)
+heylookllm service install --host 0.0.0.0
+
+# Manage service
+heylookllm service status
+heylookllm service start
+heylookllm service stop
+heylookllm service restart
+heylookllm service uninstall
+```
+
+See [Service and Security Guide](guides/SERVICE_SECURITY.md) for detailed setup and firewall configuration.
+
 ### Automatic Import
 
 Scan directories for models and auto-generate configuration:

@@ -130,6 +130,45 @@ def main():
         help="Logging level"
     )
 
+    # Service command - manage background service (macOS/Linux)
+    service_parser = subparsers.add_parser(
+        'service',
+        help='Manage heylookllm as a background service (macOS/Linux)'
+    )
+    service_parser.add_argument(
+        "action",
+        choices=["install", "uninstall", "start", "stop", "restart", "status"],
+        help="Service action to perform"
+    )
+    service_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1 for local only, use 0.0.0.0 for LAN access)"
+    )
+    service_parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to run the server on (default: 8080)"
+    )
+    service_parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Console logging level (default: INFO)"
+    )
+    service_parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Directory for log files (default: ./logs)"
+    )
+    service_parser.add_argument(
+        "--system-wide",
+        action="store_true",
+        help="Linux only: Install as system-wide service (requires sudo)"
+    )
+
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
@@ -156,6 +195,16 @@ def main():
         from heylook_llm.model_importer import import_models
         import_models(args)
         return
+
+    # Handle service command
+    if args.command == 'service':
+        # Set up logging for service management
+        import logging as log_module
+        log_level = getattr(log_module, args.log_level.upper())
+        log_module.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
+        from heylook_llm.service_manager import manage_service
+        sys.exit(manage_service(args))
 
     # Default port if not provided
     if args.port is None:

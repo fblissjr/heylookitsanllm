@@ -79,6 +79,28 @@ heylookllm import --hf-cache --profile fast
 heylookllm import --folder ~/models --interactive  # Interactive configuration wizard
 ```
 
+### Background Service (macOS/Linux)
+
+```bash
+# Install service (localhost only by default - secure)
+heylookllm service install
+
+# Install for LAN access (behind VPN)
+heylookllm service install --host 0.0.0.0
+
+# Manage service
+heylookllm service status
+heylookllm service start
+heylookllm service stop
+heylookllm service restart
+heylookllm service uninstall
+
+# Linux: system-wide service (requires sudo)
+sudo heylookllm service install --host 0.0.0.0 --system-wide
+```
+
+See `guides/SERVICE_SECURITY.md` for firewall configuration and security guidance.
+
 ## Project Structure
 
 ```
@@ -88,10 +110,15 @@ src/heylook_llm/
 ├── stt_api.py          # Speech-to-Text endpoints
 ├── router.py           # Model routing with LRU cache
 ├── config.py           # Pydantic models
+├── service_manager.py  # Background service management (macOS/Linux)
 └── providers/
     ├── mlx_provider.py         # Apple Silicon (macOS)
     ├── llama_cpp_provider.py   # GGUF models (all platforms)
     └── coreml_stt_provider.py  # STT (macOS)
+
+services/                       # Service templates
+├── heylookllm.service.template          # systemd template (Linux)
+└── com.heylookllm.server.plist.template # launchd template (macOS)
 ```
 
 ## Key Concepts
@@ -280,6 +307,7 @@ Propose alternatives and explain reasoning.
 
 **Getting Started**
 - `README.md` - Project overview and quick start
+- `guides/SERVICE_SECURITY.md` - Background service setup and security (macOS/Linux)
 - `docs/WINDOWS_INSTALL.md` - Complete Windows setup guide
 - `docs/WINDOWS_QUICK_REFERENCE.md` - Windows command reference
 - `docs/CLAUDE_APP_QUICK_REFERENCE.md` - Quick command reference

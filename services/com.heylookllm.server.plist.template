@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+heylookllm launchd service template for macOS
+This file is processed by the service installer - do not edit {placeholders}
+
+Security: Binds to localhost only by default (127.0.0.1)
+For LAN access behind VPN, change host to 0.0.0.0 and use firewall rules
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.heylookllm.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{VENV_PATH}/bin/heylookllm</string>
+        <string>--host</string>
+        <string>{HOST}</string>
+        <string>--port</string>
+        <string>{PORT}</string>
+        <string>--log-level</string>
+        <string>{LOG_LEVEL}</string>
+        <string>--file-log-level</string>
+        <string>INFO</string>
+        <string>--log-dir</string>
+        <string>{LOG_DIR}</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{WORKING_DIR}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{VENV_PATH}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>TOKENIZERS_PARALLELISM</key>
+        <string>false</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>{LOG_DIR}/heylookllm.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{LOG_DIR}/heylookllm.stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,47 @@
+# heylookllm systemd service template
+# This file is processed by the service installer - do not edit {placeholders}
+#
+# Security: Binds to localhost only by default (127.0.0.1)
+# For LAN access behind VPN, change --host to 0.0.0.0 and use firewall rules
+
+[Unit]
+Description=HeyLook LLM Server - Local AI Inference
+Documentation=https://github.com/fblissjr/heylookitsanllm
+After=network.target
+
+[Service]
+Type=simple
+User={USER}
+Group={GROUP}
+WorkingDirectory={WORKING_DIR}
+Environment="PATH={VENV_PATH}/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="TOKENIZERS_PARALLELISM=false"
+
+# Security: Bind to localhost only by default
+# Change to 0.0.0.0 for LAN access (ensure firewall is configured)
+ExecStart={VENV_PATH}/bin/heylookllm --host {HOST} --port {PORT} --log-level {LOG_LEVEL} --file-log-level INFO --log-dir {LOG_DIR}
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Resource limits (adjust based on your system)
+# LimitNOFILE=65536
+# MemoryMax=80%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={WORKING_DIR} {LOG_DIR}
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=heylookllm
+
+[Install]
+WantedBy=multi-user.target
