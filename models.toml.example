@@ -12,19 +12,20 @@
 #
 # OPTIONAL - Model Loading:
 #   vision: boolean             # Enable vision capabilities (default: false)
-#   trust_remote_code: boolean  # Allow remote code execution (default: false)
 #
 # OPTIONAL - Memory Management (critical for large models):
-#   cache_type: string          # "standard" or "quantized" (default: "standard")
+#   cache_type: string          # "standard", "quantized", or "rotating" (default: "standard")
 #                              # Use "quantized" for models > 30B params
+#                              # Use "rotating" for fixed-size cache with auto-rotation
 #   kv_bits: integer           # Bits for KV cache: 4, 8 (default: 8)
 #                              # 4-bit saves 75% memory, slight quality loss
 #   kv_group_size: integer     # Quantization group size: 32-128 (default: 64)
 #                              # Lower = faster, higher = better quality
-#   quantized_kv_start: integer # Token position to start quantizing (default: 1024)
+#   quantized_kv_start: integer # Token position to start quantizing (default: 2048)
 #                              # Keep first N tokens at full precision
 #   max_kv_size: integer       # Maximum KV cache size in tokens (default: unlimited)
-#                              # Limit to prevent OOM on large models
+#                              # Required for "rotating" cache type
+#                              # Recommended for large models to prevent OOM
 #
 # OPTIONAL - Generation:
 #   temperature: float         # 0.0-2.0, controls randomness (default: 0.7)
@@ -38,29 +39,35 @@
 #
 # OPTIONAL - Optimization:
 #   draft_model_path: string    # Path to smaller draft model for speculative decoding
-#   num_draft_tokens: integer   # Tokens to generate with draft model: 2-8 (default: 4)
+#   num_draft_tokens: integer   # Tokens to generate with draft model: 2-8 (default: 6)
 #
 # GGUF Provider Parameters (llama.cpp backend):
 # ---------------------------------------------
 # REQUIRED:
 #   model_path: string          # Path to .gguf file
-#   provider: string            # "gguf", "llama_cpp", or "llama_server"
+#   provider: string            # "gguf" or "llama_cpp" (aliases)
+#                              # "llama_server" for subprocess-based server (recommended for new installs)
 #
 # OPTIONAL - Model Loading:
 #   mmproj_path: string         # Path to vision projection .gguf (for multimodal)
-#   chat_format: string         # Chat template: "chatml", "llama-2", "qwen", etc.
+#   chat_format: string         # Chat template: "chatml", "llama-2", "llama-3", "qwen", "mistral", etc.
 #   chat_format_template: string # Path to custom Jinja2 template file
-#   embedding: boolean          # Enable embeddings extraction (default: false)
+#   embedding: boolean          # Enable embeddings extraction mode (default: false)
+#                              # Required for /v1/embeddings endpoint with GGUF models
 #
 # OPTIONAL - Memory/GPU:
 #   n_gpu_layers: integer       # GPU layers to offload: -1 for all (default: -1)
 #   n_ctx: integer             # Context window size: 512-32768 (default: 4096)
 #   n_batch: integer           # Batch size: 1-2048 (default: 512)
-#   n_threads: integer         # CPU threads: 1-64 (default: system/2)
+#   n_threads: integer         # CPU threads (default: auto-detect)
 #   use_mmap: boolean          # Memory-mapped file loading (default: true)
 #   use_mlock: boolean         # Lock model in RAM (default: false)
 #
-# OPTIONAL - llama-server specific:
+# OPTIONAL - Caching:
+#   cache: boolean             # Enable RAM cache for repeated prompts (default: true)
+#   cache_size: integer        # Cache size in bytes (default: 2147483648 = 2GB)
+#
+# OPTIONAL - llama_server provider specific:
 #   parallel_slots: integer    # Number of concurrent request slots (default: 1)
 #
 # OPTIONAL - Generation (same as MLX):
