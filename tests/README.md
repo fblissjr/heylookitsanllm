@@ -194,7 +194,7 @@ python tests/integration/test_batch_integration.py
 
 5. **Batch Error Handling** - Batch endpoint needs error tests
 6. **Provider Edge Cases** - Vision model edge cases (multi-image, large images)
-7. **Config Validation** - models.yaml validation not tested
+7. **Config Validation** - models.toml validation not tested
 8. **LRU Cache Edge Cases** - Concurrent eviction scenarios
 
 ### Medium Priority

@@ -9,7 +9,7 @@ echo "🚀 MLX Provider Optimization Test Suite"
 echo "======================================="
 
 # Check if we're in the right directory
-if [ ! -f "models.yaml" ]; then
+if [ ! -f "models.toml" ]; then
     echo "❌ Please run from the project root directory"
     exit 1
 fi

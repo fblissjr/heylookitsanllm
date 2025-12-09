@@ -75,7 +75,7 @@ List all language models currently available on this server.
 **Returns:**
 - Model IDs (e.g., "qwen2.5-coder-1.5b-instruct-4bit")
 - OpenAI-compatible model objects
-- Only shows models marked as `enabled: true` in models.yaml
+- Only shows models marked as `enabled: true` in models.toml
     """,
     response_description="List of available models in OpenAI-compatible format",
     tags=["OpenAI API"]
@@ -716,7 +716,7 @@ Reload model configuration and clear model cache without restarting the server.
 
 This will:
 - Clear the loaded model cache
-- Reload models.yaml configuration
+- Reload models.toml configuration
 - Keep the server running
     """,
     tags=["Admin"]

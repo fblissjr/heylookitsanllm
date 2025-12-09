@@ -158,7 +158,7 @@ case $choice in
 
         echo ""
         echo "STT backend installed successfully!"
-        echo "Configure your Parakeet model in models.yaml with provider: 'coreml_stt'"
+        echo "Configure your Parakeet model in models.toml with provider: 'coreml_stt'"
         ;;
     4)
         echo ""
@@ -251,7 +251,7 @@ case $choice in
 
         echo ""
         echo "All backends installed successfully!"
-        echo "Configure your STT models in models.yaml with provider: 'coreml_stt'"
+        echo "Configure your STT models in models.toml with provider: 'coreml_stt'"
         ;;
     6)
         echo ""
@@ -298,7 +298,7 @@ case $choice in
 
         echo ""
         echo "Everything installed successfully!"
-        echo "Configure your STT models in models.yaml with provider: 'coreml_stt'"
+        echo "Configure your STT models in models.toml with provider: 'coreml_stt'"
         ;;
     *)
         echo "ERROR: Invalid choice"
@@ -306,25 +306,25 @@ case $choice in
         ;;
 esac
 
-# Check if models.yaml exists
+# Check if models.toml exists
 echo ""
-if [[ ! -f "models.yaml" ]]; then
-    if [[ -f "models.yaml.example" ]]; then
-        echo "Creating models.yaml from example..."
-        cp models.yaml.example models.yaml
-        echo "WARNING:  Please edit models.yaml to point to your model files"
+if [[ ! -f "models.toml" ]]; then
+    if [[ -f "models.toml.example" ]]; then
+        echo "Creating models.toml from example..."
+        cp models.toml.example models.toml
+        echo "WARNING:  Please edit models.toml to point to your model files"
     else
-        echo "WARNING:  No models.yaml found. You'll need to create one or use 'heylookllm import'"
+        echo "WARNING:  No models.toml found. You'll need to create one or use 'heylookllm import'"
     fi
 else
-    echo "models.yaml already exists"
+    echo "models.toml already exists"
 fi
 
 echo ""
 echo "Setup complete!"
 echo ""
 echo "Next steps:"
-echo "1. Edit models.yaml to configure your models (or use 'heylookllm import')"
+echo "1. Edit models.toml to configure your models (or use 'heylookllm import')"
 echo "2. Start the server: heylookllm"
 echo ""
 echo "For more options, run: heylookllm --help"

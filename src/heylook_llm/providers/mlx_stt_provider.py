@@ -48,7 +48,7 @@ class MLXSTTProvider:
 
         Args:
             model_id: Unique identifier for the model
-            config: Model configuration from models.yaml
+            config: Model configuration from models.toml
             verbose: Enable verbose logging
         """
         # Check dependencies

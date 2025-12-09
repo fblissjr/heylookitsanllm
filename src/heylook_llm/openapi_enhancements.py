@@ -24,7 +24,7 @@ List all language models currently available on this server.
 - Model type (always "model" for compatibility)
 - Owner (always "user" for local models)
 
-**Note**: Only models marked as `enabled: true` in models.yaml are shown.
+**Note**: Only models marked as `enabled: true` in models.toml are shown.
         """,
         "response_description": "List of available models in OpenAI-compatible format"
     },

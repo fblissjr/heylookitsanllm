@@ -20,7 +20,7 @@ This script will:
   - Detect Python installation
   - Install base dependencies
   - Guide through GPU acceleration options (CUDA/Vulkan)
-  - Create initial models.yaml configuration
+  - Create initial models.toml configuration
 
 "@
     exit 0
@@ -287,25 +287,25 @@ switch ($choice) {
     }
 }
 
-# Check if models.yaml exists
+# Check if models.toml exists
 Write-Host ""
-if (-not (Test-Path "models.yaml")) {
-    if (Test-Path "models.yaml.example") {
-        Write-Host "Creating models.yaml from example..." -ForegroundColor Yellow
-        Copy-Item "models.yaml.example" "models.yaml"
-        Write-Host "WARNING: Please edit models.yaml to point to your model files" -ForegroundColor Red
+if (-not (Test-Path "models.toml")) {
+    if (Test-Path "models.toml.example") {
+        Write-Host "Creating models.toml from example..." -ForegroundColor Yellow
+        Copy-Item "models.toml.example" "models.toml"
+        Write-Host "WARNING: Please edit models.toml to point to your model files" -ForegroundColor Red
     } else {
-        Write-Host "WARNING: No models.yaml found. You'll need to create one or use 'heylookllm import'" -ForegroundColor Yellow
+        Write-Host "WARNING: No models.toml found. You'll need to create one or use 'heylookllm import'" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "models.yaml already exists" -ForegroundColor Green
+    Write-Host "models.toml already exists" -ForegroundColor Green
 }
 
 Write-Host ""
 Write-Host "Setup complete!" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "1. Edit models.yaml to configure your models (or use 'heylookllm import')" -ForegroundColor White
+Write-Host "1. Edit models.toml to configure your models (or use 'heylookllm import')" -ForegroundColor White
 Write-Host "2. Start the server: heylookllm" -ForegroundColor White
 Write-Host ""
 Write-Host "For more options, run: heylookllm --help" -ForegroundColor White

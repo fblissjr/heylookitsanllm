@@ -188,8 +188,8 @@ def main():
     if all(results):
         print("✅ All tests passed! Queue integration working correctly.")
         print("\nTo enable queue manager globally:")
-        print("1. Edit models.yaml")
-        print("2. Set queue_config.enabled: true")
+        print("1. Edit models.toml")
+        print("2. Set queue_config.enabled = true")
         print("3. Restart the server")
     else:
         print("⚠ Some tests failed. Check the output above.")

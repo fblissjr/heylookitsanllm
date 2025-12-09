@@ -73,37 +73,39 @@ class LlamaCppProvider(BaseProvider):
 
 ## Configuration
 
-### models.yaml Parameters
+### models.toml Parameters
 
-```yaml
-- id: "gpt-oss-20b"
-  provider: "gguf"  # or "llama_cpp" for backwards compatibility
-  config:
-    # Required
-    model_path: "path/to/model.gguf"
-    
-    # Memory/GPU
-    n_ctx: 16384          # Context window size
-    n_gpu_layers: -1      # -1 for all layers on GPU
-    n_batch: 1024         # Batch size for prompt processing
-    n_threads: 22         # CPU threads (optimal: cores - 2)
-    use_mmap: true        # Memory-mapped file loading
-    use_mlock: true       # Lock model in RAM (if available)
-    
-    # Generation
-    temperature: 1.0
-    top_p: 0.95
-    top_k: 50
-    min_p: 0.05
-    repeat_penalty: 1.0
-    max_tokens: 512
-    stop: ["<|endoftext|>", "<|return|>"]
-    
-    # Special Features
-    embedding: true       # Enable embeddings extraction
-    mmproj_path: "path/to/vision.gguf"  # For vision models
-    chat_format: "chatml" # Built-in chat format
-    chat_format_template: "templates/custom.jinja2"  # Custom template
+```toml
+[[models]]
+id = "gpt-oss-20b"
+provider = "gguf"  # or "llama_cpp" for backwards compatibility
+
+  [models.config]
+  # Required
+  model_path = "path/to/model.gguf"
+
+  # Memory/GPU
+  n_ctx = 16384          # Context window size
+  n_gpu_layers = -1      # -1 for all layers on GPU
+  n_batch = 1024         # Batch size for prompt processing
+  n_threads = 22         # CPU threads (optimal: cores - 2)
+  use_mmap = true        # Memory-mapped file loading
+  use_mlock = true       # Lock model in RAM (if available)
+
+  # Generation
+  temperature = 1.0
+  top_p = 0.95
+  top_k = 50
+  min_p = 0.05
+  repetition_penalty = 1.0
+  max_tokens = 512
+  stop = ["<|endoftext|>", "<|return|>"]
+
+  # Special Features
+  embedding = true       # Enable embeddings extraction
+  mmproj_path = "path/to/vision.gguf"  # For vision models
+  chat_format = "chatml" # Built-in chat format
+  chat_format_template = "templates/custom.jinja2"  # Custom template
 ```
 
 ### M2 Ultra Optimizations

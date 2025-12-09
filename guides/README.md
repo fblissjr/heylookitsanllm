@@ -165,15 +165,16 @@ for chunk in provider.create_chat_completion(request):
 
 ## Configuration System
 
-### Model Definition (`models.yaml`)
-```yaml
-models:
-  - id: "model-identifier"
-    provider: "mlx" | "gguf"
-    enabled: true
-    config:
-      model_path: "path/to/model"
-      # Provider-specific settings
+### Model Definition (`models.toml`)
+```toml
+[[models]]
+id = "model-identifier"
+provider = "mlx"  # or "gguf"
+enabled = true
+
+  [models.config]
+  model_path = "path/to/model"
+  # Provider-specific settings
 ```
 
 ### Provider Selection Logic
@@ -316,12 +317,14 @@ class ModelConfig(BaseModel):
 ```
 
 4. **Document Configuration**:
-```yaml
-# models.yaml
-- id: "new-model"
-  provider: "new"
-  config:
-    # Provider-specific config
+```toml
+# models.toml
+[[models]]
+id = "new-model"
+provider = "new"
+
+  [models.config]
+  # Provider-specific config
 ```
 
 ## Best Practices
@@ -381,7 +384,7 @@ python test_parallel_stress.py   # Stress test
 - GPU not used: Check n_gpu_layers setting
 
 **Router**:
-- Model not found: Check models.yaml
+- Model not found: Check models.toml
 - Cache thrashing: Reduce max_loaded_models
 - Thread deadlock: Check loading locks
 
@@ -405,4 +408,4 @@ python test_parallel_stress.py   # Stress test
 - [`SERVICE_SECURITY.md`](SERVICE_SECURITY.md) - Background service setup and security (macOS/Linux)
 - [`../CLAUDE.md`](../CLAUDE.md) - Development guidelines
 - [`../README.md`](../README.md) - Project overview
-- [`../models.yaml`](../models.yaml) - Model configuration
+- [`../models.toml`](../models.toml) - Model configuration

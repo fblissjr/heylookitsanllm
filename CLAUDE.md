@@ -141,10 +141,10 @@ services/                       # Service templates
 - **CoreMLSTTProvider**: Speech-to-text via CoreML
 
 ### Configuration
-- `models.toml` (or `models.yaml` for backward compatibility) defines all available models
+- `models.toml` defines all available models
 - Fields: `id`, `provider` (mlx/llama_cpp/llama_server/coreml_stt), `enabled`, `config`
 - Models load on-demand when requested via API
-- TOML is the preferred format; YAML is deprecated but still supported
+- See `models.toml.example` for full parameter documentation
 
 ## Error Handling
 
@@ -227,7 +227,7 @@ Use `uv sync --extra <group>` for installation (preferred), or `uv pip install -
 1. Create provider in `src/heylook_llm/providers/`
 2. Inherit from `BaseProvider` or create appropriate interface
 3. Implement required methods (`load_model`, etc.)
-4. Add provider option to `models.yaml` schema
+4. Add provider option to `models.toml` configuration
 5. Update router to handle new provider type
 6. Document in CLAUDE.md and README.md
 
@@ -383,9 +383,8 @@ Propose alternatives and explain reasoning.
 
 ### Configuration Files
 - `CLAUDE.md` - Claude AI assistant guidelines (this file)
-- `models.toml` - Model configuration (TOML format, preferred)
-- `models.yaml` - Legacy model configuration (deprecated, still supported)
-- `models.toml.example` - Example TOML configuration with full documentation
+- `models.toml` - Model configuration
+- `models.toml.example` - Example configuration with full parameter documentation
 - `pyproject.toml` - Python package configuration
 - `NEXT_STEPS.md` - Ongoing work tracker (check if exists)
 

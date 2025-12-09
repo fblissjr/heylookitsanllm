@@ -121,7 +121,7 @@ def main():
     import_parser.add_argument(
         "--merge",
         action="store_true",
-        help="Show instructions for merging with existing models.yaml"
+        help="Show instructions for merging with existing models.toml"
     )
     import_parser.add_argument(
         "--log-level",

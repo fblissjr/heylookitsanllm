@@ -101,7 +101,7 @@ class ModelRouter:
         initial_model_to_load = initial_model_id or self.app_config.default_model
         enabled_models = self.app_config.get_enabled_models()
         if not enabled_models:
-            logging.error("No enabled models found in models.yaml. Server cannot serve requests.")
+            logging.error("No enabled models found in models.toml. Server cannot serve requests.")
             return
 
         # Check if the initial model is available and its provider is installed

@@ -316,7 +316,7 @@ def get_smart_defaults(model_info: Dict[str, Any]) -> Dict[str, Any]:
     return defaults
 
 class ModelImporter:
-    """Scan directories and generate models.yaml entries."""
+    """Scan directories and generate models.toml entries."""
 
     def __init__(self, profile: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None):
         self.models = []
@@ -530,7 +530,7 @@ class ModelImporter:
         return None, None
 
     def _create_mlx_entry(self, path: Path) -> Optional[Dict]:
-        """Create a models.yaml entry for an MLX model."""
+        """Create a models.toml entry for an MLX model."""
         model_id = path.name
 
         # Skip if already processed
@@ -617,7 +617,7 @@ class ModelImporter:
         return entry
 
     def _create_gguf_entry(self, path: Path) -> Optional[Dict]:
-        """Create a models.yaml entry for a GGUF model."""
+        """Create a models.toml entry for a GGUF model."""
         model_id = path.stem  # Remove .gguf extension
 
         # Skip if already processed
