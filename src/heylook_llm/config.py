@@ -48,6 +48,12 @@ class ChatRequest(BaseModel):
     image_quality: Optional[int] = Field(None, ge=1, le=100, description="JPEG quality for resized images")
     preserve_alpha: Optional[bool] = Field(None, description="Preserve alpha channel (outputs PNG)")
 
+    # Thinking mode control (Qwen3 models)
+    enable_thinking: Optional[bool] = Field(None, description="Enable thinking mode for Qwen3 models")
+
+    # Additional sampler parameters
+    presence_penalty: Optional[float] = Field(None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
+
     @validator('messages')
     def validate_messages(cls, v):
         if not v:
@@ -116,11 +122,14 @@ class MLXModelConfig(BaseModel):
     min_p: Optional[float] = None
     max_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     cache_type: Literal["standard", "rotating", "quantized"] = "standard"
     max_kv_size: Optional[int] = None
     kv_bits: Optional[int] = Field(None, ge=1, le=8)
     kv_group_size: int = 64
     quantized_kv_start: int = 2048
+    # Thinking mode (Qwen3 models with <think> blocks)
+    enable_thinking: bool = False
 
 class LlamaCppModelConfig(BaseModel):
     model_path: str

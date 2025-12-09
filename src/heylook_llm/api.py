@@ -351,11 +351,28 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         return await non_stream_response(generator, chat_request, router, request_id, request_start_time)
 
 def stream_response_generator(generator, model_id, request_id):
+    """Sync streaming response generator with thinking token support."""
+    from heylook_llm.thinking_parser import StreamingThinkingParser
+
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
 
+    # Thinking parser for streaming
+    thinking_parser = StreamingThinkingParser()
+
     log_request_stage(request_id, "streaming")
+
+    def make_delta(delta_type: str, text: str) -> str:
+        """Create SSE delta message for thinking or content."""
+        response = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created_time,
+            "model": model_id,
+            "choices": [{"delta": {delta_type: text}}]
+        }
+        return f"data: {json.dumps(response)}\n\n"
 
     for chunk in generator:
         if not chunk.text:
@@ -368,28 +385,50 @@ def stream_response_generator(generator, model_id, request_id):
             from heylook_llm.utils import log_token_update
             log_token_update(request_id, token_count)
 
-        response = {
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": created_time,
-            "model": model_id,
-            "choices": [{"delta": {"content": chunk.text}}]
-        }
-        yield f"data: {json.dumps(response)}\n\n"
+        # Process through thinking parser
+        deltas = thinking_parser.process_chunk(chunk.text)
+        for delta_type, text in deltas:
+            if text:
+                yield make_delta(delta_type, text)
+
+    # Flush any remaining buffer
+    for delta_type, text in thinking_parser.flush():
+        if text:
+            yield make_delta(delta_type, text)
 
     # Log completion
     log_request_complete(request_id, success=True)
     yield "data: [DONE]\n\n"
 
 async def stream_response_generator_async(generator, model_id, request_id):
-    """Async streaming response generator that runs generation in thread pool."""
+    """Async streaming response generator that runs generation in thread pool.
+
+    Supports Qwen3 thinking tokens: streams delta.thinking during <think> blocks,
+    then delta.content for the response after </think>.
+    """
+    from heylook_llm.thinking_parser import StreamingThinkingParser
+
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
     last_keepalive_time = time.time()
     keepalive_interval = 10.0  # Send keepalive every 10 seconds
 
+    # Thinking parser for streaming
+    thinking_parser = StreamingThinkingParser()
+
     log_request_stage(request_id, "streaming")
+
+    def make_delta(delta_type: str, text: str) -> str:
+        """Create SSE delta message for thinking or content."""
+        response = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created_time,
+            "model": model_id,
+            "choices": [{"delta": {delta_type: text}}]
+        }
+        return f"data: {json.dumps(response)}\n\n"
 
     # Create async wrapper for the synchronous generator
     async def chunk_generator():
@@ -425,17 +464,19 @@ async def stream_response_generator_async(generator, model_id, request_id):
             from heylook_llm.utils import log_token_update
             log_token_update(request_id, token_count)
 
-        response = {
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": created_time,
-            "model": model_id,
-            "choices": [{"delta": {"content": chunk.text}}]
-        }
-        yield f"data: {json.dumps(response)}\n\n"
+        # Process through thinking parser
+        deltas = thinking_parser.process_chunk(chunk.text)
+        for delta_type, text in deltas:
+            if text:
+                yield make_delta(delta_type, text)
 
         # Update last keepalive time since we sent actual content
         last_keepalive_time = time.time()
+
+    # Flush any remaining buffer
+    for delta_type, text in thinking_parser.flush():
+        if text:
+            yield make_delta(delta_type, text)
 
     # Log completion
     log_request_complete(request_id, success=True)
@@ -472,12 +513,20 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         "total_tokens": (prompt_tokens or 0) + (completion_tokens or token_count)
     }
 
+    # Parse thinking content from Qwen3 models
+    from heylook_llm.thinking_parser import parse_thinking_content
+    content, thinking = parse_thinking_content(full_text)
+
+    message = {"role": "assistant", "content": content}
+    if thinking is not None:
+        message["thinking"] = thinking
+
     response = ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4()}",
         object="chat.completion",
         created=int(time.time()),
         model=chat_request.model or "unknown",
-        choices=[{"message": {"role": "assistant", "content": full_text}}],
+        choices=[{"message": message}],
         usage=usage_dict
     )
 

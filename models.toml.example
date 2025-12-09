@@ -36,6 +36,14 @@
 #                             # Often faster than top_p, disable top_p when using
 #   repetition_penalty: float  # 1.0-2.0, penalize repetition (default: 1.0)
 #   repetition_context_size: integer # Tokens to consider for repetition (default: 20)
+#   presence_penalty: float    # 0.0-2.0, discourage token reuse (default: 0.0)
+#                             # Recommended: 1.5 for Qwen3 thinking mode
+#
+# OPTIONAL - Thinking Mode (Qwen3 models):
+#   enable_thinking: boolean   # Enable <think> block parsing (default: false)
+#                             # When true, applies Qwen3 optimal defaults:
+#                             # temperature=0.6, top_p=0.95, top_k=20, presence_penalty=1.5
+#                             # Response includes separate "thinking" field
 #
 # OPTIONAL - Optimization:
 #   draft_model_path: string    # Path to smaller draft model for speculative decoding
@@ -115,6 +123,33 @@ enabled = true
   temperature = 0.7
   top_k = 50
   top_p = 0.95
+
+# --- Qwen3 Thinking Models ---
+# These models use Qwen3's <think>...</think> blocks for reasoning.
+# When enable_thinking=true:
+# - Server applies Qwen3 optimal sampler defaults (temp=0.6, presence_penalty=1.5)
+# - Responses include "thinking" field with parsed reasoning content
+# - Streaming separates delta.thinking from delta.content
+
+[[models]]
+id = "qwen3-4b-thinking"
+provider = "mlx"
+description = "Qwen3-4B with thinking mode for prompt rewriting and reasoning"
+tags = ["thinking", "qwen3", "rewriter"]
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/Qwen/Qwen3-4B-mlx"
+  vision = false
+  enable_thinking = true  # Enable <think> block parsing and optimal defaults
+  # Thinking mode automatically applies:
+  # - temperature = 0.6 (don't use 0 - causes endless repetition)
+  # - top_p = 0.95
+  # - top_k = 20
+  # - presence_penalty = 1.5 (reduces repetition in thinking)
+  # You can override any of these:
+  # temperature = 0.7  # Uncomment to override thinking default
+  max_tokens = 1024
 
 # --- MLX Models ---
 [[models]]

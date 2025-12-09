@@ -17,6 +17,39 @@ DEFAULT_TEMP = 1.0
 DEFAULT_TOP_P = 0.95
 DEFAULT_REPETITION_PENALTY = 1.1
 
+
+def make_presence_penalty_processor(penalty: float):
+    """
+    Create a presence penalty logits processor.
+
+    Presence penalty reduces the likelihood of tokens that have already appeared,
+    regardless of how many times they appeared. This encourages the model to
+    explore new topics.
+
+    Recommended value for Qwen3 thinking mode: 1.5
+
+    Args:
+        penalty: Penalty value (0.0-2.0). Higher values discourage repetition more.
+
+    Returns:
+        A logits processor function compatible with mlx-lm.
+    """
+    def processor(tokens: mx.array, logits: mx.array) -> mx.array:
+        if penalty <= 0.0 or len(tokens) == 0:
+            return logits
+
+        # Get unique tokens that have appeared
+        unique_tokens = mx.unique(tokens)
+
+        # Apply penalty to logits of tokens that have appeared
+        # Subtract penalty from the logits of seen tokens
+        logits = logits.at[unique_tokens].add(-penalty)
+
+        return logits
+
+    return processor
+
+
 def _xtc_special_tokens(tokenizer: PreTrainedTokenizer | None) -> list[int]:
     """Return the newline token + all EOS ids."""
     if tokenizer is None:
@@ -27,6 +60,7 @@ def _xtc_special_tokens(tokenizer: PreTrainedTokenizer | None) -> list[int]:
         return newline_token + eos_tokens
     except Exception:
         return []
+
 
 def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable, list[callable]]:
     """
@@ -58,5 +92,10 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
         repetition_penalty=params.get("repetition_penalty", DEFAULT_REPETITION_PENALTY),
         repetition_context_size=params.get("repetition_context_size", 20),
     )
+
+    # Add presence penalty processor if specified
+    presence_penalty = params.get("presence_penalty", 0.0)
+    if presence_penalty > 0.0:
+        processors.append(make_presence_penalty_processor(presence_penalty))
 
     return sampler, processors

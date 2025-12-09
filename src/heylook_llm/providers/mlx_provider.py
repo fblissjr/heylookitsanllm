@@ -188,11 +188,26 @@ class TextOnlyStrategy:
                 msg_dict['content'] = ' '.join(text_parts)
             messages_for_template.append(msg_dict)
 
-        prompt = tokenizer.apply_chat_template(
-            messages_for_template,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+        # Get enable_thinking from params (request) or model config
+        enable_thinking = effective_request.get("enable_thinking")
+        if enable_thinking is None:
+            enable_thinking = getattr(self.model_config, 'enable_thinking', True)
+
+        # Apply chat template with thinking control for Qwen3 models
+        try:
+            prompt = tokenizer.apply_chat_template(
+                messages_for_template,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking
+            )
+        except TypeError:
+            # Tokenizer doesn't support enable_thinking parameter (non-Qwen3 models)
+            prompt = tokenizer.apply_chat_template(
+                messages_for_template,
+                tokenize=False,
+                add_generation_prompt=True
+            )
         
         # Tokenize the prompt
         if isinstance(prompt, str):
@@ -907,26 +922,48 @@ class MLXProvider(BaseProvider):
         return has_images
 
     def _apply_model_defaults(self, request: ChatRequest) -> dict:
-        """Apply model defaults with minimal object creation."""
+        """Apply model defaults with minimal object creation.
+
+        Supports thinking mode defaults for Qwen3 models.
+        """
         global_defaults = {
             'temperature': 0.1,
             'top_p': 1.0,
             'top_k': 0,
             'min_p': 0.0,
             'max_tokens': 512,
-            'repetition_penalty': 1.0
+            'repetition_penalty': 1.0,
+            'presence_penalty': 0.0
         }
 
-        # Get only the parameter fields we care about from the request
+        # Qwen3 thinking mode optimal settings (from Qwen3 best practices)
+        thinking_defaults = {
+            'temperature': 0.6,  # Don't use 0 - causes repetition
+            'top_p': 0.95,
+            'top_k': 20,
+            'min_p': 0.0,
+            'presence_penalty': 1.5  # Reduces repetition in thinking
+        }
+
+        # Start with global defaults
+        merged_config = global_defaults.copy()
+
+        # If thinking mode is enabled for this model, apply thinking defaults
+        if self.config.get('enable_thinking', False):
+            merged_config.update(thinking_defaults)
+
+        # Apply model config overrides
+        config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
+                       'repetition_penalty', 'presence_penalty', 'enable_thinking']
+        merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
+
+        # Get only the parameter fields we care about from the request (highest priority)
         request_params = {
             k: v for k, v in request.model_dump().items()
-            if k in ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens', 'repetition_penalty', 'seed']
+            if k in ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
+                     'repetition_penalty', 'presence_penalty', 'enable_thinking', 'seed']
             and v is not None
         }
-
-        # Efficient config merging without including messages
-        merged_config = global_defaults.copy()
-        merged_config.update({k: v for k, v in self.config.items() if v is not None})
         merged_config.update(request_params)
 
         return merged_config
