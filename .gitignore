@@ -24,6 +24,9 @@ logs/
 
 # configs
 model.toml
+models.toml
+model.yaml
+models.yaml
 
 # Distribution / packaging
 .Python
