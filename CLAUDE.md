@@ -6,7 +6,12 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **IMPORTANT**: Before making changes to provider code, MLX integration, or VLM functionality, check the `internal/` directory for known issues and lessons learned:
 
-**Key Rule**: Always use library high-level APIs (mlx-vlm's `stream_generate`, mlx-lm's `stream_generate`) instead of reimplementing with low-level functions. If something seems broken in a library, verify it's actually broken before implementing a workaround.
+**Key Rule**: Always use library high-level APIs instead of reimplementing with low-level functions:
+- `mlx_vlm.generate.stream_generate` for VLM generation
+- `mlx_vlm.prompt_utils.apply_chat_template` for VLM prompt formatting (handles image tokens)
+- `mlx_lm.generate.stream_generate` for text-only generation
+
+If something seems broken in a library, verify it's actually broken before implementing a workaround.
 
 ## Ongoing Work - CHECK FIRST
 

@@ -16,6 +16,7 @@ from mlx_lm.utils import load as lm_load
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_vlm.utils import load as vlm_load
 from mlx_vlm import generate as vlm_generate, stream_generate as vlm_stream_generate
+from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest
 from .base import BaseProvider
@@ -35,24 +36,25 @@ generation_stream = mx.new_stream(mx.default_device())
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None):
     """
-    Apply chat template using the processor's tokenizer.
+    Apply chat template using mlx-vlm's prompt_utils.
 
-    This is a simple wrapper around processor.apply_chat_template that was previously
-    provided by mlx_vlm.prompt_utils but has been removed.
+    This uses the library's apply_chat_template which properly formats messages
+    with image tokens based on num_images and model_type.
 
     Args:
         processor: The model processor (contains tokenizer)
-        config: Model config (not used, kept for compatibility)
+        config: Model config (contains model_type for proper formatting)
         messages: List of message dicts with 'role' and 'content'
-        num_images: Number of images (not used, kept for compatibility)
+        num_images: Number of images to add tokens for
 
     Returns:
-        str: Formatted prompt string
+        str: Formatted prompt string with proper image tokens
     """
-    return processor.apply_chat_template(
+    return mlx_vlm_apply_chat_template(
+        processor,
+        config,
         messages,
-        tokenize=False,
-        add_generation_prompt=True
+        num_images=num_images or 0
     )
 
 
@@ -352,16 +354,8 @@ class VLMTextOnlyStrategy:
                             has_images = True
                             message_has_images = True
                             image_counter += 1
-                            # Add image placeholder to maintain position
-                            # Note: Some models (like Gemma) handle image tokens automatically
-                            # in their chat template, so we shouldn't add them manually
-                            model_type = str(type(model)).lower() if model else ""
-                            if 'gemma' not in model_type:
-                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                    text_parts.append(processor.tokenizer.image_token)
-                                else:
-                                    # Fallback for models without explicit image tokens
-                                    text_parts.append(f"[Image {image_counter}]")
+                            # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                            # handles image token insertion based on num_images
                     elif isinstance(part, dict):
                         # Dict format
                         if part.get('type') == 'text':
@@ -377,16 +371,8 @@ class VLMTextOnlyStrategy:
                                 has_images = True
                                 message_has_images = True
                                 image_counter += 1
-                                # Add image placeholder to maintain position
-                                # Note: Some models (like Gemma) handle image tokens automatically
-                                # in their chat template, so we shouldn't add them manually
-                                model_type = str(type(model)).lower() if model else ""
-                                if 'gemma' not in model_type:
-                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                        text_parts.append(processor.tokenizer.image_token)
-                                    else:
-                                        # Fallback for models without explicit image tokens
-                                        text_parts.append(f"[Image {image_counter}]")
+                                # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                                # handles image token insertion based on num_images
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
@@ -482,13 +468,8 @@ class VLMVisionStrategy:
                             image_urls.append(part.image_url.url)
                             has_images = True
                             image_counter += 1
-                            # Add image placeholder to maintain position
-                            model_type = str(type(model)).lower() if model else ""
-                            if 'gemma' not in model_type:
-                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                    text_parts.append(processor.tokenizer.image_token)
-                                else:
-                                    text_parts.append(f"[Image {image_counter}]")
+                            # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                            # handles image token insertion based on num_images
                     elif isinstance(part, dict):
                         # Dict format
                         if part.get('type') == 'text':
@@ -503,13 +484,8 @@ class VLMVisionStrategy:
                                 image_urls.append(url)
                                 has_images = True
                                 image_counter += 1
-                                # Add image placeholder to maintain position
-                                model_type = str(type(model)).lower() if model else ""
-                                if 'gemma' not in model_type:
-                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                        text_parts.append(processor.tokenizer.image_token)
-                                    else:
-                                        text_parts.append(f"[Image {image_counter}]")
+                                # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                                # handles image token insertion based on num_images
 
                 # Combine text parts
                 combined_content = " ".join(text_parts) if text_parts else ""
@@ -577,16 +553,8 @@ class VLMVisionStrategy:
                             has_images = True
                             message_has_images = True
                             image_counter += 1
-                            # Add image placeholder to maintain position
-                            # Note: Some models (like Gemma) handle image tokens automatically
-                            # in their chat template, so we shouldn't add them manually
-                            model_type = str(type(model)).lower() if model else ""
-                            if 'gemma' not in model_type:
-                                if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                    text_parts.append(processor.tokenizer.image_token)
-                                else:
-                                    # Fallback for models without explicit image tokens
-                                    text_parts.append(f"[Image {image_counter}]")
+                            # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                            # handles image token insertion based on num_images
                     elif isinstance(part, dict):
                         # Dict format
                         if part.get('type') == 'text':
@@ -602,16 +570,8 @@ class VLMVisionStrategy:
                                 has_images = True
                                 message_has_images = True
                                 image_counter += 1
-                                # Add image placeholder to maintain position
-                                # Note: Some models (like Gemma) handle image tokens automatically
-                                # in their chat template, so we shouldn't add them manually
-                                model_type = str(type(model)).lower() if model else ""
-                                if 'gemma' not in model_type:
-                                    if processor.tokenizer and hasattr(processor.tokenizer, 'image_token'):
-                                        text_parts.append(processor.tokenizer.image_token)
-                                    else:
-                                        # Fallback for models without explicit image tokens
-                                        text_parts.append(f"[Image {image_counter}]")
+                                # Don't add manual placeholders - mlx-vlm's apply_chat_template
+                                # handles image token insertion based on num_images
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""

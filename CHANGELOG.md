@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Fixed
+
+- **Qwen3-VL-MOE Vision Support**: Fixed "Image features and image tokens do not match" error
+  - Use `mlx_vlm.prompt_utils.apply_chat_template` for proper image token insertion
+  - Removed manual image placeholder insertion that conflicted with library handling
+  - Now properly passes `num_images` to prompt formatting
+
 ### Added
 
 - **Qwen3 Thinking Token Support**: Parse `<think>...</think>` blocks from Qwen3 model outputs
