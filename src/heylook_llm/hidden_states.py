@@ -382,6 +382,16 @@ async def create_hidden_states(
         # Load the model
         provider = router.get_provider(request.model)
 
+        # Apply model config defaults for hidden states parameters
+        layer = request.layer
+        max_length = request.max_length
+        if hasattr(provider, 'config') and isinstance(provider.config, dict):
+            # Use model config defaults if request uses default values
+            if layer == -2:  # Default value in request
+                layer = provider.config.get('default_hidden_layer', -2)
+            if max_length == 512:  # Default value in request
+                max_length = provider.config.get('default_max_length', 512)
+
         # Determine provider type
         provider_class_name = provider.__class__.__name__
         if "MLX" in provider_class_name:
@@ -409,11 +419,11 @@ async def create_hidden_states(
         else:
             extractor = create_hidden_states_extractor(provider_type, provider.model)
 
-        # Extract hidden states
+        # Extract hidden states (using possibly model-config-overridden values)
         results = extractor.extract(
             texts,
-            layer=request.layer,
-            max_length=request.max_length,
+            layer=layer,
+            max_length=max_length,
             return_attention_mask=request.return_attention_mask,
         )
 
@@ -433,7 +443,7 @@ async def create_hidden_states(
             hidden_states=hidden_states_output,
             shape=result["shape"],
             model=request.model,
-            layer=request.layer,
+            layer=layer,  # Use actual layer (may be from model config)
             dtype=result["dtype"],
             encoding_format=encoding_format,
             attention_mask=result.get("attention_mask"),

@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🚀 MLX Provider Optimization Test Suite"
+echo "MLX Provider Optimization Test Suite"
 echo "======================================="
 
 # Check if we're in the right directory

@@ -132,11 +132,15 @@ services/                       # Service templates
 - LRU cache holds max 2 models in memory
 - Automatic loading/unloading based on API requests
 - Provider selection based on `models.toml` configuration
+- **Auto model selection**: If no model specified in request, uses loaded model or `default_model` from config
 
 ### API Compatibility
 - **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/batch/chat/completions`, `/v1/hidden_states`
 - **Admin**: `/v1/admin/restart`, `/v1/admin/reload`
 - **Batch**: `/v1/batch/chat/completions` - Batch text generation (2-4x throughput, text-only models)
+- **Logprobs**: `logprobs: true` + `top_logprobs: N` in chat completions returns token probabilities
+- **Streaming Usage**: `stream_options: {include_usage: true}` returns token counts in final streaming chunk
+- **Thinking Mode**: Qwen3 `<think>` blocks parsed and returned as `message.thinking` (non-streaming) or `delta.thinking` (streaming)
 
 ### Provider System
 - **BaseProvider**: Abstract interface for LLM providers
@@ -150,6 +154,10 @@ services/                       # Service templates
 - Fields: `id`, `provider` (mlx/llama_cpp/llama_server/coreml_stt), `enabled`, `config`
 - Models load on-demand when requested via API
 - See `models.toml.example` for full parameter documentation
+- **MLX-specific config options**:
+  - `enable_thinking`: Enable Qwen3 thinking mode with optimal sampler defaults
+  - `default_hidden_layer`: Default layer for hidden states extraction (default: -2)
+  - `default_max_length`: Default max sequence length for hidden states (default: 512)
 
 ## Error Handling
 

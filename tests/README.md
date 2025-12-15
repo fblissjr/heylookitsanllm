@@ -77,10 +77,6 @@ Shared test data and helpers:
 
 Test input files (images, audio, etc.)
 
-### Archive (tests/archive/)
-
-62 archived files - see `archive/README.md` for details.
-
 ## Running Tests
 
 ### Prerequisites

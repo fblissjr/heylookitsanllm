@@ -4,9 +4,21 @@ Parser for Qwen3 thinking blocks in generated text.
 
 Qwen3 models can output <think>...</think> blocks when reasoning.
 This module extracts thinking content and separates it from the final response.
+
+Supports two parsing modes:
+1. Token-level: Uses special token IDs for precise detection (recommended)
+2. Text-based: Falls back to regex for models without token IDs
+
+Qwen3 thinking token IDs:
+- <think>: 151667
+- </think>: 151668
 """
 import re
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
+
+# Qwen3 special token IDs for thinking blocks
+THINK_START_TOKEN_ID = 151667  # <think>
+THINK_END_TOKEN_ID = 151668    # </think>
 
 
 def parse_thinking_content(text: str) -> Tuple[str, Optional[str]]:
@@ -147,3 +159,135 @@ class StreamingThinkingParser:
         self.buffer = ""
         self.in_thinking = False
         self.thinking_complete = False
+
+
+class TokenLevelThinkingParser:
+    """
+    Token-based parser for streaming thinking content.
+
+    Uses special token IDs for precise detection of <think>/</ think> boundaries.
+    More efficient than text-based parsing as it avoids buffering and regex.
+
+    This parser is recommended for Qwen3 models where token IDs are available.
+    Falls back gracefully if token IDs are not provided.
+    """
+
+    def __init__(self):
+        self.in_thinking = False
+        self.thinking_complete = False
+        # Track if we've seen the <think> token (skip its text in output)
+        self._skip_next_text = False
+
+    def process_token(
+        self, token_id: Optional[int], text: str
+    ) -> List[Tuple[str, str]]:
+        """
+        Process a token with its ID and text.
+
+        Args:
+            token_id: The token ID (can be None if not available)
+            text: The decoded text for this token
+
+        Returns:
+            List of tuples (delta_type, text) where delta_type is 'thinking' or 'content'
+            Empty list if token should be suppressed (e.g., the special tokens themselves)
+        """
+        if not text:
+            return []
+
+        # Check for special token IDs
+        if token_id == THINK_START_TOKEN_ID:
+            # Entering thinking mode - suppress the <think> text
+            self.in_thinking = True
+            self._skip_next_text = True
+            return []
+
+        if token_id == THINK_END_TOKEN_ID:
+            # Exiting thinking mode - suppress the </think> text
+            self.in_thinking = False
+            self.thinking_complete = True
+            self._skip_next_text = True
+            return []
+
+        # Skip text that corresponds to special tokens (already handled above)
+        if self._skip_next_text:
+            self._skip_next_text = False
+            # Only skip if text matches the special token text
+            if text.strip() in ('<think>', '</think>'):
+                return []
+
+        # Determine delta type based on current state
+        if self.in_thinking:
+            return [('thinking', text)]
+        else:
+            return [('content', text)]
+
+    def flush(self) -> List[Tuple[str, str]]:
+        """
+        Flush any remaining state.
+
+        For token-level parsing, there's no buffering so this just resets state.
+
+        Returns:
+            Empty list (no buffered content)
+        """
+        return []
+
+    def reset(self):
+        """Reset parser state for reuse."""
+        self.in_thinking = False
+        self.thinking_complete = False
+        self._skip_next_text = False
+
+
+class HybridThinkingParser:
+    """
+    Hybrid parser that uses token IDs when available, falls back to text parsing.
+
+    This is the recommended parser for production use as it:
+    1. Uses precise token-level detection when token IDs are available
+    2. Falls back to text-based parsing for compatibility with other models
+    """
+
+    def __init__(self):
+        self._token_parser = TokenLevelThinkingParser()
+        self._text_parser = StreamingThinkingParser()
+        self._use_token_mode = False  # Will be set once we see a token ID
+
+    def process_chunk(
+        self, text: str, token_id: Optional[int] = None
+    ) -> List[Tuple[str, str]]:
+        """
+        Process a chunk of streamed text with optional token ID.
+
+        Args:
+            text: The next chunk of generated text
+            token_id: Optional token ID for token-level parsing
+
+        Returns:
+            List of tuples (delta_type, text) where delta_type is 'thinking' or 'content'
+        """
+        # If we have a token ID, use token-level parsing
+        if token_id is not None:
+            self._use_token_mode = True
+            return self._token_parser.process_token(token_id, text)
+
+        # Once we've seen token IDs, continue using token parser
+        # (this handles edge cases where token_id might be missing for some chunks)
+        if self._use_token_mode:
+            return self._token_parser.process_token(None, text)
+
+        # Fall back to text-based parsing
+        return self._text_parser.process_chunk(text)
+
+    def flush(self) -> List[Tuple[str, str]]:
+        """Flush any remaining buffer content."""
+        if self._use_token_mode:
+            return self._token_parser.flush()
+        return self._text_parser.flush()
+
+    def reset(self):
+        """Reset parser state for reuse."""
+        self._token_parser.reset()
+        self._text_parser.reset()
+        self._use_token_mode = False

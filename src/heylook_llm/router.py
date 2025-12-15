@@ -249,9 +249,28 @@ class ModelRouter:
         finally:
             self.cache_lock.acquire()
 
+    def get_current_model_id(self) -> Optional[str]:
+        """Get the most recently used model ID from cache, or None if no models loaded."""
+        if self.providers:
+            # OrderedDict keeps insertion order; last item is most recently used
+            return next(reversed(self.providers))
+        return None
+
     def get_provider(self, model_id: str) -> BaseProvider:
+        # Fallback logic when no model specified:
+        # 1. Use currently loaded model (most recently used)
+        # 2. Use default_model from config
+        # 3. Raise error with available models
         if not model_id:
-            raise ValueError("model_id cannot be empty.")
+            model_id = self.get_current_model_id()
+            if model_id:
+                logging.debug(f"No model specified, using loaded model: {model_id}")
+            elif self.app_config.default_model:
+                model_id = self.app_config.default_model
+                logging.debug(f"No model specified, using default: {model_id}")
+            else:
+                available = [m.id for m in self.app_config.get_enabled_models()]
+                raise ValueError(f"No model specified and no default configured. Available: {available}")
 
         # Fast path: check cache first
         provider = self._check_cache(model_id)

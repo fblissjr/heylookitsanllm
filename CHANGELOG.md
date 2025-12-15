@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Added
+
+- **Auto Model Selection**: Fallback to loaded model when no model specified in request
+  - Uses most recently used model from LRU cache
+  - Falls back to `default_model` from config if no models loaded
+  - Provides clear error message with available models if no default
+
+- **Token-Level Thinking Parser**: More efficient parsing of Qwen3 thinking blocks
+  - New `TokenLevelThinkingParser` uses token IDs (151667/151668) for precise detection
+  - New `HybridThinkingParser` auto-selects between token-level and text-based parsing
+  - Eliminates regex buffering overhead when token IDs are available
+  - Instant detection of `<think>`/`</think>` boundaries via special token IDs
+  - Backwards compatible: falls back to text parsing for models without token IDs
+  - Integrated into streaming response generator for automatic use
+
+- **Hidden States Config Defaults**: Model-level defaults for hidden states extraction
+  - New `default_hidden_layer` config option in MLXModelConfig (default: -2)
+  - New `default_max_length` config option in MLXModelConfig (default: 512)
+  - Hidden states endpoint now applies model config defaults when request uses defaults
+
+- **OpenAI-Compatible Streaming Usage Stats**: Return usage statistics in streaming responses
+  - New `stream_options: {include_usage: true}` parameter in ChatRequest
+  - When enabled, final streaming chunk includes `usage` object with prompt/completion/total token counts
+  - Follows OpenAI API specification for streaming usage stats
+  - Enables accurate token tracking for streaming responses
+
+- **OpenAI-Compatible Logprobs Support**: Return token log probabilities in chat completions
+  - New `logprobs: bool` parameter to enable log probability output
+  - New `top_logprobs: int` parameter to specify number of top alternatives (0-20)
+  - Non-streaming responses include `choice.logprobs.content` array with per-token data
+  - Streaming responses include `choice.logprobs` delta in each chunk
+  - Each token entry includes: `token`, `token_id`, `logprob`, `bytes`, `top_logprobs[]`
+  - Leverages mlx-lm's full vocabulary log-softmax for accurate probabilities
+  - New `logprobs.py` module with `LogprobsCollector` and `StreamingLogprobsCollector`
+
 ### Fixed
 
 - **Qwen3-VL-MOE Vision Support**: Fixed "Image features and image tokens do not match" error
@@ -12,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed manual image placeholder insertion that conflicted with library handling
   - Now properly passes `num_images` to prompt formatting
 
-### Added
+### Previously Added
 
 - **Qwen3 Thinking Token Support**: Parse `<think>...</think>` blocks from Qwen3 model outputs
   - Non-streaming responses include `message.thinking` field with parsed reasoning content

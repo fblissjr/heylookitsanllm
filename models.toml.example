@@ -45,6 +45,11 @@
 #                             # temperature=0.6, top_p=0.95, top_k=20, presence_penalty=1.5
 #                             # Response includes separate "thinking" field
 #
+# OPTIONAL - Hidden States (for /v1/hidden_states endpoint):
+#   default_hidden_layer: integer # Default layer for extraction (default: -2, second-to-last)
+#   default_max_length: integer   # Default max sequence length (default: 512)
+#                                 # Used when request doesn't specify these values
+#
 # OPTIONAL - Optimization:
 #   draft_model_path: string    # Path to smaller draft model for speculative decoding
 #   num_draft_tokens: integer   # Tokens to generate with draft model: 2-8 (default: 6)

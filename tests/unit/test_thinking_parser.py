@@ -2,11 +2,18 @@
 """
 Unit tests for the Qwen3 thinking token parser.
 
-Tests both the non-streaming parse_thinking_content function and
-the StreamingThinkingParser class.
+Tests the non-streaming parse_thinking_content function,
+the StreamingThinkingParser class, and the token-level parsers.
 """
 import pytest
-from heylook_llm.thinking_parser import parse_thinking_content, StreamingThinkingParser
+from heylook_llm.thinking_parser import (
+    parse_thinking_content,
+    StreamingThinkingParser,
+    TokenLevelThinkingParser,
+    HybridThinkingParser,
+    THINK_START_TOKEN_ID,
+    THINK_END_TOKEN_ID,
+)
 
 
 class TestParseThinkingContent:
@@ -236,3 +243,163 @@ class TestEdgeCases:
         assert content == "Short answer"
         assert thinking == long_thinking
         assert len(thinking) == 10000
+
+
+class TestTokenLevelThinkingParser:
+    """Tests for the TokenLevelThinkingParser class."""
+
+    def test_token_ids_constants(self):
+        """Verify token ID constants are correct."""
+        assert THINK_START_TOKEN_ID == 151667
+        assert THINK_END_TOKEN_ID == 151668
+
+    def test_no_thinking_tokens(self):
+        """Regular tokens should be emitted as content."""
+        parser = TokenLevelThinkingParser()
+        results = []
+
+        # Normal tokens (not thinking-related)
+        results.extend(parser.process_token(1234, "Hello"))
+        results.extend(parser.process_token(5678, " world"))
+        results.extend(parser.flush())
+
+        assert all(t == 'content' for t, _ in results)
+        full_text = ''.join(txt for _, txt in results)
+        assert full_text == "Hello world"
+
+    def test_think_start_token(self):
+        """<think> token should switch to thinking mode."""
+        parser = TokenLevelThinkingParser()
+
+        # <think> token - should be suppressed
+        results = parser.process_token(THINK_START_TOKEN_ID, "<think>")
+        assert results == []
+        assert parser.in_thinking is True
+
+    def test_think_end_token(self):
+        """</think> token should exit thinking mode."""
+        parser = TokenLevelThinkingParser()
+        parser.in_thinking = True  # Start in thinking mode
+
+        # </think> token - should be suppressed
+        results = parser.process_token(THINK_END_TOKEN_ID, "</think>")
+        assert results == []
+        assert parser.in_thinking is False
+        assert parser.thinking_complete is True
+
+    def test_thinking_content_between_tokens(self):
+        """Content between <think> and </think> should be thinking."""
+        parser = TokenLevelThinkingParser()
+        results = []
+
+        # <think> token
+        results.extend(parser.process_token(THINK_START_TOKEN_ID, "<think>"))
+        # Thinking content
+        results.extend(parser.process_token(1001, "Let me"))
+        results.extend(parser.process_token(1002, " reason"))
+        # </think> token
+        results.extend(parser.process_token(THINK_END_TOKEN_ID, "</think>"))
+        # Response content
+        results.extend(parser.process_token(2001, "The answer"))
+        results.extend(parser.process_token(2002, " is 42"))
+        results.extend(parser.flush())
+
+        thinking_parts = [(t, txt) for t, txt in results if t == 'thinking']
+        content_parts = [(t, txt) for t, txt in results if t == 'content']
+
+        thinking_text = ''.join(txt for _, txt in thinking_parts)
+        content_text = ''.join(txt for _, txt in content_parts)
+
+        assert "Let me reason" in thinking_text
+        assert "The answer is 42" in content_text
+
+    def test_reset(self):
+        """Reset should clear parser state."""
+        parser = TokenLevelThinkingParser()
+        parser.in_thinking = True
+        parser.thinking_complete = True
+
+        parser.reset()
+
+        assert parser.in_thinking is False
+        assert parser.thinking_complete is False
+
+
+class TestHybridThinkingParser:
+    """Tests for the HybridThinkingParser class."""
+
+    def test_token_mode_with_token_ids(self):
+        """Parser should use token mode when token IDs are provided."""
+        parser = HybridThinkingParser()
+        results = []
+
+        # First chunk with token ID - activates token mode
+        results.extend(parser.process_chunk("Hello", token_id=1234))
+        assert parser._use_token_mode is True
+
+        results.extend(parser.process_chunk(" world", token_id=5678))
+        results.extend(parser.flush())
+
+        full_text = ''.join(txt for _, txt in results)
+        assert full_text == "Hello world"
+
+    def test_text_mode_without_token_ids(self):
+        """Parser should use text mode when no token IDs are provided."""
+        parser = HybridThinkingParser()
+        results = []
+
+        # Chunks without token IDs - uses text mode
+        results.extend(parser.process_chunk("<think>"))
+        results.extend(parser.process_chunk("Thinking"))
+        results.extend(parser.process_chunk("</think>"))
+        results.extend(parser.process_chunk("Answer"))
+        results.extend(parser.flush())
+
+        assert parser._use_token_mode is False
+
+        thinking_parts = [(t, txt) for t, txt in results if t == 'thinking' and txt]
+        content_parts = [(t, txt) for t, txt in results if t == 'content' and txt]
+
+        thinking_text = ''.join(txt for _, txt in thinking_parts)
+        content_text = ''.join(txt for _, txt in content_parts)
+
+        assert "Thinking" in thinking_text
+        assert "Answer" in content_text
+
+    def test_hybrid_with_thinking_tokens(self):
+        """Hybrid parser should handle Qwen3 thinking tokens."""
+        parser = HybridThinkingParser()
+        results = []
+
+        # Simulate Qwen3 output with thinking tokens
+        results.extend(parser.process_chunk("<think>", token_id=THINK_START_TOKEN_ID))
+        results.extend(parser.process_chunk("Reasoning step 1", token_id=1001))
+        results.extend(parser.process_chunk("</think>", token_id=THINK_END_TOKEN_ID))
+        results.extend(parser.process_chunk("Final answer", token_id=2001))
+        results.extend(parser.flush())
+
+        thinking_parts = [(t, txt) for t, txt in results if t == 'thinking' and txt]
+        content_parts = [(t, txt) for t, txt in results if t == 'content' and txt]
+
+        thinking_text = ''.join(txt for _, txt in thinking_parts)
+        content_text = ''.join(txt for _, txt in content_parts)
+
+        assert "Reasoning step 1" in thinking_text
+        assert "Final answer" in content_text
+        # Special tokens should not appear in output
+        assert "<think>" not in thinking_text
+        assert "</think>" not in thinking_text
+
+    def test_reset(self):
+        """Reset should clear both parsers."""
+        parser = HybridThinkingParser()
+
+        # Activate token mode
+        parser.process_chunk("test", token_id=123)
+        assert parser._use_token_mode is True
+
+        parser.reset()
+
+        assert parser._use_token_mode is False
+        assert parser._token_parser.in_thinking is False
+        assert parser._text_parser.in_thinking is False

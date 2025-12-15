@@ -54,6 +54,13 @@ class ChatRequest(BaseModel):
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
+    # Logprobs support (OpenAI-compatible)
+    logprobs: Optional[bool] = Field(None, description="Return log probabilities for output tokens")
+    top_logprobs: Optional[int] = Field(None, ge=0, le=20, description="Number of top tokens with log probabilities (0-20)")
+
+    # Streaming options (OpenAI-compatible)
+    stream_options: Optional[Dict] = Field(None, description="Options for streaming: {include_usage: true} to get usage stats")
+
     @validator('messages')
     def validate_messages(cls, v):
         if not v:
@@ -130,6 +137,9 @@ class MLXModelConfig(BaseModel):
     quantized_kv_start: int = 2048
     # Thinking mode (Qwen3 models with <think> blocks)
     enable_thinking: bool = False
+    # Hidden states defaults (for /v1/hidden_states endpoint)
+    default_hidden_layer: int = -2  # Z-Image uses penultimate layer
+    default_max_length: int = 512
 
 class LlamaCppModelConfig(BaseModel):
     model_path: str

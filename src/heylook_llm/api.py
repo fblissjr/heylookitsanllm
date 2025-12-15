@@ -344,7 +344,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator_async(generator, chat_request.model, request_id),
+            stream_response_generator_async(generator, chat_request, router, request_id),
             media_type="text/event-stream"
         )
     else:
@@ -400,33 +400,65 @@ def stream_response_generator(generator, model_id, request_id):
     log_request_complete(request_id, success=True)
     yield "data: [DONE]\n\n"
 
-async def stream_response_generator_async(generator, model_id, request_id):
+async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id):
     """Async streaming response generator that runs generation in thread pool.
 
     Supports Qwen3 thinking tokens: streams delta.thinking during <think> blocks,
     then delta.content for the response after </think>.
-    """
-    from heylook_llm.thinking_parser import StreamingThinkingParser
 
+    Supports logprobs: includes token log probabilities in each chunk when requested.
+
+    Uses HybridThinkingParser for token-level detection when token IDs are available.
+    """
+    from heylook_llm.thinking_parser import HybridThinkingParser
+
+    model_id = chat_request.model
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
+    prompt_tokens = 0
+    completion_tokens = 0
     last_keepalive_time = time.time()
     keepalive_interval = 10.0  # Send keepalive every 10 seconds
 
-    # Thinking parser for streaming
-    thinking_parser = StreamingThinkingParser()
+    # Check if usage stats should be included in final chunk
+    include_usage = (
+        chat_request.stream_options
+        and chat_request.stream_options.get('include_usage', False)
+    )
+
+    # Hybrid thinking parser: uses token IDs when available, falls back to text parsing
+    thinking_parser = HybridThinkingParser()
+
+    # Initialize logprobs collector if requested
+    logprobs_collector = None
+    if chat_request.logprobs:
+        try:
+            from heylook_llm.logprobs import StreamingLogprobsCollector
+            # Get tokenizer from provider for decoding tokens
+            provider = router.get_provider(chat_request.model)
+            tokenizer = None
+            if hasattr(provider, 'processor') and provider.processor:
+                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
+            if tokenizer:
+                top_logprobs = chat_request.top_logprobs or 5
+                logprobs_collector = StreamingLogprobsCollector(tokenizer, top_logprobs=top_logprobs)
+        except Exception as e:
+            logging.warning(f"Failed to initialize streaming logprobs collector: {e}")
 
     log_request_stage(request_id, "streaming")
 
-    def make_delta(delta_type: str, text: str) -> str:
-        """Create SSE delta message for thinking or content."""
+    def make_delta(delta_type: str, text: str, logprobs_delta=None) -> str:
+        """Create SSE delta message for thinking or content with optional logprobs."""
+        choice = {"delta": {delta_type: text}, "index": 0}
+        if logprobs_delta:
+            choice["logprobs"] = logprobs_delta
         response = {
             "id": response_id,
             "object": "chat.completion.chunk",
             "created": created_time,
             "model": model_id,
-            "choices": [{"delta": {delta_type: text}}]
+            "choices": [choice]
         }
         return f"data: {json.dumps(response)}\n\n"
 
@@ -459,16 +491,31 @@ async def stream_response_generator_async(generator, model_id, request_id):
 
         token_count += 1
 
+        # Track token counts for usage stats (OpenAI stream_options.include_usage)
+        prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+        completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+
+        # Get token ID for token-level parsing and logprobs
+        token_id = getattr(chunk, 'token', None)
+
+        # Collect logprobs if requested and available
+        logprobs_delta = None
+        if logprobs_collector:
+            chunk_logprobs = getattr(chunk, 'logprobs', None)
+            if token_id is not None and chunk_logprobs is not None:
+                logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)
+
         # Update token count periodically
         if token_count % 10 == 0:  # Update every 10 tokens for streaming
             from heylook_llm.utils import log_token_update
             log_token_update(request_id, token_count)
 
-        # Process through thinking parser
-        deltas = thinking_parser.process_chunk(chunk.text)
+        # Process through thinking parser (uses token ID for Qwen3 thinking blocks)
+        deltas = thinking_parser.process_chunk(chunk.text, token_id=token_id)
         for delta_type, text in deltas:
             if text:
-                yield make_delta(delta_type, text)
+                yield make_delta(delta_type, text, logprobs_delta)
+                logprobs_delta = None  # Only include logprobs in first delta for this token
 
         # Update last keepalive time since we sent actual content
         last_keepalive_time = time.time()
@@ -477,6 +524,25 @@ async def stream_response_generator_async(generator, model_id, request_id):
     for delta_type, text in thinking_parser.flush():
         if text:
             yield make_delta(delta_type, text)
+
+    # Emit usage stats in final chunk if requested (OpenAI stream_options.include_usage)
+    if include_usage:
+        # Use tracked counts, fallback to token_count for completion_tokens
+        final_prompt_tokens = prompt_tokens or 0
+        final_completion_tokens = completion_tokens or token_count
+        usage_chunk = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": created_time,
+            "model": model_id,
+            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": final_prompt_tokens,
+                "completion_tokens": final_completion_tokens,
+                "total_tokens": final_prompt_tokens + final_completion_tokens
+            }
+        }
+        yield f"data: {json.dumps(usage_chunk)}\n\n"
 
     # Log completion
     log_request_complete(request_id, success=True)
@@ -487,8 +553,24 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     prompt_tokens = 0
     completion_tokens = 0
     token_count = 0
+    logprobs_collector = None
 
     log_request_stage(request_id, "processing_response")
+
+    # Initialize logprobs collector if requested
+    if chat_request.logprobs:
+        try:
+            from heylook_llm.logprobs import LogprobsCollector
+            # Get tokenizer from provider for decoding tokens
+            provider = router.get_provider(chat_request.model)
+            tokenizer = None
+            if hasattr(provider, 'processor') and provider.processor:
+                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
+            if tokenizer:
+                top_logprobs = chat_request.top_logprobs or 5
+                logprobs_collector = LogprobsCollector(tokenizer, top_logprobs=top_logprobs)
+        except Exception as e:
+            logging.warning(f"Failed to initialize logprobs collector: {e}")
 
     # Process generation in thread pool to avoid blocking event loop
     def consume_generator():
@@ -496,6 +578,13 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         for chunk in generator:
             full_text += chunk.text
             token_count += 1
+
+            # Collect logprobs if requested and available
+            if logprobs_collector:
+                token_id = getattr(chunk, 'token', None)
+                chunk_logprobs = getattr(chunk, 'logprobs', None)
+                if token_id is not None and chunk_logprobs is not None:
+                    logprobs_collector.add_token(token_id, chunk_logprobs)
 
             # Update token count periodically for long responses
             if token_count % 25 == 0:
@@ -521,12 +610,17 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     if thinking is not None:
         message["thinking"] = thinking
 
+    # Build choice with optional logprobs
+    choice = {"message": message, "index": 0, "finish_reason": "stop"}
+    if logprobs_collector and logprobs_collector.content:
+        choice["logprobs"] = logprobs_collector.to_dict()
+
     response = ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4()}",
         object="chat.completion",
         created=int(time.time()),
         model=chat_request.model or "unknown",
-        choices=[{"message": message}],
+        choices=[choice],
         usage=usage_dict
     )
 
