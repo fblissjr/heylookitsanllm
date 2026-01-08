@@ -27,6 +27,7 @@ model.toml
 models.toml
 model.yaml
 models.yaml
+.claude
 
 # Distribution / packaging
 .Python

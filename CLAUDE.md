@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+<!-- Full agent coordination and documentation navigation: see AGENTS.md -->
+
 This file provides guidance to Claude Code when working with code in this repository.
 
 ## Internal Documentation - READ FIRST
@@ -15,14 +17,13 @@ If something seems broken in a library, verify it's actually broken before imple
 
 ## Ongoing Work - CHECK FIRST
 
-**ACTIVE DEVELOPMENT**: If there is a `NEXT_STEPS.md` file in the root directory, **READ IT FIRST** before making any changes. It contains:
+**ACTIVE DEVELOPMENT**: Check `internal/session/CURRENT.md` before making changes. It contains:
 - Current work in progress
+- Quick resume instructions
 - What's been completed
-- What needs to be done next
-- Important notes and gotchas
-- Clear continuation instructions
+- Blockers and context
 
-This ensures continuity across sessions and prevents duplicate work.
+For persistent cross-session tasks, see `internal/session/TODO.md`.
 
 ## Code Style Guidelines
 
@@ -312,121 +313,8 @@ Challenge the user when:
 - Platform incompatibility ignored
 
 Propose alternatives and explain reasoning.
-- When searching the codebase, always use `ripgrep` (`rg`) instead of `grep` for better performance and respecting `.gitignore`.
 
-## Documentation Index
+## Search and Navigation
 
-### User Documentation (docs/)
-
-**Getting Started**
-- `README.md` - Project overview and quick start
-- `guides/SERVICE_SECURITY.md` - Background service setup and security (macOS/Linux)
-- `docs/WINDOWS_INSTALL.md` - Complete Windows setup guide
-- `docs/WINDOWS_QUICK_REFERENCE.md` - Windows command reference
-- `docs/CLAUDE_APP_QUICK_REFERENCE.md` - Quick command reference
-
-**API Integration**
-- `docs/CLIENT_INTEGRATION_GUIDE.md` - Complete API integration guide
-- `docs/CLIENT_DEVELOPER_GUIDE.md` - Developer guide for API consumers
-- `docs/CLIENT_CAPABILITY_DETECTION.md` - Feature detection guide
-- `docs/OPENAPI_DOCUMENTATION_UPDATE.md` - API documentation changelog
-
-**API Endpoints & Features**
-- Swagger UI: `http://localhost:8080/docs`
-- ReDoc: `http://localhost:8080/redoc`
-- `docs/embeddings_api.md` - Embeddings API documentation
-- `docs/heylookllm_embeddings_spec.md` - Embeddings specification
-- `docs/BATCH_PROCESSING.md` - Batch processing reference
-
-**Testing & Development**
-- `docs/TESTING_GUIDE.md` - Testing guide for developers
-- `docs/QUEUE_INTEGRATION.md` - Queue integration reference
-
-**Archives**
-- `docs/archive/` - 29 archived files (3+ months old, superseded by current docs)
-
-### Internal Documentation (internal/)
-
-**Navigation Hub**
-- `internal/00_README.md` - Documentation index with question-based navigation
-
-**Core Architecture** (Complete 01-07 sequence - start here)
-- `internal/00_CODEBASE_STRUCTURE.md` - Complete module map
-- `internal/01_architecture_overview.md` - System architecture
-- `internal/02_provider_mlx.md` - MLX provider design
-- `internal/03_provider_llama_cpp.md` - llama.cpp provider design
-- `internal/04_provider_unification_strategy.md` - Provider abstraction
-- `internal/05_API_ARCHITECTURE.md` - FastAPI and all endpoints
-- `internal/06_ROUTER_SYSTEM.md` - Model caching and routing
-- `internal/07_CONFIGURATION.md` - Configuration system
-
-**Critical Lessons Learned** (READ BEFORE MAKING CHANGES)
-- `internal/VLM_VISION_BUG_2025-11-17.md` - CRITICAL: Don't reimplement library functionality
-- `internal/MLX_CODE_REVIEW_2025.md` - MLX compatibility review
-
-**Features & Capabilities**
-- `internal/QWEN3_VL_MLX_IMPLEMENTATION.md` - Vision model implementation
-- `internal/BATCH_TEXT_IMPLEMENTATION_PLAN.md` - Batch text generation
-- `internal/BATCH_VISION_IMPLEMENTATION_PLAN.md` - Batch vision processing
-- `internal/DUAL_PATH.md` - Dual-path optimization design
-- `internal/IMAGE_TRANSFER_OPTIMIZATION.md` - Image optimization
-
-**Platform Support**
-- `internal/WINDOWS_SUPPORT_DESIGN_AND_PLAN.md` - Windows implementation
-- `internal/LLAMA_CPP_ROADMAP.md` - Cross-platform llama.cpp
-
-**Performance & Optimization**
-- `internal/PERFORMANCE_OPTIMIZATION_GUIDE.md` - Performance notes
-- `internal/IMPLEMENTATION_COMPLETE_2025-11-14.md` - Implementation summary
-
-**Analytics & Monitoring**
-- `internal/HEYLOOK_ANALYTICS_TECH_SPEC.md` - Analytics technical spec
-- `internal/HEYLOOK_ANALYTICS_TEST_GUIDE.md` - Analytics testing
-- `internal/dependency_analysis_report.md` - Dependency analysis
-
-**Project History**
-- `internal/LOG.md` - Development timeline
-
-**How to Use Internal Documentation**
-- New to codebase? Start with `00_README.md` → `00_CODEBASE_STRUCTURE.md` → `01_architecture_overview.md`
-- Adding an endpoint? Read `05_API_ARCHITECTURE.md`
-- Working with models? Read `06_ROUTER_SYSTEM.md` and `07_CONFIGURATION.md`
-- Touching VLM code? Read `VLM_VISION_BUG_2025-11-17.md` first
-- Need specific info? Use question-based navigation in `00_README.md`
-
-### Configuration Files
-- `CLAUDE.md` - Claude AI assistant guidelines (this file)
-- `models.toml` - Model configuration
-- `models.toml.example` - Example configuration with full parameter documentation
-- `pyproject.toml` - Python package configuration
-- `NEXT_STEPS.md` - Ongoing work tracker (check if exists)
-
-## Living Documentation Philosophy
-
-This project follows living documentation principles:
-
-**internal/ - Design Documentation (Always Current)**
-- Architecture decisions and their rationale
-- Provider implementation details
-- Critical bug postmortems with lessons learned
-- Performance optimization strategies
-- Implementation plans and reviews
-
-**docs/ - User-Facing Documentation**
-- Installation and setup guides
-- API integration guides
-- Feature documentation
-- Quick reference guides
-
-**When to Update Documentation:**
-- After completing features → Document in internal/, create user guide in docs/
-- After fixing critical bugs → Write postmortem in internal/
-- After design decisions → Document rationale in internal/
-- After API changes → Update docs/ guides
-
-**Archive Policy:**
-- Content 3+ months old → Archive to docs/archive/ or tests/archive/
-- internal/ does NOT archive - living docs stay current via updates
-- Archive READMEs explain what was archived and why
-
-See `internal/DOCUMENTATION_PRINCIPLES.md` for complete methodology.
+- When searching the codebase, use `ripgrep` (`rg`) for better performance
+- For documentation navigation, see `AGENTS.md` and `internal/00_INDEX.md`
