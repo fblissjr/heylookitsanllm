@@ -59,7 +59,6 @@
 # REQUIRED:
 #   model_path: string          # Path to .gguf file
 #   provider: string            # "gguf" or "llama_cpp" (aliases)
-#                              # "llama_server" for subprocess-based server (recommended for new installs)
 #
 # OPTIONAL - Model Loading:
 #   mmproj_path: string         # Path to vision projection .gguf (for multimodal)
@@ -80,8 +79,6 @@
 #   cache: boolean             # Enable RAM cache for repeated prompts (default: true)
 #   cache_size: integer        # Cache size in bytes (default: 2147483648 = 2GB)
 #
-# OPTIONAL - llama_server provider specific:
-#   parallel_slots: integer    # Number of concurrent request slots (default: 1)
 #
 # OPTIONAL - Generation (same as MLX):
 #   temperature, max_tokens, top_p, top_k, min_p, repetition_penalty
@@ -206,11 +203,11 @@ enabled = true
   top_k = 50
   cache_type = "standard"
 
-# GGUF Models (llama-server provider recommended for new installations)
+# GGUF Models (llama-cpp-python backend)
 [[models]]
-id = "qwen2.5-vl-72b-server"
-provider = "llama_server"
-description = "Qwen2.5 VL 72B via llama-server (subprocess)"
+id = "qwen2.5-vl-72b-gguf"
+provider = "llama_cpp"
+description = "Qwen2.5 VL 72B via llama-cpp-python"
 tags = ["vision", "large", "gguf"]
 enabled = true
 
@@ -221,13 +218,12 @@ enabled = true
   n_gpu_layers = -1
   n_ctx = 4096
   vision = true
-  parallel_slots = 2 # Handle 2 concurrent requests
   temperature = 0.8
   max_tokens = 1024
 
 [[models]]
-id = "mistral-small-vision"
-provider = "llama_server"
+id = "mistral-small-vision-gguf"
+provider = "llama_cpp"
 description = "Mistral Small 24B with vision capabilities"
 tags = ["vision", "mistral", "custom-template"]
 enabled = true

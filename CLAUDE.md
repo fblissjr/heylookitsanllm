@@ -105,7 +105,7 @@ heylookllm service uninstall
 sudo heylookllm service install --host 0.0.0.0 --system-wide
 ```
 
-See `guides/SERVICE_SECURITY.md` for firewall configuration and security guidance.
+See `docs/SERVICE_SECURITY.md` for firewall configuration and security guidance.
 
 ## Project Structure
 
@@ -152,7 +152,7 @@ services/                       # Service templates
 
 ### Configuration
 - `models.toml` defines all available models
-- Fields: `id`, `provider` (mlx/llama_cpp/llama_server/coreml_stt), `enabled`, `config`
+- Fields: `id`, `provider` (mlx/llama_cpp/coreml_stt/mlx_stt), `enabled`, `config`
 - Models load on-demand when requested via API
 - See `models.toml.example` for full parameter documentation
 - **MLX-specific config options**:
@@ -195,9 +195,9 @@ See `tests/README.md` for complete test documentation and coverage matrix.
 
 ### Primary Docs
 - `README.md` - Quick start and overview
-- `docs/WINDOWS_INSTALL.md` - Complete Windows setup guide
-- `docs/WINDOWS_QUICK_REFERENCE.md` - Windows command reference
-- `docs/CLIENT_INTEGRATION_GUIDE.md` - API integration guide
+- `docs/WINDOWS.md` - Complete Windows installation and reference
+- `docs/FRONTEND_HANDOFF.md` - Complete API reference for frontend developers
+- `docs/SERVICE_SECURITY.md` - Background service setup and security
 
 ### API Documentation
 - Swagger UI: `http://localhost:8080/docs`

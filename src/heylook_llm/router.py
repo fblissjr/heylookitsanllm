@@ -1,5 +1,4 @@
 # src/heylook_llm/router.py
-import yaml
 import tomllib
 import logging
 import threading
@@ -60,6 +59,9 @@ except ImportError as e:
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
+        # Store config path for reload
+        self.config_path = config_path
+
         # Load config (supports both YAML and TOML)
         config_data = self._load_config(config_path)
         self.app_config = AppConfig(**config_data)
@@ -142,49 +144,26 @@ class ModelRouter:
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
 
     def _load_config(self, config_path: str) -> dict:
-        """Load configuration from YAML or TOML file.
-
-        Supports both formats for backward compatibility.
-        Priority: .toml > .yaml
-        Auto-migrates YAML to TOML if models.yaml exists but models.toml doesn't.
-        """
+        """Load configuration from TOML file."""
         config_file = Path(config_path)
 
-        # If user specified exact file, use it
-        if config_file.suffix in ['.toml', '.yaml', '.yml']:
+        # If user specified exact file with extension
+        if config_file.suffix == '.toml':
             if not config_file.exists():
                 raise FileNotFoundError(f"Config file not found: {config_path}")
+            with open(config_file, 'rb') as f:
+                return tomllib.load(f)
 
-            if config_file.suffix == '.toml':
-                with open(config_file, 'rb') as f:
-                    return tomllib.load(f)
-            else:  # .yaml or .yml
-                logging.warning(
-                    f"YAML config format is deprecated. Consider migrating to TOML format. "
-                    f"Run 'heylookllm import' to generate models.toml from your existing setup."
-                )
-                with open(config_file, 'r') as f:
-                    return yaml.safe_load(f)
-
-        # If no extension, try .toml first, then .yaml
+        # If no extension, add .toml
         toml_path = config_file.with_suffix('.toml')
-        yaml_path = config_file.with_suffix('.yaml')
-
         if toml_path.exists():
             with open(toml_path, 'rb') as f:
                 return tomllib.load(f)
-        elif yaml_path.exists():
-            logging.warning(
-                f"YAML config format is deprecated. Consider migrating to TOML format. "
-                f"Run 'heylookllm import' to generate models.toml from your existing setup."
-            )
-            with open(yaml_path, 'r') as f:
-                return yaml.safe_load(f)
-        else:
-            raise FileNotFoundError(
-                f"Config file not found. Tried: {toml_path}, {yaml_path}. "
-                f"Run 'heylookllm import' to create configuration."
-            )
+
+        raise FileNotFoundError(
+            f"Config file not found: {toml_path}. "
+            f"Run 'heylookllm import' to create configuration."
+        )
 
     def _init_queue_manager(self):
         """Initialize queue manager based on configuration."""
@@ -436,26 +415,26 @@ class ModelRouter:
         """Clear all loaded models from cache."""
         with self.cache_lock:
             # Unload all models
-            for model_id in list(self.models.keys()):
-                provider = self.models[model_id]
+            for model_id in list(self.providers.keys()):
+                provider = self.providers[model_id]
                 try:
-                    provider.unload_model()
+                    provider.unload()
                     logging.info(f"Unloaded model: {model_id}")
                 except Exception as e:
                     logging.error(f"Error unloading model {model_id}: {e}")
-            
-            # Clear the cache
-            self.models.clear()
-            self.model_usage_order.clear()
+
+            # Clear the cache (OrderedDict maintains order automatically)
+            self.providers.clear()
             logging.info("Model cache cleared")
     
     def reload_config(self):
         """Reload model configuration from file."""
         try:
-            # Reload the configuration
-            from .config import ModelConfig
-            self.app_config = ModelConfig()
-            logging.info("Model configuration reloaded")
+            # Reload the configuration from stored path
+            config_data = self._load_config(self.config_path)
+            self.app_config = AppConfig(**config_data)
+            self.max_loaded_models = self.app_config.max_loaded_models
+            logging.info(f"Model configuration reloaded from {self.config_path}")
         except Exception as e:
             logging.error(f"Failed to reload configuration: {e}")
             raise
