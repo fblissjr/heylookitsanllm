@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Structured Hidden States Endpoint**: New `/v1/hidden_states/structured` for server-side chat template
+  - Accepts chat components separately (user_prompt, system_prompt, thinking_content, assistant_content)
+  - Server applies Qwen3 chat template internally with `enable_thinking` support
+  - Returns token boundaries for each section (system, user, think, assistant)
+  - Returns token counts per section and total
+  - Optional `formatted_prompt` field for debugging
+  - Enables ablation studies and token attribution research for Z-Image
+
+- **Model Capabilities Discovery**: Expose model capabilities in `/v1/models` response
+  - New `capabilities` field in model config (e.g., `["hidden_states", "chat", "thinking", "vision"]`)
+  - New `supports_thinking` and `thinking_token_ids` fields in MLXModelConfig
+  - `/v1/models` now includes `provider` and `capabilities` when configured
+  - Enables programmatic capability discovery for multi-model clients
+
 - **Auto Model Selection**: Fallback to loaded model when no model specified in request
   - Uses most recently used model from LRU cache
   - Falls back to `default_model` from config if no models loaded

@@ -96,3 +96,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "heylook_llm.templates" = ["*.jinja2", "*.tpl", "*.yaml"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

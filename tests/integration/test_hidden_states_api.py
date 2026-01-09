@@ -271,3 +271,206 @@ class TestHiddenStatesLlamaCpp:
         # Should return 422 (Unprocessable Entity) for unsupported model type
         assert resp.status_code == 422
         assert "not supported" in resp.json().get("detail", "").lower()
+
+
+@pytest.mark.integration
+class TestStructuredHiddenStatesEndpoint:
+    """Integration tests for /v1/hidden_states/structured endpoint."""
+
+    def test_basic_structured_extraction(self, api_client, check_model_available):
+        """Test basic structured hidden states extraction."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "A cat sleeping in sunlight",
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Check required fields
+        assert "hidden_states" in data
+        assert "shape" in data
+        assert "model" in data
+        assert "layer" in data
+        assert "dtype" in data
+
+        # Check shape
+        assert len(data["shape"]) == 2
+        assert data["shape"][1] == EXPECTED_HIDDEN_DIM
+
+    def test_with_token_boundaries(self, api_client, check_model_available):
+        """Test that token boundaries are returned when requested."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "A beautiful sunset",
+            "system_prompt": "You are an image generator",
+            "return_token_boundaries": True,
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Token boundaries should be present
+        assert "token_boundaries" in data
+        assert "user" in data["token_boundaries"]
+
+        # System boundary should exist since we provided system_prompt
+        assert "system" in data["token_boundaries"]
+
+        # Boundaries should have start and end
+        assert "start" in data["token_boundaries"]["system"]
+        assert "end" in data["token_boundaries"]["system"]
+
+        # Token counts should be present
+        assert "token_counts" in data
+        assert "total" in data["token_counts"]
+
+    def test_with_formatted_prompt(self, api_client, check_model_available):
+        """Test that formatted prompt is returned when requested."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "A cat",
+            "return_formatted_prompt": True,
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert "formatted_prompt" in data
+        assert "<|im_start|>user" in data["formatted_prompt"]
+        assert "A cat" in data["formatted_prompt"]
+
+    def test_with_system_and_user(self, api_client, check_model_available):
+        """Test with both system and user prompts."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "A sunset over mountains",
+            "system_prompt": "Generate detailed images",
+            "return_token_boundaries": True,
+            "return_formatted_prompt": True,
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Both prompts should be in formatted output
+        assert "Generate detailed images" in data["formatted_prompt"]
+        assert "A sunset over mountains" in data["formatted_prompt"]
+
+        # Boundaries should reflect system comes before user
+        boundaries = data["token_boundaries"]
+        assert boundaries["system"]["start"] < boundaries["user"]["start"]
+
+    def test_base64_encoding(self, api_client, check_model_available):
+        """Test base64 encoding for structured extraction."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "Test prompt",
+            "encoding_format": "base64",
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["encoding_format"] == "base64"
+        assert isinstance(data["hidden_states"], str)
+
+        # Verify we can decode it
+        decoded_bytes = base64.b64decode(data["hidden_states"])
+        arr = np.frombuffer(decoded_bytes, dtype=np.float32)
+        expected_size = data["shape"][0] * data["shape"][1]
+        assert len(arr) == expected_size
+
+    def test_custom_layer(self, api_client, check_model_available):
+        """Test structured extraction from a specific layer."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+            "user_prompt": "Test",
+            "layer": -3,
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["layer"] == -3
+
+
+@pytest.mark.integration
+class TestStructuredHiddenStatesErrors:
+    """Error handling tests for /v1/hidden_states/structured endpoint."""
+
+    def test_missing_user_prompt(self, api_client, check_server):
+        """Test error when user_prompt is missing."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": TEST_MODEL,
+        })
+
+        assert resp.status_code in [400, 422]
+
+    def test_missing_model(self, api_client, check_server):
+        """Test error when model is missing."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "user_prompt": "test",
+        })
+
+        assert resp.status_code in [400, 422]
+
+    def test_unknown_model(self, api_client, check_server):
+        """Test error when requesting unknown model."""
+        resp = api_client.post("/v1/hidden_states/structured", json={
+            "model": "nonexistent-model-xyz",
+            "user_prompt": "test",
+        })
+
+        assert resp.status_code in [404, 500]
+
+
+@pytest.mark.integration
+class TestModelCapabilities:
+    """Tests for model capabilities in /v1/models endpoint."""
+
+    def test_models_endpoint_returns_provider(self, api_client, check_server):
+        """Test that /v1/models includes provider type."""
+        resp = api_client.get("/v1/models")
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert "data" in data
+        # At least some models should have provider
+        models_with_provider = [m for m in data["data"] if "provider" in m]
+        assert len(models_with_provider) > 0
+
+        # Provider should be valid
+        for model in models_with_provider:
+            assert model["provider"] in ["mlx", "llama_cpp", "gguf", "coreml_stt", "mlx_stt"]
+
+    def test_models_endpoint_structure(self, api_client, check_server):
+        """Test /v1/models response structure."""
+        resp = api_client.get("/v1/models")
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["object"] == "list"
+        assert "data" in data
+
+        for model in data["data"]:
+            assert "id" in model
+            assert "object" in model
+            assert model["object"] == "model"
+            assert "owned_by" in model
+
+    def test_capabilities_field_present_when_configured(self, api_client, check_server):
+        """Test that capabilities field is present when configured."""
+        resp = api_client.get("/v1/models")
+
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # This test just verifies the structure is correct
+        # Capabilities may or may not be configured
+        for model in data["data"]:
+            if "capabilities" in model:
+                assert isinstance(model["capabilities"], list)
+                for cap in model["capabilities"]:
+                    assert isinstance(cap, str)

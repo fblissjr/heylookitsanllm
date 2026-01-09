@@ -81,9 +81,26 @@ List all language models currently available on this server.
     tags=["OpenAI API"]
 )
 async def list_models(request: Request):
-    """Get the list of available models in OpenAI format."""
+    """Get the list of available models in OpenAI format with capabilities."""
     router = request.app.state.router_instance
-    models_data = [{"id": model_id, "object": "model", "owned_by": "user"} for model_id in router.list_available_models()]
+    models_data = []
+
+    for model_id in router.list_available_models():
+        model_entry = {
+            "id": model_id,
+            "object": "model",
+            "owned_by": "user",
+        }
+
+        # Add capabilities and provider if available from config
+        model_config = router.app_config.get_model_config(model_id)
+        if model_config:
+            model_entry["provider"] = model_config.provider
+            if model_config.capabilities:
+                model_entry["capabilities"] = model_config.capabilities
+
+        models_data.append(model_entry)
+
     return {"object": "list", "data": models_data}
 
 @app.post("/v1/chat/completions",
@@ -1061,6 +1078,102 @@ async def extract_hidden_states_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logging.error(f"Error extracting hidden states: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/hidden_states/structured",
+    summary="Extract Structured Hidden States",
+    description="""
+Extract hidden states with server-side chat template application and token boundary tracking.
+
+**Key Differences from /v1/hidden_states:**
+- Accepts chat components separately (user_prompt, system_prompt, etc.)
+- Server applies Qwen3 chat template internally
+- Returns token boundary information for each section
+- Supports pre-filled thinking/assistant content
+
+**Use Cases:**
+- Z-Image embeddings with precise template control
+- Token attribution research
+- Ablation studies on prompt sections
+- Debugging chat template formatting
+
+**Request Body:**
+- `model` (string): Model ID to use
+- `user_prompt` (string): User message content (required)
+- `system_prompt` (string, optional): System prompt content
+- `thinking_content` (string, optional): Pre-filled thinking block
+- `assistant_content` (string, optional): Pre-filled assistant response
+- `enable_thinking` (boolean, optional): Control thinking mode (default: true)
+- `layer` (integer, optional): Layer to extract from (default: -2)
+- `max_length` (integer, optional): Max sequence length (default: 512)
+- `encoding_format` (string, optional): "float" (default) or "base64"
+- `return_token_boundaries` (boolean, optional): Return token indices per section
+- `return_formatted_prompt` (boolean, optional): Return formatted prompt string
+
+**Note:** Only supported for MLX models with Qwen3-style chat templates.
+    """,
+    response_description="Hidden states with token boundaries",
+    tags=["OpenAI API"],
+    responses={
+        200: {
+            "description": "Structured hidden states extracted successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "hidden_states": "SGVsbG8gV29ybGQ=",
+                        "shape": [120, 2560],
+                        "model": "Qwen3-4B",
+                        "layer": -2,
+                        "dtype": "bfloat16",
+                        "encoding_format": "base64",
+                        "token_boundaries": {
+                            "system": {"start": 0, "end": 35},
+                            "user": {"start": 35, "end": 80}
+                        },
+                        "token_counts": {
+                            "system": 35,
+                            "user": 45,
+                            "total": 120
+                        }
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Model doesn't support structured hidden state extraction",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Structured hidden states only supported for MLX models."
+                    }
+                }
+            }
+        }
+    }
+)
+async def extract_structured_hidden_states(
+    request: Request,
+    structured_request: dict = Body(...)
+):
+    """Extract structured hidden states with server-side chat template and token boundaries."""
+    from heylook_llm.hidden_states import (
+        StructuredHiddenStatesRequest,
+        create_structured_hidden_states,
+    )
+
+    try:
+        req = StructuredHiddenStatesRequest(**structured_request)
+        router = request.app.state.router_instance
+        response = await create_structured_hidden_states(req, router)
+        return response.model_dump(exclude_none=True)
+
+    except NotImplementedError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.error(f"Error extracting structured hidden states: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2558,6 +2671,20 @@ response = requests.post(url + '/multipart', files=files, data=data)
     }
 )(create_chat_multipart)
 
+def _get_api_endpoints():
+    """Dynamically discover all /v1/ endpoints from registered routes."""
+    endpoints = {}
+    for route in app.routes:
+        if hasattr(route, 'path') and route.path.startswith('/v1/'):
+            # Get methods (GET, POST, etc.)
+            methods = getattr(route, 'methods', {'GET'})
+            method = next(iter(methods)) if methods else 'GET'
+            # Create endpoint name from path
+            name = route.path.replace('/v1/', '').replace('/', '_')
+            endpoints[name] = {"method": method, "path": route.path}
+    return endpoints
+
+
 @app.get("/",
     summary="Server Information",
     description="Get server information and available endpoints",
@@ -2568,36 +2695,24 @@ async def root():
     return {
         "name": "HeylookLLM",
         "version": "1.0.1",
-        "description": "High-performance local LLM server with dual API compatibility",
+        "description": "High-performance local LLM server with OpenAI-compatible API",
         "documentation": {
             "interactive": "/docs",
             "redoc": "/redoc",
             "openapi": "/openapi.json"
         },
-        "apis": {
-            "openai": {
-                "description": "OpenAI-compatible API for maximum compatibility",
-                "endpoints": {
-                    "list_models": {"method": "GET", "path": "/v1/models"},
-                    "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
-                    "chat_multipart": {"method": "POST", "path": "/v1/chat/completions/multipart", "note": "⚡ Fast vision endpoint"},
-                    "performance": {"method": "GET", "path": "/v1/performance"},
-                    "capabilities": {"method": "GET", "path": "/v1/capabilities", "note": "Discover optimizations"}
-                }
-            }
-        },
+        "endpoints": _get_api_endpoints(),
         "features": {
             "model_providers": ["MLX (Apple Silicon)", "llama.cpp (GGUF)"],
             "vision_models": True,
             "streaming": True,
             "batch_processing": True,
-            "model_caching": "LRU (max 2 models)",
-            "performance_optimizations": ["Metal acceleration", "Async processing", "Smart caching"]
+            "model_caching": "LRU (max 2 models)"
         },
         "quick_start": {
-            "1": "List models: GET /v1/models",
-            "2": "Chat: POST /v1/chat/completions",
-            "3": "Vision (fast): POST /v1/chat/completions/multipart"
+            "1": "GET /v1/models - List available models",
+            "2": "POST /v1/chat/completions - Chat with a model",
+            "3": "GET /docs - Interactive API documentation"
         }
     }
 

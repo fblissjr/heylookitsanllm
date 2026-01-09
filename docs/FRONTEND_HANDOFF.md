@@ -69,6 +69,27 @@ async function getModels(): Promise<Model[]> {
   const data = await response.json();
   return data.data || [];
 }
+
+// Response now includes provider and capabilities:
+// {
+//   "object": "list",
+//   "data": [
+//     {
+//       "id": "Qwen3-4B",
+//       "object": "model",
+//       "owned_by": "user",
+//       "provider": "mlx",
+//       "capabilities": ["chat", "hidden_states", "thinking"]
+//     },
+//     {
+//       "id": "qwen-vl-chat",
+//       "object": "model",
+//       "owned_by": "user",
+//       "provider": "mlx",
+//       "capabilities": ["chat", "vision", "hidden_states"]
+//     }
+//   ]
+// }
 ```
 
 ---
@@ -87,6 +108,7 @@ async function getModels(): Promise<Model[]> {
 | `/v1/capabilities` | GET | Server features/limits | No | N/A | No |
 | `/v1/audio/transcriptions` | POST | Speech-to-text (macOS) | No | No | No |
 | `/v1/hidden_states` | POST | Extract hidden states | No | No | No |
+| `/v1/hidden_states/structured` | POST | Structured hidden states with token boundaries | No | No | No |
 | `/v1/admin/reload` | POST | Hot-reload model config | No | N/A | No |
 
 ### Interactive API Documentation
@@ -590,6 +612,106 @@ async function transcribeAudio(
 // Supported formats: mp3, wav, m4a, webm, flac, ogg, mp4, mpeg
 ```
 
+### I. Structured Hidden States (MLX only)
+
+Extract hidden states with server-side chat template application and token boundary tracking. This is useful for:
+- Z-Image embeddings with precise template control
+- Token attribution research
+- Ablation studies on prompt sections
+- Debugging chat template formatting
+
+```typescript
+interface StructuredHiddenStatesRequest {
+  model: string;
+  user_prompt: string;
+  system_prompt?: string;
+  thinking_content?: string;
+  assistant_content?: string;
+  enable_thinking?: boolean;
+  layer?: number;
+  max_length?: number;
+  encoding_format?: 'float' | 'base64';
+  return_token_boundaries?: boolean;
+  return_formatted_prompt?: boolean;
+}
+
+interface TokenBoundary {
+  start: number;
+  end: number;
+}
+
+interface StructuredHiddenStatesResponse {
+  hidden_states: number[][] | string;
+  shape: [number, number];
+  model: string;
+  layer: number;
+  dtype: string;
+  encoding_format?: string;
+  token_boundaries?: {
+    system?: TokenBoundary;
+    user?: TokenBoundary;
+    think?: TokenBoundary;
+    assistant?: TokenBoundary;
+  };
+  token_counts?: {
+    system?: number;
+    user?: number;
+    think?: number;
+    assistant?: number;
+    total: number;
+  };
+  formatted_prompt?: string;
+}
+
+async function extractStructuredHiddenStates(
+  request: StructuredHiddenStatesRequest
+): Promise<StructuredHiddenStatesResponse> {
+  const response = await fetch(`${BASE_URL}/v1/hidden_states/structured`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request)
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || `HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// Example usage
+const response = await extractStructuredHiddenStates({
+  model: 'Qwen3-4B',
+  user_prompt: 'What is the capital of France?',
+  system_prompt: 'You are a helpful geography assistant.',
+  enable_thinking: true,
+  layer: -2,
+  encoding_format: 'base64',
+  return_token_boundaries: true
+});
+
+// Response includes:
+// - hidden_states: base64-encoded tensor or float array
+// - shape: [seq_len, hidden_dim] e.g., [120, 2560]
+// - token_boundaries: { system: {start: 0, end: 35}, user: {start: 35, end: 80} }
+// - token_counts: { system: 35, user: 45, total: 120 }
+```
+
+**Key Features:**
+- Server applies Qwen3 chat template internally
+- Returns token indices showing where each section starts/ends
+- Supports pre-filled thinking and assistant content
+- MLX models only (not supported for llama.cpp)
+- Returns raw hidden states from specified layer (default: -2)
+
+**Token Boundaries:**
+The `token_boundaries` field shows where each prompt section starts and ends in the token sequence:
+- `system`: System prompt tokens
+- `user`: User prompt tokens
+- `think`: Thinking block tokens (if thinking_content provided)
+- `assistant`: Assistant content tokens (if assistant_content provided)
+
 ---
 
 ## 5. TypeScript Types
@@ -627,6 +749,8 @@ export interface Model {
   object: 'model';
   created?: number;
   owned_by: string;
+  provider?: 'mlx' | 'llama_cpp' | 'gguf' | 'coreml_stt' | 'mlx_stt';
+  capabilities?: string[];  // e.g., ['chat', 'vision', 'hidden_states', 'thinking']
 }
 
 export interface ModelParameters {
@@ -784,6 +908,50 @@ export interface BatchCompletionResponse {
   created: number;
   model: string;
   choices: ChatCompletionChoice[];
+}
+
+// === Hidden States Types ===
+
+export interface TokenBoundary {
+  start: number;
+  end: number;
+}
+
+export interface StructuredHiddenStatesRequest {
+  model: string;
+  user_prompt: string;
+  system_prompt?: string;
+  thinking_content?: string;
+  assistant_content?: string;
+  enable_thinking?: boolean;
+  layer?: number;
+  max_length?: number;
+  encoding_format?: 'float' | 'base64';
+  return_token_boundaries?: boolean;
+  return_formatted_prompt?: boolean;
+}
+
+export interface StructuredHiddenStatesResponse {
+  hidden_states: number[][] | string;
+  shape: [number, number];
+  model: string;
+  layer: number;
+  dtype: string;
+  encoding_format?: string;
+  token_boundaries?: {
+    system?: TokenBoundary;
+    user?: TokenBoundary;
+    think?: TokenBoundary;
+    assistant?: TokenBoundary;
+  };
+  token_counts?: {
+    system?: number;
+    user?: number;
+    think?: number;
+    assistant?: number;
+    total: number;
+  };
+  formatted_prompt?: string;
 }
 
 // === Server Capabilities ===

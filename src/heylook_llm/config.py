@@ -140,6 +140,9 @@ class MLXModelConfig(BaseModel):
     # Hidden states defaults (for /v1/hidden_states endpoint)
     default_hidden_layer: int = -2  # Z-Image uses penultimate layer
     default_max_length: int = 512
+    # Thinking support metadata (for model capabilities discovery)
+    supports_thinking: bool = False
+    thinking_token_ids: Optional[List[int]] = None  # e.g., [151667, 151668] for <think>, </think>
 
 class LlamaCppModelConfig(BaseModel):
     model_path: str
@@ -179,6 +182,8 @@ class ModelConfig(BaseModel):
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
+    # Model capabilities for discovery (e.g., ["hidden_states", "chat", "thinking", "vision"])
+    capabilities: List[str] = Field(default_factory=list)
 
     @validator('config', pre=True)
     def validate_config_type(cls, v, values):
@@ -189,6 +194,8 @@ class ModelConfig(BaseModel):
             return LlamaCppModelConfig(**v)
         elif provider == 'coreml_stt':
             return CoreMLSTTModelConfig(**v)
+        elif provider == 'mlx_stt':
+            return MLXSTTModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
 
 class AppConfig(BaseModel):

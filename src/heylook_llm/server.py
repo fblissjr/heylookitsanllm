@@ -7,10 +7,7 @@ import sys
 import uvicorn
 import argparse
 import logging
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from heylook_llm.router import ModelRouter
-from heylook_llm.api import app
 
 # Try to use uvloop for better async performance
 try:
@@ -21,61 +18,13 @@ try:
 except ImportError:
     HAS_UVLOOP = False
 
-def create_openai_only_app():
-    """Create app with only OpenAI API endpoints"""
-    from heylook_llm.api import list_models, create_chat_completion, create_batch_chat_completion, get_capabilities, performance_metrics, data_query, data_summary, create_embeddings_endpoint, extract_hidden_states_endpoint, restart_server, reload_models
-    from heylook_llm.api_multipart import create_chat_multipart
-    from heylook_llm.stt_api import stt_router
-
-    openai_app = FastAPI(title="OpenAI-Compatible LLM Server", version="1.0.0")
-
-    # Add CORS middleware
-    openai_app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins for development
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # Add OpenAI endpoints
-    openai_app.get("/v1/models")(list_models)
-    openai_app.post("/v1/chat/completions")(create_chat_completion)
-    openai_app.post("/v1/batch/chat/completions")(create_batch_chat_completion)
-    openai_app.post("/v1/embeddings")(create_embeddings_endpoint)
-    openai_app.post("/v1/hidden_states")(extract_hidden_states_endpoint)
-    openai_app.get("/v1/capabilities")(get_capabilities)
-    openai_app.get("/v1/performance")(performance_metrics)
-    openai_app.post("/v1/chat/completions/multipart")(create_chat_multipart)
-    openai_app.post("/v1/data/query")(data_query)
-    openai_app.get("/v1/data/summary")(data_summary)
-
-    # Add STT endpoints
-    openai_app.include_router(stt_router)
-
-    # Add admin endpoints
-    openai_app.post("/v1/admin/restart")(restart_server)
-    openai_app.post("/v1/admin/reload")(reload_models)
-
-    @openai_app.get("/")
-    async def root():
-        return {
-            "message": "OpenAI-Compatible LLM Server",
-            "endpoints": {
-                "models": "/v1/models",
-                "chat": "/v1/chat/completions",
-                "batch_chat": "/v1/batch/chat/completions",
-                "embeddings": "/v1/embeddings",
-                "hidden_states": "/v1/hidden_states",
-                "capabilities": "/v1/capabilities",
-                "performance": "/v1/performance",
-                "multipart": "/v1/chat/completions/multipart",
-                "data_query": "/v1/data/query",
-                "data_summary": "/v1/data/summary"
-            }
-        }
-
-    return openai_app
+def get_api_endpoints(app_instance):
+    """Extract API endpoint paths from app routes for display."""
+    endpoints = []
+    for route in app_instance.routes:
+        if hasattr(route, 'path') and route.path.startswith('/v1/'):
+            endpoints.append(route.path)
+    return sorted(set(endpoints))
 
 
 def main():
@@ -288,15 +237,19 @@ def main():
         logging.error("  - For both: uv sync --extra all")
         sys.exit(1)
 
-    # Create and configure the app
-    selected_app = create_openai_only_app()
-    print(f"Starting API server on {args.host}:{args.port}")
-    print("Available endpoints: /v1/models, /v1/chat/completions, /v1/batch/chat/completions, /v1/embeddings, /v1/hidden_states, /v1/audio/transcriptions, /v1/stt/models, /v1/capabilities, /v1/performance, /v1/chat/completions/multipart, /v1/data/query")
+    # Use the app from api.py directly (single source of truth for endpoints)
+    from heylook_llm.api import app
 
-    selected_app.state.router_instance = router
+    # Attach router to app state
+    app.state.router_instance = router
+
+    # Display startup info with dynamic endpoint discovery
+    endpoints = get_api_endpoints(app)
+    print(f"Starting API server on {args.host}:{args.port}")
+    print(f"Available endpoints: {', '.join(endpoints)}")
 
     uvicorn.run(
-        selected_app,
+        app,
         host=args.host,
         port=args.port,
         log_level=args.log_level.lower()

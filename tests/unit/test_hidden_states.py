@@ -8,6 +8,10 @@ import pytest
 from heylook_llm.hidden_states import (
     HiddenStatesRequest,
     HiddenStatesResponse,
+    StructuredHiddenStatesRequest,
+    StructuredHiddenStatesResponse,
+    TokenBoundary,
+    ChatTemplateTokenizer,
     encode_hidden_states_base64,
     LlamaCppHiddenStatesExtractor,
 )
@@ -211,3 +215,207 @@ class TestLayerIndexNormalization:
         layer_idx = 5
         target = layer_idx if layer_idx >= 0 else n_layers + layer_idx
         assert target == 5
+
+
+class TestStructuredHiddenStatesRequest:
+    """Tests for StructuredHiddenStatesRequest model."""
+
+    def test_minimal_request(self):
+        """Test request with only required fields."""
+        req = StructuredHiddenStatesRequest(
+            model="Qwen3-4B",
+            user_prompt="A cat sleeping"
+        )
+        assert req.model == "Qwen3-4B"
+        assert req.user_prompt == "A cat sleeping"
+        assert req.system_prompt is None
+        assert req.thinking_content is None
+        assert req.assistant_content is None
+        assert req.enable_thinking is True  # default
+        assert req.layer == -2  # default
+        assert req.max_length == 512  # default
+        assert req.encoding_format == "float"  # default
+        assert req.return_token_boundaries is False  # default
+        assert req.return_formatted_prompt is False  # default
+
+    def test_full_request(self):
+        """Test request with all fields specified."""
+        req = StructuredHiddenStatesRequest(
+            model="Qwen3-4B",
+            user_prompt="A cat sleeping",
+            system_prompt="You generate images",
+            thinking_content="This is a simple scene",
+            assistant_content="A tabby cat curled up",
+            enable_thinking=True,
+            layer=-3,
+            max_length=256,
+            encoding_format="base64",
+            return_token_boundaries=True,
+            return_formatted_prompt=True,
+        )
+        assert req.model == "Qwen3-4B"
+        assert req.user_prompt == "A cat sleeping"
+        assert req.system_prompt == "You generate images"
+        assert req.thinking_content == "This is a simple scene"
+        assert req.assistant_content == "A tabby cat curled up"
+        assert req.enable_thinking is True
+        assert req.layer == -3
+        assert req.max_length == 256
+        assert req.encoding_format == "base64"
+        assert req.return_token_boundaries is True
+        assert req.return_formatted_prompt is True
+
+
+class TestStructuredHiddenStatesResponse:
+    """Tests for StructuredHiddenStatesResponse model."""
+
+    def test_minimal_response(self):
+        """Test response with only required fields."""
+        resp = StructuredHiddenStatesResponse(
+            hidden_states=[[0.1, 0.2], [0.3, 0.4]],
+            shape=[2, 2],
+            model="Qwen3-4B",
+            layer=-2,
+            dtype="bfloat16",
+        )
+        assert resp.hidden_states == [[0.1, 0.2], [0.3, 0.4]]
+        assert resp.shape == [2, 2]
+        assert resp.model == "Qwen3-4B"
+        assert resp.layer == -2
+        assert resp.dtype == "bfloat16"
+        assert resp.token_boundaries is None
+        assert resp.token_counts is None
+        assert resp.formatted_prompt is None
+
+    def test_with_token_boundaries(self):
+        """Test response with token boundaries."""
+        resp = StructuredHiddenStatesResponse(
+            hidden_states="SGVsbG8gV29ybGQ=",
+            shape=[120, 2560],
+            model="Qwen3-4B",
+            layer=-2,
+            dtype="bfloat16",
+            encoding_format="base64",
+            token_boundaries={
+                "system": TokenBoundary(start=0, end=35),
+                "user": TokenBoundary(start=35, end=80),
+            },
+            token_counts={"system": 35, "user": 45, "total": 120},
+            formatted_prompt="<|im_start|>system\nYou generate images...",
+        )
+        assert resp.token_boundaries["system"].start == 0
+        assert resp.token_boundaries["system"].end == 35
+        assert resp.token_boundaries["user"].start == 35
+        assert resp.token_counts["system"] == 35
+        assert resp.token_counts["total"] == 120
+        assert resp.formatted_prompt is not None
+
+
+class TestTokenBoundary:
+    """Tests for TokenBoundary model."""
+
+    def test_boundary_creation(self):
+        """Test creating a token boundary."""
+        boundary = TokenBoundary(start=10, end=50)
+        assert boundary.start == 10
+        assert boundary.end == 50
+
+    def test_boundary_dict_conversion(self):
+        """Test converting boundary to/from dict."""
+        boundary = TokenBoundary(start=0, end=100)
+        d = boundary.model_dump()
+        assert d == {"start": 0, "end": 100}
+
+        # Recreate from dict
+        boundary2 = TokenBoundary(**d)
+        assert boundary2.start == 0
+        assert boundary2.end == 100
+
+
+class TestChatTemplateTokenizer:
+    """Tests for ChatTemplateTokenizer class."""
+
+    def test_initialization(self):
+        """Test that tokenizer initializes correctly."""
+        # Create a mock tokenizer
+        class MockTokenizer:
+            def encode(self, text):
+                return list(range(len(text.split())))
+
+            def apply_chat_template(self, messages, **kwargs):
+                # Simple mock implementation
+                parts = []
+                for msg in messages:
+                    parts.append(f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n")
+                if kwargs.get("add_generation_prompt"):
+                    parts.append("<|im_start|>assistant\n")
+                return "".join(parts)
+
+        tokenizer = MockTokenizer()
+        template_tokenizer = ChatTemplateTokenizer(tokenizer)
+
+        assert template_tokenizer.tokenizer is tokenizer
+        assert template_tokenizer.config == {}
+
+    def test_special_token_constants(self):
+        """Test that Qwen3 special token IDs are correct."""
+        assert ChatTemplateTokenizer.THINK_START_TOKEN == 151667
+        assert ChatTemplateTokenizer.THINK_END_TOKEN == 151668
+        assert ChatTemplateTokenizer.IM_START_TOKEN == 151644
+        assert ChatTemplateTokenizer.IM_END_TOKEN == 151645
+
+    def test_build_prompt_user_only(self):
+        """Test building prompt with only user message."""
+        class MockTokenizer:
+            def encode(self, text):
+                # Simple: 1 token per word
+                return list(range(len(text.split())))
+
+            def apply_chat_template(self, messages, **kwargs):
+                parts = []
+                for msg in messages:
+                    parts.append(f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n")
+                if kwargs.get("add_generation_prompt"):
+                    parts.append("<|im_start|>assistant\n")
+                return "".join(parts)
+
+        tokenizer = MockTokenizer()
+        template_tokenizer = ChatTemplateTokenizer(tokenizer)
+
+        formatted_prompt, token_ids, boundaries = template_tokenizer.build_prompt_with_boundaries(
+            user_prompt="Hello world",
+        )
+
+        assert "Hello world" in formatted_prompt
+        assert "<|im_start|>user" in formatted_prompt
+        assert "user" in boundaries
+        assert "system" not in boundaries
+
+    def test_build_prompt_with_system(self):
+        """Test building prompt with system and user messages."""
+        class MockTokenizer:
+            def encode(self, text):
+                return list(range(len(text.split())))
+
+            def apply_chat_template(self, messages, **kwargs):
+                parts = []
+                for msg in messages:
+                    parts.append(f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n")
+                if kwargs.get("add_generation_prompt"):
+                    parts.append("<|im_start|>assistant\n")
+                return "".join(parts)
+
+        tokenizer = MockTokenizer()
+        template_tokenizer = ChatTemplateTokenizer(tokenizer)
+
+        formatted_prompt, token_ids, boundaries = template_tokenizer.build_prompt_with_boundaries(
+            user_prompt="Hello world",
+            system_prompt="You are helpful",
+        )
+
+        assert "You are helpful" in formatted_prompt
+        assert "Hello world" in formatted_prompt
+        assert "system" in boundaries
+        assert "user" in boundaries
+        assert boundaries["system"]["start"] == 0
+        assert boundaries["user"]["start"] > 0

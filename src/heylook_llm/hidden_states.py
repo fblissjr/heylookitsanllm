@@ -14,7 +14,7 @@ Key differences from embeddings:
 """
 import base64
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -55,6 +55,261 @@ class HiddenStatesResponse(BaseModel):
     attention_mask: Optional[List[int]] = Field(
         None, description="Attention mask if requested"
     )
+
+
+# --- Structured Hidden States Models ---
+
+
+class StructuredHiddenStatesRequest(BaseModel):
+    """Request for structured hidden states with server-side chat template application."""
+
+    model: str = Field(..., description="Model ID to use for extraction")
+    user_prompt: str = Field(..., description="User message content")
+    system_prompt: Optional[str] = Field(None, description="System prompt content")
+    thinking_content: Optional[str] = Field(
+        None, description="Pre-filled thinking block content"
+    )
+    assistant_content: Optional[str] = Field(
+        None, description="Pre-filled assistant response content"
+    )
+    enable_thinking: bool = Field(
+        True, description="Control chat template thinking mode (Qwen3)"
+    )
+    layer: int = Field(
+        -2, description="Which layer to extract from (-2 for second-to-last)"
+    )
+    max_length: int = Field(512, description="Maximum sequence length")
+    encoding_format: str = Field(
+        "float", description="Output format: 'float' (nested list) or 'base64'"
+    )
+    return_token_boundaries: bool = Field(
+        False, description="Return token indices for each section"
+    )
+    return_formatted_prompt: bool = Field(
+        False, description="Return the formatted prompt string (for debugging)"
+    )
+
+
+class TokenBoundary(BaseModel):
+    """Token boundary information for a prompt section."""
+
+    start: int = Field(..., description="Start token index (inclusive)")
+    end: int = Field(..., description="End token index (exclusive)")
+
+
+class StructuredHiddenStatesResponse(BaseModel):
+    """Response for structured hidden states extraction with token boundaries."""
+
+    hidden_states: Union[List[List[float]], str] = Field(
+        ..., description="Hidden states as nested list or base64 string"
+    )
+    shape: List[int] = Field(
+        ..., description="Shape of hidden states [seq_len, hidden_dim]"
+    )
+    model: str = Field(..., description="Model ID used")
+    layer: int = Field(..., description="Layer extracted from")
+    dtype: str = Field(..., description="Data type of the hidden states")
+    encoding_format: Optional[str] = Field(
+        None, description="Encoding format used (only present for base64)"
+    )
+
+    # Token boundary fields
+    token_boundaries: Optional[Dict[str, TokenBoundary]] = Field(
+        None,
+        description="Token boundaries for each section: system, user, think, assistant",
+    )
+    token_counts: Optional[Dict[str, int]] = Field(
+        None, description="Token count for each section"
+    )
+    formatted_prompt: Optional[str] = Field(
+        None, description="The formatted prompt string (for debugging)"
+    )
+
+
+# --- Chat Template Tokenizer for Boundary Tracking ---
+
+
+class ChatTemplateTokenizer:
+    """
+    Handles chat template application with token boundary tracking.
+
+    Builds prompts incrementally and tracks where each section (system, user,
+    think, assistant) starts and ends in the token sequence. This enables
+    research use cases like ablation studies on prompt sections.
+    """
+
+    # Qwen3 special token IDs
+    THINK_START_TOKEN = 151667  # <think>
+    THINK_END_TOKEN = 151668  # </think>
+    IM_START_TOKEN = 151644  # <|im_start|>
+    IM_END_TOKEN = 151645  # <|im_end|>
+
+    def __init__(self, tokenizer, config: Optional[Dict] = None):
+        """
+        Initialize with a tokenizer.
+
+        Args:
+            tokenizer: HuggingFace-style tokenizer with encode() and
+                       apply_chat_template() methods
+            config: Optional model config dict
+        """
+        self.tokenizer = tokenizer
+        self.config = config or {}
+
+    def build_prompt_with_boundaries(
+        self,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
+        thinking_content: Optional[str] = None,
+        assistant_content: Optional[str] = None,
+        enable_thinking: bool = True,
+    ) -> Tuple[str, List[int], Dict[str, Dict[str, int]]]:
+        """
+        Build chat prompt and track token boundaries for each section.
+
+        Args:
+            user_prompt: Required user message
+            system_prompt: Optional system message
+            thinking_content: Optional pre-filled thinking block
+            assistant_content: Optional pre-filled assistant response
+            enable_thinking: Whether to enable thinking mode in template
+
+        Returns:
+            Tuple of:
+                - formatted_prompt: The complete chat template string
+                - token_ids: List of token IDs for the prompt
+                - token_boundaries: Dict mapping section names to {"start": int, "end": int}
+        """
+        # Build messages list
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
+        # Build assistant message if we have pre-filled content
+        if thinking_content or assistant_content:
+            assistant_msg = ""
+            if thinking_content:
+                assistant_msg += f"<think>\n{thinking_content}\n</think>\n"
+            if assistant_content:
+                assistant_msg += assistant_content
+            if assistant_msg:
+                messages.append({"role": "assistant", "content": assistant_msg})
+
+        # Apply chat template
+        formatted_prompt = self._apply_chat_template(messages, enable_thinking)
+
+        # Tokenize full prompt
+        full_tokens = self._encode(formatted_prompt)
+
+        # Compute token boundaries
+        boundaries = self._compute_boundaries(
+            formatted_prompt,
+            full_tokens,
+            system_prompt,
+            user_prompt,
+            thinking_content,
+            assistant_content,
+        )
+
+        return formatted_prompt, full_tokens, boundaries
+
+    def _apply_chat_template(
+        self, messages: List[Dict[str, str]], enable_thinking: bool
+    ) -> str:
+        """Apply chat template with enable_thinking support."""
+        try:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking,
+            )
+        except TypeError:
+            # Tokenizer doesn't support enable_thinking parameter
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+
+    def _encode(self, text: str) -> List[int]:
+        """Encode text to token IDs."""
+        if hasattr(self.tokenizer, "encode"):
+            return self.tokenizer.encode(text)
+        elif callable(self.tokenizer):
+            result = self.tokenizer(text, return_tensors=None, add_special_tokens=False)
+            return result["input_ids"]
+        else:
+            raise ValueError(f"Tokenizer {type(self.tokenizer)} not supported")
+
+    def _compute_boundaries(
+        self,
+        formatted_prompt: str,
+        full_tokens: List[int],
+        system_prompt: Optional[str],
+        user_prompt: str,
+        thinking_content: Optional[str],
+        assistant_content: Optional[str],
+    ) -> Dict[str, Dict[str, int]]:
+        """
+        Compute token boundaries by incremental tokenization.
+
+        Strategy: Tokenize progressively longer prefixes of the prompt
+        and use the token counts to determine section boundaries.
+        """
+        boundaries = {}
+        total_tokens = len(full_tokens)
+
+        # Build sections incrementally to find boundaries
+        # Qwen3 format: <|im_start|>role\ncontent<|im_end|>\n
+        current_pos = 0
+
+        if system_prompt:
+            # System section: <|im_start|>system\n{content}<|im_end|>\n
+            system_text = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+            system_tokens = self._encode(system_text)
+            boundaries["system"] = {"start": current_pos, "end": len(system_tokens)}
+            current_pos = len(system_tokens)
+
+        # User section
+        user_start = current_pos
+        if system_prompt:
+            # Tokenize system + user together for accurate boundary
+            prefix_with_user = (
+                f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+                f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
+            )
+            prefix_tokens = self._encode(prefix_with_user)
+            user_end = len(prefix_tokens)
+        else:
+            user_text = f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
+            user_tokens = self._encode(user_text)
+            user_end = len(user_tokens)
+
+        boundaries["user"] = {"start": user_start, "end": user_end}
+        current_pos = user_end
+
+        # Assistant section with thinking
+        if thinking_content or assistant_content:
+            # Find think section boundaries using special token IDs
+            if thinking_content:
+                think_start = current_pos
+                think_end = total_tokens  # Default to end
+
+                # Search for </think> token (ID 151668) in the token sequence
+                for i, tok_id in enumerate(full_tokens[current_pos:], start=current_pos):
+                    if tok_id == self.THINK_END_TOKEN:
+                        think_end = i + 1  # Include the </think> token
+                        break
+
+                boundaries["think"] = {"start": think_start, "end": think_end}
+                current_pos = think_end
+
+            if assistant_content:
+                boundaries["assistant"] = {"start": current_pos, "end": total_tokens}
+
+        return boundaries
 
 
 def encode_hidden_states_base64(hidden_states: np.ndarray) -> str:
@@ -454,4 +709,124 @@ async def create_hidden_states(
         raise
     except Exception as e:
         logging.error(f"Error extracting hidden states: {e}")
+        raise
+
+
+async def create_structured_hidden_states(
+    request: StructuredHiddenStatesRequest,
+    router: Any,
+) -> StructuredHiddenStatesResponse:
+    """
+    Create structured hidden states with server-side chat template application.
+
+    This function:
+    1. Accepts chat components separately (user_prompt, system_prompt, etc.)
+    2. Applies the chat template server-side with token boundary tracking
+    3. Extracts hidden states from the specified layer
+    4. Returns token boundaries for each section (system, user, think, assistant)
+
+    Args:
+        request: The structured hidden states request
+        router: The model router instance
+
+    Returns:
+        StructuredHiddenStatesResponse with hidden states and token boundaries
+    """
+    try:
+        # Load the model
+        provider = router.get_provider(request.model)
+
+        # Only MLX models are supported for structured hidden states
+        provider_class_name = provider.__class__.__name__
+        if "MLX" not in provider_class_name:
+            raise NotImplementedError(
+                "Structured hidden states extraction only supported for MLX models. "
+                f"Provider {provider_class_name} is not supported."
+            )
+
+        # Get processor/tokenizer
+        processor = getattr(provider, "processor", None)
+        if processor is None:
+            raise ValueError(
+                f"MLX provider for model {request.model} has no processor/tokenizer"
+            )
+
+        # Get the tokenizer from processor
+        if hasattr(processor, "_tokenizer"):
+            tokenizer = processor._tokenizer
+        elif hasattr(processor, "tokenizer"):
+            tokenizer = processor.tokenizer
+        else:
+            tokenizer = processor
+
+        # Apply model config defaults
+        layer = request.layer
+        max_length = request.max_length
+        if hasattr(provider, "config") and isinstance(provider.config, dict):
+            if layer == -2:
+                layer = provider.config.get("default_hidden_layer", -2)
+            if max_length == 512:
+                max_length = provider.config.get("default_max_length", 512)
+
+        # Build prompt with boundary tracking
+        template_tokenizer = ChatTemplateTokenizer(tokenizer, provider.config)
+        formatted_prompt, token_ids, token_boundaries = (
+            template_tokenizer.build_prompt_with_boundaries(
+                user_prompt=request.user_prompt,
+                system_prompt=request.system_prompt,
+                thinking_content=request.thinking_content,
+                assistant_content=request.assistant_content,
+                enable_thinking=request.enable_thinking,
+            )
+        )
+
+        # Extract hidden states using existing extractor
+        extractor = MLXHiddenStatesExtractor(provider.model, processor)
+        results = extractor.extract(
+            [formatted_prompt],
+            layer=layer,
+            max_length=max_length,
+        )
+        result = results[0]
+
+        # Format output
+        if request.encoding_format == "base64":
+            hidden_states_output = encode_hidden_states_base64(result["hidden_states"])
+            encoding_format = "base64"
+        else:
+            hidden_states_output = result["hidden_states"].tolist()
+            encoding_format = None
+
+        # Build response
+        response_data = {
+            "hidden_states": hidden_states_output,
+            "shape": result["shape"],
+            "model": request.model,
+            "layer": layer,
+            "dtype": result["dtype"],
+            "encoding_format": encoding_format,
+        }
+
+        # Add optional fields
+        if request.return_token_boundaries:
+            # Convert dict boundaries to TokenBoundary objects
+            response_data["token_boundaries"] = {
+                section: TokenBoundary(**bounds)
+                for section, bounds in token_boundaries.items()
+            }
+            response_data["token_counts"] = {
+                section: bounds["end"] - bounds["start"]
+                for section, bounds in token_boundaries.items()
+            }
+            response_data["token_counts"]["total"] = result["shape"][0]
+
+        if request.return_formatted_prompt:
+            response_data["formatted_prompt"] = formatted_prompt
+
+        return StructuredHiddenStatesResponse(**response_data)
+
+    except NotImplementedError:
+        raise
+    except Exception as e:
+        logging.error(f"Error extracting structured hidden states: {e}")
         raise
