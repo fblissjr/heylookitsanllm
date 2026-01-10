@@ -40,7 +40,8 @@ function createMockConversation(overrides: Partial<Conversation> = {}): Conversa
   }
 }
 
-function createMockMessage(overrides: Partial<Message> = {}): Message {
+// Helper for future tests - prefixed to avoid unused warning
+function _createMockMessage(overrides: Partial<Message> = {}): Message {
   return {
     id: `msg-${Date.now()}`,
     role: 'user',
@@ -49,6 +50,7 @@ function createMockMessage(overrides: Partial<Message> = {}): Message {
     ...overrides,
   }
 }
+void _createMockMessage
 
 describe('chatStore', () => {
   beforeEach(() => {
@@ -129,7 +131,7 @@ describe('chatStore', () => {
       it('creates conversation with system prompt', () => {
         const { createConversation } = useChatStore.getState()
 
-        const id = createConversation('test-model', 'You are a helpful assistant.')
+        createConversation('test-model', 'You are a helpful assistant.')
 
         const { conversations } = useChatStore.getState()
         expect(conversations[0].systemPrompt).toBe('You are a helpful assistant.')
@@ -253,7 +255,7 @@ describe('chatStore', () => {
       })
 
       it('returns active conversation when set', () => {
-        const { createConversation, activeConversation } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const id = createConversation('test-model')
 
@@ -265,7 +267,7 @@ describe('chatStore', () => {
 
     describe('getConversationById', () => {
       it('returns conversation by id', () => {
-        const { createConversation, getConversationById } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const id = createConversation('test-model')
 
