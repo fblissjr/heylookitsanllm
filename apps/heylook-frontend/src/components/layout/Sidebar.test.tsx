@@ -54,7 +54,7 @@ import { useUIStore } from '../../stores/uiStore'
 function createMockConversation(overrides: Partial<Conversation> = {}): Conversation {
   const baseTime = new Date('2024-06-15T12:00:00.000Z').getTime()
   return {
-    id: `conv-${Math.random().toString(36).substr(2, 9)}`,
+    id: `conv-${Math.random().toString(36).slice(2, 11)}`,
     title: 'Test Conversation',
     modelId: 'test-model',
     messages: [],

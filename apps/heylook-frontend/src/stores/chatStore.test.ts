@@ -288,7 +288,7 @@ describe('chatStore', () => {
   describe('message management', () => {
     describe('addMessage', () => {
       it('adds message to conversation', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, {
@@ -304,7 +304,7 @@ describe('chatStore', () => {
       })
 
       it('generates unique message id', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId1 = useChatStore.getState().addMessage(convId, { role: 'user', content: 'First' })
@@ -314,7 +314,7 @@ describe('chatStore', () => {
       })
 
       it('adds timestamp to message', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const beforeTime = Date.now()
         const convId = createConversation('test-model')
@@ -327,7 +327,7 @@ describe('chatStore', () => {
       })
 
       it('updates conversation title from first user message', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         expect(useChatStore.getState().getConversationById(convId)?.title).toBe('New Conversation')
@@ -341,7 +341,7 @@ describe('chatStore', () => {
       })
 
       it('truncates long messages for title', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const longContent = 'A'.repeat(100)
@@ -356,7 +356,7 @@ describe('chatStore', () => {
       })
 
       it('does not update title after first message', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         useChatStore.getState().addMessage(convId, { role: 'user', content: 'First message' })
@@ -366,7 +366,7 @@ describe('chatStore', () => {
       })
 
       it('adds message with images', () => {
-        const { createConversation, addMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         useChatStore.getState().addMessage(convId, {

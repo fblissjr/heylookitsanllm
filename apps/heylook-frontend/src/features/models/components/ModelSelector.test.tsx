@@ -205,10 +205,10 @@ describe('ModelSelector', () => {
 
       // Should show min and max labels - find the range label container
       // The labels are in a flex container with text-xs text-gray-400 class
-      const rangeLabels = document.querySelector('.flex.justify-between.text-xs') as HTMLElement | null
+      const rangeLabels = document.querySelector('.flex.justify-between.text-xs')
       expect(rangeLabels).toBeInTheDocument()
-      expect(within(rangeLabels!).getByText('512')).toBeInTheDocument()
-      expect(within(rangeLabels!).getByText('32,768')).toBeInTheDocument()
+      expect(within(rangeLabels as HTMLElement).getByText('512')).toBeInTheDocument()
+      expect(within(rangeLabels as HTMLElement).getByText('32,768')).toBeInTheDocument()
     })
   })
 
