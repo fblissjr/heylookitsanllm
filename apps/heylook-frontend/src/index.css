@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Custom theme configuration for Tailwind CSS 4 */
+@theme {
+  --color-primary: #3B82F6;
+  --color-primary-hover: #2563EB;
+  --color-primary-light: #60A5FA;
+  --color-background-light: #ffffff;
+  --color-background-dark: #0f172a;
+  --color-surface-light: #f3f4f6;
+  --color-surface-dark: #1e293b;
+  --color-surface-darker: #020617;
+  --color-accent-green: #10b981;
+  --color-accent-red: #ef4444;
+  --color-accent-purple: #8b5cf6;
+  --color-accent-amber: #f59e0b;
+  --font-family-display: 'Inter', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Menlo', monospace;
+}
+
+/* Custom scrollbar for dark mode */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Safe area insets for iOS */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Hide scrollbar but keep functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Message bubble styles */
+.message-user {
+  @apply bg-primary text-white rounded-2xl rounded-tr-sm;
+}
+
+.message-assistant {
+  @apply bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm;
+}
+
+/* Thinking block styles */
+.thinking-block {
+  @apply font-mono text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-surface-darker border border-gray-200 dark:border-gray-700 rounded-lg;
+}
+
+/* Focus styles */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background-dark;
+}
+
+/* Slider thumb */
+input[type="range"] {
+  @apply appearance-none bg-transparent cursor-pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  @apply h-2 rounded-full bg-gray-200 dark:bg-gray-700;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  @apply appearance-none w-4 h-4 rounded-full bg-primary -mt-1 shadow-md;
+}
+
+input[type="range"]::-moz-range-track {
+  @apply h-2 rounded-full bg-gray-200 dark:bg-gray-700;
+}
+
+input[type="range"]::-moz-range-thumb {
+  @apply w-4 h-4 rounded-full bg-primary border-0 shadow-md;
+}

@@ -1,0 +1,107 @@
+import { create } from 'zustand'
+
+type PanelType = 'settings' | 'models' | 'advanced' | null
+type ModalType = 'modelLoad' | 'deleteMessage' | 'deleteConversation' | 'savePreset' | null
+
+interface ConfirmDeleteState {
+  type: 'message' | 'conversation' | null
+  id: string | null
+  title?: string
+  conversationId?: string
+  messageIndex?: number
+}
+
+interface UIState {
+  // Panels
+  activePanel: PanelType
+  isSidebarOpen: boolean
+  isSettingsExpanded: Record<string, boolean>
+
+  // Modals
+  activeModal: ModalType
+  confirmDelete: ConfirmDeleteState
+
+  // Mobile
+  isMobile: boolean
+  isBottomSheetOpen: boolean
+
+  // Actions - Panels
+  setActivePanel: (panel: PanelType) => void
+  togglePanel: (panel: PanelType) => void
+  toggleSidebar: () => void
+  toggleSettingsSection: (section: string) => void
+
+  // Actions - Modals
+  openModal: (modal: ModalType) => void
+  closeModal: () => void
+  setConfirmDelete: (state: ConfirmDeleteState) => void
+
+  // Actions - Mobile
+  setIsMobile: (isMobile: boolean) => void
+  setBottomSheetOpen: (isOpen: boolean) => void
+}
+
+export const useUIStore = create<UIState>((set) => ({
+  activePanel: null,
+  isSidebarOpen: true,
+  isSettingsExpanded: {
+    sampling: false,
+    repetition: false,
+    advanced: false,
+  },
+
+  activeModal: null,
+  confirmDelete: {
+    type: null,
+    id: null,
+  },
+
+  isMobile: false,
+  isBottomSheetOpen: false,
+
+  setActivePanel: (panel) => {
+    set({ activePanel: panel })
+  },
+
+  togglePanel: (panel) => {
+    set(state => ({
+      activePanel: state.activePanel === panel ? null : panel,
+    }))
+  },
+
+  toggleSidebar: () => {
+    set(state => ({ isSidebarOpen: !state.isSidebarOpen }))
+  },
+
+  toggleSettingsSection: (section) => {
+    set(state => ({
+      isSettingsExpanded: {
+        ...state.isSettingsExpanded,
+        [section]: !state.isSettingsExpanded[section],
+      },
+    }))
+  },
+
+  openModal: (modal) => {
+    set({ activeModal: modal })
+  },
+
+  closeModal: () => {
+    set({ activeModal: null, confirmDelete: { type: null, id: null } })
+  },
+
+  setConfirmDelete: (state) => {
+    set({ confirmDelete: state, activeModal: state.type ? 'deleteMessage' : null })
+  },
+
+  setIsMobile: (isMobile) => {
+    set({
+      isMobile,
+      isSidebarOpen: !isMobile, // Close sidebar on mobile by default
+    })
+  },
+
+  setBottomSheetOpen: (isOpen) => {
+    set({ isBottomSheetOpen: isOpen })
+  },
+}))
