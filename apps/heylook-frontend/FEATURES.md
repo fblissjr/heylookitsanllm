@@ -1,0 +1,216 @@
+# Features Documentation
+
+## Feature Status Overview
+
+| Category | Implemented | Planned | Out of Scope |
+|----------|-------------|---------|--------------|
+| Chat | 9 | 2 | 1 |
+| Models | 6 | 2 | 0 |
+| Storage | 5 | 1 | 0 |
+| UI/UX | 8 | 4 | 2 |
+| Settings | 4 | 2 | 0 |
+
+---
+
+## Implemented Features
+
+### Chat Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Text Chat | Send and receive text messages | Complete |
+| Streaming Responses | Real-time token-by-token display | Complete |
+| Thinking Mode | Display model reasoning (Qwen3) | Complete |
+| Stop Generation | Cancel ongoing response | Complete |
+| Message Editing | Edit sent messages | Complete |
+| Message Deletion | Delete individual messages | Complete |
+| Cascade Delete | Delete message and all following | Complete |
+| Regenerate Response | Re-generate assistant response | Complete |
+| Image Attachments | Add images to messages (VLM) | Complete |
+
+### Model Management
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Model List | View all available models | Complete |
+| Model Loading | Load a model for chat | Complete |
+| Model Unloading | Unload current model | Complete |
+| Capability Badges | Show model capabilities (Chat, Vision, etc.) | Complete |
+| Context Window | Adjust context size before loading | Complete |
+| Hot Swap | Switch models mid-conversation | Complete |
+
+### Conversation Management
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Create Conversation | Start new chat sessions | Complete |
+| Switch Conversations | Navigate between chats | Complete |
+| Delete Conversation | Remove conversation with confirmation | Complete |
+| Auto-Title | Generate title from first message | Complete |
+| Conversation List | Sidebar with all conversations | Complete |
+
+### Persistence
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| IndexedDB Storage | Store conversations in browser | Complete |
+| Auto-Save | Debounced save on changes | Complete |
+| Load on Startup | Restore conversations on refresh | Complete |
+| Theme Persistence | Remember theme preference | Complete |
+| Settings Persistence | Remember sampler settings | Complete |
+
+### UI/UX
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Dark Theme | Native dark mode | Complete |
+| Responsive Layout | Works on various screen sizes | Complete |
+| Collapsible Sidebar | Toggle conversation list | Complete |
+| Loading States | Spinners and skeleton states | Complete |
+| Error States | Connection failed, retry options | Complete |
+| Hover Actions | Show actions on hover | Complete |
+| Keyboard Shortcuts | Enter to send, Shift+Enter for newline | Complete |
+| Copy Message | Copy message content | Complete |
+
+### Settings
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Temperature | Adjust randomness (0-2) | Complete |
+| Top P | Nucleus sampling | Complete |
+| Top K | Top-k sampling | Complete |
+| Max Tokens | Limit response length | Complete |
+
+---
+
+## Planned Features (Gaps)
+
+### High Priority
+
+| Feature | Description | Complexity | Notes |
+|---------|-------------|------------|-------|
+| Config Editing | Edit models.toml via UI | High | Requires backend API endpoints |
+| Token Display | Show token usage per message | Low | Backend already returns this |
+| Export Conversations | Export to JSON/Markdown | Medium | DB export function exists |
+| Import Conversations | Import from JSON | Medium | DB import function exists |
+
+### Medium Priority
+
+| Feature | Description | Complexity | Notes |
+|---------|-------------|------------|-------|
+| Search | Search conversation content | Medium | Requires IndexedDB query |
+| System Prompt UI | Edit system prompt per conversation | Low | Data model supports this |
+| Keyboard Shortcuts | Cmd+K palette, Cmd+N new chat | Medium | Common UX pattern |
+| Theme Toggle | Light/Dark/Auto mode selector | Low | ThemeContext ready |
+| Presets | Sampler parameter presets | Low | Just UI + localStorage |
+| Message Timestamps | Show when messages were sent | Low | Data exists, needs UI |
+
+### Low Priority
+
+| Feature | Description | Complexity | Notes |
+|---------|-------------|------------|-------|
+| Markdown Rendering | Render markdown in messages | Medium | Need markdown library |
+| Code Highlighting | Syntax highlight code blocks | Medium | Need highlight.js or similar |
+| Conversation Rename | Manual title editing | Low | Update function exists |
+| Conversation Pinning | Pin important conversations | Low | Add pinned field |
+| Message Reactions | Add reactions to messages | Low | UI polish |
+| Typing Indicator | Show when model is "typing" | Low | Already have streaming state |
+
+---
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Authentication | Local-only application |
+| Multi-user | Single user design |
+| Cloud Sync | Privacy - local storage only |
+| Mobile App | Web-only for now |
+| Plugins/Extensions | Keep core simple |
+
+---
+
+## Known Gaps and Limitations
+
+### Technical Gaps
+
+1. **No offline support**: Requires backend connection
+2. **No service worker**: Could improve load performance
+3. **No code splitting**: Single bundle (acceptable at current size)
+4. **No i18n**: English only
+5. **No accessibility audit**: May have a11y issues
+
+### UX Gaps
+
+1. **No empty state guidance**: Could better guide new users
+2. **No onboarding**: Assumes user knows the system
+3. **Limited error messages**: Could be more helpful
+4. **No undo for delete**: Confirmation modal only protection
+5. **No message search**: Can't search within conversation
+
+### Testing Gaps
+
+1. **No visual regression tests**: Could add Chromatic/Percy
+2. **No performance tests**: Could add Lighthouse CI
+3. **Limited mobile E2E**: Tests run on desktop only
+4. **No accessibility tests**: Could add axe-core
+
+---
+
+## Implementation Roadmap
+
+### Phase 1: Polish (v0.2.0)
+- Token display per message
+- Export/Import conversations
+- Theme toggle in UI
+- Message timestamps
+
+### Phase 2: Power User (v0.3.0)
+- Keyboard shortcuts (Cmd+K palette)
+- Search conversations
+- System prompt UI
+- Sampler presets
+
+### Phase 3: Config (v0.4.0)
+- models.toml editing via UI
+- Backend API endpoints for config
+- Model parameter editing
+
+### Phase 4: Rich Content (v0.5.0)
+- Markdown rendering
+- Code syntax highlighting
+- Message reactions/annotations
+
+---
+
+## Feature Request Template
+
+To request a new feature, include:
+
+1. **Description**: What the feature does
+2. **Use Case**: Why it's needed
+3. **Priority**: High/Medium/Low
+4. **Complexity**: Estimate effort
+5. **Dependencies**: Backend changes needed?
+
+---
+
+## Test Coverage by Feature
+
+| Feature Area | Unit Tests | Component Tests | E2E Tests |
+|--------------|------------|-----------------|-----------|
+| Chat Store | 75 | - | 12 |
+| Model Store | 40 | - | 12 |
+| Settings Store | 25 | - | 6 |
+| UI Store | 35 | - | 2 |
+| ChatView | - | 18 | 8 |
+| MessageList | - | 25 | - |
+| ChatInput | - | 19 | 4 |
+| ModelSelector | - | 30 | 12 |
+| Sidebar | - | 30 | 4 |
+| Header | - | 21 | 2 |
+| Layout | - | 23 | - |
+| Persistence | - | - | 16 |
+| **Total** | 175 | 166 | 78 |
+
+Note: 471 unit/component tests + 48 E2E tests = 519 total tests
