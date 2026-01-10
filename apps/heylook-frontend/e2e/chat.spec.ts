@@ -112,7 +112,7 @@ test.describe('Chat Input (requires model loaded)', () => {
     await page.goto('/')
 
     // Wait for connection
-    await page.waitForTimeout(3000)
+    await page.waitForTimeout(2000)
 
     // Skip if backend not running
     const connectionFailed = page.getByText('Connection Failed')
@@ -120,39 +120,53 @@ test.describe('Chat Input (requires model loaded)', () => {
       test.skip(true, 'Backend not running')
     }
 
-    // Try to select a model - click the model selector
+    // Step 1: Open the models panel
     const modelSelector = page.getByRole('button', { name: /select model/i })
-    if (await modelSelector.isVisible()) {
-      await modelSelector.click()
+    if (!(await modelSelector.isVisible())) {
+      test.skip(true, 'Model selector not visible')
+    }
+    await modelSelector.click()
 
-      // Wait for model panel to open and select first available model
-      await page.waitForTimeout(500)
-      const modelOption = page.locator('[data-testid="model-option"]').first().or(
-        page.locator('.model-item').first()
-      ).or(
-        page.getByRole('button').filter({ hasText: /qwen|gemma|llama/i }).first()
-      )
-
-      if (await modelOption.isVisible()) {
-        await modelOption.click()
-        // Wait for model to load
-        await page.waitForTimeout(5000)
-      } else {
-        test.skip(true, 'No models available to select')
-      }
+    // Step 2: Wait for models panel to open and find a model card
+    await page.waitForTimeout(500)
+    const modelsHeading = page.getByRole('heading', { name: 'Models' })
+    if (!(await modelsHeading.isVisible())) {
+      test.skip(true, 'Models panel did not open')
     }
 
-    // Check if chat input is now visible (model loaded + conversation created)
+    // Step 3: Click a model card (buttons in the model list containing model names)
+    // Look for a small/fast model first for quicker testing
+    const modelCard = page.locator('button').filter({ hasText: /qwen3-4b|gemma.*4b|llama.*1b/i }).first()
+    const anyModelCard = page.locator('button').filter({ hasText: /qwen|gemma|llama/i }).first()
+
+    if (await modelCard.isVisible()) {
+      await modelCard.click()
+    } else if (await anyModelCard.isVisible()) {
+      await anyModelCard.click()
+    } else {
+      test.skip(true, 'No model cards found')
+    }
+
+    // Step 4: Click the "Load Model" button
+    await page.waitForTimeout(300)
+    const loadButton = page.getByRole('button', { name: /load model/i })
+    if (!(await loadButton.isVisible())) {
+      test.skip(true, 'Load Model button not visible')
+    }
+    await loadButton.click()
+
+    // Step 5: Wait for chat input to appear (model loaded + conversation created)
     const chatInput = page.locator('textarea')
-    const inputVisible = await chatInput.isVisible().catch(() => false)
-    if (!inputVisible) {
-      test.skip(true, 'Chat input not visible - model may not have loaded')
+    try {
+      await expect(chatInput).toBeVisible({ timeout: 10000 })
+    } catch {
+      test.skip(true, 'Chat input not visible after loading model')
     }
   })
 
   test('can type in chat input', async ({ page }) => {
     const chatInput = page.locator('textarea')
-    await expect(chatInput).toBeVisible({ timeout: 10000 })
+    await expect(chatInput).toBeVisible({ timeout: 5000 })
 
     await chatInput.fill('Hello, this is a test message')
     await expect(chatInput).toHaveValue('Hello, this is a test message')
@@ -160,7 +174,7 @@ test.describe('Chat Input (requires model loaded)', () => {
 
   test('send button state changes with input', async ({ page }) => {
     const chatInput = page.locator('textarea')
-    await expect(chatInput).toBeVisible({ timeout: 10000 })
+    await expect(chatInput).toBeVisible({ timeout: 5000 })
 
     // Clear input - send button should be disabled
     await chatInput.fill('')
