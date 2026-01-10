@@ -67,11 +67,12 @@ describe('EmptyState', () => {
     })
 
     it('renders with proper styling structure', () => {
-      render(<EmptyState type="no-conversation" />)
+      const { container } = render(<EmptyState type="no-conversation" />)
 
-      const container = screen.getByText('Start a New Conversation').closest('div')?.parentElement
-      expect(container).toHaveClass('text-center')
-      expect(container).toHaveClass('max-w-md')
+      // The outermost div should have text-center and max-w-md classes
+      const outerDiv = container.querySelector('.text-center')
+      expect(outerDiv).toBeInTheDocument()
+      expect(outerDiv).toHaveClass('max-w-md')
     })
   })
 

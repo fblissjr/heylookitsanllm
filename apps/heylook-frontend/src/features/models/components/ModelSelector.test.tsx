@@ -163,8 +163,10 @@ describe('ModelSelector', () => {
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // The slider value should be displayed
-      expect(screen.getByText('8,192')).toBeInTheDocument()
+      // The slider value should be displayed with font-mono class
+      const valueDisplay = document.querySelector('.font-mono.text-primary')
+      expect(valueDisplay).toBeInTheDocument()
+      expect(valueDisplay).toHaveTextContent('8,192')
     })
 
     it('shows Load Model button when model is selected', async () => {
@@ -201,9 +203,12 @@ describe('ModelSelector', () => {
       const modelCard = screen.getByText('qwen-vl-4b').closest('button')
       await user.click(modelCard!)
 
-      // Should show min and max labels
-      expect(screen.getByText('512')).toBeInTheDocument()
-      expect(screen.getByText('32,768')).toBeInTheDocument()
+      // Should show min and max labels - find the range label container
+      // The labels are in a flex container with text-xs text-gray-400 class
+      const rangeLabels = document.querySelector('.flex.justify-between.text-xs') as HTMLElement | null
+      expect(rangeLabels).toBeInTheDocument()
+      expect(within(rangeLabels!).getByText('512')).toBeInTheDocument()
+      expect(within(rangeLabels!).getByText('32,768')).toBeInTheDocument()
     })
   })
 
@@ -325,7 +330,9 @@ describe('ModelSelector', () => {
       render(<ModelSelector />)
 
       expect(screen.getByText('Current:')).toBeInTheDocument()
-      expect(screen.getByText('llama-3.2-1b')).toBeInTheDocument()
+      // The model ID appears multiple times (in header and card), so use getAllByText
+      const modelIdElements = screen.getAllByText('llama-3.2-1b')
+      expect(modelIdElements.length).toBeGreaterThanOrEqual(1)
     })
 
     it('calls setLoadedModel with null when unload clicked', async () => {
@@ -452,8 +459,12 @@ describe('ModelSelector', () => {
 
       render(<ModelSelector />)
 
-      const modelCard = screen.getByText('llama-3.2-1b').closest('button')
-      expect(modelCard).toHaveClass('border-accent-green')
+      // Find all buttons and get the one that contains the model ID in the card list
+      const modelCards = screen.getAllByRole('button').filter(
+        btn => btn.textContent?.includes('llama-3.2-1b') && btn.textContent?.includes('meta')
+      )
+      expect(modelCards.length).toBe(1)
+      expect(modelCards[0]).toHaveClass('border-accent-green')
     })
   })
 

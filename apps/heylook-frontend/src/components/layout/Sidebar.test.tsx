@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { Sidebar } from './Sidebar'
 import type { Conversation } from '../../types/chat'
 import type { LoadedModel } from '../../types/models'
@@ -51,16 +50,16 @@ import { useChatStore } from '../../stores/chatStore'
 import { useModelStore } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
 
-// Helper to create mock conversations
+// Helper to create mock conversations with a fixed date
 function createMockConversation(overrides: Partial<Conversation> = {}): Conversation {
-  const now = Date.now()
+  const baseTime = new Date('2024-06-15T12:00:00.000Z').getTime()
   return {
     id: `conv-${Math.random().toString(36).substr(2, 9)}`,
     title: 'Test Conversation',
     modelId: 'test-model',
     messages: [],
-    createdAt: now,
-    updatedAt: now,
+    createdAt: baseTime,
+    updatedAt: baseTime,
     ...overrides,
   }
 }
@@ -119,8 +118,7 @@ describe('Sidebar', () => {
       expect(newChatButton).toBeDisabled()
     })
 
-    it('calls createConversation with model id when clicked', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('calls createConversation with model id when clicked', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: defaultLoadedModel,
       })
@@ -128,13 +126,12 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const newChatButton = screen.getByText('New Chat').closest('button')
-      await user.click(newChatButton!)
+      fireEvent.click(newChatButton!)
 
       expect(mockCreateConversation).toHaveBeenCalledWith('test-model')
     })
 
-    it('toggles sidebar after creating conversation on mobile', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('toggles sidebar after creating conversation on mobile', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: defaultLoadedModel,
       })
@@ -146,13 +143,12 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const newChatButton = screen.getByText('New Chat').closest('button')
-      await user.click(newChatButton!)
+      fireEvent.click(newChatButton!)
 
       expect(mockToggleSidebar).toHaveBeenCalled()
     })
 
-    it('does not toggle sidebar after creating conversation on desktop', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('does not toggle sidebar after creating conversation on desktop', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: defaultLoadedModel,
       })
@@ -164,13 +160,12 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const newChatButton = screen.getByText('New Chat').closest('button')
-      await user.click(newChatButton!)
+      fireEvent.click(newChatButton!)
 
       expect(mockToggleSidebar).not.toHaveBeenCalled()
     })
 
-    it('does not create conversation when no model loaded', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('does not create conversation when no model loaded', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: null,
       })
@@ -178,7 +173,7 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const newChatButton = screen.getByText('New Chat').closest('button')
-      await user.click(newChatButton!)
+      fireEvent.click(newChatButton!)
 
       expect(mockCreateConversation).not.toHaveBeenCalled()
     })
@@ -260,8 +255,7 @@ describe('Sidebar', () => {
       expect(activeButton).toHaveClass('text-primary')
     })
 
-    it('calls setActiveConversation when clicking a conversation', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('calls setActiveConversation when clicking a conversation', () => {
       const conversations = [
         createMockConversation({ id: 'conv-1', title: 'Test Chat' }),
       ]
@@ -272,13 +266,15 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
-      await user.click(screen.getByText('Test Chat'))
+      // Click on the conversation text/span, not the outer button
+      const conversationText = screen.getByText('Test Chat')
+      const conversationButton = conversationText.closest('button')
+      fireEvent.click(conversationButton!)
 
       expect(mockSetActiveConversation).toHaveBeenCalledWith('conv-1')
     })
 
-    it('toggles sidebar after selecting conversation on mobile', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('toggles sidebar after selecting conversation on mobile', () => {
       const conversations = [
         createMockConversation({ id: 'conv-1', title: 'Test Chat' }),
       ]
@@ -293,7 +289,9 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
-      await user.click(screen.getByText('Test Chat'))
+      const conversationText = screen.getByText('Test Chat')
+      const conversationButton = conversationText.closest('button')
+      fireEvent.click(conversationButton!)
 
       expect(mockToggleSidebar).toHaveBeenCalled()
     })
@@ -315,8 +313,7 @@ describe('Sidebar', () => {
       expect(deleteButton).toBeInTheDocument()
     })
 
-    it('calls setConfirmDelete when delete button is clicked', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('calls setConfirmDelete when delete button is clicked', () => {
       const conversations = [
         createMockConversation({ id: 'conv-1', title: 'Chat to Delete' }),
       ]
@@ -328,7 +325,7 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const deleteButton = screen.getByLabelText('Delete conversation')
-      await user.click(deleteButton)
+      fireEvent.click(deleteButton)
 
       expect(mockSetConfirmDelete).toHaveBeenCalledWith({
         type: 'conversation',
@@ -337,8 +334,7 @@ describe('Sidebar', () => {
       })
     })
 
-    it('does not trigger setActiveConversation when clicking delete', async () => {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    it('does not trigger setActiveConversation when clicking delete', () => {
       const conversations = [
         createMockConversation({ id: 'conv-1', title: 'Test Chat' }),
       ]
@@ -350,7 +346,7 @@ describe('Sidebar', () => {
       render(<Sidebar />)
 
       const deleteButton = screen.getByLabelText('Delete conversation')
-      await user.click(deleteButton)
+      fireEvent.click(deleteButton)
 
       // Delete click should call setConfirmDelete but not setActiveConversation
       expect(mockSetConfirmDelete).toHaveBeenCalled()
@@ -537,6 +533,3 @@ describe('Sidebar', () => {
     })
   })
 })
-
-// Import afterEach for cleanup
-import { afterEach } from 'vitest'

@@ -29,9 +29,6 @@ const defaultUIState = {
   toggleSidebar: mockToggleSidebar,
 }
 
-// Create a mock store with getState
-const mockGetState = vi.fn(() => ({ toggleSidebar: mockToggleSidebar }))
-
 vi.mock('../../stores/uiStore', () => ({
   useUIStore: Object.assign(
     vi.fn(() => defaultUIState),
