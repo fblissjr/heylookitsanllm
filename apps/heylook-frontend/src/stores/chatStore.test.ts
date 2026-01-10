@@ -382,7 +382,7 @@ describe('chatStore', () => {
 
     describe('updateMessage', () => {
       it('updates message content', () => {
-        const { createConversation, addMessage, updateMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'user', content: 'Original' })
@@ -394,7 +394,7 @@ describe('chatStore', () => {
       })
 
       it('updates message thinking field', () => {
-        const { createConversation, addMessage, updateMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'assistant', content: 'Response' })
@@ -406,7 +406,7 @@ describe('chatStore', () => {
       })
 
       it('updates conversation updatedAt timestamp', () => {
-        const { createConversation, addMessage, updateMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'user', content: 'Test' })
@@ -421,7 +421,7 @@ describe('chatStore', () => {
 
     describe('deleteMessage', () => {
       it('removes message from conversation', () => {
-        const { createConversation, addMessage, deleteMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'user', content: 'Test' })
@@ -434,7 +434,7 @@ describe('chatStore', () => {
       })
 
       it('only removes specified message', () => {
-        const { createConversation, addMessage, deleteMessage } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId1 = useChatStore.getState().addMessage(convId, { role: 'user', content: 'First' })
@@ -450,7 +450,7 @@ describe('chatStore', () => {
 
     describe('deleteMessageAndDownstream', () => {
       it('deletes message and all messages after it', () => {
-        const { createConversation, addMessage, deleteMessageAndDownstream } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId1 = useChatStore.getState().addMessage(convId, { role: 'user', content: 'First' })
@@ -465,7 +465,7 @@ describe('chatStore', () => {
       })
 
       it('handles non-existent message id gracefully', () => {
-        const { createConversation, addMessage, deleteMessageAndDownstream } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         useChatStore.getState().addMessage(convId, { role: 'user', content: 'Test' })
@@ -479,7 +479,7 @@ describe('chatStore', () => {
 
     describe('getMessagesUpTo', () => {
       it('returns messages up to but not including specified message', () => {
-        const { createConversation, addMessage, getMessagesUpTo } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         useChatStore.getState().addMessage(convId, { role: 'user', content: 'First' })
@@ -493,7 +493,7 @@ describe('chatStore', () => {
       })
 
       it('returns all messages if message id not found', () => {
-        const { createConversation, addMessage, getMessagesUpTo } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         useChatStore.getState().addMessage(convId, { role: 'user', content: 'First' })
@@ -517,8 +517,6 @@ describe('chatStore', () => {
   describe('streaming state management', () => {
     describe('setStreaming', () => {
       it('updates streaming state partially', () => {
-        const { setStreaming } = useChatStore.getState()
-
         useChatStore.getState().setStreaming({ isStreaming: true })
 
         expect(useChatStore.getState().streaming.isStreaming).toBe(true)
@@ -526,8 +524,6 @@ describe('chatStore', () => {
       })
 
       it('updates multiple streaming fields', () => {
-        const { setStreaming } = useChatStore.getState()
-
         useChatStore.getState().setStreaming({
           isStreaming: true,
           content: 'Hello',
@@ -543,8 +539,6 @@ describe('chatStore', () => {
 
     describe('appendStreamContent', () => {
       it('appends content to streaming content', () => {
-        const { setStreaming, appendStreamContent } = useChatStore.getState()
-
         useChatStore.getState().setStreaming({ isStreaming: true, content: 'Hello' })
         useChatStore.getState().appendStreamContent(' World', false)
 
@@ -552,8 +546,6 @@ describe('chatStore', () => {
       })
 
       it('appends thinking content separately', () => {
-        const { setStreaming, appendStreamContent } = useChatStore.getState()
-
         useChatStore.getState().setStreaming({ isStreaming: true, thinking: 'Let me' })
         useChatStore.getState().appendStreamContent(' think...', true)
 
@@ -564,7 +556,7 @@ describe('chatStore', () => {
 
     describe('finalizeStream', () => {
       it('updates message with final content', () => {
-        const { createConversation, addMessage, setStreaming, finalizeStream } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'assistant', content: '' })
@@ -585,7 +577,7 @@ describe('chatStore', () => {
       })
 
       it('resets streaming state', () => {
-        const { createConversation, addMessage, setStreaming, finalizeStream } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'assistant', content: '' })
@@ -607,8 +599,6 @@ describe('chatStore', () => {
       })
 
       it('does nothing if no messageId', () => {
-        const { setStreaming, finalizeStream } = useChatStore.getState()
-
         useChatStore.getState().setStreaming({
           isStreaming: true,
           content: 'Content',
@@ -622,8 +612,6 @@ describe('chatStore', () => {
       })
 
       it('does nothing if no activeConversationId', () => {
-        const { setStreaming, finalizeStream, setActiveConversation } = useChatStore.getState()
-
         useChatStore.getState().setActiveConversation(null)
         useChatStore.getState().setStreaming({
           isStreaming: true,
@@ -642,8 +630,6 @@ describe('chatStore', () => {
   describe('edit mode', () => {
     describe('startEditing', () => {
       it('sets edit state with message info', () => {
-        const { startEditing } = useChatStore.getState()
-
         useChatStore.getState().startEditing('msg-123', 'Original content')
 
         expect(useChatStore.getState().editState).toEqual({
@@ -656,8 +642,6 @@ describe('chatStore', () => {
 
     describe('updateEditContent', () => {
       it('updates edited content', () => {
-        const { startEditing, updateEditContent } = useChatStore.getState()
-
         useChatStore.getState().startEditing('msg-123', 'Original')
         useChatStore.getState().updateEditContent('Modified')
 
@@ -668,8 +652,6 @@ describe('chatStore', () => {
 
     describe('cancelEditing', () => {
       it('resets edit state', () => {
-        const { startEditing, cancelEditing } = useChatStore.getState()
-
         useChatStore.getState().startEditing('msg-123', 'Content')
         useChatStore.getState().cancelEditing()
 
@@ -683,16 +665,12 @@ describe('chatStore', () => {
 
     describe('saveEdit', () => {
       it('returns null if no messageId', () => {
-        const { saveEdit } = useChatStore.getState()
-
         const result = useChatStore.getState().saveEdit()
 
         expect(result).toBeNull()
       })
 
       it('returns null if no activeConversationId', () => {
-        const { startEditing, saveEdit } = useChatStore.getState()
-
         useChatStore.getState().startEditing('msg-123', 'Content')
         const result = useChatStore.getState().saveEdit()
 
@@ -700,7 +678,7 @@ describe('chatStore', () => {
       })
 
       it('updates message and returns edit info', () => {
-        const { createConversation, addMessage, startEditing, updateEditContent, saveEdit } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'user', content: 'Original' })
@@ -720,7 +698,7 @@ describe('chatStore', () => {
       })
 
       it('resets edit state after save', () => {
-        const { createConversation, addMessage, startEditing, saveEdit } = useChatStore.getState()
+        const { createConversation } = useChatStore.getState()
 
         const convId = createConversation('test-model')
         const msgId = useChatStore.getState().addMessage(convId, { role: 'user', content: 'Original' })
@@ -740,7 +718,6 @@ describe('chatStore', () => {
   describe('persistence', () => {
     describe('setConversations', () => {
       it('sets conversations array', () => {
-        const { setConversations } = useChatStore.getState()
         const mockConversations = [
           createMockConversation({ id: 'conv-1' }),
           createMockConversation({ id: 'conv-2' }),
@@ -780,8 +757,6 @@ describe('chatStore', () => {
 
   describe('edge cases', () => {
     it('handles operations on non-existent conversation gracefully', () => {
-      const { addMessage, updateMessage, deleteMessage } = useChatStore.getState()
-
       // These should not throw
       expect(() => useChatStore.getState().addMessage('non-existent', { role: 'user', content: 'Test' })).not.toThrow()
       expect(() => useChatStore.getState().updateMessage('non-existent', 'msg-id', { content: 'Updated' })).not.toThrow()
@@ -789,8 +764,6 @@ describe('chatStore', () => {
     })
 
     it('handles multiple rapid conversation creations', () => {
-      const { createConversation } = useChatStore.getState()
-
       const ids: string[] = []
       for (let i = 0; i < 10; i++) {
         ids.push(useChatStore.getState().createConversation(`model-${i}`))
@@ -801,7 +774,7 @@ describe('chatStore', () => {
     })
 
     it('handles empty thinking string correctly on finalize', () => {
-      const { createConversation, addMessage, setStreaming, finalizeStream } = useChatStore.getState()
+      const { createConversation } = useChatStore.getState()
 
       const convId = createConversation('test-model')
       const msgId = useChatStore.getState().addMessage(convId, { role: 'assistant', content: '' })
