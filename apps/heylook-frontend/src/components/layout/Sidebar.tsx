@@ -135,7 +135,10 @@ export function Sidebar() {
                 <span className="flex-1 truncate text-sm">{conv.title}</span>
                 <button
                   onClick={(e) => handleDeleteClick(e, conv.id, conv.title)}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-all"
+                  className={clsx(
+                    'p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-all',
+                    isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'
+                  )}
                   aria-label="Delete conversation"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

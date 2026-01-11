@@ -10,7 +10,7 @@ from typing import Generator, Dict
 from llama_cpp import Llama, LlamaRAMCache, llama_cpp
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, Llava15ChatHandler
 
-from ..config import ChatRequest
+from ..config import ChatRequest, ModelMetrics
 from .base import BaseProvider
 
 class LlamaCppProvider(BaseProvider):
@@ -210,6 +210,52 @@ class LlamaCppProvider(BaseProvider):
             except Exception as e:
                 logging.error(f"Llama.cpp model call failed: {e}", exc_info=True)
                 yield LlamaCppStreamChunk(text=f"\n\nError: Llama.cpp generation failed: {str(e)}")
+
+    def _get_context_used(self) -> int:
+        """Get current context usage from the model."""
+        try:
+            if hasattr(self.model, '_ctx') and self.model._ctx is not None:
+                ctx = self.model._ctx
+                if hasattr(ctx, 'n_tokens'):
+                    return ctx.n_tokens
+            if hasattr(self.model, 'n_tokens'):
+                return self.model.n_tokens
+        except Exception as e:
+            logging.debug(f"Could not get llama.cpp context usage: {e}")
+        return 0
+
+    def get_metrics(self) -> ModelMetrics:
+        """Get current metrics for this model (context usage, memory, etc.)."""
+        try:
+            if self.model is None:
+                return ModelMetrics(
+                    context_used=0,
+                    context_capacity=0,
+                    context_percent=0.0,
+                    memory_mb=0.0,
+                    requests_active=0
+                )
+
+            context_capacity = self.config.get('n_ctx', 4096)
+            context_used = self._get_context_used()
+            context_percent = (context_used / context_capacity * 100) if context_capacity > 0 else 0.0
+
+            return ModelMetrics(
+                context_used=context_used,
+                context_capacity=context_capacity,
+                context_percent=round(context_percent, 1),
+                memory_mb=0.0,  # Memory estimation not available for llama.cpp
+                requests_active=1 if self._generation_lock.locked() else 0
+            )
+        except Exception as e:
+            logging.warning(f"Failed to get llama.cpp metrics: {e}")
+            return ModelMetrics(
+                context_used=0,
+                context_capacity=0,
+                context_percent=0.0,
+                memory_mb=0.0,
+                requests_active=0
+            )
 
     def unload(self):
         logging.info(f"Unloading GGUF model: {self.model_id}")

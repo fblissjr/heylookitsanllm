@@ -14,14 +14,19 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, streaming, modelCapabilities }: MessageListProps) {
+  // Filter out the message being streamed (it's rendered separately as StreamingMessage)
+  const visibleMessages = streaming.isStreaming && streaming.messageId
+    ? messages.filter(m => m.id !== streaming.messageId)
+    : messages
+
   return (
     <div className="space-y-6">
-      {messages.map((message, index) => (
+      {visibleMessages.map((message, index) => (
         <MessageBubble
           key={message.id}
           message={message}
           index={index}
-          totalMessages={messages.length}
+          totalMessages={visibleMessages.length}
           modelCapabilities={modelCapabilities}
         />
       ))}
@@ -347,8 +352,13 @@ interface MessageActionsProps {
 }
 
 function MessageActions({ role, onCopy, onEdit, onDelete, onRegenerate }: MessageActionsProps) {
+  const { isMobile } = useUIStore()
+
   return (
-    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className={clsx(
+      'flex items-center gap-2 transition-opacity',
+      isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'
+    )}>
       <button
         onClick={onCopy}
         className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"

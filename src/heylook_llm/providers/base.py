@@ -1,7 +1,7 @@
 # src/heylook_llm/providers/base.py
 from abc import ABC, abstractmethod
-from typing import Generator, Dict
-from ..config import ChatRequest
+from typing import Generator, Dict, Optional
+from ..config import ChatRequest, ModelMetrics
 
 class BaseProvider(ABC):
     """Abstract base class for all model backends."""
@@ -17,6 +17,15 @@ class BaseProvider(ABC):
     @abstractmethod
     def create_chat_completion(self, request: ChatRequest) -> Generator:
         raise NotImplementedError
+
+    def get_metrics(self) -> Optional[ModelMetrics]:
+        """
+        Get current metrics for this model (context usage, memory, etc.).
+
+        Returns:
+            ModelMetrics if available, None if not supported by this provider.
+        """
+        return None
 
     def unload(self):
         """Optional method to explicitly release resources."""

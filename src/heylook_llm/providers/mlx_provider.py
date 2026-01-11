@@ -18,7 +18,7 @@ from mlx_vlm.utils import load as vlm_load
 from mlx_vlm import generate as vlm_generate, stream_generate as vlm_stream_generate
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
-from ..config import ChatRequest
+from ..config import ChatRequest, ModelMetrics
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.performance_monitor import time_mlx_operation, performance_monitor
@@ -1129,6 +1129,54 @@ class MLXProvider(BaseProvider):
                 logging.info(f"Generation Path Performance Comparison: {path_comparison}")
         except Exception as e:
             logging.debug(f"Failed to log performance summary: {e}")
+
+    def _get_context_capacity(self) -> int:
+        """Get max context window size from model config."""
+        if not hasattr(self.model, 'config'):
+            return 32768  # Default fallback
+
+        config = self.model.config
+        if hasattr(config, 'max_position_embeddings'):
+            return config.max_position_embeddings
+        if hasattr(config, 'text_config') and hasattr(config.text_config, 'max_position_embeddings'):
+            return config.text_config.max_position_embeddings
+        if hasattr(config, 'max_seq_len'):
+            return config.max_seq_len
+        return 32768
+
+    def _get_context_used(self) -> int:
+        """Get current context usage from prompt cache (thread-safe)."""
+        try:
+            cache_manager = get_global_cache_manager()
+            return cache_manager.get_context_usage(self.model_id)
+        except Exception as e:
+            logging.debug(f"Could not get context usage from cache: {e}")
+            return 0
+
+    def get_metrics(self) -> ModelMetrics:
+        """Get current metrics for this model (context usage, memory, etc.)."""
+        try:
+            metal_memory_mb = mx.metal.get_active_memory() / (1024 * 1024)
+            context_used = self._get_context_used()
+            context_capacity = self._get_context_capacity()
+            context_percent = (context_used / context_capacity * 100) if context_capacity > 0 else 0.0
+
+            return ModelMetrics(
+                context_used=context_used,
+                context_capacity=context_capacity,
+                context_percent=round(context_percent, 1),
+                memory_mb=round(metal_memory_mb, 1),
+                requests_active=1 if self._generation_lock.locked() else 0
+            )
+        except Exception as e:
+            logging.warning(f"Failed to get MLX metrics: {e}")
+            return ModelMetrics(
+                context_used=0,
+                context_capacity=0,
+                context_percent=0.0,
+                memory_mb=0.0,
+                requests_active=0
+            )
 
     def unload(self):
         """Cleanup with cache clearing and performance logging."""

@@ -4,110 +4,17 @@ import type { SamplerSettings, Preset, PresetType } from '../types/settings'
 import { DEFAULT_SAMPLER_SETTINGS } from '../types/settings'
 
 function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
 }
 
-// Built-in presets
-const BUILTIN_SYSTEM_PROMPTS: Preset[] = [
-  {
-    id: 'default',
-    type: 'system_prompt',
-    name: 'Default',
-    description: 'A helpful AI assistant',
-    data: { prompt: 'You are a helpful AI assistant.' },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'coding',
-    type: 'system_prompt',
-    name: 'Coding Assistant',
-    description: 'Expert programmer with clear explanations',
-    data: { prompt: 'You are an expert programmer. Provide clear, concise code examples with explanations. Use best practices and modern patterns.' },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'creative',
-    type: 'system_prompt',
-    name: 'Creative Writer',
-    description: 'Creative and imaginative writing assistant',
-    data: { prompt: 'You are a creative writing assistant. Help with storytelling, poetry, and imaginative content. Be expressive and engaging.' },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'analyst',
-    type: 'system_prompt',
-    name: 'Data Analyst',
-    description: 'Precise data analysis and insights',
-    data: { prompt: 'You are a data analyst. Provide precise, factual analysis. Use structured formats when presenting data. Be thorough and accurate.' },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-]
+// Built-in system prompt presets removed - default is empty to use model's jinja2 chat template
+// Users can still create their own presets
+const BUILTIN_SYSTEM_PROMPTS: Preset[] = []
 
-const BUILTIN_SAMPLER_PRESETS: Preset[] = [
-  {
-    id: 'balanced',
-    type: 'sampler',
-    name: 'Balanced',
-    description: 'Good for general use',
-    data: DEFAULT_SAMPLER_SETTINGS,
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'creative',
-    type: 'sampler',
-    name: 'Creative',
-    description: 'Higher temperature for creative tasks',
-    data: {
-      ...DEFAULT_SAMPLER_SETTINGS,
-      temperature: 1.2,
-      top_p: 0.95,
-      top_k: 50,
-    },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'precise',
-    type: 'sampler',
-    name: 'Precise',
-    description: 'Lower temperature for factual responses',
-    data: {
-      ...DEFAULT_SAMPLER_SETTINGS,
-      temperature: 0.3,
-      top_p: 0.85,
-      top_k: 30,
-    },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 'deterministic',
-    type: 'sampler',
-    name: 'Deterministic',
-    description: 'Reproducible outputs',
-    data: {
-      ...DEFAULT_SAMPLER_SETTINGS,
-      temperature: 0.0,
-      top_p: 1.0,
-      top_k: 1,
-    },
-    isBuiltIn: true,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-]
+// Built-in sampler presets removed - defaults should come from model config (models.toml)
+// Users can still create their own presets
+// TODO: Extend /v1/models endpoint to return sampler defaults from models.toml
+const BUILTIN_SAMPLER_PRESETS: Preset[] = []
 
 interface SettingsState {
   // Current settings
@@ -140,12 +47,14 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
-      systemPrompt: BUILTIN_SYSTEM_PROMPTS[0].data.prompt as string,
+      // Default to empty - model's jinja2 chat template handles system behavior
+      systemPrompt: '',
       jinjaTemplate: null,
       samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
       userPresets: [],
-      activeSystemPromptPresetId: 'default',
-      activeSamplerPresetId: 'balanced',
+      // No active presets by default - using empty/default values
+      activeSystemPromptPresetId: null,
+      activeSamplerPresetId: null,
 
       setSystemPrompt: (prompt) => {
         set({ systemPrompt: prompt, activeSystemPromptPresetId: null })
@@ -165,7 +74,7 @@ export const useSettingsStore = create<SettingsState>()(
       resetSamplerToDefaults: () => {
         set({
           samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
-          activeSamplerPresetId: 'balanced',
+          activeSamplerPresetId: null,
         })
       },
 

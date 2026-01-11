@@ -1,5 +1,10 @@
 # src/heylook_llm/api.py
-import uuid, time, logging, argparse, sys, asyncio
+import argparse
+import asyncio
+import logging
+import sys
+import time
+import uuid
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Body, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -15,8 +20,13 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from heylook_llm.router import ModelRouter
-from heylook_llm.config import ChatRequest, PerformanceMetrics, ChatCompletionResponse, BatchChatRequest, BatchChatResponse, BatchStats
+from heylook_llm.config import (
+    ChatRequest, PerformanceMetrics, ChatCompletionResponse,
+    BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
+    CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse
+)
 from heylook_llm.providers.common.performance_monitor import performance_monitor
+from heylook_llm.system_metrics import SystemMetricsCollector
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.metrics_db_wrapper import get_metrics_db, init_metrics_db
 from heylook_llm.analytics_config import analytics_config
@@ -102,6 +112,61 @@ async def list_models(request: Request):
         models_data.append(model_entry)
 
     return {"object": "list", "data": models_data}
+
+
+# Initialize metrics collector as None - will be created on first request
+# Thread-safe lazy initialization with double-checked locking
+import threading
+_metrics_collector: SystemMetricsCollector | None = None
+_metrics_collector_lock = threading.Lock()
+
+
+def _get_metrics_collector(router: ModelRouter) -> SystemMetricsCollector:
+    """Get or create the system metrics collector (thread-safe)."""
+    global _metrics_collector
+    if _metrics_collector is None:
+        with _metrics_collector_lock:
+            # Double-check after acquiring lock
+            if _metrics_collector is None:
+                _metrics_collector = SystemMetricsCollector(router, cache_ttl_seconds=30.0)
+    return _metrics_collector
+
+
+@app.get("/v1/system/metrics",
+    summary="Get System Metrics",
+    description="""
+Get current system resource and model metrics for monitoring dashboards.
+
+**Returns:**
+- System metrics: RAM usage, CPU percentage
+- Per-model metrics: Context usage, memory, active requests
+- Cached for 30 seconds to minimize polling overhead
+
+**Use Cases:**
+- Build monitoring dashboards
+- Track context window usage during conversations
+- Monitor system resource consumption
+- Alert on high memory/context usage
+
+**Polling:**
+- Recommended poll interval: 5-10 seconds
+- Backend caches metrics for 30 seconds
+    """,
+    response_model=SystemMetricsResponse,
+    response_description="Current system and model metrics",
+    tags=["Monitoring"]
+)
+async def get_system_metrics(request: Request, force_refresh: bool = False):
+    """
+    Get current system and model metrics.
+
+    Args:
+        force_refresh: If true, bypass cache and collect fresh metrics
+    """
+    router = request.app.state.router_instance
+    collector = _get_metrics_collector(router)
+    return collector.collect(force_refresh=force_refresh)
+
 
 @app.post("/v1/chat/completions",
     summary="Create Chat Completion",
@@ -426,6 +491,12 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     Supports logprobs: includes token log probabilities in each chunk when requested.
 
     Uses HybridThinkingParser for token-level detection when token IDs are available.
+
+    Enhanced metadata (when stream_options.include_usage=true):
+    - thinking_tokens/content_tokens: Separate token counts
+    - timing: thinking_duration_ms, content_duration_ms, total_duration_ms
+    - generation_config: Sampler settings used
+    - stop_reason: Why generation stopped
     """
     from heylook_llm.thinking_parser import HybridThinkingParser
 
@@ -435,8 +506,15 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     token_count = 0
     prompt_tokens = 0
     completion_tokens = 0
-    last_keepalive_time = time.time()
-    keepalive_interval = 10.0  # Send keepalive every 10 seconds
+
+    # Enhanced timing tracking
+    generation_start_time = time.time()
+    thinking_start_time = None
+    thinking_end_time = None
+    content_start_time = None
+    thinking_tokens = 0
+    content_tokens = 0
+    stop_reason = "stop"
 
     # Check if usage stats should be included in final chunk
     include_usage = (
@@ -531,34 +609,99 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         deltas = thinking_parser.process_chunk(chunk.text, token_id=token_id)
         for delta_type, text in deltas:
             if text:
+                # Track timing and token counts by type
+                if delta_type == "thinking":
+                    if thinking_start_time is None:
+                        thinking_start_time = time.time()
+                    thinking_tokens += 1
+                else:  # content
+                    if thinking_start_time is not None and thinking_end_time is None:
+                        thinking_end_time = time.time()
+                    if content_start_time is None:
+                        content_start_time = time.time()
+                    content_tokens += 1
+
                 yield make_delta(delta_type, text, logprobs_delta)
                 logprobs_delta = None  # Only include logprobs in first delta for this token
-
-        # Update last keepalive time since we sent actual content
-        last_keepalive_time = time.time()
 
     # Flush any remaining buffer
     for delta_type, text in thinking_parser.flush():
         if text:
+            # Track final tokens during flush
+            if delta_type == "thinking":
+                thinking_tokens += 1
+            else:
+                content_tokens += 1
             yield make_delta(delta_type, text)
+
+    # Calculate final timing
+    generation_end_time = time.time()
+    total_duration_ms = int((generation_end_time - generation_start_time) * 1000)
+
+    thinking_duration_ms = None
+    if thinking_start_time and thinking_end_time:
+        thinking_duration_ms = int((thinking_end_time - thinking_start_time) * 1000)
+    elif thinking_start_time and thinking_tokens > 0:
+        # Thinking never ended (no content), calculate from now
+        thinking_duration_ms = int((generation_end_time - thinking_start_time) * 1000)
+
+    content_duration_ms = None
+    if content_start_time:
+        content_duration_ms = int((generation_end_time - content_start_time) * 1000)
 
     # Emit usage stats in final chunk if requested (OpenAI stream_options.include_usage)
     if include_usage:
         # Use tracked counts, fallback to token_count for completion_tokens
         final_prompt_tokens = prompt_tokens or 0
         final_completion_tokens = completion_tokens or token_count
+
+        # Build enhanced usage object
+        usage_data = {
+            "prompt_tokens": final_prompt_tokens,
+            "completion_tokens": final_completion_tokens,
+            "total_tokens": final_prompt_tokens + final_completion_tokens
+        }
+
+        # Add thinking-specific fields if there were thinking tokens
+        if thinking_tokens > 0:
+            usage_data["thinking_tokens"] = thinking_tokens
+            usage_data["content_tokens"] = content_tokens
+
+        # Build timing object
+        timing_data = {
+            "total_duration_ms": total_duration_ms
+        }
+        if thinking_duration_ms is not None:
+            timing_data["thinking_duration_ms"] = thinking_duration_ms
+        if content_duration_ms is not None:
+            timing_data["content_duration_ms"] = content_duration_ms
+
+        # Build generation config from request (only include set values)
+        generation_config = {
+            k: v for k, v in {
+                "temperature": chat_request.temperature,
+                "top_p": chat_request.top_p,
+                "top_k": chat_request.top_k,
+                "max_tokens": chat_request.max_tokens,
+                "enable_thinking": chat_request.enable_thinking,
+            }.items() if v is not None
+        }
+
         usage_chunk = {
             "id": response_id,
             "object": "chat.completion.chunk",
             "created": created_time,
             "model": model_id,
-            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": final_prompt_tokens,
-                "completion_tokens": final_completion_tokens,
-                "total_tokens": final_prompt_tokens + final_completion_tokens
-            }
+            "choices": [{"delta": {}, "index": 0, "finish_reason": stop_reason}],
+            "usage": usage_data,
+            "timing": timing_data,
+            "stop_reason": stop_reason
         }
+
+        # Only include generation_config if non-empty
+        if generation_config:
+            usage_chunk["generation_config"] = generation_config
+
         yield f"data: {json.dumps(usage_chunk)}\n\n"
 
     # Log completion
@@ -2595,6 +2738,87 @@ async def get_capabilities(request: Request):
     }
 
     return capabilities
+
+
+# =============================================================================
+# Cache Management Endpoints
+# =============================================================================
+
+# Cache manager for persistent cache storage
+from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
+
+
+@app.get("/v1/cache/list",
+    summary="List Saved Prompt Caches",
+    description="""
+List all prompt caches currently in memory.
+
+**Returns:**
+- List of cache entries with model ID and token counts
+- Cache statistics for each loaded model
+
+**Note:** Currently shows in-memory caches only. Persistent storage coming soon.
+    """,
+    response_model=CacheListResponse,
+    response_description="List of cached prompts",
+    tags=["Monitoring"]
+)
+async def list_caches(request: Request, model: str = None):
+    """List all prompt caches, optionally filtered by model."""
+    cache_manager = get_global_cache_manager()
+    cache_info = cache_manager.get_cache_info()
+
+    caches = []
+    for model_id, info in cache_info.items():
+        if model and model_id != model:
+            continue
+
+        caches.append(CacheInfo(
+            cache_id=f"mem-{model_id}",  # In-memory cache ID
+            model=model_id,
+            name=f"Active cache for {model_id}",
+            description="In-memory prompt cache",
+            tokens_cached=info.get("tokens_cached", 0),
+            size_mb=0.0,  # Unknown for in-memory
+            created_at=datetime.utcnow().isoformat()
+        ))
+
+    return CacheListResponse(caches=caches)
+
+
+@app.post("/v1/cache/clear",
+    summary="Clear Prompt Caches",
+    description="""
+Clear prompt caches for a specific model or all models.
+
+**Use Cases:**
+- Free memory by clearing unused caches
+- Reset cache state when switching contexts
+- Troubleshooting cache-related issues
+
+**Note:** This clears in-memory caches. The next request will rebuild the cache.
+    """,
+    response_model=CacheClearResponse,
+    response_description="Number of caches cleared",
+    tags=["Monitoring"]
+)
+async def clear_caches(request: Request, body: CacheClearRequest = Body(default=CacheClearRequest())):
+    """Clear prompt caches for a model or all models."""
+    cache_manager = get_global_cache_manager()
+    cache_info = cache_manager.get_cache_info()
+
+    if body.model:
+        # Clear specific model cache
+        if body.model in cache_info:
+            cache_manager.invalidate_cache(body.model)
+            return CacheClearResponse(deleted_count=1)
+        return CacheClearResponse(deleted_count=0)
+    else:
+        # Clear all caches
+        count = len(cache_info)
+        cache_manager.clear_all()
+        return CacheClearResponse(deleted_count=count)
+
 
 # Import and register multipart endpoint
 from heylook_llm.api_multipart import create_chat_multipart

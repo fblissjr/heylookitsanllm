@@ -235,6 +235,17 @@ class ModelRouter:
             return next(reversed(self.providers))
         return None
 
+    def get_loaded_models(self) -> Dict[str, BaseProvider]:
+        """
+        Get all currently loaded models.
+
+        Returns:
+            Dict mapping model_id to BaseProvider instance.
+        """
+        with self.cache_lock:
+            # Return a copy to prevent external modification
+            return dict(self.providers)
+
     def get_provider(self, model_id: str) -> BaseProvider:
         # Fallback logic when no model specified:
         # 1. Use currently loaded model (most recently used)

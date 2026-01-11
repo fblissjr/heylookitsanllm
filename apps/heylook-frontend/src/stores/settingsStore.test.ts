@@ -5,20 +5,21 @@ import { DEFAULT_SAMPLER_SETTINGS } from '../types/settings'
 describe('settingsStore', () => {
   beforeEach(() => {
     // Reset store to initial state before each test
+    // No built-in presets - default system prompt is empty
     useSettingsStore.setState({
-      systemPrompt: 'You are a helpful AI assistant.',
+      systemPrompt: '',
       jinjaTemplate: null,
       samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
       userPresets: [],
-      activeSystemPromptPresetId: 'default',
-      activeSamplerPresetId: 'balanced',
+      activeSystemPromptPresetId: null,
+      activeSamplerPresetId: null,
     })
   })
 
   describe('system prompt', () => {
-    it('has default system prompt', () => {
+    it('has empty default system prompt', () => {
       const { systemPrompt } = useSettingsStore.getState()
-      expect(systemPrompt).toBe('You are a helpful AI assistant.')
+      expect(systemPrompt).toBe('')
     })
 
     it('updates system prompt and clears active preset', () => {
@@ -57,29 +58,25 @@ describe('settingsStore', () => {
 
       const { samplerSettings, activeSamplerPresetId } = useSettingsStore.getState()
       expect(samplerSettings).toEqual(DEFAULT_SAMPLER_SETTINGS)
-      expect(activeSamplerPresetId).toBe('balanced')
+      expect(activeSamplerPresetId).toBeNull() // No built-in presets
     })
   })
 
   describe('presets', () => {
-    it('returns built-in system prompts', () => {
+    it('starts with no built-in system prompts (use model jinja2 template)', () => {
       const { getAllPresets } = useSettingsStore.getState()
       const presets = getAllPresets('system_prompt')
 
-      expect(presets.length).toBeGreaterThanOrEqual(4)
-      expect(presets.some(p => p.id === 'default')).toBe(true)
-      expect(presets.some(p => p.id === 'coding')).toBe(true)
-      expect(presets.every(p => p.type === 'system_prompt')).toBe(true)
+      // No built-in presets - users create their own
+      expect(presets.length).toBe(0)
     })
 
-    it('returns built-in sampler presets', () => {
+    it('starts with no built-in sampler presets (use model defaults)', () => {
       const { getAllPresets } = useSettingsStore.getState()
       const presets = getAllPresets('sampler')
 
-      expect(presets.some(p => p.id === 'balanced')).toBe(true)
-      expect(presets.some(p => p.id === 'creative')).toBe(true)
-      expect(presets.some(p => p.id === 'precise')).toBe(true)
-      expect(presets.some(p => p.id === 'deterministic')).toBe(true)
+      // No built-in presets - sampler defaults should come from models.toml
+      expect(presets.length).toBe(0)
     })
 
     it('saves a new system prompt preset', () => {
@@ -98,31 +95,59 @@ describe('settingsStore', () => {
       expect(saved?.isBuiltIn).toBe(false)
     })
 
-    it('loads a preset', () => {
-      const { getAllPresets, loadPreset } = useSettingsStore.getState()
+    it('saves a new sampler preset', () => {
+      const { updateSamplerSettings, savePreset, getAllPresets } = useSettingsStore.getState()
 
-      const creativePreset = getAllPresets('sampler').find(p => p.id === 'creative')
-      expect(creativePreset).toBeDefined()
+      updateSamplerSettings({ temperature: 1.5, top_p: 0.8 })
+      const presetId = savePreset('sampler', 'Creative Preset', 'For creative writing')
 
-      loadPreset(creativePreset!)
+      const presets = getAllPresets('sampler')
+      const saved = presets.find(p => p.id === presetId)
+
+      expect(saved).toBeDefined()
+      expect(saved?.name).toBe('Creative Preset')
+      expect(saved?.data.temperature).toBe(1.5)
+      expect(saved?.data.top_p).toBe(0.8)
+    })
+
+    it('loads a user-created preset', () => {
+      const { updateSamplerSettings, savePreset, getAllPresets, loadPreset, resetSamplerToDefaults } = useSettingsStore.getState()
+
+      // Create and save a preset
+      updateSamplerSettings({ temperature: 1.2 })
+      const presetId = savePreset('sampler', 'Creative', 'Higher temperature')
+
+      // Reset to defaults
+      resetSamplerToDefaults()
+      expect(useSettingsStore.getState().samplerSettings.temperature).toBe(DEFAULT_SAMPLER_SETTINGS.temperature)
+
+      // Load the preset
+      const createdPreset = getAllPresets('sampler').find(p => p.id === presetId)
+      expect(createdPreset).toBeDefined()
+      loadPreset(createdPreset!)
 
       const { samplerSettings, activeSamplerPresetId } = useSettingsStore.getState()
       expect(samplerSettings.temperature).toBe(1.2)
-      expect(activeSamplerPresetId).toBe('creative')
+      expect(activeSamplerPresetId).toBe(presetId)
     })
 
     it('duplicates a preset', () => {
-      const { getAllPresets, duplicatePreset } = useSettingsStore.getState()
+      const { setSystemPrompt, savePreset, getAllPresets, duplicatePreset } = useSettingsStore.getState()
 
-      const codingPreset = getAllPresets('system_prompt').find(p => p.id === 'coding')
-      const newId = duplicatePreset(codingPreset!)
+      // Create a preset to duplicate
+      setSystemPrompt('Original prompt')
+      const originalId = savePreset('system_prompt', 'Original', 'Original description')
+
+      const originalPreset = getAllPresets('system_prompt').find(p => p.id === originalId)
+      const newId = duplicatePreset(originalPreset!)
 
       const presets = getAllPresets('system_prompt')
       const duplicated = presets.find(p => p.id === newId)
 
       expect(duplicated).toBeDefined()
-      expect(duplicated?.name).toBe('Coding Assistant (copy)')
+      expect(duplicated?.name).toBe('Original (copy)')
       expect(duplicated?.isBuiltIn).toBe(false)
+      expect(duplicated?.data.prompt).toBe('Original prompt')
     })
 
     it('deletes a user preset', () => {

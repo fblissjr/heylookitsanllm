@@ -208,3 +208,111 @@ class AppConfig(BaseModel):
 
     def get_enabled_models(self) -> List[ModelConfig]:
         return [m for m in self.models if m.enabled]
+
+
+# =============================================================================
+# System Metrics Models
+# =============================================================================
+
+class SystemResourceMetrics(BaseModel):
+    """System-wide resource metrics (RAM, CPU)."""
+    ram_used_gb: float = Field(..., description="RAM currently used in GB")
+    ram_available_gb: float = Field(..., description="RAM available in GB")
+    ram_total_gb: float = Field(..., description="Total system RAM in GB")
+    cpu_percent: float = Field(..., description="CPU usage percentage")
+
+
+class ModelMetrics(BaseModel):
+    """Per-model metrics (context usage, memory)."""
+    context_used: int = Field(..., description="Tokens currently in context")
+    context_capacity: int = Field(..., description="Maximum context window size")
+    context_percent: float = Field(..., description="Context usage percentage")
+    memory_mb: float = Field(..., description="Model memory usage in MB")
+    requests_active: int = Field(0, description="Active requests for this model")
+
+
+class SystemMetricsResponse(BaseModel):
+    """Response for GET /v1/system/metrics endpoint."""
+    timestamp: str = Field(..., description="ISO timestamp of metrics collection")
+    system: SystemResourceMetrics
+    models: Dict[str, ModelMetrics] = Field(default_factory=dict, description="Metrics per loaded model")
+
+
+# =============================================================================
+# Cache Management Models
+# =============================================================================
+
+class CacheInfo(BaseModel):
+    """Information about a saved prompt cache."""
+    cache_id: str = Field(..., description="Unique cache identifier")
+    model: str = Field(..., description="Model ID this cache belongs to")
+    name: str = Field(..., description="User-friendly cache name")
+    description: Optional[str] = Field(None, description="Optional description")
+    tokens_cached: int = Field(..., description="Number of tokens in cache")
+    size_mb: float = Field(..., description="Cache file size in MB")
+    created_at: str = Field(..., description="ISO timestamp of creation")
+
+
+# Placeholder models for future /v1/cache/save endpoint (not yet implemented)
+class CacheSaveRequest(BaseModel):
+    """Request to save current prompt cache."""
+    model: str = Field(..., description="Model ID to save cache for")
+    name: str = Field(..., description="User-friendly name for the cache")
+    description: Optional[str] = Field(None, description="Optional description")
+
+
+class CacheSaveResponse(BaseModel):
+    """Response from cache save operation."""
+    cache_id: str
+    model: str
+    name: str
+    tokens_cached: int
+    size_mb: float
+    created_at: str
+
+
+class CacheListResponse(BaseModel):
+    """Response for listing saved caches."""
+    caches: List[CacheInfo] = Field(default_factory=list)
+
+
+class CacheClearRequest(BaseModel):
+    """Request to clear caches."""
+    model: Optional[str] = Field(None, description="Model ID to clear caches for (all if omitted)")
+
+
+class CacheClearResponse(BaseModel):
+    """Response from cache clear operation."""
+    deleted_count: int
+
+
+# =============================================================================
+# Enhanced Streaming Metadata
+# Schema documentation for stream_options.include_usage response fields.
+# These models document the API contract; actual streaming uses dicts directly.
+# =============================================================================
+
+class EnhancedUsage(BaseModel):
+    """Extended usage statistics including thinking tokens."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    thinking_tokens: Optional[int] = Field(None, description="Tokens used in thinking blocks")
+    content_tokens: Optional[int] = Field(None, description="Tokens in actual content")
+    total_tokens: int = 0
+
+
+class GenerationTiming(BaseModel):
+    """Timing breakdown for generation phases."""
+    thinking_duration_ms: Optional[int] = Field(None, description="Time spent in thinking phase")
+    content_duration_ms: Optional[int] = Field(None, description="Time spent generating content")
+    total_duration_ms: int = Field(..., description="Total generation time")
+
+
+class GenerationConfig(BaseModel):
+    """Sampler configuration used for generation."""
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    enable_thinking: Optional[bool] = None
+    max_tokens: Optional[int] = None
