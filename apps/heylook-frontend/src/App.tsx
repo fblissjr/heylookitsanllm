@@ -7,19 +7,22 @@ import { useModelStore } from './stores/modelStore'
 function App() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
   const fetchModels = useModelStore((state) => state.fetchModels)
+  const fetchCapabilities = useModelStore((state) => state.fetchCapabilities)
 
   useEffect(() => {
-    // Check connection and fetch models on startup
+    // Check connection and fetch models + capabilities on startup
     const init = async () => {
       try {
         await fetchModels()
+        // Fetch capabilities in parallel (non-blocking)
+        fetchCapabilities()
         setIsConnected(true)
       } catch {
         setIsConnected(false)
       }
     }
     init()
-  }, [fetchModels])
+  }, [fetchModels, fetchCapabilities])
 
   if (isConnected === null) {
     return (

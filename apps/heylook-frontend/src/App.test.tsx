@@ -20,13 +20,14 @@ vi.mock('./components/modals/ConfirmDeleteModal', () => ({
   ConfirmDeleteModal: () => <div data-testid="confirm-delete-modal">ConfirmDeleteModal</div>,
 }))
 
-// Mock fetchModels function
+// Mock fetchModels and fetchCapabilities functions
 const mockFetchModels = vi.fn()
+const mockFetchCapabilities = vi.fn()
 
 // Mock the model store
 vi.mock('./stores/modelStore', () => ({
-  useModelStore: vi.fn((selector: (state: { fetchModels: typeof mockFetchModels }) => unknown) =>
-    selector({ fetchModels: mockFetchModels })
+  useModelStore: vi.fn((selector: (state: { fetchModels: typeof mockFetchModels; fetchCapabilities: typeof mockFetchCapabilities }) => unknown) =>
+    selector({ fetchModels: mockFetchModels, fetchCapabilities: mockFetchCapabilities })
   ),
 }))
 
@@ -34,6 +35,7 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFetchModels.mockReset()
+    mockFetchCapabilities.mockReset()
   })
 
   afterEach(() => {

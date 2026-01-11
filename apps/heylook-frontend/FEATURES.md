@@ -104,6 +104,8 @@
 | Feature | Description | Complexity | Notes |
 |---------|-------------|------------|-------|
 | Config Editing | Edit models.toml via UI | High | Requires backend API endpoints |
+| Multipart Image Upload | Use /v1/chat/completions/multipart | Low | API ready, UI uses base64 instead |
+| Capabilities Detection | Call /v1/capabilities on startup | Low | fetchCapabilities() exists but unused |
 
 ### Medium Priority
 
@@ -111,6 +113,8 @@
 |---------|-------------|------------|-------|
 | Search | Search conversation content | Medium | Requires IndexedDB query |
 | Keyboard Shortcuts | Cmd+K palette, Cmd+N new chat | Medium | Common UX pattern |
+| Logprobs Display | Enable and display token probabilities | Medium | Types defined, needs UI toggle + display |
+| Batch Processing UI | Multi-prompt batch interface | Medium | batchChat() API ready |
 
 ### Low Priority
 
@@ -122,6 +126,14 @@
 | Conversation Pinning | Pin important conversations | Low | Add pinned field |
 | Message Reactions | Add reactions to messages | Low | UI polish |
 | Typing Indicator | Show when model is "typing" | Low | Already have streaming state |
+
+### Out of Scope (Advanced Backend Features)
+
+| Feature | Description | Notes |
+|---------|-------------|-------|
+| Embeddings UI | /v1/embeddings endpoint | Specialized use case |
+| Hidden States UI | /v1/hidden_states endpoint | Research/debugging use case |
+| Audio Transcription UI | /v1/audio/transcriptions | macOS only, requires STT provider |
 
 ---
 

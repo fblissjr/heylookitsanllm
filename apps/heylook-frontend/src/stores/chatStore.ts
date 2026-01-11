@@ -66,8 +66,8 @@ interface ChatState {
 
   // Streaming
   setStreaming: (state: Partial<StreamingState>) => void
-  appendStreamContent: (content: string, isThinking: boolean) => void
-  finalizeStream: (tokenCount?: number) => void
+  appendStreamContent: (content: string, isThinking: boolean, rawEvent?: string) => void
+  finalizeStream: (tokenCount?: number, promptTokens?: number) => void
 
   // Edit mode
   startEditing: (messageId: string, content: string) => void
@@ -300,9 +300,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...settings.samplerSettings,
       },
       {
-        onToken: (token) => appendStreamContent(token, false),
-        onThinking: (thinking) => appendStreamContent(thinking, true),
-        onComplete: (usage) => finalizeStream(usage?.completion_tokens),
+        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
+        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
+        onComplete: (usage) => finalizeStream(usage?.completion_tokens, usage?.prompt_tokens),
         onError: (error) => {
           console.error('Stream error:', error)
           finalizeStream()
@@ -376,9 +376,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...settings.samplerSettings,
       },
       {
-        onToken: (token) => appendStreamContent(token, false),
-        onThinking: (thinking) => appendStreamContent(thinking, true),
-        onComplete: (usage) => finalizeStream(usage?.completion_tokens),
+        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
+        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
+        onComplete: (usage) => finalizeStream(usage?.completion_tokens, usage?.prompt_tokens),
         onError: (error) => {
           console.error('Regenerate error:', error)
           finalizeStream()
@@ -436,31 +436,67 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setStreaming: (streamState) => {
-    set(state => ({
-      streaming: { ...state.streaming, ...streamState },
-    }))
+    set(state => {
+      // When starting a new stream, record the start time
+      const newState = { ...state.streaming, ...streamState }
+      if (streamState.isStreaming && !state.streaming.isStreaming) {
+        newState.startTime = Date.now()
+        newState.firstTokenTime = undefined
+        newState.rawEvents = []
+      }
+      return { streaming: newState }
+    })
   },
 
-  appendStreamContent: (content, isThinking) => {
-    set(state => ({
-      streaming: {
-        ...state.streaming,
-        [isThinking ? 'thinking' : 'content']:
-          state.streaming[isThinking ? 'thinking' : 'content'] + content,
-      },
-    }))
+  appendStreamContent: (content, isThinking, rawEvent) => {
+    set(state => {
+      const now = Date.now()
+      const isFirstToken = !state.streaming.firstTokenTime && content.length > 0
+
+      return {
+        streaming: {
+          ...state.streaming,
+          [isThinking ? 'thinking' : 'content']:
+            state.streaming[isThinking ? 'thinking' : 'content'] + content,
+          // Capture first token time
+          firstTokenTime: isFirstToken ? now : state.streaming.firstTokenTime,
+          // Store raw events for debugging
+          rawEvents: rawEvent
+            ? [...(state.streaming.rawEvents || []), rawEvent]
+            : state.streaming.rawEvents,
+        },
+      }
+    })
   },
 
-  finalizeStream: (tokenCount) => {
+  finalizeStream: (tokenCount, promptTokens) => {
     const { streaming, activeConversationId } = get()
     if (!streaming.messageId || !activeConversationId) return
 
-    // Update the message with final content and token count
+    // Calculate performance metrics
+    const now = Date.now()
+    const totalDuration = streaming.startTime ? now - streaming.startTime : undefined
+    const timeToFirstToken = streaming.startTime && streaming.firstTokenTime
+      ? streaming.firstTokenTime - streaming.startTime
+      : undefined
+    const tokensPerSecond = tokenCount && totalDuration && totalDuration > 0
+      ? (tokenCount / totalDuration) * 1000
+      : undefined
+
+    // Update the message with final content, token count, and performance metrics
     get().updateMessage(activeConversationId, streaming.messageId, {
       content: streaming.content,
       thinking: streaming.thinking || undefined,
       tokenCount,
       isRegenerating: false,
+      performance: {
+        timeToFirstToken,
+        tokensPerSecond,
+        totalDuration,
+        promptTokens,
+        completionTokens: tokenCount,
+      },
+      rawStream: streaming.rawEvents,
     })
 
     // Reset streaming state
@@ -470,6 +506,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: '',
         thinking: '',
         messageId: null,
+        startTime: undefined,
+        firstTokenTime: undefined,
+        rawEvents: undefined,
       },
     })
   },

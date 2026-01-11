@@ -3,10 +3,11 @@
 import type { StreamChunk, Usage, ChatCompletionRequest } from '../types/api'
 
 export interface StreamCallbacks {
-  onToken: (token: string) => void
-  onThinking?: (thinking: string) => void
+  onToken: (token: string, rawEvent?: string) => void
+  onThinking?: (thinking: string, rawEvent?: string) => void
   onComplete: (usage?: Usage) => void
   onError: (error: Error) => void
+  onRawEvent?: (event: string) => void  // For debugging raw SSE data
 }
 
 export async function streamChat(
@@ -41,13 +42,15 @@ export async function streamChat(
     const decoder = new TextDecoder()
     let buffer = ''
 
+    const { onRawEvent } = callbacks
+
     while (true) {
       const { done, value } = await reader.read()
 
       if (done) {
         // Process any remaining buffer
         if (buffer.trim()) {
-          processLines(buffer.split('\n'), onToken, onThinking, onComplete)
+          processLines(buffer.split('\n'), onToken, onThinking, onComplete, onRawEvent)
         }
         break
       }
@@ -56,7 +59,7 @@ export async function streamChat(
       const lines = buffer.split('\n')
       buffer = lines.pop() || '' // Keep incomplete line in buffer
 
-      processLines(lines, onToken, onThinking, onComplete)
+      processLines(lines, onToken, onThinking, onComplete, onRawEvent)
     }
 
     // If we didn't receive a [DONE] signal, still call onComplete
@@ -77,15 +80,21 @@ export async function streamChat(
 
 function processLines(
   lines: string[],
-  onToken: (token: string) => void,
-  onThinking: ((thinking: string) => void) | undefined,
-  onComplete: (usage?: Usage) => void
+  onToken: (token: string, rawEvent?: string) => void,
+  onThinking: ((thinking: string, rawEvent?: string) => void) | undefined,
+  onComplete: (usage?: Usage) => void,
+  onRawEvent?: (event: string) => void
 ): void {
   for (const line of lines) {
     const trimmed = line.trim()
     if (!trimmed || !trimmed.startsWith('data: ')) continue
 
     const data = trimmed.slice(6) // Remove 'data: ' prefix
+
+    // Always capture raw events for debugging
+    if (onRawEvent && data !== '[DONE]') {
+      onRawEvent(trimmed)
+    }
 
     if (data === '[DONE]') {
       return
@@ -96,11 +105,11 @@ function processLines(
       const delta = chunk.choices?.[0]?.delta
 
       if (delta?.content) {
-        onToken(delta.content)
+        onToken(delta.content, trimmed)
       }
 
       if (delta?.thinking && onThinking) {
-        onThinking(delta.thinking)
+        onThinking(delta.thinking, trimmed)
       }
 
       // Check for usage in final chunk

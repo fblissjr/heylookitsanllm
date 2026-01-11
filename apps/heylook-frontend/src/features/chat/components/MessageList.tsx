@@ -3,6 +3,8 @@ import { Message } from '../../../types/chat'
 import { ModelCapabilities } from '../../../types/models'
 import { useChatStore, StreamingState } from '../../../stores/chatStore'
 import { useUIStore } from '../../../stores/uiStore'
+import { PerformanceInfo } from './PerformanceInfo'
+import { RawStreamModal } from './RawStreamModal'
 import clsx from 'clsx'
 
 interface MessageListProps {
@@ -47,6 +49,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
   const [showThinking, setShowThinking] = useState(false)
+  const [showRawStream, setShowRawStream] = useState(false)
 
   const { editMessageAndRegenerate, regenerateFromPosition } = useChatStore()
   const { setConfirmDelete } = useUIStore()
@@ -191,10 +194,19 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                 </div>
               </div>
               <div className="flex items-center justify-between mt-1 px-1">
-                <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                  {formatTime(message.timestamp)}
-                  {message.tokenCount && ` | ${message.tokenCount} tokens`}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                    {formatTime(message.timestamp)}
+                    {message.tokenCount && ` | ${message.tokenCount} tokens`}
+                  </span>
+                  {message.performance && (
+                    <PerformanceInfo
+                      performance={message.performance}
+                      rawStream={message.rawStream}
+                      onShowRawStream={() => setShowRawStream(true)}
+                    />
+                  )}
+                </div>
                 <MessageActions
                   role="assistant"
                   onCopy={handleCopy}
@@ -203,6 +215,14 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                   onRegenerate={handleRegenerate}
                 />
               </div>
+              {/* Raw stream modal */}
+              {message.rawStream && (
+                <RawStreamModal
+                  isOpen={showRawStream}
+                  onClose={() => setShowRawStream(false)}
+                  rawStream={message.rawStream}
+                />
+              )}
             </>
           )}
         </div>

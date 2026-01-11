@@ -2,6 +2,11 @@ import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent, D
 import { useChatStore } from '../../../stores/chatStore'
 import clsx from 'clsx'
 
+interface ImagePreview {
+  file: File
+  previewUrl: string
+}
+
 interface ChatInputProps {
   conversationId: string
   modelId: string
@@ -11,7 +16,7 @@ interface ChatInputProps {
 
 export function ChatInput({ conversationId, modelId, hasVision, disabled }: ChatInputProps) {
   const [message, setMessage] = useState('')
-  const [images, setImages] = useState<string[]>([])
+  const [images, setImages] = useState<ImagePreview[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -27,15 +32,34 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
     }
   }, [message])
 
+  // Convert File to base64 data URL
+  const fileToBase64 = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }, [])
+
   const handleSubmit = useCallback(async () => {
     const trimmedMessage = message.trim()
     if (!trimmedMessage && images.length === 0) return
     if (disabled) return
 
-    await sendMessage(conversationId, trimmedMessage, modelId, images.length > 0 ? images : undefined)
+    // Convert images to base64 only when sending (lazy conversion)
+    let base64Images: string[] | undefined
+    if (images.length > 0) {
+      base64Images = await Promise.all(images.map(img => fileToBase64(img.file)))
+    }
+
+    // Clean up preview URLs before clearing state
+    images.forEach(img => URL.revokeObjectURL(img.previewUrl))
+
+    await sendMessage(conversationId, trimmedMessage, modelId, base64Images)
     setMessage('')
     setImages([])
-  }, [message, images, disabled, conversationId, modelId, sendMessage])
+  }, [message, images, disabled, conversationId, modelId, sendMessage, fileToBase64])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -48,21 +72,17 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
     stopGeneration()
   }, [stopGeneration])
 
-  // Image handling
-  const processFiles = useCallback(async (files: FileList | File[]) => {
+  // Image handling - use object URLs for instant preview (no base64 conversion)
+  const processFiles = useCallback((files: FileList | File[]) => {
     if (!hasVision) return
 
-    const newImages: string[] = []
+    const newImages: ImagePreview[] = []
     for (const file of Array.from(files)) {
       if (!file.type.startsWith('image/')) continue
 
-      // Convert to base64
-      const reader = new FileReader()
-      const base64 = await new Promise<string>((resolve) => {
-        reader.onload = () => resolve(reader.result as string)
-        reader.readAsDataURL(file)
-      })
-      newImages.push(base64)
+      // Create object URL for instant preview (much faster than base64)
+      const previewUrl = URL.createObjectURL(file)
+      newImages.push({ file, previewUrl })
     }
 
     setImages(prev => [...prev, ...newImages])
@@ -110,7 +130,14 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
   }, [processFiles])
 
   const removeImage = useCallback((index: number) => {
-    setImages(prev => prev.filter((_, i) => i !== index))
+    setImages(prev => {
+      // Revoke the object URL to free memory
+      const imageToRemove = prev[index]
+      if (imageToRemove) {
+        URL.revokeObjectURL(imageToRemove.previewUrl)
+      }
+      return prev.filter((_, i) => i !== index)
+    })
   }, [])
 
   return (
@@ -121,7 +148,7 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
           {images.map((img, i) => (
             <div key={i} className="relative group">
               <img
-                src={img}
+                src={img.previewUrl}
                 alt={`Upload ${i + 1}`}
                 className="w-20 h-20 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
               />
