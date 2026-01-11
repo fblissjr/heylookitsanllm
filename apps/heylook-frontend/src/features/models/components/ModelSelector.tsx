@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
 import { useUIStore } from '../../../stores/uiStore'
 import { useChatStore } from '../../../stores/chatStore'
+import { useSettingsStore } from '../../../stores/settingsStore'
 import type { Model } from '../../../types/api'
 import clsx from 'clsx'
 
@@ -9,6 +10,7 @@ export function ModelSelector() {
   const { models, loadedModel, setLoadedModel, setModelStatus, setError } = useModelStore()
   const { setActivePanel } = useUIStore()
   const { createConversation } = useChatStore()
+  const { systemPrompt } = useSettingsStore()
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [contextWindow, setContextWindow] = useState(4096)
   const [isLoading, setIsLoading] = useState(false)
@@ -38,8 +40,8 @@ export function ModelSelector() {
         capabilities,
       })
 
-      // Create a new conversation with this model
-      createConversation(selectedModel.id)
+      // Create a new conversation with this model and current system prompt
+      createConversation(selectedModel.id, systemPrompt)
 
       // Close the panel
       setActivePanel(null)
@@ -50,7 +52,7 @@ export function ModelSelector() {
     } finally {
       setIsLoading(false)
     }
-  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, createConversation, setActivePanel])
+  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, createConversation, setActivePanel, systemPrompt])
 
   const handleUnloadModel = useCallback(() => {
     setLoadedModel(null)

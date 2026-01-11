@@ -2,6 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Header } from './Header'
+import { ThemeProvider } from '../../contexts/ThemeContext'
+
+// Wrapper component with ThemeProvider
+function renderHeader() {
+  return render(
+    <ThemeProvider>
+      <Header />
+    </ThemeProvider>
+  )
+}
 
 // Mock the stores
 const mockToggleSidebar = vi.fn()
@@ -44,35 +54,35 @@ describe('Header', () => {
 
   describe('rendering', () => {
     it('renders the header element', () => {
-      render(<Header />)
+      renderHeader()
 
       const header = document.querySelector('header')
       expect(header).toBeInTheDocument()
     })
 
     it('renders the sidebar toggle button', () => {
-      render(<Header />)
+      renderHeader()
 
       const sidebarButton = screen.getByLabelText('Toggle sidebar')
       expect(sidebarButton).toBeInTheDocument()
     })
 
     it('renders the model selector button', () => {
-      render(<Header />)
+      renderHeader()
 
       // When no model is loaded, shows "Select Model"
       expect(screen.getByText('Select Model')).toBeInTheDocument()
     })
 
     it('renders advanced settings button', () => {
-      render(<Header />)
+      renderHeader()
 
       const advancedButton = screen.getByLabelText('Advanced settings')
       expect(advancedButton).toBeInTheDocument()
     })
 
     it('renders sampler settings button', () => {
-      render(<Header />)
+      renderHeader()
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       expect(samplerButton).toBeInTheDocument()
@@ -81,7 +91,7 @@ describe('Header', () => {
 
   describe('model display', () => {
     it('shows "Select Model" when no model is loaded', () => {
-      render(<Header />)
+      renderHeader()
 
       expect(screen.getByText('Select Model')).toBeInTheDocument()
     })
@@ -97,13 +107,13 @@ describe('Header', () => {
         modelStatus: 'loaded' as const,
       })
 
-      render(<Header />)
+      renderHeader()
 
       expect(screen.getByText('my-model')).toBeInTheDocument()
     })
 
     it('shows dropdown indicator on model selector', () => {
-      render(<Header />)
+      renderHeader()
 
       // The chevron down icon is rendered as an SVG inside the button
       const modelButton = screen.getByText('Select Model').closest('button')
@@ -121,7 +131,7 @@ describe('Header', () => {
         modelStatus: 'unloaded' as const,
       })
 
-      render(<Header />)
+      renderHeader()
 
       const indicator = document.querySelector('.bg-gray-500')
       expect(indicator).toBeInTheDocument()
@@ -138,7 +148,7 @@ describe('Header', () => {
         modelStatus: 'loaded' as const,
       })
 
-      render(<Header />)
+      renderHeader()
 
       const indicator = document.querySelector('.bg-accent-green')
       expect(indicator).toBeInTheDocument()
@@ -151,7 +161,7 @@ describe('Header', () => {
         modelStatus: 'loading' as const,
       })
 
-      render(<Header />)
+      renderHeader()
 
       const indicator = document.querySelector('.bg-amber-500.animate-pulse')
       expect(indicator).toBeInTheDocument()
@@ -161,7 +171,7 @@ describe('Header', () => {
   describe('sidebar toggle', () => {
     it('calls toggleSidebar when sidebar button is clicked', async () => {
       const user = userEvent.setup()
-      render(<Header />)
+      renderHeader()
 
       const sidebarButton = screen.getByLabelText('Toggle sidebar')
       await user.click(sidebarButton)
@@ -173,7 +183,7 @@ describe('Header', () => {
   describe('panel toggles', () => {
     it('calls togglePanel with "models" when model selector is clicked', async () => {
       const user = userEvent.setup()
-      render(<Header />)
+      renderHeader()
 
       const modelButton = screen.getByText('Select Model').closest('button')
       await user.click(modelButton!)
@@ -183,7 +193,7 @@ describe('Header', () => {
 
     it('calls togglePanel with "advanced" when advanced settings is clicked', async () => {
       const user = userEvent.setup()
-      render(<Header />)
+      renderHeader()
 
       const advancedButton = screen.getByLabelText('Advanced settings')
       await user.click(advancedButton)
@@ -193,7 +203,7 @@ describe('Header', () => {
 
     it('calls togglePanel with "settings" when sampler settings is clicked', async () => {
       const user = userEvent.setup()
-      render(<Header />)
+      renderHeader()
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       await user.click(samplerButton)
@@ -210,7 +220,7 @@ describe('Header', () => {
         activePanel: 'advanced',
       })
 
-      render(<Header />)
+      renderHeader()
 
       const advancedButton = screen.getByLabelText('Advanced settings')
       expect(advancedButton).toHaveClass('bg-primary/20')
@@ -224,7 +234,7 @@ describe('Header', () => {
         activePanel: 'settings',
       })
 
-      render(<Header />)
+      renderHeader()
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       expect(samplerButton).toHaveClass('bg-primary/20')
@@ -232,7 +242,7 @@ describe('Header', () => {
     })
 
     it('does not highlight buttons when no panel is active', () => {
-      render(<Header />)
+      renderHeader()
 
       const advancedButton = screen.getByLabelText('Advanced settings')
       const samplerButton = screen.getByLabelText('Sampler settings')
@@ -244,14 +254,14 @@ describe('Header', () => {
 
   describe('button tooltips', () => {
     it('has correct title on advanced settings button', () => {
-      render(<Header />)
+      renderHeader()
 
       const advancedButton = screen.getByLabelText('Advanced settings')
       expect(advancedButton).toHaveAttribute('title', 'System Prompt & Templates')
     })
 
     it('has correct title on sampler settings button', () => {
-      render(<Header />)
+      renderHeader()
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       expect(samplerButton).toHaveAttribute('title', 'Generation Parameters')
@@ -260,11 +270,49 @@ describe('Header', () => {
 
   describe('settings indicator dot', () => {
     it('shows indicator dot on sampler settings button', () => {
-      render(<Header />)
+      renderHeader()
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       const indicatorDot = samplerButton.querySelector('.bg-primary.rounded-full')
       expect(indicatorDot).toBeInTheDocument()
+    })
+  })
+
+  describe('theme toggle', () => {
+    it('renders theme toggle button', () => {
+      renderHeader()
+
+      const themeButton = screen.getByLabelText('Toggle theme')
+      expect(themeButton).toBeInTheDocument()
+    })
+
+    it('shows correct tooltip for dark mode', () => {
+      renderHeader()
+
+      const themeButton = screen.getByLabelText('Toggle theme')
+      expect(themeButton).toHaveAttribute('title', 'Dark mode')
+    })
+
+    it('cycles theme on click', async () => {
+      const user = userEvent.setup()
+      renderHeader()
+
+      const themeButton = screen.getByLabelText('Toggle theme')
+
+      // Initial state is dark mode
+      expect(themeButton).toHaveAttribute('title', 'Dark mode')
+
+      // Click to change to light mode
+      await user.click(themeButton)
+      expect(themeButton).toHaveAttribute('title', 'Light mode')
+
+      // Click to change to auto mode
+      await user.click(themeButton)
+      expect(themeButton).toHaveAttribute('title', 'System theme')
+
+      // Click to cycle back to dark mode
+      await user.click(themeButton)
+      expect(themeButton).toHaveAttribute('title', 'Dark mode')
     })
   })
 })

@@ -78,6 +78,12 @@ vi.mock('../../../stores/chatStore', () => ({
   })),
 }))
 
+vi.mock('../../../stores/settingsStore', () => ({
+  useSettingsStore: vi.fn(() => ({
+    systemPrompt: 'You are a helpful AI assistant.',
+  })),
+}))
+
 // Import mocks after defining
 import { useModelStore } from '../../../stores/modelStore'
 
@@ -263,7 +269,7 @@ describe('ModelSelector', () => {
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
-      expect(mockCreateConversation).toHaveBeenCalledWith('llama-3.2-1b')
+      expect(mockCreateConversation).toHaveBeenCalledWith('llama-3.2-1b', 'You are a helpful AI assistant.')
     })
 
     it('closes panel after loading model', async () => {

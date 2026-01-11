@@ -15,6 +15,14 @@ vi.mock('../../features/models/components/ModelSelector', () => ({
   ModelSelector: () => <div data-testid="mock-model-selector">ModelSelector</div>,
 }))
 
+vi.mock('../panels/AdvancedPanel', () => ({
+  AdvancedPanel: () => <div data-testid="mock-advanced-panel">AdvancedPanel</div>,
+}))
+
+vi.mock('../panels/SettingsPanel', () => ({
+  SettingsPanel: () => <div data-testid="mock-settings-panel">SettingsPanel</div>,
+}))
+
 // Mock store state
 const mockToggleSidebar = vi.fn()
 const mockSetIsMobile = vi.fn()
@@ -326,6 +334,54 @@ describe('Layout', () => {
 
       const main = document.querySelector('main.flex-1.flex.flex-col.min-w-0.overflow-hidden')
       expect(main).toBeInTheDocument()
+    })
+  })
+
+  describe('advanced panel', () => {
+    it('shows AdvancedPanel when activePanel is "advanced"', () => {
+      vi.mocked(useUIStore).mockReturnValue({
+        ...defaultUIState,
+        activePanel: 'advanced',
+      })
+
+      render(<Layout><div>Content</div></Layout>)
+
+      expect(screen.getByTestId('mock-advanced-panel')).toBeInTheDocument()
+    })
+
+    it('does not show AdvancedPanel when activePanel is something else', () => {
+      vi.mocked(useUIStore).mockReturnValue({
+        ...defaultUIState,
+        activePanel: 'models',
+      })
+
+      render(<Layout><div>Content</div></Layout>)
+
+      expect(screen.queryByTestId('mock-advanced-panel')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('settings panel', () => {
+    it('shows SettingsPanel when activePanel is "settings"', () => {
+      vi.mocked(useUIStore).mockReturnValue({
+        ...defaultUIState,
+        activePanel: 'settings',
+      })
+
+      render(<Layout><div>Content</div></Layout>)
+
+      expect(screen.getByTestId('mock-settings-panel')).toBeInTheDocument()
+    })
+
+    it('does not show SettingsPanel when activePanel is something else', () => {
+      vi.mocked(useUIStore).mockReturnValue({
+        ...defaultUIState,
+        activePanel: 'advanced',
+      })
+
+      render(<Layout><div>Content</div></Layout>)
+
+      expect(screen.queryByTestId('mock-settings-panel')).not.toBeInTheDocument()
     })
   })
 })

@@ -6,9 +6,9 @@
 |----------|-------------|---------|--------------|
 | Chat | 9 | 2 | 1 |
 | Models | 6 | 2 | 0 |
-| Storage | 5 | 1 | 0 |
-| UI/UX | 8 | 4 | 2 |
-| Settings | 4 | 2 | 0 |
+| Storage | 7 | 0 | 0 |
+| UI/UX | 11 | 1 | 2 |
+| Settings | 13 | 0 | 0 |
 
 ---
 
@@ -58,12 +58,15 @@
 | Load on Startup | Restore conversations on refresh | Complete |
 | Theme Persistence | Remember theme preference | Complete |
 | Settings Persistence | Remember sampler settings | Complete |
+| Export Conversations | Download all conversations as JSON | Complete |
+| Import Conversations | Upload JSON file to restore chats | Complete |
 
 ### UI/UX
 
 | Feature | Description | Status |
 |---------|-------------|--------|
 | Dark Theme | Native dark mode | Complete |
+| Theme Toggle | Light/Dark/Auto mode selector in header | Complete |
 | Responsive Layout | Works on various screen sizes | Complete |
 | Collapsible Sidebar | Toggle conversation list | Complete |
 | Loading States | Spinners and skeleton states | Complete |
@@ -71,6 +74,8 @@
 | Hover Actions | Show actions on hover | Complete |
 | Keyboard Shortcuts | Enter to send, Shift+Enter for newline | Complete |
 | Copy Message | Copy message content | Complete |
+| Token Usage Display | Show prompt/completion tokens per message | Complete |
+| Message Timestamps | Show when messages were sent | Complete |
 
 ### Settings
 
@@ -80,6 +85,15 @@
 | Top P | Nucleus sampling | Complete |
 | Top K | Top-k sampling | Complete |
 | Max Tokens | Limit response length | Complete |
+| Min P | Minimum probability threshold | Complete |
+| Repetition Penalty | Penalize repeated tokens | Complete |
+| Presence Penalty | Encourage topic diversity | Complete |
+| Frequency Penalty | Reduce word repetition | Complete |
+| Seed | Reproducible generation | Complete |
+| Settings Panel UI | Sliders and controls for all parameters | Complete |
+| Sampler Presets | Balanced, Creative, Precise, Deterministic | Complete |
+| System Prompt UI | Edit system prompt with presets | Complete |
+| Thinking Mode Toggle | Enable/disable Qwen3 thinking mode | Complete |
 
 ---
 
@@ -90,20 +104,13 @@
 | Feature | Description | Complexity | Notes |
 |---------|-------------|------------|-------|
 | Config Editing | Edit models.toml via UI | High | Requires backend API endpoints |
-| Token Display | Show token usage per message | Low | Backend already returns this |
-| Export Conversations | Export to JSON/Markdown | Medium | DB export function exists |
-| Import Conversations | Import from JSON | Medium | DB import function exists |
 
 ### Medium Priority
 
 | Feature | Description | Complexity | Notes |
 |---------|-------------|------------|-------|
 | Search | Search conversation content | Medium | Requires IndexedDB query |
-| System Prompt UI | Edit system prompt per conversation | Low | Data model supports this |
 | Keyboard Shortcuts | Cmd+K palette, Cmd+N new chat | Medium | Common UX pattern |
-| Theme Toggle | Light/Dark/Auto mode selector | Low | ThemeContext ready |
-| Presets | Sampler parameter presets | Low | Just UI + localStorage |
-| Message Timestamps | Show when messages were sent | Low | Data exists, needs UI |
 
 ### Low Priority
 
@@ -159,17 +166,17 @@
 
 ## Implementation Roadmap
 
-### Phase 1: Polish (v0.2.0)
-- Token display per message
-- Export/Import conversations
-- Theme toggle in UI
-- Message timestamps
+### Phase 1: Polish (v0.2.0) - COMPLETE
+- [x] Token display per message
+- [x] Export/Import conversations
+- [x] Theme toggle in UI
+- [x] Message timestamps
 
-### Phase 2: Power User (v0.3.0)
-- Keyboard shortcuts (Cmd+K palette)
-- Search conversations
-- System prompt UI
-- Sampler presets
+### Phase 2: Power User (v0.3.0) - PARTIAL
+- [x] System prompt UI with presets
+- [x] Sampler presets (Balanced, Creative, Precise, Deterministic)
+- [ ] Keyboard shortcuts (Cmd+K palette)
+- [ ] Search conversations
 
 ### Phase 3: Config (v0.4.0)
 - models.toml editing via UI
@@ -207,10 +214,10 @@ To request a new feature, include:
 | MessageList | - | 25 | - |
 | ChatInput | - | 19 | 4 |
 | ModelSelector | - | 30 | 12 |
-| Sidebar | - | 30 | 4 |
-| Header | - | 21 | 2 |
-| Layout | - | 23 | - |
+| Sidebar | - | 38 | 4 |
+| Header | - | 24 | 2 |
+| Layout | - | 27 | - |
 | Persistence | - | - | 16 |
-| **Total** | 175 | 166 | 78 |
+| **Total** | 175 | 181 | 78 |
 
-Note: 471 unit/component tests + 48 E2E tests = 519 total tests
+Note: 486 unit/component tests + 48 E2E tests = 534 total tests

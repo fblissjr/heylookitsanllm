@@ -3,6 +3,8 @@ import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 import { useUIStore } from '../../stores/uiStore'
 import { ModelSelector } from '../../features/models/components/ModelSelector'
+import { AdvancedPanel } from '../panels/AdvancedPanel'
+import { SettingsPanel } from '../panels/SettingsPanel'
 
 interface LayoutProps {
   children: ReactNode
@@ -50,8 +52,8 @@ export function Layout({ children }: LayoutProps) {
           {children}
         </main>
 
-        {/* Right panel - Model Selector */}
-        {activePanel === 'models' && (
+        {/* Right panels */}
+        {activePanel && (
           <>
             {/* Backdrop for mobile */}
             {isMobile && (
@@ -65,7 +67,9 @@ export function Layout({ children }: LayoutProps) {
               w-80 bg-white dark:bg-surface-dark border-l border-gray-200 dark:border-gray-700
               flex flex-col overflow-hidden
             `}>
-              <ModelSelector />
+              {activePanel === 'models' && <ModelSelector />}
+              {activePanel === 'advanced' && <AdvancedPanel />}
+              {activePanel === 'settings' && <SettingsPanel />}
             </aside>
           </>
         )}

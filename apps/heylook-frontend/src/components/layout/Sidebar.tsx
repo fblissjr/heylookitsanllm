@@ -1,16 +1,22 @@
+import { useRef, useState } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useModelStore } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { exportConversations, importConversations } from '../../lib/db'
 import clsx from 'clsx'
 
 export function Sidebar() {
-  const { conversations, activeConversationId, createConversation, setActiveConversation } = useChatStore()
+  const { conversations, activeConversationId, createConversation, setActiveConversation, loadFromDB } = useChatStore()
   const { loadedModel } = useModelStore()
   const { setConfirmDelete, isMobile, toggleSidebar } = useUIStore()
+  const { systemPrompt } = useSettingsStore()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [importStatus, setImportStatus] = useState<string | null>(null)
 
   const handleNewConversation = () => {
     if (loadedModel) {
-      createConversation(loadedModel.id)
+      createConversation(loadedModel.id, systemPrompt)
       if (isMobile) toggleSidebar()
     }
   }
@@ -23,6 +29,45 @@ export function Sidebar() {
   const handleDeleteClick = (e: React.MouseEvent, id: string, title: string) => {
     e.stopPropagation()
     setConfirmDelete({ type: 'conversation', id, title })
+  }
+
+  const handleExport = async () => {
+    try {
+      const json = await exportConversations()
+      const blob = new Blob([json], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `heylook-conversations-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export failed:', error)
+    }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    try {
+      const json = await file.text()
+      const count = await importConversations(json)
+      await loadFromDB() // Refresh conversations from DB
+      setImportStatus(`Imported ${count} conversations`)
+      setTimeout(() => setImportStatus(null), 3000)
+    } catch (error) {
+      console.error('Import failed:', error)
+      setImportStatus('Import failed')
+      setTimeout(() => setImportStatus(null), 3000)
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
   }
 
   const formatDate = (timestamp: number) => {
@@ -111,10 +156,55 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Footer with model info */}
-      {loadedModel && (
-        <div className="p-3 border-t border-gray-200 dark:border-gray-700">
-          <div className="text-xs text-gray-400 dark:text-gray-500">
+      {/* Footer with export/import and model info */}
+      <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+        {/* Export/Import buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            disabled={conversations.length === 0}
+            className={clsx(
+              'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+              conversations.length === 0
+                ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
+                : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300'
+            )}
+            title="Export conversations"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Export
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition-colors"
+            title="Import conversations"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Import
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleImport}
+            className="hidden"
+          />
+        </div>
+
+        {/* Import status message */}
+        {importStatus && (
+          <div className="text-xs text-center text-accent-green">
+            {importStatus}
+          </div>
+        )}
+
+        {/* Model info */}
+        {loadedModel && (
+          <div className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-gray-700">
             <span className="block truncate font-medium text-gray-600 dark:text-gray-300">
               {loadedModel.id}
             </span>
@@ -123,8 +213,8 @@ export function Sidebar() {
               {loadedModel.capabilities.thinking && 'Thinking '}
             </span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   )
 }

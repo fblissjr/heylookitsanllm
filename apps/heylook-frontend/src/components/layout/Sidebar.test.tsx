@@ -46,6 +46,12 @@ vi.mock('../../stores/uiStore', () => ({
   useUIStore: vi.fn(() => defaultUIState),
 }))
 
+vi.mock('../../stores/settingsStore', () => ({
+  useSettingsStore: vi.fn(() => ({
+    systemPrompt: 'You are a helpful AI assistant.',
+  })),
+}))
+
 import { useChatStore } from '../../stores/chatStore'
 import { useModelStore } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -128,7 +134,7 @@ describe('Sidebar', () => {
       const newChatButton = screen.getByText('New Chat').closest('button')
       fireEvent.click(newChatButton!)
 
-      expect(mockCreateConversation).toHaveBeenCalledWith('test-model')
+      expect(mockCreateConversation).toHaveBeenCalledWith('test-model', 'You are a helpful AI assistant.')
     })
 
     it('toggles sidebar after creating conversation on mobile', () => {
@@ -451,7 +457,7 @@ describe('Sidebar', () => {
       expect(screen.getByText('test-model')).toBeInTheDocument()
     })
 
-    it('does not show footer when no model is loaded', () => {
+    it('does not show model info when no model is loaded', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: null,
       })
@@ -462,9 +468,8 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
-      // Footer border-t element should not exist
-      const footer = document.querySelector('.border-t.border-gray-200')
-      expect(footer).not.toBeInTheDocument()
+      // Model info should not exist (but footer with export/import is visible)
+      expect(screen.queryByText('test-model')).not.toBeInTheDocument()
     })
 
     it('shows Vision capability when model has vision', () => {
@@ -530,6 +535,82 @@ describe('Sidebar', () => {
       const newChatButton = screen.getByText('New Chat').closest('button')
       expect(newChatButton).toHaveClass('bg-gray-200')
       expect(newChatButton).toHaveClass('text-gray-400')
+    })
+  })
+
+  describe('export/import', () => {
+    it('renders export button', () => {
+      render(<Sidebar />)
+
+      expect(screen.getByText('Export')).toBeInTheDocument()
+    })
+
+    it('renders import button', () => {
+      render(<Sidebar />)
+
+      expect(screen.getByText('Import')).toBeInTheDocument()
+    })
+
+    it('export button is disabled when no conversations', () => {
+      vi.mocked(useChatStore).mockReturnValue({
+        ...defaultChatState,
+        conversations: [],
+      })
+
+      render(<Sidebar />)
+
+      const exportButton = screen.getByText('Export').closest('button')
+      expect(exportButton).toBeDisabled()
+    })
+
+    it('export button is enabled when conversations exist', () => {
+      const conversations = [
+        createMockConversation({ id: 'conv-1', title: 'Test Chat' }),
+      ]
+      vi.mocked(useChatStore).mockReturnValue({
+        ...defaultChatState,
+        conversations,
+      })
+
+      render(<Sidebar />)
+
+      const exportButton = screen.getByText('Export').closest('button')
+      expect(exportButton).not.toBeDisabled()
+    })
+
+    it('import button is always enabled', () => {
+      vi.mocked(useChatStore).mockReturnValue({
+        ...defaultChatState,
+        conversations: [],
+      })
+
+      render(<Sidebar />)
+
+      const importButton = screen.getByText('Import').closest('button')
+      expect(importButton).not.toBeDisabled()
+    })
+
+    it('has correct tooltip on export button', () => {
+      render(<Sidebar />)
+
+      const exportButton = screen.getByText('Export').closest('button')
+      expect(exportButton).toHaveAttribute('title', 'Export conversations')
+    })
+
+    it('has correct tooltip on import button', () => {
+      render(<Sidebar />)
+
+      const importButton = screen.getByText('Import').closest('button')
+      expect(importButton).toHaveAttribute('title', 'Import conversations')
+    })
+
+    it('renders hidden file input for import', () => {
+      render(<Sidebar />)
+
+      const fileInput = document.querySelector('input[type="file"]')
+      expect(fileInput).toBeInTheDocument()
+      expect(fileInput).toHaveAttribute('accept', '.json')
+      expect(fileInput).toHaveClass('hidden')
     })
   })
 })
