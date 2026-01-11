@@ -6,6 +6,7 @@ import { useUIStore } from '../../../stores/uiStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'
 import { MessageDebugModal } from './MessageDebugModal'
+import { formatDuration } from '../../../utils/formatters'
 import { RawStreamModal } from './RawStreamModal'
 import clsx from 'clsx'
 
@@ -223,7 +224,6 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                 <MessageMetricsFooter
                   performance={message.performance}
                   modelId={message.modelId}
-                  timestamp={message.timestamp}
                   onShowDebug={() => setShowDebugModal(true)}
                 />
               )}
@@ -267,20 +267,13 @@ interface ThinkingBlockProps {
   thinkingTokens?: number
 }
 
-// Format thinking time for display
-function formatThinkingTime(ms?: number): string {
-  if (ms === undefined) return ''
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
-
 function ThinkingBlock({ content, isOpen, onToggle, thinkingTime, thinkingTokens }: ThinkingBlockProps) {
   // Build header text
   const hasMetrics = thinkingTime !== undefined || thinkingTokens !== undefined
   let headerText = 'Thinking'
   if (hasMetrics) {
     const parts: string[] = []
-    if (thinkingTime !== undefined) parts.push(formatThinkingTime(thinkingTime))
+    if (thinkingTime !== undefined) parts.push(formatDuration(thinkingTime))
     if (thinkingTokens !== undefined) parts.push(`${thinkingTokens.toLocaleString()} tokens`)
     headerText = `Thought for ${parts.join(' | ')}`
   }

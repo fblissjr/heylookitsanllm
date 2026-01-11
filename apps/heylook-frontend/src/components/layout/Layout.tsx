@@ -12,18 +12,19 @@ interface LayoutProps {
 }
 
 export function Layout({ children }: LayoutProps) {
-  const { isSidebarOpen, isMobile, setIsMobile, activePanel, setActivePanel } = useUIStore()
+  const { isSidebarOpen, isMobile, activePanel, setActivePanel } = useUIStore()
 
   // Detect mobile viewport
+  // Use getState() to avoid memory leak from unstable action references
   useEffect(() => {
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768)
+      useUIStore.getState().setIsMobile(window.innerWidth < 768)
     }
 
     checkMobile()
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
-  }, [setIsMobile])
+  }, [])
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">

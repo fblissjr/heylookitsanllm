@@ -1,36 +1,10 @@
 import type { PerformanceMetrics } from '../../../types/chat'
+import { formatDuration, formatTPS, formatTokens, truncateString } from '../../../utils/formatters'
 
 interface MessageMetricsFooterProps {
   performance: PerformanceMetrics
   modelId?: string
-  timestamp: number
   onShowDebug: () => void
-}
-
-// Format duration in human readable form
-function formatDuration(ms?: number): string {
-  if (ms === undefined) return '-'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
-
-// Format tokens per second
-function formatTPS(tps?: number): string {
-  if (tps === undefined) return '-'
-  return `${tps.toFixed(1)} tok/s`
-}
-
-// Format token count
-function formatTokens(count?: number): string {
-  if (count === undefined) return '-'
-  return `${count.toLocaleString()} tokens`
-}
-
-// Truncate model name for display
-function truncateModelName(modelId?: string, maxLen = 12): string {
-  if (!modelId) return ''
-  if (modelId.length <= maxLen) return modelId
-  return modelId.slice(0, maxLen - 1) + '...'
 }
 
 export function MessageMetricsFooter({
@@ -75,7 +49,7 @@ export function MessageMetricsFooter({
         {modelId && (
           <>
             <span className="text-gray-600 dark:text-gray-300" title={modelId}>
-              {truncateModelName(modelId, 16)}
+              {truncateString(modelId, 16)}
             </span>
             {cached !== undefined && (
               <span className="text-gray-300 dark:text-gray-600">|</span>
@@ -113,7 +87,7 @@ export function MessageMetricsFooter({
         <div className="flex items-center gap-2">
           {modelId && (
             <span className="text-gray-600 dark:text-gray-300" title={modelId}>
-              {truncateModelName(modelId, 12)}
+              {truncateString(modelId, 12)}
             </span>
           )}
           {modelId && ttft !== undefined && (

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Message } from '../../../types/chat'
 import type { Model } from '../../../types/api'
+import { formatDuration } from '../../../utils/formatters'
 
 interface MessageDebugModalProps {
   isOpen: boolean
@@ -58,14 +59,21 @@ function MetricRow({ label, value, mono = false }: { label: string; value: React
   )
 }
 
-// Format duration
-function formatDuration(ms?: number): string {
-  if (ms === undefined) return '-'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(2)}s`
-}
-
 export function MessageDebugModal({ isOpen, onClose, message, modelInfo }: MessageDebugModalProps) {
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   const perf = message.performance
@@ -73,10 +81,14 @@ export function MessageDebugModal({ isOpen, onClose, message, modelInfo }: Messa
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop - accessible with keyboard support */}
       <div
         className="fixed inset-0 bg-black/50 z-50"
         onClick={onClose}
+        onKeyDown={(e) => e.key === 'Enter' && onClose()}
+        role="button"
+        tabIndex={0}
+        aria-label="Close modal"
       />
 
       {/* Desktop: centered modal */}

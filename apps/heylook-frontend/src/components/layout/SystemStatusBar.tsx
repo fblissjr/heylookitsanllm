@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useSystemStore } from '../../stores/systemStore'
 import { useModelStore } from '../../stores/modelStore'
+import { formatGB, formatNumber } from '../../utils/formatters'
 
 interface SystemStatusBarProps {
   className?: string
@@ -13,26 +14,16 @@ function getContextColorClass(percent: number): string {
   return 'text-gray-500 dark:text-gray-400'
 }
 
-// Format bytes to human readable
-function formatGB(gb: number): string {
-  if (gb >= 10) return `${gb.toFixed(0)}G`
-  return `${gb.toFixed(1)}G`
-}
-
-// Format large numbers with commas
-function formatNumber(n: number): string {
-  return n.toLocaleString()
-}
-
 export function SystemStatusBar({ className = '' }: SystemStatusBarProps) {
-  const { metrics, isPolling, startPolling, stopPolling } = useSystemStore()
+  const { metrics, isPolling } = useSystemStore()
   const { loadedModel } = useModelStore()
 
   // Start/stop polling based on component mount
+  // Use getState() to avoid stale closure issues with Zustand actions
   useEffect(() => {
-    startPolling()
-    return () => stopPolling()
-  }, [startPolling, stopPolling])
+    useSystemStore.getState().startPolling()
+    return () => useSystemStore.getState().stopPolling()
+  }, [])
 
   // Get metrics for the currently loaded model
   const modelMetrics = loadedModel?.id && metrics?.models
