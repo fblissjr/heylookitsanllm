@@ -1,11 +1,26 @@
 // SSE Streaming API Client
 
-import type { StreamChunk, Usage, ChatCompletionRequest } from '../types/api'
+import type {
+  StreamChunk,
+  Usage,
+  EnhancedUsage,
+  GenerationTiming,
+  StreamGenerationConfig,
+  ChatCompletionRequest
+} from '../types/api'
+
+// Enhanced completion data from final SSE chunk
+export interface StreamCompletionData {
+  usage?: EnhancedUsage
+  timing?: GenerationTiming
+  generationConfig?: StreamGenerationConfig
+  stopReason?: string
+}
 
 export interface StreamCallbacks {
   onToken: (token: string, rawEvent?: string) => void
   onThinking?: (thinking: string, rawEvent?: string) => void
-  onComplete: (usage?: Usage) => void
+  onComplete: (data?: StreamCompletionData) => void
   onError: (error: Error) => void
   onRawEvent?: (event: string) => void  // For debugging raw SSE data
 }
@@ -82,7 +97,7 @@ function processLines(
   lines: string[],
   onToken: (token: string, rawEvent?: string) => void,
   onThinking: ((thinking: string, rawEvent?: string) => void) | undefined,
-  onComplete: (usage?: Usage) => void,
+  onComplete: (data?: StreamCompletionData) => void,
   onRawEvent?: (event: string) => void
 ): void {
   for (const line of lines) {
@@ -112,9 +127,15 @@ function processLines(
         onThinking(delta.thinking, trimmed)
       }
 
-      // Check for usage in final chunk
+      // Check for usage in final chunk - extract all enhanced fields
       if (chunk.usage) {
-        onComplete(chunk.usage)
+        const completionData: StreamCompletionData = {
+          usage: chunk.usage,
+          timing: chunk.timing,
+          generationConfig: chunk.generation_config,
+          stopReason: chunk.stop_reason,
+        }
+        onComplete(completionData)
         return
       }
     } catch {

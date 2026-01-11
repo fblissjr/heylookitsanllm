@@ -62,7 +62,7 @@ function createMockConversation(overrides: Partial<Conversation> = {}): Conversa
   return {
     id: `conv-${Math.random().toString(36).slice(2, 11)}`,
     title: 'Test Conversation',
-    modelId: 'test-model',
+    defaultModelId: 'test-model',
     messages: [],
     createdAt: baseTime,
     updatedAt: baseTime,

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Message, Conversation, StreamingState, EditState } from '../types/chat'
-import { streamChat } from '../api/streaming'
+import { streamChat, type StreamCompletionData } from '../api/streaming'
 import { useSettingsStore } from './settingsStore'
 import * as db from '../lib/db'
 
@@ -67,7 +67,7 @@ interface ChatState {
   // Streaming
   setStreaming: (state: Partial<StreamingState>) => void
   appendStreamContent: (content: string, isThinking: boolean, rawEvent?: string) => void
-  finalizeStream: (tokenCount?: number, promptTokens?: number) => void
+  finalizeStream: (completionData?: StreamCompletionData) => void
 
   // Edit mode
   startEditing: (messageId: string, content: string) => void
@@ -107,7 +107,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const newConversation: Conversation = {
       id,
       title: 'New Conversation',
-      modelId,
+      defaultModelId: modelId,
       messages: [],
       systemPrompt,
       createdAt: now,
@@ -302,7 +302,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       {
         onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
         onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (usage) => finalizeStream(usage?.completion_tokens, usage?.prompt_tokens),
+        onComplete: (data) => finalizeStream(data),
         onError: (error) => {
           console.error('Stream error:', error)
           finalizeStream()
@@ -371,14 +371,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     await streamChat(
       {
-        model: updatedConversation.modelId,
+        model: updatedConversation.defaultModelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },
       {
         onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
         onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (usage) => finalizeStream(usage?.completion_tokens, usage?.prompt_tokens),
+        onComplete: (data) => finalizeStream(data),
         onError: (error) => {
           console.error('Regenerate error:', error)
           finalizeStream()
@@ -469,13 +469,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  finalizeStream: (tokenCount, promptTokens) => {
+  finalizeStream: (completionData) => {
     const { streaming, activeConversationId } = get()
     if (!streaming.messageId || !activeConversationId) return
 
+    // Extract data from completion response
+    const usage = completionData?.usage
+    const timing = completionData?.timing
+    const generationConfig = completionData?.generationConfig
+    const stopReason = completionData?.stopReason
+
     // Calculate performance metrics
     const now = Date.now()
-    const totalDuration = streaming.startTime ? now - streaming.startTime : undefined
+    const tokenCount = usage?.completion_tokens
+    const promptTokens = usage?.prompt_tokens
+
+    // Use server timing if available, fallback to client-side calculation
+    const totalDuration = timing?.total_duration_ms ?? (streaming.startTime ? now - streaming.startTime : undefined)
+    const thinkingDuration = timing?.thinking_duration_ms
+
     const timeToFirstToken = streaming.startTime && streaming.firstTokenTime
       ? streaming.firstTokenTime - streaming.startTime
       : undefined
@@ -495,7 +507,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         totalDuration,
         promptTokens,
         completionTokens: tokenCount,
+        // Enhanced metrics from backend
+        thinkingTokens: usage?.thinking_tokens,
+        contentTokens: usage?.content_tokens,
+        thinkingDuration,
+        stopReason,
+        generationConfig,
       },
+      // Per-message thinking metrics (convenience fields)
+      thinkingTokens: usage?.thinking_tokens,
+      thinkingDuration,
       rawStream: streaming.rawEvents,
     })
 

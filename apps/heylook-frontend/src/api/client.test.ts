@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { fetchAPI, postAPI, APIError } from './client'
-import { streamChat, chatCompletion, type StreamCallbacks } from './streaming'
+import { streamChat, chatCompletion, type StreamCallbacks, type StreamCompletionData } from './streaming'
 import {
   getModels,
   getCapabilities,
@@ -607,10 +607,10 @@ describe('streaming', () => {
     })
 
     it('extracts usage from final chunk', async () => {
-      const usageResults: (Usage | undefined)[] = []
+      const usageResults: (StreamCompletionData | undefined)[] = []
       const callbacks: StreamCallbacks = {
         onToken: vi.fn(),
-        onComplete: (usage) => { usageResults.push(usage) },
+        onComplete: (data) => { usageResults.push(data) },
         onError: vi.fn(),
       }
 
@@ -637,8 +637,13 @@ describe('streaming', () => {
       )
 
       // onComplete is called twice: once when usage chunk is received, once at end of stream
-      // The first call should have the usage
-      expect(usageResults[0]).toEqual(usage)
+      // The first call should have the usage wrapped in StreamCompletionData
+      expect(usageResults[0]).toEqual({
+        usage,
+        timing: undefined,
+        generationConfig: undefined,
+        stopReason: undefined,
+      })
     })
 
     it('handles chunked SSE data (split across reads)', async () => {

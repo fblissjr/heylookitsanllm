@@ -14,7 +14,7 @@ const mockSetConfirmDelete = vi.fn()
 const mockActiveConversation = {
   id: 'conv-123',
   title: 'Test Conversation',
-  modelId: 'model-abc',
+  defaultModelId: 'model-abc',
   messages: [],
   createdAt: Date.now(),
   updatedAt: Date.now(),

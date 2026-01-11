@@ -79,6 +79,29 @@ export interface Usage {
   total_tokens: number;
 }
 
+// Enhanced usage with thinking/content token breakdown
+export interface EnhancedUsage extends Usage {
+  thinking_tokens?: number;
+  content_tokens?: number;
+}
+
+// Generation timing breakdown
+export interface GenerationTiming {
+  thinking_duration_ms?: number;
+  content_duration_ms?: number;
+  total_duration_ms?: number;
+}
+
+// Generation config that was used
+export interface StreamGenerationConfig {
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  enable_thinking?: boolean;
+  max_tokens?: number;
+}
+
 export interface TokenLogprob {
   token: string;
   token_id: number;
@@ -130,7 +153,11 @@ export interface StreamChunk {
   created: number;
   model: string;
   choices: StreamChoice[];
-  usage?: Usage;
+  usage?: EnhancedUsage;
+  // Enhanced fields in final chunk
+  timing?: GenerationTiming;
+  generation_config?: StreamGenerationConfig;
+  stop_reason?: string;
 }
 
 export interface ServerCapabilities {

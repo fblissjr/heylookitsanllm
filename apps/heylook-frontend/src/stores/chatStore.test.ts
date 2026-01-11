@@ -32,7 +32,7 @@ function createMockConversation(overrides: Partial<Conversation> = {}): Conversa
   return {
     id: `conv-${now}`,
     title: 'Test Conversation',
-    modelId: 'test-model',
+    defaultModelId: 'test-model',
     messages: [],
     createdAt: now,
     updatedAt: now,
@@ -114,7 +114,7 @@ describe('chatStore', () => {
         const { conversations } = useChatStore.getState()
         expect(conversations).toHaveLength(1)
         expect(conversations[0].id).toBe(id)
-        expect(conversations[0].modelId).toBe('test-model')
+        expect(conversations[0].defaultModelId).toBe('test-model')
         expect(conversations[0].title).toBe('New Conversation')
         expect(conversations[0].messages).toEqual([])
       })
@@ -568,7 +568,9 @@ describe('chatStore', () => {
           messageId: msgId,
         })
 
-        useChatStore.getState().finalizeStream(100)
+        useChatStore.getState().finalizeStream({
+          usage: { prompt_tokens: 50, completion_tokens: 100, total_tokens: 150 }
+        })
 
         const conversation = useChatStore.getState().getConversationById(convId)
         expect(conversation?.messages[0].content).toBe('Final response')
