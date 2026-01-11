@@ -1,6 +1,7 @@
 import { ReactNode, useEffect } from 'react'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
+import { SystemStatusBar } from './SystemStatusBar'
 import { useUIStore } from '../../stores/uiStore'
 import { ModelSelector } from '../../features/models/components/ModelSelector'
 import { AdvancedPanel } from '../panels/AdvancedPanel'
@@ -49,7 +50,10 @@ export function Layout({ children }: LayoutProps) {
 
         {/* Main content */}
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {children}
+          <div className="flex-1 overflow-hidden">
+            {children}
+          </div>
+          <SystemStatusBar />
         </main>
 
         {/* Right panels */}

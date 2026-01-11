@@ -40,6 +40,23 @@ vi.mock('../../../stores/uiStore', () => ({
   })),
 }))
 
+vi.mock('../../../stores/modelStore', () => ({
+  useModelStore: vi.fn(() => ({
+    loadedModel: {
+      id: 'test-model',
+      provider: 'mlx',
+      capabilities: {
+        chat: true,
+        vision: false,
+        thinking: false,
+        hidden_states: false,
+        embeddings: false,
+      },
+      contextWindow: 4096,
+    },
+  })),
+}))
+
 
 describe('MessageList', () => {
   const defaultStreamingState: StreamingState = {
@@ -175,12 +192,15 @@ describe('MessageList', () => {
       expect(img).toHaveAttribute('src', 'data:image/png;base64,abc123')
     })
 
-    it('renders assistant message with token count', () => {
+    it('renders assistant message with token count in metrics footer', () => {
       const messages = [
         createMessage({
           role: 'assistant',
           content: 'Response',
-          tokenCount: 42,
+          performance: {
+            completionTokens: 42,
+            tokensPerSecond: 25.5,
+          },
         }),
       ]
 
@@ -192,7 +212,9 @@ describe('MessageList', () => {
         />
       )
 
-      expect(screen.getByText(/42 tokens/)).toBeInTheDocument()
+      // Both mobile and desktop layouts render the tokens (hidden via CSS)
+      const tokenElements = screen.getAllByText(/42 tokens/)
+      expect(tokenElements.length).toBeGreaterThan(0)
     })
   })
 
@@ -214,7 +236,7 @@ describe('MessageList', () => {
         />
       )
 
-      expect(screen.queryByText('Thinking Process')).not.toBeInTheDocument()
+      expect(screen.queryByText('Thinking')).not.toBeInTheDocument()
     })
 
     it('shows thinking block when model supports thinking and message has thinking', () => {
@@ -234,7 +256,7 @@ describe('MessageList', () => {
         />
       )
 
-      expect(screen.getByText('Thinking Process')).toBeInTheDocument()
+      expect(screen.getByText('Thinking')).toBeInTheDocument()
     })
 
     it('toggles thinking block visibility on click', async () => {
@@ -255,7 +277,7 @@ describe('MessageList', () => {
         />
       )
 
-      const summary = screen.getByText('Thinking Process')
+      const summary = screen.getByText('Thinking')
 
       // Initially closed (default showThinking is false)
       expect(screen.queryByText('Some thinking process')).not.toBeInTheDocument()

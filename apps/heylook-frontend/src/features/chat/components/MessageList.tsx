@@ -3,7 +3,9 @@ import { Message } from '../../../types/chat'
 import { ModelCapabilities } from '../../../types/models'
 import { useChatStore, StreamingState } from '../../../stores/chatStore'
 import { useUIStore } from '../../../stores/uiStore'
-import { PerformanceInfo } from './PerformanceInfo'
+import { useModelStore } from '../../../stores/modelStore'
+import { MessageMetricsFooter } from './MessageMetricsFooter'
+import { MessageDebugModal } from './MessageDebugModal'
 import { RawStreamModal } from './RawStreamModal'
 import clsx from 'clsx'
 
@@ -55,6 +57,10 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
   const [editContent, setEditContent] = useState(message.content)
   const [showThinking, setShowThinking] = useState(false)
   const [showRawStream, setShowRawStream] = useState(false)
+  const [showDebugModal, setShowDebugModal] = useState(false)
+
+  // Get model info for debug modal
+  const { loadedModel } = useModelStore()
 
   const { editMessageAndRegenerate, regenerateFromPosition } = useChatStore()
   const { setConfirmDelete } = useUIStore()
@@ -177,6 +183,8 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
             content={message.thinking}
             isOpen={showThinking}
             onToggle={() => setShowThinking(!showThinking)}
+            thinkingTime={message.performance?.thinkingDuration}
+            thinkingTokens={message.performance?.thinkingTokens}
           />
         )}
 
@@ -199,19 +207,9 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                 </div>
               </div>
               <div className="flex items-center justify-between mt-1 px-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                    {formatTime(message.timestamp)}
-                    {message.tokenCount && ` | ${message.tokenCount} tokens`}
-                  </span>
-                  {message.performance && (
-                    <PerformanceInfo
-                      performance={message.performance}
-                      rawStream={message.rawStream}
-                      onShowRawStream={() => setShowRawStream(true)}
-                    />
-                  )}
-                </div>
+                <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                  {formatTime(message.timestamp)}
+                </span>
                 <MessageActions
                   role="assistant"
                   onCopy={handleCopy}
@@ -220,6 +218,31 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                   onRegenerate={handleRegenerate}
                 />
               </div>
+              {/* Performance metrics footer */}
+              {message.performance && (
+                <MessageMetricsFooter
+                  performance={message.performance}
+                  modelId={message.modelId}
+                  timestamp={message.timestamp}
+                  onShowDebug={() => setShowDebugModal(true)}
+                />
+              )}
+              {/* Debug modal */}
+              <MessageDebugModal
+                isOpen={showDebugModal}
+                onClose={() => setShowDebugModal(false)}
+                message={message}
+                modelInfo={loadedModel ? {
+                  id: loadedModel.id,
+                  object: 'model' as const,
+                  owned_by: loadedModel.provider ?? 'unknown',
+                  provider: loadedModel.provider as 'mlx' | 'llama_cpp' | 'gguf' | 'coreml_stt' | 'mlx_stt' | undefined,
+                  capabilities: Object.entries(loadedModel.capabilities)
+                    .filter(([, v]) => v)
+                    .map(([k]) => k),
+                  context_window: loadedModel.contextWindow,
+                } : undefined}
+              />
               {/* Raw stream modal */}
               {message.rawStream && (
                 <RawStreamModal
@@ -240,23 +263,42 @@ interface ThinkingBlockProps {
   content: string
   isOpen: boolean
   onToggle: () => void
+  thinkingTime?: number   // ms
+  thinkingTokens?: number
 }
 
-function ThinkingBlock({ content, isOpen, onToggle }: ThinkingBlockProps) {
+// Format thinking time for display
+function formatThinkingTime(ms?: number): string {
+  if (ms === undefined) return ''
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(2)}s`
+}
+
+function ThinkingBlock({ content, isOpen, onToggle, thinkingTime, thinkingTokens }: ThinkingBlockProps) {
+  // Build header text
+  const hasMetrics = thinkingTime !== undefined || thinkingTokens !== undefined
+  let headerText = 'Thinking'
+  if (hasMetrics) {
+    const parts: string[] = []
+    if (thinkingTime !== undefined) parts.push(formatThinkingTime(thinkingTime))
+    if (thinkingTokens !== undefined) parts.push(`${thinkingTokens.toLocaleString()} tokens`)
+    headerText = `Thought for ${parts.join(' | ')}`
+  }
+
   return (
-    <details open={isOpen} className="bg-gray-50 dark:bg-surface-dark/50 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <details open={isOpen} className="bg-purple-50 dark:bg-purple-900/10 rounded-xl border-l-4 border-purple-400 overflow-hidden">
       <summary
         onClick={(e) => { e.preventDefault(); onToggle() }}
-        className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
+        className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-purple-100 dark:hover:bg-purple-900/20 transition-colors"
       >
-        <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300">
-          <svg className="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
           </svg>
-          <span className="text-sm font-medium">Thinking Process</span>
+          <span className="text-sm font-medium">{headerText}</span>
         </div>
         <svg
-          className={clsx('w-4 h-4 text-gray-400 transition-transform', isOpen && 'rotate-180')}
+          className={clsx('w-4 h-4 text-purple-400 transition-transform', isOpen && 'rotate-180')}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -265,8 +307,8 @@ function ThinkingBlock({ content, isOpen, onToggle }: ThinkingBlockProps) {
         </svg>
       </summary>
       {isOpen && (
-        <div className="px-4 pb-4 pt-1 border-t border-gray-200 dark:border-gray-700/50">
-          <pre className="text-sm text-gray-500 dark:text-gray-400 font-mono whitespace-pre-wrap overflow-x-auto">
+        <div className="px-4 pb-4 pt-1 border-t border-purple-200 dark:border-purple-800/50">
+          <pre className="text-sm text-purple-800/70 dark:text-purple-300/70 font-mono whitespace-pre-wrap overflow-x-auto">
             {content}
           </pre>
         </div>
