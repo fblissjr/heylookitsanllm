@@ -5,7 +5,7 @@ import type {
   Usage,
   EnhancedUsage,
   GenerationTiming,
-  StreamGenerationConfig,
+  GenerationConfig,
   ChatCompletionRequest
 } from '../types/api'
 
@@ -13,7 +13,7 @@ import type {
 export interface StreamCompletionData {
   usage?: EnhancedUsage
   timing?: GenerationTiming
-  generationConfig?: StreamGenerationConfig
+  generationConfig?: GenerationConfig
   stopReason?: string
 }
 

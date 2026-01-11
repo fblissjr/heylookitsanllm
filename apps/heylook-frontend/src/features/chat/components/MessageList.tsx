@@ -7,7 +7,6 @@ import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'
 import { MessageDebugModal } from './MessageDebugModal'
 import { formatDuration } from '../../../utils/formatters'
-import { RawStreamModal } from './RawStreamModal'
 import clsx from 'clsx'
 
 interface MessageListProps {
@@ -57,7 +56,6 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
   const [showThinking, setShowThinking] = useState(false)
-  const [showRawStream, setShowRawStream] = useState(false)
   const [showDebugModal, setShowDebugModal] = useState(false)
 
   // Get model info for debug modal
@@ -243,14 +241,6 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                   context_window: loadedModel.contextWindow,
                 } : undefined}
               />
-              {/* Raw stream modal */}
-              {message.rawStream && (
-                <RawStreamModal
-                  isOpen={showRawStream}
-                  onClose={() => setShowRawStream(false)}
-                  rawStream={message.rawStream}
-                />
-              )}
             </>
           )}
         </div>

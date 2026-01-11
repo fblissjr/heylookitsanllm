@@ -1,13 +1,8 @@
 // Internal Chat/Conversation Types
 
-export interface GenerationConfig {
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  min_p?: number;
-  enable_thinking?: boolean;
-  max_tokens?: number;
-}
+// Re-export GenerationConfig from api.ts for use in PerformanceMetrics
+export type { GenerationConfig } from './api'
+import type { GenerationConfig } from './api'
 
 export interface PerformanceMetrics {
   timeToFirstToken?: number;   // ms from request to first token

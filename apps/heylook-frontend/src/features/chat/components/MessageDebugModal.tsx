@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { Message } from '../../../types/chat'
 import type { Model } from '../../../types/api'
 import { formatDuration } from '../../../utils/formatters'
@@ -60,13 +60,37 @@ function MetricRow({ label, value, mono = false }: { label: string; value: React
 }
 
 export function MessageDebugModal({ isOpen, onClose, message, modelInfo }: MessageDebugModalProps) {
-  // Handle Escape key to close modal
+  const modalRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Handle Escape key and focus trap
   useEffect(() => {
     if (!isOpen) return
+
+    // Focus the close button when modal opens
+    closeButtonRef.current?.focus()
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose()
+        return
+      }
+
+      // Focus trap: keep Tab navigation within modal
+      if (e.key === 'Tab' && modalRef.current) {
+        const focusableElements = modalRef.current.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+        const firstElement = focusableElements[0] as HTMLElement
+        const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement
+
+        if (e.shiftKey && document.activeElement === firstElement) {
+          e.preventDefault()
+          lastElement?.focus()
+        } else if (!e.shiftKey && document.activeElement === lastElement) {
+          e.preventDefault()
+          firstElement?.focus()
+        }
       }
     }
 
@@ -81,29 +105,31 @@ export function MessageDebugModal({ isOpen, onClose, message, modelInfo }: Messa
 
   return (
     <>
-      {/* Backdrop - accessible with keyboard support */}
+      {/* Backdrop - click to close, hidden from screen readers */}
       <div
         className="fixed inset-0 bg-black/50 z-50"
         onClick={onClose}
-        onKeyDown={(e) => e.key === 'Enter' && onClose()}
-        role="button"
-        tabIndex={0}
-        aria-label="Close modal"
+        aria-hidden="true"
       />
 
       {/* Desktop: centered modal */}
       <div className="hidden sm:block fixed inset-0 z-50 pointer-events-none">
         <div className="flex items-center justify-center min-h-screen p-4">
           <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debug-modal-title"
             className="bg-white dark:bg-surface-dark rounded-lg shadow-xl max-w-xl w-full max-h-[80vh] overflow-hidden pointer-events-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <h2 id="debug-modal-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                 Message Debug Info
               </h2>
               <button
+                ref={closeButtonRef}
                 onClick={onClose}
                 className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
                 aria-label="Close"

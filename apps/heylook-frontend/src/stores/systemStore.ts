@@ -80,9 +80,14 @@ export const useSystemStore = create<SystemState>((set, get) => ({
   },
 
   startPolling: () => {
-    const { isPolling, fetchMetrics } = get()
-    if (isPolling) return // Already polling
+    // Clear any existing interval first to prevent race conditions
+    // (e.g., React StrictMode calling startPolling twice in rapid succession)
+    if (pollingInterval) {
+      clearInterval(pollingInterval)
+      pollingInterval = null
+    }
 
+    const { fetchMetrics } = get()
     set({ isPolling: true })
 
     // Fetch immediately on start

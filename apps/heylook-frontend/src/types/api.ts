@@ -92,8 +92,8 @@ export interface GenerationTiming {
   total_duration_ms?: number;
 }
 
-// Generation config that was used
-export interface StreamGenerationConfig {
+// Generation config / sampler settings
+export interface GenerationConfig {
   temperature?: number;
   top_p?: number;
   top_k?: number;
@@ -156,7 +156,7 @@ export interface StreamChunk {
   usage?: EnhancedUsage;
   // Enhanced fields in final chunk
   timing?: GenerationTiming;
-  generation_config?: StreamGenerationConfig;
+  generation_config?: GenerationConfig;
   stop_reason?: string;
 }
 

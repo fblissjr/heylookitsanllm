@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Message, Conversation, StreamingState, EditState } from '../types/chat'
+import type { APIMessage } from '../types/api'
 import { streamChat, type StreamCompletionData } from '../api/streaming'
 import { useSettingsStore } from './settingsStore'
 import * as db from '../lib/db'
@@ -38,7 +39,7 @@ function buildAPIMessages(
   messages: Message[],
   excludeId?: string,
   systemPrompt?: string
-): Array<{ role: 'system' | 'user' | 'assistant'; content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> }> {
+): APIMessage[] {
   const apiMessages = messages
     .filter(m => m.id !== excludeId)
     .map(m => ({
