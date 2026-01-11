@@ -38,8 +38,6 @@ export interface Message {
   rawStream?: string[];  // Raw SSE events for debugging
   // Multi-model conversation support
   modelId?: string;            // Model that generated this message
-  thinkingTokens?: number;     // Separate thinking token count (convenience)
-  thinkingDuration?: number;   // Thinking time in ms (convenience)
 }
 
 export interface Conversation {

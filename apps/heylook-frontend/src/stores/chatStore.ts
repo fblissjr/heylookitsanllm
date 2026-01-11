@@ -32,6 +32,32 @@ function generateTitle(messages: Message[]): string {
   return 'New Conversation'
 }
 
+// Build API messages from conversation messages
+// Handles image content transformation and optionally excludes a specific message
+function buildAPIMessages(
+  messages: Message[],
+  excludeId?: string,
+  systemPrompt?: string
+): Array<{ role: 'system' | 'user' | 'assistant'; content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> }> {
+  const apiMessages = messages
+    .filter(m => m.id !== excludeId)
+    .map(m => ({
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.images && m.images.length > 0
+        ? [
+            { type: 'text' as const, text: m.content },
+            ...m.images.map(img => ({ type: 'image_url' as const, image_url: { url: img } })),
+          ]
+        : m.content,
+    }))
+
+  if (systemPrompt) {
+    apiMessages.unshift({ role: 'system', content: systemPrompt })
+  }
+
+  return apiMessages
+}
+
 interface ChatState {
   // Data
   conversations: Conversation[]
@@ -275,23 +301,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Get current settings
     const settings = useSettingsStore.getState()
 
-    // Build messages array for API
-    const apiMessages = get().conversations.find(c => c.id === conversationId)?.messages
-      .filter(m => m.id !== assistantMessageId) // Exclude the empty placeholder
-      .map(m => ({
-        role: m.role as 'system' | 'user' | 'assistant',
-        content: m.images && m.images.length > 0
-          ? [
-              { type: 'text' as const, text: m.content },
-              ...m.images.map(img => ({ type: 'image_url' as const, image_url: { url: img } })),
-            ]
-          : m.content,
-      })) || []
-
-    // Add system prompt if set
-    if (conversation.systemPrompt) {
-      apiMessages.unshift({ role: 'system', content: conversation.systemPrompt })
-    }
+    // Build messages array for API (exclude the empty placeholder)
+    const currentConversation = get().conversations.find(c => c.id === conversationId)
+    const apiMessages = buildAPIMessages(
+      currentConversation?.messages || [],
+      assistantMessageId,
+      conversation.systemPrompt
+    )
 
     await streamChat(
       {
@@ -353,21 +369,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const updatedConversation = get().conversations.find(c => c.id === conversationId)
     if (!updatedConversation) return
 
-    const apiMessages = updatedConversation.messages
-      .filter(m => m.id !== assistantMessageId)
-      .map(m => ({
-        role: m.role as 'system' | 'user' | 'assistant',
-        content: m.images && m.images.length > 0
-          ? [
-              { type: 'text' as const, text: m.content },
-              ...m.images.map(img => ({ type: 'image_url' as const, image_url: { url: img } })),
-            ]
-          : m.content,
-      }))
-
-    if (updatedConversation.systemPrompt) {
-      apiMessages.unshift({ role: 'system', content: updatedConversation.systemPrompt })
-    }
+    const apiMessages = buildAPIMessages(
+      updatedConversation.messages,
+      assistantMessageId,
+      updatedConversation.systemPrompt
+    )
 
     await streamChat(
       {
@@ -514,9 +520,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         stopReason,
         generationConfig,
       },
-      // Per-message thinking metrics (convenience fields)
-      thinkingTokens: usage?.thinking_tokens,
-      thinkingDuration,
       rawStream: streaming.rawEvents,
     })
 

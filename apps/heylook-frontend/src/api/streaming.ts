@@ -32,6 +32,15 @@ export async function streamChat(
 ): Promise<void> {
   const { onToken, onThinking, onComplete, onError } = callbacks
 
+  // Track whether onComplete was already called with data to prevent double calls
+  let completedWithData = false
+  const wrappedOnComplete = (data?: StreamCompletionData) => {
+    if (data) {
+      completedWithData = true
+    }
+    onComplete(data)
+  }
+
   try {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
@@ -65,7 +74,7 @@ export async function streamChat(
       if (done) {
         // Process any remaining buffer
         if (buffer.trim()) {
-          processLines(buffer.split('\n'), onToken, onThinking, onComplete, onRawEvent)
+          processLines(buffer.split('\n'), onToken, onThinking, wrappedOnComplete, onRawEvent)
         }
         break
       }
@@ -74,16 +83,20 @@ export async function streamChat(
       const lines = buffer.split('\n')
       buffer = lines.pop() || '' // Keep incomplete line in buffer
 
-      processLines(lines, onToken, onThinking, onComplete, onRawEvent)
+      processLines(lines, onToken, onThinking, wrappedOnComplete, onRawEvent)
     }
 
-    // If we didn't receive a [DONE] signal, still call onComplete
-    onComplete()
+    // Only call onComplete if we didn't already complete with usage data
+    if (!completedWithData) {
+      onComplete()
+    }
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
         // User cancelled, not an error
-        onComplete()
+        if (!completedWithData) {
+          onComplete()
+        }
         return
       }
       onError(error)

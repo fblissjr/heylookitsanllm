@@ -84,7 +84,7 @@ describe('ChatView', () => {
   const mockConversation: Conversation = {
     id: 'conv-123',
     title: 'Test Conversation',
-    modelId: 'test-model',
+    defaultModelId: 'test-model',
     messages: [
       {
         id: 'msg-1',

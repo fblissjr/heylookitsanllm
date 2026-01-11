@@ -44,6 +44,16 @@ interface SystemState {
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 const POLL_INTERVAL_MS = 5000 // 5 seconds
 
+// HMR cleanup to prevent interval leaks during development
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval)
+      pollingInterval = null
+    }
+  })
+}
+
 export const useSystemStore = create<SystemState>((set, get) => ({
   metrics: null,
   isPolling: false,
