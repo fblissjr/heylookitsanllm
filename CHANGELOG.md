@@ -56,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TextOnlyStrategy model_config**: Fixed AttributeError when `enable_thinking` not in request
+  - Added `model_config` parameter to `TextOnlyStrategy.__init__`
+  - Changed `getattr()` to `.get()` for proper dict access
+  - Fixes Qwen3 thinking mode fallback to model config defaults
+
 - **Qwen3-VL-MOE Vision Support**: Fixed "Image features and image tokens do not match" error
   - Use `mlx_vlm.prompt_utils.apply_chat_template` for proper image token insertion
   - Removed manual image placeholder insertion that conflicted with library handling

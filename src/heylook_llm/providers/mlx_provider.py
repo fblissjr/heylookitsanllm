@@ -170,9 +170,10 @@ class GenerationStrategy(Protocol):
 class TextOnlyStrategy:
     """Strategy for text-only LLM requests."""
 
-    def __init__(self, draft_model=None, model_id=None):
+    def __init__(self, draft_model=None, model_id=None, model_config=None):
         self.draft_model = draft_model
         self.model_id = model_id
+        self.model_config = model_config or {}
         self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "text_only")
@@ -193,7 +194,7 @@ class TextOnlyStrategy:
         # Get enable_thinking from params (request) or model config
         enable_thinking = effective_request.get("enable_thinking")
         if enable_thinking is None:
-            enable_thinking = getattr(self.model_config, 'enable_thinking', True)
+            enable_thinking = self.model_config.get('enable_thinking', True)
 
         # Apply chat template with thinking control for Qwen3 models
         try:
@@ -839,7 +840,11 @@ class MLXProvider(BaseProvider):
             self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
             self._strategies['vlm_vision'] = VLMVisionStrategy()
         else:
-            self._strategies['text_only'] = TextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
+            self._strategies['text_only'] = TextOnlyStrategy(
+                draft_model=self.draft_model,
+                model_id=self.model_id,
+                model_config=self.config
+            )
 
     @time_mlx_operation("path_decision")
     def _detect_images_optimized(self, messages: List) -> bool:
