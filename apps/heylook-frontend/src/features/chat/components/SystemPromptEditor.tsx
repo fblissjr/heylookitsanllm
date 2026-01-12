@@ -3,7 +3,6 @@ import clsx from 'clsx'
 
 interface SystemPromptEditorProps {
   systemPrompt: string | undefined
-  conversationId: string  // Kept for future use (e.g., tracking per-conversation edit state)
   onUpdate: (systemPrompt: string, shouldRegenerate: boolean) => Promise<void>
   disabled?: boolean
   hasMessages: boolean
@@ -11,7 +10,6 @@ interface SystemPromptEditorProps {
 
 export function SystemPromptEditor({
   systemPrompt,
-  conversationId: _conversationId,
   onUpdate,
   disabled,
   hasMessages
@@ -20,6 +18,16 @@ export function SystemPromptEditor({
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(systemPrompt || '')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (focusTimeoutRef.current) {
+        clearTimeout(focusTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Sync edit value when systemPrompt changes externally
   useEffect(() => {
@@ -41,7 +49,7 @@ export function SystemPromptEditor({
     setIsEditing(true)
     setIsExpanded(true)
     // Focus textarea after render
-    setTimeout(() => textareaRef.current?.focus(), 0)
+    focusTimeoutRef.current = setTimeout(() => textareaRef.current?.focus(), 0)
   }, [systemPrompt])
 
   const handleCancel = useCallback(() => {

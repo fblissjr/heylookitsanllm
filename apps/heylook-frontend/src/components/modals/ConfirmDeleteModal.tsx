@@ -17,8 +17,16 @@ export function ConfirmDeleteModal() {
     } else if (confirmDelete.type === 'message' && confirmDelete.id && confirmDelete.conversationId) {
       await deleteMessageWithCascade(confirmDelete.conversationId, confirmDelete.id, regenerate)
     }
+    // Call cleanup callback before closing
+    confirmDelete.onComplete?.()
     closeModal()
   }, [confirmDelete, deleteConversation, deleteMessageWithCascade, closeModal])
+
+  const handleCancel = useCallback(() => {
+    // Call cleanup callback on cancel too
+    confirmDelete.onComplete?.()
+    closeModal()
+  }, [confirmDelete, closeModal])
 
   if (activeModal !== 'deleteMessage' && activeModal !== 'deleteConversation') {
     return null
@@ -67,7 +75,7 @@ export function ConfirmDeleteModal() {
         {/* Actions */}
         <div className="grid grid-cols-2 gap-3 px-6 pb-6">
           <button
-            onClick={closeModal}
+            onClick={handleCancel}
             className="w-full py-2.5 px-4 border border-gray-600 bg-gray-700 text-gray-200 rounded-xl text-sm font-medium hover:bg-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-700"
           >
             Cancel

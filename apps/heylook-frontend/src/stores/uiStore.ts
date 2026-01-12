@@ -10,6 +10,7 @@ interface ConfirmDeleteState {
   title?: string
   conversationId?: string
   messageIndex?: number
+  onComplete?: () => void  // Called after modal closes (confirm or cancel)
 }
 
 interface UIState {

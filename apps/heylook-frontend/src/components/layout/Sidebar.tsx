@@ -85,9 +85,8 @@ export function Sidebar() {
       type: 'bulk',
       ids: Array.from(selectedIds),
       title,
+      onComplete: exitSelectionMode,  // Exit selection mode after modal closes
     })
-
-    exitSelectionMode()
   }, [selectedIds, conversations, setConfirmDelete, exitSelectionMode])
 
   const handleCheckboxClick = (e: React.MouseEvent, id: string) => {
@@ -374,6 +373,11 @@ function ConversationItem({
               : 'opacity-0 w-0 group-hover:opacity-100 group-hover:w-5'
         )}
         onClick={(e) => onCheckboxClick(e, conversation.id)}
+        onKeyDown={(e) => e.key === 'Enter' && onCheckboxClick(e as unknown as React.MouseEvent, conversation.id)}
+        role="checkbox"
+        aria-checked={isSelected}
+        aria-label={`Select ${conversation.title}`}
+        tabIndex={isSelectionMode ? 0 : -1}
       >
         <div
           className={clsx(

@@ -53,7 +53,6 @@ export function ChatView() {
         {/* System Prompt Editor at top of conversation */}
         <SystemPromptEditor
           systemPrompt={conversation.systemPrompt}
-          conversationId={conversation.id}
           onUpdate={handleSystemPromptUpdate}
           disabled={streaming.isStreaming}
           hasMessages={conversation.messages.length > 0}

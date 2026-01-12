@@ -631,7 +631,7 @@ class MLXProvider(BaseProvider):
                 logging.info("Loading text-only model using MLX LM")
                 self.model, self.processor = lm_load(model_path)
 
-            logging.info(f"😅 Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
+            logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 
             # Debug model structure for KV cache optimization
             if logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -674,7 +674,7 @@ class MLXProvider(BaseProvider):
             try:
                 # Draft models are always text-only
                 self.draft_model, _ = lm_load(draft_path)
-                logging.info("🥹 Draft model loaded successfully for speculative decoding")
+                logging.info("Draft model loaded successfully for speculative decoding")
             except Exception as e:
                 logging.warning(f"Failed to load draft model: {e}")
                 self.draft_model = None
