@@ -106,12 +106,50 @@ async def list_models(request: Request):
         model_config = router.app_config.get_model_config(model_id)
         if model_config:
             model_entry["provider"] = model_config.provider
+
+            # Use explicit capabilities if set, otherwise auto-detect
             if model_config.capabilities:
                 model_entry["capabilities"] = model_config.capabilities
+            else:
+                # Auto-detect capabilities from model config
+                capabilities = _infer_model_capabilities(model_config)
+                if capabilities:
+                    model_entry["capabilities"] = capabilities
 
         models_data.append(model_entry)
 
     return {"object": "list", "data": models_data}
+
+
+def _infer_model_capabilities(model_config) -> list[str]:
+    """Infer model capabilities from config when not explicitly set."""
+    capabilities = []
+    provider = model_config.provider
+    config = model_config.config
+
+    # STT models have transcription capability, not chat
+    if provider in ("coreml_stt", "mlx_stt"):
+        return ["transcription"]
+
+    # Chat models (MLX and llama_cpp)
+    if provider in ("mlx", "llama_cpp", "gguf"):
+        capabilities.append("chat")
+
+        # Check for vision capability
+        if hasattr(config, "vision") and config.vision:
+            capabilities.append("vision")
+
+        # Check for thinking capability
+        if hasattr(config, "enable_thinking") and config.enable_thinking:
+            capabilities.append("thinking")
+        elif hasattr(config, "supports_thinking") and config.supports_thinking:
+            capabilities.append("thinking")
+
+        # MLX models support hidden states extraction
+        if provider == "mlx":
+            capabilities.append("hidden_states")
+
+    return capabilities
 
 
 # Initialize metrics collector as None - will be created on first request

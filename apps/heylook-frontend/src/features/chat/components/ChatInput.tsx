@@ -194,8 +194,13 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     })
   }, [])
 
-  // Filter to only chat-capable models
+  // Filter to chat-capable models
+  // If model has capabilities array, check for 'chat'; otherwise assume all models are chat-capable
+  // (backend may not return capabilities for all models)
   const chatModels = models.filter(m => {
+    if (!m.capabilities || m.capabilities.length === 0) {
+      return true // Assume chat-capable if no capabilities specified
+    }
     const caps = getModelCapabilities(m)
     return caps.chat
   })
