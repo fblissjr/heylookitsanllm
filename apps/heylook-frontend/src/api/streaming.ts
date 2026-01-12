@@ -42,9 +42,6 @@ export async function streamChat(
   }
 
   try {
-    // Debug: log request to verify system prompt is included
-    console.log('[streamChat] Request messages:', request.messages)
-
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
