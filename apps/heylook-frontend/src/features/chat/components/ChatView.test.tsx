@@ -17,11 +17,10 @@ vi.mock('./MessageList', () => ({
 }))
 
 vi.mock('./ChatInput', () => ({
-  ChatInput: vi.fn(({ conversationId, modelId, hasVision, disabled }) => (
+  ChatInput: vi.fn(({ conversationId, defaultModelId, disabled }) => (
     <div data-testid="chat-input">
       <span data-testid="input-conversation-id">{conversationId}</span>
-      <span data-testid="input-model-id">{modelId}</span>
-      <span data-testid="input-has-vision">{hasVision ? 'vision-enabled' : 'vision-disabled'}</span>
+      <span data-testid="input-default-model-id">{defaultModelId}</span>
       <span data-testid="input-disabled">{disabled ? 'disabled' : 'enabled'}</span>
     </div>
   )),
@@ -267,37 +266,35 @@ describe('ChatView', () => {
       expect(screen.getByTestId('input-conversation-id')).toHaveTextContent('conv-123')
     })
 
-    it('passes modelId to ChatInput', () => {
+    it('passes defaultModelId to ChatInput from conversation', () => {
       render(<ChatView />)
 
-      expect(screen.getByTestId('input-model-id')).toHaveTextContent('test-model')
+      // Uses conversation.defaultModelId which is 'test-model'
+      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
     })
 
-    it('passes hasVision=false when model does not support vision', () => {
-      render(<ChatView />)
-
-      expect(screen.getByTestId('input-has-vision')).toHaveTextContent('vision-disabled')
-    })
-
-    it('passes hasVision=true when model supports vision', () => {
-      vi.mocked(useModelStore).mockReturnValue({
-        loadedModel: {
-          id: 'vision-model',
-          capabilities: {
-            chat: true,
-            vision: true,
-            thinking: false,
-            hidden_states: false,
-            embeddings: false,
-          },
-          contextWindow: 4096,
+    it('falls back to loadedModel.id when conversation has no defaultModelId', () => {
+      vi.mocked(useChatStore).mockReturnValue({
+        activeConversation: () => ({
+          id: 'conv-123',
+          title: 'Test Conversation',
+          defaultModelId: '', // Empty - should fall back
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+        streaming: {
+          isStreaming: false,
+          content: '',
+          thinking: '',
+          messageId: null,
         },
-        modelStatus: 'loaded',
       })
 
       render(<ChatView />)
 
-      expect(screen.getByTestId('input-has-vision')).toHaveTextContent('vision-enabled')
+      // Falls back to loadedModel.id which is 'test-model'
+      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
     })
 
     it('passes disabled=false when not streaming', () => {
@@ -338,8 +335,7 @@ describe('ChatView', () => {
       expect(ChatInput).toHaveBeenCalled()
       const callArgs = vi.mocked(ChatInput).mock.calls[0][0]
       expect(callArgs.conversationId).toBe('conv-123')
-      expect(callArgs.modelId).toBe('test-model')
-      expect(callArgs.hasVision).toBe(false)
+      expect(callArgs.defaultModelId).toBe('test-model')
       expect(callArgs.disabled).toBe(true)
     })
   })

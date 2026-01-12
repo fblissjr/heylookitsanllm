@@ -36,6 +36,7 @@ dependencies = [
     "Pillow>=10.0.1",
     "tqdm>=4.65.0",
     "parakeet-mlx>=0.3.7",
+    "psutil>=5.9.0",  # System metrics (RAM, CPU)
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────

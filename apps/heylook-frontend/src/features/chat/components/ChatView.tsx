@@ -68,8 +68,7 @@ export function ChatView() {
       {/* Input area */}
       <ChatInput
         conversationId={conversation.id}
-        modelId={loadedModel.id}
-        hasVision={loadedModel.capabilities.vision}
+        defaultModelId={conversation.defaultModelId || loadedModel.id}
         disabled={streaming.isStreaming}
       />
     </div>

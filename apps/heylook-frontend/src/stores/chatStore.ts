@@ -301,17 +301,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const conversation = get().conversations.find(c => c.id === conversationId)
     if (!conversation) return
 
-    // Add user message
+    // Add user message (no modelId for user messages)
     addMessage(conversationId, {
       role: 'user',
       content,
       images,
     })
 
-    // Create placeholder for assistant message
+    // Create placeholder for assistant message with modelId tracking
     const assistantMessageId = addMessage(conversationId, {
       role: 'assistant',
       content: '',
+      modelId, // Track which model will generate this response
     })
 
     // Start streaming
@@ -374,11 +375,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Delete from position onwards
     deleteMessageAndDownstream(conversationId, messageAtPosition.id)
 
-    // Create new assistant placeholder
+    // Get updated conversation after deletion
+    const updatedConversation = get().conversations.find(c => c.id === conversationId)
+    if (!updatedConversation) return
+
+    // Create new assistant placeholder (use conversation's default model for regeneration)
     const assistantMessageId = addMessage(conversationId, {
       role: 'assistant',
       content: '',
       isRegenerating: true,
+      modelId: updatedConversation.defaultModelId, // Track regeneration model
     })
 
     // Start streaming
@@ -392,19 +398,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     abortController = new AbortController()
     const settings = useSettingsStore.getState()
 
-    // Get updated conversation
-    const updatedConversation = get().conversations.find(c => c.id === conversationId)
-    if (!updatedConversation) return
+    // Refresh conversation reference after adding the message
+    const currentConversation = get().conversations.find(c => c.id === conversationId)
+    if (!currentConversation) return
 
     const apiMessages = buildAPIMessages(
-      updatedConversation.messages,
+      currentConversation.messages,
       assistantMessageId,
-      updatedConversation.systemPrompt
+      currentConversation.systemPrompt
     )
 
     await streamChat(
       {
-        model: updatedConversation.defaultModelId,
+        model: currentConversation.defaultModelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },

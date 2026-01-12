@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent, DragEvent } from 'react'
 import { useChatStore } from '../../../stores/chatStore'
+import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
 import clsx from 'clsx'
 
 interface ImagePreview {
@@ -9,19 +10,41 @@ interface ImagePreview {
 
 interface ChatInputProps {
   conversationId: string
-  modelId: string
-  hasVision: boolean
+  defaultModelId: string
   disabled: boolean
 }
 
-export function ChatInput({ conversationId, modelId, hasVision, disabled }: ChatInputProps) {
+export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInputProps) {
   const [message, setMessage] = useState('')
   const [images, setImages] = useState<ImagePreview[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [selectedModelId, setSelectedModelId] = useState(defaultModelId)
+  const [showModelWarning, setShowModelWarning] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { sendMessage, stopGeneration, streaming } = useChatStore()
+  const { models, loadedModel } = useModelStore()
+
+  // Get capabilities for selected model
+  const selectedModel = models.find(m => m.id === selectedModelId)
+  const hasVision = selectedModel ? getModelCapabilities(selectedModel).vision : false
+
+  // Sync selectedModelId with defaultModelId when conversation changes
+  useEffect(() => {
+    setSelectedModelId(defaultModelId)
+  }, [defaultModelId])
+
+  // Handle model change with warning
+  const handleModelChange = useCallback((newModelId: string) => {
+    const isModelSwitch = loadedModel && newModelId !== loadedModel.id
+    setSelectedModelId(newModelId)
+    if (isModelSwitch) {
+      setShowModelWarning(true)
+      // Auto-hide warning after 3 seconds
+      setTimeout(() => setShowModelWarning(false), 3000)
+    }
+  }, [loadedModel])
 
   // Auto-resize textarea
   useEffect(() => {
@@ -56,10 +79,11 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
     // Clean up preview URLs before clearing state
     images.forEach(img => URL.revokeObjectURL(img.previewUrl))
 
-    await sendMessage(conversationId, trimmedMessage, modelId, base64Images)
+    await sendMessage(conversationId, trimmedMessage, selectedModelId, base64Images)
     setMessage('')
     setImages([])
-  }, [message, images, disabled, conversationId, modelId, sendMessage, fileToBase64])
+    setShowModelWarning(false)
+  }, [message, images, disabled, conversationId, selectedModelId, sendMessage, fileToBase64])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -140,8 +164,79 @@ export function ChatInput({ conversationId, modelId, hasVision, disabled }: Chat
     })
   }, [])
 
+  // Filter to only chat-capable models
+  const chatModels = models.filter(m => {
+    const caps = getModelCapabilities(m)
+    return caps.chat
+  })
+
   return (
     <div className="p-4 bg-white dark:bg-background-dark border-t border-gray-200 dark:border-gray-800">
+      {/* Model selector */}
+      <div className="mb-3 flex items-center gap-2">
+        {/* Desktop: Full selector */}
+        <div className="hidden sm:flex items-center gap-2">
+          <label className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+            Model:
+          </label>
+          <select
+            value={selectedModelId}
+            onChange={(e) => handleModelChange(e.target.value)}
+            disabled={disabled || streaming.isStreaming}
+            className={clsx(
+              'text-sm bg-gray-100 dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-1.5',
+              'text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/50',
+              'transition-colors cursor-pointer',
+              (disabled || streaming.isStreaming) && 'opacity-50 cursor-not-allowed'
+            )}
+          >
+            {chatModels.map(model => (
+              <option key={model.id} value={model.id}>
+                {model.id}
+                {loadedModel?.id === model.id ? ' (loaded)' : ''}
+              </option>
+            ))}
+          </select>
+          {/* Model switch warning */}
+          {showModelWarning && (
+            <span className="text-xs text-amber-600 dark:text-amber-400 animate-pulse">
+              Switching models may affect context
+            </span>
+          )}
+        </div>
+
+        {/* Mobile: Compact selector */}
+        <div className="sm:hidden flex items-center gap-2 w-full">
+          <svg className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+          </svg>
+          <select
+            value={selectedModelId}
+            onChange={(e) => handleModelChange(e.target.value)}
+            disabled={disabled || streaming.isStreaming}
+            className={clsx(
+              'flex-1 text-sm bg-gray-100 dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5',
+              'text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/50',
+              'transition-colors cursor-pointer truncate',
+              (disabled || streaming.isStreaming) && 'opacity-50 cursor-not-allowed'
+            )}
+          >
+            {chatModels.map(model => (
+              <option key={model.id} value={model.id}>
+                {model.id}{loadedModel?.id === model.id ? ' *' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Model switch warning for mobile */}
+      {showModelWarning && (
+        <div className="sm:hidden mb-2 text-xs text-amber-600 dark:text-amber-400 text-center animate-pulse">
+          Switching models may affect context
+        </div>
+      )}
+
       {/* Image previews */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">

@@ -256,9 +256,10 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
-      const activeButton = screen.getByText('Active Chat').closest('button')
-      expect(activeButton).toHaveClass('bg-primary/10')
-      expect(activeButton).toHaveClass('text-primary')
+      // Conversation items are now div[role="button"] instead of actual buttons
+      const activeItem = screen.getByText('Active Chat').closest('[role="button"]')
+      expect(activeItem).toHaveClass('bg-primary/10')
+      expect(activeItem).toHaveClass('text-primary')
     })
 
     it('calls setActiveConversation when clicking a conversation', () => {
@@ -272,15 +273,17 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
-      // Click on the conversation text/span, not the outer button
+      // Conversation items are div[role="button"] - click the item
       const conversationText = screen.getByText('Test Chat')
-      const conversationButton = conversationText.closest('button')
-      fireEvent.click(conversationButton!)
+      const conversationItem = conversationText.closest('[role="button"]')
+      fireEvent.click(conversationItem!)
 
       expect(mockSetActiveConversation).toHaveBeenCalledWith('conv-1')
     })
 
-    it('toggles sidebar after selecting conversation on mobile', () => {
+    it('on mobile, clicking conversation does not trigger immediate selection (uses long press)', () => {
+      // On mobile, conversations use long press to enter selection mode
+      // Regular click does nothing to prevent accidental selection
       const conversations = [
         createMockConversation({ id: 'conv-1', title: 'Test Chat' }),
       ]
@@ -295,11 +298,14 @@ describe('Sidebar', () => {
 
       render(<Sidebar />)
 
+      // On mobile, onClick is not attached - long press is used instead
       const conversationText = screen.getByText('Test Chat')
-      const conversationButton = conversationText.closest('button')
-      fireEvent.click(conversationButton!)
+      const conversationItem = conversationText.closest('[role="button"]')
+      fireEvent.click(conversationItem!)
 
-      expect(mockToggleSidebar).toHaveBeenCalled()
+      // Click should NOT trigger any action on mobile
+      expect(mockSetActiveConversation).not.toHaveBeenCalled()
+      expect(mockToggleSidebar).not.toHaveBeenCalled()
     })
   })
 

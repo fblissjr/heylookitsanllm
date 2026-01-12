@@ -514,7 +514,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     content_start_time = None
     thinking_tokens = 0
     content_tokens = 0
-    stop_reason = "stop"
+    stop_reason = "eos_token"  # Default; updated from MLX finish_reason if available
 
     # Check if usage stats should be included in final chunk
     include_usage = (
@@ -581,14 +581,28 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             yield f": keepalive prompt_processing {chunk.processed}/{chunk.total}\n\n"
             continue
 
+        # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
+        # The final chunk may have empty text but still carry the finish_reason
+        chunk_finish_reason = getattr(chunk, 'finish_reason', None)
+        if chunk_finish_reason:
+            # Map MLX finish reasons to OpenAI-compatible values
+            # "length" -> "max_tokens" (hit max_tokens limit)
+            # "stop" -> "eos_token" (natural end of generation)
+            if chunk_finish_reason == "length":
+                stop_reason = "max_tokens"
+            elif chunk_finish_reason == "stop":
+                stop_reason = "eos_token"
+            else:
+                stop_reason = chunk_finish_reason  # Pass through any other values
+
+        # Also capture token counts from chunks (including final empty chunk)
+        prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+        completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+
         if not chunk.text:
             continue
 
         token_count += 1
-
-        # Track token counts for usage stats (OpenAI stream_options.include_usage)
-        prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-        completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
 
         # Get token ID for token-level parsing and logprobs
         token_id = getattr(chunk, 'token', None)
@@ -682,6 +696,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                 "temperature": chat_request.temperature,
                 "top_p": chat_request.top_p,
                 "top_k": chat_request.top_k,
+                "min_p": chat_request.min_p,
                 "max_tokens": chat_request.max_tokens,
                 "enable_thinking": chat_request.enable_thinking,
             }.items() if v is not None

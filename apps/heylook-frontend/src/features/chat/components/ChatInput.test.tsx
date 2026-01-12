@@ -7,7 +7,7 @@ import { ChatInput } from './ChatInput'
 const mockSendMessage = vi.fn()
 const mockStopGeneration = vi.fn()
 
-const defaultMockState = {
+const defaultMockChatState = {
   sendMessage: mockSendMessage,
   stopGeneration: mockStopGeneration,
   streaming: {
@@ -19,24 +19,48 @@ const defaultMockState = {
 }
 
 vi.mock('../../../stores/chatStore', () => ({
-  useChatStore: vi.fn(() => defaultMockState),
+  useChatStore: vi.fn(() => defaultMockChatState),
 }))
 
-// Import the mock after defining it
+// Mock the modelStore
+const defaultMockModelState = {
+  models: [
+    { id: 'model-abc', capabilities: ['chat'], owned_by: 'test' },
+    { id: 'model-vision', capabilities: ['chat', 'vision'], owned_by: 'test' },
+  ],
+  loadedModel: { id: 'model-abc', capabilities: { chat: true, vision: false, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
+}
+
+vi.mock('../../../stores/modelStore', () => ({
+  useModelStore: vi.fn(() => defaultMockModelState),
+  getModelCapabilities: vi.fn((model) => {
+    const caps = model.capabilities || []
+    return {
+      chat: caps.includes('chat'),
+      vision: caps.includes('vision'),
+      thinking: caps.includes('thinking'),
+      hidden_states: caps.includes('hidden_states'),
+      embeddings: caps.includes('embeddings'),
+    }
+  }),
+}))
+
+// Import the mocks after defining them
 import { useChatStore } from '../../../stores/chatStore'
+import { useModelStore } from '../../../stores/modelStore'
 
 describe('ChatInput', () => {
   const defaultProps = {
     conversationId: 'conv-123',
-    modelId: 'model-abc',
-    hasVision: false,
+    defaultModelId: 'model-abc',
     disabled: false,
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
     // Reset to default state before each test
-    vi.mocked(useChatStore).mockReturnValue(defaultMockState)
+    vi.mocked(useChatStore).mockReturnValue(defaultMockChatState)
+    vi.mocked(useModelStore).mockReturnValue(defaultMockModelState)
   })
 
   describe('rendering', () => {
@@ -47,8 +71,13 @@ describe('ChatInput', () => {
       expect(textarea).toBeInTheDocument()
     })
 
-    it('renders placeholder mentioning images when hasVision is true', () => {
-      render(<ChatInput {...defaultProps} hasVision />)
+    it('renders placeholder mentioning images when selected model has vision', () => {
+      // Mock a vision model being selected
+      vi.mocked(useModelStore).mockReturnValue({
+        ...defaultMockModelState,
+        loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
+      })
+      render(<ChatInput {...defaultProps} defaultModelId="model-vision" />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
       expect(textarea).toBeInTheDocument()
@@ -61,15 +90,19 @@ describe('ChatInput', () => {
       expect(sendButton).toBeInTheDocument()
     })
 
-    it('shows add image button when hasVision is true', () => {
-      render(<ChatInput {...defaultProps} hasVision />)
+    it('shows add image button when selected model has vision', () => {
+      vi.mocked(useModelStore).mockReturnValue({
+        ...defaultMockModelState,
+        loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
+      })
+      render(<ChatInput {...defaultProps} defaultModelId="model-vision" />)
 
       const addImageButton = screen.getByTitle('Add image')
       expect(addImageButton).toBeInTheDocument()
     })
 
-    it('hides add image button when hasVision is false', () => {
-      render(<ChatInput {...defaultProps} hasVision={false} />)
+    it('hides add image button when selected model does not have vision', () => {
+      render(<ChatInput {...defaultProps} />)
 
       const addImageButton = screen.queryByTitle('Add image')
       expect(addImageButton).not.toBeInTheDocument()

@@ -142,18 +142,22 @@ describe('systemStore', () => {
       expect(mockFetch).toHaveBeenCalledWith('/v1/system/metrics')
     })
 
-    it('does not start again if already polling', () => {
+    it('restarts polling if called again (handles React StrictMode)', () => {
+      // The implementation clears and restarts the interval on each call
+      // to handle React StrictMode which may call startPolling twice
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockMetricsResponse),
       })
 
       useSystemStore.getState().startPolling()
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+
       mockFetch.mockClear()
       useSystemStore.getState().startPolling()
 
-      // Should not have been called again immediately
-      expect(mockFetch).not.toHaveBeenCalled()
+      // Second call should also fetch (restarts polling)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
     })
 
     it('polls at regular intervals', async () => {

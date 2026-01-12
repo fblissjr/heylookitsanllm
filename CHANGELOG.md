@@ -39,11 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `default_max_length` config option in MLXModelConfig (default: 512)
   - Hidden states endpoint now applies model config defaults when request uses defaults
 
-- **OpenAI-Compatible Streaming Usage Stats**: Return usage statistics in streaming responses
+- **Enhanced Streaming Metadata**: Detailed generation stats in final streaming chunk
   - New `stream_options: {include_usage: true}` parameter in ChatRequest
-  - When enabled, final streaming chunk includes `usage` object with prompt/completion/total token counts
-  - Follows OpenAI API specification for streaming usage stats
-  - Enables accurate token tracking for streaming responses
+  - `usage` object with `prompt_tokens`, `completion_tokens`, `thinking_tokens`, `content_tokens`, `total_tokens`
+  - `timing` object with `thinking_duration_ms`, `content_duration_ms`, `total_duration_ms`
+  - `generation_config` object with sampler settings used (temperature, top_p, top_k, min_p, max_tokens, enable_thinking)
+  - `stop_reason` field indicating why generation stopped: `eos_token`, `max_tokens`, `stop_sequence`, or `length`
+  - Properly maps MLX `finish_reason` values to OpenAI-compatible stop reasons
+  - Enables frontend display of thinking tokens, timing breakdown, and stop reason
 
 - **OpenAI-Compatible Logprobs Support**: Return token log probabilities in chat completions
   - New `logprobs: bool` parameter to enable log probability output

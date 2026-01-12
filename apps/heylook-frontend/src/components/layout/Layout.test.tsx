@@ -40,7 +40,7 @@ const defaultUIState = {
 vi.mock('../../stores/uiStore', () => ({
   useUIStore: Object.assign(
     vi.fn(() => defaultUIState),
-    { getState: () => ({ toggleSidebar: mockToggleSidebar }) }
+    { getState: () => ({ toggleSidebar: mockToggleSidebar, setIsMobile: mockSetIsMobile }) }
   ),
 }))
 
