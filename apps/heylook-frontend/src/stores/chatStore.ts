@@ -74,6 +74,7 @@ interface ChatState {
   setActiveConversation: (id: string | null) => void
   deleteConversation: (id: string) => void
   updateConversationTitle: (id: string, title: string) => void
+  updateSystemPrompt: (conversationId: string, systemPrompt: string, shouldRegenerate?: boolean) => Promise<void>
 
   // Message management
   addMessage: (conversationId: string, message: Omit<Message, 'id' | 'timestamp'>) => string
@@ -177,6 +178,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Persist to DB
     const conversation = get().conversations.find(c => c.id === id)
     if (conversation) debouncedSave(conversation)
+  },
+
+  updateSystemPrompt: async (conversationId, systemPrompt, shouldRegenerate = false) => {
+    const { regenerateFromPosition } = get()
+    const conversation = get().conversations.find(c => c.id === conversationId)
+    if (!conversation) return
+
+    // Update the system prompt
+    set(state => ({
+      conversations: state.conversations.map(c =>
+        c.id === conversationId ? { ...c, systemPrompt, updatedAt: Date.now() } : c
+      ),
+    }))
+
+    // Persist to DB
+    const updatedConversation = get().conversations.find(c => c.id === conversationId)
+    if (updatedConversation) debouncedSave(updatedConversation)
+
+    // If shouldRegenerate and there are assistant messages, regenerate from first one
+    if (shouldRegenerate) {
+      const firstAssistantIndex = conversation.messages.findIndex(m => m.role === 'assistant')
+      if (firstAssistantIndex !== -1) {
+        await regenerateFromPosition(conversationId, firstAssistantIndex)
+      }
+    }
   },
 
   addMessage: (conversationId, messageData) => {

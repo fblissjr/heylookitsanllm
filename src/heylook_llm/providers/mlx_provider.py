@@ -1183,6 +1183,17 @@ class MLXProvider(BaseProvider):
                 requests_active=0
             )
 
+    def clear_cache(self) -> bool:
+        """Clear the prompt cache for this model."""
+        try:
+            cache_manager = get_global_cache_manager()
+            cache_manager.invalidate_cache(self.model_id)
+            logging.info(f"Cleared prompt cache for {self.model_id}")
+            return True
+        except Exception as e:
+            logging.warning(f"Failed to clear cache for {self.model_id}: {e}")
+            return False
+
     def unload(self):
         """Cleanup with cache clearing and performance logging."""
         logging.info(f"Unloading MLX model: {self.model_id}")

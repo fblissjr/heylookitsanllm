@@ -27,6 +27,18 @@ class BaseProvider(ABC):
         """
         return None
 
+    def clear_cache(self) -> bool:
+        """
+        Clear any prompt/KV cache for this model.
+
+        This is called when the context should be fully invalidated
+        (e.g., explicit user request, major prompt structure change).
+
+        Returns:
+            True if cache was cleared, False if not supported or no cache exists.
+        """
+        return False
+
     def unload(self):
         """Optional method to explicitly release resources."""
         pass

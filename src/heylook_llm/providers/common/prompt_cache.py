@@ -180,18 +180,30 @@ def process_prompt_with_cache(
         return tokens_to_process, prompt_cache
     
     elif common_len < cache_len:
+        # If common prefix is very small, the prompt structure changed fundamentally
+        # (e.g., system prompt changed). Reset cache rather than trying to trim.
+        # Trimming only truncates length but KV values retain attention from old context.
+        MIN_REUSABLE_PREFIX = 5  # Minimum tokens to justify cache reuse
+
+        if common_len < MIN_REUSABLE_PREFIX:
+            logging.debug(f"Common prefix too small ({common_len} < {MIN_REUSABLE_PREFIX}), resetting cache")
+            cache_config = cache_config or {}
+            prompt_cache.cache = make_cache(model, cache_config)
+            prompt_cache.tokens = new_tokens
+            return new_tokens, prompt_cache
+
         # Need to trim the cache
         if can_trim_prompt_cache(prompt_cache.cache):
             num_to_trim = cache_len - common_len
             trimmed = trim_prompt_cache(prompt_cache.cache, num_to_trim)
-            
+
             if trimmed == num_to_trim:
                 # Successfully trimmed
                 prompt_cache.tokens = new_tokens
                 tokens_to_process = new_tokens[common_len:]
                 logging.debug(f"Trimmed {num_to_trim} tokens from cache, reusing {common_len}, processing {len(tokens_to_process)}")
                 return tokens_to_process, prompt_cache
-        
+
         # Can't trim or trim failed, reset cache
         logging.debug(f"Cannot trim cache, resetting")
         cache_config = cache_config or {}
