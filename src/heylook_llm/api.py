@@ -514,7 +514,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     content_start_time = None
     thinking_tokens = 0
     content_tokens = 0
-    stop_reason = "eos_token"  # Default; updated from MLX finish_reason if available
+    stop_reason = "stop"  # Default; updated from MLX finish_reason if available
 
     # Check if usage stats should be included in final chunk
     include_usage = (
@@ -586,12 +586,12 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         chunk_finish_reason = getattr(chunk, 'finish_reason', None)
         if chunk_finish_reason:
             # Map MLX finish reasons to OpenAI-compatible values
-            # "length" -> "max_tokens" (hit max_tokens limit)
-            # "stop" -> "eos_token" (natural end of generation)
+            # OpenAI uses: "stop" (natural end), "length" (hit max_tokens), "content_filter"
+            # MLX uses: "stop" (EOS token), "length" (hit max_tokens)
             if chunk_finish_reason == "length":
-                stop_reason = "max_tokens"
+                stop_reason = "length"  # OpenAI standard for max_tokens
             elif chunk_finish_reason == "stop":
-                stop_reason = "eos_token"
+                stop_reason = "stop"  # OpenAI standard for natural completion
             else:
                 stop_reason = chunk_finish_reason  # Pass through any other values
 
