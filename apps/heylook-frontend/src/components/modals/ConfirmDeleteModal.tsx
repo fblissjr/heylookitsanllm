@@ -9,6 +9,11 @@ export function ConfirmDeleteModal() {
   const handleConfirm = useCallback(async (regenerate = false) => {
     if (confirmDelete.type === 'conversation' && confirmDelete.id) {
       deleteConversation(confirmDelete.id)
+    } else if (confirmDelete.type === 'bulk' && confirmDelete.ids) {
+      // Delete all selected conversations
+      for (const id of confirmDelete.ids) {
+        deleteConversation(id)
+      }
     } else if (confirmDelete.type === 'message' && confirmDelete.id && confirmDelete.conversationId) {
       await deleteMessageWithCascade(confirmDelete.conversationId, confirmDelete.id, regenerate)
     }
@@ -20,6 +25,8 @@ export function ConfirmDeleteModal() {
   }
 
   const isMessage = confirmDelete.type === 'message'
+  const isBulk = confirmDelete.type === 'bulk'
+  const bulkCount = confirmDelete.ids?.length || 0
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -34,18 +41,20 @@ export function ConfirmDeleteModal() {
 
           {/* Title */}
           <h3 className="text-lg font-semibold text-white mb-2">
-            Delete {isMessage ? 'message' : 'conversation'}?
+            Delete {isMessage ? 'message' : isBulk ? `${bulkCount} conversations` : 'conversation'}?
           </h3>
 
           {/* Description */}
           <p className="text-sm text-gray-400 mb-4">
             {isMessage
               ? 'This will remove the message from your history. This action cannot be undone.'
-              : 'This will permanently delete this conversation and all its messages.'}
+              : isBulk
+                ? `This will permanently delete ${bulkCount} conversations and all their messages.`
+                : 'This will permanently delete this conversation and all its messages.'}
           </p>
 
           {/* Affected content preview */}
-          {confirmDelete.title && (
+          {confirmDelete.title && !isBulk && (
             <div className="p-3 bg-gray-900/40 rounded-lg text-xs text-left border border-gray-700 mb-4">
               <p className="font-medium text-gray-300 mb-1">
                 {isMessage ? 'Message:' : 'Conversation:'}

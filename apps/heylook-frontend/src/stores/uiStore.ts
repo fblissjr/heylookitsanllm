@@ -4,8 +4,9 @@ type PanelType = 'settings' | 'models' | 'advanced' | null
 type ModalType = 'modelLoad' | 'deleteMessage' | 'deleteConversation' | 'savePreset' | null
 
 interface ConfirmDeleteState {
-  type: 'message' | 'conversation' | null
-  id: string | null
+  type: 'message' | 'conversation' | 'bulk' | null
+  id?: string | null
+  ids?: string[]  // For bulk delete
   title?: string
   conversationId?: string
   messageIndex?: number
