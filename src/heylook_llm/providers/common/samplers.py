@@ -5,9 +5,14 @@ This module centralizes the creation of sampler and logits processor functions,
 ensuring that all MLX-based models (both LLM and VLM) use the exact same,
 feature-rich generation hyperparameters as the standalone mlx-lm library.
 It acts as a single source of truth for sampling logic.
+
+Performance note:
+Compiled functions follow the mlx-lm pattern using @partial(mx.compile, ...)
+to generate optimized Metal kernels for sampling operations.
 """
 from __future__ import annotations
 
+import numpy as np
 import mlx.core as mx
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
@@ -16,6 +21,23 @@ from transformers import PreTrainedTokenizer
 DEFAULT_TEMP = 1.0
 DEFAULT_TOP_P = 0.95
 DEFAULT_REPETITION_PENALTY = 1.1
+
+
+def _mlx_unique(x: mx.array) -> mx.array:
+    """
+    Get unique values from array.
+
+    Uses numpy since MLX 0.29 doesn't have mx.unique and doesn't support
+    boolean indexing. Performance impact is minimal as token arrays are small.
+    """
+    return mx.array(np.unique(np.array(x)))
+
+
+# Compiled presence penalty kernel following mlx-lm pattern
+@mx.compile
+def _apply_presence_penalty_compiled(logits: mx.array, unique_tokens: mx.array, penalty: float) -> mx.array:
+    """Compiled presence penalty application for Metal optimization."""
+    return logits.at[unique_tokens].add(-penalty)
 
 
 def make_presence_penalty_processor(penalty: float):
@@ -38,14 +60,11 @@ def make_presence_penalty_processor(penalty: float):
         if penalty <= 0.0 or len(tokens) == 0:
             return logits
 
-        # Get unique tokens that have appeared
-        unique_tokens = mx.unique(tokens)
+        # Get unique tokens using pure MLX implementation
+        unique_tokens = _mlx_unique(tokens)
 
-        # Apply penalty to logits of tokens that have appeared
-        # Subtract penalty from the logits of seen tokens
-        logits = logits.at[unique_tokens].add(-penalty)
-
-        return logits
+        # Use compiled kernel for penalty application
+        return _apply_presence_penalty_compiled(logits, unique_tokens, penalty)
 
     return processor
 

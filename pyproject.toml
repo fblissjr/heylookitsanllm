@@ -23,6 +23,9 @@ classifiers = [
 # Security-patched versions with proper version pinning
 # -------------------------------------------------------------------
 dependencies = [
+    "mlx",
+    "mlx-lm",
+    "transformers",
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.5.0",
@@ -35,7 +38,6 @@ dependencies = [
     "numpy>=1.24.0",
     "Pillow>=10.0.1",
     "tqdm>=4.65.0",
-    "parakeet-mlx>=0.3.7",
     "psutil>=5.9.0",  # System metrics (RAM, CPU)
 ]
 
@@ -60,23 +62,19 @@ analytics = [
 ]
 profile = [
     "py-spy>=0.3.14",          # Sampling profiler
-    "memray>=1.13.0",          # Memory profiler with security fixes
 ]
 mlx = [
     "mlx",                      # Core MLX library
     "mlx-lm",                   # MLX text generation
     "mlx-vlm>=0.3.4",           # MLX vision generation (Qwen3-VL support requires >=0.3.4)
     "datasets>=2.19.1",         # HuggingFace datasets
-    "transformers>=4.35.0",     # HuggingFace transformers
+    "transformers",     # HuggingFace transformers
     "huggingface-hub>=0.34.0,<1.0",  # Required by transformers (version constraint)
     "opencv-python>=4.8.1.78",  # Image processing for vision
     "torch>=2.0.0",
     "torchvision>=0.15.0",      # Vision utilities
     "scipy>=1.11.0",            # Required by mlx-vlm
     "soundfile>=0.12.1",        # Audio processing support
-]
-llama-cpp = [
-    "llama-cpp-python>=0.2.0", # GGUF model support
 ]
 stt = [
     "coremltools>=9.0b1",       # CoreML model support
@@ -101,4 +99,17 @@ where = ["src"]
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
+]
+
+# ─── Pytest configuration ──────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "integration: Integration tests (requires server or model)",
+    "mlx_perf: MLX performance optimization tests (requires MLX and model)",
+    "slow: Slow tests (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
 ]

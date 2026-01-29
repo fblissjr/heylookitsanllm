@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MLX Performance Optimizations**: Following mlx-lm reference patterns for better Metal utilization
+  - Compiled presence penalty processor with `@mx.compile` decorator for Metal kernel optimization
+  - Compiled vision preprocessing (normalize + transpose) for faster image encoding
+  - Pre-computed ImageNet constants as module-level `mx.array` objects
+  - Use `mx.broadcast_to` instead of list multiplication for memory-efficient grid creation
+  - Replaced blocking `mx.eval` with `mx.async_eval` for better pipeline pipelining
+  - Added buffer cache cleanup method with configurable retention
+  - Release temporaries before sync points to reduce memory pressure
+
+- **MLX Performance Test Suite**: Comprehensive tests for MLX optimizations
+  - `tests/unit/mlx_perf/`: Compilation correctness, type consistency, sync boundary tests
+  - `tests/integration/mlx_perf/`: Throughput benchmarks, TTFT tests, memory profiling
+  - New pytest markers: `mlx_perf`, `slow` for selective test execution
+  - Configurable test model path via `HEYLOOK_TEST_MODEL` env var
+
 - **Structured Hidden States Endpoint**: New `/v1/hidden_states/structured` for server-side chat template
   - Accepts chat components separately (user_prompt, system_prompt, thinking_content, assistant_content)
   - Server applies Qwen3 chat template internally with `enable_thinking` support

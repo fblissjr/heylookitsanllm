@@ -4,6 +4,11 @@ Batch vision encoding optimization for MLX VLMs.
 
 This module implements efficient batch processing of multiple images
 through the vision encoder, reducing processing time by 3-4x.
+
+Performance optimizations:
+- Pre-computed ImageNet normalization constants as module-level mx.array
+- Compiled normalize+transpose kernel for Metal optimization
+- mx.broadcast_to instead of list multiplication for memory efficiency
 """
 
 import mlx.core as mx
@@ -14,6 +19,25 @@ import numpy as np
 import logging
 
 from .common.performance_monitor import time_mlx_operation
+
+# Pre-computed ImageNet normalization constants (created once at module load)
+# Using float32 as the canonical type; will be converted to image dtype if needed
+_IMAGENET_MEAN = mx.array([0.485, 0.456, 0.406], dtype=mx.float32)
+_IMAGENET_STD = mx.array([0.229, 0.224, 0.225], dtype=mx.float32)
+
+# Pre-computed grid template for Qwen-style models (avoids list multiplication)
+_GRID_TEMPLATE = mx.array([[1, 24, 24]], dtype=mx.int32)
+
+
+@mx.compile
+def _normalize_and_transpose(img_array: mx.array) -> mx.array:
+    """
+    Compiled image normalization and transpose for Metal optimization.
+
+    Performs: normalized = (img - mean) / std, then HWC -> CHW transpose
+    """
+    normalized = (img_array - _IMAGENET_MEAN) / _IMAGENET_STD
+    return normalized.transpose(2, 0, 1)
 
 
 class BatchVisionEncoder:
@@ -56,13 +80,30 @@ class BatchVisionEncoder:
     def _get_buffer(self, batch_size: int, channels: int = 3) -> mx.array:
         """Get or create a pre-allocated buffer for the given batch size."""
         key = (batch_size, channels, self._image_size, self._image_size)
-        
+
         if key not in self._buffer_cache:
             # Create new buffer
             self._buffer_cache[key] = mx.zeros(key)
             logging.debug(f"Created new image buffer: {key}")
-        
+
         return self._buffer_cache[key]
+
+    def clear_buffers(self, keep_last_n: int = 2):
+        """
+        Clear old buffer cache entries to free Metal memory.
+
+        Keeps the most recently used buffers to avoid thrashing.
+
+        Args:
+            keep_last_n: Number of buffer entries to retain (default: 2)
+        """
+        if len(self._buffer_cache) > keep_last_n:
+            # Sort by key (older entries first) and remove excess
+            keys = list(self._buffer_cache.keys())
+            for key in keys[:-keep_last_n]:
+                del self._buffer_cache[key]
+            mx.clear_cache()
+            logging.debug(f"Cleared vision buffer cache, kept {keep_last_n} entries")
     
     @time_mlx_operation("batch_preprocess", "vision")
     def preprocess_batch(self, images: List[Image.Image]) -> mx.array:
@@ -110,33 +151,30 @@ class BatchVisionEncoder:
         if buffer is not None:
             return buffer[:batch_size]
         else:
-            return mx.stack(processed_images)
+            result = mx.stack(processed_images)
+            # Release temporaries before returning to reduce memory pressure
+            del processed_images
+            return result
     
     def _manual_preprocess(self, image: Image.Image) -> mx.array:
-        """Manual image preprocessing fallback."""
+        """Manual image preprocessing fallback using compiled normalization."""
         original_size = image.size
         # Resize
         image = image.resize((self._image_size, self._image_size), Image.LANCZOS)
-        
+
         if original_size != (self._image_size, self._image_size):
             logging.info(f"[MLX BATCH VISION] Resized image from {original_size} to {self._image_size}x{self._image_size}")
-        
+
         # Convert to RGB if needed
         if image.mode != 'RGB':
             image = image.convert('RGB')
-        
-        # To numpy
+
+        # To numpy then MLX - scale to [0,1] range
         img_array = np.array(image).astype(np.float32) / 255.0
-        
-        # Normalize (ImageNet stats)
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
-        img_array = (img_array - mean) / std
-        
-        # CHW format
-        img_array = img_array.transpose(2, 0, 1)
-        
-        return mx.array(img_array)
+
+        # Convert to MLX array and use compiled normalize+transpose
+        img_mlx = mx.array(img_array)
+        return _normalize_and_transpose(img_mlx)
     
     @time_mlx_operation("batch_encode", "vision")
     def encode_batch(self, images: Union[List[Image.Image], mx.array]) -> mx.array:
@@ -182,7 +220,8 @@ class BatchVisionEncoder:
             num_images = image_batch.shape[0]
             # For static images: time=1, and height/width are determined by patches
             # Typically for 336x336 images with 14x14 patch size = 24x24 patches
-            grid_thw = mx.array([[1, 24, 24]] * num_images, dtype=mx.int32)
+            # Use mx.broadcast_to instead of list multiplication for efficiency
+            grid_thw = mx.broadcast_to(_GRID_TEMPLATE, (num_images, 3))
             vision_features = vision_encoder(image_batch, grid_thw, output_hidden_states=False)
         else:
             vision_features = vision_encoder(image_batch)
@@ -192,10 +231,12 @@ class BatchVisionEncoder:
             vision_features = self.model.multi_modal_projector(vision_features)
         elif hasattr(self.model, 'vision_projector'):
             vision_features = self.model.vision_projector(vision_features)
-        
-        # Force evaluation
-        mx.eval(vision_features)
-        
+
+        # Schedule async array evaluation for pipelining instead of blocking sync
+        # This allows the Metal GPU to continue processing while we return
+        # The actual synchronization will happen when tokens are yielded
+        mx.async_eval(vision_features)
+
         return vision_features
     
     def encode_with_compression(
