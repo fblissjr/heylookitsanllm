@@ -25,6 +25,7 @@
     "idb": "^8.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-router-dom": "^7.13.0",
     "zustand": "^5.0.4"
   },
   "devDependencies": {
