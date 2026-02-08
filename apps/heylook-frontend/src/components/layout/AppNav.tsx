@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { ChatBubbleIcon } from '../icons'
+import { ChatBubbleIcon, LayersIcon } from '../icons'
 import clsx from 'clsx'
 
 interface NavItem {
@@ -10,6 +10,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/chat', label: 'Chat', icon: ChatBubbleIcon },
+  { to: '/batch', label: 'Batch', icon: LayersIcon },
 ]
 
 export function AppNav() {

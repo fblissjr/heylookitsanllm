@@ -1,10 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppShell } from './components/layout/AppShell'
 import { Layout } from './components/layout/Layout'
 import { ChatView } from './applets/chat/components/ChatView'
 import { ConfirmDeleteModal } from './applets/chat/components/ConfirmDeleteModal'
 import { useModelStore } from './stores/modelStore'
+
+const BatchView = lazy(() =>
+  import('./applets/batch').then((m) => ({ default: m.BatchView }))
+)
+
+function BatchFallback() {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 function App() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
@@ -72,6 +84,11 @@ function App() {
             <Layout>
               <ChatView />
             </Layout>
+          } />
+          <Route path="/batch" element={
+            <Suspense fallback={<BatchFallback />}>
+              <BatchView />
+            </Suspense>
           } />
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Route>
