@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ModelSelector } from './ModelSelector'
-import type { Model } from '../../../types/api'
-import type { LoadedModel, ModelCapabilities } from '../../../types/models'
+import type { Model } from '../../types/api'
+import type { LoadedModel, ModelCapabilities } from '../../types/models'
 
 // Mock the stores
 const mockSetLoadedModel = vi.fn()
 const mockSetModelStatus = vi.fn()
 const mockSetError = vi.fn()
 const mockSetActivePanel = vi.fn()
-const mockCreateConversation = vi.fn()
+const mockOnModelLoaded = vi.fn()
 
 const defaultModelCapabilities: ModelCapabilities = {
   chat: true,
@@ -52,7 +52,7 @@ const defaultModelStoreState = {
   setError: mockSetError,
 }
 
-vi.mock('../../../stores/modelStore', () => ({
+vi.mock('../../stores/modelStore', () => ({
   useModelStore: vi.fn(() => defaultModelStoreState),
   getModelCapabilities: vi.fn((model: Model) => {
     const caps = model.capabilities || []
@@ -66,26 +66,14 @@ vi.mock('../../../stores/modelStore', () => ({
   }),
 }))
 
-vi.mock('../../../stores/uiStore', () => ({
+vi.mock('../../stores/uiStore', () => ({
   useUIStore: vi.fn(() => ({
     setActivePanel: mockSetActivePanel,
   })),
 }))
 
-vi.mock('../../../applets/chat/stores/chatStore', () => ({
-  useChatStore: vi.fn(() => ({
-    createConversation: mockCreateConversation,
-  })),
-}))
-
-vi.mock('../../../stores/settingsStore', () => ({
-  useSettingsStore: vi.fn(() => ({
-    systemPrompt: 'You are a helpful AI assistant.',
-  })),
-}))
-
 // Import mocks after defining
-import { useModelStore } from '../../../stores/modelStore'
+import { useModelStore } from '../../stores/modelStore'
 
 describe('ModelSelector', () => {
   beforeEach(() => {
@@ -103,7 +91,6 @@ describe('ModelSelector', () => {
     it('renders close button in header', () => {
       render(<ModelSelector />)
 
-      // Find the close button (contains X icon SVG)
       const closeButton = screen.getByRole('button', { name: '' })
       expect(closeButton).toBeInTheDocument()
     })
@@ -146,7 +133,6 @@ describe('ModelSelector', () => {
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // After selection, Load Configuration section should appear
       expect(screen.getByText('Load Configuration')).toBeInTheDocument()
     })
 
@@ -165,11 +151,9 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select a model with context_window: 8192
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // The slider value should be displayed with font-mono class
       const valueDisplay = document.querySelector('.font-mono.text-primary')
       expect(valueDisplay).toBeInTheDocument()
       expect(valueDisplay).toHaveTextContent('8,192')
@@ -191,13 +175,11 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select a model first
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
       const slider = screen.getByRole('slider')
 
-      // The slider should have the correct min/max attributes
       expect(slider).toHaveAttribute('min', '512')
       expect(slider).toHaveAttribute('max', '8192')
     })
@@ -209,8 +191,6 @@ describe('ModelSelector', () => {
       const modelCard = screen.getByText('qwen-vl-4b').closest('button')
       await user.click(modelCard!)
 
-      // Should show min and max labels - find the range label container
-      // The labels are in a flex container with text-xs text-gray-400 class
       const rangeLabels = document.querySelector('.flex.justify-between.text-xs')
       expect(rangeLabels).toBeInTheDocument()
       expect(within(rangeLabels as HTMLElement).getByText('512')).toBeInTheDocument()
@@ -223,11 +203,9 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select model
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Click Load Model
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
@@ -238,11 +216,9 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select model
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Click Load Model
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
@@ -257,30 +233,39 @@ describe('ModelSelector', () => {
       )
     })
 
-    it('calls createConversation after loading model', async () => {
+    it('calls onModelLoaded callback after loading model', async () => {
       const user = userEvent.setup()
-      render(<ModelSelector />)
+      render(<ModelSelector onModelLoaded={mockOnModelLoaded} />)
 
-      // Select model
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Click Load Model
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
-      expect(mockCreateConversation).toHaveBeenCalledWith('llama-3.2-1b', 'You are a helpful AI assistant.')
+      expect(mockOnModelLoaded).toHaveBeenCalledWith('llama-3.2-1b')
+    })
+
+    it('does not fail when onModelLoaded is not provided', async () => {
+      const user = userEvent.setup()
+      render(<ModelSelector />)
+
+      const modelCard = screen.getByText('llama-3.2-1b').closest('button')
+      await user.click(modelCard!)
+
+      const loadButton = screen.getByRole('button', { name: /Load Model/i })
+      await user.click(loadButton)
+
+      expect(mockSetLoadedModel).toHaveBeenCalled()
     })
 
     it('closes panel after loading model', async () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select model
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Click Load Model
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
@@ -291,11 +276,9 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // Select model
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Click Load Model
       const loadButton = screen.getByRole('button', { name: /Load Model/i })
       await user.click(loadButton)
 
@@ -336,7 +319,6 @@ describe('ModelSelector', () => {
       render(<ModelSelector />)
 
       expect(screen.getByText('Current:')).toBeInTheDocument()
-      // The model ID appears multiple times (in header and card), so use getAllByText
       const modelIdElements = screen.getAllByText('llama-3.2-1b')
       expect(modelIdElements.length).toBeGreaterThanOrEqual(1)
     })
@@ -384,7 +366,6 @@ describe('ModelSelector', () => {
     it('shows Chat badge for chat-capable models', () => {
       render(<ModelSelector />)
 
-      // All test models have chat capability
       const chatBadges = screen.getAllByText('Chat')
       expect(chatBadges.length).toBeGreaterThan(0)
     })
@@ -404,7 +385,6 @@ describe('ModelSelector', () => {
     it('renders capability badge with correct icon abbreviation', () => {
       render(<ModelSelector />)
 
-      // Find the Vision badge and check it has the V icon
       const visionBadge = screen.getByText('Vision').closest('span')
       expect(visionBadge).toBeInTheDocument()
       expect(within(visionBadge!).getByText('V')).toBeInTheDocument()
@@ -413,11 +393,9 @@ describe('ModelSelector', () => {
     it('renders multiple capabilities for multi-capability models', () => {
       render(<ModelSelector />)
 
-      // qwen-vl-4b has chat and vision
       const qwenVLCard = screen.getByText('qwen-vl-4b').closest('button')
       expect(qwenVLCard).toBeInTheDocument()
 
-      // Inside this card, should have both Chat and Vision badges
       const chatBadge = within(qwenVLCard!).getByText('Chat')
       const visionBadge = within(qwenVLCard!).getByText('Vision')
       expect(chatBadge).toBeInTheDocument()
@@ -430,7 +408,6 @@ describe('ModelSelector', () => {
       const user = userEvent.setup()
       render(<ModelSelector />)
 
-      // The close button is the first button in the header (has SVG with X path)
       const header = screen.getByRole('heading', { name: 'Models' }).closest('div')
       const closeButton = within(header!).getByRole('button')
       await user.click(closeButton)
@@ -447,7 +424,6 @@ describe('ModelSelector', () => {
       const modelCard = screen.getByText('llama-3.2-1b').closest('button')
       await user.click(modelCard!)
 
-      // Selected card should have primary border color class
       expect(modelCard).toHaveClass('border-primary')
     })
 
@@ -465,7 +441,6 @@ describe('ModelSelector', () => {
 
       render(<ModelSelector />)
 
-      // Find all buttons and get the one that contains the model ID in the card list
       const modelCards = screen.getAllByRole('button').filter(
         btn => btn.textContent?.includes('llama-3.2-1b') && btn.textContent?.includes('meta')
       )

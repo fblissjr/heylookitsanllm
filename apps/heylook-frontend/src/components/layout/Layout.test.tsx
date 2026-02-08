@@ -11,7 +11,7 @@ vi.mock('../../applets/chat/components/Sidebar', () => ({
   Sidebar: () => <aside data-testid="mock-sidebar">Sidebar</aside>,
 }))
 
-vi.mock('../../features/models/components/ModelSelector', () => ({
+vi.mock('../composed/ModelSelector', () => ({
   ModelSelector: () => <div data-testid="mock-model-selector">ModelSelector</div>,
 }))
 
@@ -36,6 +36,18 @@ const defaultUIState = {
   setActivePanel: mockSetActivePanel,
   toggleSidebar: mockToggleSidebar,
 }
+
+vi.mock('../../applets/chat/stores/chatStore', () => ({
+  useChatStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ createConversation: vi.fn() })
+  ),
+}))
+
+vi.mock('../../stores/settingsStore', () => ({
+  useSettingsStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ systemPrompt: 'You are a helpful AI assistant.' })
+  ),
+}))
 
 vi.mock('../../stores/uiStore', () => ({
   useUIStore: Object.assign(

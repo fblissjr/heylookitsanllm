@@ -1,23 +1,23 @@
 import { useState, useCallback } from 'react'
-import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
-import { useUIStore } from '../../../stores/uiStore'
-import { useChatStore } from '../../../applets/chat/stores/chatStore'
-import { useSettingsStore } from '../../../stores/settingsStore'
-import type { Model } from '../../../types/api'
+import { useModelStore, getModelCapabilities } from '../../stores/modelStore'
+import { useUIStore } from '../../stores/uiStore'
+import type { Model } from '../../types/api'
 import clsx from 'clsx'
 
-export function ModelSelector() {
+interface ModelSelectorProps {
+  /** Called after a model is loaded. Use to trigger applet-specific actions (e.g., create conversation). */
+  onModelLoaded?: (modelId: string) => void
+}
+
+export function ModelSelector({ onModelLoaded }: ModelSelectorProps) {
   const { models, loadedModel, setLoadedModel, setModelStatus, setError } = useModelStore()
   const { setActivePanel } = useUIStore()
-  const { createConversation } = useChatStore()
-  const { systemPrompt } = useSettingsStore()
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [contextWindow, setContextWindow] = useState(4096)
   const [isLoading, setIsLoading] = useState(false)
 
   const handleSelectModel = useCallback((model: Model) => {
     setSelectedModel(model)
-    // Set default context window from model config if available
     const defaultContext = model.context_window || 4096
     setContextWindow(defaultContext)
   }, [])
@@ -30,8 +30,6 @@ export function ModelSelector() {
     setError(null)
 
     try {
-      // Call the load endpoint (the backend will load the model on first use)
-      // For now, we just set the model as loaded since the backend loads on-demand
       const capabilities = getModelCapabilities(selectedModel)
 
       setLoadedModel({
@@ -40,8 +38,7 @@ export function ModelSelector() {
         capabilities,
       })
 
-      // Create a new conversation with this model and current system prompt
-      createConversation(selectedModel.id, systemPrompt)
+      onModelLoaded?.(selectedModel.id)
 
       // Close the panel
       setActivePanel(null)
@@ -52,7 +49,7 @@ export function ModelSelector() {
     } finally {
       setIsLoading(false)
     }
-  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, createConversation, setActivePanel, systemPrompt])
+  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, onModelLoaded, setActivePanel])
 
   const handleUnloadModel = useCallback(() => {
     setLoadedModel(null)
@@ -254,7 +251,6 @@ function CapabilityBadge({ icon, label, color = 'blue' }: CapabilityBadgeProps) 
     red: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',
   }
 
-  // Using text for icons since we don't have Material Icons loaded
   const iconMap: Record<string, string> = {
     chat: 'C',
     visibility: 'V',
