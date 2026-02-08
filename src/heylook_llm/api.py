@@ -128,7 +128,7 @@ def _infer_model_capabilities(model_config) -> list[str]:
     config = model_config.config
 
     # STT models have transcription capability, not chat
-    if provider in ("coreml_stt", "mlx_stt"):
+    if provider == "mlx_stt":
         return ["transcription"]
 
     # Chat models (MLX and llama_cpp)
@@ -3008,9 +3008,9 @@ def custom_openapi():
 A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
 
 **Platform Support**: macOS, Linux, and Windows
-- macOS: All backends (MLX, llama.cpp, CoreML STT)
+- macOS: All backends (MLX, llama.cpp, MLX STT)
 - Linux: llama.cpp backend
-- Windows: llama.cpp backend with CUDA, Vulkan, or CPU
+- Windows: llama.cpp backend (CUDA, Vulkan, or CPU)
 
 ## 🎯 Key Features
 
@@ -3021,7 +3021,7 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 - **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)
 - **GGUF Models**: Support via llama.cpp for broad compatibility (all platforms)
 - **Vision Models**: Process images with vision-language models
-- **Speech-to-Text**: CoreML STT models (macOS only)
+- **Speech-to-Text**: Parakeet MLX models (macOS only)
 
 ### Performance Features
 - **Smart Model Caching**: LRU cache keeps 2 models in memory

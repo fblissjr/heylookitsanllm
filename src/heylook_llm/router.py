@@ -31,21 +31,6 @@ except ImportError:
     LlamaCppProvider = None
     HAS_LLAMA_CPP = False
 
-# Try to import CoreML STT provider
-try:
-    from heylook_llm.providers.coreml_stt_provider import CoreMLSTTProvider
-    HAS_COREML_STT = True
-except ImportError as e:
-    CoreMLSTTProvider = None
-    HAS_COREML_STT = False
-    # Store the error for logging but don't fail startup
-    COREML_IMPORT_ERROR = str(e)
-except Exception as e:
-    # Catch any other errors (like coremltools compatibility issues)
-    CoreMLSTTProvider = None
-    HAS_COREML_STT = False
-    COREML_IMPORT_ERROR = f"CoreML STT provider failed to load: {e}"
-
 # Try to import MLX STT provider
 try:
     from heylook_llm.providers.mlx_stt_provider import MLXSTTProvider
@@ -87,11 +72,6 @@ class ModelRouter:
             logging.debug("Llama.cpp provider is available")
         else:
             logging.debug("Llama.cpp provider not available. Install with: uv sync --extra llama-cpp")
-
-        if HAS_COREML_STT:
-            logging.debug("CoreML STT provider is available")
-        else:
-            logging.debug("CoreML STT provider not available. Install coremltools and dependencies.")
 
         self.log_level = log_level
 
@@ -292,8 +272,6 @@ class ModelRouter:
             if LlamaCppProvider:
                 provider_map["llama_cpp"] = LlamaCppProvider
                 provider_map["gguf"] = LlamaCppProvider  # Support both names
-            if CoreMLSTTProvider:
-                provider_map["coreml_stt"] = CoreMLSTTProvider
             if MLXSTTProvider:
                 provider_map["mlx_stt"] = MLXSTTProvider
 
@@ -303,8 +281,8 @@ class ModelRouter:
                     raise ValueError(f"MLX provider requested but not installed. Run: uv sync --extra mlx")
                 elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
                     raise ValueError(f"GGUF provider requested but not installed. Run: uv sync --extra llama-cpp")
-                elif model_config.provider == "coreml_stt" and not HAS_COREML_STT:
-                    raise ValueError(f"CoreML STT provider requested but not installed. Install coremltools and dependencies.")
+                elif model_config.provider == "mlx_stt" and not HAS_MLX_STT:
+                    raise ValueError(f"MLX STT provider requested but not installed. Run: uv sync --extra stt")
                 else:
                     raise ValueError(f"Unknown provider: {model_config.provider}")
 
@@ -357,15 +335,7 @@ class ModelRouter:
     def get_stt_provider(self, model_id: str):
         """Get an STT provider instance."""
         provider = self.get_provider(model_id)
-        # Check if it's either CoreML or MLX STT provider
-        # Build tuple of available STT provider classes
-        stt_providers = []
-        if CoreMLSTTProvider:
-            stt_providers.append(CoreMLSTTProvider)
-        if MLXSTTProvider:
-            stt_providers.append(MLXSTTProvider)
-
-        if not stt_providers or not isinstance(provider, tuple(stt_providers)):
+        if not MLXSTTProvider or not isinstance(provider, MLXSTTProvider):
             raise ValueError(f"Model '{model_id}' is not an STT model")
         return provider
     

@@ -39,7 +39,7 @@ Transcribe audio file to text using the specified STT model.
 
 **Supported formats:** WAV, MP3, M4A, FLAC, OGG, WebM
 **Max file size:** 25MB
-**Models:** parakeet-tdt-v3 (CoreML)
+**Models:** parakeet-tdt-v3 (MLX)
 
 This endpoint is compatible with OpenAI's Whisper API format.
     """,
@@ -207,7 +207,7 @@ async def list_stt_models():
             {
                 "id": "parakeet-tdt-v3",
                 "name": "Parakeet TDT v3 (0.6B)",
-                "provider": "coreml",
+                "provider": "mlx_stt",
                 "languages": ["en"],
                 "capabilities": {
                     "transcribe": True,
