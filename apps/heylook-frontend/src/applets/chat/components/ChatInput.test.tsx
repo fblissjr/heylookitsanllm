@@ -18,7 +18,7 @@ const defaultMockChatState = {
   },
 }
 
-vi.mock('../../../stores/chatStore', () => ({
+vi.mock('../stores/chatStore', () => ({
   useChatStore: vi.fn(() => defaultMockChatState),
 }))
 
@@ -46,7 +46,7 @@ vi.mock('../../../stores/modelStore', () => ({
 }))
 
 // Import the mocks after defining them
-import { useChatStore } from '../../../stores/chatStore'
+import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 
 describe('ChatInput', () => {

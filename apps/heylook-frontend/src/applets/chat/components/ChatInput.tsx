@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent, DragEvent } from 'react'
-import { useChatStore } from '../../../stores/chatStore'
+import { useChatStore } from '../stores/chatStore'
 import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
 import clsx from 'clsx'
 

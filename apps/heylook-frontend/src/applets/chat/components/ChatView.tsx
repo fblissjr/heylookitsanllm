@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { useChatStore } from '../../../stores/chatStore'
+import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'

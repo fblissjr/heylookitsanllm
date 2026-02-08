@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useSettingsStore } from '../../stores/settingsStore'
-import { useUIStore } from '../../stores/uiStore'
-import { useChatStore } from '../../stores/chatStore'
-import { CloseIcon } from '../icons'
-import type { Preset } from '../../types/settings'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import { useUIStore } from '../../../stores/uiStore'
+import { useChatStore } from '../stores/chatStore'
+import { CloseIcon } from '../../../components/icons'
+import type { Preset } from '../../../types/settings'
 import clsx from 'clsx'
 
 export function AdvancedPanel() {

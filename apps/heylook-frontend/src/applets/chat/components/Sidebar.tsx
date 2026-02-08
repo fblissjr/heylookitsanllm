@@ -1,12 +1,12 @@
 import { useRef, useState, useCallback } from 'react'
-import { useChatStore } from '../../stores/chatStore'
-import { useModelStore } from '../../stores/modelStore'
-import { useUIStore } from '../../stores/uiStore'
-import { useSettingsStore } from '../../stores/settingsStore'
-import { exportConversations, importConversations } from '../../lib/db'
-import { useLongPress } from '../../hooks/useLongPress'
+import { useChatStore } from '../stores/chatStore'
+import { useModelStore } from '../../../stores/modelStore'
+import { useUIStore } from '../../../stores/uiStore'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import { exportConversations, importConversations } from '../../../lib/db'
+import { useLongPress } from '../../../hooks/useLongPress'
 import clsx from 'clsx'
-import type { Conversation } from '../../types/chat'
+import type { Conversation } from '../../../types/chat'
 
 export function Sidebar() {
   const { conversations, activeConversationId, createConversation, setActiveConversation, loadFromDB } = useChatStore()

@@ -1,10 +1,10 @@
 import { ReactNode, useEffect } from 'react'
 import { Header } from './Header'
-import { Sidebar } from './Sidebar'
+import { Sidebar } from '../../applets/chat/components/Sidebar'
 import { SystemStatusBar } from './SystemStatusBar'
 import { useUIStore } from '../../stores/uiStore'
 import { ModelSelector } from '../../features/models/components/ModelSelector'
-import { AdvancedPanel } from '../panels/AdvancedPanel'
+import { AdvancedPanel } from '../../applets/chat/components/AdvancedPanel'
 import { SettingsPanel } from '../panels/SettingsPanel'
 
 interface LayoutProps {

@@ -1,9 +1,9 @@
 import { create } from 'zustand'
-import type { Message, Conversation, StreamingState, EditState } from '../types/chat'
-import type { APIMessage } from '../types/api'
-import { streamChat, type StreamCompletionData } from '../api/streaming'
-import { useSettingsStore } from './settingsStore'
-import * as db from '../lib/db'
+import type { Message, Conversation, StreamingState, EditState } from '../../../types/chat'
+import type { APIMessage } from '../../../types/api'
+import { streamChat, type StreamCompletionData } from '../../../api/streaming'
+import { useSettingsStore } from '../../../stores/settingsStore'
+import * as db from '../../../lib/db'
 
 // Re-export StreamingState for components
 export type { StreamingState }

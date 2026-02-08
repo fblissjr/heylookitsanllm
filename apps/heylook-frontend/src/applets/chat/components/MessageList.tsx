@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { Message } from '../../../types/chat'
 import { ModelCapabilities } from '../../../types/models'
-import { useChatStore, StreamingState } from '../../../stores/chatStore'
+import { useChatStore, StreamingState } from '../stores/chatStore'
 import { useUIStore } from '../../../stores/uiStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'

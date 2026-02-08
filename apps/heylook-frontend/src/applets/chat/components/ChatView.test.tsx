@@ -65,7 +65,7 @@ const defaultModelState: {
   modelStatus: 'loaded',
 }
 
-vi.mock('../../../stores/chatStore', () => ({
+vi.mock('../stores/chatStore', () => ({
   useChatStore: vi.fn(() => defaultChatState),
 }))
 
@@ -74,7 +74,7 @@ vi.mock('../../../stores/modelStore', () => ({
 }))
 
 // Import after mocks
-import { useChatStore } from '../../../stores/chatStore'
+import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'

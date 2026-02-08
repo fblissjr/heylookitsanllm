@@ -20,12 +20,12 @@ vi.mock('./components/layout/Layout', () => ({
 }))
 
 // Mock the ChatView component
-vi.mock('./features/chat/components/ChatView', () => ({
+vi.mock('./applets/chat/components/ChatView', () => ({
   ChatView: () => <div data-testid="chat-view">ChatView</div>,
 }))
 
 // Mock the ConfirmDeleteModal component
-vi.mock('./components/modals/ConfirmDeleteModal', () => ({
+vi.mock('./applets/chat/components/ConfirmDeleteModal', () => ({
   ConfirmDeleteModal: () => <div data-testid="confirm-delete-modal">ConfirmDeleteModal</div>,
 }))
 

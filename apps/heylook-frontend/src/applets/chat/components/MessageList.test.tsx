@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MessageList } from './MessageList'
 import type { Message } from '../../../types/chat'
-import type { StreamingState } from '../../../stores/chatStore'
+import type { StreamingState } from '../stores/chatStore'
 import type { ModelCapabilities } from '../../../types/models'
 
 // Mock the stores
@@ -20,7 +20,7 @@ const mockActiveConversation = {
   updatedAt: Date.now(),
 }
 
-vi.mock('../../../stores/chatStore', () => ({
+vi.mock('../stores/chatStore', () => ({
   useChatStore: Object.assign(
     vi.fn(() => ({
       editMessageAndRegenerate: mockEditMessageAndRegenerate,

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
 import { useUIStore } from '../../../stores/uiStore'
-import { useChatStore } from '../../../stores/chatStore'
+import { useChatStore } from '../../../applets/chat/stores/chatStore'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import type { Model } from '../../../types/api'
 import clsx from 'clsx'

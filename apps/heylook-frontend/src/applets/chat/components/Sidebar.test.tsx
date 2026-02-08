@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Sidebar } from './Sidebar'
-import type { Conversation } from '../../types/chat'
-import type { LoadedModel } from '../../types/models'
+import type { Conversation } from '../../../types/chat'
+import type { LoadedModel } from '../../../types/models'
 
 // Mock functions
 const mockCreateConversation = vi.fn()
@@ -34,27 +34,27 @@ const defaultUIState = {
   toggleSidebar: mockToggleSidebar,
 }
 
-vi.mock('../../stores/chatStore', () => ({
+vi.mock('../stores/chatStore', () => ({
   useChatStore: vi.fn(() => defaultChatState),
 }))
 
-vi.mock('../../stores/modelStore', () => ({
+vi.mock('../../../stores/modelStore', () => ({
   useModelStore: vi.fn(() => defaultModelState),
 }))
 
-vi.mock('../../stores/uiStore', () => ({
+vi.mock('../../../stores/uiStore', () => ({
   useUIStore: vi.fn(() => defaultUIState),
 }))
 
-vi.mock('../../stores/settingsStore', () => ({
+vi.mock('../../../stores/settingsStore', () => ({
   useSettingsStore: vi.fn(() => ({
     systemPrompt: 'You are a helpful AI assistant.',
   })),
 }))
 
-import { useChatStore } from '../../stores/chatStore'
-import { useModelStore } from '../../stores/modelStore'
-import { useUIStore } from '../../stores/uiStore'
+import { useChatStore } from '../stores/chatStore'
+import { useModelStore } from '../../../stores/modelStore'
+import { useUIStore } from '../../../stores/uiStore'
 
 // Helper to create mock conversations with a fixed date
 function createMockConversation(overrides: Partial<Conversation> = {}): Conversation {

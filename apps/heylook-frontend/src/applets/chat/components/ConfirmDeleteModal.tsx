@@ -1,8 +1,8 @@
 import { useCallback } from 'react'
-import { useUIStore } from '../../stores/uiStore'
-import { useChatStore } from '../../stores/chatStore'
-import { Modal } from '../primitives'
-import { TrashIcon } from '../icons'
+import { useUIStore } from '../../../stores/uiStore'
+import { useChatStore } from '../stores/chatStore'
+import { Modal } from '../../../components/primitives'
+import { TrashIcon } from '../../../components/icons'
 
 export function ConfirmDeleteModal() {
   const { activeModal, confirmDelete, closeModal } = useUIStore()

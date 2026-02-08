@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppShell } from './components/layout/AppShell'
 import { Layout } from './components/layout/Layout'
-import { ChatView } from './features/chat/components/ChatView'
-import { ConfirmDeleteModal } from './components/modals/ConfirmDeleteModal'
+import { ChatView } from './applets/chat/components/ChatView'
+import { ConfirmDeleteModal } from './applets/chat/components/ConfirmDeleteModal'
 import { useModelStore } from './stores/modelStore'
 
 function App() {

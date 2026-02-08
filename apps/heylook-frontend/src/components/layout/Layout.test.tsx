@@ -7,7 +7,7 @@ vi.mock('./Header', () => ({
   Header: () => <header data-testid="mock-header">Header</header>,
 }))
 
-vi.mock('./Sidebar', () => ({
+vi.mock('../../applets/chat/components/Sidebar', () => ({
   Sidebar: () => <aside data-testid="mock-sidebar">Sidebar</aside>,
 }))
 
@@ -15,7 +15,7 @@ vi.mock('../../features/models/components/ModelSelector', () => ({
   ModelSelector: () => <div data-testid="mock-model-selector">ModelSelector</div>,
 }))
 
-vi.mock('../panels/AdvancedPanel', () => ({
+vi.mock('../../applets/chat/components/AdvancedPanel', () => ({
   AdvancedPanel: () => <div data-testid="mock-advanced-panel">AdvancedPanel</div>,
 }))
 

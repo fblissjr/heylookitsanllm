@@ -25,17 +25,17 @@ const defaultChatState = {
   deleteMessageWithCascade: mockDeleteMessageWithCascade,
 }
 
-vi.mock('../../stores/uiStore', () => ({
+vi.mock('../../../stores/uiStore', () => ({
   useUIStore: vi.fn(() => defaultUIState),
 }))
 
-vi.mock('../../stores/chatStore', () => ({
+vi.mock('../stores/chatStore', () => ({
   useChatStore: vi.fn(() => defaultChatState),
 }))
 
 // Import after mocks are defined
-import { useUIStore } from '../../stores/uiStore'
-import { useChatStore } from '../../stores/chatStore'
+import { useUIStore } from '../../../stores/uiStore'
+import { useChatStore } from '../stores/chatStore'
 
 describe('ConfirmDeleteModal', () => {
   beforeEach(() => {

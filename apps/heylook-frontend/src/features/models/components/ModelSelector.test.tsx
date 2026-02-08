@@ -72,7 +72,7 @@ vi.mock('../../../stores/uiStore', () => ({
   })),
 }))
 
-vi.mock('../../../stores/chatStore', () => ({
+vi.mock('../../../applets/chat/stores/chatStore', () => ({
   useChatStore: vi.fn(() => ({
     createConversation: mockCreateConversation,
   })),

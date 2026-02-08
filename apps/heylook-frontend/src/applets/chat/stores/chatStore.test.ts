@@ -1,21 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useChatStore } from './chatStore'
-import type { Conversation, Message } from '../types/chat'
+import type { Conversation, Message } from '../../../types/chat'
 
 // Mock the db module
-vi.mock('../lib/db', () => ({
+vi.mock('../../../lib/db', () => ({
   saveConversation: vi.fn().mockResolvedValue(undefined),
   deleteConversation: vi.fn().mockResolvedValue(undefined),
   getAllConversations: vi.fn().mockResolvedValue([]),
 }))
 
 // Mock the streaming API
-vi.mock('../api/streaming', () => ({
+vi.mock('../../../api/streaming', () => ({
   streamChat: vi.fn(),
 }))
 
 // Mock settingsStore
-vi.mock('./settingsStore', () => ({
+vi.mock('../../../stores/settingsStore', () => ({
   useSettingsStore: {
     getState: vi.fn().mockReturnValue({
       samplerSettings: {
@@ -733,7 +733,7 @@ describe('chatStore', () => {
 
     describe('loadFromDB', () => {
       it('loads conversations from database', async () => {
-        const db = await import('../lib/db')
+        const db = await import('../../../lib/db')
         const mockConversations = [
           createMockConversation({ id: 'db-conv-1' }),
         ]
@@ -745,7 +745,7 @@ describe('chatStore', () => {
       })
 
       it('handles database errors gracefully', async () => {
-        const db = await import('../lib/db')
+        const db = await import('../../../lib/db')
         const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
         vi.mocked(db.getAllConversations).mockRejectedValue(new Error('DB Error'))
 
