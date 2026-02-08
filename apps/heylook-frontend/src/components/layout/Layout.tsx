@@ -27,7 +27,7 @@ export function Layout({ children }: LayoutProps) {
   }, [])
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">
+    <div className="h-full flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">
       <Header />
 
       <div className="flex-1 flex overflow-hidden">

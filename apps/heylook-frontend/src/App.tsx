@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { AppShell } from './components/layout/AppShell'
 import { Layout } from './components/layout/Layout'
 import { ChatView } from './features/chat/components/ChatView'
 import { ConfirmDeleteModal } from './components/modals/ConfirmDeleteModal'
@@ -64,9 +66,16 @@ function App() {
 
   return (
     <>
-      <Layout>
-        <ChatView />
-      </Layout>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/chat" element={
+            <Layout>
+              <ChatView />
+            </Layout>
+          } />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
+        </Route>
+      </Routes>
       <ConfirmDeleteModal />
     </>
   )

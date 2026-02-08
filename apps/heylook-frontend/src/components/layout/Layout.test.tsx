@@ -62,7 +62,7 @@ describe('Layout', () => {
     it('renders the layout container', () => {
       render(<Layout><div>Content</div></Layout>)
 
-      const container = document.querySelector('.h-screen')
+      const container = document.querySelector('.h-full')
       expect(container).toBeInTheDocument()
     })
 
@@ -321,7 +321,7 @@ describe('Layout', () => {
       render(<Layout><div>Content</div></Layout>)
 
       // Main container should have flex column
-      const container = document.querySelector('.h-screen.flex.flex-col')
+      const container = document.querySelector('.h-full.flex.flex-col')
       expect(container).toBeInTheDocument()
 
       // Content area should have flex
