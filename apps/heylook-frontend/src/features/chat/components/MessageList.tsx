@@ -6,7 +6,8 @@ import { useUIStore } from '../../../stores/uiStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'
 import { MessageDebugModal } from './MessageDebugModal'
-import { formatDuration } from '../../../utils/formatters'
+import { ThinkingBlock } from '../../../components/composed'
+import { ComputerIcon, CopyIcon, EditIcon, TrashIcon, RefreshIcon, CheckIcon } from '../../../components/icons'
 import clsx from 'clsx'
 
 interface MessageListProps {
@@ -170,9 +171,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
     <div className="flex items-start gap-3 max-w-full">
       {/* Avatar */}
       <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
-        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
+        <ComputerIcon className="w-4 h-4 text-white" />
       </div>
 
       <div className="flex flex-col gap-2 min-w-0 flex-1">
@@ -249,57 +248,6 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
   )
 }
 
-interface ThinkingBlockProps {
-  content: string
-  isOpen: boolean
-  onToggle: () => void
-  thinkingTime?: number   // ms
-  thinkingTokens?: number
-}
-
-function ThinkingBlock({ content, isOpen, onToggle, thinkingTime, thinkingTokens }: ThinkingBlockProps) {
-  // Build header text
-  const hasMetrics = thinkingTime !== undefined || thinkingTokens !== undefined
-  let headerText = 'Thinking'
-  if (hasMetrics) {
-    const parts: string[] = []
-    if (thinkingTime !== undefined) parts.push(formatDuration(thinkingTime))
-    if (thinkingTokens !== undefined) parts.push(`${thinkingTokens.toLocaleString()} tokens`)
-    headerText = `Thought for ${parts.join(' | ')}`
-  }
-
-  return (
-    <details open={isOpen} className="bg-purple-50 dark:bg-purple-900/10 rounded-xl border-l-4 border-purple-400 overflow-hidden">
-      <summary
-        onClick={(e) => { e.preventDefault(); onToggle() }}
-        className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-purple-100 dark:hover:bg-purple-900/20 transition-colors"
-      >
-        <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-          </svg>
-          <span className="text-sm font-medium">{headerText}</span>
-        </div>
-        <svg
-          className={clsx('w-4 h-4 text-purple-400 transition-transform', isOpen && 'rotate-180')}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </summary>
-      {isOpen && (
-        <div className="px-4 pb-4 pt-1 border-t border-purple-200 dark:border-purple-800/50">
-          <pre className="text-sm text-purple-800/70 dark:text-purple-300/70 font-mono whitespace-pre-wrap overflow-x-auto">
-            {content}
-          </pre>
-        </div>
-      )}
-    </details>
-  )
-}
-
 interface EditingBubbleProps {
   content: string
   onChange: (content: string) => void
@@ -345,9 +293,7 @@ function EditingBubble({ content, onChange, onCancel, onSave, showRegenerateOpti
                 onClick={() => onSave(true)}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary-hover shadow-md transition-all flex items-center gap-2"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
+                <RefreshIcon />
                 Save & Regenerate
               </button>
             </>
@@ -356,9 +302,7 @@ function EditingBubble({ content, onChange, onCancel, onSave, showRegenerateOpti
               onClick={() => onSave(false)}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary-hover shadow-md transition-all flex items-center gap-2"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <CheckIcon />
               Save Changes
             </button>
           )}
@@ -389,27 +333,21 @@ function MessageActions({ role, onCopy, onEdit, onDelete, onRegenerate }: Messag
         className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         title="Copy"
       >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-        </svg>
+        <CopyIcon />
       </button>
       <button
         onClick={onEdit}
         className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         title="Edit"
       >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-        </svg>
+        <EditIcon />
       </button>
       <button
         onClick={onDelete}
         className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
         title="Delete"
       >
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
+        <TrashIcon className="w-4 h-4" />
       </button>
       {role === 'assistant' && onRegenerate && (
         <button
@@ -417,9 +355,7 @@ function MessageActions({ role, onCopy, onEdit, onDelete, onRegenerate }: Messag
           className="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/10 transition-colors"
           title="Regenerate"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
+          <RefreshIcon />
         </button>
       )}
     </div>
@@ -439,9 +375,7 @@ function StreamingMessage({ content, thinking, showThinking }: StreamingMessageP
     <div className="flex items-start gap-3 max-w-full">
       {/* Avatar with pulse animation */}
       <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20 animate-pulse">
-        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
+        <ComputerIcon className="w-4 h-4 text-white" />
       </div>
 
       <div className="flex flex-col gap-2 min-w-0 flex-1">
