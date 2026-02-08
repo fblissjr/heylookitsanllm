@@ -2,47 +2,10 @@ import { useState } from 'react'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useModelStore } from '../../stores/modelStore'
+import { Slider, Toggle } from '../primitives'
+import { CloseIcon, ChevronDownIcon } from '../icons'
 import type { Preset, SamplerSettings } from '../../types/settings'
 import clsx from 'clsx'
-
-interface SliderProps {
-  label: string
-  value: number
-  min: number
-  max: number
-  step: number
-  onChange: (value: number) => void
-  description?: string
-  disabled?: boolean
-}
-
-function Slider({ label, value, min, max, step, onChange, description, disabled }: SliderProps) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          {label}
-        </label>
-        <span className="text-sm text-gray-500 dark:text-gray-400 tabular-nums">
-          {value.toFixed(step < 1 ? 2 : 0)}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        disabled={disabled}
-        className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
-      />
-      {description && (
-        <p className="text-xs text-gray-400 dark:text-gray-500">{description}</p>
-      )}
-    </div>
-  )
-}
 
 export function SettingsPanel() {
   const {
@@ -101,9 +64,7 @@ export function SettingsPanel() {
             onClick={() => setActivePanel(null)}
             className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <CloseIcon />
           </button>
         </div>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -140,9 +101,7 @@ export function SettingsPanel() {
                     className="ml-1 p-0.5 rounded hover:bg-red-500/20"
                     title="Delete preset"
                   >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                    <CloseIcon className="w-3 h-3" />
                   </button>
                 )}
               </button>
@@ -196,32 +155,13 @@ export function SettingsPanel() {
         {/* Thinking Mode Toggle */}
         {supportsThinking && (
           <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                  Thinking Mode
-                </label>
-                <p className="text-xs text-amber-600 dark:text-amber-400">
-                  Show model reasoning process (Qwen3)
-                </p>
-              </div>
-              <button
-                onClick={() => updateSetting('enable_thinking', !samplerSettings.enable_thinking)}
-                className={clsx(
-                  'relative w-11 h-6 rounded-full transition-colors',
-                  samplerSettings.enable_thinking
-                    ? 'bg-amber-500'
-                    : 'bg-gray-300 dark:bg-gray-600'
-                )}
-              >
-                <span
-                  className={clsx(
-                    'absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform',
-                    samplerSettings.enable_thinking ? 'translate-x-5.5' : 'translate-x-0.5'
-                  )}
-                />
-              </button>
-            </div>
+            <Toggle
+              enabled={samplerSettings.enable_thinking ?? false}
+              onChange={(v) => updateSetting('enable_thinking', v)}
+              label="Thinking Mode"
+              description="Show model reasoning process (Qwen3)"
+              variant="amber"
+            />
           </div>
         )}
 
@@ -231,14 +171,7 @@ export function SettingsPanel() {
           className="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 border-t border-gray-200 dark:border-gray-700"
         >
           <span>Advanced Settings</span>
-          <svg
-            className={clsx('w-4 h-4 transition-transform', showAdvanced && 'rotate-180')}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+          <ChevronDownIcon className={clsx('w-4 h-4 transition-transform', showAdvanced && 'rotate-180')} />
         </button>
 
         {/* Advanced Settings */}

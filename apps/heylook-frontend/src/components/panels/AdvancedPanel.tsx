@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useChatStore } from '../../stores/chatStore'
+import { CloseIcon } from '../icons'
 import type { Preset } from '../../types/settings'
 import clsx from 'clsx'
 
@@ -71,9 +72,7 @@ export function AdvancedPanel() {
             onClick={() => setActivePanel(null)}
             className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <CloseIcon />
           </button>
         </div>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -110,9 +109,7 @@ export function AdvancedPanel() {
                     className="ml-1 p-0.5 rounded hover:bg-red-500/20"
                     title="Delete preset"
                   >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                    <CloseIcon className="w-3 h-3" />
                   </button>
                 )}
               </button>

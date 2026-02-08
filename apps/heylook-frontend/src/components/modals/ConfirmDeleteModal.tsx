@@ -1,6 +1,8 @@
 import { useCallback } from 'react'
 import { useUIStore } from '../../stores/uiStore'
 import { useChatStore } from '../../stores/chatStore'
+import { Modal } from '../primitives'
+import { TrashIcon } from '../icons'
 
 export function ConfirmDeleteModal() {
   const { activeModal, confirmDelete, closeModal } = useUIStore()
@@ -37,14 +39,11 @@ export function ConfirmDeleteModal() {
   const bulkCount = confirmDelete.ids?.length || 0
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-700 animate-in fade-in zoom-in-95 duration-200">
+    <Modal>
         <div className="p-6 text-center">
           {/* Icon */}
           <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-800/20 mb-4">
-            <svg className="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
+            <TrashIcon className="w-6 h-6 text-red-500" />
           </div>
 
           {/* Title */}
@@ -99,7 +98,6 @@ export function ConfirmDeleteModal() {
             </button>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
