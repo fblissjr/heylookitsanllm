@@ -17,8 +17,10 @@ models.yaml
 # work
 archive/
 artifacts/
+coderef/
 GEMINI.md
 docs/archive
+docs/frontend-mocks/
 internal/
 logs/
 

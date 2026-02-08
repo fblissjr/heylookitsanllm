@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heylookitsanllm"
-version = "1.1.1"
-description = "On-Device Multimodal LLM API server for local LLM models, using MLX and llama.cpp"
+version = "1.2.0"
+description = "On-Device Multimodal LLM API server for local LLM models, using MLX"
 authors = [{ name = "Fred Bliss" }]
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -69,7 +69,7 @@ mlx = [
     "mlx-vlm>=0.3.4",           # MLX vision generation (Qwen3-VL support requires >=0.3.4)
     "datasets>=2.19.1",         # HuggingFace datasets
     "transformers",     # HuggingFace transformers
-    "huggingface-hub>=0.34.0,<1.0",  # Required by transformers (version constraint)
+    "huggingface-hub",
     "opencv-python>=4.8.1.78",  # Image processing for vision
     "torch>=2.0.0",
     "torchvision>=0.15.0",      # Vision utilities
@@ -77,12 +77,10 @@ mlx = [
     "soundfile>=0.12.1",        # Audio processing support
 ]
 stt = [
-    "coremltools>=9.0b1",       # CoreML model support
-    "librosa>=0.10.0",          # Audio processing
+    "parakeet-mlx",             # MLX-based speech-to-text (Parakeet TDT)
     "soundfile>=0.12.1",        # Audio file I/O
-    "torch>=2.0.0",             # PyTorch for tensor operations
 ]
-all = ["heylookitsanllm[performance,analytics,mlx,llama-cpp,stt,profile]"]
+all = ["heylookitsanllm[performance,analytics,mlx,stt,profile]"]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"
@@ -95,6 +93,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "heylook_llm.templates" = ["*.jinja2", "*.tpl", "*.yaml"]
+
+[tool.uv.sources]
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git" }
+parakeet-mlx = { git = "https://github.com/senstella/parakeet-mlx.git" }
 
 [dependency-groups]
 dev = [
