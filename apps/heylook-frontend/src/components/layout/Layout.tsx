@@ -1,11 +1,13 @@
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useCallback } from 'react'
 import { Header } from './Header'
-import { Sidebar } from './Sidebar'
+import { Sidebar } from '../../applets/chat/components/Sidebar'
 import { SystemStatusBar } from './SystemStatusBar'
 import { useUIStore } from '../../stores/uiStore'
-import { ModelSelector } from '../../features/models/components/ModelSelector'
-import { AdvancedPanel } from '../panels/AdvancedPanel'
+import { ModelSelector } from '../composed/ModelSelector'
+import { AdvancedPanel } from '../../applets/chat/components/AdvancedPanel'
 import { SettingsPanel } from '../panels/SettingsPanel'
+import { useChatStore } from '../../applets/chat/stores/chatStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 
 interface LayoutProps {
   children: ReactNode
@@ -13,6 +15,12 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const { isSidebarOpen, isMobile, activePanel, setActivePanel } = useUIStore()
+  const createConversation = useChatStore((s) => s.createConversation)
+  const systemPrompt = useSettingsStore((s) => s.systemPrompt)
+
+  const handleModelLoaded = useCallback((modelId: string) => {
+    createConversation(modelId, systemPrompt)
+  }, [createConversation, systemPrompt])
 
   // Detect mobile viewport
   // Use getState() to avoid memory leak from unstable action references
@@ -27,7 +35,7 @@ export function Layout({ children }: LayoutProps) {
   }, [])
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">
+    <div className="h-full flex flex-col overflow-hidden bg-background-light dark:bg-background-dark">
       <Header />
 
       <div className="flex-1 flex overflow-hidden">
@@ -72,7 +80,7 @@ export function Layout({ children }: LayoutProps) {
               w-80 bg-white dark:bg-surface-dark border-l border-gray-200 dark:border-gray-700
               flex flex-col overflow-hidden
             `}>
-              {activePanel === 'models' && <ModelSelector />}
+              {activePanel === 'models' && <ModelSelector onModelLoaded={handleModelLoaded} />}
               {activePanel === 'advanced' && <AdvancedPanel />}
               {activePanel === 'settings' && <SettingsPanel />}
             </aside>

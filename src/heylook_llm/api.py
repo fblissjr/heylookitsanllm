@@ -72,6 +72,10 @@ app.add_middleware(
 from heylook_llm.stt_api import stt_router
 app.include_router(stt_router)
 
+# Import and include Messages API router
+from heylook_llm.messages_api import messages_router
+app.include_router(messages_router)
+
 @app.get("/v1/models",
     summary="List Available Models",
     description="""
@@ -128,7 +132,7 @@ def _infer_model_capabilities(model_config) -> list[str]:
     config = model_config.config
 
     # STT models have transcription capability, not chat
-    if provider in ("coreml_stt", "mlx_stt"):
+    if provider == "mlx_stt":
         return ["transcription"]
 
     # Chat models (MLX and llama_cpp)
@@ -232,6 +236,16 @@ Generate text completions from chat messages using the specified model.
     """,
     response_model=ChatCompletionResponse,
     response_description="Chat completion with generated text and token usage",
+    responses={
+        200: {
+            "description": "Non-streaming: JSON response. Streaming (stream=true): Server-Sent Events where each `data:` line contains a StreamChunk JSON object, ending with `data: [DONE]`.",
+            "content": {
+                "text/event-stream": {
+                    "schema": {"$ref": "#/components/schemas/StreamChunk"},
+                },
+            },
+        },
+    },
     tags=["OpenAI API"]
 )
 async def create_chat_completion(request: Request, chat_request: ChatRequest):
@@ -3008,9 +3022,9 @@ def custom_openapi():
 A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
 
 **Platform Support**: macOS, Linux, and Windows
-- macOS: All backends (MLX, llama.cpp, CoreML STT)
+- macOS: All backends (MLX, llama.cpp, MLX STT)
 - Linux: llama.cpp backend
-- Windows: llama.cpp backend with CUDA, Vulkan, or CPU
+- Windows: llama.cpp backend (CUDA, Vulkan, or CPU)
 
 ## 🎯 Key Features
 
@@ -3021,7 +3035,7 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 - **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)
 - **GGUF Models**: Support via llama.cpp for broad compatibility (all platforms)
 - **Vision Models**: Process images with vision-language models
-- **Speech-to-Text**: CoreML STT models (macOS only)
+- **Speech-to-Text**: Parakeet MLX models (macOS only)
 
 ### Performance Features
 - **Smart Model Caching**: LRU cache keeps 2 models in memory
@@ -3118,6 +3132,31 @@ This enables:
 
     if "schemas" not in openapi_schema["components"]:
         openapi_schema["components"]["schemas"] = {}
+
+    # Add streaming chunk schemas (SSE payload types not auto-discovered by FastAPI)
+    from heylook_llm.config import (
+        StreamChunk as _StreamChunk,
+        StreamChoice as _StreamChoice,
+        StreamDelta as _StreamDelta,
+        StreamLogprobs as _StreamLogprobs,
+        TokenLogprobInfo as _TokenLogprobInfo,
+        TopLogprobEntry as _TopLogprobEntry,
+        EnhancedUsage as _EnhancedUsage,
+        GenerationTiming as _GenerationTiming,
+        GenerationConfig as _GenerationConfig,
+    )
+    for _model in [
+        _StreamChunk, _StreamChoice, _StreamDelta, _StreamLogprobs,
+        _TokenLogprobInfo, _TopLogprobEntry, _EnhancedUsage, _GenerationTiming, _GenerationConfig,
+    ]:
+        _schema = _model.model_json_schema(ref_template="#/components/schemas/{model}")
+        _name = _model.__name__
+        # Move $defs to top-level schemas
+        if "$defs" in _schema:
+            for _def_name, _def_schema in _schema["$defs"].items():
+                openapi_schema["components"]["schemas"][_def_name] = _def_schema
+            del _schema["$defs"]
+        openapi_schema["components"]["schemas"][_name] = _schema
 
     # Add example schemas
     openapi_schema["components"]["examples"] = {

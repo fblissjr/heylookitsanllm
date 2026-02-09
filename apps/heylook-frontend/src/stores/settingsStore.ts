@@ -2,10 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { SamplerSettings, Preset, PresetType } from '../types/settings'
 import { DEFAULT_SAMPLER_SETTINGS } from '../types/settings'
-
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-}
+import { generateId } from '../lib/id'
 
 // Built-in system prompt presets removed - default is empty to use model's jinja2 chat template
 // Users can still create their own presets

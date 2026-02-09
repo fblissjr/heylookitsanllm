@@ -1,8 +1,38 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { AppShell } from './components/layout/AppShell'
 import { Layout } from './components/layout/Layout'
-import { ChatView } from './features/chat/components/ChatView'
-import { ConfirmDeleteModal } from './components/modals/ConfirmDeleteModal'
+import { ChatView } from './applets/chat/components/ChatView'
+import { ConfirmDeleteModal } from './applets/chat/components/ConfirmDeleteModal'
 import { useModelStore } from './stores/modelStore'
+
+const BatchView = lazy(() =>
+  import('./applets/batch').then((m) => ({ default: m.BatchView }))
+)
+
+const TokenExplorerView = lazy(() =>
+  import('./applets/token-explorer').then((m) => ({ default: m.TokenExplorerView }))
+)
+
+const ComparisonView = lazy(() =>
+  import('./applets/model-comparison').then((m) => ({ default: m.ComparisonView }))
+)
+
+const PerformanceView = lazy(() =>
+  import('./applets/performance').then((m) => ({ default: m.PerformanceView }))
+)
+
+const NotebookView = lazy(() =>
+  import('./applets/notebook').then((m) => ({ default: m.NotebookView }))
+)
+
+function LazyFallback() {
+  return (
+    <div className="h-full flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 function App() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
@@ -64,9 +94,41 @@ function App() {
 
   return (
     <>
-      <Layout>
-        <ChatView />
-      </Layout>
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/chat" element={
+            <Layout>
+              <ChatView />
+            </Layout>
+          } />
+          <Route path="/batch" element={
+            <Suspense fallback={<LazyFallback />}>
+              <BatchView />
+            </Suspense>
+          } />
+          <Route path="/explore" element={
+            <Suspense fallback={<LazyFallback />}>
+              <TokenExplorerView />
+            </Suspense>
+          } />
+          <Route path="/compare" element={
+            <Suspense fallback={<LazyFallback />}>
+              <ComparisonView />
+            </Suspense>
+          } />
+          <Route path="/perf" element={
+            <Suspense fallback={<LazyFallback />}>
+              <PerformanceView />
+            </Suspense>
+          } />
+          <Route path="/notebook" element={
+            <Suspense fallback={<LazyFallback />}>
+              <NotebookView />
+            </Suspense>
+          } />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
+        </Route>
+      </Routes>
       <ConfirmDeleteModal />
     </>
   )

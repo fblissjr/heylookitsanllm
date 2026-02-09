@@ -18,6 +18,7 @@ ContentPart = Union[TextContentPart, ImageContentPart]
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: Union[str, List[ContentPart]]
+    thinking: Optional[str] = None
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
@@ -153,18 +154,6 @@ class LlamaCppModelConfig(BaseModel):
     n_ctx: int = 4096
     vision: bool = False
 
-class CoreMLSTTModelConfig(BaseModel):
-    model_path: str
-    compute_units: Literal["CPU_ONLY", "CPU_AND_NE", "ALL"] = "ALL"
-    sample_rate: int = 16000
-    max_audio_seconds: int = 15
-    vocab_size: int = 128
-    blank_id: int = 127
-    num_layers: int = 12
-    hidden_size: int = 320
-    max_symbols_per_timestep: int = 10
-    durations: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
-
 class MLXSTTModelConfig(BaseModel):
     """Configuration for MLX STT models (parakeet-mlx)."""
     model_path: str = "mlx-community/parakeet-tdt-0.6b-v3"  # HF repo or local path
@@ -177,8 +166,8 @@ class MLXSTTModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp", "gguf", "coreml_stt", "mlx_stt"]  # Support all providers
-    config: Union[MLXModelConfig, LlamaCppModelConfig, CoreMLSTTModelConfig, MLXSTTModelConfig]
+    provider: Literal["mlx", "llama_cpp", "gguf", "mlx_stt"]  # Support all providers
+    config: Union[MLXModelConfig, LlamaCppModelConfig, MLXSTTModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -192,8 +181,6 @@ class ModelConfig(BaseModel):
             return MLXModelConfig(**v)
         elif provider in ['llama_cpp', 'gguf']:  # Support both names
             return LlamaCppModelConfig(**v)
-        elif provider == 'coreml_stt':
-            return CoreMLSTTModelConfig(**v)
         elif provider == 'mlx_stt':
             return MLXSTTModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
@@ -316,3 +303,72 @@ class GenerationConfig(BaseModel):
     min_p: Optional[float] = None
     enable_thinking: Optional[bool] = None
     max_tokens: Optional[int] = None
+
+
+# =============================================================================
+# SSE Stream Chunk Models
+# These document the Server-Sent Events payload for streaming responses.
+# =============================================================================
+
+class TopLogprobEntry(BaseModel):
+    """A candidate token with its log probability (used in top_logprobs arrays)."""
+    token: str = Field(..., description="Token text")
+    token_id: int = Field(..., description="Token vocabulary ID")
+    logprob: float = Field(..., description="Log probability of this token")
+    bytes: List[int] = Field(default_factory=list, description="UTF-8 byte values")
+
+class TokenLogprobInfo(BaseModel):
+    """Token with its log probability and alternative candidates."""
+    token: str = Field(..., description="Token text")
+    token_id: int = Field(..., description="Token vocabulary ID")
+    logprob: float = Field(..., description="Log probability of this token")
+    bytes: List[int] = Field(default_factory=list, description="UTF-8 byte values")
+    top_logprobs: Optional[List[TopLogprobEntry]] = Field(
+        None, description="Alternative tokens with their logprobs"
+    )
+
+class StreamLogprobs(BaseModel):
+    """Logprobs attached to a streaming chunk."""
+    content: List[TokenLogprobInfo] = Field(
+        default_factory=list, description="Token-level logprob data for this chunk"
+    )
+
+class StreamDelta(BaseModel):
+    """Delta content in a streaming chunk."""
+    role: Optional[str] = Field(None, description="Role (only in first chunk)")
+    content: Optional[str] = Field(None, description="Text content delta")
+    thinking: Optional[str] = Field(None, description="Thinking content delta")
+
+class StreamChoice(BaseModel):
+    """Single choice in a streaming chunk."""
+    index: int = 0
+    delta: StreamDelta = Field(default_factory=StreamDelta)
+    logprobs: Optional[StreamLogprobs] = None
+    finish_reason: Optional[str] = Field(
+        None, description="'stop', 'length', or null while streaming"
+    )
+
+class StreamChunk(BaseModel):
+    """SSE payload for a single streaming chunk (data: {...}).
+
+    Sent as Server-Sent Events on the /v1/chat/completions endpoint
+    when stream=true. The final chunk includes usage, timing, and
+    generation_config when stream_options.include_usage=true.
+    """
+    id: str = Field(..., description="Response identifier (chatcmpl-...)")
+    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+    created: int = Field(..., description="Unix timestamp")
+    model: str = Field(..., description="Model ID used for generation")
+    choices: List[StreamChoice]
+    usage: Optional[EnhancedUsage] = Field(
+        None, description="Token usage (final chunk only, requires stream_options.include_usage)"
+    )
+    timing: Optional[GenerationTiming] = Field(
+        None, description="Generation timing breakdown (final chunk only)"
+    )
+    generation_config: Optional[GenerationConfig] = Field(
+        None, description="Sampler settings used (final chunk only)"
+    )
+    stop_reason: Optional[str] = Field(
+        None, description="Why generation stopped (final chunk only)"
+    )

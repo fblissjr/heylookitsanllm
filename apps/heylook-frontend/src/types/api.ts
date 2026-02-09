@@ -1,4 +1,29 @@
-// API Request/Response Types based on docs/FRONTEND_HANDOFF.md
+// API Types -- Adapter Layer
+//
+// Manual type definitions for the frontend. The generated file
+// (generated-api.ts) is auto-produced by `npm run generate:api` with a
+// sed post-process that converts `| null` to `| undefined`. Structural
+// differences remain (required-with-default vs optional, string vs
+// literal), so we keep manual interfaces here and use compile-time
+// assertions below to catch drift against the generated schema.
+//
+// To regenerate: npm run generate:api  (requires backend running at :8080)
+
+// Verify that the generated schema file exists at build time.
+// If this import fails, run: npm run generate:api
+import type { components as _components } from './generated-api'
+
+// Type-check: ensure our manual TokenLogprob is structurally compatible
+// with the generated TokenLogprobInfo (catches drift at compile time).
+type _AssertTokenLogprob = _components['schemas']['TokenLogprobInfo']
+type _AssertStreamChunk = _components['schemas']['StreamChunk']
+// These are consumed below to suppress unused-type warnings.
+export type { _AssertTokenLogprob as _GeneratedTokenLogprob }
+export type { _AssertStreamChunk as _GeneratedStreamChunk }
+
+// =============================================================================
+// Message Types
+// =============================================================================
 
 export type MessageRole = 'system' | 'user' | 'assistant';
 
@@ -19,7 +44,12 @@ export type MessageContent = TextContent | ImageContent;
 export interface APIMessage {
   role: MessageRole;
   content: string | MessageContent[];
+  thinking?: string;
 }
+
+// =============================================================================
+// Model Types
+// =============================================================================
 
 export interface Model {
   id: string;
@@ -27,8 +57,8 @@ export interface Model {
   created?: number;
   owned_by: string;
   provider?: 'mlx' | 'llama_cpp' | 'gguf' | 'coreml_stt' | 'mlx_stt';
-  capabilities?: string[]; // 'chat', 'vision', 'hidden_states', 'thinking'
-  context_window?: number; // Default context window from config
+  capabilities?: string[];
+  context_window?: number;
 }
 
 export interface ModelListResponse {
@@ -36,19 +66,9 @@ export interface ModelListResponse {
   data: Model[];
 }
 
-export interface SamplerParams {
-  temperature?: number;
-  max_tokens?: number;
-  top_p?: number;
-  top_k?: number;
-  min_p?: number;
-  repetition_penalty?: number;
-  repetition_context_size?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  seed?: number;
-  stop?: string[];
-}
+// =============================================================================
+// Chat Completion Request (backend: ChatRequest)
+// =============================================================================
 
 export interface ChatCompletionRequest {
   model: string;
@@ -73,34 +93,34 @@ export interface ChatCompletionRequest {
   enable_thinking?: boolean;
 }
 
+// =============================================================================
+// Usage & Metrics
+// =============================================================================
+
 export interface Usage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
 }
 
-// Enhanced usage with thinking/content token breakdown
-export interface EnhancedUsage extends Usage {
+// Re-export from generated schema with optional-field normalization.
+// The generated types use `field: T | undefined` (required key) while
+// consumers expect `field?: T` (optional key). We wrap with Partial for
+// fields that the server may omit, keeping required fields strict.
+type _GenEnhancedUsage = _components['schemas']['EnhancedUsage']
+export type EnhancedUsage = Omit<_GenEnhancedUsage, 'thinking_tokens' | 'content_tokens'> & {
   thinking_tokens?: number;
   content_tokens?: number;
 }
 
-// Generation timing breakdown
-export interface GenerationTiming {
-  thinking_duration_ms?: number;
-  content_duration_ms?: number;
-  total_duration_ms?: number;
-}
+type _GenGenerationTiming = _components['schemas']['GenerationTiming']
+export type GenerationTiming = Partial<_GenGenerationTiming>
 
-// Generation config / sampler settings
-export interface GenerationConfig {
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  min_p?: number;
-  enable_thinking?: boolean;
-  max_tokens?: number;
-}
+export type GenerationConfig = Partial<_components['schemas']['GenerationConfig']>
+
+// =============================================================================
+// Logprobs (corresponds to generated TokenLogprobInfo, TopLogprobEntry)
+// =============================================================================
 
 export interface TokenLogprob {
   token: string;
@@ -113,6 +133,10 @@ export interface TokenLogprob {
 export interface Logprobs {
   content: TokenLogprob[];
 }
+
+// =============================================================================
+// Chat Completion Response (backend: ChatCompletionResponse)
+// =============================================================================
 
 export interface ChatCompletionChoice {
   index: number;
@@ -134,6 +158,10 @@ export interface ChatCompletionResponse {
   usage?: Usage;
 }
 
+// =============================================================================
+// Streaming Types (corresponds to generated StreamChunk, StreamChoice, StreamDelta)
+// =============================================================================
+
 export interface StreamDelta {
   role?: 'assistant';
   content?: string;
@@ -154,11 +182,14 @@ export interface StreamChunk {
   model: string;
   choices: StreamChoice[];
   usage?: EnhancedUsage;
-  // Enhanced fields in final chunk
   timing?: GenerationTiming;
   generation_config?: GenerationConfig;
   stop_reason?: string;
 }
+
+// =============================================================================
+// Server Capabilities
+// =============================================================================
 
 export interface ServerCapabilities {
   server_version: string;
@@ -229,10 +260,28 @@ export interface ServerCapabilities {
   };
 }
 
+// =============================================================================
+// Error & Frontend-Only Types
+// =============================================================================
+
 export interface APIError {
   detail: string | Array<{
     loc: (string | number)[];
     msg: string;
     type: string;
   }>;
+}
+
+export interface SamplerParams {
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  top_k?: number;
+  min_p?: number;
+  repetition_penalty?: number;
+  repetition_context_size?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  seed?: number;
+  stop?: string[];
 }

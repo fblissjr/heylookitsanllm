@@ -137,6 +137,7 @@ services/                       # Service templates
 
 ### API Compatibility
 - **OpenAI**: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/batch/chat/completions`, `/v1/hidden_states`
+- **Messages**: `/v1/messages` - Anthropic Messages-inspired API with typed content blocks (text, image, thinking, logprobs). System prompt as top-level parameter. Streaming returns structured SSE events (message_start, content_block_start/delta/stop, message_delta, message_stop).
 - **Admin**: `/v1/admin/restart`, `/v1/admin/reload`
 - **Batch**: `/v1/batch/chat/completions` - Batch text generation (2-4x throughput, text-only models)
 - **Logprobs**: `logprobs: true` + `top_logprobs: N` in chat completions returns token probabilities
@@ -290,6 +291,7 @@ curl http://localhost:8080/v1/models
 - Use `/v1/chat/completions/multipart` for raw images (57ms faster per image)
 - Images processed in parallel
 - Base64 encoding has overhead
+- **Sampling limitations**: VLM vision path supports temperature, top_p, repetition_penalty, logit_bias, and logits_processors. Does NOT support top_k, min_p, presence_penalty, or XTC (mlx-vlm hardcodes its own sampling in `generate_step`; no pluggable sampler interface). Text-only VLM requests use the full mlx-lm sampler pipeline.
 
 ### GGUF Models
 - Thread-safe via mutex lock (serialized requests)

@@ -42,7 +42,6 @@ files_to_check = [
     "src/heylook_llm/optimizations/__init__.py",
     "src/heylook_llm/optimizations/fast_image.py",
     "src/heylook_llm/optimizations/fast_json.py",
-    "src/heylook_llm/optimizations/mlx_metal_tuning.py",
     "src/heylook_llm/optimizations/mlx_optimizations.py",
     "src/heylook_llm/optimizations/status.py",
     "src/heylook_llm/providers/__init__.py",

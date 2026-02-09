@@ -16,7 +16,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "dev:backend": "cd ../.. && uv run heylookllm --log-level DEBUG",
-    "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\""
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\"",
+    "generate:api": "openapi-typescript http://localhost:8080/openapi.json -o src/types/generated-api.ts && sed -i '' 's/| null/| undefined/g' src/types/generated-api.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
@@ -24,6 +25,7 @@
     "idb": "^8.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-router-dom": "^7.13.0",
     "zustand": "^5.0.4"
   },
   "devDependencies": {
@@ -45,6 +47,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
     "jsdom": "^27.4.0",
+    "openapi-typescript": "^7.10.1",
     "postcss": "^8.5.4",
     "tailwindcss": "^4.1.11",
     "typescript": "~5.9.3",

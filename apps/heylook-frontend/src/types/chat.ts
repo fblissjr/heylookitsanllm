@@ -29,6 +29,7 @@ export interface Message {
   tokenCount?: number;
   isEditing?: boolean;
   isRegenerating?: boolean;
+  editedAt?: number;           // set when user edits this message
   performance?: PerformanceMetrics;
   rawStream?: string[];  // Raw SSE events for debugging
   // Multi-model conversation support
@@ -56,7 +57,7 @@ export interface StreamingState {
   rawEvents?: string[];  // Raw SSE events for debugging
 }
 
-export type MessageActionType = 'copy' | 'edit' | 'delete' | 'regenerate';
+export type MessageActionType = 'copy' | 'edit' | 'delete' | 'regenerate' | 'continue' | 'next-turn';
 
 export interface EditState {
   messageId: string | null;

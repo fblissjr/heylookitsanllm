@@ -7,15 +7,15 @@ vi.mock('./Header', () => ({
   Header: () => <header data-testid="mock-header">Header</header>,
 }))
 
-vi.mock('./Sidebar', () => ({
+vi.mock('../../applets/chat/components/Sidebar', () => ({
   Sidebar: () => <aside data-testid="mock-sidebar">Sidebar</aside>,
 }))
 
-vi.mock('../../features/models/components/ModelSelector', () => ({
+vi.mock('../composed/ModelSelector', () => ({
   ModelSelector: () => <div data-testid="mock-model-selector">ModelSelector</div>,
 }))
 
-vi.mock('../panels/AdvancedPanel', () => ({
+vi.mock('../../applets/chat/components/AdvancedPanel', () => ({
   AdvancedPanel: () => <div data-testid="mock-advanced-panel">AdvancedPanel</div>,
 }))
 
@@ -36,6 +36,18 @@ const defaultUIState = {
   setActivePanel: mockSetActivePanel,
   toggleSidebar: mockToggleSidebar,
 }
+
+vi.mock('../../applets/chat/stores/chatStore', () => ({
+  useChatStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ createConversation: vi.fn() })
+  ),
+}))
+
+vi.mock('../../stores/settingsStore', () => ({
+  useSettingsStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
+    selector({ systemPrompt: 'You are a helpful AI assistant.' })
+  ),
+}))
 
 vi.mock('../../stores/uiStore', () => ({
   useUIStore: Object.assign(
@@ -62,7 +74,7 @@ describe('Layout', () => {
     it('renders the layout container', () => {
       render(<Layout><div>Content</div></Layout>)
 
-      const container = document.querySelector('.h-screen')
+      const container = document.querySelector('.h-full')
       expect(container).toBeInTheDocument()
     })
 
@@ -321,7 +333,7 @@ describe('Layout', () => {
       render(<Layout><div>Content</div></Layout>)
 
       // Main container should have flex column
-      const container = document.querySelector('.h-screen.flex.flex-col')
+      const container = document.querySelector('.h-full.flex.flex-col')
       expect(container).toBeInTheDocument()
 
       // Content area should have flex

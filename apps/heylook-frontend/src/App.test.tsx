@@ -1,7 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import App from './App'
+
+// Mock the AppShell to pass through children via Outlet
+vi.mock('./components/layout/AppShell', () => ({
+  AppShell: () => {
+    const { Outlet } = require('react-router-dom')
+    return <div data-testid="app-shell"><Outlet /></div>
+  },
+}))
 
 // Mock the Layout component
 vi.mock('./components/layout/Layout', () => ({
@@ -11,12 +20,12 @@ vi.mock('./components/layout/Layout', () => ({
 }))
 
 // Mock the ChatView component
-vi.mock('./features/chat/components/ChatView', () => ({
+vi.mock('./applets/chat/components/ChatView', () => ({
   ChatView: () => <div data-testid="chat-view">ChatView</div>,
 }))
 
 // Mock the ConfirmDeleteModal component
-vi.mock('./components/modals/ConfirmDeleteModal', () => ({
+vi.mock('./applets/chat/components/ConfirmDeleteModal', () => ({
   ConfirmDeleteModal: () => <div data-testid="confirm-delete-modal">ConfirmDeleteModal</div>,
 }))
 
@@ -30,6 +39,14 @@ vi.mock('./stores/modelStore', () => ({
     selector({ fetchModels: mockFetchModels, fetchCapabilities: mockFetchCapabilities })
   ),
 }))
+
+function renderApp() {
+  return render(
+    <MemoryRouter initialEntries={['/chat']}>
+      <App />
+    </MemoryRouter>
+  )
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -47,7 +64,7 @@ describe('App', () => {
       // fetchModels never resolves, keeping app in loading state
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
-      render(<App />)
+      renderApp()
 
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
     })
@@ -55,7 +72,7 @@ describe('App', () => {
     it('displays spinner animation during loading', () => {
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
-      render(<App />)
+      renderApp()
 
       const spinner = document.querySelector('.animate-spin')
       expect(spinner).toBeInTheDocument()
@@ -64,7 +81,7 @@ describe('App', () => {
     it('renders loading state with correct styling', () => {
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
-      render(<App />)
+      renderApp()
 
       const container = document.querySelector('.bg-background-dark')
       expect(container).toBeInTheDocument()
@@ -73,7 +90,7 @@ describe('App', () => {
     it('calls fetchModels on mount', () => {
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
-      render(<App />)
+      renderApp()
 
       expect(mockFetchModels).toHaveBeenCalledTimes(1)
     })
@@ -83,7 +100,7 @@ describe('App', () => {
     it('shows "Connection Failed" when fetchModels throws', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('Connection Failed')).toBeInTheDocument()
@@ -93,7 +110,7 @@ describe('App', () => {
     it('displays error message with server address', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText(/localhost:8080/)).toBeInTheDocument()
@@ -103,7 +120,7 @@ describe('App', () => {
     it('shows heylookllm command in error message', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('heylookllm')).toBeInTheDocument()
@@ -113,7 +130,7 @@ describe('App', () => {
     it('renders warning icon in error state', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         const icon = document.querySelector('.text-accent-red')
@@ -124,7 +141,7 @@ describe('App', () => {
     it('renders retry button in error state', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('Retry Connection')).toBeInTheDocument()
@@ -142,7 +159,7 @@ describe('App', () => {
         writable: true,
       })
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('Retry Connection')).toBeInTheDocument()
@@ -157,7 +174,7 @@ describe('App', () => {
       // Test with string rejection
       mockFetchModels.mockRejectedValue('string error')
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('Connection Failed')).toBeInTheDocument()
@@ -169,7 +186,7 @@ describe('App', () => {
     it('renders Layout when connected', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByTestId('layout')).toBeInTheDocument()
@@ -179,7 +196,7 @@ describe('App', () => {
     it('renders ChatView inside Layout', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByTestId('chat-view')).toBeInTheDocument()
@@ -189,7 +206,7 @@ describe('App', () => {
     it('renders ConfirmDeleteModal when connected', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByTestId('confirm-delete-modal')).toBeInTheDocument()
@@ -199,7 +216,7 @@ describe('App', () => {
     it('does not show loading spinner when connected', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.queryByText('Connecting to server...')).not.toBeInTheDocument()
@@ -209,7 +226,7 @@ describe('App', () => {
     it('does not show error state when connected', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.queryByText('Connection Failed')).not.toBeInTheDocument()
@@ -221,7 +238,7 @@ describe('App', () => {
     it('transitions from loading to connected', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       // Initially shows loading
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
@@ -235,7 +252,7 @@ describe('App', () => {
     it('transitions from loading to error', async () => {
       mockFetchModels.mockRejectedValue(new Error('Connection refused'))
 
-      render(<App />)
+      renderApp()
 
       // Initially shows loading
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
@@ -251,14 +268,22 @@ describe('App', () => {
     it('only calls fetchModels once on mount', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      const { rerender } = render(<App />)
+      const { rerender } = render(
+        <MemoryRouter initialEntries={['/chat']}>
+          <App />
+        </MemoryRouter>
+      )
 
       await waitFor(() => {
         expect(screen.getByTestId('layout')).toBeInTheDocument()
       })
 
       // Re-render should not call fetchModels again
-      rerender(<App />)
+      rerender(
+        <MemoryRouter initialEntries={['/chat']}>
+          <App />
+        </MemoryRouter>
+      )
 
       expect(mockFetchModels).toHaveBeenCalledTimes(1)
     })
@@ -270,7 +295,7 @@ describe('App', () => {
       })
       mockFetchModels.mockReturnValue(delayedPromise)
 
-      render(<App />)
+      renderApp()
 
       // Should be in loading state
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
@@ -289,7 +314,7 @@ describe('App', () => {
     it('loading state has appropriate structure', () => {
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
-      render(<App />)
+      renderApp()
 
       // Text is visible for screen readers
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
@@ -298,7 +323,7 @@ describe('App', () => {
     it('error state has heading structure', async () => {
       mockFetchModels.mockRejectedValue(new Error('error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         const heading = screen.getByRole('heading', { name: 'Connection Failed' })
@@ -310,7 +335,7 @@ describe('App', () => {
       const user = userEvent.setup()
       mockFetchModels.mockRejectedValue(new Error('error'))
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByText('Retry Connection')).toBeInTheDocument()
@@ -328,7 +353,7 @@ describe('App', () => {
     it('handles empty successful response', async () => {
       mockFetchModels.mockResolvedValue(undefined)
 
-      render(<App />)
+      renderApp()
 
       await waitFor(() => {
         expect(screen.getByTestId('layout')).toBeInTheDocument()
@@ -342,7 +367,7 @@ describe('App', () => {
       })
       mockFetchModels.mockReturnValue(slowPromise)
 
-      render(<App />)
+      renderApp()
 
       // Still loading
       expect(screen.getByText('Connecting to server...')).toBeInTheDocument()
