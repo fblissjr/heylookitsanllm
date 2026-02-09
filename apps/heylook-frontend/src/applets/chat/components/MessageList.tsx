@@ -7,7 +7,10 @@ import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'
 import { MessageDebugModal } from './MessageDebugModal'
 import { ThinkingBlock } from '../../../components/composed'
-import { ComputerIcon, CopyIcon, EditIcon, TrashIcon, RefreshIcon, CheckIcon } from '../../../components/icons'
+import { MessageActions } from '../../../components/composed/MessageActions'
+import { StaleBadge } from '../../../components/primitives/StaleBadge'
+import { isMessageStale } from '../../../lib/stale'
+import { ComputerIcon, RefreshIcon, CheckIcon } from '../../../components/icons'
 import clsx from 'clsx'
 
 interface MessageListProps {
@@ -31,6 +34,7 @@ export function MessageList({ messages, streaming, modelCapabilities }: MessageL
           index={index}
           totalMessages={visibleMessages.length}
           modelCapabilities={modelCapabilities}
+          isStale={isMessageStale(visibleMessages, index)}
         />
       ))}
 
@@ -51,18 +55,20 @@ interface MessageBubbleProps {
   index: number
   totalMessages: number
   modelCapabilities: ModelCapabilities
+  isStale: boolean
 }
 
-function MessageBubble({ message, index, totalMessages, modelCapabilities }: MessageBubbleProps) {
+function MessageBubble({ message, index, totalMessages, modelCapabilities, isStale }: MessageBubbleProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
-  const [showThinking, setShowThinking] = useState(false)
+  const [editThinking, setEditThinking] = useState(message.thinking || '')
+  const [showThinking, setShowThinking] = useState(true)
   const [showDebugModal, setShowDebugModal] = useState(false)
 
   // Get model info for debug modal
   const { loadedModel } = useModelStore()
 
-  const { editMessageAndRegenerate, regenerateFromPosition } = useChatStore()
+  const { editMessageAndRegenerate, regenerateFromPosition, continueFromMessage, generateNextTurn } = useChatStore()
   const { setConfirmDelete } = useUIStore()
 
   const handleCopy = useCallback(() => {
@@ -71,22 +77,24 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
 
   const handleEdit = useCallback(() => {
     setEditContent(message.content)
+    setEditThinking(message.thinking || '')
     setIsEditing(true)
-  }, [message.content])
+  }, [message.content, message.thinking])
 
   const handleCancelEdit = useCallback(() => {
     setIsEditing(false)
     setEditContent(message.content)
-  }, [message.content])
+    setEditThinking(message.thinking || '')
+  }, [message.content, message.thinking])
 
   const handleSaveEdit = useCallback(async (shouldRegenerate: boolean) => {
-    // Get conversation ID from parent - for now we'll use the store
     const conversation = useChatStore.getState().activeConversation()
     if (!conversation) return
 
-    await editMessageAndRegenerate(conversation.id, message.id, editContent, shouldRegenerate)
+    const thinkingArg = message.role === 'assistant' ? editThinking : undefined
+    await editMessageAndRegenerate(conversation.id, message.id, editContent, shouldRegenerate, thinkingArg)
     setIsEditing(false)
-  }, [editContent, message.id, editMessageAndRegenerate])
+  }, [editContent, editThinking, message.id, message.role, editMessageAndRegenerate])
 
   const handleDelete = useCallback(() => {
     const conversation = useChatStore.getState().activeConversation()
@@ -108,12 +116,34 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
     await regenerateFromPosition(conversation.id, index)
   }, [index, regenerateFromPosition])
 
+  const handleContinue = useCallback(async () => {
+    const conversation = useChatStore.getState().activeConversation()
+    if (!conversation) return
+
+    await continueFromMessage(conversation.id, message.id)
+  }, [message.id, continueFromMessage])
+
+  const handleNextTurn = useCallback(async () => {
+    const conversation = useChatStore.getState().activeConversation()
+    if (!conversation) return
+
+    await generateNextTurn(conversation.id)
+  }, [generateNextTurn])
+
+  const handleThinkingSave = useCallback((newThinking: string) => {
+    const conversation = useChatStore.getState().activeConversation()
+    if (!conversation) return
+
+    editMessageAndRegenerate(conversation.id, message.id, message.content, false, newThinking)
+  }, [message.id, message.content, editMessageAndRegenerate])
+
   if (message.role === 'system') {
     return (
       <div className="flex justify-center">
-        <div className="bg-gray-100 dark:bg-surface-dark px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-gray-400 max-w-[90%]">
+        <div className="group bg-gray-100 dark:bg-surface-dark px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-gray-400 max-w-[90%]">
           <span className="font-medium">System:</span> {message.content.slice(0, 100)}
           {message.content.length > 100 && '...'}
+          {isStale && <StaleBadge className="ml-2" />}
         </div>
       </div>
     )
@@ -153,15 +183,19 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                 onCopy={handleCopy}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                isStale={isStale}
               />
             </>
           )}
         </div>
 
-        {/* Timestamp */}
-        <span className="text-[10px] text-gray-400 dark:text-gray-500">
-          {formatTime(message.timestamp)}
-        </span>
+        {/* Timestamp + stale badge */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+            {formatTime(message.timestamp)}
+          </span>
+          {isStale && <StaleBadge />}
+        </div>
       </div>
     )
   }
@@ -183,20 +217,38 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
             onToggle={() => setShowThinking(!showThinking)}
             thinkingTime={message.performance?.thinkingDuration}
             thinkingTokens={message.performance?.thinkingTokens}
+            editable
+            onSave={handleThinkingSave}
           />
         )}
 
         {/* Response content */}
         <div className="group">
           {isEditing ? (
-            <EditingBubble
-              content={editContent}
-              onChange={setEditContent}
-              onCancel={handleCancelEdit}
-              onSave={handleSaveEdit}
-              showRegenerateOption={false}
-              isAssistant
-            />
+            <div className="w-full space-y-3">
+              {/* Thinking textarea for assistant messages */}
+              {message.thinking !== undefined && modelCapabilities.thinking && (
+                <div className="bg-purple-50 dark:bg-purple-900/10 rounded-xl border-l-4 border-purple-400 p-3">
+                  <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider block mb-2">
+                    Thinking
+                  </label>
+                  <textarea
+                    value={editThinking}
+                    onChange={(e) => setEditThinking(e.target.value)}
+                    className="w-full bg-white dark:bg-surface-darker text-purple-800 dark:text-purple-200 p-3 rounded-lg border border-purple-300 dark:border-purple-700 focus:ring-1 focus:ring-purple-500/50 resize-none min-h-[80px] font-mono text-sm"
+                    rows={3}
+                  />
+                </div>
+              )}
+              <EditingBubble
+                content={editContent}
+                onChange={setEditContent}
+                onCancel={handleCancelEdit}
+                onSave={handleSaveEdit}
+                showRegenerateOption={false}
+                isAssistant
+              />
+            </div>
           ) : (
             <>
               <div className="bg-gray-100 dark:bg-surface-dark px-4 py-3 rounded-2xl rounded-tl-sm border border-gray-200 dark:border-gray-700">
@@ -205,15 +257,21 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities }: Mes
                 </div>
               </div>
               <div className="flex items-center justify-between mt-1 px-1">
-                <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                  {formatTime(message.timestamp)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                    {formatTime(message.timestamp)}
+                  </span>
+                  {isStale && <StaleBadge />}
+                </div>
                 <MessageActions
                   role="assistant"
                   onCopy={handleCopy}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onRegenerate={handleRegenerate}
+                  onContinue={handleContinue}
+                  onNextTurn={index === totalMessages - 1 ? handleNextTurn : undefined}
+                  isStale={isStale}
                 />
               </div>
               {/* Performance metrics footer */}
@@ -312,56 +370,6 @@ function EditingBubble({ content, onChange, onCancel, onSave, showRegenerateOpti
   )
 }
 
-interface MessageActionsProps {
-  role: 'user' | 'assistant'
-  onCopy: () => void
-  onEdit: () => void
-  onDelete: () => void
-  onRegenerate?: () => void
-}
-
-function MessageActions({ role, onCopy, onEdit, onDelete, onRegenerate }: MessageActionsProps) {
-  const { isMobile } = useUIStore()
-
-  return (
-    <div className={clsx(
-      'flex items-center gap-2 transition-opacity',
-      isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'
-    )}>
-      <button
-        onClick={onCopy}
-        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        title="Copy"
-      >
-        <CopyIcon />
-      </button>
-      <button
-        onClick={onEdit}
-        className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        title="Edit"
-      >
-        <EditIcon />
-      </button>
-      <button
-        onClick={onDelete}
-        className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-        title="Delete"
-      >
-        <TrashIcon className="w-4 h-4" />
-      </button>
-      {role === 'assistant' && onRegenerate && (
-        <button
-          onClick={onRegenerate}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-primary/10 transition-colors"
-          title="Regenerate"
-        >
-          <RefreshIcon />
-        </button>
-      )}
-    </div>
-  )
-}
-
 interface StreamingMessageProps {
   content: string
   thinking: string
@@ -393,7 +401,7 @@ function StreamingMessage({ content, thinking, showThinking }: StreamingMessageP
           <div className="bg-gray-100 dark:bg-surface-dark px-4 py-3 rounded-2xl rounded-tl-sm border border-gray-200 dark:border-gray-700">
             <p className="whitespace-pre-wrap">
               {content}
-              <span className="animate-pulse">\u2588</span>
+              <span className="animate-pulse">{'\u2588'}</span>
             </p>
           </div>
         )}

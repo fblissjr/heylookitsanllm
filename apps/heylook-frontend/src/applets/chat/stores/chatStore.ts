@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Message, Conversation, StreamingState, EditState } from '../../../types/chat'
-import type { APIMessage } from '../../../types/api'
+import { buildAPIMessages } from '../../../lib/messages'
 import { streamChat, type StreamCompletionData } from '../../../api/streaming'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import * as db from '../../../lib/db'
@@ -28,32 +28,6 @@ function generateTitle(messages: Message[]): string {
     return content.length < firstUserMessage.content.length ? `${content}...` : content
   }
   return 'New Conversation'
-}
-
-// Build API messages from conversation messages
-// Handles image content transformation and optionally excludes a specific message
-function buildAPIMessages(
-  messages: Message[],
-  excludeId?: string,
-  systemPrompt?: string
-): APIMessage[] {
-  const apiMessages = messages
-    .filter(m => m.id !== excludeId)
-    .map(m => ({
-      role: m.role as 'system' | 'user' | 'assistant',
-      content: m.images && m.images.length > 0
-        ? [
-            { type: 'text' as const, text: m.content },
-            ...m.images.map(img => ({ type: 'image_url' as const, image_url: { url: img } })),
-          ]
-        : m.content,
-    }))
-
-  if (systemPrompt) {
-    apiMessages.unshift({ role: 'system', content: systemPrompt })
-  }
-
-  return apiMessages
 }
 
 interface ChatState {
@@ -86,8 +60,10 @@ interface ChatState {
   sendMessage: (conversationId: string, content: string, modelId: string, images?: string[]) => Promise<void>
   stopGeneration: () => void
   regenerateFromPosition: (conversationId: string, position: number) => Promise<void>
-  editMessageAndRegenerate: (conversationId: string, messageId: string, newContent: string, shouldRegenerate: boolean) => Promise<void>
+  editMessageAndRegenerate: (conversationId: string, messageId: string, newContent: string, shouldRegenerate: boolean, newThinking?: string) => Promise<void>
   deleteMessageWithCascade: (conversationId: string, messageId: string, shouldRegenerateNext?: boolean) => Promise<void>
+  continueFromMessage: (conversationId: string, messageId: string) => Promise<void>
+  generateNextTurn: (conversationId: string) => Promise<void>
 
   // Streaming
   setStreaming: (state: Partial<StreamingState>) => void
@@ -330,8 +306,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const currentConversation = get().conversations.find(c => c.id === conversationId)
     const apiMessages = buildAPIMessages(
       currentConversation?.messages || [],
-      assistantMessageId,
-      conversation.systemPrompt
+      { excludeId: assistantMessageId, systemPrompt: conversation.systemPrompt }
     )
 
     await streamChat(
@@ -401,8 +376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const apiMessages = buildAPIMessages(
       currentConversation.messages,
-      assistantMessageId,
-      currentConversation.systemPrompt
+      { excludeId: assistantMessageId, systemPrompt: currentConversation.systemPrompt }
     )
 
     await streamChat(
@@ -424,7 +398,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     )
   },
 
-  editMessageAndRegenerate: async (conversationId, messageId, newContent, shouldRegenerate) => {
+  editMessageAndRegenerate: async (conversationId, messageId, newContent, shouldRegenerate, newThinking) => {
     const { updateMessage, regenerateFromPosition } = get()
     const conversation = get().conversations.find(c => c.id === conversationId)
     if (!conversation) return
@@ -432,8 +406,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const messageIndex = conversation.messages.findIndex(m => m.id === messageId)
     if (messageIndex === -1) return
 
-    // Update the message content
-    updateMessage(conversationId, messageId, { content: newContent })
+    // Update the message content and mark as edited
+    const updates: Partial<Message> = {
+      content: newContent,
+      editedAt: Date.now(),
+    }
+    if (newThinking !== undefined) {
+      updates.thinking = newThinking
+    }
+    updateMessage(conversationId, messageId, updates)
 
     if (shouldRegenerate && messageIndex < conversation.messages.length - 1) {
       // Regenerate from the next position (first assistant message after this)
@@ -469,6 +450,100 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await regenerateFromPosition(conversationId, messageIndex)
       }
     }
+  },
+
+  continueFromMessage: async (conversationId, messageId) => {
+    const { setStreaming, appendStreamContent, finalizeStream } = get()
+    const conversation = get().conversations.find(c => c.id === conversationId)
+    if (!conversation) return
+
+    const targetMessage = conversation.messages.find(m => m.id === messageId)
+    if (!targetMessage || targetMessage.role !== 'assistant') return
+
+    // Build API messages INCLUDING this assistant message (no exclusion)
+    // Backend sees last message is assistant -> continues from there
+    const messageIndex = conversation.messages.findIndex(m => m.id === messageId)
+    const messagesUpToTarget = conversation.messages.slice(0, messageIndex + 1)
+    const apiMessages = buildAPIMessages(messagesUpToTarget, {
+      systemPrompt: conversation.systemPrompt,
+    })
+
+    // Start streaming with existing content (we'll append to it)
+    setStreaming({
+      isStreaming: true,
+      content: targetMessage.content,
+      thinking: targetMessage.thinking || '',
+      messageId,
+      startTime: Date.now(),
+    })
+
+    abortController = new AbortController()
+    const settings = useSettingsStore.getState()
+
+    await streamChat(
+      {
+        model: conversation.defaultModelId,
+        messages: apiMessages,
+        ...settings.samplerSettings,
+      },
+      {
+        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
+        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
+        onComplete: (data) => finalizeStream(data),
+        onError: (error) => {
+          console.error('Continue error:', error)
+          finalizeStream()
+        },
+      },
+      abortController.signal
+    )
+  },
+
+  generateNextTurn: async (conversationId) => {
+    const { addMessage, setStreaming, appendStreamContent, finalizeStream } = get()
+    const conversation = get().conversations.find(c => c.id === conversationId)
+    if (!conversation) return
+
+    // Build API messages from full history
+    const apiMessages = buildAPIMessages(conversation.messages, {
+      systemPrompt: conversation.systemPrompt,
+    })
+
+    // Create new assistant placeholder
+    const assistantMessageId = addMessage(conversationId, {
+      role: 'assistant',
+      content: '',
+      modelId: conversation.defaultModelId,
+    })
+
+    // Start streaming
+    setStreaming({
+      isStreaming: true,
+      content: '',
+      thinking: '',
+      messageId: assistantMessageId,
+    })
+
+    abortController = new AbortController()
+    const settings = useSettingsStore.getState()
+
+    await streamChat(
+      {
+        model: conversation.defaultModelId,
+        messages: apiMessages,
+        ...settings.samplerSettings,
+      },
+      {
+        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
+        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
+        onComplete: (data) => finalizeStream(data),
+        onError: (error) => {
+          console.error('Next turn error:', error)
+          finalizeStream()
+        },
+      },
+      abortController.signal
+    )
   },
 
   setStreaming: (streamState) => {

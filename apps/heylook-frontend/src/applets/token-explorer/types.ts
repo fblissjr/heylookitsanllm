@@ -13,6 +13,7 @@ export interface ExplorerRun {
   maxTokens: number
   status: RunStatus
   tokens: LogprobToken[]
+  thinkingTokenCount?: number
   error?: string
   createdAt: number
   completedAt?: number

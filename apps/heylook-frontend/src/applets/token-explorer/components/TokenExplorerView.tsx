@@ -118,6 +118,7 @@ export function TokenExplorerView() {
                 tokens={activeRun.tokens}
                 selectedIndex={selectedTokenIndex}
                 isStreaming={activeRun.status === 'streaming'}
+                thinkingTokenCount={activeRun.thinkingTokenCount}
                 onTokenClick={handleTokenClick}
               />
             </div>

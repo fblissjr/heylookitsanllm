@@ -462,7 +462,7 @@ describe('notebookStore', () => {
   describe('stopGeneration', () => {
     it('marks generation as not generating', () => {
       useNotebookStore.setState({
-        generation: { isGenerating: true, insertPosition: 0, generatedLength: 10 },
+        generation: { isGenerating: true, insertPosition: 0, generatedLength: 10, thinking: '' },
       })
 
       useNotebookStore.getState().stopGeneration()

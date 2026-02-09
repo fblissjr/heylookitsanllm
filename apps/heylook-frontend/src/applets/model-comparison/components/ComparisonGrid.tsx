@@ -16,6 +16,7 @@ function gridCols(modelCount: number): string {
 
 export function ComparisonGrid({ run }: ComparisonGridProps) {
   const stopModel = useComparisonStore((s) => s.stopModel)
+  const editResult = useComparisonStore((s) => s.editResult)
   const [activePromptIndex, setActivePromptIndex] = useState(0)
 
   const isBatch = run.mode === 'batch'
@@ -73,6 +74,7 @@ export function ComparisonGrid({ run }: ComparisonGridProps) {
                 result={result}
                 showLogprobs={run.enableLogprobs}
                 onStop={handleStop}
+                onEditResult={(mid, updates) => editResult(run.id, mid, activePromptIndex, updates)}
               />
             )
           })}

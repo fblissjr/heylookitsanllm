@@ -162,6 +162,23 @@ export function SparklesIcon({ className = 'w-5 h-5', ...props }: IconProps) {
   )
 }
 
+export function PlayIcon({ className = 'w-4 h-4', ...props }: IconProps) {
+  return (
+    <svg className={className} {...defaults} {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  )
+}
+
+export function ForwardIcon({ className = 'w-4 h-4', ...props }: IconProps) {
+  return (
+    <svg className={className} {...defaults} {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M21 16l-7.89-5.26a2 2 0 00-2.22 0L3 16" />
+    </svg>
+  )
+}
+
 export function DocumentTextIcon({ className = 'w-5 h-5', ...props }: IconProps) {
   return (
     <svg className={className} {...defaults} {...props}>

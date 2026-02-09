@@ -18,6 +18,7 @@ ContentPart = Union[TextContentPart, ImageContentPart]
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: Union[str, List[ContentPart]]
+    thinking: Optional[str] = None
     name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None

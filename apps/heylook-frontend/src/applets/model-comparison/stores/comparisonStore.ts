@@ -79,6 +79,13 @@ interface ComparisonState {
   clearRuns: () => void
   updateSettings: (settings: Partial<ComparisonSettings>) => void
 
+  editResult: (
+    runId: string,
+    modelId: string,
+    promptIndex: number,
+    updates: { content?: string; thinking?: string }
+  ) => void
+
   // Internal: called by streaming callbacks
   updateModelResult: (
     runId: string,
@@ -225,6 +232,19 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
   updateSettings: (partial) => {
     set((state) => ({
       settings: { ...state.settings, ...partial },
+    }))
+  },
+
+  editResult: (runId, modelId, promptIndex, updates) => {
+    set((state) => ({
+      runs: state.runs.map((run) => {
+        if (run.id !== runId) return run
+        return updateRunResult(run, modelId, promptIndex, (r) => ({
+          ...r,
+          ...(updates.content !== undefined ? { content: updates.content } : {}),
+          ...(updates.thinking !== undefined ? { thinking: updates.thinking } : {}),
+        }))
+      }),
     }))
   },
 

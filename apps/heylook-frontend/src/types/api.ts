@@ -44,6 +44,7 @@ export type MessageContent = TextContent | ImageContent;
 export interface APIMessage {
   role: MessageRole;
   content: string | MessageContent[];
+  thinking?: string;
 }
 
 // =============================================================================

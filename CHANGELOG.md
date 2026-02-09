@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.0
+
+### Added
+
+- **Glass Box: Universal Editability and Transparency**: Every token the model generates is now visible, editable, and round-trips correctly through the API.
+  - **Backend thinking round-trip**: `ChatMessage` accepts `thinking` field; MLX provider reconstructs `<think>` tags before template application across all generation paths (text, VLM, batch). Assistant prefill support: when last message is `role: assistant`, sets `add_generation_prompt=False` for mid-response continuation.
+  - **Shared `lib/messages.ts`**: Extracted from chatStore, now includes thinking on assistant messages in API payloads. Used by all applets.
+  - **Shared `lib/stale.ts`**: Timestamp-based stale detection -- marks downstream messages when upstream edits occur. No stored flags.
+  - **Editable ThinkingBlock**: Thinking blocks are now default-open and editable (save/cancel inline).
+  - **Shared MessageActions**: Copy, edit, delete, regenerate, continue, next-turn actions in one component. Compact mode for tight layouts.
+  - **StaleBadge**: Amber indicator on messages generated before upstream edits.
+  - **Chat: Continue from message**: Prefill/append to partial assistant responses.
+  - **Chat: Generate next turn**: Fresh assistant response from full history without a user message.
+  - **Notebook: Thinking display**: ThinkingBlock appears above editor during and after generation with thinking models.
+  - **Model Comparison: Editable results**: ThinkingBlock defaults open and editable on completed results. Compact message actions. New `editResult` store action.
+  - **Token Explorer: Thinking token visibility**: Tracks thinking token boundary. Visual separator between thinking and response tokens in the stream.
+- **PlayIcon, ForwardIcon**: Added to icon library (22 icons total).
+
 ## 1.7.1
 
 ### Fixed

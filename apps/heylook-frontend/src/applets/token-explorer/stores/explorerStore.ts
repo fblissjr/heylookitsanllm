@@ -13,7 +13,7 @@ interface ExplorerState {
   selectedTokenIndex: number | null
 
   startRun: (prompt: string, model: string, topLogprobs: number, temperature: number, maxTokens: number) => void
-  appendToken: (runId: string, logprob: TokenLogprob) => void
+  appendToken: (runId: string, logprob: TokenLogprob, isThinking?: boolean) => void
   completeRun: (runId: string) => void
   failRun: (runId: string, error: string) => void
   stopRun: () => void
@@ -53,6 +53,9 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
 
     abortController = new AbortController()
 
+    // Track whether we're in thinking phase
+    let inThinking = false
+
     streamChat(
       {
         model,
@@ -64,11 +67,15 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
       },
       {
         onToken: () => {
-          // Tokens are handled via onLogprobs; content is ignored
+          // First content token marks end of thinking phase
+          if (inThinking) inThinking = false
+        },
+        onThinking: () => {
+          if (!inThinking) inThinking = true
         },
         onLogprobs: (logprobs) => {
           for (const lp of logprobs) {
-            get().appendToken(id, lp)
+            get().appendToken(id, lp, inThinking)
           }
         },
         onComplete: () => {
@@ -82,12 +89,19 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     )
   },
 
-  appendToken: (runId, logprob) => {
+  appendToken: (runId, logprob, isThinking) => {
     set((state) => ({
       runs: state.runs.map((r) => {
         if (r.id !== runId) return r
         const token = tokenFromLogprob(logprob, r.tokens.length)
-        return { ...r, tokens: [...r.tokens, token] }
+        const thinkingCount = isThinking
+          ? (r.thinkingTokenCount ?? 0) + 1
+          : r.thinkingTokenCount
+        return {
+          ...r,
+          tokens: [...r.tokens, token],
+          ...(thinkingCount !== undefined ? { thinkingTokenCount: thinkingCount } : {}),
+        }
       }),
     }))
   },

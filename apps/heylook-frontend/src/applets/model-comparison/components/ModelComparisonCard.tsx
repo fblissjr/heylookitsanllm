@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import type { ModelResult, ModelResultStatus } from '../types'
 import { MetricsBar } from './MetricsBar'
 import { LogprobsDetail } from './LogprobsDetail'
 import { ThinkingBlock } from '../../../components/composed/ThinkingBlock'
+import { MessageActions } from '../../../components/composed/MessageActions'
 import { StreamingCursor } from '../../../components/primitives/StreamingCursor'
 import clsx from 'clsx'
 
@@ -10,6 +11,7 @@ interface ModelComparisonCardProps {
   result: ModelResult
   showLogprobs: boolean
   onStop: (modelId: string) => void
+  onEditResult?: (modelId: string, updates: { content?: string; thinking?: string }) => void
 }
 
 const statusDot: Record<ModelResultStatus, string> = {
@@ -28,9 +30,18 @@ const statusLabel: Record<ModelResultStatus, string> = {
   error: 'Error',
 }
 
-export function ModelComparisonCard({ result, showLogprobs, onStop }: ModelComparisonCardProps) {
-  const [thinkingOpen, setThinkingOpen] = useState(false)
+export function ModelComparisonCard({ result, showLogprobs, onStop, onEditResult }: ModelComparisonCardProps) {
+  const [thinkingOpen, setThinkingOpen] = useState(true)
   const isActive = result.status === 'loading' || result.status === 'streaming'
+  const isCompleted = result.status === 'completed'
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(result.content)
+  }, [result.content])
+
+  const handleThinkingSave = useCallback((newThinking: string) => {
+    onEditResult?.(result.modelId, { thinking: newThinking })
+  }, [result.modelId, onEditResult])
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg flex flex-col overflow-hidden">
@@ -68,6 +79,8 @@ export function ModelComparisonCard({ result, showLogprobs, onStop }: ModelCompa
                 content={result.thinking}
                 isOpen={thinkingOpen}
                 onToggle={() => setThinkingOpen(!thinkingOpen)}
+                editable={isCompleted}
+                onSave={handleThinkingSave}
               />
             )}
             <div className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
@@ -79,6 +92,17 @@ export function ModelComparisonCard({ result, showLogprobs, onStop }: ModelCompa
           </div>
         )}
       </div>
+
+      {/* Compact actions for completed results */}
+      {isCompleted && (
+        <div className="px-3 py-1 flex justify-end">
+          <MessageActions
+            role="assistant"
+            onCopy={handleCopy}
+            compact
+          />
+        </div>
+      )}
 
       {/* Metrics */}
       {(result.status === 'completed' || result.status === 'streaming') && (

@@ -224,6 +224,7 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => ({
         isGenerating: true,
         insertPosition: cursorPosition,
         generatedLength: 0,
+        thinking: '',
       },
       error: null,
     })
@@ -263,6 +264,16 @@ export const useNotebookStore = create<NotebookStoreState>((set, get) => ({
             generation: {
               ...state.generation,
               generatedLength: state.generation.generatedLength + token.length,
+            },
+          })
+        },
+        onThinking: (thinking) => {
+          const state = get()
+          if (!state.generation) return
+          set({
+            generation: {
+              ...state.generation,
+              thinking: state.generation.thinking + thinking,
             },
           })
         },

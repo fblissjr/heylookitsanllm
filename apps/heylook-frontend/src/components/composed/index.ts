@@ -1,3 +1,4 @@
 export { ThinkingBlock } from './ThinkingBlock'
+export { MessageActions } from './MessageActions'
 export { AlternativeBar } from './AlternativeBar'
 export { RunHistoryList } from './RunHistoryList'

@@ -28,6 +28,7 @@ export interface GenerationState {
   isGenerating: boolean
   insertPosition: number
   generatedLength: number
+  thinking: string
 }
 
 export interface NotebookState {

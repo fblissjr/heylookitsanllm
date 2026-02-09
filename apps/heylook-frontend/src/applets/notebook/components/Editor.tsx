@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { StopIcon } from '../../../components/icons'
+import { ThinkingBlock } from '../../../components/composed/ThinkingBlock'
 import { useModelStore } from '../../../stores/modelStore'
 import { useNotebookStore } from '../stores/notebookStore'
 
@@ -22,6 +23,8 @@ export function Editor() {
     : null
 
   const isGenerating = generation?.isGenerating ?? false
+  const thinkingContent = generation?.thinking ?? ''
+  const [thinkingOpen, setThinkingOpen] = useState(true)
 
   const handleContentChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -92,6 +95,18 @@ export function Editor() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Thinking block (above editor when present) */}
+      {thinkingContent && (
+        <div className="flex-shrink-0 px-4 pt-3 border-b border-gray-700">
+          <ThinkingBlock
+            content={isGenerating ? thinkingContent + '\u2588' : thinkingContent}
+            isOpen={thinkingOpen}
+            onToggle={() => setThinkingOpen(!thinkingOpen)}
+            editable={!isGenerating}
+          />
+        </div>
+      )}
+
       {/* Editor area */}
       <div className="flex-1 overflow-hidden">
         <textarea

@@ -58,6 +58,21 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
     )
 
 
+def _reconstruct_thinking(msg_dict: dict) -> dict:
+    """Reconstruct model-specific thinking tags in assistant message content.
+
+    If an assistant message carries a 'thinking' field the frontend edited,
+    we prepend <think>...</think> tags so the tokenizer sees the full
+    thinking block as part of the content.  The 'thinking' key is removed
+    from the dict so it does not leak into the chat template.
+    """
+    thinking = msg_dict.pop('thinking', None)
+    if thinking and msg_dict.get('role') == 'assistant':
+        content = msg_dict.get('content', '')
+        msg_dict['content'] = f"<think>\n{thinking}\n</think>\n{content}"
+    return msg_dict
+
+
 class KeepaliveChunk:
     """Special chunk type for SSE keepalive messages during prompt processing."""
     def __init__(self, processed: int, total: int):
@@ -189,7 +204,13 @@ class TextOnlyStrategy:
             if isinstance(msg_dict.get('content'), list):
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
+            # Reconstruct thinking tags for assistant messages with edited thinking
+            msg_dict = _reconstruct_thinking(msg_dict)
             messages_for_template.append(msg_dict)
+
+        # Prefill: if last message is assistant, don't add generation prompt
+        last_is_assistant = messages_for_template[-1].get('role') == 'assistant' if messages_for_template else False
+        add_gen_prompt = not last_is_assistant
 
         # Get enable_thinking from params (request) or model config
         enable_thinking = effective_request.get("enable_thinking")
@@ -201,7 +222,7 @@ class TextOnlyStrategy:
             prompt = tokenizer.apply_chat_template(
                 messages_for_template,
                 tokenize=False,
-                add_generation_prompt=True,
+                add_generation_prompt=add_gen_prompt,
                 enable_thinking=enable_thinking
             )
         except TypeError:
@@ -209,7 +230,7 @@ class TextOnlyStrategy:
             prompt = tokenizer.apply_chat_template(
                 messages_for_template,
                 tokenize=False,
-                add_generation_prompt=True
+                add_generation_prompt=add_gen_prompt
             )
         
         # Tokenize the prompt
@@ -295,6 +316,8 @@ class VLMTextOnlyStrategy:
             if isinstance(msg_dict.get('content'), list):
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
+            # Reconstruct thinking tags for assistant messages with edited thinking
+            msg_dict = _reconstruct_thinking(msg_dict)
             messages_for_template.append(msg_dict)
 
         # Apply VLM chat template with no images
@@ -377,9 +400,16 @@ class VLMTextOnlyStrategy:
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
-                text_messages.append({"role": msg.role, "content": combined_content})
+                msg_dict = {"role": msg.role, "content": combined_content}
+                # Reconstruct thinking for assistant messages
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
             elif isinstance(content, str):
-                text_messages.append({"role": msg.role, "content": content})
+                msg_dict = {"role": msg.role, "content": content}
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
 
         formatted_prompt = vlm_apply_chat_template(
             processor, config, text_messages, num_images=len(images)
@@ -490,9 +520,16 @@ class VLMVisionStrategy:
 
                 # Combine text parts
                 combined_content = " ".join(text_parts) if text_parts else ""
-                text_messages.append({"role": msg.role, "content": combined_content})
+                msg_dict = {"role": msg.role, "content": combined_content}
+                # Reconstruct thinking for assistant messages
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
             elif isinstance(content, str):
-                text_messages.append({"role": msg.role, "content": content})
+                msg_dict = {"role": msg.role, "content": content}
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
 
         # Load all images in parallel
         if image_urls:
@@ -576,9 +613,15 @@ class VLMVisionStrategy:
 
                 # Combine text parts, preserving image positions
                 combined_content = " ".join(text_parts) if text_parts else ""
-                text_messages.append({"role": msg.role, "content": combined_content})
+                msg_dict = {"role": msg.role, "content": combined_content}
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
             elif isinstance(content, str):
-                text_messages.append({"role": msg.role, "content": content})
+                msg_dict = {"role": msg.role, "content": content}
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                text_messages.append(msg_dict)
 
         formatted_prompt = vlm_apply_chat_template(
             processor, config, text_messages, num_images=len(images)
@@ -1002,12 +1045,18 @@ class MLXProvider(BaseProvider):
                 if isinstance(msg_dict.get('content'), list):
                     text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                     msg_dict['content'] = ' '.join(text_parts)
+                # Reconstruct thinking tags for assistant messages with edited thinking
+                msg_dict = _reconstruct_thinking(msg_dict)
                 messages_for_template.append(msg_dict)
+
+            # Prefill: if last message is assistant, don't add generation prompt
+            last_is_assistant = messages_for_template[-1].get('role') == 'assistant' if messages_for_template else False
+            add_gen_prompt = not last_is_assistant
 
             prompt = tokenizer.apply_chat_template(
                 messages_for_template,
                 tokenize=False,
-                add_generation_prompt=True
+                add_generation_prompt=add_gen_prompt
             )
 
             tokens = tokenizer.encode(prompt)

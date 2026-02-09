@@ -279,16 +279,16 @@ describe('MessageList', () => {
 
       const summary = screen.getByText('Thinking')
 
-      // Initially closed (default showThinking is false)
-      expect(screen.queryByText('Some thinking process')).not.toBeInTheDocument()
-
-      // Click to open
-      await user.click(summary)
+      // Initially open (default showThinking is true)
       expect(screen.getByText('Some thinking process')).toBeInTheDocument()
 
       // Click to close
       await user.click(summary)
       expect(screen.queryByText('Some thinking process')).not.toBeInTheDocument()
+
+      // Click to reopen
+      await user.click(summary)
+      expect(screen.getByText('Some thinking process')).toBeInTheDocument()
     })
   })
 
