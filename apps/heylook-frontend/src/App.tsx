@@ -14,6 +14,10 @@ const TokenExplorerView = lazy(() =>
   import('./applets/token-explorer').then((m) => ({ default: m.TokenExplorerView }))
 )
 
+const ComparisonView = lazy(() =>
+  import('./applets/model-comparison').then((m) => ({ default: m.ComparisonView }))
+)
+
 function LazyFallback() {
   return (
     <div className="h-full flex items-center justify-center">
@@ -97,6 +101,11 @@ function App() {
           <Route path="/explore" element={
             <Suspense fallback={<LazyFallback />}>
               <TokenExplorerView />
+            </Suspense>
+          } />
+          <Route path="/compare" element={
+            <Suspense fallback={<LazyFallback />}>
+              <ComparisonView />
             </Suspense>
           } />
           <Route path="*" element={<Navigate to="/chat" replace />} />
