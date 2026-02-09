@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react'
 import { TokenChip } from './TokenChip'
+import { StreamingCursor } from '../../../components/primitives/StreamingCursor'
 import type { ExplorerToken } from '../types'
 
 interface TokenStreamProps {
@@ -38,7 +39,7 @@ export function TokenStream({ tokens, selectedIndex, isStreaming, onTokenClick }
         />
       ))}
       {isStreaming && (
-        <span className="inline-block w-2 h-4 mx-1 bg-primary animate-pulse rounded-sm align-middle" />
+        <StreamingCursor />
       )}
       <div ref={endRef} />
     </div>

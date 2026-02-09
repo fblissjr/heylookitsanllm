@@ -2,10 +2,7 @@ import { create } from 'zustand'
 import { batchChat } from '../../../api/endpoints'
 import type { BatchJob, BatchJobStatus, BatchJobResult, BatchView } from '../types'
 import type { SamplerSettings } from '../../../types/settings'
-
-function generateId(): string {
-  return `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-}
+import { generateId } from '../../../lib/id'
 
 interface BatchState {
   // Data
@@ -33,7 +30,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   setActiveJobId: (id) => set({ activeJobId: id }),
 
   createJob: async (prompts, model, params) => {
-    const id = generateId()
+    const id = generateId('batch')
     const job: BatchJob = {
       id,
       status: 'queued',

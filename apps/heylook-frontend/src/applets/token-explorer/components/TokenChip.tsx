@@ -1,19 +1,13 @@
 import { useCallback } from 'react'
 import { useTheme } from '../../../contexts/ThemeContext'
+import { probabilityToColor } from '../../../lib/color'
+import { displayToken } from '../../../lib/tokens'
 import type { ExplorerToken } from '../types'
 
 interface TokenChipProps {
   token: ExplorerToken
   isSelected: boolean
   onClick: (index: number) => void
-}
-
-function probabilityToColor(probability: number, isDark: boolean): string {
-  const p = Math.max(0, Math.min(1, probability))
-  const hue = p * 120 // 0=red -> 60=yellow -> 120=green
-  const saturation = 65
-  const lightness = isDark ? 25 + p * 10 : 85 - p * 15
-  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
 }
 
 function formatLogprob(logprob: number): string {
@@ -32,15 +26,7 @@ export function TokenChip({ token, isSelected, onClick }: TokenChipProps) {
   }, [onClick, token.index])
 
   const bgColor = probabilityToColor(token.probability, resolvedTheme === 'dark')
-
-  // Display whitespace tokens visually
-  const displayText = token.token === '\n'
-    ? '\u21B5' // return symbol
-    : token.token === '\t'
-      ? '\u2192' // right arrow
-      : token.token === ' '
-        ? '\u00B7' // middle dot
-        : token.token
+  const display = displayToken(token.token)
 
   return (
     <span
@@ -64,7 +50,7 @@ export function TokenChip({ token, isSelected, onClick }: TokenChipProps) {
         color: resolvedTheme === 'dark' ? '#e5e7eb' : '#1f2937',
       }}
     >
-      {displayText}
+      {display}
     </span>
   )
 }

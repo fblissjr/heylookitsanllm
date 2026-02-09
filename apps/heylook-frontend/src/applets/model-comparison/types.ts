@@ -1,14 +1,7 @@
-import type { TokenLogprob } from '../../types/api'
+import type { LogprobToken } from '../../lib/tokens'
 import type { SamplerSettings } from '../../types/settings'
 
-export interface ComparisonToken {
-  index: number
-  token: string
-  tokenId: number
-  logprob: number
-  probability: number // Math.exp(logprob)
-  topLogprobs: TokenLogprob[]
-}
+export type { LogprobToken as ComparisonToken }
 
 export type RunStatus = 'idle' | 'running' | 'completed' | 'partial' | 'error'
 export type ModelResultStatus = 'pending' | 'loading' | 'streaming' | 'completed' | 'error'
@@ -27,7 +20,7 @@ export interface ModelResult {
   status: ModelResultStatus
   content: string
   thinking?: string
-  tokens: ComparisonToken[] // only populated if logprobs enabled
+  tokens: LogprobToken[] // only populated if logprobs enabled
   performance: ModelPerformance
   error?: string
 }
@@ -40,10 +33,10 @@ export interface ComparisonRun {
   params: Partial<SamplerSettings>
   enableLogprobs: boolean
   topLogprobs: number
-  // Map<modelId, results-per-prompt>
+  // Record<modelId, results-per-prompt>
   // Single mode: results[modelId] has one entry
   // Batch mode: results[modelId] has N entries (one per prompt)
-  results: Map<string, ModelResult[]>
+  results: Record<string, ModelResult[]>
   status: RunStatus
   createdAt: number
   completedAt?: number

@@ -1,5 +1,6 @@
 import { TrashIcon } from '../../../components/icons'
-import type { ExplorerRun, RunStatus } from '../types'
+import { StatusBadge } from '../../../components/primitives/StatusBadge'
+import type { ExplorerRun } from '../types'
 import clsx from 'clsx'
 
 interface RunHistoryCardProps {
@@ -9,17 +10,7 @@ interface RunHistoryCardProps {
   onRemove: (id: string) => void
 }
 
-const statusConfig: Record<RunStatus, { label: string; color: string; bg: string }> = {
-  idle: { label: 'Idle', color: 'text-gray-500', bg: 'bg-gray-100 dark:bg-gray-800' },
-  streaming: { label: 'Streaming', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-900/30' },
-  completed: { label: 'Done', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/30' },
-  stopped: { label: 'Stopped', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-100 dark:bg-amber-900/30' },
-  error: { label: 'Error', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-100 dark:bg-red-900/30' },
-}
-
 export function RunHistoryCard({ run, isActive, onSelect, onRemove }: RunHistoryCardProps) {
-  const config = statusConfig[run.status]
-
   return (
     <button
       onClick={() => onSelect(run.id)}
@@ -36,9 +27,7 @@ export function RunHistoryCard({ run, isActive, onSelect, onRemove }: RunHistory
             {run.prompt}
           </p>
           <div className="flex items-center gap-2 mt-1">
-            <span className={clsx('text-[10px] font-medium px-1.5 py-0.5 rounded-full', config.bg, config.color)}>
-              {config.label}
-            </span>
+            <StatusBadge variant={run.status} />
             <span className="text-[10px] text-gray-400">
               {run.tokens.length} tok
             </span>

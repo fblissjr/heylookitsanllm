@@ -1,35 +1,12 @@
-import type { BatchJob, BatchJobStatus } from '../types'
+import type { BatchJob } from '../types'
 import { TrashIcon, RefreshIcon } from '../../../components/icons'
-import clsx from 'clsx'
+import { StatusBadge } from '../../../components/primitives/StatusBadge'
 
 interface BatchJobCardProps {
   job: BatchJob
   onView: (id: string) => void
   onRemove: (id: string) => void
   onRetry: (id: string) => void
-}
-
-const statusConfig: Record<BatchJobStatus, { label: string; color: string; bg: string }> = {
-  queued: {
-    label: 'Queued',
-    color: 'text-blue-600 dark:text-blue-400',
-    bg: 'bg-blue-100 dark:bg-blue-900/30',
-  },
-  processing: {
-    label: 'Processing',
-    color: 'text-amber-600 dark:text-amber-400',
-    bg: 'bg-amber-100 dark:bg-amber-900/30',
-  },
-  completed: {
-    label: 'Completed',
-    color: 'text-green-600 dark:text-green-400',
-    bg: 'bg-green-100 dark:bg-green-900/30',
-  },
-  failed: {
-    label: 'Failed',
-    color: 'text-red-600 dark:text-red-400',
-    bg: 'bg-red-100 dark:bg-red-900/30',
-  },
 }
 
 function formatDuration(ms: number): string {
@@ -42,16 +19,16 @@ function formatTimestamp(ts: number): string {
 }
 
 export function BatchJobCard({ job, onView, onRemove, onRetry }: BatchJobCardProps) {
-  const config = statusConfig[job.status]
-
   return (
     <div className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-surface-dark">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full', config.bg, config.color)}>
-              {config.label}
-            </span>
+            <StatusBadge
+              variant={job.status}
+              label={job.status === 'completed' ? 'Completed' : undefined}
+              className="text-xs px-2"
+            />
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {formatTimestamp(job.createdAt)}
             </span>

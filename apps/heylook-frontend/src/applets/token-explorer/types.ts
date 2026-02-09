@@ -1,13 +1,6 @@
-import type { TokenLogprob } from '../../types/api'
+import type { LogprobToken } from '../../lib/tokens'
 
-export interface ExplorerToken {
-  index: number
-  token: string
-  tokenId: number
-  logprob: number
-  probability: number // Math.exp(logprob), precomputed
-  topLogprobs: TokenLogprob[]
-}
+export type { LogprobToken as ExplorerToken }
 
 export type RunStatus = 'idle' | 'streaming' | 'completed' | 'stopped' | 'error'
 
@@ -19,7 +12,7 @@ export interface ExplorerRun {
   temperature: number
   maxTokens: number
   status: RunStatus
-  tokens: ExplorerToken[]
+  tokens: LogprobToken[]
   error?: string
   createdAt: number
   completedAt?: number

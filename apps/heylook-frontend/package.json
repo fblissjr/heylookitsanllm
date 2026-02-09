@@ -17,7 +17,7 @@
     "test:e2e:ui": "playwright test --ui",
     "dev:backend": "cd ../.. && uv run heylookllm --log-level DEBUG",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:backend\"",
-    "generate:api": "openapi-typescript http://localhost:8080/openapi.json -o src/api/generated/schema.ts"
+    "generate:api": "openapi-typescript http://localhost:8080/openapi.json -o src/types/generated-api.ts && sed -i '' 's/| null/| undefined/g' src/types/generated-api.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",

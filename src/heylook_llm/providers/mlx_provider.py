@@ -615,6 +615,10 @@ class MLXProvider(BaseProvider):
         import threading
         self._generation_lock = threading.Lock()
 
+        # Reference counting for safe unload -- prevents eviction during active generation
+        self._active_generations = 0
+        self._active_lock = threading.Lock()
+
     @time_mlx_operation("model_loading")
     def load_model(self):
         model_path = self.config['model_path']
@@ -1013,8 +1017,14 @@ class MLXProvider(BaseProvider):
         # Process batch
         processor = self._get_batch_processor()
 
-        with self._generation_lock:
-            results = processor.process_batch(prompts, max_tokens_list)
+        with self._active_lock:
+            self._active_generations += 1
+        try:
+            with self._generation_lock:
+                results = processor.process_batch(prompts, max_tokens_list)
+        finally:
+            with self._active_lock:
+                self._active_generations -= 1
 
         # Convert to API response format
         completions = []
@@ -1040,6 +1050,10 @@ class MLXProvider(BaseProvider):
             class MLXErrorChunk:
                 def __init__(self, text):
                     self.text = text
+
+            # Increment active generation counter (prevents safe unload during generation)
+            with self._active_lock:
+                self._active_generations += 1
 
             # Use generation lock to prevent Metal command buffer conflicts
             lock_acquired = self._generation_lock.acquire(blocking=False)
@@ -1121,6 +1135,9 @@ class MLXProvider(BaseProvider):
             finally:
                 # Always release the generation lock
                 self._generation_lock.release()
+                # Decrement active generation counter
+                with self._active_lock:
+                    self._active_generations -= 1
 
     def log_performance_summary(self):
         """Log current performance metrics."""
@@ -1171,7 +1188,7 @@ class MLXProvider(BaseProvider):
                 context_capacity=context_capacity,
                 context_percent=round(context_percent, 1),
                 memory_mb=round(metal_memory_mb, 1),
-                requests_active=1 if self._generation_lock.locked() else 0
+                requests_active=self._active_generations
             )
         except Exception as e:
             logging.warning(f"Failed to get MLX metrics: {e}")
@@ -1195,8 +1212,35 @@ class MLXProvider(BaseProvider):
             return False
 
     def unload(self):
-        """Cleanup with cache clearing and performance logging."""
+        """Cleanup with cache clearing and performance logging.
+
+        Waits for active generations to complete before releasing model resources
+        to prevent Metal command buffer crashes during LRU cache eviction.
+        """
         logging.info(f"Unloading MLX model: {self.model_id}")
+
+        # Wait for active generations to finish before destroying model resources
+        max_wait = 30  # seconds
+        start = time.time()
+        while True:
+            with self._active_lock:
+                if self._active_generations == 0:
+                    break
+                active = self._active_generations
+            elapsed = time.time() - start
+            if elapsed > max_wait:
+                logging.warning(
+                    f"Force unloading {self.model_id} after {max_wait}s "
+                    f"with {active} active generation(s)"
+                )
+                break
+            # Log every 2 seconds to avoid spam
+            if int(elapsed * 10) % 20 == 0:
+                logging.info(
+                    f"Waiting for {active} active generation(s) on {self.model_id} "
+                    f"before unload ({elapsed:.1f}s elapsed)"
+                )
+            time.sleep(0.1)
 
         # Log performance summary before cleanup
         self.log_performance_summary()

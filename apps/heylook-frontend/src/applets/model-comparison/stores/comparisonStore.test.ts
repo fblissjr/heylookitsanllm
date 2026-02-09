@@ -81,7 +81,7 @@ describe('comparisonStore', () => {
       expect(run.prompts).toEqual(['Hello'])
       expect(run.selectedModelIds).toEqual(['model-a', 'model-b'])
       expect(run.mode).toBe('single')
-      expect(run.results.size).toBe(2)
+      expect(Object.keys(run.results)).toHaveLength(2)
       expect(activeRunId).toBe(run.id)
     })
 
@@ -110,8 +110,8 @@ describe('comparisonStore', () => {
       const run = useComparisonStore.getState().runs[0]
       expect(run.mode).toBe('batch')
       // Each model has 2 results (one per prompt)
-      expect(run.results.get('model-a')).toHaveLength(2)
-      expect(run.results.get('model-b')).toHaveLength(2)
+      expect(run.results['model-a']).toHaveLength(2)
+      expect(run.results['model-b']).toHaveLength(2)
     })
 
     it('passes correct request params to streamChat', async () => {
@@ -190,13 +190,13 @@ describe('comparisonStore', () => {
       // Simulate first token
       capturedCallbacks!.onToken('Hi')
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.status).toBe('streaming')
       expect(result.content).toBe('Hi')
 
       // Simulate second token
       capturedCallbacks!.onToken(' there')
-      const result2 = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result2 = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result2.content).toBe('Hi there')
     })
 
@@ -216,7 +216,7 @@ describe('comparisonStore', () => {
       capturedCallbacks!.onThinking!('Let me think...')
       capturedCallbacks!.onThinking!(' More thinking.')
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.thinking).toBe('Let me think... More thinking.')
       expect(result.status).toBe('streaming')
     })
@@ -237,7 +237,7 @@ describe('comparisonStore', () => {
 
       await useComparisonStore.getState().startRun(['Hello'], ['model-a'])
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.status).toBe('completed')
       expect(result.content).toBe('Hi')
       expect(result.performance.promptTokens).toBe(5)
@@ -254,7 +254,7 @@ describe('comparisonStore', () => {
 
       await useComparisonStore.getState().startRun(['Hello'], ['model-a'])
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.status).toBe('error')
       expect(result.error).toBe('Model not found')
     })
@@ -273,7 +273,7 @@ describe('comparisonStore', () => {
 
       await useComparisonStore.getState().startRun(['Hello'], ['model-a'])
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.tokens).toHaveLength(1)
       expect(result.tokens[0].token).toBe('Hi')
       expect(result.tokens[0].tokenId).toBe(42)
@@ -500,8 +500,8 @@ describe('comparisonStore', () => {
       callbackMap['model-b'].onToken('Beta')
 
       const run = useComparisonStore.getState().runs[0]
-      expect(run.results.get('model-a')![0].content).toBe('Alpha')
-      expect(run.results.get('model-b')![0].content).toBe('Beta')
+      expect(run.results['model-a'][0].content).toBe('Alpha')
+      expect(run.results['model-b'][0].content).toBe('Beta')
     })
   })
 
@@ -524,11 +524,11 @@ describe('comparisonStore', () => {
 
       const run = useComparisonStore.getState().runs[0]
       // model-a has 2 results, model-b has 2 results
-      expect(run.results.get('model-a')!).toHaveLength(2)
-      expect(run.results.get('model-b')!).toHaveLength(2)
+      expect(run.results['model-a']).toHaveLength(2)
+      expect(run.results['model-b']).toHaveLength(2)
 
       // All results should be completed
-      for (const modelResults of run.results.values()) {
+      for (const modelResults of Object.values(run.results)) {
         for (const result of modelResults) {
           expect(result.status).toBe('completed')
         }
@@ -546,7 +546,7 @@ describe('comparisonStore', () => {
         status: 'streaming',
       })
 
-      const result = useComparisonStore.getState().runs[0].results.get('model-a')![0]
+      const result = useComparisonStore.getState().runs[0].results['model-a'][0]
       expect(result.status).toBe('streaming')
       expect(result.modelId).toBe('model-a') // preserved
     })

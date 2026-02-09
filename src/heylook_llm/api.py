@@ -232,6 +232,16 @@ Generate text completions from chat messages using the specified model.
     """,
     response_model=ChatCompletionResponse,
     response_description="Chat completion with generated text and token usage",
+    responses={
+        200: {
+            "description": "Non-streaming: JSON response. Streaming (stream=true): Server-Sent Events where each `data:` line contains a StreamChunk JSON object, ending with `data: [DONE]`.",
+            "content": {
+                "text/event-stream": {
+                    "schema": {"$ref": "#/components/schemas/StreamChunk"},
+                },
+            },
+        },
+    },
     tags=["OpenAI API"]
 )
 async def create_chat_completion(request: Request, chat_request: ChatRequest):
@@ -3118,6 +3128,31 @@ This enables:
 
     if "schemas" not in openapi_schema["components"]:
         openapi_schema["components"]["schemas"] = {}
+
+    # Add streaming chunk schemas (SSE payload types not auto-discovered by FastAPI)
+    from heylook_llm.config import (
+        StreamChunk as _StreamChunk,
+        StreamChoice as _StreamChoice,
+        StreamDelta as _StreamDelta,
+        StreamLogprobs as _StreamLogprobs,
+        TokenLogprobInfo as _TokenLogprobInfo,
+        TopLogprobEntry as _TopLogprobEntry,
+        EnhancedUsage as _EnhancedUsage,
+        GenerationTiming as _GenerationTiming,
+        GenerationConfig as _GenerationConfig,
+    )
+    for _model in [
+        _StreamChunk, _StreamChoice, _StreamDelta, _StreamLogprobs,
+        _TokenLogprobInfo, _TopLogprobEntry, _EnhancedUsage, _GenerationTiming, _GenerationConfig,
+    ]:
+        _schema = _model.model_json_schema(ref_template="#/components/schemas/{model}")
+        _name = _model.__name__
+        # Move $defs to top-level schemas
+        if "$defs" in _schema:
+            for _def_name, _def_schema in _schema["$defs"].items():
+                openapi_schema["components"]["schemas"][_def_name] = _def_schema
+            del _schema["$defs"]
+        openapi_schema["components"]["schemas"][_name] = _schema
 
     # Add example schemas
     openapi_schema["components"]["examples"] = {

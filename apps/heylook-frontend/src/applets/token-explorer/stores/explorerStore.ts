@@ -1,24 +1,11 @@
 import { create } from 'zustand'
 import { streamChat } from '../../../api/streaming'
 import type { TokenLogprob } from '../../../types/api'
-import type { ExplorerToken, ExplorerRun, RunStatus } from '../types'
+import type { ExplorerRun, RunStatus } from '../types'
+import { generateId } from '../../../lib/id'
+import { tokenFromLogprob } from '../../../lib/tokens'
 
 let abortController: AbortController | null = null
-
-function generateId(): string {
-  return `run-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-}
-
-function tokenFromLogprob(logprob: TokenLogprob, index: number): ExplorerToken {
-  return {
-    index,
-    token: logprob.token,
-    tokenId: logprob.token_id,
-    logprob: logprob.logprob,
-    probability: Math.exp(logprob.logprob),
-    topLogprobs: logprob.top_logprobs ?? [],
-  }
-}
 
 interface ExplorerState {
   runs: ExplorerRun[]
@@ -45,7 +32,7 @@ export const useExplorerStore = create<ExplorerState>((set, get) => ({
     // Stop any active run first
     get().stopRun()
 
-    const id = generateId()
+    const id = generateId('run')
     const run: ExplorerRun = {
       id,
       prompt,

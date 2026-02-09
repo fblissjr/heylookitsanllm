@@ -1,42 +1,9 @@
 import { useTheme } from '../../../contexts/ThemeContext'
+import { AlternativeBar } from '../../../components/composed/AlternativeBar'
 import type { ExplorerToken } from '../types'
-import type { TokenLogprob } from '../../../types/api'
 
 interface TokenDetailProps {
   token: ExplorerToken
-}
-
-function probabilityToBarColor(probability: number, isDark: boolean): string {
-  const p = Math.max(0, Math.min(1, probability))
-  const hue = p * 120
-  const saturation = 65
-  const lightness = isDark ? 35 + p * 10 : 75 - p * 15
-  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
-}
-
-function AlternativeBar({ alt, maxProb, isDark }: { alt: TokenLogprob; maxProb: number; isDark: boolean }) {
-  const prob = Math.exp(alt.logprob)
-  const widthPercent = maxProb > 0 ? (prob / maxProb) * 100 : 0
-
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="w-20 font-mono truncate text-gray-700 dark:text-gray-300 text-right shrink-0" title={alt.token}>
-        {alt.token === ' ' ? '\u00B7' : alt.token === '\n' ? '\u21B5' : alt.token}
-      </span>
-      <div className="flex-1 h-5 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
-        <div
-          className="h-full rounded transition-all"
-          style={{
-            width: `${Math.max(2, widthPercent)}%`,
-            backgroundColor: probabilityToBarColor(prob, isDark),
-          }}
-        />
-      </div>
-      <span className="w-16 text-right font-mono text-gray-500 dark:text-gray-400 shrink-0">
-        {(prob * 100).toFixed(1)}%
-      </span>
-    </div>
-  )
 }
 
 export function TokenDetail({ token }: TokenDetailProps) {

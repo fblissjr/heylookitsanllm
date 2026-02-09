@@ -18,6 +18,10 @@ const ComparisonView = lazy(() =>
   import('./applets/model-comparison').then((m) => ({ default: m.ComparisonView }))
 )
 
+const PerformanceView = lazy(() =>
+  import('./applets/performance').then((m) => ({ default: m.PerformanceView }))
+)
+
 function LazyFallback() {
   return (
     <div className="h-full flex items-center justify-center">
@@ -106,6 +110,11 @@ function App() {
           <Route path="/compare" element={
             <Suspense fallback={<LazyFallback />}>
               <ComparisonView />
+            </Suspense>
+          } />
+          <Route path="/perf" element={
+            <Suspense fallback={<LazyFallback />}>
+              <PerformanceView />
             </Suspense>
           } />
           <Route path="*" element={<Navigate to="/chat" replace />} />

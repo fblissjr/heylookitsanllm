@@ -146,6 +146,14 @@ export function ScaleIcon({ className = 'w-5 h-5', ...props }: IconProps) {
   )
 }
 
+export function ChartBarIcon({ className = 'w-5 h-5', ...props }: IconProps) {
+  return (
+    <svg className={className} {...defaults} {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 13h2v8H3v-8zm6-4h2v12H9V9zm6-6h2v18h-2V3zm6 8h2v10h-2V11z" />
+    </svg>
+  )
+}
+
 export function SparklesIcon({ className = 'w-5 h-5', ...props }: IconProps) {
   return (
     <svg className={className} {...defaults} {...props}>

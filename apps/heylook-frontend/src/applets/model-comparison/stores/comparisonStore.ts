@@ -3,9 +3,10 @@ import { streamChat } from '../../../api/streaming'
 import type { StreamCompletionData } from '../../../api/streaming'
 import type { TokenLogprob } from '../../../types/api'
 import { DEFAULT_SAMPLER_SETTINGS } from '../../../types/settings'
+import { generateId } from '../../../lib/id'
+import { tokenFromLogprob } from '../../../lib/tokens'
 import type {
   ComparisonRun,
-  ComparisonToken,
   ComparisonSettings,
   ModelResult,
   ModelPerformance,
@@ -17,23 +18,8 @@ import { sessionPersistence } from './persistence'
 // Module-level abort controllers: keyed by `${runId}-${modelId}-${promptIndex}`
 const abortControllers = new Map<string, AbortController>()
 
-function generateId(): string {
-  return `comp-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-}
-
 function abortKey(runId: string, modelId: string, promptIndex: number): string {
   return `${runId}-${modelId}-${promptIndex}`
-}
-
-function tokenFromLogprob(logprob: TokenLogprob, index: number): ComparisonToken {
-  return {
-    index,
-    token: logprob.token,
-    tokenId: logprob.token_id,
-    logprob: logprob.logprob,
-    probability: Math.exp(logprob.logprob),
-    topLogprobs: logprob.top_logprobs ?? [],
-  }
 }
 
 function emptyModelResult(modelId: string): ModelResult {
@@ -46,11 +32,8 @@ function emptyModelResult(modelId: string): ModelResult {
   }
 }
 
-function deriveRunStatus(results: Map<string, ModelResult[]>): RunStatus {
-  const allResults: ModelResult[] = []
-  for (const arr of results.values()) {
-    allResults.push(...arr)
-  }
+function deriveRunStatus(results: Record<string, ModelResult[]>): RunStatus {
+  const allResults = Object.values(results).flat()
   if (allResults.length === 0) return 'idle'
 
   const hasRunning = allResults.some(
@@ -64,6 +47,21 @@ function deriveRunStatus(results: Map<string, ModelResult[]>): RunStatus {
   if (hasError && hasCompleted) return 'partial'
   if (hasError && !hasCompleted) return 'error'
   return 'completed'
+}
+
+/** Update a single ModelResult within a run's results Record. */
+function updateRunResult(
+  run: ComparisonRun,
+  modelId: string,
+  promptIndex: number,
+  updater: (result: ModelResult) => ModelResult
+): ComparisonRun {
+  const existing = run.results[modelId]
+  if (!existing || !existing[promptIndex]) return run
+
+  const newArr = [...existing]
+  newArr[promptIndex] = updater(newArr[promptIndex])
+  return { ...run, results: { ...run.results, [modelId]: newArr } }
 }
 
 interface ComparisonState {
@@ -120,16 +118,13 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
   persistence: sessionPersistence,
 
   startRun: async (prompts, modelIds) => {
-    const runId = generateId()
+    const runId = generateId('comp')
     const { settings } = get()
 
-    // Build results map: each model gets one ModelResult per prompt
-    const results = new Map<string, ModelResult[]>()
+    // Build results record: each model gets one ModelResult per prompt
+    const results: Record<string, ModelResult[]> = {}
     for (const modelId of modelIds) {
-      results.set(
-        modelId,
-        prompts.map(() => emptyModelResult(modelId))
-      )
+      results[modelId] = prompts.map(() => emptyModelResult(modelId))
     }
 
     const run: ComparisonRun = {
@@ -237,14 +232,7 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
     set((state) => ({
       runs: state.runs.map((run) => {
         if (run.id !== runId) return run
-        const existing = run.results.get(modelId)
-        if (!existing || !existing[promptIndex]) return run
-
-        const newArr = [...existing]
-        newArr[promptIndex] = { ...newArr[promptIndex], ...updates }
-        const newResults = new Map(run.results)
-        newResults.set(modelId, newArr)
-        return { ...run, results: newResults }
+        return updateRunResult(run, modelId, promptIndex, (r) => ({ ...r, ...updates }))
       }),
     }))
   },
@@ -253,19 +241,11 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
     set((state) => ({
       runs: state.runs.map((run) => {
         if (run.id !== runId) return run
-        const existing = run.results.get(modelId)
-        if (!existing || !existing[promptIndex]) return run
-
-        const result = existing[promptIndex]
-        const newArr = [...existing]
-        if (isThinking) {
-          newArr[promptIndex] = { ...result, thinking: (result.thinking || '') + content }
-        } else {
-          newArr[promptIndex] = { ...result, content: result.content + content }
-        }
-        const newResults = new Map(run.results)
-        newResults.set(modelId, newArr)
-        return { ...run, results: newResults }
+        return updateRunResult(run, modelId, promptIndex, (r) =>
+          isThinking
+            ? { ...r, thinking: (r.thinking || '') + content }
+            : { ...r, content: r.content + content }
+        )
       }),
     }))
   },
@@ -274,18 +254,12 @@ export const useComparisonStore = create<ComparisonState>((set, get) => ({
     set((state) => ({
       runs: state.runs.map((run) => {
         if (run.id !== runId) return run
-        const existing = run.results.get(modelId)
-        if (!existing || !existing[promptIndex]) return run
-
-        const result = existing[promptIndex]
-        const newTokens = logprobs.map((lp, i) =>
-          tokenFromLogprob(lp, result.tokens.length + i)
-        )
-        const newArr = [...existing]
-        newArr[promptIndex] = { ...result, tokens: [...result.tokens, ...newTokens] }
-        const newResults = new Map(run.results)
-        newResults.set(modelId, newArr)
-        return { ...run, results: newResults }
+        return updateRunResult(run, modelId, promptIndex, (r) => {
+          const newTokens = logprobs.map((lp, i) =>
+            tokenFromLogprob(lp, r.tokens.length + i)
+          )
+          return { ...r, tokens: [...r.tokens, ...newTokens] }
+        })
       }),
     }))
   },
@@ -309,6 +283,21 @@ async function streamModelPrompt(
   // Transition to loading
   get().updateModelResult(runId, modelId, promptIndex, { status: 'loading' })
 
+  // Helper to look up current result for this model/prompt
+  const getCurrentResult = () =>
+    get().runs.find((r) => r.id === runId)?.results[modelId]?.[promptIndex]
+
+  // Helper to transition to streaming on first token
+  const transitionToStreaming = () => {
+    const result = getCurrentResult()
+    if (result?.status === 'loading') {
+      firstTokenTime = Date.now()
+      get().updateModelResult(runId, modelId, promptIndex, {
+        status: 'streaming',
+      })
+    }
+  }
+
   try {
     await streamChat(
       {
@@ -321,36 +310,14 @@ async function streamModelPrompt(
       },
       {
         onToken: (token) => {
-          const currentResult = get().runs
-            .find((r) => r.id === runId)
-            ?.results.get(modelId)?.[promptIndex]
-          if (!currentResult) return
-
-          // First token: transition to streaming
-          if (currentResult.status === 'loading') {
-            firstTokenTime = Date.now()
-            get().updateModelResult(runId, modelId, promptIndex, {
-              status: 'streaming',
-            })
-          }
-
+          if (!getCurrentResult()) return
+          transitionToStreaming()
           get().appendContent(runId, modelId, promptIndex, token, false)
         },
 
         onThinking: (thinking) => {
-          const currentResult = get().runs
-            .find((r) => r.id === runId)
-            ?.results.get(modelId)?.[promptIndex]
-          if (!currentResult) return
-
-          // Also transition to streaming on first thinking token
-          if (currentResult.status === 'loading') {
-            firstTokenTime = Date.now()
-            get().updateModelResult(runId, modelId, promptIndex, {
-              status: 'streaming',
-            })
-          }
-
+          if (!getCurrentResult()) return
+          transitionToStreaming()
           get().appendContent(runId, modelId, promptIndex, thinking, true)
         },
 

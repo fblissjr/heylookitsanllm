@@ -4,6 +4,7 @@ import type { APIMessage } from '../../../types/api'
 import { streamChat, type StreamCompletionData } from '../../../api/streaming'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import * as db from '../../../lib/db'
+import { generateId } from '../../../lib/id'
 
 // Re-export StreamingState for components
 export type { StreamingState }
@@ -18,10 +19,6 @@ function debouncedSave(conversation: Conversation) {
   saveTimeout = setTimeout(() => {
     db.saveConversation(conversation).catch(console.error)
   }, 500)
-}
-
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 }
 
 function generateTitle(messages: Message[]): string {

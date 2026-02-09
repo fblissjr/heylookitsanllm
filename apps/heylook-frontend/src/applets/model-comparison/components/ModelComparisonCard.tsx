@@ -3,6 +3,7 @@ import type { ModelResult, ModelResultStatus } from '../types'
 import { MetricsBar } from './MetricsBar'
 import { LogprobsDetail } from './LogprobsDetail'
 import { ThinkingBlock } from '../../../components/composed/ThinkingBlock'
+import { StreamingCursor } from '../../../components/primitives/StreamingCursor'
 import clsx from 'clsx'
 
 interface ModelComparisonCardProps {
@@ -72,7 +73,7 @@ export function ModelComparisonCard({ result, showLogprobs, onStop }: ModelCompa
             <div className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
               {result.content}
               {result.status === 'streaming' && (
-                <span className="inline-block w-1.5 h-4 bg-primary animate-pulse ml-0.5 align-text-bottom" />
+                <StreamingCursor className="ml-0.5 align-text-bottom" />
               )}
             </div>
           </div>

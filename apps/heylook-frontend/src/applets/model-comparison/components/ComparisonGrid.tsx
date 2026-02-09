@@ -63,7 +63,7 @@ export function ComparisonGrid({ run }: ComparisonGridProps) {
       <div className="flex-1 overflow-y-auto p-4">
         <div className={clsx('grid gap-4', gridCols(modelCount))}>
           {run.selectedModelIds.map((modelId) => {
-            const results = run.results.get(modelId)
+            const results = run.results[modelId]
             const result = results?.[activePromptIndex]
             if (!result) return null
 

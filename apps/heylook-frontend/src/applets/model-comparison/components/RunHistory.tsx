@@ -1,16 +1,10 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { useComparisonStore } from '../stores/comparisonStore'
-import { ChevronDownIcon, TrashIcon } from '../../../components/icons'
-import type { ComparisonRun, RunStatus } from '../types'
+import { TrashIcon } from '../../../components/icons'
+import { StatusBadge } from '../../../components/primitives/StatusBadge'
+import { RunHistoryList } from '../../../components/composed/RunHistoryList'
+import type { ComparisonRun } from '../types'
 import clsx from 'clsx'
-
-const statusConfig: Record<RunStatus, { label: string; color: string; bg: string }> = {
-  idle: { label: 'Idle', color: 'text-gray-500', bg: 'bg-gray-100 dark:bg-gray-800' },
-  running: { label: 'Running', color: 'text-green-600 dark:text-green-400', bg: 'bg-green-100 dark:bg-green-900/30' },
-  completed: { label: 'Done', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/30' },
-  partial: { label: 'Partial', color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-100 dark:bg-amber-900/30' },
-  error: { label: 'Error', color: 'text-red-600 dark:text-red-400', bg: 'bg-red-100 dark:bg-red-900/30' },
-}
 
 function RunCard({
   run,
@@ -23,7 +17,6 @@ function RunCard({
   onSelect: (id: string) => void
   onRemove: (id: string) => void
 }) {
-  const config = statusConfig[run.status]
   const modelCount = run.selectedModelIds.length
   const promptPreview = run.prompts[0].slice(0, 60)
 
@@ -43,9 +36,7 @@ function RunCard({
             {promptPreview}{run.prompts[0].length > 60 ? '...' : ''}
           </p>
           <div className="flex items-center gap-2 mt-1">
-            <span className={clsx('text-[10px] font-medium px-1.5 py-0.5 rounded-full', config.bg, config.color)}>
-              {config.label}
-            </span>
+            <StatusBadge variant={run.status} />
             <span className="text-[10px] text-gray-400">
               {modelCount} model{modelCount !== 1 ? 's' : ''}
             </span>
@@ -78,48 +69,29 @@ export function RunHistory() {
   const removeRun = useComparisonStore((s) => s.removeRun)
   const clearRuns = useComparisonStore((s) => s.clearRuns)
 
-  const [isCollapsed, setIsCollapsed] = useState(false)
-
   const handleSelect = useCallback((id: string) => selectRun(id), [selectRun])
   const handleRemove = useCallback((id: string) => removeRun(id), [removeRun])
 
-  if (runs.length === 0) return null
+  const renderCard = useCallback(
+    (run: ComparisonRun, isActive: boolean) => (
+      <RunCard
+        run={run}
+        isActive={isActive}
+        onSelect={handleSelect}
+        onRemove={handleRemove}
+      />
+    ),
+    [handleSelect, handleRemove]
+  )
 
   return (
-    <div className="mt-4 border-t border-gray-200 dark:border-gray-700 pt-3">
-      <div className="flex items-center justify-between mb-2">
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200"
-        >
-          <ChevronDownIcon className={clsx('w-3 h-3 transition-transform', isCollapsed && '-rotate-90')} />
-          History ({runs.length})
-        </button>
-        {runs.length > 1 && (
-          <button
-            onClick={clearRuns}
-            className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-red-500"
-            title="Clear all runs"
-          >
-            <TrashIcon className="w-3 h-3" />
-            Clear
-          </button>
-        )}
-      </div>
-
-      {!isCollapsed && (
-        <div className="space-y-1.5">
-          {runs.map((run) => (
-            <RunCard
-              key={run.id}
-              run={run}
-              isActive={run.id === activeRunId}
-              onSelect={handleSelect}
-              onRemove={handleRemove}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <RunHistoryList
+      runs={runs}
+      activeRunId={activeRunId}
+      onSelect={handleSelect}
+      onRemove={handleRemove}
+      onClear={clearRuns}
+      renderCard={renderCard}
+    />
   )
 }
