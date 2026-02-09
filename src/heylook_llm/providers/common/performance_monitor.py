@@ -9,9 +9,10 @@ Why this exists:
 - Data-centric approach to optimization validation
 """
 import time
+import types
 import logging
 import functools
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, Optional, Callable, Any
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from threading import Lock
@@ -63,41 +64,53 @@ class PerformanceMonitor:
     def time_operation(self, operation_name: str, path_info: Optional[str] = None):
         """
         Decorator to time operations with optional path information.
-        
-        Args:
-            operation_name: Base name of the operation
-            path_info: Optional path information (e.g., 'vlm_text', 'vlm_vision', 'text_only')
+
+        Generator-aware: if the decorated function returns a generator, timing
+        spans from first to last yield (the actual generation), not the instant
+        the generator object is created.
         """
         def decorator(func: Callable) -> Callable:
             @functools.wraps(func)
             def wrapper(*args, **kwargs):
                 if not self.enabled:
                     return func(*args, **kwargs)
-                
-                # Build metric key
+
                 metric_key = operation_name
                 if path_info:
                     metric_key = f"{operation_name}_{path_info}"
-                
+
                 start_time = time.perf_counter()
-                try:
-                    result = func(*args, **kwargs)
-                    return result
-                finally:
-                    end_time = time.perf_counter()
-                    duration = end_time - start_time
-                    
-                    with self.lock:
-                        self.metrics[metric_key].add_measurement(duration)
-                        
-                        # Log slow operations (data-driven thresholds)
-                        if duration > 1.0:  # Log operations over 1 second
-                            logging.warning(f"Slow operation: {metric_key} took {duration:.3f}s")
-                        elif duration > 0.5:  # Debug log for moderately slow operations
-                            logging.debug(f"Operation timing: {metric_key} took {duration:.3f}s")
-            
+                result = func(*args, **kwargs)
+
+                # If the result is a generator, wrap it to time the full iteration
+                if isinstance(result, types.GeneratorType):
+                    return self._wrap_generator(result, metric_key)
+
+                # Regular function -- record timing now
+                duration = time.perf_counter() - start_time
+                self._record(metric_key, duration)
+                return result
+
             return wrapper
         return decorator
+
+    def _wrap_generator(self, gen, metric_key: str):
+        """Wrap a generator to time from first to last yield."""
+        start_time = time.perf_counter()
+        try:
+            yield from gen
+        finally:
+            duration = time.perf_counter() - start_time
+            self._record(metric_key, duration)
+
+    def _record(self, metric_key: str, duration: float):
+        """Record a timing measurement and log if slow."""
+        with self.lock:
+            self.metrics[metric_key].add_measurement(duration)
+            if duration > 1.0:
+                logging.warning(f"Slow operation: {metric_key} took {duration:.3f}s")
+            elif duration > 0.5:
+                logging.debug(f"Operation timing: {metric_key} took {duration:.3f}s")
     
     def record_timing(self, operation_name: str, duration: float, path_info: Optional[str] = None):
         """Directly record a timing measurement."""

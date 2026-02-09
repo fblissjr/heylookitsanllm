@@ -10,8 +10,7 @@ Why this exists:
 """
 
 import mlx.core as mx
-import mlx.nn as nn
-from typing import Generator, List, Optional, Union, Any
+from typing import Generator, List, Union, Any
 from mlx_lm.generate import stream_generate as lm_stream_generate
 from mlx_vlm.generate import stream_generate as vlm_stream_generate
 
@@ -33,50 +32,10 @@ class VLMGeneratorWithSampling:
         self.model = model
         self.processor = processor
         self.tokenizer = processor.tokenizer if hasattr(processor, 'tokenizer') else processor
-        
-        # Cache for performance
-        self._vocab_size = None
-        self._eos_token_id = None
-        
-    def _get_vocab_size(self) -> int:
-        """Get vocabulary size with caching."""
-        if self._vocab_size is None:
-            if hasattr(self.tokenizer, 'vocab_size'):
-                self._vocab_size = self.tokenizer.vocab_size
-            else:
-                # Fallback: try to get from model
-                try:
-                    self._vocab_size = self.model.language_model.vocab_size
-                except:
-                    self._vocab_size = 32000  # Reasonable default
-        return self._vocab_size
-    
-    def _get_eos_token_id(self) -> int:
-        """Get EOS token ID with caching."""
-        if self._eos_token_id is None:
-            if hasattr(self.tokenizer, 'eos_token_id'):
-                self._eos_token_id = self.tokenizer.eos_token_id
-            else:
-                self._eos_token_id = 2  # Common EOS token
-        return self._eos_token_id
-    
-    def _apply_advanced_sampling(self, logits: mx.array, sampler: callable, 
-                                processors: List[callable], tokens: mx.array) -> mx.array:
-        """
-        Apply advanced sampling with mlx-lm quality.
-        
-        This uses the existing sampler and processors that are already configured
-        with the advanced sampling parameters.
-        """
-        # Apply logits processors (repetition penalty, logit bias, etc.)
-        processed_logits = logits
-        for processor in processors:
-            processed_logits = processor(processed_logits, tokens)
-        
-        # Apply sampler (temperature, top-p, top-k, min-p)
-        token = sampler(processed_logits)
-        
-        return token
+
+        # Cache LanguageModelLogitsWrapper for text-only path
+        from ..mlx_provider import LanguageModelLogitsWrapper
+        self._language_model_wrapper = LanguageModelLogitsWrapper(model.language_model)
     
     @time_mlx_operation("vlm_generation", "vision_with_sampling")
     def stream_generate_with_sampling(
@@ -127,11 +86,8 @@ class VLMGeneratorWithSampling:
         Uses mlx-lm's advanced sampling with the VLM's language model component.
         """
         try:
-            # Use the language model component with advanced sampling
-            from ..mlx_provider import LanguageModelLogitsWrapper
-            
-            # Create optimized wrapper if not already done
-            language_model = LanguageModelLogitsWrapper(self.model.language_model)
+            # Use the cached language model wrapper with advanced sampling
+            language_model = self._language_model_wrapper
             
             # Extract the prompt_progress_callback if provided
             prompt_progress_callback = kwargs.pop('prompt_progress_callback', None)
@@ -168,16 +124,17 @@ class VLMGeneratorWithSampling:
         **kwargs
     ) -> Generator[Any, None, None]:
         """
-        Vision generation with mlx-lm sampling features.
-        
-        For now, this falls back to the standard mlx-vlm generation since
-        the complex custom sampling loop needs more robust implementation.
-        The main benefit comes from the text-only optimization path.
+        Vision generation using mlx-vlm's stream_generate.
+
+        Sampling support:
+        - Supported: temperature, top_p, repetition_penalty, logit_bias, logits_processors
+        - NOT supported: top_k, min_p, presence_penalty, XTC (mlx-vlm uses its own
+          hardcoded sampling in generate_step; no pluggable sampler interface)
         """
-        
-        # Use standard VLM generation - the main optimization benefit
-        # comes from the text-only path using mlx-lm
-        
+        # Forward logits_processors if provided
+        if processors:
+            kwargs['logits_processors'] = processors
+
         # For Qwen models, we need to handle grid_thw
         model_type = str(type(self.model)).lower()
         if 'qwen' in model_type and image is not None:
@@ -198,49 +155,6 @@ class VLMGeneratorWithSampling:
             **kwargs
         )
     
-    def supports_speculative_decoding(self) -> bool:
-        """Check if speculative decoding is supported."""
-        # For now, only support on text-only VLM requests
-        return True
-
-
 def create_vlm_generator_with_sampling(model, processor) -> VLMGeneratorWithSampling:
-    """
-    Factory function to create enhanced VLM generator.
-    
-    Args:
-        model: VLM model
-        processor: VLM processor
-        
-    Returns:
-        VLMGeneratorWithSampling instance
-    """
+    """Factory function to create enhanced VLM generator."""
     return VLMGeneratorWithSampling(model, processor)
-
-
-# Convenience function for backwards compatibility
-def vlm_stream_generate_with_sampling(
-    model,
-    processor,
-    prompt: str,
-    image: Union[List, None] = None,
-    sampler: callable = None,
-    processors: List[callable] = None,
-    max_tokens: int = 512,
-    **kwargs
-) -> Generator[Any, None, None]:
-    """
-    VLM stream generation with mlx-lm sampling features.
-    
-    This is the main entry point for enhanced VLM generation with feature backporting.
-    """
-    generator = create_vlm_generator_with_sampling(model, processor)
-    
-    yield from generator.stream_generate_with_sampling(
-        prompt=prompt,
-        image=image,
-        sampler=sampler,
-        processors=processors,
-        max_tokens=max_tokens,
-        **kwargs
-    )

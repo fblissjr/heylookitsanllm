@@ -95,5 +95,17 @@ class TestLlamaCppProvider(unittest.TestCase):
         self.assertIsNone(kwargs.get('chat_format'))
         self.assertIsNone(kwargs.get('chat_handler'))
 
+    def test_thinking_field_not_in_provider_messages(self):
+        """llama_cpp_provider does not handle thinking field -- verify ChatMessage accepts it."""
+        from heylook_llm.config import ChatMessage
+        msg = ChatMessage(role="assistant", content="hi", thinking="reasoning")
+        # Provider only sees content, not thinking
+        assert msg.content == "hi"
+        assert msg.thinking == "reasoning"
+        # When dumped with exclude_none, thinking is present
+        d = msg.model_dump()
+        assert d["thinking"] == "reasoning"
+
+
 if __name__ == '__main__':
     unittest.main()

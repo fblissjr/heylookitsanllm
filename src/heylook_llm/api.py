@@ -72,6 +72,10 @@ app.add_middleware(
 from heylook_llm.stt_api import stt_router
 app.include_router(stt_router)
 
+# Import and include Messages API router
+from heylook_llm.messages_api import messages_router
+app.include_router(messages_router)
+
 @app.get("/v1/models",
     summary="List Available Models",
     description="""

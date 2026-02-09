@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.10.1
+
+### Fixed
+
+- **`wired_limit` model mismatch in VLMTextOnlyStrategy**: `wired_limit()` was receiving the full VLM model (vision encoder + language model) but only the language model wrapper was running, causing incorrect Metal memory limit calculations. Now correctly passes `self._cached_wrapper` to match the model actually used for generation.
+- **Generator detection in performance_monitor**: `time_operation` used `hasattr(result, '__next__')` which matched any iterator. Changed to `isinstance(result, types.GeneratorType)` for precise generator detection.
+- **VLM vision path now forwards logits_processors and repetition_penalty**: `_stream_generate_vision_enhanced()` previously silently dropped `processors` and `repetition_penalty`. These are now forwarded to `vlm_stream_generate` as `logits_processors` and `repetition_penalty` kwargs (both supported by `mlx_vlm.generate.generate_step`).
+
+### Removed
+
+- Dead `_cached_generator` field from `VLMTextOnlyStrategy` (only used by `VLMVisionStrategy`)
+- Duplicate `import threading` inside `MLXProvider.__init__` (already imported at module level)
+
+## 1.10.0
+
+### Fixed
+
+- **VLM text-only sampling parity**: `VLMTextOnlyStrategy` now uses `lm_stream_generate` with full sampler/processor pipeline (top_k, min_p, presence_penalty, logit_bias, XTC). Previously bypassed all advanced sampling by calling `vlm_stream_generate` with raw temperature/top_p/repetition_penalty kwargs.
+- **VLM text-only prompt caching**: Added prompt cache support to VLM text-only path (same pattern as `TextOnlyStrategy`), reducing token processing on follow-up requests.
+- **Performance monitor generator timing**: `time_operation` decorator now correctly times generator functions from first to last yield, instead of measuring generator object creation time (microseconds).
+- **`_apply_model_defaults` serialization**: Replaced `request.model_dump()` (serialized entire request including all messages) with direct `getattr()` for the 9 scalar parameter fields.
+
+### Removed
+
+- **`mlx_metal_tuning.py` module**: Deleted entirely. This module was called on every model load and caused active harm: cast all weights to float16 (destroying 4-bit quantized weights), pre-allocated unused KV cache buffers (wasting GPU memory), set wired limits that conflicted with per-generation context managers, and ran `subprocess.run(['sysctl', 'hw.memsize'])` on every load.
+- **Broken `_content_cache`**: Removed image detection cache that used `id(messages)` as key (ephemeral per request, never hit, grew without bound).
+- **Dead methods**: Removed `VLMTextOnlyStrategy._prepare_vlm_inputs`, `VLMVisionStrategy._prepare_vlm_inputs`, `VLMGeneratorWithSampling._apply_advanced_sampling`, `_get_vocab_size`, `_get_eos_token_id`, `supports_speculative_decoding`, and `vlm_stream_generate_with_sampling` convenience wrapper.
+- **Unused imports**: Cleaned up `traceback`, `ABC`, `abstractmethod`, `vlm_generate`, `vlm_stream_generate`, `load_image`, `make_cache`, `BatchVisionStrategy` from mlx_provider.py. Removed `nn` from vlm_generation.py.
+
+### Added
+
+- **`mx.clear_cache()` after generation**: Added to `create_chat_completion` finally block to release MLX internal memory cache between requests, preventing memory accumulation.
+- **`LanguageModelLogitsWrapper` caching in `VLMGeneratorWithSampling`**: Wrapper now created once in `__init__` instead of per-request.
+
+## 1.9.0
+
+### Added
+
+- **`/v1/messages` endpoint**: Anthropic Messages-inspired API alongside existing `/v1/chat/completions`. Typed content blocks (text, image, thinking, logprobs), system prompt as top-level parameter, and structured SSE streaming with distinct event types (message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop). Uses `StreamingEventTranslator` state machine for event sequencing.
+- **Testing infrastructure**: Root `tests/conftest.py` with shared fixtures (mock_mlx, mock_mlx_provider, mock_vlm_provider, sample requests). Reusable MLX mocking utilities in `tests/helpers/mlx_mock.py` for testing provider code on any platform without MLX installed.
+- **MLX provider unit tests**: 26 tests covering initialization, strategy compilation, image detection, model defaults (including thinking mode defaults), metrics, cache clearing, unload safety, and error paths.
+- **Glass Box backend tests**: 16 tests validating `_reconstruct_thinking()` round-trip behavior and assistant prefill convention. Covers thinking tag formatting, non-assistant message handling, None/empty thinking, and dict mutation semantics.
+- **Config unit tests**: Rewrote `test_config.py` from 6-line script to 25 proper pytest tests covering ChatMessage, ChatRequest, ModelConfig, and AppConfig.
+- **Messages API unit tests**: 21 tests for request/response converters and StreamingEventTranslator event sequencing.
+
+### Removed
+
+- Deleted `config_migration.py` (dead code -- YAML-to-TOML migration completed, file imported nowhere).
+
+### Fixed
+
+- Fixed `mlx_provider.py` header comment (was referencing old `mlx_provider_optimized.py` filename).
+
 ## 1.8.0
 
 ### Added
