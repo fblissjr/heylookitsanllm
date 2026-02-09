@@ -6,7 +6,8 @@ import type {
   EnhancedUsage,
   GenerationTiming,
   GenerationConfig,
-  ChatCompletionRequest
+  ChatCompletionRequest,
+  TokenLogprob,
 } from '../types/api'
 
 // Enhanced completion data from final SSE chunk
@@ -20,6 +21,7 @@ export interface StreamCompletionData {
 export interface StreamCallbacks {
   onToken: (token: string, rawEvent?: string) => void
   onThinking?: (thinking: string, rawEvent?: string) => void
+  onLogprobs?: (logprobs: TokenLogprob[]) => void
   onComplete: (data?: StreamCompletionData) => void
   onError: (error: Error) => void
   onRawEvent?: (event: string) => void  // For debugging raw SSE data
@@ -30,7 +32,7 @@ export async function streamChat(
   callbacks: StreamCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const { onToken, onThinking, onComplete, onError } = callbacks
+  const { onToken, onThinking, onLogprobs, onComplete, onError } = callbacks
 
   // Track whether onComplete was already called with data to prevent double calls
   let completedWithData = false
@@ -74,7 +76,7 @@ export async function streamChat(
       if (done) {
         // Process any remaining buffer
         if (buffer.trim()) {
-          processLines(buffer.split('\n'), onToken, onThinking, wrappedOnComplete, onRawEvent)
+          processLines(buffer.split('\n'), onToken, onThinking, onLogprobs, wrappedOnComplete, onRawEvent)
         }
         break
       }
@@ -83,7 +85,7 @@ export async function streamChat(
       const lines = buffer.split('\n')
       buffer = lines.pop() || '' // Keep incomplete line in buffer
 
-      processLines(lines, onToken, onThinking, wrappedOnComplete, onRawEvent)
+      processLines(lines, onToken, onThinking, onLogprobs, wrappedOnComplete, onRawEvent)
     }
 
     // Only call onComplete if we didn't already complete with usage data
@@ -110,6 +112,7 @@ function processLines(
   lines: string[],
   onToken: (token: string, rawEvent?: string) => void,
   onThinking: ((thinking: string, rawEvent?: string) => void) | undefined,
+  onLogprobs: ((logprobs: TokenLogprob[]) => void) | undefined,
   onComplete: (data?: StreamCompletionData) => void,
   onRawEvent?: (event: string) => void
 ): void {
@@ -138,6 +141,12 @@ function processLines(
 
       if (delta?.thinking && onThinking) {
         onThinking(delta.thinking, trimmed)
+      }
+
+      // Extract logprobs from streaming chunk
+      const logprobsContent = chunk.choices?.[0]?.logprobs?.content
+      if (logprobsContent && logprobsContent.length > 0 && onLogprobs) {
+        onLogprobs(logprobsContent)
       }
 
       // Check for usage in final chunk - extract all enhanced fields

@@ -10,7 +10,11 @@ const BatchView = lazy(() =>
   import('./applets/batch').then((m) => ({ default: m.BatchView }))
 )
 
-function BatchFallback() {
+const TokenExplorerView = lazy(() =>
+  import('./applets/token-explorer').then((m) => ({ default: m.TokenExplorerView }))
+)
+
+function LazyFallback() {
   return (
     <div className="h-full flex items-center justify-center">
       <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -86,8 +90,13 @@ function App() {
             </Layout>
           } />
           <Route path="/batch" element={
-            <Suspense fallback={<BatchFallback />}>
+            <Suspense fallback={<LazyFallback />}>
               <BatchView />
+            </Suspense>
+          } />
+          <Route path="/explore" element={
+            <Suspense fallback={<LazyFallback />}>
+              <TokenExplorerView />
             </Suspense>
           } />
           <Route path="*" element={<Navigate to="/chat" replace />} />
