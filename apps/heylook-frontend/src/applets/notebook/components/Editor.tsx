@@ -109,18 +109,20 @@ export function Editor() {
 
       {/* Editor area */}
       <div className="flex-1 overflow-hidden">
-        <textarea
-          ref={textareaRef}
-          value={activeDoc.content}
-          onChange={handleContentChange}
-          onSelect={handleCursorChange}
-          onClick={handleCursorChange}
-          onKeyUp={handleCursorChange}
-          placeholder="Start typing... The model will continue from your cursor position."
-          disabled={isGenerating}
-          className="w-full h-full resize-none p-6 bg-transparent text-gray-100 font-mono text-sm leading-relaxed placeholder:text-gray-600 focus:outline-none disabled:opacity-70"
-          spellCheck={false}
-        />
+        <div className="max-w-4xl mx-auto h-full">
+          <textarea
+            ref={textareaRef}
+            value={activeDoc.content}
+            onChange={handleContentChange}
+            onSelect={handleCursorChange}
+            onClick={handleCursorChange}
+            onKeyUp={handleCursorChange}
+            placeholder="Start typing... The model will continue from your cursor position."
+            disabled={isGenerating}
+            className="w-full h-full resize-none p-6 bg-transparent text-gray-100 font-mono text-sm leading-relaxed placeholder:text-gray-600 focus:outline-none disabled:opacity-70"
+            spellCheck={false}
+          />
+        </div>
       </div>
 
       {/* Status bar + controls */}

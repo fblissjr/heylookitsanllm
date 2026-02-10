@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.11.0
+
+### Added
+
+- **Mobile bottom tab navigation**: New `MobileBottomNav` component provides access to all 6 applets on mobile (Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook). Previously only Chat was reachable.
+- **Shared `AppletLayout` component**: Reusable responsive wrapper for applets with left panels. Desktop shows inline panel; mobile hides it behind a toggle button with overlay drawer.
+- **Model loading from any applet**: `ModelSelector` and right panels (Advanced, Settings) lifted from Chat-only `Layout` to `AppShell`, making model management available on every route.
+- **iOS scroll fix**: `100dvh` height with `100vh` fallback, `-webkit-overflow-scrolling: touch` on chat scroll container.
+- **Desktop content width constraints**: `max-w-3xl` on chat messages, `max-w-4xl` on batch/notebook/token-explorer, preventing unreadable line lengths on wide screens.
+
+### Changed
+
+- **AppShell absorbs shared chrome**: Header, SystemStatusBar, ModelSelector panel, AdvancedPanel, SettingsPanel, and mobile detection all moved from route-specific `Layout` to `AppShell`. `Layout` reduced to Chat sidebar wrapper only.
+- **Header is route-aware**: Sidebar hamburger toggle only renders on `/chat`; other routes show a spacer.
+- **ModelSelector no longer uses `onModelLoaded` callback**: Removed prop. ChatView now watches `loadedModel` store state directly to auto-create conversations.
+- **AppNav exports `navItems`**: Shared between desktop sidebar and mobile bottom nav.
+- **Applet LeftPanels stripped of outer wrappers**: `AppletLayout` now provides width, border, and responsive behavior.
+
+### Frontend Tests
+
+- 707 tests passing across 31 test files (was 686/28)
+- New test files: `AppShell.test.tsx` (20), `MobileBottomNav.test.tsx` (6), `AppletLayout.test.tsx` (13)
+- Rewrote `Layout.test.tsx` (sidebar-only), `Header.test.tsx` (route-aware), `ModelSelector.test.tsx` (removed callback tests)
+
 ## 1.10.1
 
 ### Fixed

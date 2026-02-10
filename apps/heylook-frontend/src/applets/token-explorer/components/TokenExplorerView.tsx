@@ -4,6 +4,7 @@ import { TokenStream } from './TokenStream'
 import { TokenDetail } from './TokenDetail'
 import { RunHistory } from './RunHistory'
 import { useExplorerStore } from '../stores/explorerStore'
+import { AppletLayout } from '../../../components/layout/AppletLayout'
 
 export function TokenExplorerView() {
   const activeRunId = useExplorerStore((s) => s.activeRunId)
@@ -59,24 +60,25 @@ export function TokenExplorerView() {
     }
   }, [stopRun])
 
-  return (
-    <div className="h-full flex">
-      {/* Left panel: form + run history */}
-      <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Token Explorer
-          </h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-            Visualize token probabilities as they stream
-          </p>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          <ExplorerForm />
-          <RunHistory />
-        </div>
+  const leftPanel = (
+    <>
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
+          Token Explorer
+        </h1>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          Visualize token probabilities as they stream
+        </p>
       </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <ExplorerForm />
+        <RunHistory />
+      </div>
+    </>
+  )
 
+  return (
+    <AppletLayout leftPanel={leftPanel} leftPanelWidth="w-80">
       {/* Main panel: token stream + detail */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {activeRun ? (
@@ -114,13 +116,15 @@ export function TokenExplorerView() {
 
             {/* Token stream */}
             <div className="flex-1 overflow-y-auto p-6">
-              <TokenStream
-                tokens={activeRun.tokens}
-                selectedIndex={selectedTokenIndex}
-                isStreaming={activeRun.status === 'streaming'}
-                thinkingTokenCount={activeRun.thinkingTokenCount}
-                onTokenClick={handleTokenClick}
-              />
+              <div className="max-w-4xl">
+                <TokenStream
+                  tokens={activeRun.tokens}
+                  selectedIndex={selectedTokenIndex}
+                  isStreaming={activeRun.status === 'streaming'}
+                  thinkingTokenCount={activeRun.thinkingTokenCount}
+                  onTokenClick={handleTokenClick}
+                />
+              </div>
             </div>
 
             {/* Token detail panel */}
@@ -135,6 +139,6 @@ export function TokenExplorerView() {
           </div>
         )}
       </div>
-    </div>
+    </AppletLayout>
   )
 }

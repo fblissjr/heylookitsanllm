@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { Header } from './Header'
 import { ThemeProvider } from '../../contexts/ThemeContext'
 
-// Wrapper component with ThemeProvider
-function renderHeader() {
+// Wrapper component with ThemeProvider and Router
+function renderHeader(initialRoute = '/chat') {
   return render(
-    <ThemeProvider>
-      <Header />
-    </ThemeProvider>
+    <MemoryRouter initialEntries={[initialRoute]}>
+      <ThemeProvider>
+        <Header />
+      </ThemeProvider>
+    </MemoryRouter>
   )
 }
 
@@ -60,8 +63,8 @@ describe('Header', () => {
       expect(header).toBeInTheDocument()
     })
 
-    it('renders the sidebar toggle button', () => {
-      renderHeader()
+    it('renders the sidebar toggle button on chat route', () => {
+      renderHeader('/chat')
 
       const sidebarButton = screen.getByLabelText('Toggle sidebar')
       expect(sidebarButton).toBeInTheDocument()
@@ -86,6 +89,29 @@ describe('Header', () => {
 
       const samplerButton = screen.getByLabelText('Sampler settings')
       expect(samplerButton).toBeInTheDocument()
+    })
+  })
+
+  describe('route-aware hamburger', () => {
+    it('shows sidebar toggle on /chat route', () => {
+      renderHeader('/chat')
+
+      expect(screen.getByLabelText('Toggle sidebar')).toBeInTheDocument()
+    })
+
+    it('hides sidebar toggle on non-chat routes', () => {
+      renderHeader('/batch')
+
+      expect(screen.queryByLabelText('Toggle sidebar')).not.toBeInTheDocument()
+    })
+
+    it('shows spacer instead of hamburger on non-chat routes', () => {
+      renderHeader('/explore')
+
+      // Should have a spacer div instead
+      expect(screen.queryByLabelText('Toggle sidebar')).not.toBeInTheDocument()
+      const spacer = document.querySelector('.w-10')
+      expect(spacer).toBeInTheDocument()
     })
   })
 
@@ -171,7 +197,7 @@ describe('Header', () => {
   describe('sidebar toggle', () => {
     it('calls toggleSidebar when sidebar button is clicked', async () => {
       const user = userEvent.setup()
-      renderHeader()
+      renderHeader('/chat')
 
       const sidebarButton = screen.getByLabelText('Toggle sidebar')
       await user.click(sidebarButton)
