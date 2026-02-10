@@ -7,6 +7,9 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      spacing: {
+        'mobile-nav': '4rem',
+      },
       colors: {
         primary: {
           DEFAULT: '#3B82F6',

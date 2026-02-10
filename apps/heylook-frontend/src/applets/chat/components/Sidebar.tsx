@@ -373,7 +373,6 @@ function ConversationItem({
               : 'opacity-0 w-0 group-hover:opacity-100 group-hover:w-5'
         )}
         onClick={(e) => onCheckboxClick(e, conversation.id)}
-        onTouchStart={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.key === 'Enter' && onCheckboxClick(e as unknown as React.MouseEvent, conversation.id)}
         role="checkbox"
         aria-checked={isSelected}
@@ -409,7 +408,6 @@ function ConversationItem({
       {!isSelectionMode && (
         <button
           onClick={(e) => onDelete(e, conversation.id, conversation.title)}
-          onTouchStart={(e) => e.stopPropagation()}
           className={clsx(
             'p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-all',
             isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'

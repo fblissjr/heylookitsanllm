@@ -65,7 +65,7 @@ export function AppletLayout({
             onClick={() => setPanelOpen(false)}
             data-testid="applet-panel-backdrop"
           />
-          <div className="fixed left-0 top-0 bottom-16 z-40 w-80 bg-white dark:bg-surface-dark flex flex-col overflow-hidden">
+          <div className="fixed left-0 top-0 bottom-mobile-nav z-40 w-80 bg-white dark:bg-surface-dark flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Controls</span>
               <button

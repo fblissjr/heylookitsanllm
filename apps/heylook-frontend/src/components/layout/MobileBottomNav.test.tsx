@@ -45,7 +45,7 @@ describe('MobileBottomNav', () => {
   it('has proper mobile bottom bar styling', () => {
     renderWithProviders(<MobileBottomNav />, { routerProps: { initialEntries: ['/chat'] } })
 
-    const nav = document.querySelector('nav.bg-gray-900.border-t.h-16')
+    const nav = document.querySelector('nav.bg-gray-900.border-t.h-mobile-nav')
     expect(nav).toBeInTheDocument()
   })
 

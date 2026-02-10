@@ -43,7 +43,7 @@ interface UIState {
   setBottomSheetOpen: (isOpen: boolean) => void
 }
 
-export const useUIStore = create<UIState>((set) => ({
+export const useUIStore = create<UIState>((set, get) => ({
   activePanel: null,
   isSidebarOpen: true,
   isSettingsExpanded: {
@@ -85,7 +85,10 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   openModal: (modal) => {
-    set({ activeModal: modal })
+    set((prev) => ({
+      activeModal: modal,
+      isSidebarOpen: prev.isMobile && modal ? false : prev.isSidebarOpen,
+    }))
   },
 
   closeModal: () => {
@@ -93,11 +96,12 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setConfirmDelete: (state) => {
-    set((prev) => ({
-      confirmDelete: state,
-      activeModal: state.type ? 'deleteMessage' : null,
-      isSidebarOpen: prev.isMobile && state.type ? false : prev.isSidebarOpen,
-    }))
+    set({ confirmDelete: state })
+    if (state.type) {
+      get().openModal('deleteMessage')
+    } else {
+      set({ activeModal: null })
+    }
   },
 
   setIsMobile: (isMobile) => {

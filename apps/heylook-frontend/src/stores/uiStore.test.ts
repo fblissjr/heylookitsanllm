@@ -240,6 +240,39 @@ describe('uiStore', () => {
         openModal('savePreset')
         expect(useUIStore.getState().activeModal).toBe('savePreset')
       })
+
+      it('closes sidebar on mobile when opening a modal', () => {
+        useUIStore.setState({ isMobile: true, isSidebarOpen: true })
+        const { openModal } = useUIStore.getState()
+
+        openModal('deleteMessage')
+
+        const state = useUIStore.getState()
+        expect(state.activeModal).toBe('deleteMessage')
+        expect(state.isSidebarOpen).toBe(false)
+      })
+
+      it('does not affect sidebar on desktop when opening a modal', () => {
+        useUIStore.setState({ isMobile: false, isSidebarOpen: true })
+        const { openModal } = useUIStore.getState()
+
+        openModal('deleteMessage')
+
+        const state = useUIStore.getState()
+        expect(state.activeModal).toBe('deleteMessage')
+        expect(state.isSidebarOpen).toBe(true)
+      })
+
+      it('does not close sidebar on mobile when modal is null', () => {
+        useUIStore.setState({ isMobile: true, isSidebarOpen: true })
+        const { openModal } = useUIStore.getState()
+
+        openModal(null)
+
+        const state = useUIStore.getState()
+        expect(state.activeModal).toBeNull()
+        expect(state.isSidebarOpen).toBe(true)
+      })
     })
 
     describe('closeModal', () => {
@@ -326,6 +359,21 @@ describe('uiStore', () => {
         const state = useUIStore.getState()
         expect(state.confirmDelete).toEqual({ type: null, id: null })
         expect(state.activeModal).toBeNull()
+      })
+
+      it('closes sidebar on mobile when opening delete modal', () => {
+        useUIStore.setState({ isMobile: true, isSidebarOpen: true })
+        const { setConfirmDelete } = useUIStore.getState()
+
+        setConfirmDelete({
+          type: 'conversation',
+          id: 'conv-123',
+          title: 'Test',
+        })
+
+        const state = useUIStore.getState()
+        expect(state.activeModal).toBe('deleteMessage')
+        expect(state.isSidebarOpen).toBe(false)
       })
 
       it('handles all optional fields', () => {

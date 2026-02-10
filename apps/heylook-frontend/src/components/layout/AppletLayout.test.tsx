@@ -120,12 +120,12 @@ describe('AppletLayout', () => {
       expect(screen.queryByTestId('left-panel')).not.toBeInTheDocument()
     })
 
-    it('overlay avoids bottom nav with bottom-16', () => {
+    it('overlay avoids bottom nav with bottom-mobile-nav', () => {
       renderLayout(true)
 
       fireEvent.click(screen.getByLabelText('Open controls panel'))
 
-      const overlay = document.querySelector('.fixed.left-0.top-0.bottom-16.z-40')
+      const overlay = document.querySelector('.fixed.left-0.top-0.bottom-mobile-nav.z-40')
       expect(overlay).toBeInTheDocument()
     })
   })

@@ -22,7 +22,7 @@ export function Layout({ children }: LayoutProps) {
             className="fixed inset-0 bg-black/50 z-30"
             onClick={() => useUIStore.getState().toggleSidebar()}
           />
-          <div className="fixed left-0 top-0 bottom-16 z-40 w-72">
+          <div className="fixed left-0 top-0 bottom-mobile-nav z-40 w-72">
             <Sidebar />
           </div>
         </>
