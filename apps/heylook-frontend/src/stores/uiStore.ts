@@ -93,7 +93,11 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setConfirmDelete: (state) => {
-    set({ confirmDelete: state, activeModal: state.type ? 'deleteMessage' : null })
+    set((prev) => ({
+      confirmDelete: state,
+      activeModal: state.type ? 'deleteMessage' : null,
+      isSidebarOpen: prev.isMobile && state.type ? false : prev.isSidebarOpen,
+    }))
   },
 
   setIsMobile: (isMobile) => {
