@@ -26,6 +26,10 @@ const NotebookView = lazy(() =>
   import('./applets/notebook').then((m) => ({ default: m.NotebookView }))
 )
 
+const ModelsView = lazy(() =>
+  import('./applets/models').then((m) => ({ default: m.ModelsView }))
+)
+
 function LazyFallback() {
   return (
     <div className="h-full flex items-center justify-center">
@@ -124,6 +128,11 @@ function App() {
           <Route path="/notebook" element={
             <Suspense fallback={<LazyFallback />}>
               <NotebookView />
+            </Suspense>
+          } />
+          <Route path="/models" element={
+            <Suspense fallback={<LazyFallback />}>
+              <ModelsView />
             </Suspense>
           } />
           <Route path="*" element={<Navigate to="/chat" replace />} />

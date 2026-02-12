@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.0
+
+### Added
+
+- **Model Management System**: Full-stack model management with backend API and frontend applet
+  - **ModelService** (`model_service.py`): Service layer for model discovery, validation, and config management with thread-safe atomic TOML writes, path validation, CRUD operations, scan/import, and profile application
+  - **Admin API** (`admin_api.py`): 14 endpoints under `/v1/admin/models/` for CRUD, scan, import, validate, profiles, bulk-profile, load/unload, and status
+  - **Router enhancements**: `unload_model()`, `get_model_status()`, `reload_single_model()` on ModelRouter
+  - **Pydantic models**: `ScannedModelResponse`, `ModelScanRequest`, `ModelImportRequest`, `ModelUpdateRequest`, `AdminModelResponse`, `ModelStatusResponse`, `ProfileInfo`, etc.
+- **Models applet** (`/models` route): 7th frontend applet for model management
+  - Side-by-side list + detail layout (AppletLayout pattern)
+  - Searchable, filterable model list with status pills (Loaded/Available/Disabled)
+  - Full config editing with field-level reload indicators
+  - Import workflow: scan filesystem/HF cache, select models, apply profile, import
+  - Preset selector for quick profile application
+  - Provider-specific config forms (MLX 17 fields, GGUF 13 fields, STT 6 fields)
+  - Load/unload controls per model
+  - Metadata editing (description, tags)
+  - Config-only removal with confirmation
+
+### Changed
+
+- **AppNav**: Added Models entry with CubeIcon (7 nav items total)
+- **MobileBottomNav**: Inherits Models entry via shared `navItems`
+- **App.tsx**: Added lazy-loaded `/models` route
+
 ## 1.11.1
 
 ### Changed

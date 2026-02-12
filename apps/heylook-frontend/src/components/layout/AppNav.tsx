@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { ChatBubbleIcon, LayersIcon, SparklesIcon, ScaleIcon, ChartBarIcon, DocumentTextIcon } from '../icons'
+import { ChatBubbleIcon, LayersIcon, SparklesIcon, ScaleIcon, ChartBarIcon, DocumentTextIcon, CubeIcon } from '../icons'
 import clsx from 'clsx'
 
 export interface NavItem {
@@ -15,6 +15,7 @@ export const navItems: NavItem[] = [
   { to: '/compare', label: 'Compare', icon: ScaleIcon },
   { to: '/perf', label: 'Perf', icon: ChartBarIcon },
   { to: '/notebook', label: 'Note', icon: DocumentTextIcon },
+  { to: '/models', label: 'Models', icon: CubeIcon },
 ]
 
 export function AppNav() {
