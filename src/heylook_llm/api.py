@@ -53,6 +53,10 @@ app = FastAPI(
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
         },
         {
+            "name": "Admin",
+            "description": "Model management endpoints for CRUD, scanning, importing, and monitoring models"
+        },
+        {
             "name": "Monitoring",
             "description": "Performance monitoring and server status endpoints"
         }
@@ -75,6 +79,11 @@ app.include_router(stt_router)
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
+
+# Import and include Admin API routers (order matters: fixed paths before catch-all)
+from heylook_llm.admin_api import scan_import_router, admin_router
+app.include_router(scan_import_router)
+app.include_router(admin_router)
 
 @app.get("/v1/models",
     summary="List Available Models",

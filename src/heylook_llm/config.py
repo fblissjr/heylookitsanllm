@@ -372,3 +372,102 @@ class StreamChunk(BaseModel):
     stop_reason: Optional[str] = Field(
         None, description="Why generation stopped (final chunk only)"
     )
+
+
+# =============================================================================
+# Admin API Models (Model Management)
+# =============================================================================
+
+class ScannedModelResponse(BaseModel):
+    """A model discovered during filesystem scan."""
+    id: str = Field(..., description="Auto-generated model identifier")
+    path: str = Field(..., description="Filesystem path to model")
+    provider: Literal["mlx", "gguf"] = Field(..., description="Detected provider type")
+    size_gb: float = Field(..., description="Estimated model size in GB")
+    vision: bool = Field(False, description="Whether model supports vision")
+    quantization: Optional[str] = Field(None, description="Quantization level (4bit, 8bit, etc)")
+    already_configured: bool = Field(False, description="True if ID already exists in models.toml")
+    tags: List[str] = Field(default_factory=list)
+    description: str = ""
+
+
+class ModelScanRequest(BaseModel):
+    """Request to scan for importable models."""
+    paths: List[str] = Field(default_factory=list, description="Custom paths to scan")
+    scan_hf_cache: bool = Field(True, description="Also scan HuggingFace cache directories")
+
+
+class ModelImportRequest(BaseModel):
+    """Import one or more scanned models."""
+    models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
+    profile: Optional[str] = Field("balanced", description="Profile to apply to all imported models")
+
+
+class ModelUpdateRequest(BaseModel):
+    """Partial update to model config."""
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+    capabilities: Optional[List[str]] = None
+    config: Optional[Dict] = Field(None, description="Provider-specific config updates")
+
+
+class ModelValidateRequest(BaseModel):
+    """Validate a model config without saving."""
+    id: str
+    provider: str
+    config: Dict
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class AdminValidationResult(BaseModel):
+    """Result of config validation."""
+    valid: bool
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class BulkProfileRequest(BaseModel):
+    """Apply a profile to multiple models."""
+    model_ids: List[str] = Field(..., description="Model IDs to apply profile to")
+    profile: str = Field(..., description="Profile name to apply")
+
+
+class ModelStatusResponse(BaseModel):
+    """Runtime status of a model."""
+    loaded: bool = Field(..., description="Whether model is currently in LRU cache")
+    memory_mb: Optional[float] = Field(None, description="Memory usage in MB (if loaded)")
+    context_used: Optional[int] = Field(None, description="Tokens currently in context")
+    context_capacity: Optional[int] = Field(None, description="Maximum context window")
+    requests_active: Optional[int] = Field(None, description="Active requests for this model")
+
+
+class AdminModelResponse(BaseModel):
+    """Full model config for admin API responses."""
+    id: str
+    provider: str
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    enabled: bool = True
+    capabilities: List[str] = Field(default_factory=list)
+    config: Dict = Field(default_factory=dict)
+    loaded: bool = False
+
+
+class AdminModelListResponse(BaseModel):
+    """Response for listing all model configs."""
+    models: List[AdminModelResponse] = Field(default_factory=list)
+    total: int = 0
+
+
+class ProfileInfo(BaseModel):
+    """Profile metadata."""
+    name: str
+    description: str
+
+
+class ProfileListResponse(BaseModel):
+    """Response for listing available profiles."""
+    profiles: List[ProfileInfo] = Field(default_factory=list)
