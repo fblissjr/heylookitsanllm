@@ -107,23 +107,20 @@ def test_stt_models_endpoint(base_url="http://localhost:8080"):
 
 
 def test_direct_provider():
-    """Test the CoreML STT provider directly (without server)."""
-    logger.info("Testing CoreML STT provider directly...")
+    """Test the MLX STT provider directly (without server)."""
+    logger.info("Testing MLX STT provider directly...")
 
     try:
-        from heylook_llm.providers.coreml_stt_provider import CoreMLSTTProvider
+        from heylook_llm.providers.mlx_stt_provider import MLXSTTProvider
 
         config = {
-            "model_path": "~/Storage/parakeet_coreml",  # Use the correct path
-            "compute_units": "ALL",
-            "sample_rate": 16000,
-            "max_audio_seconds": 15
+            "model_path": "mlx-community/parakeet-tdt-0.6b-v3",
         }
 
         # Create provider
-        provider = CoreMLSTTProvider("parakeet-tdt-v3", config, verbose=True)
+        provider = MLXSTTProvider("parakeet-tdt-v3", config, verbose=True)
 
-        # Load model - ACTUALLY call load_model()
+        # Load model
         logger.info("Loading model...")
         try:
             provider.load_model()
@@ -145,7 +142,7 @@ def test_direct_provider():
 
     except ImportError as e:
         logger.error(f"Could not import provider: {e}")
-        logger.info("Make sure to install: uv pip install coremltools librosa torch soundfile")
+        logger.info("Make sure to install: uv sync --extra stt")
         return False
     except Exception as e:
         logger.error(f"Direct provider test failed: {e}")

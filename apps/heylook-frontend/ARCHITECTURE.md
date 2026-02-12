@@ -288,6 +288,25 @@ Production Build:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Applet Platform (v1.9.0+)
+
+The frontend uses a lazy-loaded applet architecture with 6 applets:
+
+| Applet | Route | Store | Tests |
+|--------|-------|-------|-------|
+| Chat | `/` | chatStore (applet-owned) | ~200 |
+| Batch | `/batch` | batchStore (applet-owned) | 18 |
+| Token Explorer | `/explore` | explorerStore (applet-owned) | 21 |
+| Model Comparison | `/compare` | comparisonStore (applet-owned) | 33 |
+| Performance | `/perf` | performanceStore (applet-owned) | ~50 |
+| Notebook | `/notebook` | notebookStore (applet-owned) | ~50 |
+
+Shared stores (model, settings, UI) remain in `src/stores/`.
+Shared components live in `src/components/` (primitives/, composed/, icons/, layout/).
+Each applet is lazy-loaded via `React.lazy` for code splitting.
+
+**Total: 711 tests across 31 test files.**
+
 ## Future Considerations
 
 See [FEATURES.md](./FEATURES.md) for planned features and known gaps.

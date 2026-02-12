@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-OpenAI-compatible API server for local LLM inference with MLX, llama.cpp, and CoreML.
+OpenAI-compatible API server for local LLM inference with MLX and llama.cpp.
 
 A lightweight API server for running Apple MLX models, GGUF models, and a bunch of quality of life additions, using a modified OpenAI endpoint (can't really say it's fully compatible anymore given the additions), with on-the-fly model swapping and optional analytics.
 
@@ -12,7 +12,7 @@ A lightweight API server for running Apple MLX models, GGUF models, and a bunch 
       - Huge thanks to both the [MLX team](https://github.com/ml-explore) for [mlx-lm](https://github.com/ml-explore/mlx-lm) and [Blaizzy](https://github.com/Blaizzy) for [mlx-vlm](https://github.com/Blaizzy/mlx-vlm). Nothing here would work without them.
   - **llama.cpp**: Cross-platform support for GGUF models (CUDA, Vulkan, CPU)
       - Grateful for the continuous work put in by the core maintainers of [llama.cpp](https://github.com/ggerganov/llama.cpp), who've been pushing ahead since the first llama model.
-  - **CoreML**: *Experimental* Speech-to-Text on Apple Silicon (Neural Engine)
+  - **MLX STT**: Speech-to-Text on Apple Silicon via parakeet-mlx
 - **Vision Models**: Process images with vision-language models (VLM), with support to push down / resize from the client
 - **Performance Optimized**:
   - Metal acceleration on macOS
@@ -54,7 +54,7 @@ cd heylookitsanllm
 uv sync                            # Base install
 uv sync --extra mlx                # macOS only
 uv sync --extra llama-cpp          # All platforms
-uv sync --extra stt                # macOS only (CoreML) - very experimental
+uv sync --extra stt                # macOS only (MLX STT via parakeet-mlx)
 uv sync --extra analytics          # DuckDB analytics
 uv sync --extra all                # Install everything
 
