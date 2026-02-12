@@ -3,29 +3,312 @@
 Service layer for model discovery, validation, and configuration management.
 
 Provides CRUD operations on models.toml, filesystem scanning for importable models,
-smart defaults, and profile application. Thread-safe for concurrent API access.
+smart defaults, profile definitions, and profile application. Thread-safe for
+concurrent API access.
+
+This module is the single source of truth for:
+- Model profiles (PROFILES, ModelProfile)
+- Smart defaults (get_smart_defaults)
+- HuggingFace cache paths (get_hf_cache_paths)
+- Config CRUD, scanning, import, validation
 """
 
+import copy
 import logging
+import os
+import platform
 import re
 import shutil
 import threading
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import tomli_w  # type: ignore[import-untyped]
 
 from heylook_llm.config import AppConfig, ModelConfig
-from heylook_llm.model_importer import (
-    PROFILES,
-    ModelImporter,
-    get_hf_cache_paths,
-    get_smart_defaults,
-)
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# HuggingFace cache paths (platform-specific)
+# =============================================================================
+
+def get_hf_cache_paths() -> list[str]:
+    """Get platform-specific HuggingFace cache paths."""
+    if platform.system() == "Windows":
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/AppData/Local/huggingface/hub"),
+        ]
+    elif platform.system() == "Darwin":
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/Library/Caches/huggingface/hub"),
+        ]
+    else:
+        return [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/.huggingface/hub"),
+        ]
+
+
+# =============================================================================
+# Model profiles
+# =============================================================================
+
+@dataclass
+class ModelProfile:
+    """Profile with smart defaults for different model types.
+
+    Automatically filters provider-specific parameters.
+    """
+    name: str
+    description: str
+    defaults: dict[str, Any] = field(default_factory=dict)
+
+    # Provider-specific parameter sets
+    GGUF_ONLY_PARAMS = {
+        'n_ctx', 'n_batch', 'n_threads', 'n_gpu_layers',
+        'use_mmap', 'use_mlock', 'chat_format', 'chat_format_template',
+        'mmproj_path', 'parallel_slots'
+    }
+    MLX_ONLY_PARAMS = {
+        'cache_type', 'kv_bits', 'kv_group_size', 'quantized_kv_start',
+        'max_kv_size', 'draft_model_path', 'num_draft_tokens'
+    }
+
+    def apply(self, config: dict[str, Any], model_info: dict[str, Any]) -> dict[str, Any]:
+        """Apply profile defaults to config, filtering provider-specific params."""
+        result = config.copy()
+        provider = model_info.get('provider', 'mlx')
+
+        is_gguf = provider in ['llama_cpp', 'gguf', 'llama_server']
+        is_mlx = provider == 'mlx'
+
+        for key, value in self.defaults.items():
+            if is_mlx and key in self.GGUF_ONLY_PARAMS:
+                continue
+            if is_gguf and key in self.MLX_ONLY_PARAMS:
+                continue
+
+            if key not in result:
+                if callable(value):
+                    result[key] = value(model_info)
+                else:
+                    result[key] = value
+
+        return result
+
+
+PROFILES: dict[str, ModelProfile] = {
+    "fast": ModelProfile(
+        name="fast",
+        description="Optimized for speed - low latency, short responses",
+        defaults={
+            "temperature": 0.3,
+            "top_k": 10,
+            "min_p": 0.1,
+            "max_tokens": 256,
+            "repetition_penalty": 1.0,
+            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 13 else "standard"
+        }
+    ),
+    "balanced": ModelProfile(
+        name="balanced",
+        description="Balance between speed and quality - default recommended",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 40,
+            "min_p": 0.05,
+            "max_tokens": 512,
+            "repetition_penalty": 1.05,
+            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 30 else "standard"
+        }
+    ),
+    "quality": ModelProfile(
+        name="quality",
+        description="Optimized for quality - broader sampling, longer responses",
+        defaults={
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "top_k": 50,
+            "max_tokens": 1024,
+            "repetition_penalty": 1.1,
+            "cache_type": "standard"
+        }
+    ),
+    "performance": ModelProfile(
+        name="performance",
+        description="Maximum performance and accuracy - no KV cache quantization, large context",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 50,
+            "top_p": 0.95,
+            "max_tokens": 2048,
+            "repetition_penalty": 1.05,
+            "repetition_context_size": 20,
+            "cache_type": "standard",
+            "n_ctx": lambda m: 16384 if m.get('size_gb', 0) > 30 else 8192,
+            "n_batch": 1024,
+            "use_mmap": True,
+            "use_mlock": False
+        }
+    ),
+    "max_quality": ModelProfile(
+        name="max_quality",
+        description="Maximum quality - no quantization, full precision KV cache, unlimited context",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 100,
+            "top_p": 0.98,
+            "max_tokens": 4096,
+            "repetition_penalty": 1.05,
+            "repetition_context_size": 20,
+            "cache_type": "standard",
+            "n_ctx": lambda m: 32768 if m.get('size_gb', 0) > 30 else 16384,
+            "n_batch": 2048,
+            "use_mmap": True,
+            "use_mlock": True
+        }
+    ),
+    "background": ModelProfile(
+        name="background",
+        description="Minimal resource usage for 24/7 operation - aggressive memory optimization",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 20,
+            "min_p": 0.1,
+            "max_tokens": 256,
+            "repetition_penalty": 1.0,
+            "repetition_context_size": 10,
+            "cache_type": "quantized",
+            "kv_bits": 8,
+            "kv_group_size": 32,
+            "quantized_kv_start": 256,
+            "max_kv_size": 1024,
+            "n_ctx": 2048,
+            "n_batch": 256,
+            "use_mmap": True,
+            "use_mlock": False
+        }
+    ),
+    "memory": ModelProfile(
+        name="memory",
+        description="Optimized for low memory usage - moderate resource constraints",
+        defaults={
+            "cache_type": "quantized",
+            "kv_bits": 8,
+            "kv_group_size": 32,
+            "quantized_kv_start": 256,
+            "max_kv_size": 1024,
+            "max_tokens": 256
+        }
+    ),
+    "interactive": ModelProfile(
+        name="interactive",
+        description="Optimized for chat/interactive use - responsive and conversational",
+        defaults={
+            "temperature": 0.7,
+            "top_k": 30,
+            "min_p": 0.05,
+            "max_tokens": 512,
+            "repetition_penalty": 1.05,
+            "repetition_context_size": 20
+        }
+    ),
+    "encoder": ModelProfile(
+        name="encoder",
+        description="Optimized for hidden states extraction (text encoding for image generation)",
+        defaults={
+            "max_tokens": 2048,
+            "cache_type": "standard",
+            "temperature": 0.7,
+            "top_k": 50,
+            "top_p": 0.95,
+            "repetition_penalty": 1.0,
+        }
+    ),
+}
+
+
+# =============================================================================
+# Smart defaults
+# =============================================================================
+
+def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
+    """Generate smart defaults based on model characteristics.
+
+    NOTE: These defaults are optimized for text GENERATION use cases.
+    For text ENCODING (hidden states extraction for Z-Image, etc.):
+    - max_tokens does NOT limit hidden states (request-level max_length does)
+    - Temperature, top_k, etc. are ignored (no generation happens)
+    - Only quantization level affects hidden state precision
+    - Use --profile encoder for encoder-focused defaults
+    """
+    defaults: dict[str, Any] = {}
+
+    size_gb = model_info.get('size_gb', 0)
+    is_vision = model_info.get('is_vision', False)
+    provider = model_info.get('provider', 'mlx')
+
+    # Temperature based on model type
+    if 'instruct' in model_info.get('name', '').lower():
+        defaults['temperature'] = 0.7
+    elif 'chat' in model_info.get('name', '').lower():
+        defaults['temperature'] = 0.8
+    else:
+        defaults['temperature'] = 0.9
+
+    # Cache strategy based on size
+    if provider == 'mlx':
+        if size_gb > 30:
+            defaults['cache_type'] = 'quantized'
+            defaults['kv_bits'] = 8
+            defaults['kv_group_size'] = 32
+            defaults['quantized_kv_start'] = 512
+            defaults['max_kv_size'] = 2048
+        elif size_gb > 13:
+            defaults['cache_type'] = 'quantized'
+            defaults['kv_bits'] = 8
+            defaults['kv_group_size'] = 64
+            defaults['quantized_kv_start'] = 1024
+        else:
+            defaults['cache_type'] = 'standard'
+
+    # Sampling strategy
+    if size_gb > 30:
+        defaults['top_k'] = 20
+        defaults['min_p'] = 0.05
+        defaults['max_tokens'] = 256
+    elif size_gb < 3:
+        defaults['top_k'] = 50
+        defaults['top_p'] = 0.95
+        defaults['max_tokens'] = 1024
+    else:
+        defaults['top_k'] = 40
+        defaults['min_p'] = 0.05
+        defaults['max_tokens'] = 512
+
+    # Vision model specifics
+    if is_vision:
+        defaults['max_tokens'] = min(defaults.get('max_tokens', 512), 512)
+
+    # Repetition penalty
+    defaults['repetition_penalty'] = 1.05
+    defaults['repetition_context_size'] = 20
+
+    # Provider-specific
+    if provider in ['llama_cpp', 'gguf']:
+        defaults['n_gpu_layers'] = -1
+        defaults['n_ctx'] = 8192 if size_gb > 30 else 4096
+        defaults['n_batch'] = 512
+        defaults['use_mmap'] = True
+        defaults['use_mlock'] = False
+
+    return defaults
 
 # Fields that require a model reload vs runtime-changeable
 RELOAD_REQUIRED_FIELDS = frozenset({
@@ -160,6 +443,7 @@ class ModelService:
 
     def scan_directory(self, path: str) -> list[ScannedModel]:
         """Scan a directory for importable models."""
+        from heylook_llm.model_importer import ModelImporter
         importer = ModelImporter()
         raw_models = importer.scan_directory(path)
         configured_ids = {m.id for m in self.list_configs()}
@@ -167,6 +451,7 @@ class ModelService:
 
     def scan_hf_cache(self) -> list[ScannedModel]:
         """Scan HuggingFace cache directories for models."""
+        from heylook_llm.model_importer import ModelImporter
         importer = ModelImporter()
         raw_models = importer.scan_hf_cache()
         configured_ids = {m.id for m in self.list_configs()}
@@ -329,8 +614,15 @@ class ModelService:
             if idx is None:
                 raise ValueError(f"Model '{model_id}' not found")
 
-            model = models[idx]
+            # Work on a deep copy so the original is untouched if validation fails
+            model = copy.deepcopy(models[idx])
             changed_reload_fields = []
+
+            # Validate path BEFORE applying updates
+            if "model_path" in updates.get("config", {}):
+                path_result = self.validate_path(updates["config"]["model_path"])
+                if not path_result.valid:
+                    raise ValueError(f"Invalid model path: {path_result.error}")
 
             # Apply top-level updates
             for key in ("description", "tags", "enabled", "capabilities"):
@@ -347,13 +639,7 @@ class ModelService:
                     if old_value != value and key in RELOAD_REQUIRED_FIELDS:
                         changed_reload_fields.append(key)
 
-            # Validate path if changed
-            if "model_path" in updates.get("config", {}):
-                path_result = self.validate_path(updates["config"]["model_path"])
-                if not path_result.valid:
-                    raise ValueError(f"Invalid model path: {path_result.error}")
-
-            # Validate the updated model
+            # Validate the updated model -- only commit if valid
             try:
                 validated = ModelConfig(**model)
             except Exception as e:
@@ -376,9 +662,10 @@ class ModelService:
             if len(models) == original_len:
                 return False
 
-            # Update default_model if we removed it
+            # Update default_model if we removed it -- prefer enabled models
             if data.get("default_model") == model_id:
-                data["default_model"] = models[0]["id"] if models else "none"
+                enabled_models = [m for m in models if m.get("enabled", True)]
+                data["default_model"] = enabled_models[0]["id"] if enabled_models else ("none" if not models else models[0]["id"])
 
             data["models"] = models
             self._write_toml(data)

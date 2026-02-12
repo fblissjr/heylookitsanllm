@@ -27,6 +27,8 @@ interface ModelsState {
   // Loading states
   loading: boolean
   error: string | null
+  actionLoading: string | null  // model_id currently being acted on
+  profilesLoaded: boolean
 
   // Actions
   fetchConfigs: () => Promise<void>
@@ -67,6 +69,8 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   importing: false,
   loading: false,
   error: null,
+  actionLoading: null,
+  profilesLoaded: false,
 
   fetchConfigs: async () => {
     set({ loading: true, error: null })
@@ -82,9 +86,9 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   fetchProfiles: async () => {
     try {
       const data = await fetchAPI<{ profiles: ProfileInfo[] }>(`${API_BASE}/profiles`)
-      set({ profiles: data.profiles })
+      set({ profiles: data.profiles, profilesLoaded: true })
     } catch {
-      // Non-fatal
+      set({ profilesLoaded: true })
     }
   },
 
@@ -128,6 +132,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   },
 
   toggleEnabled: async (id) => {
+    set({ actionLoading: id })
     try {
       const data = await postAPI<AdminModelConfig>(`${API_BASE}/${encodeURIComponent(id)}/toggle`, {})
       set((s) => ({
@@ -136,6 +141,8 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Toggle failed'
       set({ error: msg })
+    } finally {
+      set({ actionLoading: null })
     }
   },
 
@@ -164,16 +171,20 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   },
 
   applyProfile: async (ids, profile) => {
+    set({ actionLoading: ids[0] ?? null })
     try {
       await postAPI(`${API_BASE}/bulk-profile`, { model_ids: ids, profile })
       await get().fetchConfigs()
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Apply profile failed'
       set({ error: msg })
+    } finally {
+      set({ actionLoading: null })
     }
   },
 
   loadModel: async (id) => {
+    set({ actionLoading: id })
     try {
       await postAPI(`${API_BASE}/${encodeURIComponent(id)}/load`, {})
       set((s) => ({
@@ -182,10 +193,13 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Load failed'
       set({ error: msg })
+    } finally {
+      set({ actionLoading: null })
     }
   },
 
   unloadModel: async (id) => {
+    set({ actionLoading: id })
     try {
       await postAPI(`${API_BASE}/${encodeURIComponent(id)}/unload`, {})
       set((s) => ({
@@ -194,6 +208,8 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unload failed'
       set({ error: msg })
+    } finally {
+      set({ actionLoading: null })
     }
   },
 }))

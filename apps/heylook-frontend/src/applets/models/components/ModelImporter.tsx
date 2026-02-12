@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useModelsStore } from '../stores/modelsStore'
 import type { ScannedModel } from '../types'
 
@@ -11,11 +11,22 @@ export function ModelImporter() {
   const scanForModels = useModelsStore((s) => s.scanForModels)
   const importModels = useModelsStore((s) => s.importModels)
   const profiles = useModelsStore((s) => s.profiles)
+  const error = useModelsStore((s) => s.error)
 
   const [customPath, setCustomPath] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectedProfile, setSelectedProfile] = useState('balanced')
   const [step, setStep] = useState<'scan' | 'select'>('scan')
+
+  // Reset local state when modal opens
+  useEffect(() => {
+    if (importOpen) {
+      setCustomPath('')
+      setSelectedIds(new Set())
+      setSelectedProfile('balanced')
+      setStep('scan')
+    }
+  }, [importOpen])
 
   if (!importOpen) return null
 
@@ -23,8 +34,9 @@ export function ModelImporter() {
     const paths = customPath.trim() ? [customPath.trim()] : []
     await scanForModels({ paths, scan_hf_cache: true })
     setStep('select')
-    // Pre-select models that aren't already configured
-    const unconfigured = scanResults.filter((m) => !m.already_configured)
+    // Read fresh state after async call -- closure-captured scanResults is stale
+    const freshResults = useModelsStore.getState().scanResults
+    const unconfigured = freshResults.filter((m) => !m.already_configured)
     setSelectedIds(new Set(unconfigured.map((m) => m.id)))
   }
 
@@ -83,6 +95,11 @@ export function ModelImporter() {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5">
+          {error && (
+            <div className="px-4 py-2 mb-3 bg-red-500/10 border border-red-500/20 rounded text-xs text-red-400">
+              {error}
+            </div>
+          )}
           {step === 'scan' ? (
             <ScanStep
               customPath={customPath}

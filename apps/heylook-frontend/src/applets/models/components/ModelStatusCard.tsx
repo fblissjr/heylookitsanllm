@@ -8,6 +8,8 @@ interface Props {
 export function ModelStatusCard({ model }: Props) {
   const loadModel = useModelsStore((s) => s.loadModel)
   const unloadModel = useModelsStore((s) => s.unloadModel)
+  const actionLoading = useModelsStore((s) => s.actionLoading)
+  const isLoading = actionLoading === model.id
 
   return (
     <div className="px-4 pb-3 space-y-2">
@@ -49,16 +51,28 @@ export function ModelStatusCard({ model }: Props) {
           {model.loaded ? (
             <button
               onClick={() => unloadModel(model.id)}
-              className="px-3 py-1 text-xs font-medium text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded transition-colors"
+              disabled={isLoading}
+              className="px-3 py-1 text-xs font-medium text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 rounded transition-colors disabled:opacity-50"
             >
-              Unload
+              {isLoading ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                  Unloading...
+                </span>
+              ) : 'Unload'}
             </button>
           ) : (
             <button
               onClick={() => loadModel(model.id)}
-              className="px-3 py-1 text-xs font-medium text-green-400 bg-green-500/10 hover:bg-green-500/20 rounded transition-colors"
+              disabled={isLoading}
+              className="px-3 py-1 text-xs font-medium text-green-400 bg-green-500/10 hover:bg-green-500/20 rounded transition-colors disabled:opacity-50"
             >
-              Load
+              {isLoading ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+                  Loading...
+                </span>
+              ) : 'Load'}
             </button>
           )}
         </div>

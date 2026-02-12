@@ -47,6 +47,16 @@ def _get_loaded_model_ids(request: Request) -> set[str]:
     return set(router.get_loaded_models().keys())
 
 
+def _safe_reload_config(request: Request) -> str | None:
+    """Reload router config, returning a warning string on failure instead of raising."""
+    try:
+        request.app.state.router_instance.reload_config()
+        return None
+    except Exception as e:
+        logger.error(f"Config reload failed after update: {e}")
+        return f"Config saved but runtime reload failed: {e}. Changes will apply on next restart."
+
+
 def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
     """Convert a ModelConfig to an AdminModelResponse."""
     return AdminModelResponse(
@@ -84,10 +94,6 @@ async def list_model_configs(request: Request):
     response_model=AdminModelResponse,
 )
 async def get_model_config(model_id: str, request: Request):
-    # Exclude known sub-paths so they don't match this catch-all
-    if model_id in ("profiles", "scan", "import", "validate", "bulk-profile"):
-        raise HTTPException(status_code=404, detail="Not found")
-
     service = _get_service(request)
     config = service.get_config(model_id)
     if not config:
@@ -110,10 +116,13 @@ async def add_model_config(request: Request, body: dict):
     service = _get_service(request)
     try:
         config = service.add_config(body)
-        # Reload router config so new model is available
-        request.app.state.router_instance.reload_config()
+        warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        return _model_config_to_response(config, loaded_ids)
+        response = _model_config_to_response(config, loaded_ids)
+        result = response.model_dump()
+        if warning:
+            result["warning"] = warning
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -130,14 +139,16 @@ async def update_model_config(model_id: str, request: Request, updates: ModelUpd
     try:
         update_dict = updates.model_dump(exclude_none=True)
         config, reload_fields = service.update_config(model_id, update_dict)
-        # Reload router config
-        request.app.state.router_instance.reload_config()
+        warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
         response = _model_config_to_response(config, loaded_ids)
-        return {
+        result = {
             "model": response.model_dump(),
             "reload_required_fields": reload_fields,
         }
+        if warning:
+            result["warning"] = warning
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -159,8 +170,11 @@ async def remove_model_config(model_id: str, request: Request):
     if not service.remove_config(model_id):
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
-    router.reload_config()
-    return {"status": "removed", "model_id": model_id}
+    warning = _safe_reload_config(request)
+    result: dict = {"status": "removed", "model_id": model_id}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 # --- Toggle ---
@@ -175,7 +189,7 @@ async def toggle_model(model_id: str, request: Request):
     service = _get_service(request)
     try:
         config = service.toggle_enabled(model_id)
-        request.app.state.router_instance.reload_config()
+        _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
         return _model_config_to_response(config, loaded_ids)
     except ValueError as e:
@@ -259,12 +273,15 @@ async def _import_models(request: Request, import_request: ModelImportRequest):
             models_to_import=import_request.models,
             profile_name=import_request.profile,
         )
-        request.app.state.router_instance.reload_config()
+        warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        return {
+        result: dict = {
             "imported": [_model_config_to_response(c, loaded_ids).model_dump() for c in imported],
             "total": len(imported),
         }
+        if warning:
+            result["warning"] = warning
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -297,12 +314,15 @@ async def _bulk_apply_profile(request: Request, body: BulkProfileRequest):
     service = _get_service(request)
     try:
         updated = service.bulk_apply_profile(body.model_ids, body.profile)
-        request.app.state.router_instance.reload_config()
+        warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        return {
+        result: dict = {
             "updated": [_model_config_to_response(c, loaded_ids).model_dump() for c in updated],
             "total": len(updated),
         }
+        if warning:
+            result["warning"] = warning
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

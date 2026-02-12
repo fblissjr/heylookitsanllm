@@ -33,10 +33,13 @@ interface InnerProps {
 }
 
 function ModelDetailInner({ model, updateConfig, removeConfig, toggleEnabled }: InnerProps) {
+  const actionLoading = useModelsStore((s) => s.actionLoading)
+  const isToggling = actionLoading === model.id
   const [description, setDescription] = useState(model.description ?? '')
   const [tags, setTags] = useState(model.tags.join(', '))
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [reloadFields, setReloadFields] = useState<string[]>([])
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -61,6 +64,7 @@ function ModelDetailInner({ model, updateConfig, removeConfig, toggleEnabled }: 
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       const updates: Record<string, unknown> = {}
       if (description !== (model.description ?? '')) updates.description = description
@@ -69,6 +73,8 @@ function ModelDetailInner({ model, updateConfig, removeConfig, toggleEnabled }: 
       const fields = await updateConfig(model.id, updates)
       setReloadFields(fields)
       setDirty(false)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Save failed')
     } finally {
       setSaving(false)
     }
@@ -76,16 +82,24 @@ function ModelDetailInner({ model, updateConfig, removeConfig, toggleEnabled }: 
 
   const handleConfigUpdate = async (configUpdates: Record<string, unknown>) => {
     setSaving(true)
+    setSaveError(null)
     try {
       const fields = await updateConfig(model.id, { config: configUpdates })
       setReloadFields(fields)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Update failed')
     } finally {
       setSaving(false)
     }
   }
 
   const handleRemove = async () => {
-    await removeConfig(model.id)
+    setSaveError(null)
+    try {
+      await removeConfig(model.id)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Remove failed')
+    }
   }
 
   return (
@@ -100,17 +114,29 @@ function ModelDetailInner({ model, updateConfig, removeConfig, toggleEnabled }: 
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => toggleEnabled(model.id)}
-              className={`px-2 py-1 text-xs font-medium rounded ${
+              disabled={isToggling}
+              className={`px-2 py-1 text-xs font-medium rounded disabled:opacity-50 ${
                 model.enabled
                   ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                   : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
               }`}
             >
-              {model.enabled ? 'Enabled' : 'Disabled'}
+              {isToggling ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                </span>
+              ) : model.enabled ? 'Enabled' : 'Disabled'}
             </button>
           </div>
         </div>
       </div>
+
+      {/* Error display */}
+      {saveError && (
+        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-400">
+          {saveError}
+        </div>
+      )}
 
       {/* Reload warning */}
       {reloadFields.length > 0 && (
