@@ -1,30 +1,42 @@
 # Hey Look, It's an LLM
 
-OpenAI-compatible API server for local LLM inference with MLX and llama.cpp.
+Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a React web UI, and on-the-fly model swapping.
 
-A lightweight API server for running Apple MLX models, GGUF models, and a bunch of quality of life additions, using a modified OpenAI endpoint (can't really say it's fully compatible anymore given the additions), with on-the-fly model swapping and optional analytics.
+Built on Apple MLX for text, vision, and speech-to-text, with llama.cpp support for cross-platform GGUF inference.
 
 ## Key Features
 
-- **OpenAI-Compatible API**: Works with existing OpenAI client libraries - Anthropic API compatible functionality coming soon
+- **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic Messages-style `/v1/messages` with typed content blocks (text, image, thinking, logprobs, hidden states)
 - **Multi-Provider**:
-  - **MLX**: Optimized for Apple Silicon (with additional Metal acceleration)
-      - Huge thanks to both the [MLX team](https://github.com/ml-explore) for [mlx-lm](https://github.com/ml-explore/mlx-lm) and [Blaizzy](https://github.com/Blaizzy) for [mlx-vlm](https://github.com/Blaizzy/mlx-vlm). Nothing here would work without them.
-  - **llama.cpp**: Cross-platform support for GGUF models (CUDA, Vulkan, CPU)
-      - Grateful for the continuous work put in by the core maintainers of [llama.cpp](https://github.com/ggerganov/llama.cpp), who've been pushing ahead since the first llama model.
-  - **MLX STT**: Speech-to-Text on Apple Silicon via parakeet-mlx
-- **Vision Models**: Process images with vision-language models (VLM), with support to push down / resize from the client
-- **Performance Optimized**:
-  - Metal acceleration on macOS
-  - Async processing and smart caching
-  - Fast multipart image endpoint
-  - Batch processing for 2-4x throughput
-- **Hot Swapping**: Change models on the fly without restarting, specified in the request body
-- **Analytics**: Optional tracking and performance metrics
+  - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
+  - **llama.cpp**: Cross-platform GGUF via llama-server subprocess (CUDA, Vulkan, CPU)
+  - **MLX STT**: Speech-to-text via [parakeet-mlx](https://github.com/senstella/parakeet-mlx)
+- **Thinking Blocks**: Qwen3-style `<think>` parsing with token-level detection, round-trip editing, and streaming
+- **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
+- **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
+- **Model Management**: Scan, import, configure, load/unload models from the web UI or API
+- **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
+- **Batch Processing**: 2-4x throughput for multi-prompt workloads
+- **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
+- **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
+
+## Web UI
+
+7 applets built with React + Zustand + Vite:
+
+- **Chat** -- Streaming conversation with thinking blocks, message editing, continue/regenerate
+- **Batch** -- Multi-prompt batch jobs with result dashboard
+- **Token Explorer** -- Real-time token probability visualization with top-K alternatives
+- **Model Comparison** -- Side-by-side generation from 2-6 models
+- **Performance** -- System metrics, timing breakdowns, throughput sparklines
+- **Notebook** -- Base-model text continuation with cursor-based generation
+- **Models** -- Scan, import, configure, and load/unload models
+
+See [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) for frontend architecture.
 
 ## Platform Support
 
-- **macOS**: Both backends (MLX, llama.cpp)
+- **macOS**: MLX + llama.cpp backends, STT
 - **Linux**: llama.cpp backend (CUDA, CPU)
 - **Windows**: llama.cpp backend (CUDA, Vulkan, CPU)
 
@@ -32,217 +44,80 @@ A lightweight API server for running Apple MLX models, GGUF models, and a bunch 
 
 ### Installation
 
-**macOS/Linux**:
-```bash
-./setup.sh
-```
-
-**Windows**:
-```powershell
-.\setup.ps1
-```
-
-See [Windows Installation Guide](docs/WINDOWS_INSTALL.md) for detailed Windows setup.
-
-### Manual Installation
-
 ```bash
 git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 
-# Recommended: use uv sync for proper dependency resolution
-uv sync                            # Base install
-uv sync --extra mlx                # macOS only
-uv sync --extra llama-cpp          # All platforms
-uv sync --extra stt                # macOS only (MLX STT via parakeet-mlx)
-uv sync --extra analytics          # DuckDB analytics
-uv sync --extra all                # Install everything
+# Base install (MLX on macOS)
+uv sync
 
-# Alternative: pip-style install (doesn't use lockfile)
-uv pip install -e .
-uv pip install -e .[mlx,llama-cpp]
-```
-
-### GPU Acceleration
-
-**macOS (Metal)**
-Included by default with `mlx`. For `llama-cpp`, run:
-```bash
-CMAKE_ARGS="-DLLAMA_METAL=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
-```
-
-**Linux/Windows (CUDA)**
-```bash
-# Linux
-CMAKE_ARGS="-DGGML_CUDA=on" FORCE_CMAKE=1 uv pip install --force-reinstall --no-cache-dir llama-cpp-python
-
-# Windows (PowerShell)
-$env:CMAKE_ARGS = "-DGGML_CUDA=on"
-$env:FORCE_CMAKE = "1"
-python -m pip install --force-reinstall --no-cache-dir llama-cpp-python
+# Optional extras
+uv sync --extra stt          # Speech-to-text (macOS, parakeet-mlx)
+uv sync --extra analytics    # DuckDB analytics
+uv sync --extra performance  # xxhash, uvloop, turbojpeg, cachetools
+uv sync --extra all          # Everything
 ```
 
 ### Start Server
 
 ```bash
-# Configure models first
+# Configure models
 cp models.toml.example models.toml
 # Edit models.toml with your model paths
 
-# Start server
+# Start
 heylookllm --log-level INFO
 heylookllm --port 8080
 ```
 
 ### Run as Background Service (macOS/Linux)
 
-Run the server as a persistent service that survives SSH disconnects:
-
 ```bash
-# Install service (localhost only by default)
-heylookllm service install
-
-# Install for LAN access (behind VPN)
-heylookllm service install --host 0.0.0.0
-
-# Manage service
-heylookllm service status
-heylookllm service start
-heylookllm service stop
-heylookllm service restart
-heylookllm service uninstall
+heylookllm service install            # localhost only
+heylookllm service install --host 0.0.0.0  # LAN access
+heylookllm service status|start|stop|restart|uninstall
 ```
 
-See [Service and Security Guide](guides/SERVICE_SECURITY.md) for detailed setup and firewall configuration.
+### Adding Models
 
-### Automatic Import
+There are three ways to add models:
 
-Scan directories for models and auto-generate configuration:
+**Web UI** -- Open the Models applet (`/models`) in the browser. Click Import, scan a directory or your HuggingFace cache, select the models you want, pick a profile, and import. Models are added to `models.toml` and available immediately.
 
+**CLI** -- Scan a directory or HF cache and generate config:
 ```bash
 heylookllm import --folder ~/models --output models.toml
 heylookllm import --hf-cache --profile fast
 ```
 
-## API Documentation
+**API** -- Scan then import programmatically (server must be running):
+```bash
+# Scan a directory for models
+curl -X POST http://localhost:8080/v1/admin/models/scan \
+  -H "Content-Type: application/json" \
+  -d '{"paths": ["/path/to/models"], "scan_hf_cache": true}'
 
-Interactive docs available when server is running:
-- **Swagger UI**: http://localhost:8080/docs
-- **ReDoc**: http://localhost:8080/redoc
-- **OpenAPI Schema**: http://localhost:8080/openapi.json
-
-### Key Endpoints
-
-**Core Endpoints** (`/v1`)
-- `GET /v1/models` - List available models
-- `POST /v1/chat/completions` - Chat completion (text and vision)
-- `POST /v1/chat/completions/multipart` - Fast raw image upload (57ms faster per image)
-- `POST /v1/batch/chat/completions` - Batch processing (2-4x throughput)
-- `POST /v1/embeddings` - Generate embeddings
-- `POST /v1/hidden_states` - Extract hidden states from intermediate layers (MLX only)
-
-**Speech-to-Text** (macOS only)
-- `POST /v1/audio/transcriptions` - Transcribe audio
-- `POST /v1/audio/translations` - Translate audio to English
-- `GET /v1/stt/models` - List STT models
-
-**Analytics and Admin**
-- `GET /v1/capabilities` - Discover server capabilities and optimizations
-- `GET /v1/performance` - Real-time performance metrics
-- `GET /v1/data/summary` - Analytics summary (requires analytics enabled)
-- `POST /v1/data/query` - Query analytics data
-- `POST /v1/admin/restart` - Restart server
-- `POST /v1/admin/reload` - Reload model configuration
-
-### Example Usage (Python)
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:8080/v1",
-    api_key="not-needed"
-)
-
-# Chat
-response = client.chat.completions.create(
-    model="qwen2.5-coder-1.5b",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
-)
-
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="")
-
-# Embeddings
-embedding = client.embeddings.create(
-    input="Your text here",
-    model="qwen2.5-coder-1.5b"
-)
-print(embedding.data[0].embedding[:5])  # First 5 dimensions
+# Import selected models from scan results
+curl -X POST http://localhost:8080/v1/admin/models/import \
+  -H "Content-Type: application/json" \
+  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "fast"}'
 ```
 
-### Hidden States (MLX only)
-
-Extract intermediate layer hidden states for use with diffusion models:
-
-```python
-import requests
-
-response = requests.post(
-    "http://localhost:8080/v1/hidden_states",
-    json={
-        "model": "Qwen/Qwen3-4B",
-        "input": "A photo of a cat",
-        "layer_index": -2,  # Second-to-last layer
-        "encoding_format": "base64"  # or "float" for JSON array
-    }
-)
-result = response.json()
-print(f"Shape: {result['data'][0]['shape']}")  # [seq_len, hidden_dim]
+If you edit `models.toml` directly while the server is running, reload the config:
+```bash
+curl -X POST http://localhost:8080/v1/admin/reload
 ```
 
-### Batch Processing
+## API
 
-Process multiple requests efficiently with 2-4x throughput improvement:
-
-```python
-import requests
-
-response = requests.post(
-    "http://localhost:8080/v1/batch/chat/completions",
-    json={
-        "requests": [
-            {
-                "model": "qwen-14b",
-                "messages": [{"role": "user", "content": "Prompt 1"}],
-                "max_tokens": 50
-            },
-            {
-                "model": "qwen-14b",
-                "messages": [{"role": "user", "content": "Prompt 2"}],
-                "max_tokens": 50
-            }
-        ]
-    }
-)
-```
-
-## Analytics (Optional)
-
-Track performance metrics and request history.
-
-1. **Setup**: `python setup_analytics.py`
-2. **Enable**: Set `HEYLOOK_ANALYTICS_ENABLED=true`
-3. **Analyze**: `python analyze_logs.py`
+Interactive docs at `http://localhost:8080/docs` when the server is running.
 
 ## Troubleshooting
 
-**Model not loading**
 ```bash
 heylookllm --log-level DEBUG
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file
+MIT License -- see [LICENSE](LICENSE)

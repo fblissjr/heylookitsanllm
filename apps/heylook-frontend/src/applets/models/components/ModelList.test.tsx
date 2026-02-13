@@ -24,8 +24,10 @@ const defaultState = {
   setSelectedId: vi.fn(),
   searchQuery: '',
   setSearchQuery: vi.fn(),
-  filters: { provider: [], status: [], capability: [] } as ModelFilter,
+  filters: { provider: [], status: [], capability: [], tag: [] } as ModelFilter,
   setFilters: vi.fn(),
+  sortConfig: { field: 'name' as const, direction: 'asc' as const },
+  setSortConfig: vi.fn(),
   setImportOpen: vi.fn(),
 }
 
@@ -39,7 +41,7 @@ describe('ModelList', () => {
     defaultState.configs = []
     defaultState.selectedId = null
     defaultState.searchQuery = ''
-    defaultState.filters = { provider: [], status: [], capability: [] }
+    defaultState.filters = { provider: [], status: [], capability: [], tag: [] }
   })
 
   // --- Rendering ---
@@ -52,7 +54,7 @@ describe('ModelList', () => {
 
     it('shows "no matches" when filters exclude all models', () => {
       defaultState.configs = [mockModel()]
-      defaultState.filters = { provider: ['gguf'], status: [], capability: [] }
+      defaultState.filters = { provider: ['gguf'], status: [], capability: [], tag: [] }
       render(<ModelList />)
       expect(screen.getByText('No models match filters')).toBeTruthy()
     })
@@ -135,7 +137,7 @@ describe('ModelList', () => {
         mockModel({ id: 'mlx-model', provider: 'mlx' }),
         mockModel({ id: 'gguf-model', provider: 'gguf' }),
       ]
-      defaultState.filters = { provider: ['mlx'], status: [], capability: [] }
+      defaultState.filters = { provider: ['mlx'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('mlx-model')).toBeTruthy()
@@ -147,7 +149,7 @@ describe('ModelList', () => {
         mockModel({ id: 'model-active', loaded: true, enabled: true }),
         mockModel({ id: 'model-idle', loaded: false, enabled: true }),
       ]
-      defaultState.filters = { provider: [], status: ['loaded'], capability: [] }
+      defaultState.filters = { provider: [], status: ['loaded'], capability: [], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('model-active')).toBeTruthy()
@@ -159,7 +161,7 @@ describe('ModelList', () => {
         mockModel({ id: 'vision-model', capabilities: ['chat', 'vision'] }),
         mockModel({ id: 'text-model', capabilities: ['chat'] }),
       ]
-      defaultState.filters = { provider: [], status: [], capability: ['vision'] }
+      defaultState.filters = { provider: [], status: [], capability: ['vision'], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('vision-model')).toBeTruthy()
@@ -173,7 +175,7 @@ describe('ModelList', () => {
         mockModel({ id: 'mlx-qwen', provider: 'mlx' }),
       ]
       defaultState.searchQuery = 'llama'
-      defaultState.filters = { provider: ['mlx'], status: [], capability: [] }
+      defaultState.filters = { provider: ['mlx'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('mlx-llama')).toBeTruthy()
@@ -195,7 +197,7 @@ describe('ModelList', () => {
 
     it('import button opens modal', () => {
       render(<ModelList />)
-      fireEvent.click(screen.getByText('Import Models'))
+      fireEvent.click(screen.getByText('Import'))
       expect(defaultState.setImportOpen).toHaveBeenCalledWith(true)
     })
 
@@ -217,7 +219,7 @@ describe('ModelList', () => {
     })
 
     it('shows chips for active filters', () => {
-      defaultState.filters = { provider: ['gguf'], status: ['disabled'], capability: [] }
+      defaultState.filters = { provider: ['gguf'], status: ['disabled'], capability: [], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('gguf')).toBeTruthy()
@@ -225,7 +227,7 @@ describe('ModelList', () => {
     })
 
     it('removing a chip updates filters', () => {
-      defaultState.filters = { provider: ['gguf', 'mlx_stt'], status: [], capability: [] }
+      defaultState.filters = { provider: ['gguf', 'mlx_stt'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
       // Click the 'x' button next to 'gguf'

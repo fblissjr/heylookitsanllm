@@ -1,6 +1,7 @@
+import { useMemo } from 'react'
 import clsx from 'clsx'
 import { useModelsStore } from '../stores/modelsStore'
-import type { AdminModelConfig } from '../types'
+import type { AdminModelConfig, ModelFilter, SortConfig } from '../types'
 
 function statusPill(model: AdminModelConfig) {
   if (!model.enabled) return { label: 'Disabled', color: 'bg-gray-500' }
@@ -19,10 +20,7 @@ function matchesSearch(model: AdminModelConfig, query: string): boolean {
   )
 }
 
-function matchesFilters(
-  model: AdminModelConfig,
-  filters: { provider: string[]; status: string[]; capability: string[] }
-): boolean {
+function matchesFilters(model: AdminModelConfig, filters: ModelFilter): boolean {
   if (filters.provider.length > 0 && !filters.provider.includes(model.provider)) return false
   if (filters.status.length > 0) {
     const status = !model.enabled ? 'disabled' : model.loaded ? 'loaded' : 'available'
@@ -31,7 +29,49 @@ function matchesFilters(
   if (filters.capability.length > 0) {
     if (!filters.capability.some((c) => model.capabilities.includes(c))) return false
   }
+  if (filters.tag.length > 0) {
+    if (!filters.tag.some((t) => model.tags.includes(t))) return false
+  }
   return true
+}
+
+function statusRank(model: AdminModelConfig): number {
+  if (model.loaded) return 0
+  if (model.enabled) return 1
+  return 2
+}
+
+function sortModels(models: AdminModelConfig[], sort: SortConfig): AdminModelConfig[] {
+  const dir = sort.direction === 'asc' ? 1 : -1
+  return [...models].sort((a, b) => {
+    switch (sort.field) {
+      case 'name':
+        return dir * a.id.localeCompare(b.id)
+      case 'provider': {
+        const cmp = a.provider.localeCompare(b.provider)
+        return cmp !== 0 ? dir * cmp : a.id.localeCompare(b.id)
+      }
+      case 'status': {
+        const cmp = statusRank(a) - statusRank(b)
+        return cmp !== 0 ? dir * cmp : a.id.localeCompare(b.id)
+      }
+      default:
+        return 0
+    }
+  })
+}
+
+type SortOption = { label: string; field: SortConfig['field']; direction: SortConfig['direction'] }
+
+const SORT_OPTIONS: SortOption[] = [
+  { label: 'Name (A-Z)', field: 'name', direction: 'asc' },
+  { label: 'Name (Z-A)', field: 'name', direction: 'desc' },
+  { label: 'Provider', field: 'provider', direction: 'asc' },
+  { label: 'Status (Loaded first)', field: 'status', direction: 'asc' },
+]
+
+function sortOptionKey(opt: SortOption): string {
+  return `${opt.field}:${opt.direction}`
 }
 
 export function ModelList() {
@@ -41,11 +81,26 @@ export function ModelList() {
   const searchQuery = useModelsStore((s) => s.searchQuery)
   const setSearchQuery = useModelsStore((s) => s.setSearchQuery)
   const filters = useModelsStore((s) => s.filters)
+  const sortConfig = useModelsStore((s) => s.sortConfig)
+  const setSortConfig = useModelsStore((s) => s.setSortConfig)
   const setImportOpen = useModelsStore((s) => s.setImportOpen)
 
-  const filtered = configs
-    .filter((m) => matchesSearch(m, searchQuery))
-    .filter((m) => matchesFilters(m, filters))
+  const allTags = useMemo(() => {
+    const tags = new Set<string>()
+    for (const m of configs) {
+      for (const t of m.tags) tags.add(t)
+    }
+    return Array.from(tags).sort()
+  }, [configs])
+
+  const filtered = useMemo(() => {
+    const result = configs
+      .filter((m) => matchesSearch(m, searchQuery))
+      .filter((m) => matchesFilters(m, filters))
+    return sortModels(result, sortConfig)
+  }, [configs, searchQuery, filters, sortConfig])
+
+  const currentSortKey = sortOptionKey({ label: '', field: sortConfig.field, direction: sortConfig.direction })
 
   return (
     <div className="flex flex-col h-full">
@@ -58,15 +113,34 @@ export function ModelList() {
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-full px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-1 focus:ring-primary text-gray-900 dark:text-gray-100 placeholder-gray-400"
         />
-        <button
-          onClick={() => setImportOpen(true)}
-          className="w-full px-3 py-1.5 text-sm font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors"
-        >
-          Import Models
-        </button>
+        <div className="flex gap-2">
+          <select
+            value={currentSortKey}
+            onChange={(e) => {
+              const opt = SORT_OPTIONS.find((o) => sortOptionKey(o) === e.target.value)
+              if (opt) setSortConfig({ field: opt.field, direction: opt.direction })
+            }}
+            className="flex-1 px-2 py-1.5 text-xs bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            {SORT_OPTIONS.map((opt) => (
+              <option key={sortOptionKey(opt)} value={sortOptionKey(opt)}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => setImportOpen(true)}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors shrink-0"
+          >
+            Import
+          </button>
+        </div>
       </div>
 
-      {/* Filter chips */}
+      {/* Tag filter chips */}
+      {allTags.length > 0 && <TagChips allTags={allTags} />}
+
+      {/* Active filter chips */}
       <FilterChips />
 
       {/* Model list */}
@@ -114,6 +188,38 @@ export function ModelList() {
       <div className="px-3 py-1.5 text-[11px] text-gray-400 border-t border-gray-200 dark:border-gray-700 shrink-0">
         {filtered.length} of {configs.length} models
       </div>
+    </div>
+  )
+}
+
+function TagChips({ allTags }: { allTags: string[] }) {
+  const filters = useModelsStore((s) => s.filters)
+  const setFilters = useModelsStore((s) => s.setFilters)
+  const activeTags = filters.tag
+
+  function toggleTag(tag: string) {
+    const next = activeTags.includes(tag)
+      ? activeTags.filter((t) => t !== tag)
+      : [...activeTags, tag]
+    setFilters({ tag: next })
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1 px-3 py-1.5 border-b border-gray-200 dark:border-gray-700">
+      {allTags.map((tag) => (
+        <button
+          key={tag}
+          onClick={() => toggleTag(tag)}
+          className={clsx(
+            'px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors',
+            activeTags.includes(tag)
+              ? 'bg-primary text-white'
+              : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-600'
+          )}
+        >
+          {tag}
+        </button>
+      ))}
     </div>
   )
 }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heylookitsanllm"
-version = "1.2.0"
+version = "1.12.2"
 description = "On-Device Multimodal LLM API server for local LLM models, using MLX"
 authors = [{ name = "Fred Bliss" }]
 readme = "README.md"
@@ -40,23 +40,17 @@ dependencies = [
     "tqdm>=4.65.0",
     "psutil>=5.9.0",  # System metrics (RAM, CPU)
     "mlx-vlm>=0.3.11",
+    "orjson>=3.9.15",  # Fast JSON serialization
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-mock>=3"]
 performance = [
-    "orjson>=3.9.15",      # Fast JSON parsing with security fixes
     "xxhash>=3.4.1",       # Fast hashing for caching
     "PyTurboJPEG>=1.7.5",  # Fast JPEG encoding/decoding
     "uvloop>=0.19.0",      # Fast async event loop
-    "cachetools>=5.3.2",   # Advanced caching with thread safety improvements
-    "imagecodecs>=2023.9.18", # Hardware-accelerated codecs
-    "blake3>=0.4.0",       # Fastest cryptographic hash
-    "diskcache>=5.6.3",    # Persistent disk cache
-    "msgpack>=1.0.7",      # Binary serialization
-    "aiofiles>=23.2.1",    # Async file I/O
-    "aiocache>=0.12.2",    # Async caching
+    "cachetools>=5.3.2",   # Advanced caching with thread safety
 ]
 analytics = [
     "duckdb>=1.0.0", # Analytics database

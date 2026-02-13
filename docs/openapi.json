@@ -1,0 +1,4531 @@
+{
+  "components": {
+    "examples": {
+      "simple_text_request": {
+        "summary": "Simple text completion",
+        "value": {
+          "max_tokens": 256,
+          "messages": [
+            {
+              "content": "Write a hello world in Python",
+              "role": "user"
+            }
+          ],
+          "model": "qwen2.5-coder-1.5b-instruct-4bit"
+        }
+      },
+      "streaming_request": {
+        "summary": "Streaming response",
+        "value": {
+          "max_tokens": 1024,
+          "messages": [
+            {
+              "content": "Tell me a story",
+              "role": "user"
+            }
+          ],
+          "model": "qwen2.5-coder-1.5b-instruct-4bit",
+          "stream": true
+        }
+      },
+      "vision_request": {
+        "summary": "Vision model request",
+        "value": {
+          "max_tokens": 512,
+          "messages": [
+            {
+              "content": [
+                {
+                  "text": "What's in this image?",
+                  "type": "text"
+                },
+                {
+                  "image_url": {
+                    "url": "data:image/jpeg;base64,..."
+                  },
+                  "type": "image_url"
+                }
+              ],
+              "role": "user"
+            }
+          ],
+          "model": "llava-1.5-7b-hf-4bit"
+        }
+      }
+    },
+    "schemas": {
+      "AdminModelListResponse": {
+        "description": "Response for listing all model configs.",
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/AdminModelResponse"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "AdminModelListResponse",
+        "type": "object"
+      },
+      "AdminModelResponse": {
+        "description": "Full model config for admin API responses.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "loaded": {
+            "default": false,
+            "title": "Loaded",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "provider"
+        ],
+        "title": "AdminModelResponse",
+        "type": "object"
+      },
+      "BatchChatRequest": {
+        "description": "Request for batch chat completions.",
+        "properties": {
+          "completion_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 32,
+            "description": "Max concurrent generations",
+            "title": "Completion Batch Size"
+          },
+          "prefill_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 8,
+            "description": "Max prefill parallelism",
+            "title": "Prefill Batch Size"
+          },
+          "prefill_step_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 2048,
+            "description": "Chunk size for prefill",
+            "title": "Prefill Step Size"
+          },
+          "processing_mode": {
+            "default": "batch",
+            "title": "Processing Mode",
+            "type": "string"
+          },
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/ChatRequest"
+            },
+            "title": "Requests",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "title": "BatchChatRequest",
+        "type": "object"
+      },
+      "BatchChatResponse": {
+        "description": "Response for batch chat completions.",
+        "properties": {
+          "batch_stats": {
+            "$ref": "#/components/schemas/BatchStats"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ChatCompletionResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "batch_stats"
+        ],
+        "title": "BatchChatResponse",
+        "type": "object"
+      },
+      "BatchStats": {
+        "description": "Statistics for batch processing.",
+        "properties": {
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "number"
+          },
+          "generation_time": {
+            "title": "Generation Time",
+            "type": "number"
+          },
+          "memory_peak_mb": {
+            "title": "Memory Peak Mb",
+            "type": "number"
+          },
+          "prefill_time": {
+            "title": "Prefill Time",
+            "type": "number"
+          },
+          "throughput_req_per_sec": {
+            "title": "Throughput Req Per Sec",
+            "type": "number"
+          },
+          "throughput_tok_per_sec": {
+            "title": "Throughput Tok Per Sec",
+            "type": "number"
+          },
+          "total_requests": {
+            "title": "Total Requests",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_requests",
+          "elapsed_seconds",
+          "throughput_req_per_sec",
+          "throughput_tok_per_sec",
+          "prefill_time",
+          "generation_time",
+          "memory_peak_mb"
+        ],
+        "title": "BatchStats",
+        "type": "object"
+      },
+      "Body_create_chat_multipart_v1_chat_completions_multipart_post": {
+        "properties": {
+          "image_quality": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 85,
+            "description": "JPEG quality for resized images (1-100)",
+            "title": "Image Quality"
+          },
+          "images": {
+            "items": {
+              "format": "binary",
+              "type": "string"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "include_timing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Timing"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "messages": {
+            "title": "Messages",
+            "type": "string"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "preserve_alpha": {
+            "default": false,
+            "description": "Preserve alpha channel (outputs PNG instead of JPEG)",
+            "title": "Preserve Alpha",
+            "type": "boolean"
+          },
+          "processing_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing Mode"
+          },
+          "repetition_context_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Context Size"
+          },
+          "repetition_penalty": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Penalty"
+          },
+          "resize_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to specific height (overrides resize_max)",
+            "title": "Resize Height"
+          },
+          "resize_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to max dimension (e.g., 512, 768, 1024)",
+            "title": "Resize Max"
+          },
+          "resize_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to specific width (overrides resize_max)",
+            "title": "Resize Width"
+          },
+          "return_individual": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Individual"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "stream": {
+            "default": false,
+            "title": "Stream",
+            "type": "boolean"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P"
+          }
+        },
+        "required": [
+          "model",
+          "messages"
+        ],
+        "title": "Body_create_chat_multipart_v1_chat_completions_multipart_post",
+        "type": "object"
+      },
+      "Body_transcribe_audio_v1_audio_transcriptions_post": {
+        "properties": {
+          "file": {
+            "description": "Audio file to transcribe",
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Language code",
+            "title": "Language"
+          },
+          "model": {
+            "description": "Model ID to use",
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional prompt",
+            "title": "Prompt"
+          },
+          "response_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "json",
+            "description": "Response format",
+            "title": "Response Format"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0.0,
+            "description": "Sampling temperature",
+            "title": "Temperature"
+          }
+        },
+        "required": [
+          "file",
+          "model"
+        ],
+        "title": "Body_transcribe_audio_v1_audio_transcriptions_post",
+        "type": "object"
+      },
+      "Body_translate_audio_v1_audio_translations_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "response_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "json",
+            "title": "Response Format"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0.0,
+            "title": "Temperature"
+          }
+        },
+        "required": [
+          "file",
+          "model"
+        ],
+        "title": "Body_translate_audio_v1_audio_translations_post",
+        "type": "object"
+      },
+      "BulkProfileRequest": {
+        "description": "Apply a profile to multiple models.",
+        "properties": {
+          "model_ids": {
+            "description": "Model IDs to apply profile to",
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Ids",
+            "type": "array"
+          },
+          "profile": {
+            "description": "Profile name to apply",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_ids",
+          "profile"
+        ],
+        "title": "BulkProfileRequest",
+        "type": "object"
+      },
+      "CacheClearRequest": {
+        "description": "Request to clear caches.",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model ID to clear caches for (all if omitted)",
+            "title": "Model"
+          }
+        },
+        "title": "CacheClearRequest",
+        "type": "object"
+      },
+      "CacheClearResponse": {
+        "description": "Response from cache clear operation.",
+        "properties": {
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count"
+        ],
+        "title": "CacheClearResponse",
+        "type": "object"
+      },
+      "CacheInfo": {
+        "description": "Information about a saved prompt cache.",
+        "properties": {
+          "cache_id": {
+            "description": "Unique cache identifier",
+            "title": "Cache Id",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "ISO timestamp of creation",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional description",
+            "title": "Description"
+          },
+          "model": {
+            "description": "Model ID this cache belongs to",
+            "title": "Model",
+            "type": "string"
+          },
+          "name": {
+            "description": "User-friendly cache name",
+            "title": "Name",
+            "type": "string"
+          },
+          "size_mb": {
+            "description": "Cache file size in MB",
+            "title": "Size Mb",
+            "type": "number"
+          },
+          "tokens_cached": {
+            "description": "Number of tokens in cache",
+            "title": "Tokens Cached",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cache_id",
+          "model",
+          "name",
+          "tokens_cached",
+          "size_mb",
+          "created_at"
+        ],
+        "title": "CacheInfo",
+        "type": "object"
+      },
+      "CacheListResponse": {
+        "description": "Response for listing saved caches.",
+        "properties": {
+          "caches": {
+            "items": {
+              "$ref": "#/components/schemas/CacheInfo"
+            },
+            "title": "Caches",
+            "type": "array"
+          }
+        },
+        "title": "CacheListResponse",
+        "type": "object"
+      },
+      "ChatCompletionResponse": {
+        "properties": {
+          "choices": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetrics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "additionalProperties": true,
+            "title": "Usage",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices",
+          "usage"
+        ],
+        "title": "ChatCompletionResponse",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentPart"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageContentPart"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          },
+          "tool_calls": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Calls"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "properties": {
+          "enable_thinking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Enable thinking mode for Qwen3 models",
+            "title": "Enable Thinking"
+          },
+          "image_quality": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "JPEG quality for resized images",
+            "title": "Image Quality"
+          },
+          "include_performance": {
+            "default": false,
+            "title": "Include Performance",
+            "type": "boolean"
+          },
+          "include_timing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Include timing information",
+            "title": "Include Timing"
+          },
+          "logprobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Return log probabilities for output tokens",
+            "title": "Logprobs"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "presence_penalty": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)",
+            "title": "Presence Penalty"
+          },
+          "preserve_alpha": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Preserve alpha channel (outputs PNG)",
+            "title": "Preserve Alpha"
+          },
+          "processing_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "conversation|sequential|sequential_with_context",
+            "title": "Processing Mode"
+          },
+          "repetition_context_size": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Context Size"
+          },
+          "repetition_penalty": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.1,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Penalty"
+          },
+          "resize_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to specific height",
+            "title": "Resize Height"
+          },
+          "resize_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to max dimension (e.g., 512, 768, 1024)",
+            "title": "Resize Max"
+          },
+          "resize_width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Resize images to specific width",
+            "title": "Resize Width"
+          },
+          "return_individual": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Return individual responses vs combined",
+            "title": "Return Individual"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "stream": {
+            "default": false,
+            "title": "Stream",
+            "type": "boolean"
+          },
+          "stream_options": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Options for streaming: {include_usage: true} to get usage stats",
+            "title": "Stream Options"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          },
+          "top_logprobs": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of top tokens with log probabilities (0-20)",
+            "title": "Top Logprobs"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "EnhancedUsage": {
+        "description": "Extended usage statistics including thinking tokens.",
+        "properties": {
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "content_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Tokens in actual content",
+            "title": "Content Tokens"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "thinking_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Tokens used in thinking blocks",
+            "title": "Thinking Tokens"
+          },
+          "total_tokens": {
+            "default": 0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "title": "EnhancedUsage",
+        "type": "object"
+      },
+      "GenerationConfig": {
+        "description": "Sampler configuration used for generation.",
+        "properties": {
+          "enable_thinking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Enable Thinking"
+          },
+          "max_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Tokens"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min P"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Temperature"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Top K"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Top P"
+          }
+        },
+        "title": "GenerationConfig",
+        "type": "object"
+      },
+      "GenerationTiming": {
+        "description": "Timing breakdown for generation phases.",
+        "properties": {
+          "content_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Time spent generating content",
+            "title": "Content Duration Ms"
+          },
+          "thinking_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Time spent in thinking phase",
+            "title": "Thinking Duration Ms"
+          },
+          "total_duration_ms": {
+            "description": "Total generation time",
+            "title": "Total Duration Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_duration_ms"
+        ],
+        "title": "GenerationTiming",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HiddenStatesBlock": {
+        "description": "Hidden states extraction results.\n\nReturned by /v1/hidden_states endpoints. Contains the raw activation\nvectors from a specified model layer, with token boundary information\nfor mapping back to input tokens.",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Base64-encoded hidden states (when data_encoding='base64')",
+            "title": "Data"
+          },
+          "data_encoding": {
+            "default": "external",
+            "description": "How the hidden state data is provided",
+            "enum": [
+              "base64",
+              "external"
+            ],
+            "title": "Data Encoding",
+            "type": "string"
+          },
+          "layer": {
+            "description": "Layer index the states were extracted from",
+            "title": "Layer",
+            "type": "integer"
+          },
+          "shape": {
+            "description": "Tensor shape [seq_len, hidden_dim]",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Shape",
+            "type": "array"
+          },
+          "token_boundaries": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Token-to-position mapping for the hidden states",
+            "title": "Token Boundaries"
+          },
+          "type": {
+            "const": "hidden_states",
+            "default": "hidden_states",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "layer",
+          "shape"
+        ],
+        "title": "HiddenStatesBlock",
+        "type": "object"
+      },
+      "ImageBlock": {
+        "description": "Image content block for vision models.\n\nSupports base64-encoded data or a URL reference. Mirrors the existing\nmultipart image handling but in a structured block format.",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Base64-encoded image data (when source_type='base64')",
+            "title": "Data"
+          },
+          "media_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "MIME type, e.g. 'image/jpeg'. Required for base64.",
+            "title": "Media Type"
+          },
+          "source_type": {
+            "description": "How the image data is provided",
+            "enum": [
+              "base64",
+              "url"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "type": {
+            "const": "image",
+            "default": "image",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Image URL (when source_type='url')",
+            "title": "Url"
+          }
+        },
+        "required": [
+          "source_type"
+        ],
+        "title": "ImageBlock",
+        "type": "object"
+      },
+      "ImageContentPart": {
+        "properties": {
+          "image_url": {
+            "$ref": "#/components/schemas/ImageUrl"
+          },
+          "type": {
+            "const": "image_url",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "image_url"
+        ],
+        "title": "ImageContentPart",
+        "type": "object"
+      },
+      "ImageUrl": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "ImageUrl",
+        "type": "object"
+      },
+      "LogprobsBlock": {
+        "description": "Token-level log probability data for a generation.\n\nReturned when `logprobs: true` is set in the request. Contains per-token\nprobability information for the generated sequence.",
+        "properties": {
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/TokenLogprobEntry"
+            },
+            "title": "Tokens",
+            "type": "array"
+          },
+          "type": {
+            "const": "logprobs",
+            "default": "logprobs",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "LogprobsBlock",
+        "type": "object"
+      },
+      "Message": {
+        "description": "A single message in a conversation.\n\nContent can be a plain string (convenience) or a list of typed content\nblocks (for multimodal messages with images).",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TextBlock"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageBlock"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "Message",
+        "type": "object"
+      },
+      "MessageCreateRequest": {
+        "description": "Request body for POST /v1/messages.\n\nDifferences from the current ChatRequest (OpenAI format):\n- system is a top-level parameter, not in the messages array\n- content uses typed blocks instead of OpenAI's content_parts\n- thinking is a top-level bool instead of enable_thinking\n- no processing_mode/return_individual (those move to BatchRequest)\n- no image resize params (handled by /v1/messages/multipart)",
+        "properties": {
+          "include_performance": {
+            "default": false,
+            "description": "Include performance metrics (tps, memory) in response",
+            "title": "Include Performance",
+            "type": "boolean"
+          },
+          "logprobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Return log probabilities for output tokens",
+            "title": "Logprobs"
+          },
+          "max_tokens": {
+            "default": 1024,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Tokens",
+            "type": "integer"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Arbitrary metadata passed through to the response",
+            "title": "Metadata"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model ID. If omitted, uses loaded model or default_model from config.",
+            "title": "Model"
+          },
+          "presence_penalty": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Presence Penalty"
+          },
+          "repetition_context_size": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Context Size"
+          },
+          "repetition_penalty": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.1,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repetition Penalty"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "stream": {
+            "default": false,
+            "title": "Stream",
+            "type": "boolean"
+          },
+          "stream_options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StreamOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "system": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "System prompt. Kept out of messages array for clarity.",
+            "title": "System"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Enable thinking mode for models that support it (e.g. Qwen3)",
+            "title": "Thinking"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          },
+          "top_logprobs": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Number of top token alternatives with log probabilities (0-20)",
+            "title": "Top Logprobs"
+          },
+          "top_p": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top P"
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "title": "MessageCreateRequest",
+        "type": "object"
+      },
+      "MessageResponse": {
+        "description": "Response from POST /v1/messages (non-streaming).\n\nContent is a list of typed blocks. A simple text response is\n[TextBlock(text=\"...\")]. A thinking model might return\n[ThinkingBlock(text=\"...\"), TextBlock(text=\"...\")].\nLogprobs, if requested, appear as a LogprobsBlock at the end.",
+        "properties": {
+          "content": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TextBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ThinkingBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/LogprobsBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/HiddenStatesBlock"
+                }
+              ]
+            },
+            "title": "Content",
+            "type": "array"
+          },
+          "id": {
+            "description": "Unique message ID, prefixed 'msg_'",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Echoed from request metadata",
+            "title": "Metadata"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "const": "assistant",
+            "default": "assistant",
+            "title": "Role",
+            "type": "string"
+          },
+          "stop_reason": {
+            "default": "stop",
+            "enum": [
+              "stop",
+              "length",
+              "error"
+            ],
+            "title": "Stop Reason",
+            "type": "string"
+          },
+          "type": {
+            "const": "message",
+            "default": "message",
+            "title": "Type",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "id",
+          "model",
+          "content",
+          "usage"
+        ],
+        "title": "MessageResponse",
+        "type": "object"
+      },
+      "ModelImportRequest": {
+        "description": "Import one or more scanned models.",
+        "properties": {
+          "models": {
+            "description": "Models to import (id, path, provider, overrides)",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "balanced",
+            "description": "Profile to apply to all imported models",
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "ModelImportRequest",
+        "type": "object"
+      },
+      "ModelMetrics": {
+        "description": "Per-model metrics (context usage, memory).",
+        "properties": {
+          "context_capacity": {
+            "description": "Maximum context window size",
+            "title": "Context Capacity",
+            "type": "integer"
+          },
+          "context_percent": {
+            "description": "Context usage percentage",
+            "title": "Context Percent",
+            "type": "number"
+          },
+          "context_used": {
+            "description": "Tokens currently in context",
+            "title": "Context Used",
+            "type": "integer"
+          },
+          "memory_mb": {
+            "description": "Model memory usage in MB",
+            "title": "Memory Mb",
+            "type": "number"
+          },
+          "requests_active": {
+            "default": 0,
+            "description": "Active requests for this model",
+            "title": "Requests Active",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "context_used",
+          "context_capacity",
+          "context_percent",
+          "memory_mb"
+        ],
+        "title": "ModelMetrics",
+        "type": "object"
+      },
+      "ModelScanRequest": {
+        "description": "Request to scan for importable models.",
+        "properties": {
+          "paths": {
+            "description": "Custom paths to scan",
+            "items": {
+              "type": "string"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "scan_hf_cache": {
+            "default": true,
+            "description": "Also scan HuggingFace cache directories",
+            "title": "Scan Hf Cache",
+            "type": "boolean"
+          }
+        },
+        "title": "ModelScanRequest",
+        "type": "object"
+      },
+      "ModelStatusResponse": {
+        "description": "Runtime status of a model.",
+        "properties": {
+          "context_capacity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Maximum context window",
+            "title": "Context Capacity"
+          },
+          "context_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tokens currently in context",
+            "title": "Context Used"
+          },
+          "loaded": {
+            "description": "Whether model is currently in LRU cache",
+            "title": "Loaded",
+            "type": "boolean"
+          },
+          "memory_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Memory usage in MB (if loaded)",
+            "title": "Memory Mb"
+          },
+          "requests_active": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Active requests for this model",
+            "title": "Requests Active"
+          }
+        },
+        "required": [
+          "loaded"
+        ],
+        "title": "ModelStatusResponse",
+        "type": "object"
+      },
+      "ModelUpdateRequest": {
+        "description": "Partial update to model config.",
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Provider-specific config updates",
+            "title": "Config"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "title": "ModelUpdateRequest",
+        "type": "object"
+      },
+      "ModelValidateRequest": {
+        "description": "Validate a model config without saving.",
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "title": "Config",
+            "type": "object"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "config"
+        ],
+        "title": "ModelValidateRequest",
+        "type": "object"
+      },
+      "PerformanceInfo": {
+        "description": "Generation performance metrics.\n\nReturned when include_performance=true in the request.",
+        "properties": {
+          "content_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time spent generating content",
+            "title": "Content Duration Ms"
+          },
+          "generation_tps": {
+            "description": "Generation tokens per second",
+            "title": "Generation Tps",
+            "type": "number"
+          },
+          "peak_memory_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Peak memory usage in GB",
+            "title": "Peak Memory Gb"
+          },
+          "prompt_tps": {
+            "description": "Prompt processing tokens per second",
+            "title": "Prompt Tps",
+            "type": "number"
+          },
+          "thinking_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time spent in thinking phase",
+            "title": "Thinking Duration Ms"
+          },
+          "total_duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Total generation time",
+            "title": "Total Duration Ms"
+          }
+        },
+        "required": [
+          "prompt_tps",
+          "generation_tps"
+        ],
+        "title": "PerformanceInfo",
+        "type": "object"
+      },
+      "PerformanceMetrics": {
+        "properties": {
+          "generation_tps": {
+            "title": "Generation Tps",
+            "type": "number"
+          },
+          "peak_memory_gb": {
+            "title": "Peak Memory Gb",
+            "type": "number"
+          },
+          "prompt_tps": {
+            "title": "Prompt Tps",
+            "type": "number"
+          }
+        },
+        "required": [
+          "prompt_tps",
+          "generation_tps",
+          "peak_memory_gb"
+        ],
+        "title": "PerformanceMetrics",
+        "type": "object"
+      },
+      "StreamChoice": {
+        "description": "Single choice in a streaming chunk.",
+        "properties": {
+          "delta": {
+            "$ref": "#/components/schemas/StreamDelta"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "'stop', 'length', or null while streaming",
+            "title": "Finish Reason"
+          },
+          "index": {
+            "default": 0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "logprobs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StreamLogprobs"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "title": "StreamChoice",
+        "type": "object"
+      },
+      "StreamChunk": {
+        "description": "SSE payload for a single streaming chunk (data: {...}).\n\nSent as Server-Sent Events on the /v1/chat/completions endpoint\nwhen stream=true. The final chunk includes usage, timing, and\ngeneration_config when stream_options.include_usage=true.",
+        "properties": {
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/StreamChoice"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "created": {
+            "description": "Unix timestamp",
+            "title": "Created",
+            "type": "integer"
+          },
+          "generation_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Sampler settings used (final chunk only)"
+          },
+          "id": {
+            "description": "Response identifier (chatcmpl-...)",
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model ID used for generation",
+            "title": "Model",
+            "type": "string"
+          },
+          "object": {
+            "const": "chat.completion.chunk",
+            "default": "chat.completion.chunk",
+            "title": "Object",
+            "type": "string"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Why generation stopped (final chunk only)",
+            "title": "Stop Reason"
+          },
+          "timing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationTiming"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Generation timing breakdown (final chunk only)"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnhancedUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Token usage (final chunk only, requires stream_options.include_usage)"
+          }
+        },
+        "required": [
+          "id",
+          "created",
+          "model",
+          "choices"
+        ],
+        "title": "StreamChunk",
+        "type": "object"
+      },
+      "StreamDelta": {
+        "description": "Delta content in a streaming chunk.",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Text content delta",
+            "title": "Content"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Role (only in first chunk)",
+            "title": "Role"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Thinking content delta",
+            "title": "Thinking"
+          }
+        },
+        "title": "StreamDelta",
+        "type": "object"
+      },
+      "StreamLogprobs": {
+        "description": "Logprobs attached to a streaming chunk.",
+        "properties": {
+          "content": {
+            "description": "Token-level logprob data for this chunk",
+            "items": {
+              "$ref": "#/components/schemas/TokenLogprobInfo"
+            },
+            "title": "Content",
+            "type": "array"
+          }
+        },
+        "title": "StreamLogprobs",
+        "type": "object"
+      },
+      "StreamOptions": {
+        "description": "Options that control streaming behavior.",
+        "properties": {
+          "include_usage": {
+            "default": false,
+            "description": "Include token usage statistics in the final stream event",
+            "title": "Include Usage",
+            "type": "boolean"
+          }
+        },
+        "title": "StreamOptions",
+        "type": "object"
+      },
+      "SystemMetricsResponse": {
+        "description": "Response for GET /v1/system/metrics endpoint.",
+        "properties": {
+          "models": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ModelMetrics"
+            },
+            "description": "Metrics per loaded model",
+            "title": "Models",
+            "type": "object"
+          },
+          "system": {
+            "$ref": "#/components/schemas/SystemResourceMetrics"
+          },
+          "timestamp": {
+            "description": "ISO timestamp of metrics collection",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timestamp",
+          "system"
+        ],
+        "title": "SystemMetricsResponse",
+        "type": "object"
+      },
+      "SystemResourceMetrics": {
+        "description": "System-wide resource metrics (RAM, CPU).",
+        "properties": {
+          "cpu_percent": {
+            "description": "CPU usage percentage",
+            "title": "Cpu Percent",
+            "type": "number"
+          },
+          "ram_available_gb": {
+            "description": "RAM available in GB",
+            "title": "Ram Available Gb",
+            "type": "number"
+          },
+          "ram_total_gb": {
+            "description": "Total system RAM in GB",
+            "title": "Ram Total Gb",
+            "type": "number"
+          },
+          "ram_used_gb": {
+            "description": "RAM currently used in GB",
+            "title": "Ram Used Gb",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ram_used_gb",
+          "ram_available_gb",
+          "ram_total_gb",
+          "cpu_percent"
+        ],
+        "title": "SystemResourceMetrics",
+        "type": "object"
+      },
+      "TextBlock": {
+        "description": "Plain text content block. Used in both input and output.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "default": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TextBlock",
+        "type": "object"
+      },
+      "TextContentPart": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentPart",
+        "type": "object"
+      },
+      "ThinkingBlock": {
+        "description": "Model reasoning/thinking content (Qwen3 <think> blocks).\n\nSeparated from the main text so frontends can display thinking in a\ncollapsible section or hide it entirely.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "thinking",
+            "default": "thinking",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ThinkingBlock",
+        "type": "object"
+      },
+      "TokenLogprobEntry": {
+        "description": "Full logprob entry for one generated token position.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "logprob": {
+            "title": "Logprob",
+            "type": "number"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id"
+          },
+          "top_logprobs": {
+            "items": {
+              "$ref": "#/components/schemas/TopLogprob"
+            },
+            "title": "Top Logprobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "token",
+          "logprob"
+        ],
+        "title": "TokenLogprobEntry",
+        "type": "object"
+      },
+      "TokenLogprobInfo": {
+        "description": "Token with its log probability and alternative candidates.",
+        "properties": {
+          "bytes": {
+            "description": "UTF-8 byte values",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Bytes",
+            "type": "array"
+          },
+          "logprob": {
+            "description": "Log probability of this token",
+            "title": "Logprob",
+            "type": "number"
+          },
+          "token": {
+            "description": "Token text",
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "description": "Token vocabulary ID",
+            "title": "Token Id",
+            "type": "integer"
+          },
+          "top_logprobs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TopLogprobEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Alternative tokens with their logprobs",
+            "title": "Top Logprobs"
+          }
+        },
+        "required": [
+          "token",
+          "token_id",
+          "logprob"
+        ],
+        "title": "TokenLogprobInfo",
+        "type": "object"
+      },
+      "TopLogprob": {
+        "description": "A candidate token with its log probability.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "logprob": {
+            "title": "Logprob",
+            "type": "number"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id"
+          }
+        },
+        "required": [
+          "token",
+          "logprob"
+        ],
+        "title": "TopLogprob",
+        "type": "object"
+      },
+      "TopLogprobEntry": {
+        "description": "A candidate token with its log probability (used in top_logprobs arrays).",
+        "properties": {
+          "bytes": {
+            "description": "UTF-8 byte values",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Bytes",
+            "type": "array"
+          },
+          "logprob": {
+            "description": "Log probability of this token",
+            "title": "Logprob",
+            "type": "number"
+          },
+          "token": {
+            "description": "Token text",
+            "title": "Token",
+            "type": "string"
+          },
+          "token_id": {
+            "description": "Token vocabulary ID",
+            "title": "Token Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "token",
+          "token_id",
+          "logprob"
+        ],
+        "title": "TopLogprobEntry",
+        "type": "object"
+      },
+      "TranscriptionResponse": {
+        "description": "Response model for transcription.",
+        "properties": {
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Audio duration in seconds",
+            "title": "Duration"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Detected language",
+            "title": "Language"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model used for transcription",
+            "title": "Model"
+          },
+          "text": {
+            "description": "Transcribed text",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TranscriptionResponse",
+        "type": "object"
+      },
+      "Usage": {
+        "description": "Token usage statistics.\n\nExtends OpenAI's usage with thinking-specific token counts.",
+        "properties": {
+          "content_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tokens in non-thinking content",
+            "title": "Content Tokens"
+          },
+          "input_tokens": {
+            "default": 0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "output_tokens": {
+            "default": 0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "thinking_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Tokens used in thinking blocks (Qwen3)",
+            "title": "Thinking Tokens"
+          }
+        },
+        "title": "Usage",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "externalDocs": {
+    "description": "GitHub Repository",
+    "url": "https://github.com/fblissjr/heylookitsanllm"
+  },
+  "info": {
+    "description": "\n# HeylookLLM API Documentation 🚀\n\nA high-performance API server for local LLM inference with OpenAI-compatible endpoints.\n\n**Platform Support**: macOS, Linux, and Windows\n- macOS: All backends (MLX, llama.cpp, MLX STT)\n- Linux: llama.cpp backend\n- Windows: llama.cpp backend (CUDA, Vulkan, or CPU)\n\n## 🎯 Key Features\n\n### API Compatibility\n- **OpenAI API**: Full compatibility with OpenAI clients and libraries\n\n### Model Support\n- **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)\n- **GGUF Models**: Support via llama.cpp for broad compatibility (all platforms)\n- **Vision Models**: Process images with vision-language models\n- **Speech-to-Text**: Parakeet MLX models (macOS only)\n\n### Performance Features\n- **Smart Model Caching**: LRU cache keeps 2 models in memory\n- **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image\n- **Async Processing**: Non-blocking request handling\n- **Performance Monitoring**: Real-time metrics at `/v1/performance`\n- **GPU Acceleration**: Metal (macOS), CUDA (NVIDIA), Vulkan (AMD/Intel)\n\n## Quick Start\n\n### 1. Check Available Models\n```bash\ncurl http://localhost:8080/v1/models\n```\n\n### 2. Generate Text\n```bash\ncurl http://localhost:8080/v1/chat/completions \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"model\": \"qwen2.5-coder-1.5b-instruct-4bit\",\n    \"messages\": [{\"role\": \"user\", \"content\": \"Hello!\"}]\n  }'\n```\n\n### 3. Process Images (Fast)\n```python\nimport requests\n\nfiles = [('images', ('image.jpg', image_bytes, 'image/jpeg'))]\ndata = {\n    'model': 'llava-1.5-7b-hf-4bit',\n    'messages': json.dumps([{\n        \"role\": \"user\",\n        \"content\": [\n            {\"type\": \"text\", \"text\": \"What's in this image?\"},\n            {\"type\": \"image_url\", \"image_url\": {\"url\": \"__RAW_IMAGE__\"}}\n        ]\n    }])\n}\nresponse = requests.post('http://localhost:8080/v1/chat/completions/multipart',\n                        files=files, data=data)\n```\n\n## 📚 Client Libraries\n\n### OpenAI Python SDK\n```python\nfrom openai import OpenAI\nclient = OpenAI(base_url=\"http://localhost:8080/v1\", api_key=\"not-needed\")\nresponse = client.chat.completions.create(\n    model=\"qwen2.5-coder-1.5b-instruct-4bit\",\n    messages=[{\"role\": \"user\", \"content\": \"Hello!\"}]\n)\n```\n\n## Configuration\n\nModels are configured in `models.toml`. The server automatically loads models on demand and manages memory with LRU eviction.\n\n## 📈 Performance Optimization\n\nInstall with performance extras for maximum speed:\n```bash\npip install heylookllm[performance]\n```\n\nThis enables:\n- uvloop for faster async\n- orjson for 10x faster JSON\n- TurboJPEG for fast image processing\n- xxHash for ultra-fast caching\n        ",
+    "title": "HeylookLLM - High-Performance Local LLM Server",
+    "version": "1.0.1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "description": "Get server information and available endpoints",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Server Information",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/admin/models": {
+      "get": {
+        "description": "List all model configurations including disabled models, with full config details.",
+        "operationId": "list_model_configs_v1_admin_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminModelListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List All Model Configs",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "post": {
+        "description": "Add a new model configuration to models.toml.",
+        "operationId": "add_model_config_v1_admin_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Model Config",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/bulk-profile": {
+      "post": {
+        "description": "Apply a profile to multiple models at once.",
+        "operationId": "_bulk_apply_profile_v1_admin_models_bulk_profile_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bulk Apply Profile",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/import": {
+      "post": {
+        "description": "Import scanned models into configuration.",
+        "operationId": "_import_models_v1_admin_models_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Models",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/profiles": {
+      "get": {
+        "description": "List available preset profiles.",
+        "operationId": "_list_profiles_v1_admin_models_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Profiles",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/scan": {
+      "post": {
+        "description": "Scan filesystem paths and HF cache for importable models.",
+        "operationId": "_scan_for_models_v1_admin_models_scan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scan for Models",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/validate": {
+      "post": {
+        "description": "Validate a model config without saving.",
+        "operationId": "_validate_config_v1_admin_models_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Config",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/{model_id}": {
+      "delete": {
+        "description": "Remove a model from configuration. Model files stay on disk.",
+        "operationId": "remove_model_config_v1_admin_models__model_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Model Config",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "get": {
+        "description": "Get full configuration for a single model.",
+        "operationId": "get_model_config_v1_admin_models__model_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Model Config",
+        "tags": [
+          "Admin"
+        ]
+      },
+      "patch": {
+        "description": "Update specific fields of a model's configuration. Returns which fields require reload.",
+        "operationId": "update_model_config_v1_admin_models__model_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Model Config",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/{model_id}/load": {
+      "post": {
+        "description": "Explicitly load a model into the LRU cache.",
+        "operationId": "load_model_v1_admin_models__model_id__load_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Load Model",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/{model_id}/status": {
+      "get": {
+        "description": "Get runtime status of a model (loaded state, memory, metrics).",
+        "operationId": "get_model_status_v1_admin_models__model_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Model Status",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/{model_id}/toggle": {
+      "post": {
+        "description": "Toggle a model's enabled/disabled state.",
+        "operationId": "toggle_model_v1_admin_models__model_id__toggle_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminModelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Toggle Model Enabled",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/models/{model_id}/unload": {
+      "post": {
+        "description": "Explicitly unload a model from the LRU cache.",
+        "operationId": "unload_model_v1_admin_models__model_id__unload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_id",
+            "required": true,
+            "schema": {
+              "title": "Model Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unload Model",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/reload": {
+      "post": {
+        "description": "Reload model configuration and clear model cache without restarting the server.\n\nThis will:\n- Clear the loaded model cache\n- Reload models.toml configuration\n- Keep the server running",
+        "operationId": "reload_models_v1_admin_reload_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Reload Models",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/admin/restart": {
+      "post": {
+        "description": "Restart the server to reload configuration and code changes.\n\n**WARNING**: This will interrupt all active connections!\n\n**Security Note**: This endpoint should be disabled in production or protected with authentication.",
+        "operationId": "restart_server_v1_admin_restart_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Restart Server",
+        "tags": [
+          "Admin"
+        ]
+      }
+    },
+    "/v1/audio/transcriptions": {
+      "post": {
+        "description": "Transcribe audio file to text using the specified STT model.\n\n**Supported formats:** WAV, MP3, M4A, FLAC, OGG, WebM\n**Max file size:** 25MB\n**Models:** parakeet-tdt-v3 (MLX)\n\nThis endpoint is compatible with OpenAI's Whisper API format.",
+        "operationId": "transcribe_audio_v1_audio_transcriptions_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_transcribe_audio_v1_audio_transcriptions_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful transcription"
+          },
+          "400": {
+            "description": "Invalid audio format or parameters"
+          },
+          "413": {
+            "description": "File too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "description": "Model loading or transcription error"
+          }
+        },
+        "summary": "Transcribe Audio",
+        "tags": [
+          "Speech-to-Text"
+        ]
+      }
+    },
+    "/v1/audio/translations": {
+      "post": {
+        "description": "Transcribe and translate audio to English.\n\nCurrently uses the same model as transcription with translation capabilities.",
+        "operationId": "translate_audio_v1_audio_translations_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_translate_audio_v1_audio_translations_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Translate Audio",
+        "tags": [
+          "Speech-to-Text"
+        ]
+      }
+    },
+    "/v1/batch/chat/completions": {
+      "post": {
+        "description": "Process multiple chat completion requests in a single batch for improved throughput.\n\n**Performance Benefits:**\n- 2-4x throughput improvement vs sequential processing\n- Efficient handling of variable-length prompts via left-padding\n- Optimized Metal memory management\n\n**Requirements:**\n- All requests must use the same text-only model\n- Streaming is not supported (batch processing is inherently blocking)\n- Minimum 2 requests per batch (recommended 3+ for best performance)\n\n**Batch Parameters:**\n- `completion_batch_size`: Max concurrent generations (default: 32)\n- `prefill_batch_size`: Max prefill parallelism (default: 8)\n- `prefill_step_size`: Chunk size for memory efficiency (default: 2048)\n\n**Performance Notes:**\n- Best performance with similar-length prompts (reduces padding waste)\n- Larger batch sizes provide better throughput but higher latency\n- Monitor batch_stats in response for throughput metrics",
+        "operationId": "create_batch_chat_completion_v1_batch_chat_completions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchChatResponse"
+                }
+              }
+            },
+            "description": "Batch completion results with statistics"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch Chat Completions",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/batch/process": {
+      "post": {
+        "description": "Process multiple prompts in batch with progress tracking.\n\n**Request body:**\n- prompts: Array of prompt objects containing:\n  - id: Unique identifier for the prompt\n  - content: The prompt text\n  - model: Model to use (optional, uses default if not specified)\n  - temperature: Temperature override (optional)\n  - max_tokens: Max tokens override (optional)\n  - metadata: Any additional metadata (optional)\n- defaults: Default parameters for all prompts\n  - model: Default model to use\n  - temperature: Default temperature\n  - max_tokens: Default max tokens\n- batch_config: Batch processing configuration\n  - parallelism: Number of concurrent requests (default: 3)\n  - retry_failed: Whether to retry failed requests (default: true)\n  - max_retries: Maximum retry attempts (default: 2)\n\n**Returns:**\n- batch_id: Unique batch processing ID\n- status: Current batch status\n- progress: Progress information",
+        "operationId": "batch_process_v1_batch_process_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Batch processing status"
+          }
+        },
+        "summary": "Batch Process Prompts",
+        "tags": [
+          "Batch Processing"
+        ]
+      }
+    },
+    "/v1/batch/{batch_id}": {
+      "get": {
+        "description": "Get the status and results of a batch processing job.",
+        "operationId": "get_batch_status_v1_batch__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Batch processing status and results"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Batch Status",
+        "tags": [
+          "Batch Processing"
+        ]
+      }
+    },
+    "/v1/cache/clear": {
+      "post": {
+        "description": "Clear prompt caches for a specific model or all models.\n\n**Use Cases:**\n- Free memory by clearing unused caches\n- Reset cache state when switching contexts\n- Troubleshooting cache-related issues\n\n**Note:** This clears in-memory caches. The next request will rebuild the cache.",
+        "operationId": "clear_caches_v1_cache_clear_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CacheClearRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheClearResponse"
+                }
+              }
+            },
+            "description": "Number of caches cleared"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Prompt Caches",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/cache/list": {
+      "get": {
+        "description": "List all prompt caches currently in memory.\n\n**Returns:**\n- List of cache entries with model ID and token counts\n- Cache statistics for each loaded model\n\n**Note:** Currently shows in-memory caches only. Persistent storage coming soon.",
+        "operationId": "list_caches_v1_cache_list_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "title": "Model",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheListResponse"
+                }
+              }
+            },
+            "description": "List of cached prompts"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Saved Prompt Caches",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "description": "Get detailed information about server capabilities and optimization options.\n\n**Returns:**\n- Available performance optimizations\n- Supported features and endpoints\n- Optimal usage recommendations\n- API extensions\n\n**Use this endpoint to:**\n- Discover fast endpoints (like multipart upload)\n- Check which optimizations are active\n- Get recommendations for best performance\n- Understand server limits and capabilities\n\n**Client Integration:**\nClients should query this endpoint on startup to discover:\n1. Whether to use `/v1/chat/completions/multipart` for images\n2. Recommended batch sizes\n3. Optimal request patterns\n4. Available performance features",
+        "operationId": "get_capabilities_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Server capabilities and optimization details"
+          }
+        },
+        "summary": "Get Server Capabilities",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "description": "Generate text completions from chat messages using the specified model.\n\n**Key Features:**\n- Automatic model loading with LRU cache (max 2 models)\n- Vision model support with base64 images\n- Streaming responses (Server-Sent Events)\n- Batch processing for multiple prompts\n- Reproducible generation with seed parameter\n- Metal-optimized inference for MLX models\n\n**Special Parameters:**\n- `processing_mode`: Control batch behavior (\"sequential\", \"parallel\", \"conversation\")\n- `return_individual`: Get separate responses for batch requests\n- `include_timing`: Add performance metrics to response\n- `stream`: Enable token-by-token streaming\n\n**Performance Notes:**\n- First request to a model includes loading time (~2-30s depending on size)\n- Subsequent requests use cached model for instant inference\n- Vision models process images in parallel for efficiency",
+        "operationId": "create_chat_completion_v1_chat_completions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatCompletionResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamChunk"
+                }
+              }
+            },
+            "description": "Non-streaming: JSON response. Streaming (stream=true): Server-Sent Events where each `data:` line contains a StreamChunk JSON object, ending with `data: [DONE]`."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Chat Completion",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/chat/completions/multipart": {
+      "post": {
+        "description": "High-performance vision endpoint that accepts raw image uploads instead of base64.\n\n**🚀 Performance Benefits:**\n- ⚡ 57ms faster per image (no base64 encoding/decoding)\n- 📉 33% bandwidth reduction\n- 🔄 Parallel image processing\n- 💾 Smart image caching with xxHash\n\n**How to Use:**\n1. Send images as multipart form files\n2. Include messages as JSON string with `__RAW_IMAGE__` placeholders\n3. Images are injected into messages in order\n\n**Example Request:**\n```python\nfiles = [\n    ('images', ('img1.jpg', image1_bytes, 'image/jpeg')),\n    ('images', ('img2.jpg', image2_bytes, 'image/jpeg'))\n]\ndata = {\n    'model': 'llava-1.5-7b-hf-4bit',\n    'messages': json.dumps([{\n        \"role\": \"user\",\n        \"content\": [\n            {\"type\": \"text\", \"text\": \"Compare these images\"},\n            {\"type\": \"image_url\", \"image_url\": {\"url\": \"__RAW_IMAGE__\"}},\n            {\"type\": \"image_url\", \"image_url\": {\"url\": \"__RAW_IMAGE__\"}}\n        ]\n    }])\n}\nresponse = requests.post(url + '/multipart', files=files, data=data)\n```\n\n**Perfect for:**\n- ComfyUI integration\n- Batch image processing\n- Real-time vision applications\n- Network-constrained environments",
+        "operationId": "create_chat_multipart_v1_chat_completions_multipart_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_chat_multipart_v1_chat_completions_multipart_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "choices": [
+                    {
+                      "finish_reason": "stop",
+                      "index": 0,
+                      "message": {
+                        "content": "The first image shows a cat, while the second shows a dog.",
+                        "role": "assistant"
+                      }
+                    }
+                  ],
+                  "created": 1677652288,
+                  "id": "chatcmpl-123",
+                  "model": "llava-1.5-7b-hf-4bit",
+                  "object": "chat.completion",
+                  "usage": {
+                    "completion_tokens": 23,
+                    "prompt_tokens": 156,
+                    "total_tokens": 179
+                  }
+                },
+                "schema": {}
+              }
+            },
+            "description": "Successful completion"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Chat Completion with Raw Images (Fast)",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/data/query": {
+      "post": {
+        "description": "Execute SQL queries against the analytics database.\n\n**Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true\n\n**Request body:**\n- query: SQL query to execute\n- limit: Maximum rows to return (default: 1000)\n\n**Returns:**\n- columns: List of column names\n- data: Query results as list of rows\n- row_count: Number of rows returned\n\n**Available tables:**\n- request_logs: Detailed request/response metrics\n- model_switches: Model loading/unloading events\n- performance_summary: Aggregated performance data\n\n**Example queries:**\n- `SELECT * FROM request_logs WHERE total_time_ms > 1000`\n- `SELECT model, AVG(tokens_per_second) FROM request_logs GROUP BY model`",
+        "operationId": "data_query_v1_data_query_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Query results with columns and data"
+          }
+        },
+        "summary": "Execute Analytics Query",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/data/request/{request_id}": {
+      "get": {
+        "description": "Get detailed information about a specific request by ID.\n\n**Note:** Analytics must be enabled with storage_level=full for complete data\n\n**Returns:**\n- Full request details including messages\n- Response content\n- Timing breakdown\n- Token counts\n- Error information (if any)",
+        "operationId": "get_request_details_v1_data_request__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Complete request details"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Request Details",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/data/summary": {
+      "get": {
+        "description": "Get pre-computed analytics summary for dashboards.\n\n**Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true\n\n**Returns:**\n- total_requests: Total number of requests\n- avg_response_time: Average response time in ms\n- tokens_per_second: Average tokens per second\n- error_rate: Error rate as percentage\n- model_usage: Request count by model\n- recent_activity: Time-series data for charts",
+        "operationId": "data_summary_v1_data_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Analytics summary data"
+          }
+        },
+        "summary": "Get Analytics Summary",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "description": "Generate embeddings for text using the specified model.\n\n**Key Features:**\n- Extract actual model embeddings (not hallucinated numbers)\n- Support for both text-only and vision models\n- Multiple pooling strategies (mean, cls, last, max)\n- Optional dimension truncation\n- Batch processing support\n\n**Use Cases:**\n- Text similarity search\n- Semantic clustering\n- Cross-modal alignment\n- Prompt interpolation\n- Document retrieval\n\n**Request Body:**\n- `input` (string | array[string]): Text(s) to embed\n- `model` (string): Model ID to use\n- `dimensions` (integer, optional): Truncate to N dimensions\n- `encoding_format` (string, optional): \"float\" or \"base64\"\n- `user` (string, optional): User identifier",
+        "operationId": "create_embeddings_endpoint_v1_embeddings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Embedding Request",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "single": {
+                    "summary": "Single embedding",
+                    "value": {
+                      "data": [
+                        {
+                          "embedding": [
+                            0.0234,
+                            -0.1567,
+                            0.8901
+                          ],
+                          "index": 0,
+                          "object": "embedding"
+                        }
+                      ],
+                      "model": "dolphin-mistral",
+                      "object": "list",
+                      "usage": {
+                        "prompt_tokens": 10,
+                        "total_tokens": 10
+                      }
+                    }
+                  }
+                },
+                "schema": {}
+              }
+            },
+            "description": "Successful response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Embeddings",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/eval/create": {
+      "post": {
+        "description": "Create a new evaluation set for model testing.\n\n**Request body:**\n- name: Evaluation set name\n- description: Optional description\n- prompts: Array of evaluation prompts\n  - prompt: The test prompt\n  - expected_contains: Optional array of strings that should appear in response\n  - expected_format: Optional format validation (json, code, markdown)\n  - tags: Optional tags for categorization\n\n**Returns:**\n- eval_id: Unique evaluation set ID\n- created_at: Creation timestamp\n- prompt_count: Number of test prompts",
+        "operationId": "create_eval_set_v1_eval_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Created evaluation set details"
+          }
+        },
+        "summary": "Create Evaluation Set",
+        "tags": [
+          "Evaluation"
+        ]
+      }
+    },
+    "/v1/eval/list": {
+      "get": {
+        "description": "List all available evaluation sets.\n\n**Returns:**\nArray of evaluation sets with:\n- eval_id: Unique ID\n- name: Evaluation set name\n- description: Description\n- prompt_count: Number of prompts\n- created_at: Creation timestamp",
+        "operationId": "list_evaluation_sets_v1_eval_list_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "List of evaluation sets"
+          }
+        },
+        "summary": "List Evaluation Sets",
+        "tags": [
+          "Evaluation"
+        ]
+      }
+    },
+    "/v1/eval/run": {
+      "post": {
+        "description": "Run an evaluation set against one or more models.\n\n**Request body:**\n- eval_id: Evaluation set ID\n- models: Array of model IDs to test\n- iterations: Number of iterations per prompt (default: 1)\n- parameters: Optional generation parameters\n  - temperature: Override temperature\n  - max_tokens: Override max tokens\n\n**Returns:**\n- run_id: Unique run ID\n- status: Run status\n- progress: Progress information",
+        "operationId": "run_evaluation_v1_eval_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Evaluation run details"
+          }
+        },
+        "summary": "Run Evaluation",
+        "tags": [
+          "Evaluation"
+        ]
+      }
+    },
+    "/v1/eval/run/{run_id}": {
+      "get": {
+        "description": "Get the status and results of an evaluation run.\n\n**Returns:**\n- run_id: Run ID\n- status: Current status (running, completed, failed)\n- progress: Progress information\n- results: Results by model (when completed)",
+        "operationId": "get_evaluation_run_v1_eval_run__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Evaluation run status and results"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Evaluation Run Status",
+        "tags": [
+          "Evaluation"
+        ]
+      }
+    },
+    "/v1/hidden_states": {
+      "post": {
+        "description": "Extract raw hidden states from a specific layer of an LLM model.\n\n**Key Differences from /v1/embeddings:**\n- Returns full sequence [seq_len, hidden_dim], not pooled\n- Extracts from specific layer (default: -2, second-to-last)\n- Filters out padding tokens via attention mask\n- Designed for use as text encoder backend for image generation\n\n**Use Cases:**\n- Text encoder for DiT-based image generation (Z-Image, etc.)\n- Model interpretability and analysis\n- Cross-modal alignment with per-token embeddings\n\n**Request Body:**\n- `input` (string | array[string]): Text(s) to encode (with chat template applied)\n- `model` (string): Model ID to use\n- `layer` (integer, optional): Layer to extract from (default: -2)\n- `max_length` (integer, optional): Max sequence length (default: 512)\n- `return_attention_mask` (boolean, optional): Include attention mask\n- `encoding_format` (string, optional): \"float\" (default) or \"base64\"\n\n**Note:** Currently only supported for MLX models. llama.cpp models will\nreturn an error as intermediate layer access is not available.",
+        "operationId": "extract_hidden_states_endpoint_v1_hidden_states_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Hidden States Request",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "base64_format": {
+                    "summary": "Base64 format response",
+                    "value": {
+                      "dtype": "bfloat16",
+                      "encoding_format": "base64",
+                      "hidden_states": "SGVsbG8gV29ybGQ=",
+                      "layer": -2,
+                      "model": "Qwen3-4B-mxfp4-mlx",
+                      "shape": [
+                        21,
+                        2560
+                      ]
+                    }
+                  },
+                  "float_format": {
+                    "summary": "Float format response",
+                    "value": {
+                      "dtype": "bfloat16",
+                      "hidden_states": [
+                        [
+                          0.123,
+                          -0.456
+                        ],
+                        [
+                          0.789,
+                          0.012
+                        ]
+                      ],
+                      "layer": -2,
+                      "model": "Qwen3-4B-mxfp4-mlx",
+                      "shape": [
+                        2,
+                        2560
+                      ]
+                    }
+                  }
+                },
+                "schema": {}
+              }
+            },
+            "description": "Hidden states extracted successfully"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Hidden state extraction from llama.cpp is not supported."
+                }
+              }
+            },
+            "description": "Model doesn't support hidden state extraction"
+          }
+        },
+        "summary": "Extract Hidden States",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/hidden_states/structured": {
+      "post": {
+        "description": "Extract hidden states with server-side chat template application and token boundary tracking.\n\n**Key Differences from /v1/hidden_states:**\n- Accepts chat components separately (user_prompt, system_prompt, etc.)\n- Server applies Qwen3 chat template internally\n- Returns token boundary information for each section\n- Supports pre-filled thinking/assistant content\n\n**Use Cases:**\n- Z-Image embeddings with precise template control\n- Token attribution research\n- Ablation studies on prompt sections\n- Debugging chat template formatting\n\n**Request Body:**\n- `model` (string): Model ID to use\n- `user_prompt` (string): User message content (required)\n- `system_prompt` (string, optional): System prompt content\n- `thinking_content` (string, optional): Pre-filled thinking block\n- `assistant_content` (string, optional): Pre-filled assistant response\n- `enable_thinking` (boolean, optional): Control thinking mode (default: true)\n- `layer` (integer, optional): Layer to extract from (default: -2)\n- `max_length` (integer, optional): Max sequence length (default: 512)\n- `encoding_format` (string, optional): \"float\" (default) or \"base64\"\n- `return_token_boundaries` (boolean, optional): Return token indices per section\n- `return_formatted_prompt` (boolean, optional): Return formatted prompt string\n\n**Note:** Only supported for MLX models with Qwen3-style chat templates.",
+        "operationId": "extract_structured_hidden_states_v1_hidden_states_structured_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Structured Request",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "dtype": "bfloat16",
+                  "encoding_format": "base64",
+                  "hidden_states": "SGVsbG8gV29ybGQ=",
+                  "layer": -2,
+                  "model": "Qwen3-4B",
+                  "shape": [
+                    120,
+                    2560
+                  ],
+                  "token_boundaries": {
+                    "system": {
+                      "end": 35,
+                      "start": 0
+                    },
+                    "user": {
+                      "end": 80,
+                      "start": 35
+                    }
+                  },
+                  "token_counts": {
+                    "system": 35,
+                    "total": 120,
+                    "user": 45
+                  }
+                },
+                "schema": {}
+              }
+            },
+            "description": "Structured hidden states extracted successfully"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "detail": "Structured hidden states only supported for MLX models."
+                }
+              }
+            },
+            "description": "Model doesn't support structured hidden state extraction"
+          }
+        },
+        "summary": "Extract Structured Hidden States",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "description": "Create a message using the Messages API format.\n\nAccepts typed content blocks (text, image) and returns structured output\nblocks (text, thinking, logprobs). System prompt is a top-level parameter,\nnot embedded in the messages array.\n\nSupports streaming via `stream: true`, which returns Server-Sent Events\nwith distinct event types (message_start, content_block_start,\ncontent_block_delta, content_block_stop, message_delta, message_stop).",
+        "operationId": "create_message_v1_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a Message",
+        "tags": [
+          "Messages API",
+          "Messages API"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "description": "List all language models currently available on this server.\n\n**Use this endpoint to:**\n- Discover which models are loaded and ready for inference\n- Verify a specific model is available before making requests\n- Get model IDs for use in completion requests\n\n**Returns:**\n- Model IDs (e.g., \"qwen2.5-coder-1.5b-instruct-4bit\")\n- OpenAI-compatible model objects\n- Only shows models marked as `enabled: true` in models.toml",
+        "operationId": "list_models_v1_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "List of available models in OpenAI-compatible format"
+          }
+        },
+        "summary": "List Available Models",
+        "tags": [
+          "OpenAI API"
+        ]
+      }
+    },
+    "/v1/performance": {
+      "get": {
+        "description": "Retrieve detailed performance metrics from all model providers.\n\n**Metrics Include:**\n- 📊 Token generation rates (tokens/second)\n- ⏱️ Time to first token (TTFT)\n- 🚀 Model loading times\n- 💾 Memory usage statistics\n- 📈 Request processing times\n- 🎯 Cache hit rates\n\n**Per-Model Statistics:**\n- Request count\n- Average/peak token generation speed\n- Total tokens generated\n- Error rates\n\n**Use Cases:**\n- Performance monitoring dashboards\n- Capacity planning\n- Model comparison\n- Troubleshooting slow inference\n- Identifying bottlenecks",
+        "operationId": "performance_metrics_v1_performance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Detailed performance metrics and summaries"
+          }
+        },
+        "summary": "Get Performance Metrics",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/performance/profile/{time_range}": {
+      "get": {
+        "description": "Get detailed performance profiling data for the specified time range.\n\n**Path parameters:**\n- time_range: Time range (1h, 6h, 24h, 7d)\n\n**Returns:**\n- Timing breakdowns by operation type\n- Resource utilization over time\n- Bottleneck analysis\n- Performance trends",
+        "operationId": "get_performance_profile_v1_performance_profile__time_range__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "time_range",
+            "required": true,
+            "schema": {
+              "title": "Time Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Performance profiling data"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Performance Profile",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/replay/{request_id}": {
+      "post": {
+        "description": "Replay a previous request with optional parameter modifications.\n\n**Note:** Analytics must be enabled for request history\n\n**Request body (optional):**\n- model: Override the original model\n- temperature: Override temperature\n- max_tokens: Override max tokens\n- system_message: Add/override system message\n\n**Returns:**\n- Original request details\n- Modified parameters\n- New response\n- Comparison metrics",
+        "operationId": "replay_request_v1_replay__request_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Replay results with comparison"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replay Request",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    },
+    "/v1/stt/models": {
+      "get": {
+        "description": "Get list of available speech-to-text models",
+        "operationId": "list_stt_models_v1_stt_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List STT Models",
+        "tags": [
+          "Speech-to-Text"
+        ]
+      }
+    },
+    "/v1/system/metrics": {
+      "get": {
+        "description": "Get current system resource and model metrics for monitoring dashboards.\n\n**Returns:**\n- System metrics: RAM usage, CPU percentage\n- Per-model metrics: Context usage, memory, active requests\n- Cached for 30 seconds to minimize polling overhead\n\n**Use Cases:**\n- Build monitoring dashboards\n- Track context window usage during conversations\n- Monitor system resource consumption\n- Alert on high memory/context usage\n\n**Polling:**\n- Recommended poll interval: 5-10 seconds\n- Backend caches metrics for 30 seconds",
+        "operationId": "get_system_metrics_v1_system_metrics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "force_refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Force Refresh",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemMetricsResponse"
+                }
+              }
+            },
+            "description": "Current system and model metrics"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get System Metrics",
+        "tags": [
+          "Monitoring"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Default server",
+      "url": "http://localhost:8080"
+    }
+  ]
+}

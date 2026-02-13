@@ -56,4 +56,9 @@ export type ModelFilter = {
   provider: string[]
   status: string[]  // 'loaded' | 'available' | 'disabled'
   capability: string[]
+  tag: string[]
 }
+
+export type SortField = 'name' | 'provider' | 'status'
+export type SortDirection = 'asc' | 'desc'
+export interface SortConfig { field: SortField; direction: SortDirection }

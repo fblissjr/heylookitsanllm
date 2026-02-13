@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.4
+
+### Added
+
+- **Models applet sorting**: Sort models by name (A-Z/Z-A), provider, or status (loaded first) via dropdown selector
+- **Models applet tag filtering**: Data-driven tag chips extracted from model configs; click to filter by tag (OR logic)
+- **Models applet preference persistence**: Sort and filter preferences persist to localStorage across sessions
+
+## 1.12.3
+
+### Changed
+
+- **README.md rewrite**: Updated from v1.1-era to reflect current state -- dual API (OpenAI + Messages), 7 applets, llama-server subprocess (not llama-cpp-python), thinking blocks, logprobs, model management, hidden states. Removed dead links (`guides/SERVICE_SECURITY.md`, `docs/WINDOWS_INSTALL.md`) and stale installation instructions (`--extra llama-cpp`, `CMAKE_ARGS`/`llama-cpp-python` GPU section).
+- **pyproject.toml version**: Bumped from 1.2.0 to 1.12.2 to match actual release.
+- **performance extra trimmed**: Removed 6 unused packages (imagecodecs, blake3, diskcache, msgpack, aiofiles, aiocache). Kept xxhash, PyTurboJPEG, uvloop, cachetools.
+
 ## 1.12.2
 
 ### Fixed
