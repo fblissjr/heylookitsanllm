@@ -235,6 +235,7 @@ class TextOnlyStrategy:
             prompt_tokens = prompt
             
         # Get or create prompt cache for this model
+        prompt_cache = None
         if self.model_id:
             # Extract cache configuration from effective_request
             cache_config = {
@@ -264,28 +265,38 @@ class TextOnlyStrategy:
 
         # Wrap generation in wired_limit context manager for optimal Metal memory management
         # This is critical for large models and ensures proper synchronization
-        with wired_limit(model, [generation_stream]):
-            # Stream tokens and handle potential leading space issue
-            first_token = True
-            for response in lm_stream_generate(
-                model=model,
-                tokenizer=tokenizer,
-                prompt=tokens_to_process,  # Use the reduced prompt
-                sampler=sampler,
-                logits_processors=processors,
-                max_tokens=effective_request['max_tokens'],
-                draft_model=self.draft_model,
-                prompt_progress_callback=prompt_progress_callback,
-                prompt_cache=generation_cache if generation_cache else None
-            ):
-                # Clean up leading space on first token for models with add_prefix_space
-                if first_token and response.text.startswith(' '):
-                    response.text = response.text.lstrip()
-                    first_token = False
-                elif first_token:
-                    first_token = False
+        generated_token_ids = []
+        try:
+            with wired_limit(model, [generation_stream]):
+                # Stream tokens and handle potential leading space issue
+                first_token = True
+                for response in lm_stream_generate(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=tokens_to_process,  # Use the reduced prompt
+                    sampler=sampler,
+                    logits_processors=processors,
+                    max_tokens=effective_request['max_tokens'],
+                    draft_model=self.draft_model,
+                    prompt_progress_callback=prompt_progress_callback,
+                    prompt_cache=generation_cache if generation_cache else None
+                ):
+                    generated_token_ids.append(response.token)
+                    # Clean up leading space on first token for models with add_prefix_space
+                    if first_token and response.text.startswith(' '):
+                        response.text = response.text.lstrip()
+                        first_token = False
+                    elif first_token:
+                        first_token = False
 
-                yield response
+                    yield response
+        finally:
+            # Update prompt cache tokens to include generated tokens so that
+            # the KV cache size matches token tracking. Without this, regeneration
+            # and message editing leave stale KV entries from the old generation.
+            if self.model_id and prompt_cache:
+                prompt_cache.tokens = prompt_tokens + generated_token_ids
+                logging.debug(f"Updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
 
 
 class VLMTextOnlyStrategy:
@@ -334,6 +345,7 @@ class VLMTextOnlyStrategy:
             prompt_tokens = prompt
 
         # Prompt cache support (same pattern as TextOnlyStrategy)
+        prompt_cache = None
         if self.model_id:
             cache_config = {
                 'cache_type': effective_request.get('cache_type', 'standard'),
@@ -357,26 +369,33 @@ class VLMTextOnlyStrategy:
         # Use lm_stream_generate with the full sampler/processor pipeline
         # Pass the language model wrapper (not the full VLM) so wired_limit
         # calculates memory limits for the model that actually runs.
-        with wired_limit(self._cached_wrapper, [generation_stream]):
-            first_token = True
-            for response in lm_stream_generate(
-                model=self._cached_wrapper,
-                tokenizer=tokenizer,
-                prompt=tokens_to_process,
-                sampler=sampler,
-                logits_processors=processors,
-                max_tokens=effective_request['max_tokens'],
-                draft_model=self.draft_model,
-                prompt_progress_callback=prompt_progress_callback,
-                prompt_cache=generation_cache if generation_cache else None
-            ):
-                if first_token and response.text.startswith(' '):
-                    response.text = response.text.lstrip()
-                    first_token = False
-                elif first_token:
-                    first_token = False
+        generated_token_ids = []
+        try:
+            with wired_limit(self._cached_wrapper, [generation_stream]):
+                first_token = True
+                for response in lm_stream_generate(
+                    model=self._cached_wrapper,
+                    tokenizer=tokenizer,
+                    prompt=tokens_to_process,
+                    sampler=sampler,
+                    logits_processors=processors,
+                    max_tokens=effective_request['max_tokens'],
+                    draft_model=self.draft_model,
+                    prompt_progress_callback=prompt_progress_callback,
+                    prompt_cache=generation_cache if generation_cache else None
+                ):
+                    generated_token_ids.append(response.token)
+                    if first_token and response.text.startswith(' '):
+                        response.text = response.text.lstrip()
+                        first_token = False
+                    elif first_token:
+                        first_token = False
 
-                yield response
+                    yield response
+        finally:
+            if self.model_id and prompt_cache:
+                prompt_cache.tokens = prompt_tokens + generated_token_ids
+                logging.debug(f"VLM text-only: updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
 
 
 class VLMVisionStrategy:

@@ -44,11 +44,13 @@ const defaultChatState = {
     thinking: '',
     messageId: null,
   },
+  updateConversationModel: vi.fn(),
 }
 
 const defaultModelState: {
   loadedModel: LoadedModel | null
   modelStatus: ModelStatus
+  models: { id: string }[]
 } = {
   loadedModel: {
     id: 'test-model',
@@ -63,6 +65,7 @@ const defaultModelState: {
     contextWindow: 4096,
   },
   modelStatus: 'loaded',
+  models: [{ id: 'test-model' }],
 }
 
 vi.mock('../stores/chatStore', () => ({
@@ -117,6 +120,7 @@ describe('ChatView', () => {
       vi.mocked(useModelStore).mockReturnValue({
         loadedModel: null,
         modelStatus: 'unloaded',
+        models: [],
       })
 
       render(<ChatView />)
@@ -141,6 +145,7 @@ describe('ChatView', () => {
           contextWindow: 4096,
         },
         modelStatus: 'loading',
+        models: [{ id: 'test-model' }],
       })
 
       render(<ChatView />)
@@ -224,6 +229,7 @@ describe('ChatView', () => {
           contextWindow: 8192,
         },
         modelStatus: 'loaded',
+        models: [{ id: 'vision-model' }],
       })
 
       render(<ChatView />)
@@ -246,6 +252,7 @@ describe('ChatView', () => {
           contextWindow: 4096,
         },
         modelStatus: 'loaded',
+        models: [{ id: 'test-model' }],
       })
 
       render(<ChatView />)

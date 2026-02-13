@@ -8,8 +8,8 @@ import { EmptyState } from './EmptyState'
 import { SystemPromptEditor } from './SystemPromptEditor'
 
 export function ChatView() {
-  const { activeConversation, streaming, updateSystemPrompt, createConversation } = useChatStore()
-  const { loadedModel, modelStatus } = useModelStore()
+  const { activeConversation, streaming, updateSystemPrompt, createConversation, updateConversationModel } = useChatStore()
+  const { loadedModel, modelStatus, models } = useModelStore()
   const systemPrompt = useSettingsStore((s) => s.systemPrompt)
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevModelRef = useRef<string | null>(loadedModel?.id ?? null)
@@ -25,6 +25,16 @@ export function ChatView() {
     }
     prevModelRef.current = loadedModel?.id ?? null
   }, [loadedModel, activeConversation, createConversation, systemPrompt])
+
+  // Auto-fix stale model IDs: if the conversation references a model that no longer
+  // exists in the server's model list, update it to the currently loaded model.
+  useEffect(() => {
+    if (!conversation || !loadedModel || models.length === 0) return
+    const modelExists = models.some(m => m.id === conversation.defaultModelId)
+    if (!modelExists && conversation.defaultModelId) {
+      updateConversationModel(conversation.id, loadedModel.id)
+    }
+  }, [conversation, loadedModel, models, updateConversationModel])
 
   const handleSystemPromptUpdate = useCallback(async (systemPrompt: string, shouldRegenerate: boolean) => {
     if (!conversation) return
@@ -83,7 +93,11 @@ export function ChatView() {
       {/* Input area */}
       <ChatInput
         conversationId={conversation.id}
-        defaultModelId={conversation.defaultModelId || loadedModel.id}
+        defaultModelId={
+          (models.length > 0 && models.some(m => m.id === conversation.defaultModelId))
+            ? conversation.defaultModelId
+            : loadedModel.id
+        }
         disabled={streaming.isStreaming}
       />
     </div>
