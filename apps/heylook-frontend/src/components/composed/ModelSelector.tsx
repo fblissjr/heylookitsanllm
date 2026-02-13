@@ -4,12 +4,7 @@ import { useUIStore } from '../../stores/uiStore'
 import type { Model } from '../../types/api'
 import clsx from 'clsx'
 
-interface ModelSelectorProps {
-  /** Called after a model is loaded. Use to trigger applet-specific actions (e.g., create conversation). */
-  onModelLoaded?: (modelId: string) => void
-}
-
-export function ModelSelector({ onModelLoaded }: ModelSelectorProps) {
+export function ModelSelector() {
   const { models, loadedModel, setLoadedModel, setModelStatus, setError } = useModelStore()
   const { setActivePanel } = useUIStore()
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
@@ -38,8 +33,6 @@ export function ModelSelector({ onModelLoaded }: ModelSelectorProps) {
         capabilities,
       })
 
-      onModelLoaded?.(selectedModel.id)
-
       // Close the panel
       setActivePanel(null)
     } catch (error) {
@@ -49,7 +42,7 @@ export function ModelSelector({ onModelLoaded }: ModelSelectorProps) {
     } finally {
       setIsLoading(false)
     }
-  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, onModelLoaded, setActivePanel])
+  }, [selectedModel, contextWindow, setLoadedModel, setModelStatus, setError, setActivePanel])
 
   const handleUnloadModel = useCallback(() => {
     setLoadedModel(null)

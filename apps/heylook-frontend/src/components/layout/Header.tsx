@@ -1,3 +1,4 @@
+import { useLocation } from 'react-router-dom'
 import { useModelStore } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useTheme, Theme } from '../../contexts/ThemeContext'
@@ -6,6 +7,7 @@ export function Header() {
   const { models, loadedModel, modelStatus } = useModelStore()
   const { toggleSidebar, togglePanel, activePanel } = useUIStore()
   const { theme, resolvedTheme, setTheme } = useTheme()
+  const { pathname } = useLocation()
 
   const cycleTheme = () => {
     const nextTheme: Record<Theme, Theme> = {
@@ -63,16 +65,20 @@ export function Header() {
 
   return (
     <header className="shrink-0 flex items-center justify-between px-4 py-3 bg-background-light dark:bg-background-dark border-b border-gray-200 dark:border-gray-800 z-20">
-      {/* Left: Menu button */}
-      <button
-        onClick={toggleSidebar}
-        className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
-        aria-label="Toggle sidebar"
-      >
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
+      {/* Left: Menu button (only on Chat route where sidebar exists) */}
+      {pathname.startsWith('/chat') ? (
+        <button
+          onClick={toggleSidebar}
+          className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
+          aria-label="Toggle sidebar"
+        >
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      ) : (
+        <div className="w-10" />
+      )}
 
       {/* Center: Model selector */}
       <button

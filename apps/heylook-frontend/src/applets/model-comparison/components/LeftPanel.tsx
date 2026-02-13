@@ -52,7 +52,7 @@ export function LeftPanel() {
   )
 
   return (
-    <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden">
+    <div className="flex flex-col overflow-hidden h-full">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
         <h1 className="text-lg font-semibold text-gray-900 dark:text-white">

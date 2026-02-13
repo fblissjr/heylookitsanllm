@@ -24,9 +24,7 @@ export function useLongPress({ onLongPress, onClick, delay = 500 }: UseLongPress
     }
   }, [])
 
-  const start = useCallback((e: React.TouchEvent | React.MouseEvent) => {
-    // Prevent text selection on long press
-    e.preventDefault()
+  const start = useCallback((_e: React.TouchEvent | React.MouseEvent) => {
     isLongPressRef.current = false
     timerRef.current = setTimeout(() => {
       // Only trigger if still mounted
@@ -62,5 +60,13 @@ export function useLongPress({ onLongPress, onClick, delay = 500 }: UseLongPress
     onTouchStart: start,
     onTouchEnd: (e: React.TouchEvent) => clear(e),
     onTouchCancel: cancel,
+    // CSS-based prevention of text selection and context menus.
+    // Consumers spread this onto the long-press target element instead of
+    // relying on e.preventDefault() which blocks click synthesis on children.
+    style: {
+      userSelect: 'none' as const,
+      WebkitUserSelect: 'none' as const,
+      touchAction: 'none' as const,
+    },
   }
 }

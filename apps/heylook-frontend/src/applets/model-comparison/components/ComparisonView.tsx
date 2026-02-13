@@ -4,6 +4,7 @@ import { LeftPanel } from './LeftPanel'
 import { ComparisonGrid } from './ComparisonGrid'
 import { EmptyState } from '../../../components/primitives/EmptyState'
 import { ScaleIcon } from '../../../components/icons'
+import { AppletLayout } from '../../../components/layout/AppletLayout'
 
 export function ComparisonView() {
   const activeRunId = useComparisonStore((s) => s.activeRunId)
@@ -42,9 +43,7 @@ export function ComparisonView() {
   }, [activeRun, activeRunId, stopRun])
 
   return (
-    <div className="h-full flex">
-      <LeftPanel />
-
+    <AppletLayout leftPanel={<LeftPanel />} leftPanelWidth="w-80">
       {/* Main content */}
       <div className="flex-1 overflow-hidden flex items-center justify-center">
         {activeRun ? (
@@ -57,6 +56,6 @@ export function ComparisonView() {
           />
         )}
       </div>
-    </div>
+    </AppletLayout>
   )
 }

@@ -45,6 +45,7 @@ interface ChatState {
   setActiveConversation: (id: string | null) => void
   deleteConversation: (id: string) => void
   updateConversationTitle: (id: string, title: string) => void
+  updateConversationModel: (id: string, modelId: string) => void
   updateSystemPrompt: (conversationId: string, systemPrompt: string, shouldRegenerate?: boolean) => Promise<void>
 
   // Message management
@@ -149,6 +150,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     }))
     // Persist to DB
+    const conversation = get().conversations.find(c => c.id === id)
+    if (conversation) debouncedSave(conversation)
+  },
+
+  updateConversationModel: (id, modelId) => {
+    set(state => ({
+      conversations: state.conversations.map(c =>
+        c.id === id ? { ...c, defaultModelId: modelId, updatedAt: Date.now() } : c
+      ),
+    }))
     const conversation = get().conversations.find(c => c.id === id)
     if (conversation) debouncedSave(conversation)
   },

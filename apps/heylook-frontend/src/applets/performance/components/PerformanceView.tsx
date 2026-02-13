@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { usePerformanceStore } from '../stores/performanceStore'
 import { LeftPanel } from './LeftPanel'
 import { MetricsGrid } from './MetricsGrid'
+import { AppletLayout } from '../../../components/layout/AppletLayout'
 
 export function PerformanceView() {
   const startPolling = usePerformanceStore((s) => s.startPolling)
@@ -15,11 +16,12 @@ export function PerformanceView() {
   }, [startPolling, stopPolling])
 
   return (
-    <div className="h-full flex">
-      <LeftPanel />
+    <AppletLayout leftPanel={<LeftPanel />} leftPanelWidth="w-64">
       <div className="flex-1 overflow-y-auto p-6">
-        <MetricsGrid />
+        <div className="max-w-6xl mx-auto">
+          <MetricsGrid />
+        </div>
       </div>
-    </div>
+    </AppletLayout>
   )
 }

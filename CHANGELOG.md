@@ -5,6 +5,111 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.4
+
+### Added
+
+- **Models applet sorting**: Sort models by name (A-Z/Z-A), provider, or status (loaded first) via dropdown selector
+- **Models applet tag filtering**: Data-driven tag chips extracted from model configs; click to filter by tag (OR logic)
+- **Models applet preference persistence**: Sort and filter preferences persist to localStorage across sessions
+
+## 1.12.3
+
+### Changed
+
+- **README.md rewrite**: Updated from v1.1-era to reflect current state -- dual API (OpenAI + Messages), 7 applets, llama-server subprocess (not llama-cpp-python), thinking blocks, logprobs, model management, hidden states. Removed dead links (`guides/SERVICE_SECURITY.md`, `docs/WINDOWS_INSTALL.md`) and stale installation instructions (`--extra llama-cpp`, `CMAKE_ARGS`/`llama-cpp-python` GPU section).
+- **pyproject.toml version**: Bumped from 1.2.0 to 1.12.2 to match actual release.
+- **performance extra trimmed**: Removed 6 unused packages (imagecodecs, blake3, diskcache, msgpack, aiofiles, aiocache). Kept xxhash, PyTurboJPEG, uvloop, cachetools.
+
+## 1.12.2
+
+### Fixed
+
+- **Mobile delete button**: Tapping the trash icon on iOS Safari triggered conversation selection (and sidebar collapse) instead of deletion. Touch events now stop propagation on the delete button so they don't bubble to the parent's long-press handler.
+- **Prompt cache stale KV entries**: After generation, the KV cache contained both prompt AND generated tokens, but token tracking only recorded the prompt. On regeneration or message editing, the trim calculation was wrong, leaving old response tokens in the KV cache and biasing the model toward repeating its previous output. Now tracks generated token IDs so trimming is accurate.
+
+## 1.12.1
+
+### Fixed
+
+- **ModelImporter race condition**: `handleScan` used stale closure-captured `scanResults` after async `scanForModels()`. Now reads fresh state via `useModelsStore.getState().scanResults`.
+- **model_service.py update_config mutation bug**: Updates were applied in-place to the models list before validation. Invalid updates corrupted in-memory state during lock hold. Now works on a deep copy and only commits if validation passes.
+- **Path validation ordering**: `model_path` validation happened after the value was already written to the config dict. Moved to before any mutations.
+- **default_model fallback**: When removing the default model, fallback now prefers enabled models instead of blindly using `models[0]`.
+- **ModelDetail save/remove error handling**: `handleSave`, `handleConfigUpdate`, and `handleRemove` now catch errors and display them inline instead of leaving the UI in a broken state.
+- **Import modal state persistence**: Local state (customPath, selectedIds, step, profile) now resets when the modal reopens.
+
+### Added
+
+- **Per-action loading states**: `actionLoading` store field tracks which model is being acted on. Load/unload buttons, toggle button, and preset buttons show spinners during operations.
+- **Import modal error display**: Errors from scan/import now display inline in the modal instead of behind it.
+- **PresetSelector empty state**: Shows "Failed to load profiles" instead of permanent "Loading..." when profile fetch fails. Uses `profilesLoaded` flag to distinguish loading from failure.
+- **reload_config error handling**: All 6 admin API endpoints that call `router.reload_config()` now catch exceptions and include a warning in the response instead of crashing.
+- **Models applet tests**: 70 tests across 3 files (modelsStore.test.ts, ModelList.test.tsx, ModelImporter.test.tsx). Total test count: 781.
+
+### Changed
+
+- **model_importer.py refactor**: Moved `PROFILES`, `ModelProfile`, `get_smart_defaults`, `get_hf_cache_paths` into `model_service.py` (single source of truth). `model_importer.py` reduced from 874 to 450 lines, now imports shared logic from `model_service`. Extracted `_detect_tags` helper to reduce duplication in MLX/GGUF entry creation.
+- **Removed fragile route exclusion list**: `admin_api.py` no longer hard-codes sub-paths that the `{model_id:path}` catch-all must skip. FastAPI's two-router registration order handles this correctly.
+
+## 1.12.0
+
+### Added
+
+- **Model Management System**: Full-stack model management with backend API and frontend applet
+  - **ModelService** (`model_service.py`): Service layer for model discovery, validation, and config management with thread-safe atomic TOML writes, path validation, CRUD operations, scan/import, and profile application
+  - **Admin API** (`admin_api.py`): 14 endpoints under `/v1/admin/models/` for CRUD, scan, import, validate, profiles, bulk-profile, load/unload, and status
+  - **Router enhancements**: `unload_model()`, `get_model_status()`, `reload_single_model()` on ModelRouter
+  - **Pydantic models**: `ScannedModelResponse`, `ModelScanRequest`, `ModelImportRequest`, `ModelUpdateRequest`, `AdminModelResponse`, `ModelStatusResponse`, `ProfileInfo`, etc.
+- **Models applet** (`/models` route): 7th frontend applet for model management
+  - Side-by-side list + detail layout (AppletLayout pattern)
+  - Searchable, filterable model list with status pills (Loaded/Available/Disabled)
+  - Full config editing with field-level reload indicators
+  - Import workflow: scan filesystem/HF cache, select models, apply profile, import
+  - Preset selector for quick profile application
+  - Provider-specific config forms (MLX 17 fields, GGUF 13 fields, STT 6 fields)
+  - Load/unload controls per model
+  - Metadata editing (description, tags)
+  - Config-only removal with confirmation
+
+### Changed
+
+- **AppNav**: Added Models entry with CubeIcon (7 nav items total)
+- **MobileBottomNav**: Inherits Models entry via shared `navItems`
+- **App.tsx**: Added lazy-loaded `/models` route
+
+## 1.11.1
+
+### Changed
+
+- **Documentation restructure**: Reorganized flat `internal/` directory (36 files, 9 dead) into `backend/`, `backend/providers/`, `bugs/`, `research/`, `frontend/`, `session/`, `log/`. Deleted 9 obsolete files, consolidated 5 into 3.
+- **CLAUDE.md rewrite**: Reduced from 322 lines to 87 lines. Now a nav hub that links out instead of duplicating content.
+- **Stale CoreML STT references**: Updated all non-historical references to use MLX STT (docs, tests, scripts). CoreML STT was removed in v1.2.0.
+
+## 1.11.0
+
+### Added
+
+- **Mobile bottom tab navigation**: New `MobileBottomNav` component provides access to all 6 applets on mobile (Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook). Previously only Chat was reachable.
+- **Shared `AppletLayout` component**: Reusable responsive wrapper for applets with left panels. Desktop shows inline panel; mobile hides it behind a toggle button with overlay drawer.
+- **Model loading from any applet**: `ModelSelector` and right panels (Advanced, Settings) lifted from Chat-only `Layout` to `AppShell`, making model management available on every route.
+- **iOS scroll fix**: `100dvh` height with `100vh` fallback, `-webkit-overflow-scrolling: touch` on chat scroll container.
+- **Desktop content width constraints**: `max-w-3xl` on chat messages, `max-w-4xl` on batch/notebook/token-explorer, preventing unreadable line lengths on wide screens.
+
+### Changed
+
+- **AppShell absorbs shared chrome**: Header, SystemStatusBar, ModelSelector panel, AdvancedPanel, SettingsPanel, and mobile detection all moved from route-specific `Layout` to `AppShell`. `Layout` reduced to Chat sidebar wrapper only.
+- **Header is route-aware**: Sidebar hamburger toggle only renders on `/chat`; other routes show a spacer.
+- **ModelSelector no longer uses `onModelLoaded` callback**: Removed prop. ChatView now watches `loadedModel` store state directly to auto-create conversations.
+- **AppNav exports `navItems`**: Shared between desktop sidebar and mobile bottom nav.
+- **Applet LeftPanels stripped of outer wrappers**: `AppletLayout` now provides width, border, and responsive behavior.
+
+### Frontend Tests
+
+- 707 tests passing across 31 test files (was 686/28)
+- New test files: `AppShell.test.tsx` (20), `MobileBottomNav.test.tsx` (6), `AppletLayout.test.tsx` (13)
+- Rewrote `Layout.test.tsx` (sidebar-only), `Header.test.tsx` (route-aware), `ModelSelector.test.tsx` (removed callback tests)
+
 ## 1.10.1
 
 ### Fixed

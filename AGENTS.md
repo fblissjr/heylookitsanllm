@@ -4,8 +4,8 @@ Quick navigation for Claude Code and specialized agents working with heylookitsa
 
 ## Essentials
 
-- [CLAUDE.md](./CLAUDE.md) - Code style, commands, key concepts, platform notes
-- [internal/00_INDEX.md](./internal/00_INDEX.md) - Full documentation navigation
+- [CLAUDE.md](./CLAUDE.md) - Nav hub: architecture links, code style, agent rules
+- [internal/](./internal/) - Organized docs: backend/, frontend/, bugs/, research/, session/, log/
 
 ## Session Continuity
 
@@ -23,68 +23,30 @@ When to use each agent:
 | **internal-docs-coordinator** | After completing features - update internal docs and maintain living documentation |
 | **ui-ux-designer** | Frontend/React work, UI design, responsive layouts (for companion apps) |
 
-## TDD Workflow
-
-Use `/uv-tdd` skill for Python test-driven development:
-- Creates project structure with tests
-- Runs tests with `uv run pytest`
-- Follows test-first methodology
-
-## Documentation Updates
-
-After completing significant work:
-1. Invoke `internal-docs-coordinator` agent to update living docs
-2. Update `internal/session/CURRENT.md` with progress
-3. Move completed items to `internal/session/TODO.md` if applicable
-
-## Quick Reference
-
-### External Reference Notation
-
-This project uses `[EXTERNAL:repo]` notation for external code references:
-```
-[EXTERNAL:mlx-lm] = https://github.com/ml-explore/mlx-lm
-[EXTERNAL:mlx-vlm] = https://github.com/Blaizzy/mlx-vlm
-```
-
-### Key Internal Docs
+## Key Internal Docs
 
 | Topic | Document |
 |-------|----------|
-| Architecture overview | `internal/01_architecture_overview.md` |
-| MLX provider | `internal/02_provider_mlx.md` |
-| API endpoints | `internal/05_API_ARCHITECTURE.md` |
-| Model routing | `internal/06_ROUTER_SYSTEM.md` |
-| Configuration | `internal/07_CONFIGURATION.md` |
-| **VLM bug (READ FIRST)** | `internal/VLM_VISION_BUG_2025-11-17.md` |
+| Architecture overview | `internal/backend/architecture.md` |
+| MLX provider | `internal/backend/providers/mlx.md` |
+| API endpoints | `internal/backend/api.md` |
+| Model routing | `internal/backend/router.md` |
+| Configuration | `internal/backend/config.md` |
+| **VLM bug (READ FIRST)** | `internal/bugs/vlm_vision_bug.md` |
 
 ### Critical Lessons Learned
 
 Before modifying MLX/VLM code, read:
-- `internal/VLM_VISION_BUG_2025-11-17.md` - Don't reimplement library APIs
-- `internal/MLX_CODE_REVIEW_2025.md` - API compatibility notes
+- `internal/bugs/vlm_vision_bug.md` - Don't reimplement library APIs
+- `internal/backend/mlx_review.md` - API compatibility notes
 
 ## Platform Support
 
 | Platform | Backend | Notes |
 |----------|---------|-------|
-| macOS | MLX, llama.cpp, CoreML STT | Full support |
+| macOS | MLX, llama.cpp, MLX STT | Full support |
 | Linux | llama.cpp | CUDA or CPU |
 | Windows | llama.cpp | CUDA or Vulkan |
-
-## Project Commands
-
-```bash
-# Server
-heylookllm --log-level DEBUG
-
-# Testing
-cd tests && pytest -m unit
-cd tests && pytest -m integration  # requires server
-
-# Model import
-heylookllm import --folder ~/models --output models.toml
-```
 
 ---
 

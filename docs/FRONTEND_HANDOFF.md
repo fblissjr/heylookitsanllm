@@ -581,7 +581,7 @@ const response = await fetch(`${BASE_URL}/v1/chat/completions`, {
 
 ### H. Audio Transcription (macOS only)
 
-Speech-to-text using CoreML.
+Speech-to-text using MLX STT (parakeet-mlx).
 
 ```typescript
 async function transcribeAudio(
@@ -749,7 +749,7 @@ export interface Model {
   object: 'model';
   created?: number;
   owned_by: string;
-  provider?: 'mlx' | 'llama_cpp' | 'gguf' | 'coreml_stt' | 'mlx_stt';
+  provider?: 'mlx' | 'llama_cpp' | 'gguf' | 'mlx_stt';
   capabilities?: string[];  // e.g., ['chat', 'vision', 'hidden_states', 'thinking']
 }
 

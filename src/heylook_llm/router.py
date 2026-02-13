@@ -419,3 +419,60 @@ class ModelRouter:
         except Exception as e:
             logging.error(f"Failed to reload configuration: {e}")
             raise
+
+    def unload_model(self, model_id: str) -> bool:
+        """Explicitly unload a specific model from cache.
+
+        Returns True if the model was loaded and is now unloaded, False if it wasn't loaded.
+        """
+        with self.cache_lock:
+            if model_id not in self.providers:
+                return False
+
+            provider = self.providers.pop(model_id)
+
+        # Unload outside the cache lock to avoid holding it during slow ops
+        is_mlx = hasattr(provider, 'provider') and provider.provider == 'mlx'
+        try:
+            provider.unload()
+            del provider
+            gc.collect()
+            if HAS_MLX and is_mlx:
+                mx.clear_cache()
+            logging.info(f"Explicitly unloaded model: {model_id}")
+        except Exception as e:
+            logging.error(f"Error unloading model {model_id}: {e}")
+
+        return True
+
+    def get_model_status(self, model_id: str) -> dict:
+        """Get load status and basic metrics for a model."""
+        with self.cache_lock:
+            loaded = model_id in self.providers
+
+        status = {"loaded": loaded}
+
+        if loaded:
+            provider = self.providers.get(model_id)
+            if provider:
+                # Try to get memory info
+                if hasattr(provider, 'get_memory_usage'):
+                    try:
+                        status["memory_mb"] = provider.get_memory_usage()
+                    except Exception:
+                        pass
+
+        return status
+
+    def reload_single_model(self, model_id: str) -> None:
+        """Reload config for one model without clearing entire cache.
+
+        If the model is currently loaded, it gets unloaded and the new config
+        is stored. It does NOT auto-reload -- the caller should use get_provider()
+        when they want it loaded again.
+        """
+        # Reload config from file first
+        self.reload_config()
+
+        # Unload if currently loaded (will be re-loaded with new config on next request)
+        self.unload_model(model_id)

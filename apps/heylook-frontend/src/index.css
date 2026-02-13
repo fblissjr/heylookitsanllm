@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* Dynamic viewport height: accounts for mobile browser chrome */
+html, body, #root {
+  height: 100dvh;
+  height: 100vh; /* fallback for browsers without dvh support */
+}
+
+/* Touch scrolling for iOS momentum */
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Custom theme configuration for Tailwind CSS 4 */
 @theme {
   --color-primary: #3B82F6;

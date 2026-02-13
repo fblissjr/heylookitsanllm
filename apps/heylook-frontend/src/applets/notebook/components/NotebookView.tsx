@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { LeftPanel } from './LeftPanel'
 import { Editor } from './Editor'
 import { useNotebookStore } from '../stores/notebookStore'
+import { AppletLayout } from '../../../components/layout/AppletLayout'
 
 export function NotebookView() {
   const loadFromDB = useNotebookStore((s) => s.loadFromDB)
@@ -54,9 +55,8 @@ export function NotebookView() {
   }, [loaded, documents.length, createDocument])
 
   return (
-    <div className="h-full flex">
-      <LeftPanel />
+    <AppletLayout leftPanel={<LeftPanel />} leftPanelWidth="w-72">
       <Editor />
-    </div>
+    </AppletLayout>
   )
 }

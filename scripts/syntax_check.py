@@ -1,5 +1,4 @@
 import ast
-import os
 import sys
 
 def check_syntax(filepath):
@@ -46,7 +45,7 @@ files_to_check = [
     "src/heylook_llm/optimizations/status.py",
     "src/heylook_llm/providers/__init__.py",
     "src/heylook_llm/providers/base.py",
-    "src/heylook_llm/providers/coreml_stt_provider.py",
+    "src/heylook_llm/providers/mlx_stt_provider.py",
     "src/heylook_llm/providers/llama_cpp_provider.py",
     "src/heylook_llm/providers/mlx_batch_text.py",
     "src/heylook_llm/providers/mlx_batch_vision.py",

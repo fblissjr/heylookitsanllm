@@ -442,7 +442,7 @@ class TestModelCapabilities:
 
         # Provider should be valid
         for model in models_with_provider:
-            assert model["provider"] in ["mlx", "llama_cpp", "gguf", "coreml_stt", "mlx_stt"]
+            assert model["provider"] in ["mlx", "llama_cpp", "gguf", "mlx_stt"]
 
     def test_models_endpoint_structure(self, api_client, check_server):
         """Test /v1/models response structure."""

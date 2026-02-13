@@ -10,7 +10,6 @@ const mockSetLoadedModel = vi.fn()
 const mockSetModelStatus = vi.fn()
 const mockSetError = vi.fn()
 const mockSetActivePanel = vi.fn()
-const mockOnModelLoaded = vi.fn()
 
 const defaultModelCapabilities: ModelCapabilities = {
   chat: true,
@@ -231,32 +230,6 @@ describe('ModelSelector', () => {
           }),
         })
       )
-    })
-
-    it('calls onModelLoaded callback after loading model', async () => {
-      const user = userEvent.setup()
-      render(<ModelSelector onModelLoaded={mockOnModelLoaded} />)
-
-      const modelCard = screen.getByText('llama-3.2-1b').closest('button')
-      await user.click(modelCard!)
-
-      const loadButton = screen.getByRole('button', { name: /Load Model/i })
-      await user.click(loadButton)
-
-      expect(mockOnModelLoaded).toHaveBeenCalledWith('llama-3.2-1b')
-    })
-
-    it('does not fail when onModelLoaded is not provided', async () => {
-      const user = userEvent.setup()
-      render(<ModelSelector />)
-
-      const modelCard = screen.getByText('llama-3.2-1b').closest('button')
-      await user.click(modelCard!)
-
-      const loadButton = screen.getByRole('button', { name: /Load Model/i })
-      await user.click(loadButton)
-
-      expect(mockSetLoadedModel).toHaveBeenCalled()
     })
 
     it('closes panel after loading model', async () => {

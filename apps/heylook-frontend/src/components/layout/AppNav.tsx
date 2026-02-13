@@ -1,20 +1,21 @@
 import { NavLink } from 'react-router-dom'
-import { ChatBubbleIcon, LayersIcon, SparklesIcon, ScaleIcon, ChartBarIcon, DocumentTextIcon } from '../icons'
+import { ChatBubbleIcon, LayersIcon, SparklesIcon, ScaleIcon, ChartBarIcon, DocumentTextIcon, CubeIcon } from '../icons'
 import clsx from 'clsx'
 
-interface NavItem {
+export interface NavItem {
   to: string
   label: string
   icon: typeof ChatBubbleIcon
 }
 
-const navItems: NavItem[] = [
+export const navItems: NavItem[] = [
   { to: '/chat', label: 'Chat', icon: ChatBubbleIcon },
   { to: '/batch', label: 'Batch', icon: LayersIcon },
   { to: '/explore', label: 'Explore', icon: SparklesIcon },
   { to: '/compare', label: 'Compare', icon: ScaleIcon },
   { to: '/perf', label: 'Perf', icon: ChartBarIcon },
   { to: '/notebook', label: 'Note', icon: DocumentTextIcon },
+  { to: '/models', label: 'Models', icon: CubeIcon },
 ]
 
 export function AppNav() {
