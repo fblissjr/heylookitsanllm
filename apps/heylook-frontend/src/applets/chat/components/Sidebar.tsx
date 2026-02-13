@@ -408,6 +408,8 @@ function ConversationItem({
       {!isSelectionMode && (
         <button
           onClick={(e) => onDelete(e, conversation.id, conversation.title)}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
           className={clsx(
             'p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-all',
             isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'
