@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.13.0
+
+### Removed
+
+- **Dead code**: Deleted `mlx_optimizations.py` (283 lines of hallucinated MLX APIs, zero imports anywhere)
+- **Queue manager**: Removed `queue_manager.py` and all queue branches from `api.py`, `messages_api.py`, `router.py`. Queue was always disabled (`queue_config.enabled: false`) and fundamentally incompatible with streaming (`list(generator)` defeated the point). Removes ~400 lines of dead code.
+
+### Added
+
+- **Generation abort mechanism**: New `AbortEvent` (`providers/abort.py`) enables cooperative cancellation of in-flight MLX generation. When a new request arrives while another is generating, the current generation is aborted (per-token check) so the new request starts immediately instead of blocking. Client disconnect during SSE streaming also triggers abort, freeing GPU compute.
+
 ## 1.12.4
 
 ### Added

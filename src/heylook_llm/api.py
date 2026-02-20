@@ -401,34 +401,15 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     try:
         log_request_stage(request_id, "routing")
 
-        # Check if request should use queue manager
-        if router.should_use_queue(chat_request.model, chat_request):
-            logging.info(f"[QUEUE] Request {request_id[:8]} using queue manager for model '{chat_request.model}'")
-            log_request_stage(request_id, "queuing")
+        # Run CPU-bound operations in thread pool
+        provider = await asyncio.to_thread(router.get_provider, chat_request.model)
 
-            # Process through queue manager
-            result = await router.process_with_queue(chat_request.model, chat_request)
+        if router.log_level <= logging.DEBUG:
+            logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
 
-            # Queue manager returns completed result, not a generator
-            # Convert to generator format for consistency
-            def queue_result_generator():
-                if hasattr(result, '__iter__'):
-                    yield from result
-                else:
-                    yield result
-
-            generator = queue_result_generator()
-        else:
-            # Direct processing (existing path)
-            # Run CPU-bound operations in thread pool
-            provider = await asyncio.to_thread(router.get_provider, chat_request.model)
-
-            if router.log_level <= logging.DEBUG:
-                logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
-
-            log_request_stage(request_id, "generating")
-            # Run model generation in thread pool
-            generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
+        log_request_stage(request_id, "generating")
+        # Run model generation in thread pool
+        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
     except RuntimeError as e:
         # Check if this is a MODEL_BUSY error
@@ -487,7 +468,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator_async(generator, chat_request, router, request_id),
+            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider),
             media_type="text/event-stream"
         )
     else:
@@ -543,7 +524,7 @@ def stream_response_generator(generator, model_id, request_id):
     log_request_complete(request_id, success=True)
     yield "data: [DONE]\n\n"
 
-async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id):
+async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None):
     """Async streaming response generator that runs generation in thread pool.
 
     Supports Qwen3 thinking tokens: streams delta.thinking during <think> blocks,
@@ -618,7 +599,10 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         }
         return f"data: {json.dumps(response)}\n\n"
 
-    # Create async wrapper for the synchronous generator
+    # Resolve abort event from provider (if MLX provider with abort support)
+    abort_event = getattr(provider, '_abort_event', None) if provider else None
+
+    # Create async wrapper for the synchronous generator with disconnect detection
     async def chunk_generator():
         loop = asyncio.get_event_loop()
 
@@ -630,7 +614,25 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                 return None
 
         while True:
-            chunk = await loop.run_in_executor(None, get_next_chunk)
+            # Submit chunk retrieval to thread pool
+            chunk_future = loop.run_in_executor(None, get_next_chunk)
+
+            # Poll for disconnect while waiting for next token
+            if http_request and abort_event:
+                while not chunk_future.done():
+                    if await http_request.is_disconnected():
+                        logging.info(f"Client disconnected during streaming (request {request_id[:8]})")
+                        abort_event.set()
+                        # Still await the future to avoid dangling coroutines
+                        try:
+                            await chunk_future
+                        except Exception:
+                            pass
+                        return
+                    # Brief sleep to avoid busy-waiting
+                    await asyncio.sleep(0.1)
+
+            chunk = await chunk_future
             if chunk is None:
                 break
             yield chunk

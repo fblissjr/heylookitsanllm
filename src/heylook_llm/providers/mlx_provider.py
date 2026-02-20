@@ -16,6 +16,7 @@ from mlx_vlm.utils import load as vlm_load
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics
+from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.performance_monitor import time_mlx_operation, performance_monitor
@@ -172,7 +173,7 @@ class LanguageModelLogitsWrapper(nn.Module):
 class GenerationStrategy(Protocol):
     """Protocol for generation strategies."""
 
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
         """Generate response using this strategy."""
         ...
 
@@ -187,7 +188,7 @@ class TextOnlyStrategy:
         self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "text_only")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
         # Apply chat template once
@@ -281,6 +282,9 @@ class TextOnlyStrategy:
                     prompt_progress_callback=prompt_progress_callback,
                     prompt_cache=generation_cache if generation_cache else None
                 ):
+                    if abort_event and abort_event.is_set():
+                        logging.info("Generation aborted (text_only)")
+                        break
                     generated_token_ids.append(response.token)
                     # Clean up leading space on first token for models with add_prefix_space
                     if first_token and response.text.startswith(' '):
@@ -309,7 +313,7 @@ class VLMTextOnlyStrategy:
         self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "vlm_text")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
         # VLM text-only: use lm_stream_generate with the language model component
         # so that the full sampler/processor pipeline (top_k, min_p, presence_penalty,
         # logit_bias, etc.) is applied -- vlm_stream_generate bypasses all of that.
@@ -384,6 +388,9 @@ class VLMTextOnlyStrategy:
                     prompt_progress_callback=prompt_progress_callback,
                     prompt_cache=generation_cache if generation_cache else None
                 ):
+                    if abort_event and abort_event.is_set():
+                        logging.info("Generation aborted (vlm_text)")
+                        break
                     generated_token_ids.append(response.token)
                     if first_token and response.text.startswith(' '):
                         response.text = response.text.lstrip()
@@ -407,7 +414,7 @@ class VLMVisionStrategy:
         self._batch_vision_processor = None
 
     @time_mlx_operation("generation", "vlm_vision")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
         # Create generator with sampling (cached)
         if self._cached_generator is None:
             self._cached_generator = create_vlm_generator_with_sampling(model, processor)
@@ -447,7 +454,7 @@ class VLMVisionStrategy:
         # Wrap generation in wired_limit context manager for optimal Metal memory management
         with wired_limit(model, [generation_stream]):
             # Use generation with mlx-lm sampling
-            yield from self._cached_generator.stream_generate_with_sampling(
+            for response in self._cached_generator.stream_generate_with_sampling(
                 prompt=formatted_prompt,
                 image=images,
                 sampler=sampler,
@@ -456,7 +463,11 @@ class VLMVisionStrategy:
                 temperature=effective_request.get('temperature', 0.1),
                 top_p=effective_request.get('top_p', 1.0),
                 repetition_penalty=effective_request.get('repetition_penalty'),
-            )
+            ):
+                if abort_event and abort_event.is_set():
+                    logging.info("Generation aborted (vlm_vision)")
+                    break
+                yield response
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs with parallel image loading."""
@@ -578,6 +589,9 @@ class MLXProvider(BaseProvider):
 
         # Add generation lock to prevent Metal command buffer conflicts
         self._generation_lock = threading.Lock()
+
+        # Cooperative abort signal for cancelling in-flight generation
+        self._abort_event = AbortEvent()
 
         # Reference counting for safe unload -- prevents eviction during active generation
         self._active_generations = 0
@@ -950,11 +964,15 @@ class MLXProvider(BaseProvider):
             with self._active_lock:
                 self._active_generations += 1
 
-            # Use generation lock to prevent Metal command buffer conflicts
+            # Preemption: if the lock is held by another generation, abort it
+            # so we can start this request sooner instead of blocking.
             lock_acquired = self._generation_lock.acquire(blocking=False)
             if not lock_acquired:
-                logging.warning(f"[MLX GENERATION] Waiting for another request to complete on {self.model_id} (Metal concurrency protection)")
+                logging.info(f"[MLX GENERATION] Preempting current generation on {self.model_id}")
+                self._abort_event.set()
                 self._generation_lock.acquire(blocking=True)
+            # Clean slate for this generation
+            self._abort_event.clear()
 
             try:
                 effective_request = self._apply_model_defaults(request)
@@ -979,7 +997,7 @@ class MLXProvider(BaseProvider):
 
                         # Use pre-compiled text-only strategy
                         strategy = self._strategies['text_only']
-                        yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+                        yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors, abort_event=self._abort_event)
                         return
 
                     # VLM model path - decide between text-only and vision
@@ -1008,7 +1026,7 @@ class MLXProvider(BaseProvider):
                     if hasattr(self.model, 'language_model'):
                         logging.debug(f"Language model type: {type(self.model.language_model)}")
 
-                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors, abort_event=self._abort_event)
 
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)
