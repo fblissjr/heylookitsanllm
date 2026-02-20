@@ -117,7 +117,7 @@ RadixTreeCache:
 
 - **Block size of 16 tokens**: Balances granularity vs. overhead. Typical conversation turn shares hundreds of tokens with the previous prefix.
 - **Delta-only prefill**: After matching the longest prefix, only the new tokens (from the match point onward) need prefill. For a 2000-token conversation where the user adds 50 tokens, prefill is 50 tokens instead of 2000.
-- **Memory-bounded**: `max_nodes` prevents unbounded growth. LRU eviction removes least-recently-accessed branches.
+- **Memory-bounded**: `max_nodes` prevents unbounded growth. LRU eviction removes least-recently-accessed branches. Eviction should also trigger when `mx.metal.get_active_memory()` exceeds ~85% of the Mac's unified memory limit to prevent SSD swap thrashing.
 - **Multiple prefixes**: Unlike current single-prefix cache, radix tree supports multiple conversation branches (e.g., regenerating different responses).
 
 ### key files
@@ -171,18 +171,40 @@ MLX compiles operations lazily into Metal compute graphs. Each unique combinatio
        return logits, k_cache, v_cache
    ```
 
+### shape bucketing for prefill
+
+During prefill (processing the full prompt before decode begins), sequence length varies with every request. Each new length triggers a graph recompilation. Shape bucketing eliminates this:
+
+1. **Pad prompts to fixed bucket sizes** (e.g., 128, 256, 512, 1024, 2048, 4096 tokens)
+2. **Pass an attention mask** to ignore padding tokens during attention computation
+3. MLX caches the compiled graph per bucket, so after the first few prompts, all prefills hit cached graphs
+
+This is especially important for TTFT -- prefill recompilation can add 200-500ms on first request at each new prompt length.
+
+### pure mlx samplers
+
+Current `samplers.py` imports numpy (`import numpy as np`) for operations that MLX 0.29 didn't support natively. This breaks the compute graph -- any `.item()`, `.tolist()`, or numpy conversion forces a GPU-to-CPU sync, stalling the Metal pipeline.
+
+Refactor plan:
+1. Audit `samplers.py` for all numpy/Python conversions
+2. Rewrite temperature scaling, top-p, top-k, and repetition penalty using pure `mx.core` operations (`mx.argmax`, `mx.random.categorical`, `mx.sort`, `mx.cumsum`)
+3. The entire sampling pipeline should be a pure `mx.array` -> `mx.array` function with no CPU round-trips
+4. This is a prerequisite for compiling the full decode step -- `@mx.compile` cannot trace through numpy calls
+
 ### key challenges
 
 - `mx.compile` requires all inputs and outputs to be `mx.array` -- no Python int positions
 - Pre-allocated KV caches must be masked/sliced correctly during attention
 - Need to verify compiled graph produces identical output to non-compiled path
 - Prompt cache integration: the pre-allocated cache must be compatible with the existing `process_prompt_with_cache` flow
+- Sampler refactoring must produce bit-identical output to current numpy-based samplers (test with fixed seeds)
 
 ### key files
 
 - `providers/mlx_provider.py` -- modify strategies to use compiled decode
+- `providers/common/samplers.py` -- refactor to pure MLX operations (eliminate numpy dependency)
 - New `providers/common/compiled_decode.py` -- compiled decode step implementation
-- Unit tests comparing compiled vs. non-compiled output
+- Unit tests comparing compiled vs. non-compiled output, sampler correctness tests
 
 ### verification
 
@@ -192,19 +214,31 @@ MLX compiles operations lazily into Metal compute graphs. Each unique combinatio
 
 ---
 
-## phase 4: speculative decoding hardening
+## phase 4: speculative decoding and kv quantization
 
 ### goal
 
-Draft model support exists but is lightly integrated. Make it reliable for production use with automatic configuration and monitoring.
+Maximize TPS and context window on memory-bandwidth-bound Apple Silicon hardware. Two complementary approaches: speculative decoding trades idle compute for speed; KV quantization compresses caches to fit larger contexts.
 
-### current state
+### why this matters for single-user local inference
+
+On Apple Silicon, batch-size-1 generation is **memory bandwidth bound**, not compute bound. The GPU ALUs idle waiting for weights to be fetched from unified memory. Speculative decoding exploits this: a tiny draft model generates candidate tokens cheaply, the main model verifies them in a single forward pass, yielding multiple accepted tokens for the bandwidth cost of one.
+
+Meanwhile, unquantized float16 KV caches for 32K+ context windows consume 10GB+ of RAM. When the Mac starts swapping to SSD, TPS drops to near zero. Quantized KV caches (4-bit or 8-bit) cut this by 2-4x with minimal quality loss.
+
+### current state -- speculative decoding
 
 - `TextOnlyStrategy` and `VLMTextOnlyStrategy` already pass `draft_model` to `lm_stream_generate`
 - Draft model loading exists in `load_model()` via `config.get('draft_model_path')`
 - No automatic draft model selection, no acceptance rate monitoring, no tuning
 
-### planned improvements
+### current state -- kv quantization
+
+- `prompt_cache.py` already supports `QuantizedKVCache` via `cache_type` and `kv_bits` config
+- Configured per-request through `effective_request` params (`cache_type`, `kv_bits`, `kv_group_size`)
+- No default-on behavior, no memory-pressure-triggered quantization, no quality impact monitoring
+
+### planned improvements -- speculative decoding
 
 1. **Automatic draft model selection**: Given a target model (e.g., Qwen3-8B), automatically select a compatible draft model (e.g., Qwen3-0.6B) from the model registry. Compatibility means same vocabulary and architecture family.
 
@@ -223,17 +257,31 @@ Draft model support exists but is lightly integrated. Make it reliable for produ
 
 4. **Default-on for compatible pairs**: When a draft model is available and compatible, enable speculative decoding by default. User can opt out via config.
 
+### planned improvements -- kv quantization
+
+5. **Default-on KV quantization**: Enable 8-bit KV quantization by default for all models. Users can override to 4-bit (more aggressive, slight quality tradeoff) or 16-bit (no quantization) via config.
+
+6. **Memory-pressure-triggered downgrade**: Monitor `mx.metal.get_active_memory()`. When memory usage exceeds 80% of available RAM, automatically downgrade KV cache from 8-bit to 4-bit. This prevents SSD swap thrashing while maintaining generation quality as long as possible.
+
+7. **Quality impact monitoring**: Track perplexity delta between quantized and unquantized KV caches on a reference prompt. Surface this in the Performance applet so users can make informed tradeoffs.
+
+8. **Per-model kv_bits config**: Add `kv_bits` to `models.toml` per-model config so different models can have different defaults (e.g., 4-bit for large 32B models, 8-bit for small 8B models).
+
 ### key files
 
 - `providers/mlx_provider.py` -- speculation stats, dynamic k adjustment
+- `providers/common/prompt_cache.py` -- KV quantization defaults, memory-pressure monitoring
+- `providers/common/cache_helpers.py` -- `QuantizedKVCache` integration
 - `model_service.py` -- automatic draft model discovery
-- `config.py` -- draft model configuration options
-- `models.toml` -- per-model draft_model_path entries
+- `config.py` -- draft model and kv_bits configuration options
+- `models.toml` -- per-model draft_model_path and kv_bits entries
 
 ### verification
 
 - Correctness: speculative output must be identical to non-speculative (by construction -- rejected tokens are re-sampled)
+- Correctness: KV quantization output quality verified via perplexity comparison on reference prompts
 - Performance: measure TPS with and without speculation across model sizes
+- Memory: measure KV cache RAM usage at various kv_bits settings (4, 8, 16) across context lengths
 - Acceptance rate logging: dashboard-visible stats for tuning
 
 ---
@@ -341,5 +389,6 @@ Phases 2 and 3 are independent and can be worked on in parallel. Phase 4 depends
 |--------|---------|---------------|---------------|---------------|---------------|
 | TTFT (multi-turn) | 1-3s | ~50ms | ~50ms | ~50ms | ~50ms |
 | TPS (decode) | baseline | baseline | +10-20% | +100-200% | +100-200% |
+| KV cache VRAM | 100% (fp16) | 100% (fp16) | 100% (fp16) | 25-50% (4-8 bit) | 25-50% (4-8 bit) |
 | Code complexity | 3 strategies | 3 strategies | 3 strategies | 3 strategies | 1 strategy |
 | JIT recompilations | per-token | per-token | 0 after first | 0 after first | 0 after first |
