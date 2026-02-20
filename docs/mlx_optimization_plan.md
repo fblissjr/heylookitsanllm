@@ -80,6 +80,8 @@ Queue manager was disabled by default (`queue_config.enabled: false`). The `shou
 
 **Known limitation:** Abort happens between tokens, not mid-token. If a single token takes 500ms, we cannot abort until it completes. Long-term fix: contribute `abort_event` parameter upstream to `mlx_lm.generate.stream_generate`.
 
+**Future improvement -- disconnect detection polling:** The current 100ms polling interval is a reasonable default but could be tuned. Shorter means faster abort detection but more `is_disconnected()` overhead. A more event-driven approach would use `asyncio.wait` with the chunk future and a disconnect-checking task instead of polling. The current approach is simple and correct, and the overhead of a 100ms poll is negligible compared to token generation time (~20-50ms per token depending on model size), so this is low priority.
+
 ---
 
 ## phase 2: radix-tree prefix caching
