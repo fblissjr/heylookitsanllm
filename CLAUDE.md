@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-02-12 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-02-23 -->
 
 ## Table of Contents
 
@@ -65,9 +65,10 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 
 ## Rules: Library APIs
 
-- Use `mlx_vlm.generate.stream_generate` for VLM generation
+- All generation (text + vision) routes through `generation_core.run_generation()` calling `mlx_lm.generate.stream_generate`
+- Vision requests use a pre-filled cache pattern: VLM forward fills KV cache, then `run_generation()` continues
 - Use `mlx_vlm.prompt_utils.apply_chat_template` for VLM prompt formatting
-- Use `mlx_lm.generate.stream_generate` for text-only generation
+- Use `mlx_vlm.utils.prepare_inputs` for VLM input tokenization (handles image grid dimensions per model)
 - Verify a library is actually broken before implementing a workaround
 - See [internal/bugs/vlm_vision_bug.md](./internal/bugs/vlm_vision_bug.md)
 
