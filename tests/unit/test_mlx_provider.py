@@ -56,20 +56,29 @@ class TestMLXProviderInit:
 @pytest.mark.unit
 class TestStrategyCompilation:
     def test_text_only_strategy_compiled(self, mock_mlx_provider):
-        """After _compile_strategies, text-only provider has 'text_only' strategy."""
+        """After _compile_strategies, text-only provider has 'text' strategy."""
         mock_mlx_provider._compile_strategies()
-        assert "text_only" in mock_mlx_provider._strategies
+        assert "text" in mock_mlx_provider._strategies
 
     def test_vlm_strategies_compiled(self, mock_vlm_provider):
-        """VLM provider has 'vlm_text' and 'vlm_vision' strategies."""
+        """VLM provider has 'text' and 'vision' strategies."""
         mock_vlm_provider._compile_strategies()
-        assert "vlm_text" in mock_vlm_provider._strategies
-        assert "vlm_vision" in mock_vlm_provider._strategies
+        assert "text" in mock_vlm_provider._strategies
+        assert "vision" in mock_vlm_provider._strategies
 
-    def test_text_only_no_vlm_strategies(self, mock_mlx_provider):
+    def test_text_only_no_vision_strategy(self, mock_mlx_provider):
         mock_mlx_provider._compile_strategies()
-        assert "vlm_text" not in mock_mlx_provider._strategies
-        assert "vlm_vision" not in mock_mlx_provider._strategies
+        assert "vision" not in mock_mlx_provider._strategies
+
+    def test_text_strategy_is_vlm_flag(self, mock_vlm_provider):
+        """VLM provider's text strategy should have is_vlm=True."""
+        mock_vlm_provider._compile_strategies()
+        assert mock_vlm_provider._strategies['text'].is_vlm is True
+
+    def test_text_only_strategy_not_vlm(self, mock_mlx_provider):
+        """Text-only provider's text strategy should have is_vlm=False."""
+        mock_mlx_provider._compile_strategies()
+        assert mock_mlx_provider._strategies['text'].is_vlm is False
 
 
 @pytest.mark.unit
@@ -362,21 +371,32 @@ class TestNoContentCache:
 
 
 @pytest.mark.unit
-class TestVLMTextOnlyStrategy:
-    """Verify VLMTextOnlyStrategy uses LanguageModelLogitsWrapper."""
+class TestUnifiedTextStrategy:
+    """Verify UnifiedTextStrategy for both text-only and VLM text paths."""
 
-    def test_vlm_text_strategy_has_cached_wrapper(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import VLMTextOnlyStrategy
-        strategy = VLMTextOnlyStrategy(draft_model=None, model_id="test-vlm")
+    def test_cached_wrapper_none_initially(self, mock_mlx):  # noqa: ARG001
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm", is_vlm=True)
         assert strategy._cached_wrapper is None  # None until generate() called
 
-    def test_vlm_text_strategy_has_cache_manager(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import VLMTextOnlyStrategy
-        strategy = VLMTextOnlyStrategy(draft_model=None, model_id="test-vlm")
+    def test_has_cache_manager(self, mock_mlx):  # noqa: ARG001
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
         assert strategy.cache_manager is not None
 
-    def test_vlm_text_strategy_no_cached_generator(self, mock_mlx):  # noqa: ARG001
-        """VLMTextOnlyStrategy should not have _cached_generator (only VLMVisionStrategy uses it)."""
-        from heylook_llm.providers.mlx_provider import VLMTextOnlyStrategy
-        strategy = VLMTextOnlyStrategy(draft_model=None, model_id="test-vlm")
+    def test_no_cached_generator(self, mock_mlx):  # noqa: ARG001
+        """UnifiedTextStrategy should not have _cached_generator (only VLMVisionStrategy uses it)."""
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
         assert not hasattr(strategy, '_cached_generator')
+
+    def test_text_only_mode(self, mock_mlx):  # noqa: ARG001
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=False)
+        assert strategy.is_vlm is False
+        assert strategy._cached_wrapper is None
+
+    def test_vlm_mode(self, mock_mlx):  # noqa: ARG001
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=True)
+        assert strategy.is_vlm is True

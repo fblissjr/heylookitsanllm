@@ -34,7 +34,7 @@ class VLMGeneratorWithSampling:
         self.tokenizer = processor.tokenizer if hasattr(processor, 'tokenizer') else processor
 
         # Cache LanguageModelLogitsWrapper for text-only path
-        from ..mlx_provider import LanguageModelLogitsWrapper
+        from .model_wrappers import LanguageModelLogitsWrapper
         self._language_model_wrapper = LanguageModelLogitsWrapper(model.language_model)
     
     @time_mlx_operation("vlm_generation", "vision_with_sampling")

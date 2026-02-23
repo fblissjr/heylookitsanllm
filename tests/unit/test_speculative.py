@@ -3,7 +3,7 @@
 
 Covers:
 - num_draft_tokens default value and passthrough
-- VLMTextOnlyStrategy model_config propagation
+- UnifiedTextStrategy model_config propagation
 - cache_config plumbing from model defaults
 """
 
@@ -69,35 +69,55 @@ class TestApplyModelDefaults:
         assert effective['temperature'] == 0.9
 
 
-class TestVLMTextOnlyStrategyModelConfig:
-    """Verify VLMTextOnlyStrategy receives model_config."""
+class TestUnifiedTextStrategyModelConfig:
+    """Verify UnifiedTextStrategy receives model_config."""
 
     def test_model_config_stored(self, mock_mlx):
-        from heylook_llm.providers.mlx_provider import VLMTextOnlyStrategy
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
 
         config = {'cache_type': 'quantized', 'kv_bits': 8}
-        strategy = VLMTextOnlyStrategy(
+        strategy = UnifiedTextStrategy(
             draft_model=None,
             model_id="test-vlm",
             model_config=config,
+            is_vlm=True,
         )
         assert strategy.model_config == config
 
     def test_model_config_defaults_to_empty(self, mock_mlx):
-        from heylook_llm.providers.mlx_provider import VLMTextOnlyStrategy
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
 
-        strategy = VLMTextOnlyStrategy(draft_model=None, model_id="test-vlm")
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
         assert strategy.model_config == {}
 
+    def test_is_vlm_flag_stored(self, mock_mlx):
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=True)
+        assert strategy.is_vlm is True
+
+        strategy2 = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=False)
+        assert strategy2.is_vlm is False
+
     def test_compile_strategies_passes_config(self, mock_vlm_provider):
-        """_compile_strategies should pass self.config to VLMTextOnlyStrategy."""
+        """_compile_strategies should pass self.config to UnifiedTextStrategy."""
         provider = mock_vlm_provider
         provider.config['cache_type'] = 'quantized'
         provider._compile_strategies()
 
-        vlm_text = provider._strategies.get('vlm_text')
-        assert vlm_text is not None
-        assert vlm_text.model_config.get('cache_type') == 'quantized'
+        text_strategy = provider._strategies.get('text')
+        assert text_strategy is not None
+        assert text_strategy.model_config.get('cache_type') == 'quantized'
+        assert text_strategy.is_vlm is True
+
+    def test_compile_strategies_text_only(self, mock_mlx_provider):
+        """Text-only provider should compile UnifiedTextStrategy with is_vlm=False."""
+        provider = mock_mlx_provider
+        provider._compile_strategies()
+
+        text_strategy = provider._strategies.get('text')
+        assert text_strategy is not None
+        assert text_strategy.is_vlm is False
 
 
 class TestCacheConfigPlumbing:

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.16.0
+
+### Changed
+
+- **Provider strategy unification**: Merged `TextOnlyStrategy` and `VLMTextOnlyStrategy` (~400 lines of duplication) into a single `UnifiedTextStrategy` (~130 lines) that dispatches on `is_vlm` for chat template application and model wrapping. All shared logic (cache config, prompt cache, generation loop, acceptance tracking, KV snapshot storage) extracted to `generation_core.run_generation()`. Strategy keys changed from `text_only`/`vlm_text`/`vlm_vision` to `text`/`vision`.
+- **`LanguageModelLogitsWrapper` moved**: Relocated from `mlx_provider.py` to `providers/common/model_wrappers.py` to break circular import with `vlm_generation.py`.
+- **Generation core extracted**: New `providers/common/generation_core.py` contains the single generation loop (`run_generation`), cache config construction (`_build_cache_config`), and prompt cache setup (`_setup_prompt_cache`). This is the integration point for future `mx.compile` optimization.
+- **Simplified routing**: `_compile_strategies()` now creates 1-2 strategies (text, optionally vision) instead of 2-3. `create_chat_completion()` routing reduced to a simple `has_images` check.
+
 ## 1.15.0
 
 ### Fixed
