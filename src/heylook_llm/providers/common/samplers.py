@@ -12,7 +12,6 @@ to generate optimized Metal kernels for sampling operations.
 """
 from __future__ import annotations
 
-import numpy as np
 import mlx.core as mx
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
@@ -24,31 +23,45 @@ DEFAULT_REPETITION_PENALTY = 1.1
 
 
 def _mlx_unique(x: mx.array) -> mx.array:
+    """Pure-MLX unique values via sort + cumsum + scatter.
+
+    Returns sorted unique values (same contract as np.unique). Uses only
+    mx.* operations -- one int32 .item() sync to determine output size.
     """
-    Get unique values from array.
+    if x.size <= 1:
+        return x
+    sorted_x = mx.sort(x)
+    mask = mx.concatenate([mx.array([True]), sorted_x[1:] != sorted_x[:-1]])
+    compressed = mx.cumsum(mask.astype(mx.int32)) - 1
+    n_unique = compressed[-1].item() + 1
+    masked_values = mx.where(mask, sorted_x, mx.zeros_like(sorted_x))
+    result = mx.zeros(n_unique, dtype=sorted_x.dtype)
+    result = result.at[compressed].add(masked_values)
+    return result
 
-    Uses numpy since MLX 0.29 doesn't have mx.unique and doesn't support
-    boolean indexing. Performance impact is minimal as token arrays are small.
+
+def _apply_presence_penalty(logits: mx.array, tokens: mx.array, penalty: float) -> mx.array:
+    """Apply presence penalty via scatter-count -- zero GPU-CPU syncs.
+
+    Instead of computing unique tokens (which requires knowing the output
+    size, forcing a sync), scatter-count token occurrences into a vocab-
+    sized array, clamp to binary presence, and subtract the penalty.
+    All shapes are determined by vocab_size (fixed per model), so this
+    is fully compilable with no recompilation across decode steps.
     """
-    return mx.array(np.unique(np.array(x)))
-
-
-# Compiled presence penalty kernel following mlx-lm pattern
-@mx.compile
-def _apply_presence_penalty_compiled(logits: mx.array, unique_tokens: mx.array, penalty: float) -> mx.array:
-    """Compiled presence penalty application for Metal optimization."""
-    return logits.at[unique_tokens].add(-penalty)
+    counts = mx.zeros_like(logits)
+    counts = counts.at[tokens].add(1.0)
+    # Clamp to presence: 1.0 if seen at least once, 0.0 otherwise
+    present = mx.minimum(counts, 1.0)
+    return logits - penalty * present
 
 
 def make_presence_penalty_processor(penalty: float):
-    """
-    Create a presence penalty logits processor.
+    """Create a presence penalty logits processor.
 
-    Presence penalty reduces the likelihood of tokens that have already appeared,
-    regardless of how many times they appeared. This encourages the model to
-    explore new topics.
-
-    Recommended value for Qwen3 thinking mode: 1.5
+    Uses scatter-count instead of unique+gather: scatter 1s at each token
+    position, clamp to binary, subtract penalty. Zero GPU-CPU syncs and
+    fixed output shapes (vocab_size) for stable compilation.
 
     Args:
         penalty: Penalty value (0.0-2.0). Higher values discourage repetition more.
@@ -59,12 +72,7 @@ def make_presence_penalty_processor(penalty: float):
     def processor(tokens: mx.array, logits: mx.array) -> mx.array:
         if penalty <= 0.0 or len(tokens) == 0:
             return logits
-
-        # Get unique tokens using pure MLX implementation
-        unique_tokens = _mlx_unique(tokens)
-
-        # Use compiled kernel for penalty application
-        return _apply_presence_penalty_compiled(logits, unique_tokens, penalty)
+        return _apply_presence_penalty(logits, tokens, penalty)
 
     return processor
 

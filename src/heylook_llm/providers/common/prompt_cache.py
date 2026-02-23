@@ -2,66 +2,85 @@
 """
 Cross-request prompt cache management for MLX models.
 
-Based on mlx-lm's prompt caching implementation but adapted for 
-persistent caching across requests.
+Uses a radix tree per model for multi-prefix KV cache reuse. Editing earlier
+messages, branching, or regenerating no longer invalidates the entire cache --
+only the divergent suffix needs re-prefilling.
 """
 
 import logging
 import threading
 from typing import List, Optional, Any, Tuple
 from dataclasses import dataclass, field
-import mlx.core as mx
-from mlx_lm.models.cache import trim_prompt_cache, can_trim_prompt_cache
-from .cache_helpers import make_cache
+
+from .cache_helpers import make_cache, snapshot_kv, restore_kv_from_snapshot
+from .radix_cache import RadixCache
 
 
 @dataclass
 class PromptCache:
-    """Persistent prompt cache that survives across requests."""
+    """Working cache for a single generation request.
+
+    Holds the live KV cache objects that lm_stream_generate mutates,
+    plus token tracking for context usage metrics. The radix tree
+    is the persistent backing store; this is the ephemeral working copy.
+    """
     cache: List[Any] = field(default_factory=list)
     model_key: Tuple[str, Optional[str]] = ("", None)
     tokens: List[int] = field(default_factory=list)
-    
+    _radix_matched_len: int = 0  # How many tokens were restored from radix cache
+
     def __str__(self):
-        """String representation for debugging."""
         return f"PromptCache(tokens={len(self.tokens)}, model={self.model_key[0]})"
 
 
 class PromptCacheManager:
+    """Manages per-model radix caches and working caches.
+
+    Each model gets a RadixCache (persistent, multi-prefix) and a PromptCache
+    (ephemeral, for the current generation). The public API is unchanged from
+    the single-prefix implementation.
+
+    Thread-safe: all public methods are protected by a reentrant lock.
     """
-    Manages prompt caches across multiple models and requests.
 
-    This allows reusing cached KV states from previous requests when
-    prompts share common prefixes (like system prompts or conversation history).
-
-    Thread-safe: All public methods are protected by a reentrant lock.
-    """
-
-    def __init__(self, max_cache_entries: int = 10):
-        self._caches = {}  # model_id -> PromptCache
+    def __init__(self, max_cache_entries: int = 10, max_radix_nodes: int = 128):
+        self._radix_caches: dict[str, RadixCache] = {}
+        self._working_caches: dict[str, PromptCache] = {}
         self._max_entries = max_cache_entries
-        self._access_order = []  # LRU tracking
-        self._lock = threading.RLock()  # Reentrant lock for thread safety
+        self._max_radix_nodes = max_radix_nodes
+        self._access_order: list[str] = []
+        self._lock = threading.RLock()
 
     def get_or_create_cache(self, model_id: str, model: Any, cache_config: dict = None) -> PromptCache:
-        """Get existing cache or create new one for model (thread-safe)."""
-        with self._lock:
-            if model_id not in self._caches:
-                # Create new cache with configuration
-                cache_config = cache_config or {}
-                cache = PromptCache(
-                    cache=make_cache(model, cache_config),
-                    model_key=(model_id, None),
-                    tokens=[]
-                )
-                self._caches[model_id] = cache
-                self._update_lru_unlocked(model_id)
-                logging.debug(f"Created new prompt cache for {model_id} with config: {cache_config}")
-            else:
-                self._update_lru_unlocked(model_id)
-                logging.debug(f"Reusing existing prompt cache for {model_id} with {len(self._caches[model_id].tokens)} tokens")
+        """Get working cache for a model (thread-safe).
 
-            return self._caches[model_id]
+        Creates the RadixCache for the model on first access. Returns a
+        PromptCache with a fresh KV cache -- the radix tree lookup happens
+        in process_prompt_with_cache().
+        """
+        with self._lock:
+            cache_config = cache_config or {}
+
+            # Ensure radix cache exists for this model
+            if model_id not in self._radix_caches:
+                self._radix_caches[model_id] = RadixCache(max_nodes=self._max_radix_nodes)
+                logging.debug(f"Created radix cache for {model_id} (max_nodes={self._max_radix_nodes})")
+
+            self._update_lru_unlocked(model_id)
+
+            # Create fresh working cache (radix tree handles persistence)
+            cache = PromptCache(
+                cache=make_cache(model, cache_config),
+                model_key=(model_id, None),
+                tokens=[],
+            )
+            self._working_caches[model_id] = cache
+            return cache
+
+    def get_radix_cache(self, model_id: str) -> Optional[RadixCache]:
+        """Get the radix cache for a model (thread-safe)."""
+        with self._lock:
+            return self._radix_caches.get(model_id)
 
     def _update_lru_unlocked(self, model_id: str):
         """Update LRU order. Must be called with lock held."""
@@ -69,65 +88,62 @@ class PromptCacheManager:
             self._access_order.remove(model_id)
         self._access_order.append(model_id)
 
-        # Evict if needed
         while len(self._access_order) > self._max_entries:
             evicted = self._access_order.pop(0)
-            del self._caches[evicted]
-            logging.debug(f"Evicted prompt cache for {evicted} (LRU)")
+            self._radix_caches.pop(evicted, None)
+            self._working_caches.pop(evicted, None)
+            logging.debug(f"Evicted caches for {evicted} (LRU)")
 
     def invalidate_cache(self, model_id: str):
-        """Invalidate cache for a specific model (thread-safe)."""
+        """Invalidate all caches for a specific model (thread-safe)."""
         with self._lock:
-            if model_id in self._caches:
-                del self._caches[model_id]
-                if model_id in self._access_order:
-                    self._access_order.remove(model_id)
-                logging.debug(f"Invalidated prompt cache for {model_id}")
+            if model_id in self._radix_caches:
+                self._radix_caches[model_id].clear()
+            self._working_caches.pop(model_id, None)
+            logging.debug(f"Invalidated caches for {model_id}")
 
     def clear_all(self):
         """Clear all caches (thread-safe)."""
         with self._lock:
-            self._caches.clear()
+            for rc in self._radix_caches.values():
+                rc.clear()
+            self._radix_caches.clear()
+            self._working_caches.clear()
             self._access_order.clear()
             logging.debug("Cleared all prompt caches")
 
     def get_cache_info(self) -> dict:
         """Get information about cached prompts (thread-safe)."""
         with self._lock:
-            return {
-                model_id: {
-                    "tokens_cached": len(cache.tokens),
-                    "cache_layers": len(cache.cache)
+            info = {}
+            for model_id, working in self._working_caches.items():
+                radix = self._radix_caches.get(model_id)
+                info[model_id] = {
+                    "tokens_cached": len(working.tokens),
+                    "cache_layers": len(working.cache),
+                    "radix_nodes": radix._node_count if radix else 0,
                 }
-                for model_id, cache in self._caches.items()
-            }
+            return info
 
     def get_context_usage(self, model_id: str) -> int:
         """Thread-safe method to get context usage for a model."""
         with self._lock:
-            cache_entry = self._caches.get(model_id)
-            if cache_entry:
-                return len(cache_entry.tokens)
+            working = self._working_caches.get(model_id)
+            if working:
+                return len(working.tokens)
             return 0
 
 
 def find_common_prefix_length(cached_tokens: List[int], new_tokens: List[int]) -> int:
-    """
-    Find the length of the common prefix between cached and new tokens.
-    
-    Args:
-        cached_tokens: Previously cached token sequence
-        new_tokens: New token sequence to process
-        
-    Returns:
-        Length of common prefix
+    """Find the length of the common prefix between cached and new tokens.
+
+    Retained as a utility for callers that need linear prefix comparison.
+    The main cache path now uses radix tree lookup instead.
     """
     min_len = min(len(cached_tokens), len(new_tokens))
-    
     for i in range(min_len):
         if cached_tokens[i] != new_tokens[i]:
             return i
-    
     return min_len
 
 
@@ -135,92 +151,94 @@ def process_prompt_with_cache(
     prompt_cache: PromptCache,
     new_tokens: List[int],
     model: Any,
-    cache_config: dict = None
+    cache_config: dict = None,
 ) -> Tuple[List[int], PromptCache]:
-    """
-    Process a prompt using cached KV states when possible.
-    
+    """Process a prompt using radix-tree cached KV states when available.
+
+    Looks up the global radix cache for the longest matching prefix. If found,
+    restores KV state from the snapshot and returns only the suffix tokens for
+    processing. Otherwise, returns the full token sequence with a fresh cache.
+
     Args:
-        prompt_cache: The current cache state
-        new_tokens: New tokenized prompt
-        model: The model (for cache recreation if needed)
-        
+        prompt_cache: Working cache (from get_or_create_cache).
+        new_tokens: Tokenized prompt for the new request.
+        model: The model (for cache creation if needed).
+        cache_config: Cache type configuration.
+
     Returns:
-        Tuple of (tokens_to_process, updated_cache)
+        Tuple of (tokens_to_process, updated_prompt_cache).
     """
-    
-    if not prompt_cache.tokens:
-        # Empty cache, process all tokens
-        prompt_cache.tokens = new_tokens
-        logging.debug(f"Empty cache, processing all {len(new_tokens)} tokens")
-        return new_tokens, prompt_cache
-    
-    # Find common prefix
-    common_len = find_common_prefix_length(prompt_cache.tokens, new_tokens)
-    
-    # Leave at least one token to process
-    common_len = min(common_len, len(new_tokens) - 1)
-    
-    if common_len == 0:
-        # No common prefix, reset cache
-        logging.debug("No common prefix found, resetting cache")
-        cache_config = cache_config or {}
-        prompt_cache.cache = make_cache(model, cache_config)
-        prompt_cache.tokens = new_tokens
-        return new_tokens, prompt_cache
-    
-    # Check if we can reuse the cache
-    cache_len = len(prompt_cache.tokens)
-    
-    if common_len == cache_len:
-        # Cache is a prefix of the new prompt
-        tokens_to_process = new_tokens[common_len:]
-        prompt_cache.tokens = new_tokens
-        logging.debug(f"Reusing {common_len} cached tokens, processing {len(tokens_to_process)} new tokens")
-        return tokens_to_process, prompt_cache
-    
-    elif common_len < cache_len:
-        # If common prefix is very small, the prompt structure changed fundamentally
-        # (e.g., system prompt changed). Reset cache rather than trying to trim.
-        # Trimming only truncates length but KV values retain attention from old context.
-        MIN_REUSABLE_PREFIX = 5  # Minimum tokens to justify cache reuse
-
-        if common_len < MIN_REUSABLE_PREFIX:
-            logging.debug(f"Common prefix too small ({common_len} < {MIN_REUSABLE_PREFIX}), resetting cache")
-            cache_config = cache_config or {}
-            prompt_cache.cache = make_cache(model, cache_config)
-            prompt_cache.tokens = new_tokens
-            return new_tokens, prompt_cache
-
-        # Need to trim the cache
-        if can_trim_prompt_cache(prompt_cache.cache):
-            num_to_trim = cache_len - common_len
-            trimmed = trim_prompt_cache(prompt_cache.cache, num_to_trim)
-
-            if trimmed == num_to_trim:
-                # Successfully trimmed
-                prompt_cache.tokens = new_tokens
-                tokens_to_process = new_tokens[common_len:]
-                logging.debug(f"Trimmed {num_to_trim} tokens from cache, reusing {common_len}, processing {len(tokens_to_process)}")
-                return tokens_to_process, prompt_cache
-
-        # Can't trim or trim failed, reset cache
-        logging.debug(f"Cannot trim cache, resetting")
-        cache_config = cache_config or {}
-        prompt_cache.cache = make_cache(model, cache_config)
-        prompt_cache.tokens = new_tokens
-        return new_tokens, prompt_cache
-    
-    # Should not reach here
-    logging.warning("Unexpected cache state, resetting")
     cache_config = cache_config or {}
+    model_id = prompt_cache.model_key[0]
+
+    # Get radix cache for this model
+    manager = get_global_cache_manager()
+    radix = manager.get_radix_cache(model_id)
+
+    if radix is not None and new_tokens:
+        matched_len, kv_snapshot = radix.longest_prefix_match(new_tokens)
+
+        if kv_snapshot is not None and matched_len > 0:
+            # Restore KV state from radix tree snapshot
+            prompt_cache.cache = restore_kv_from_snapshot(kv_snapshot, model, cache_config)
+            prompt_cache._radix_matched_len = matched_len
+
+            # Ensure at least one token to process (mlx-lm requirement)
+            tokens_to_process = new_tokens[matched_len:]
+            if not tokens_to_process:
+                tokens_to_process = new_tokens[-1:]
+                prompt_cache._radix_matched_len = len(new_tokens) - 1
+
+            prompt_cache.tokens = new_tokens
+            logging.info(
+                f"Radix cache hit: reusing {prompt_cache._radix_matched_len}/{len(new_tokens)} tokens, "
+                f"processing {len(tokens_to_process)} new"
+            )
+            return tokens_to_process, prompt_cache
+
+    # No radix match -- process all tokens with fresh cache
     prompt_cache.cache = make_cache(model, cache_config)
     prompt_cache.tokens = new_tokens
+    prompt_cache._radix_matched_len = 0
+    logging.debug(f"No radix cache hit, processing all {len(new_tokens)} tokens")
     return new_tokens, prompt_cache
+
+
+def store_generation_cache(
+    prompt_cache: PromptCache,
+    full_tokens: List[int],
+    generation_cache: List[Any],
+) -> None:
+    """Store KV cache snapshot in the radix tree after generation completes.
+
+    Called from strategy finally blocks. Snapshots the live KV cache and
+    inserts it into the radix tree so future requests can reuse the prefix.
+
+    Args:
+        prompt_cache: The working cache for this generation.
+        full_tokens: Complete token sequence (prompt + generated).
+        generation_cache: The live KV cache objects (mutated by lm_stream_generate).
+    """
+    model_id = prompt_cache.model_key[0]
+    manager = get_global_cache_manager()
+    radix = manager.get_radix_cache(model_id)
+
+    if radix is None or not generation_cache:
+        return
+
+    kv_snap = snapshot_kv(generation_cache)
+    radix.insert(full_tokens, kv_snap, prompt_cache._radix_matched_len)
+    prompt_cache.tokens = full_tokens
+
+    logging.debug(
+        f"Stored radix snapshot: {len(full_tokens)} tokens "
+        f"(matched={prompt_cache._radix_matched_len}, new={len(full_tokens) - prompt_cache._radix_matched_len})"
+    )
 
 
 # Global cache manager instance
 _global_cache_manager = PromptCacheManager()
+
 
 def get_global_cache_manager() -> PromptCacheManager:
     """Get the global prompt cache manager instance."""

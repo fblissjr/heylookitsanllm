@@ -23,7 +23,7 @@ from .common.performance_monitor import time_mlx_operation, performance_monitor
 from .common.vlm_generation import create_vlm_generator_with_sampling
 from .mlx_batch_vision import BatchVisionEncoder
 from .common.batch_vision import BatchVisionProcessor
-from .common.prompt_cache import get_global_cache_manager, process_prompt_with_cache
+from .common.prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
 
 # Create dedicated generation stream for better Metal utilization
 # This allows async evaluation and improves pipeline performance
@@ -295,12 +295,12 @@ class TextOnlyStrategy:
 
                     yield response
         finally:
-            # Update prompt cache tokens to include generated tokens so that
-            # the KV cache size matches token tracking. Without this, regeneration
-            # and message editing leave stale KV entries from the old generation.
-            if self.model_id and prompt_cache:
-                prompt_cache.tokens = prompt_tokens + generated_token_ids
-                logging.debug(f"Updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
+            # Store KV snapshot in radix tree so future requests can reuse
+            # the prefix. Also updates token tracking for context usage metrics.
+            if self.model_id and prompt_cache and generation_cache:
+                full_tokens = prompt_tokens + generated_token_ids
+                store_generation_cache(prompt_cache, full_tokens, generation_cache)
+                logging.debug(f"Stored cache: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
 
 
 class VLMTextOnlyStrategy:
@@ -400,9 +400,10 @@ class VLMTextOnlyStrategy:
 
                     yield response
         finally:
-            if self.model_id and prompt_cache:
-                prompt_cache.tokens = prompt_tokens + generated_token_ids
-                logging.debug(f"VLM text-only: updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
+            if self.model_id and prompt_cache and generation_cache:
+                full_tokens = prompt_tokens + generated_token_ids
+                store_generation_cache(prompt_cache, full_tokens, generation_cache)
+                logging.debug(f"VLM text-only: stored cache: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
 
 
 class VLMVisionStrategy:

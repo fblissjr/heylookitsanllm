@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.0
+
+### Added
+
+- **Radix-tree prefix cache**: New `RadixCache` data structure (`providers/common/radix_cache.py`) stores multiple cached prefixes per model simultaneously. Editing an earlier message, branching, or regenerating no longer invalidates the entire cache -- only the divergent suffix needs re-prefilling. Configurable block size (32 tokens), LRU leaf eviction, thread-safe.
+- **KV snapshot helpers**: `snapshot_kv()` and `restore_kv_from_snapshot()` in `cache_helpers.py` capture and restore KV cache state for radix tree storage. Uses MLX copy-on-write semantics for cheap snapshots.
+
+### Changed
+
+- **Pure-MLX sampler**: `_mlx_unique()` in `samplers.py` reimplemented using `mx.sort` + `mx.cumsum` + scatter, replacing the numpy-based version that forced a full GPU-to-CPU sync on every token when presence penalty was active. Now only a single int32 scalar crosses the device boundary.
+- **Prompt cache manager**: `PromptCacheManager` now uses a `RadixCache` per model as the persistent backing store instead of a single linear prefix cache. Public API (`get_or_create_cache`, `process_prompt_with_cache`) unchanged.
+
+### Removed
+
+- **numpy dependency from samplers**: `import numpy as np` removed from `samplers.py`. The presence penalty path now stays entirely on the Metal compute graph.
+
 ## 1.13.0
 
 ### Removed
