@@ -18,8 +18,6 @@ from PIL import Image
 import numpy as np
 import logging
 
-from .common.performance_monitor import time_mlx_operation
-
 # Pre-computed ImageNet normalization constants (created once at module load)
 # Using float32 as the canonical type; will be converted to image dtype if needed
 _IMAGENET_MEAN = mx.array([0.485, 0.456, 0.406], dtype=mx.float32)
@@ -105,7 +103,6 @@ class BatchVisionEncoder:
             mx.clear_cache()
             logging.debug(f"Cleared vision buffer cache, kept {keep_last_n} entries")
     
-    @time_mlx_operation("batch_preprocess", "vision")
     def preprocess_batch(self, images: List[Image.Image]) -> mx.array:
         """
         Preprocess multiple images into a batch tensor.
@@ -176,7 +173,6 @@ class BatchVisionEncoder:
         img_mlx = mx.array(img_array)
         return _normalize_and_transpose(img_mlx)
     
-    @time_mlx_operation("batch_encode", "vision")
     def encode_batch(self, images: Union[List[Image.Image], mx.array]) -> mx.array:
         """
         Encode a batch of images through the vision encoder.

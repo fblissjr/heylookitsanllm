@@ -31,7 +31,6 @@ files_to_check = [
     "src/heylook_llm/model_importer.py",
     "src/heylook_llm/openapi_enhancements.py",
     "src/heylook_llm/openapi_examples.py",
-    "src/heylook_llm/queue_manager.py",
     "src/heylook_llm/router.py",
     "src/heylook_llm/server.py",
     "src/heylook_llm/stt_api.py",
@@ -41,11 +40,9 @@ files_to_check = [
     "src/heylook_llm/optimizations/__init__.py",
     "src/heylook_llm/optimizations/fast_image.py",
     "src/heylook_llm/optimizations/fast_json.py",
-    "src/heylook_llm/optimizations/mlx_optimizations.py",
     "src/heylook_llm/optimizations/status.py",
     "src/heylook_llm/providers/__init__.py",
     "src/heylook_llm/providers/base.py",
-    "src/heylook_llm/providers/mlx_stt_provider.py",
     "src/heylook_llm/providers/llama_cpp_provider.py",
     "src/heylook_llm/providers/mlx_batch_text.py",
     "src/heylook_llm/providers/mlx_batch_vision.py",
@@ -54,10 +51,13 @@ files_to_check = [
     "src/heylook_llm/providers/common/__init__.py",
     "src/heylook_llm/providers/common/batch_vision.py",
     "src/heylook_llm/providers/common/cache_helpers.py",
-    "src/heylook_llm/providers/common/performance_monitor.py",
+    "src/heylook_llm/providers/common/generation_core.py",
+    "src/heylook_llm/providers/common/model_wrappers.py",
     "src/heylook_llm/providers/common/prompt_cache.py",
+    "src/heylook_llm/providers/common/radix_cache.py",
     "src/heylook_llm/providers/common/samplers.py",
-    "src/heylook_llm/providers/common/vlm_generation.py"
+    "src/heylook_llm/providers/common/vlm_generation.py",
+    "src/heylook_llm/providers/common/vlm_inputs.py",
 ]
 
 success = True

@@ -27,6 +27,37 @@ def get_api_endpoints(app_instance):
     return sorted(set(endpoints))
 
 
+def _log_disk_usage(args):
+    """Log disk usage of analytics DB and log directory at startup."""
+    from pathlib import Path
+    from heylook_llm.analytics_config import analytics_config
+
+    parts = []
+
+    # Analytics DB
+    if analytics_config.enabled:
+        db_path = Path(analytics_config.db_path).expanduser()
+        if db_path.exists():
+            size_mb = db_path.stat().st_size / (1024 * 1024)
+            parts.append(f"analytics DB: {size_mb:.1f}MB (limit: {analytics_config.max_db_size_mb}MB)")
+        else:
+            parts.append("analytics DB: not yet created")
+    else:
+        parts.append("analytics DB: disabled")
+
+    # Log directory
+    if args.file_log_level:
+        log_dir = Path(args.log_dir)
+        if log_dir.exists():
+            total = sum(f.stat().st_size for f in log_dir.iterdir() if f.is_file())
+            size_mb = total / (1024 * 1024)
+            parts.append(f"log dir: {size_mb:.1f}MB")
+    else:
+        parts.append("file logging: disabled")
+
+    logging.info(f"Disk usage -- {', '.join(parts)}")
+
+
 def main():
     """
     The main entry point for the heylookllm command-line tool.
@@ -242,6 +273,9 @@ def main():
 
     # Attach router to app state
     app.state.router_instance = router
+
+    # Log disk usage of persistent storage
+    _log_disk_usage(args)
 
     # Display startup info with dynamic endpoint discovery
     endpoints = get_api_endpoints(app)

@@ -227,19 +227,8 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     try:
         # Get provider and create generator (CPU-bound, run in thread)
-        if router.should_use_queue(chat_request.model, chat_request):
-            result = await router.process_with_queue(chat_request.model, chat_request)
-
-            def queue_result_generator():
-                if hasattr(result, "__iter__"):
-                    yield from result
-                else:
-                    yield result
-
-            generator = queue_result_generator()
-        else:
-            provider = await asyncio.to_thread(router.get_provider, chat_request.model)
-            generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
+        provider = await asyncio.to_thread(router.get_provider, chat_request.model)
+        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
     except RuntimeError as e:
         if "MODEL_BUSY" in str(e):
@@ -261,7 +250,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider),
             media_type="text/event-stream",
         )
     else:
@@ -345,11 +334,16 @@ async def _stream_messages(
     generator,
     msg_request: MessageCreateRequest,
     request_id: str,
+    http_request=None,
+    provider=None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     model = msg_request.model or "unknown"
     translator = StreamingEventTranslator(message_id, model)
+
+    # Resolve abort event from provider (if MLX provider with abort support)
+    abort_event = getattr(provider, '_abort_event', None) if provider else None
 
     # message_start
     yield translator.message_start_event()
@@ -364,7 +358,24 @@ async def _stream_messages(
             return None
 
     while True:
-        chunk = await loop.run_in_executor(None, get_next)
+        # Submit chunk retrieval to thread pool
+        chunk_future = loop.run_in_executor(None, get_next)
+
+        # Poll for disconnect while waiting for next token
+        if http_request and abort_event:
+            while not chunk_future.done():
+                if await http_request.is_disconnected():
+                    logging.info(f"[MESSAGES] Client disconnected (request {request_id[:12]})")
+                    abort_event.set()
+                    try:
+                        await chunk_future
+                    except Exception:
+                        pass
+                    return
+
+                await asyncio.sleep(0.1)
+
+        chunk = await chunk_future
         if chunk is None:
             break
 

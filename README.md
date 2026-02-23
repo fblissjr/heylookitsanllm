@@ -61,9 +61,10 @@ uv sync --extra all          # Everything
 ### Start Server
 
 ```bash
-# Configure models
-cp models.toml.example models.toml
-# Edit models.toml with your model paths
+# Import models from your HuggingFace cache (auto-generates models.toml)
+heylookllm import --hf-cache
+# Or from a specific directory:
+heylookllm import --folder ~/models
 
 # Start
 heylookllm --log-level INFO

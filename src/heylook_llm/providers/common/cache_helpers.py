@@ -50,3 +50,43 @@ def make_cache(model: nn.Module, config: dict) -> List[Any]:
 
     else:
         raise ValueError(f"Unknown cache_type: {cache_type}")
+
+
+def snapshot_kv(cache: List[Any]) -> List[tuple]:
+    """Capture KV cache state for radix tree storage.
+
+    Each cache layer exposes a .state property returning (keys, values)
+    trimmed to the current offset. MLX arrays are lazy graph nodes with
+    copy-on-write semantics, so capturing these references is cheap --
+    the actual memory is shared until the generation loop mutates the
+    cache (which creates new graph nodes, leaving our snapshot intact).
+    """
+    snapshots = []
+    for layer in cache:
+        if hasattr(layer, 'state') and not layer.empty():
+            snapshots.append(layer.state)
+        else:
+            snapshots.append(None)
+    return snapshots
+
+
+def restore_kv_from_snapshot(
+    snapshot: List[tuple | None],
+    model: Any,
+    cache_config: dict | None = None,
+) -> List[Any]:
+    """Create fresh KV cache objects initialized from a snapshot.
+
+    Args:
+        snapshot: Per-layer (keys, values) tuples from snapshot_kv().
+        model: The model (used to create correctly-sized cache objects).
+        cache_config: Cache configuration dict.
+
+    Returns:
+        A new cache list with state restored from the snapshot.
+    """
+    new_cache = make_cache(model, cache_config or {})
+    for layer, state in zip(new_cache, snapshot):
+        if state is not None:
+            layer.state = state
+    return new_cache

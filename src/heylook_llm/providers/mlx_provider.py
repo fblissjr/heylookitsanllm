@@ -7,22 +7,24 @@ import time
 from typing import Generator, Dict, List, Tuple, Protocol
 
 import mlx.core as mx
-import mlx.nn as nn
 from PIL import Image
 
 from mlx_lm.utils import load as lm_load
-from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
+from mlx_lm.generate import wired_limit
 from mlx_vlm.utils import load as vlm_load
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics
+from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
-from .common.performance_monitor import time_mlx_operation, performance_monitor
-from .common.vlm_generation import create_vlm_generator_with_sampling
+from .common.vlm_generation import stream_generate_vlm_vision
+from .common.vlm_inputs import _reconstruct_thinking
+from .common.model_wrappers import LanguageModelLogitsWrapper
+from .common.generation_core import generate_text
 from .mlx_batch_vision import BatchVisionEncoder
 from .common.batch_vision import BatchVisionProcessor
-from .common.prompt_cache import get_global_cache_manager, process_prompt_with_cache
+from .common.prompt_cache import get_global_cache_manager
 
 # Create dedicated generation stream for better Metal utilization
 # This allows async evaluation and improves pipeline performance
@@ -53,21 +55,6 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
     )
 
 
-def _reconstruct_thinking(msg_dict: dict) -> dict:
-    """Reconstruct model-specific thinking tags in assistant message content.
-
-    If an assistant message carries a 'thinking' field the frontend edited,
-    we prepend <think>...</think> tags so the tokenizer sees the full
-    thinking block as part of the content.  The 'thinking' key is removed
-    from the dict so it does not leak into the chat template.
-    """
-    thinking = msg_dict.pop('thinking', None)
-    if thinking and msg_dict.get('role') == 'assistant':
-        content = msg_dict.get('content', '')
-        msg_dict['content'] = f"<think>\n{thinking}\n</think>\n{content}"
-    return msg_dict
-
-
 class KeepaliveChunk:
     """Special chunk type for SSE keepalive messages during prompt processing."""
     def __init__(self, processed: int, total: int):
@@ -77,340 +64,123 @@ class KeepaliveChunk:
         self.text = None  # Not a regular text chunk
 
 
-class LanguageModelLogitsWrapper(nn.Module):
-    """
-    Wrapper for VLM language models to extract logits directly.
-
-    Why this exists:
-    - Provides direct logits extraction for mlx-lm compatibility
-    - Caches frequently accessed attributes
-    - Enables VLM models to work with mlx-lm's text generation pipeline
-    """
-
-    def __init__(self, language_model):
-        super().__init__()
-        # Use object.__setattr__ to avoid triggering __getattr__ during initialization
-        object.__setattr__(self, 'language_model', language_model)
-        object.__setattr__(self, '_cached_layers', None)
-        object.__setattr__(self, '_cached_config', None)
-        object.__setattr__(self, '_cached_head_dim', None)
-        object.__setattr__(self, '_cache_populated', False)
-
-    def _populate_cache(self):
-        """Populate attribute cache on first access."""
-        if not self._cache_populated:
-            # Cache layers - check both common attribute locations
-            if hasattr(self.language_model, 'model') and hasattr(self.language_model.model, 'layers'):
-                self._cached_layers = self.language_model.model.layers
-            elif hasattr(self.language_model, 'layers'):
-                self._cached_layers = self.language_model.layers
-
-            # Cache config
-            if hasattr(self.language_model, 'config'):
-                self._cached_config = self.language_model.config
-            elif hasattr(self.language_model, 'model') and hasattr(self.language_model.model, 'config'):
-                self._cached_config = self.language_model.model.config
-
-            # Cache head dimension if available
-            if self._cached_config and hasattr(self._cached_config, 'head_dim'):
-                self._cached_head_dim = self._cached_config.head_dim
-            elif self._cached_config and hasattr(self._cached_config, 'hidden_size'):
-                self._cached_head_dim = self._cached_config.hidden_size
-
-            self._cache_populated = True
-
-    def __call__(self, *args, **kwargs):
-        """Direct logits extraction - the core optimization."""
-        # Direct logits extraction avoids creating intermediate objects
-        try:
-            result = self.language_model(*args, **kwargs)
-            # Check if result has logits attribute
-            if hasattr(result, 'logits'):
-                return result.logits
-            # If result is already logits (tensor), return it
-            elif hasattr(result, 'shape'):
-                return result
-            # Otherwise try to extract logits
-            else:
-                # Log for debugging
-                logging.debug(f"LanguageModelLogitsWrapper: Unexpected result type: {type(result)}")
-                return result
-        except Exception as e:
-            logging.error(f"LanguageModelLogitsWrapper error: {e}")
-            raise
-
-    @property
-    def layers(self):
-        """Cached layers property."""
-        if self._cached_layers is None:
-            self._populate_cache()
-        return self._cached_layers
-
-    @property
-    def config(self):
-        """Cached config property."""
-        if self._cached_config is None:
-            self._populate_cache()
-        return self._cached_config
-
-    @property
-    def head_dim(self):
-        """Cached head dimension property."""
-        if self._cached_head_dim is None:
-            self._populate_cache()
-        return self._cached_head_dim
-
-    def __getattr__(self, name):
-        """Fast forwarding for any other attributes."""
-        # Only forward if language_model exists to avoid recursion
-        if 'language_model' in self.__dict__:
-            return getattr(self.language_model, name)
-        else:
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-
-
 class GenerationStrategy(Protocol):
     """Protocol for generation strategies."""
 
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         """Generate response using this strategy."""
         ...
 
 
-class TextOnlyStrategy:
-    """Strategy for text-only LLM requests."""
+class UnifiedTextStrategy:
+    """Unified strategy for all text-based generation (text-only and VLM text).
 
-    def __init__(self, draft_model=None, model_id=None, model_config=None):
+    Dispatches on is_vlm for:
+    - Chat template application (tokenizer.apply_chat_template vs vlm_apply_chat_template)
+    - Model selection (raw model vs LanguageModelLogitsWrapper)
+
+    Everything else -- cache config, prompt cache lookup, generation loop,
+    acceptance tracking, KV snapshot storage -- is handled by generation_core.
+    """
+
+    def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False):
         self.draft_model = draft_model
         self.model_id = model_id
         self.model_config = model_config or {}
-        self.cache_manager = get_global_cache_manager()
-
-    @time_mlx_operation("generation", "text_only")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
-
-        # Apply chat template once
-        # Ensure text-only models get string content, not lists
-        messages_for_template = []
-        for msg in request.messages:
-            msg_dict = msg.model_dump(exclude_none=True)
-            # If content is a list (multimodal format), extract the text
-            if isinstance(msg_dict.get('content'), list):
-                text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
-                msg_dict['content'] = ' '.join(text_parts)
-            # Reconstruct thinking tags for assistant messages with edited thinking
-            msg_dict = _reconstruct_thinking(msg_dict)
-            messages_for_template.append(msg_dict)
-
-        # Prefill: if last message is assistant, don't add generation prompt
-        last_is_assistant = messages_for_template[-1].get('role') == 'assistant' if messages_for_template else False
-        add_gen_prompt = not last_is_assistant
-
-        # Get enable_thinking from params (request) or model config
-        enable_thinking = effective_request.get("enable_thinking")
-        if enable_thinking is None:
-            enable_thinking = self.model_config.get('enable_thinking', True)
-
-        # Apply chat template with thinking control for Qwen3 models
-        try:
-            prompt = tokenizer.apply_chat_template(
-                messages_for_template,
-                tokenize=False,
-                add_generation_prompt=add_gen_prompt,
-                enable_thinking=enable_thinking
-            )
-        except TypeError:
-            # Tokenizer doesn't support enable_thinking parameter (non-Qwen3 models)
-            prompt = tokenizer.apply_chat_template(
-                messages_for_template,
-                tokenize=False,
-                add_generation_prompt=add_gen_prompt
-            )
-        
-        # Tokenize the prompt
-        if isinstance(prompt, str):
-            prompt_tokens = tokenizer.encode(prompt)
-        else:
-            prompt_tokens = prompt
-            
-        # Get or create prompt cache for this model
-        prompt_cache = None
-        if self.model_id:
-            # Extract cache configuration from effective_request
-            cache_config = {
-                'cache_type': effective_request.get('cache_type', 'standard'),
-                'kv_bits': effective_request.get('kv_bits', 8),
-                'kv_group_size': effective_request.get('kv_group_size', 64),
-                'max_kv_size': effective_request.get('max_kv_size')
-            }
-            prompt_cache = self.cache_manager.get_or_create_cache(self.model_id, model, cache_config)
-            # Process prompt with cache
-            tokens_to_process, updated_cache = process_prompt_with_cache(
-                prompt_cache, prompt_tokens, model, cache_config
-            )
-            # Use the updated cache for generation
-            generation_cache = updated_cache.cache
-            logging.info(f"Using prompt cache: processing {len(tokens_to_process)}/{len(prompt_tokens)} tokens")
-        else:
-            # No caching if model_id not provided
-            tokens_to_process = prompt_tokens
-            generation_cache = None
-
-        # Create a keepalive callback for long prompt processing
-        def prompt_progress_callback(processed: int, total: int):
-            """Callback to track prompt processing progress."""
-            logging.debug(f"Prompt processing: {processed}/{total} tokens")
-            # The callback itself doesn't yield, mlx-lm handles this internally
-
-        # Wrap generation in wired_limit context manager for optimal Metal memory management
-        # This is critical for large models and ensures proper synchronization
-        generated_token_ids = []
-        try:
-            with wired_limit(model, [generation_stream]):
-                # Stream tokens and handle potential leading space issue
-                first_token = True
-                for response in lm_stream_generate(
-                    model=model,
-                    tokenizer=tokenizer,
-                    prompt=tokens_to_process,  # Use the reduced prompt
-                    sampler=sampler,
-                    logits_processors=processors,
-                    max_tokens=effective_request['max_tokens'],
-                    draft_model=self.draft_model,
-                    prompt_progress_callback=prompt_progress_callback,
-                    prompt_cache=generation_cache if generation_cache else None
-                ):
-                    generated_token_ids.append(response.token)
-                    # Clean up leading space on first token for models with add_prefix_space
-                    if first_token and response.text.startswith(' '):
-                        response.text = response.text.lstrip()
-                        first_token = False
-                    elif first_token:
-                        first_token = False
-
-                    yield response
-        finally:
-            # Update prompt cache tokens to include generated tokens so that
-            # the KV cache size matches token tracking. Without this, regeneration
-            # and message editing leave stale KV entries from the old generation.
-            if self.model_id and prompt_cache:
-                prompt_cache.tokens = prompt_tokens + generated_token_ids
-                logging.debug(f"Updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
-
-
-class VLMTextOnlyStrategy:
-    """Strategy for VLM text-only requests (using mlx-lm path with speculative decoding)."""
-
-    def __init__(self, draft_model=None, model_id=None):
+        self.is_vlm = is_vlm
         self._cached_wrapper = None
-        self.draft_model = draft_model
-        self.model_id = model_id
         self.cache_manager = get_global_cache_manager()
 
-    @time_mlx_operation("generation", "vlm_text")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
-        # VLM text-only: use lm_stream_generate with the language model component
-        # so that the full sampler/processor pipeline (top_k, min_p, presence_penalty,
-        # logit_bias, etc.) is applied -- vlm_stream_generate bypasses all of that.
-
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
-        # Prepare messages for VLM format
-        messages_for_template = []
-        for msg in request.messages:
-            msg_dict = msg.model_dump(exclude_none=True)
-            if isinstance(msg_dict.get('content'), list):
-                text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
-                msg_dict['content'] = ' '.join(text_parts)
-            msg_dict = _reconstruct_thinking(msg_dict)
-            messages_for_template.append(msg_dict)
+        messages_for_template = self._prepare_messages(request.messages)
+        prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
+        gen_model = self._get_generation_model(model)
 
-        # Apply VLM chat template with no images
-        prompt = vlm_apply_chat_template(
-            processor,
-            model.config,
-            messages_for_template,
-            num_images=0
+        yield from generate_text(
+            model=gen_model,
+            tokenizer=tokenizer,
+            prompt_tokens=prompt_tokens,
+            effective_request=effective_request,
+            model_id=self.model_id,
+            draft_model=self.draft_model,
+            cache_manager=self.cache_manager,
+            abort_event=abort_event,
         )
 
-        # Create or reuse LanguageModelLogitsWrapper
+    def _prepare_messages(self, messages) -> list[dict]:
+        """Prepare messages for template application. Shared for both paths."""
+        messages_for_template = []
+        for msg in messages:
+            msg_dict = msg.model_dump(exclude_none=True)
+            if isinstance(msg_dict.get('content'), list):
+                text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
+                msg_dict['content'] = ' '.join(text_parts)
+            msg_dict = _reconstruct_thinking(msg_dict)
+            messages_for_template.append(msg_dict)
+        return messages_for_template
+
+    def _apply_template(self, messages, tokenizer, processor, model, effective_request) -> list[int]:
+        """Dispatch template application based on is_vlm.
+
+        Text-only: tokenizer.apply_chat_template with enable_thinking support.
+        VLM text: vlm_apply_chat_template (uses processor + model config).
+        """
+        if self.is_vlm:
+            prompt = vlm_apply_chat_template(
+                processor, model.config, messages, num_images=0
+            )
+        else:
+            last_is_assistant = messages[-1].get('role') == 'assistant' if messages else False
+            add_gen_prompt = not last_is_assistant
+
+            enable_thinking = effective_request.get("enable_thinking")
+            if enable_thinking is None:
+                enable_thinking = self.model_config.get('enable_thinking', True)
+
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    messages, tokenize=False,
+                    add_generation_prompt=add_gen_prompt,
+                    enable_thinking=enable_thinking,
+                )
+            except TypeError:
+                prompt = tokenizer.apply_chat_template(
+                    messages, tokenize=False,
+                    add_generation_prompt=add_gen_prompt,
+                )
+
+        if isinstance(prompt, str):
+            return tokenizer.encode(prompt)
+        return prompt
+
+    def _get_generation_model(self, model):
+        """Return raw model for text-only, LanguageModelLogitsWrapper for VLM.
+
+        The wrapper is cached per strategy instance so it's created once and reused.
+        For VLM, wired_limit and cache operations use the wrapper (which wraps
+        the language model component), not the full VLM model.
+        """
+        if not self.is_vlm:
+            return model
+
         if self._cached_wrapper is None:
             self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
-
-        # Tokenize the prompt
-        if isinstance(prompt, str):
-            prompt_tokens = tokenizer.encode(prompt)
-        else:
-            prompt_tokens = prompt
-
-        # Prompt cache support (same pattern as TextOnlyStrategy)
-        prompt_cache = None
-        if self.model_id:
-            cache_config = {
-                'cache_type': effective_request.get('cache_type', 'standard'),
-                'kv_bits': effective_request.get('kv_bits', 8),
-                'kv_group_size': effective_request.get('kv_group_size', 64),
-                'max_kv_size': effective_request.get('max_kv_size')
-            }
-            prompt_cache = self.cache_manager.get_or_create_cache(self.model_id, self._cached_wrapper, cache_config)
-            tokens_to_process, updated_cache = process_prompt_with_cache(
-                prompt_cache, prompt_tokens, self._cached_wrapper, cache_config
-            )
-            generation_cache = updated_cache.cache
-            logging.info(f"VLM text-only cache: processing {len(tokens_to_process)}/{len(prompt_tokens)} tokens")
-        else:
-            tokens_to_process = prompt_tokens
-            generation_cache = None
-
-        def prompt_progress_callback(processed: int, total: int):
-            logging.debug(f"VLM text-only prompt processing: {processed}/{total} tokens")
-
-        # Use lm_stream_generate with the full sampler/processor pipeline
-        # Pass the language model wrapper (not the full VLM) so wired_limit
-        # calculates memory limits for the model that actually runs.
-        generated_token_ids = []
-        try:
-            with wired_limit(self._cached_wrapper, [generation_stream]):
-                first_token = True
-                for response in lm_stream_generate(
-                    model=self._cached_wrapper,
-                    tokenizer=tokenizer,
-                    prompt=tokens_to_process,
-                    sampler=sampler,
-                    logits_processors=processors,
-                    max_tokens=effective_request['max_tokens'],
-                    draft_model=self.draft_model,
-                    prompt_progress_callback=prompt_progress_callback,
-                    prompt_cache=generation_cache if generation_cache else None
-                ):
-                    generated_token_ids.append(response.token)
-                    if first_token and response.text.startswith(' '):
-                        response.text = response.text.lstrip()
-                        first_token = False
-                    elif first_token:
-                        first_token = False
-
-                    yield response
-        finally:
-            if self.model_id and prompt_cache:
-                prompt_cache.tokens = prompt_tokens + generated_token_ids
-                logging.debug(f"VLM text-only: updated cache tokens: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated")
+        return self._cached_wrapper
 
 
 class VLMVisionStrategy:
     """Strategy for VLM requests with images using mlx-lm sampling."""
 
     def __init__(self):
-        self._cached_generator = None
         self._batch_encoder = None
         self._batch_vision_processor = None
 
-    @time_mlx_operation("generation", "vlm_vision")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors) -> Generator:
-        # Create generator with sampling (cached)
-        if self._cached_generator is None:
-            self._cached_generator = create_vlm_generator_with_sampling(model, processor)
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
+        # Build sampler internally (VLM vision path uses processor's tokenizer)
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        sampler, processors = build_sampler(tokenizer, effective_request)
 
         # Initialize batch encoder if needed
         if self._batch_encoder is None:
@@ -423,31 +193,13 @@ class VLMVisionStrategy:
         # Prepare VLM inputs with parallel image loading
         images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(request.messages, processor, model.config, model)
 
-        # Log image details before sending to model
-        logging.info(f"[VLM PROCESSING] Sending {len(images)} images to model")
-        for i, img in enumerate(images):
-            logging.info(f"[VLM PROCESSING] Image {i+1}: size={img.size}, mode={img.mode}")
-
-        # Check if processor has expected image size
-        if hasattr(processor, 'image_processor'):
-            img_proc = processor.image_processor
-            if hasattr(img_proc, 'size'):
-                expected_size = img_proc.size
-                logging.info(f"[VLM PROCESSING] Model expects images at: {expected_size}")
-            elif hasattr(img_proc, 'crop_size'):
-                expected_size = img_proc.crop_size
-                logging.info(f"[VLM PROCESSING] Model expects images at: {expected_size}")
-
-        # Use batch encoding if multiple images
-        if len(images) > 1:
-            # For now, mlx-vlm processes images within the generation loop
-            # Future optimization: pre-encode all images and modify generator
-            pass
+        logging.info(f"[VLM VISION] Processing {len(images)} image(s) | Model: {model.config.model_type if hasattr(model.config, 'model_type') else 'unknown'}")
 
         # Wrap generation in wired_limit context manager for optimal Metal memory management
         with wired_limit(model, [generation_stream]):
-            # Use generation with mlx-lm sampling
-            yield from self._cached_generator.stream_generate_with_sampling(
+            for response in stream_generate_vlm_vision(
+                model=model,
+                processor=processor,
                 prompt=formatted_prompt,
                 image=images,
                 sampler=sampler,
@@ -456,100 +208,19 @@ class VLMVisionStrategy:
                 temperature=effective_request.get('temperature', 0.1),
                 top_p=effective_request.get('top_p', 1.0),
                 repetition_penalty=effective_request.get('repetition_penalty'),
-            )
+            ):
+                if abort_event and abort_event.is_set():
+                    logging.info("Generation aborted (vlm_vision)")
+                    break
+                yield response
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
-        """Prepare VLM inputs with parallel image loading."""
-        image_urls = []
-        text_messages = []
-        has_images = False
-        image_counter = 0
-
-        # First pass: collect image URLs and build text structure
-        for msg in messages:
-            content = msg.content
-            if isinstance(content, list):
-                text_parts = []
-
-                for part in content:
-                    # Handle both object and dict formats
-                    if hasattr(part, 'type'):
-                        # Object format (ContentPart)
-                        if part.type == 'text':
-                            text_parts.append(part.text)
-                        elif part.type == 'image_url':
-                            image_urls.append(part.image_url.url)
-                            has_images = True
-                            image_counter += 1
-                            # Don't add manual placeholders - mlx-vlm's apply_chat_template
-                            # handles image token insertion based on num_images
-                    elif isinstance(part, dict):
-                        # Dict format
-                        if part.get('type') == 'text':
-                            text_parts.append(part.get('text', ''))
-                        elif part.get('type') == 'image_url':
-                            image_url = part.get('image_url', {})
-                            if isinstance(image_url, dict):
-                                url = image_url.get('url', '')
-                            else:
-                                url = image_url.url if hasattr(image_url, 'url') else ''
-                            if url:
-                                image_urls.append(url)
-                                has_images = True
-                                image_counter += 1
-                                # Don't add manual placeholders - mlx-vlm's apply_chat_template
-                                # handles image token insertion based on num_images
-
-                # Combine text parts
-                combined_content = " ".join(text_parts) if text_parts else ""
-                msg_dict = {"role": msg.role, "content": combined_content}
-                # Reconstruct thinking for assistant messages
-                if hasattr(msg, 'thinking') and msg.thinking:
-                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
-                text_messages.append(msg_dict)
-            elif isinstance(content, str):
-                msg_dict = {"role": msg.role, "content": content}
-                if hasattr(msg, 'thinking') and msg.thinking:
-                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
-                text_messages.append(msg_dict)
-
-        # Load all images in parallel
-        if image_urls:
-            images = self._batch_vision_processor.load_images_parallel(image_urls)
-        else:
-            images = []
-
-        # Format prompt
-        try:
-            # Ensure all content is strings (some templates have bugs with non-string content)
-            safe_messages = []
-            for msg in text_messages:
-                safe_msg = {
-                    "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
-                    "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"]
-                }
-                safe_messages.append(safe_msg)
-                
-            formatted_prompt = vlm_apply_chat_template(
-                processor, config, safe_messages, num_images=len(images)
-            )
-        except Exception as e:
-            logging.error(f"Chat template error: {e}")
-            logging.error(f"Text messages: {text_messages}")
-            # Fallback: Try without num_images parameter
-            try:
-                formatted_prompt = vlm_apply_chat_template(
-                    processor, config, text_messages
-                )
-            except Exception as fallback_error:
-                logging.error(f"Fallback template error: {fallback_error}")
-                # Final fallback: manually format messages
-                formatted_prompt = "\n".join([
-                    f"{msg['role']}: {msg['content']}"
-                    for msg in text_messages
-                ])
-
-        return images, formatted_prompt, has_images
+        """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
+        from .common.vlm_inputs import prepare_vlm_inputs_parallel
+        return prepare_vlm_inputs_parallel(
+            messages, processor, config, self._batch_vision_processor,
+            vlm_apply_chat_template, model=model,
+        )
 
 
 class MLXProvider(BaseProvider):
@@ -579,11 +250,13 @@ class MLXProvider(BaseProvider):
         # Add generation lock to prevent Metal command buffer conflicts
         self._generation_lock = threading.Lock()
 
+        # Cooperative abort signal for cancelling in-flight generation
+        self._abort_event = AbortEvent()
+
         # Reference counting for safe unload -- prevents eviction during active generation
         self._active_generations = 0
         self._active_lock = threading.Lock()
 
-    @time_mlx_operation("model_loading")
     def load_model(self):
         model_path = self.config['model_path']
 
@@ -755,18 +428,16 @@ class MLXProvider(BaseProvider):
 
     def _compile_strategies(self):
         """Pre-compile generation strategies to avoid runtime branching."""
+        # Unified text strategy handles both text-only and VLM text paths
+        self._strategies['text'] = UnifiedTextStrategy(
+            draft_model=self.draft_model,
+            model_id=self.model_id,
+            model_config=self.config,
+            is_vlm=self.is_vlm,
+        )
         if self.is_vlm:
-            # Pass draft model to VLM text strategy for speculative decoding
-            self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
-            self._strategies['vlm_vision'] = VLMVisionStrategy()
-        else:
-            self._strategies['text_only'] = TextOnlyStrategy(
-                draft_model=self.draft_model,
-                model_id=self.model_id,
-                model_config=self.config
-            )
+            self._strategies['vision'] = VLMVisionStrategy()
 
-    @time_mlx_operation("path_decision")
     def _detect_images_optimized(self, messages: List) -> bool:
         """Single-pass scan for images with early termination."""
         for msg in messages:
@@ -814,6 +485,13 @@ class MLXProvider(BaseProvider):
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                        'repetition_penalty', 'presence_penalty', 'enable_thinking']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
+
+        # Include cache and speculative decoding config from model config
+        cache_keys = ['cache_type', 'kv_bits', 'kv_group_size', 'max_kv_size',
+                      'quantized_kv_start', 'num_draft_tokens']
+        for key in cache_keys:
+            if key not in merged_config and key in self.config:
+                merged_config[key] = self.config[key]
 
         # Get only the scalar parameter fields from the request (highest priority)
         # Uses getattr instead of model_dump() to avoid serializing the entire message list
@@ -935,7 +613,6 @@ class MLXProvider(BaseProvider):
 
         return completions
 
-    @time_mlx_operation("chat_completion")
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
@@ -950,11 +627,15 @@ class MLXProvider(BaseProvider):
             with self._active_lock:
                 self._active_generations += 1
 
-            # Use generation lock to prevent Metal command buffer conflicts
+            # Preemption: if the lock is held by another generation, abort it
+            # so we can start this request sooner instead of blocking.
             lock_acquired = self._generation_lock.acquire(blocking=False)
             if not lock_acquired:
-                logging.warning(f"[MLX GENERATION] Waiting for another request to complete on {self.model_id} (Metal concurrency protection)")
+                logging.info(f"[MLX GENERATION] Preempting current generation on {self.model_id}")
+                self._abort_event.set()
                 self._generation_lock.acquire(blocking=True)
+            # Clean slate for this generation
+            self._abort_event.clear()
 
             try:
                 effective_request = self._apply_model_defaults(request)
@@ -967,62 +648,29 @@ class MLXProvider(BaseProvider):
                     yield MLXErrorChunk(text=f"Error: Model processor not loaded for '{self.model_id}'")
                     return
 
-                tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
-                sampler, processors = build_sampler(tokenizer, effective_request)
-
                 try:
-                    if not self.is_vlm:
-                        # Text-only model path
-                        if self._detect_images_optimized(request.messages):
-                            yield MLXErrorChunk(text=f"Error: Model '{self.model_id}' is text-only and cannot process images. Please use a vision model for image inputs.")
-                            return
-
-                        # Use pre-compiled text-only strategy
-                        strategy = self._strategies['text_only']
-                        yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
-                        return
-
-                    # VLM model path - decide between text-only and vision
                     has_images = self._detect_images_optimized(request.messages)
 
-                    # Count images for detailed logging
-                    image_count = 0
-                    if has_images:
-                        for msg in request.messages:
-                            if isinstance(msg.content, list):
-                                for part in msg.content:
-                                    if hasattr(part, 'type') and part.type == 'image_url':
-                                        image_count += 1
+                    if not self.is_vlm and has_images:
+                        yield MLXErrorChunk(text=f"Error: Model '{self.model_id}' is text-only and cannot process images. Please use a vision model for image inputs.")
+                        return
 
-                    if has_images:
-                        # Use pre-compiled vision strategy
-                        strategy = self._strategies['vlm_vision']
-                        logging.info(f"[MLX STRATEGY] Using VLM vision strategy for {image_count} images | Model: {self.model_id}")
+                    if self.is_vlm and has_images:
+                        strategy = self._strategies['vision']
+                        logging.info(f"[MLX STRATEGY] Vision path | Model: {self.model_id}")
                     else:
-                        # Use pre-compiled text-only VLM strategy (faster mlx-lm path)
-                        strategy = self._strategies['vlm_text']
-                        logging.info(f"[MLX STRATEGY] Using VLM text-only strategy (no images) | Model: {self.model_id}")
+                        strategy = self._strategies['text']
+                        logging.info(f"[MLX STRATEGY] Text path (vlm={self.is_vlm}) | Model: {self.model_id}")
 
-                    # Log model type for debugging
-                    logging.debug(f"Model type for {self.model_id}: {type(self.model)}")
-                    if hasattr(self.model, 'language_model'):
-                        logging.debug(f"Language model type: {type(self.model.language_model)}")
-
-                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors)
+                    yield from strategy.generate(request, effective_request, self.model, self.processor, abort_event=self._abort_event)
 
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)
 
                     # Reset MLX state on error to prevent stream context issues
                     try:
-                        import gc
                         gc.collect()
-                        mx.eval()  # Synchronize any pending operations
-
-                        # Clear any cached state in strategies
-                        for strategy in self._strategies.values():
-                            if hasattr(strategy, '_cached_generator'):
-                                strategy._cached_generator = None
+                        mx.eval()  # Synchronize any pending MLX operations
                     except Exception as cleanup_error:
                         logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
 
@@ -1035,19 +683,6 @@ class MLXProvider(BaseProvider):
                     self._active_generations -= 1
                 # Release MLX internal memory cache between requests
                 mx.clear_cache()
-
-    def log_performance_summary(self):
-        """Log current performance metrics."""
-        try:
-            summary = performance_monitor.get_performance_summary()
-            logging.info(f"MLX Provider Performance Summary for {self.model_id}:\n{summary}")
-
-            # Log path comparisons if available
-            path_comparison = performance_monitor.compare_paths("generation")
-            if path_comparison:
-                logging.info(f"Generation Path Performance Comparison: {path_comparison}")
-        except Exception as e:
-            logging.debug(f"Failed to log performance summary: {e}")
 
     def _get_context_capacity(self) -> int:
         """Get max context window size from model config."""
@@ -1138,9 +773,6 @@ class MLXProvider(BaseProvider):
                     f"before unload ({elapsed:.1f}s elapsed)"
                 )
             time.sleep(0.1)
-
-        # Log performance summary before cleanup
-        self.log_performance_summary()
 
         # Clear caches
         self._strategies.clear()

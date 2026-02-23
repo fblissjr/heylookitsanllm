@@ -1029,8 +1029,8 @@ wheels = [
 
 [[package]]
 name = "mlx-lm"
-version = "0.30.6"
-source = { git = "https://github.com/ml-explore/mlx-lm.git#fd6959dca7a760a4dc004a49a5724bfd741e0259" }
+version = "0.30.8"
+source = { git = "https://github.com/ml-explore/mlx-lm.git#321e764e0ab6dfa80d52a478f75d453313e00c9a" }
 dependencies = [
     { name = "jinja2" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
@@ -1053,8 +1053,8 @@ wheels = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.3.11"
-source = { git = "https://github.com/Blaizzy/mlx-vlm.git#21f9b458765efcf4290ad9b429b5900b29ec40db" }
+version = "0.3.12"
+source = { git = "https://github.com/Blaizzy/mlx-vlm.git#72d53ecc52bb09753d5f552775be8d0a37e24e75" }
 dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
@@ -1557,8 +1557,8 @@ wheels = [
 
 [[package]]
 name = "parakeet-mlx"
-version = "0.5.0"
-source = { git = "https://github.com/senstella/parakeet-mlx.git#de9ead8749aee998032f08010f260313d2804786" }
+version = "0.5.1"
+source = { git = "https://github.com/senstella/parakeet-mlx.git#ba03a1b6e8df4edadc83aca312a32600831dd481" }
 dependencies = [
     { name = "dacite" },
     { name = "huggingface-hub" },

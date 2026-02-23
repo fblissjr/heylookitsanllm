@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.1
+
+### Removed
+
+- **`PerformanceMonitor`**: Deleted `performance_monitor.py` (234 lines) and all `@time_mlx_operation` decorators. No consumers, no tests, generator-wrapping overhead on every token. `/v1/performance` endpoint returns a stub response.
+- **`VLMGeneratorWithSampling` class**: Flattened to standalone `stream_generate_vlm_vision()` function (~55 lines, down from 161). Dead text-only branch, `LanguageModelLogitsWrapper` cache, and `lm_stream_generate` import removed -- all unreachable after phase 5 unification.
+- **Duplicate `_reconstruct_thinking`**: Deleted copy from `mlx_provider.py`. Canonical version lives in `providers/common/vlm_inputs.py`.
+
+## 1.17.0
+
+### Added
+
+- **`generate_text()` entry point**: New high-level function in `generation_core.py` that builds sampler/processors internally and delegates to `run_generation()`. Strategies call this instead of building samplers externally, keeping sampler construction co-located with the generation loop.
+- **Dynamic draft token tuning (`DraftTuner`)**: Module-level singleton in `generation_core.py` that dynamically adjusts `num_draft_tokens` per model based on rolling acceptance rate. Conservative policy: increase by 1 (max 8) when acceptance > 80%, decrease by 1 (min 1) when < 50%, over a 50-sample window. Integrated into `run_generation()` automatically.
+- **Standalone VLM input preparation**: Extracted `VLMVisionStrategy._prepare_vlm_inputs_parallel` (92 lines) to `providers/common/vlm_inputs.py` as a standalone function. Testable without instantiating a full strategy.
+- **Unified path equivalence tests**: Parameterized tests proving `UnifiedTextStrategy` produces equivalent `generate_text()` calls for `is_vlm=True` and `is_vlm=False`.
+
+### Changed
+
+- **Sampler construction moved out of `create_chat_completion()`**: `build_sampler()` no longer called in the routing layer. `UnifiedTextStrategy` uses `generate_text()` (builds sampler internally); `VLMVisionStrategy` builds its own sampler at the start of `generate()`. Strategy signatures no longer include `sampler`/`processors` parameters.
+- **`run_generation()` consults DraftTuner**: When a draft model is active, `run_generation()` queries `DraftTuner` for the current token count before calling `lm_stream_generate`, and feeds acceptance data back in the `finally` block.
+
+## 1.16.0
+
+### Changed
+
+- **Provider strategy unification**: Merged `TextOnlyStrategy` and `VLMTextOnlyStrategy` (~400 lines of duplication) into a single `UnifiedTextStrategy` (~130 lines) that dispatches on `is_vlm` for chat template application and model wrapping. All shared logic (cache config, prompt cache, generation loop, acceptance tracking, KV snapshot storage) extracted to `generation_core.run_generation()`. Strategy keys changed from `text_only`/`vlm_text`/`vlm_vision` to `text`/`vision`.
+- **`LanguageModelLogitsWrapper` moved**: Relocated from `mlx_provider.py` to `providers/common/model_wrappers.py` to break circular import with `vlm_generation.py`.
+- **Generation core extracted**: New `providers/common/generation_core.py` contains the single generation loop (`run_generation`), cache config construction (`_build_cache_config`), and prompt cache setup (`_setup_prompt_cache`). This is the integration point for future `mx.compile` optimization.
+- **Simplified routing**: `_compile_strategies()` now creates 1-2 strategies (text, optionally vision) instead of 2-3. `create_chat_completion()` routing reduced to a simple `has_images` check.
+
+## 1.15.0
+
+### Fixed
+
+- **`num_draft_tokens` passthrough**: Both `TextOnlyStrategy` and `VLMTextOnlyStrategy` now pass `num_draft_tokens` to `lm_stream_generate`. Previously, the configured value (default 6) was never forwarded, causing `speculative_generate_step` to use its hardcoded default of 2. New default changed from 6 to 3 (safe middle ground between mlx-lm's default of 2 and the overly aggressive 6).
+- **`VLMTextOnlyStrategy` missing `model_config`**: Added `model_config` parameter so VLM text-only path can access model-level config (thinking mode, cache settings, etc.), matching `TextOnlyStrategy`.
+- **`cache_config` ignoring model config**: The `kv_bits` fallback changed from hardcoded `8` to `None`, and `_apply_model_defaults()` now explicitly includes cache config fields (`cache_type`, `kv_bits`, `kv_group_size`, `max_kv_size`, `quantized_kv_start`, `num_draft_tokens`) from model config. Previously, if the request didn't specify cache params, the strategy's fallback defaults would override model config.
+- **Analytics DB size limit enforced**: The cleanup thread now prunes the oldest 25% of records and runs VACUUM when the database exceeds `max_db_size_mb`, instead of just logging a warning.
+
+### Added
+
+- **Memory-pressure eviction for radix cache**: `RadixCache` accepts an optional `memory_pressure_fn` callback checked before each node insertion. When GPU memory exceeds 85% of the recommended working set, eviction triggers even if node count is below `max_nodes`. Keeps the radix cache pure (no MLX dependency in the data structure).
+- **Speculative decoding acceptance tracking**: Both text-only strategies now count draft token acceptance/rejection during generation and log the acceptance rate in the finally block. Provides visibility into whether speculation is helping without changing behavior.
+- **Startup disk usage logging**: Server startup now logs analytics DB size (with limit) and log directory size for disk usage visibility.
+- **`num_draft_tokens` in smart defaults**: `get_smart_defaults()` now includes `num_draft_tokens=3` for MLX models, ensuring the field is always present when users configure `draft_model_path`.
+
+### Changed
+
+- **Profile cache threshold aligned**: The `balanced` profile's quantized KV cache threshold changed from >30GB to >13GB, matching `get_smart_defaults()`.
+
+### Removed
+
+- **`models.toml.example`**: Deleted. The `heylookllm import` command and smart defaults generate complete config. README updated to use `heylookllm import --hf-cache` instead of `cp models.toml.example`.
+
+## 1.14.0
+
+### Added
+
+- **Radix-tree prefix cache**: New `RadixCache` data structure (`providers/common/radix_cache.py`) stores multiple cached prefixes per model simultaneously. Editing an earlier message, branching, or regenerating no longer invalidates the entire cache -- only the divergent suffix needs re-prefilling. Configurable block size (32 tokens), LRU leaf eviction, thread-safe.
+- **KV snapshot helpers**: `snapshot_kv()` and `restore_kv_from_snapshot()` in `cache_helpers.py` capture and restore KV cache state for radix tree storage. Uses MLX copy-on-write semantics for cheap snapshots.
+
+### Changed
+
+- **Pure-MLX sampler**: `_mlx_unique()` in `samplers.py` reimplemented using `mx.sort` + `mx.cumsum` + scatter, replacing the numpy-based version that forced a full GPU-to-CPU sync on every token when presence penalty was active. Now only a single int32 scalar crosses the device boundary.
+- **Prompt cache manager**: `PromptCacheManager` now uses a `RadixCache` per model as the persistent backing store instead of a single linear prefix cache. Public API (`get_or_create_cache`, `process_prompt_with_cache`) unchanged.
+
+### Removed
+
+- **numpy dependency from samplers**: `import numpy as np` removed from `samplers.py`. The presence penalty path now stays entirely on the Metal compute graph.
+
+## 1.13.0
+
+### Removed
+
+- **Dead code**: Deleted `mlx_optimizations.py` (283 lines of hallucinated MLX APIs, zero imports anywhere)
+- **Queue manager**: Removed `queue_manager.py` and all queue branches from `api.py`, `messages_api.py`, `router.py`. Queue was always disabled (`queue_config.enabled: false`) and fundamentally incompatible with streaming (`list(generator)` defeated the point). Removes ~400 lines of dead code.
+
+### Added
+
+- **Generation abort mechanism**: New `AbortEvent` (`providers/abort.py`) enables cooperative cancellation of in-flight MLX generation. When a new request arrives while another is generating, the current generation is aborted (per-token check) so the new request starts immediately instead of blocking. Client disconnect during SSE streaming also triggers abort, freeing GPU compute.
+
 ## 1.12.4
 
 ### Added
