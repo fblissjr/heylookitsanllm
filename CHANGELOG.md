@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.0
+
+### Added
+
+- **`generate_text()` entry point**: New high-level function in `generation_core.py` that builds sampler/processors internally and delegates to `run_generation()`. Strategies call this instead of building samplers externally, keeping sampler construction co-located with the generation loop.
+- **Dynamic draft token tuning (`DraftTuner`)**: Module-level singleton in `generation_core.py` that dynamically adjusts `num_draft_tokens` per model based on rolling acceptance rate. Conservative policy: increase by 1 (max 8) when acceptance > 80%, decrease by 1 (min 1) when < 50%, over a 50-sample window. Integrated into `run_generation()` automatically.
+- **Standalone VLM input preparation**: Extracted `VLMVisionStrategy._prepare_vlm_inputs_parallel` (92 lines) to `providers/common/vlm_inputs.py` as a standalone function. Testable without instantiating a full strategy.
+- **Unified path equivalence tests**: Parameterized tests proving `UnifiedTextStrategy` produces equivalent `generate_text()` calls for `is_vlm=True` and `is_vlm=False`.
+
+### Changed
+
+- **Sampler construction moved out of `create_chat_completion()`**: `build_sampler()` no longer called in the routing layer. `UnifiedTextStrategy` uses `generate_text()` (builds sampler internally); `VLMVisionStrategy` builds its own sampler at the start of `generate()`. Strategy signatures no longer include `sampler`/`processors` parameters.
+- **`run_generation()` consults DraftTuner**: When a draft model is active, `run_generation()` queries `DraftTuner` for the current token count before calling `lm_stream_generate`, and feeds acceptance data back in the `finally` block.
+
 ## 1.16.0
 
 ### Changed

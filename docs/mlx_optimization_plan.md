@@ -1,6 +1,6 @@
 # mlx engine optimization plan
 
-last updated: 2026-02-20
+last updated: 2026-02-23
 
 ## context
 
@@ -15,10 +15,11 @@ This plan phases the work from lowest-risk cleanup through high-impact optimizat
 | Phase | Goal | Risk | Impact | Status |
 |-------|------|------|--------|--------|
 | **1** | Simplify and harden foundation | Low | Remove dead code, add abort mechanism | DONE (v1.13.0) |
-| **2** | Radix-tree prefix caching | Medium | Near-instant TTFT on conversation turns | Planned |
-| **3** | Static graph compilation | Medium | Eliminate JIT recompilations during decode | Planned |
-| **4** | Speculative decoding hardening | Medium | 2x+ TPS with compatible draft models | Planned |
-| **5** | Provider unification | High | Single generation loop for all modalities | Planned |
+| **2** | Radix-tree prefix caching | Medium | Near-instant TTFT on conversation turns | DONE (v1.14.0) |
+| **3** | Pure-MLX samplers | Medium | Eliminate numpy GPU-CPU syncs in sampling | DONE (v1.14.0) |
+| **4** | Speculative decoding hardening | Medium | 2x+ TPS with compatible draft models | DONE (v1.15.0) |
+| **5** | Provider strategy unification | High | Single generation loop for text modalities | DONE (v1.16.0) |
+| **6** | Generation core maturity | Medium | Self-contained generation, dynamic draft tuning | DONE (v1.17.0) |
 
 ---
 

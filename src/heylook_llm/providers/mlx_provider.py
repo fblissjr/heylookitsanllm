@@ -21,7 +21,7 @@ from .common.samplers import build as build_sampler
 from .common.performance_monitor import time_mlx_operation, performance_monitor
 from .common.vlm_generation import create_vlm_generator_with_sampling
 from .common.model_wrappers import LanguageModelLogitsWrapper
-from .common.generation_core import run_generation
+from .common.generation_core import generate_text
 from .mlx_batch_vision import BatchVisionEncoder
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
@@ -82,7 +82,7 @@ class KeepaliveChunk:
 class GenerationStrategy(Protocol):
     """Protocol for generation strategies."""
 
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         """Generate response using this strategy."""
         ...
 
@@ -107,20 +107,18 @@ class UnifiedTextStrategy:
         self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "unified_text")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
         messages_for_template = self._prepare_messages(request.messages)
         prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
         gen_model = self._get_generation_model(model)
 
-        yield from run_generation(
+        yield from generate_text(
             model=gen_model,
             tokenizer=tokenizer,
             prompt_tokens=prompt_tokens,
             effective_request=effective_request,
-            sampler=sampler,
-            processors=processors,
             model_id=self.model_id,
             draft_model=self.draft_model,
             cache_manager=self.cache_manager,
@@ -197,7 +195,11 @@ class VLMVisionStrategy:
         self._batch_vision_processor = None
 
     @time_mlx_operation("generation", "vlm_vision")
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, sampler, processors, abort_event: AbortEvent | None = None) -> Generator:
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
+        # Build sampler internally (VLM vision path uses processor's tokenizer)
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        sampler, processors = build_sampler(tokenizer, effective_request)
+
         # Create generator with sampling (cached)
         if self._cached_generator is None:
             self._cached_generator = create_vlm_generator_with_sampling(model, processor)
@@ -234,97 +236,12 @@ class VLMVisionStrategy:
                 yield response
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
-        """Prepare VLM inputs with parallel image loading."""
-        image_urls = []
-        text_messages = []
-        has_images = False
-        image_counter = 0
-
-        # First pass: collect image URLs and build text structure
-        for msg in messages:
-            content = msg.content
-            if isinstance(content, list):
-                text_parts = []
-
-                for part in content:
-                    # Handle both object and dict formats
-                    if hasattr(part, 'type'):
-                        # Object format (ContentPart)
-                        if part.type == 'text':
-                            text_parts.append(part.text)
-                        elif part.type == 'image_url':
-                            image_urls.append(part.image_url.url)
-                            has_images = True
-                            image_counter += 1
-                            # Don't add manual placeholders - mlx-vlm's apply_chat_template
-                            # handles image token insertion based on num_images
-                    elif isinstance(part, dict):
-                        # Dict format
-                        if part.get('type') == 'text':
-                            text_parts.append(part.get('text', ''))
-                        elif part.get('type') == 'image_url':
-                            image_url = part.get('image_url', {})
-                            if isinstance(image_url, dict):
-                                url = image_url.get('url', '')
-                            else:
-                                url = image_url.url if hasattr(image_url, 'url') else ''
-                            if url:
-                                image_urls.append(url)
-                                has_images = True
-                                image_counter += 1
-                                # Don't add manual placeholders - mlx-vlm's apply_chat_template
-                                # handles image token insertion based on num_images
-
-                # Combine text parts
-                combined_content = " ".join(text_parts) if text_parts else ""
-                msg_dict = {"role": msg.role, "content": combined_content}
-                # Reconstruct thinking for assistant messages
-                if hasattr(msg, 'thinking') and msg.thinking:
-                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
-                text_messages.append(msg_dict)
-            elif isinstance(content, str):
-                msg_dict = {"role": msg.role, "content": content}
-                if hasattr(msg, 'thinking') and msg.thinking:
-                    msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
-                text_messages.append(msg_dict)
-
-        # Load all images in parallel
-        if image_urls:
-            images = self._batch_vision_processor.load_images_parallel(image_urls)
-        else:
-            images = []
-
-        # Format prompt
-        try:
-            # Ensure all content is strings (some templates have bugs with non-string content)
-            safe_messages = []
-            for msg in text_messages:
-                safe_msg = {
-                    "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
-                    "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"]
-                }
-                safe_messages.append(safe_msg)
-                
-            formatted_prompt = vlm_apply_chat_template(
-                processor, config, safe_messages, num_images=len(images)
-            )
-        except Exception as e:
-            logging.error(f"Chat template error: {e}")
-            logging.error(f"Text messages: {text_messages}")
-            # Fallback: Try without num_images parameter
-            try:
-                formatted_prompt = vlm_apply_chat_template(
-                    processor, config, text_messages
-                )
-            except Exception as fallback_error:
-                logging.error(f"Fallback template error: {fallback_error}")
-                # Final fallback: manually format messages
-                formatted_prompt = "\n".join([
-                    f"{msg['role']}: {msg['content']}"
-                    for msg in text_messages
-                ])
-
-        return images, formatted_prompt, has_images
+        """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
+        from .common.vlm_inputs import prepare_vlm_inputs_parallel
+        return prepare_vlm_inputs_parallel(
+            messages, processor, config, self._batch_vision_processor,
+            vlm_apply_chat_template, model=model,
+        )
 
 
 class MLXProvider(BaseProvider):
@@ -755,9 +672,6 @@ class MLXProvider(BaseProvider):
                     yield MLXErrorChunk(text=f"Error: Model processor not loaded for '{self.model_id}'")
                     return
 
-                tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
-                sampler, processors = build_sampler(tokenizer, effective_request)
-
                 try:
                     has_images = self._detect_images_optimized(request.messages)
 
@@ -772,7 +686,7 @@ class MLXProvider(BaseProvider):
                         strategy = self._strategies['text']
                         logging.info(f"[MLX STRATEGY] Text path (vlm={self.is_vlm}) | Model: {self.model_id}")
 
-                    yield from strategy.generate(request, effective_request, self.model, self.processor, sampler, processors, abort_event=self._abort_event)
+                    yield from strategy.generate(request, effective_request, self.model, self.processor, abort_event=self._abort_event)
 
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)

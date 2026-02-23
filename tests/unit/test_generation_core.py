@@ -5,6 +5,7 @@ Covers:
 - _build_cache_config construction from effective_request
 - _setup_prompt_cache with and without model_id
 - run_generation end-to-end with mocked lm_stream_generate
+- generate_text high-level entry point (builds sampler internally)
 - Abort event handling
 - Speculative decoding acceptance tracking
 """
@@ -226,3 +227,80 @@ class TestRunGeneration:
             call_args = mock_store.call_args
             assert call_args[0][0] is mock_working_cache
             assert call_args[0][1] == [1, 2, 10]  # prompt + generated
+
+
+class TestGenerateText:
+    """Verify generate_text builds sampler internally and delegates to run_generation."""
+
+    def test_builds_sampler_and_yields(self, mock_mlx):
+        from heylook_llm.providers.common.generation_core import generate_text
+
+        responses = [FakeResponse("Hello", 1)]
+
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate', return_value=iter(responses)), \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream', return_value=MagicMock()):
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+
+            effective = {'max_tokens': 100, 'temperature': 0.5}
+            results = list(generate_text(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                prompt_tokens=[1, 2, 3],
+                effective_request=effective,
+            ))
+
+        assert len(results) == 1
+        assert results[0].text == "Hello"
+
+    def test_passes_sampler_to_run_generation(self, mock_mlx):
+        """generate_text should call build_sampler then pass result to lm_stream_generate."""
+        from heylook_llm.providers.common.generation_core import generate_text
+
+        mock_sampler = MagicMock()
+        mock_processors = [MagicMock()]
+        responses = [FakeResponse("ok", 1)]
+
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate', return_value=iter(responses)) as mock_gen, \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream', return_value=MagicMock()), \
+             patch('heylook_llm.providers.common.samplers.build', return_value=(mock_sampler, mock_processors)):
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+
+            effective = {'max_tokens': 50}
+            list(generate_text(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                prompt_tokens=[1],
+                effective_request=effective,
+            ))
+
+        # Verify the built sampler was passed through to lm_stream_generate
+        call_kwargs = mock_gen.call_args
+        assert call_kwargs.kwargs['sampler'] is mock_sampler
+        assert call_kwargs.kwargs['logits_processors'] is mock_processors
+
+    def test_forwards_draft_model(self, mock_mlx):
+        from heylook_llm.providers.common.generation_core import generate_text
+
+        responses = [FakeResponse("x", 1)]
+        draft = MagicMock()
+
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate', return_value=iter(responses)) as mock_gen, \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream', return_value=MagicMock()):
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+
+            effective = {'max_tokens': 50}
+            list(generate_text(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                prompt_tokens=[1],
+                effective_request=effective,
+                draft_model=draft,
+            ))
+
+        assert mock_gen.call_args.kwargs['draft_model'] is draft
