@@ -54,7 +54,6 @@ def prepare_vlm_inputs_parallel(
     image_urls = []
     text_messages = []
     has_images = False
-    image_counter = 0
 
     # First pass: collect image URLs and build text structure
     for msg in messages:
@@ -71,7 +70,6 @@ def prepare_vlm_inputs_parallel(
                     elif part.type == 'image_url':
                         image_urls.append(part.image_url.url)
                         has_images = True
-                        image_counter += 1
                 elif isinstance(part, dict):
                     # Dict format
                     if part.get('type') == 'text':
@@ -85,7 +83,6 @@ def prepare_vlm_inputs_parallel(
                         if url:
                             image_urls.append(url)
                             has_images = True
-                            image_counter += 1
 
             # Combine text parts
             combined_content = " ".join(text_parts) if text_parts else ""

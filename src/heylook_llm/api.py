@@ -21,7 +21,7 @@ from fastapi.openapi.utils import get_openapi
 
 from heylook_llm.router import ModelRouter
 from heylook_llm.config import (
-    ChatRequest, PerformanceMetrics, ChatCompletionResponse,
+    ChatRequest, ChatCompletionResponse,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse
 )

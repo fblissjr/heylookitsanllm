@@ -290,7 +290,6 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 
 - Use `/v1/chat/completions/multipart` for vision models (57ms faster per image)
 - Enable streaming for real-time output
-- Monitor performance with `/v1/performance` endpoint
 - Install performance extras: `pip install heylookllm[performance]`
 
 ## 🔗 Client Libraries
