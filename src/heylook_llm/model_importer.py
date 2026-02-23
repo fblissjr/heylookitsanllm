@@ -460,14 +460,13 @@ def import_models(args: Any) -> None:
             print(f"\n--- Customizing: {model['id']} ---")
 
             # Sampler params
-            before_sampler = {
-                k: config[k] for k in ('temperature', 'top_p', 'top_k', 'min_p',
-                                        'max_tokens', 'repetition_penalty', 'repetition_context_size')
-                if k in config
-            }
+            sampler_keys = ('temperature', 'top_p', 'top_k', 'min_p',
+                            'max_tokens', 'repetition_penalty', 'repetition_context_size')
+            before_sampler = {k: config[k] for k in sampler_keys if k in config}
             updated_sampler = editor.edit_sampler_params(before_sampler or None)
-            if editor.confirm_changes(before_sampler, updated_sampler):
-                config.update(updated_sampler)
+            if updated_sampler != before_sampler:
+                if editor.confirm_changes(before_sampler, updated_sampler):
+                    config.update(updated_sampler)
 
             # KV cache params (MLX only)
             if model.get('provider') == 'mlx':
@@ -478,7 +477,7 @@ def import_models(args: Any) -> None:
                 kv_params = editor.edit_kv_cache_params(model_info=model_info)
                 if kv_params:
                     before_kv = {k: config.get(k) for k in kv_params}
-                    if editor.confirm_changes(before_kv, kv_params):
+                    if kv_params != before_kv and editor.confirm_changes(before_kv, kv_params):
                         config.update(kv_params)
 
             model['config'] = config
