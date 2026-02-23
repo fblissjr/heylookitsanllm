@@ -16,6 +16,18 @@ from .cache_helpers import make_cache, snapshot_kv, restore_kv_from_snapshot
 from .radix_cache import RadixCache
 
 
+def _mlx_memory_pressure() -> bool:
+    """Check if GPU memory exceeds 85% of recommended working set."""
+    try:
+        import mlx.core as mx
+        active = mx.metal.get_active_memory()
+        info = mx.metal.device_info()
+        limit = info.get('max_recommended_working_set_size', float('inf'))
+        return active > limit * 0.85
+    except Exception:
+        return False
+
+
 @dataclass
 class PromptCache:
     """Working cache for a single generation request.
@@ -63,7 +75,10 @@ class PromptCacheManager:
 
             # Ensure radix cache exists for this model
             if model_id not in self._radix_caches:
-                self._radix_caches[model_id] = RadixCache(max_nodes=self._max_radix_nodes)
+                self._radix_caches[model_id] = RadixCache(
+                    max_nodes=self._max_radix_nodes,
+                    memory_pressure_fn=_mlx_memory_pressure,
+                )
                 logging.debug(f"Created radix cache for {model_id} (max_nodes={self._max_radix_nodes})")
 
             self._update_lru_unlocked(model_id)

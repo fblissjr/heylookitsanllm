@@ -125,7 +125,7 @@ PROFILES: dict[str, ModelProfile] = {
             "min_p": 0.05,
             "max_tokens": 512,
             "repetition_penalty": 1.05,
-            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 30 else "standard"
+            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 13 else "standard"
         }
     ),
     "quality": ModelProfile(
@@ -299,6 +299,10 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     # Repetition penalty
     defaults['repetition_penalty'] = 1.05
     defaults['repetition_context_size'] = 20
+
+    # Speculative decoding default (used when draft_model_path is set)
+    if provider == 'mlx':
+        defaults['num_draft_tokens'] = 3
 
     # Provider-specific
     if provider in ['llama_cpp', 'gguf']:

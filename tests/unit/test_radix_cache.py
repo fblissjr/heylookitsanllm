@@ -333,3 +333,70 @@ class TestRadixCacheEmptyAndEdge:
         tokens = _make_tokens(BLOCK_SIZE * 3)
         cache.insert(tokens, ["kv"], matched_length=0)
         assert cache._node_count == 3
+
+
+class TestRadixCacheMemoryPressure:
+    """Memory-pressure callback eviction."""
+
+    def test_memory_pressure_triggers_eviction_below_max_nodes(self):
+        """Eviction should fire even when node count is below max_nodes."""
+        call_count = 0
+
+        def always_pressured() -> bool:
+            nonlocal call_count
+            call_count += 1
+            return True
+
+        cache = RadixCache(max_nodes=128, memory_pressure_fn=always_pressured)
+
+        # Insert 3 single-block entries (each is 1 node)
+        for i in range(3):
+            tokens = _make_tokens(BLOCK_SIZE, offset=i * 1000)
+            cache.insert(tokens, [f"kv_{i}"], matched_length=0)
+
+        # Under memory pressure, eviction should keep count low
+        # despite max_nodes=128 being far above the insert count
+        assert cache._node_count < 3
+        assert call_count > 0
+
+    def test_no_eviction_when_callback_returns_false(self):
+        """When callback says no pressure, no extra eviction happens."""
+        cache = RadixCache(max_nodes=128, memory_pressure_fn=lambda: False)
+
+        for i in range(5):
+            tokens = _make_tokens(BLOCK_SIZE, offset=i * 1000)
+            cache.insert(tokens, [f"kv_{i}"], matched_length=0)
+
+        # All 5 nodes should exist (no pressure, well under max_nodes)
+        assert cache._node_count == 5
+
+    def test_memory_pressure_after_n_inserts(self):
+        """Callback triggers pressure after a threshold."""
+        insert_count = 0
+
+        def pressure_after_3() -> bool:
+            return insert_count >= 3
+
+        cache = RadixCache(max_nodes=128, memory_pressure_fn=pressure_after_3)
+
+        for i in range(5):
+            insert_count = i
+            tokens = _make_tokens(BLOCK_SIZE, offset=i * 1000)
+            cache.insert(tokens, [f"kv_{i}"], matched_length=0)
+
+        # First 3 inserts: no pressure, all stored
+        # Inserts 4-5: pressure triggers eviction per insert
+        assert cache._node_count < 5
+
+    def test_no_callback_means_no_pressure(self):
+        """Default (no callback) never triggers memory eviction."""
+        cache = RadixCache(max_nodes=128)
+        assert cache._check_memory_pressure() is False
+
+    def test_callback_exception_returns_false(self):
+        """If the callback throws, treat as no pressure."""
+        def broken_fn():
+            raise RuntimeError("oops")
+
+        cache = RadixCache(max_nodes=128, memory_pressure_fn=broken_fn)
+        assert cache._check_memory_pressure() is False

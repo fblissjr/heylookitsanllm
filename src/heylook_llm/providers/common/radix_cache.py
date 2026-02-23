@@ -37,11 +37,12 @@ class RadixCache:
     (on average ~16 tokens of wasted re-prefill, but 32x fewer snapshots).
     """
 
-    def __init__(self, max_nodes: int = 128):
+    def __init__(self, max_nodes: int = 128, memory_pressure_fn: callable | None = None):
         self.root = RadixNode(token_block=(), children={}, depth=0)
         self.max_nodes = max_nodes
         self._node_count = 0
         self._lock = threading.RLock()
+        self._memory_pressure_fn = memory_pressure_fn
 
     # ------------------------------------------------------------------
     # Public API
@@ -143,8 +144,8 @@ class RadixCache:
                     # since eviction handles cleanup -- just replace the leaf
                     node = new_node
                 else:
-                    # Evict if needed before inserting
-                    if self._node_count >= self.max_nodes:
+                    # Evict if needed before inserting (node count OR memory pressure)
+                    if self._node_count >= self.max_nodes or self._check_memory_pressure():
                         self._evict_lru_unlocked()
 
                     new_node = RadixNode(
@@ -170,6 +171,15 @@ class RadixCache:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _check_memory_pressure(self) -> bool:
+        """Check if external memory pressure callback signals eviction needed."""
+        if self._memory_pressure_fn is None:
+            return False
+        try:
+            return self._memory_pressure_fn()
+        except Exception:
+            return False
 
     @staticmethod
     def _chunk_tokens(tokens: list[int]) -> list[tuple[int, ...]]:

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.0
+
+### Fixed
+
+- **`num_draft_tokens` passthrough**: Both `TextOnlyStrategy` and `VLMTextOnlyStrategy` now pass `num_draft_tokens` to `lm_stream_generate`. Previously, the configured value (default 6) was never forwarded, causing `speculative_generate_step` to use its hardcoded default of 2. New default changed from 6 to 3 (safe middle ground between mlx-lm's default of 2 and the overly aggressive 6).
+- **`VLMTextOnlyStrategy` missing `model_config`**: Added `model_config` parameter so VLM text-only path can access model-level config (thinking mode, cache settings, etc.), matching `TextOnlyStrategy`.
+- **`cache_config` ignoring model config**: The `kv_bits` fallback changed from hardcoded `8` to `None`, and `_apply_model_defaults()` now explicitly includes cache config fields (`cache_type`, `kv_bits`, `kv_group_size`, `max_kv_size`, `quantized_kv_start`, `num_draft_tokens`) from model config. Previously, if the request didn't specify cache params, the strategy's fallback defaults would override model config.
+- **Analytics DB size limit enforced**: The cleanup thread now prunes the oldest 25% of records and runs VACUUM when the database exceeds `max_db_size_mb`, instead of just logging a warning.
+
+### Added
+
+- **Memory-pressure eviction for radix cache**: `RadixCache` accepts an optional `memory_pressure_fn` callback checked before each node insertion. When GPU memory exceeds 85% of the recommended working set, eviction triggers even if node count is below `max_nodes`. Keeps the radix cache pure (no MLX dependency in the data structure).
+- **Speculative decoding acceptance tracking**: Both text-only strategies now count draft token acceptance/rejection during generation and log the acceptance rate in the finally block. Provides visibility into whether speculation is helping without changing behavior.
+- **Startup disk usage logging**: Server startup now logs analytics DB size (with limit) and log directory size for disk usage visibility.
+- **`num_draft_tokens` in smart defaults**: `get_smart_defaults()` now includes `num_draft_tokens=3` for MLX models, ensuring the field is always present when users configure `draft_model_path`.
+
+### Changed
+
+- **Profile cache threshold aligned**: The `balanced` profile's quantized KV cache threshold changed from >30GB to >13GB, matching `get_smart_defaults()`.
+
+### Removed
+
+- **`models.toml.example`**: Deleted. The `heylookllm import` command and smart defaults generate complete config. README updated to use `heylookllm import --hf-cache` instead of `cp models.toml.example`.
+
 ## 1.14.0
 
 ### Added

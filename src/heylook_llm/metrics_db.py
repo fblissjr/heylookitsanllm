@@ -353,11 +353,24 @@ class MetricsDB:
                     WHERE timestamp < '{retention_date.isoformat()}'
                 """)
 
-                # Check database size
+                # Check database size and enforce limit
                 db_size_mb = self.db_path.stat().st_size / (1024 * 1024)
                 if db_size_mb > analytics_config.max_db_size_mb:
-                    logger.warning(f"Database size ({db_size_mb:.1f}MB) exceeds limit ({analytics_config.max_db_size_mb}MB)")
-                    # Could implement more aggressive cleanup here
+                    logger.warning(
+                        f"Database size ({db_size_mb:.1f}MB) exceeds limit "
+                        f"({analytics_config.max_db_size_mb}MB), pruning oldest records"
+                    )
+                    self.conn.execute("""
+                        DELETE FROM request_logs
+                        WHERE rowid IN (
+                            SELECT rowid FROM request_logs
+                            ORDER BY timestamp ASC
+                            LIMIT (SELECT COUNT(*) / 4 FROM request_logs)
+                        )
+                    """)
+                    self.conn.execute("VACUUM")
+                    pruned_size_mb = self.db_path.stat().st_size / (1024 * 1024)
+                    logger.info(f"Pruned analytics DB: {db_size_mb:.1f}MB -> {pruned_size_mb:.1f}MB")
 
                 logger.info(f"Cleaned up analytics data older than {retention_date}")
             except Exception as e:

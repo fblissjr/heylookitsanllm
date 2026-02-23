@@ -241,7 +241,7 @@ class TextOnlyStrategy:
             # Extract cache configuration from effective_request
             cache_config = {
                 'cache_type': effective_request.get('cache_type', 'standard'),
-                'kv_bits': effective_request.get('kv_bits', 8),
+                'kv_bits': effective_request.get('kv_bits'),
                 'kv_group_size': effective_request.get('kv_group_size', 64),
                 'max_kv_size': effective_request.get('max_kv_size')
             }
@@ -267,6 +267,8 @@ class TextOnlyStrategy:
         # Wrap generation in wired_limit context manager for optimal Metal memory management
         # This is critical for large models and ensures proper synchronization
         generated_token_ids = []
+        draft_accepted = 0
+        draft_total = 0
         try:
             with wired_limit(model, [generation_stream]):
                 # Stream tokens and handle potential leading space issue
@@ -279,6 +281,7 @@ class TextOnlyStrategy:
                     logits_processors=processors,
                     max_tokens=effective_request['max_tokens'],
                     draft_model=self.draft_model,
+                    num_draft_tokens=effective_request.get('num_draft_tokens', 3),
                     prompt_progress_callback=prompt_progress_callback,
                     prompt_cache=generation_cache if generation_cache else None
                 ):
@@ -286,6 +289,11 @@ class TextOnlyStrategy:
                         logging.info("Generation aborted (text_only)")
                         break
                     generated_token_ids.append(response.token)
+                    # Track speculative decoding acceptance
+                    if hasattr(response, 'from_draft') and self.draft_model is not None:
+                        draft_total += 1
+                        if response.from_draft:
+                            draft_accepted += 1
                     # Clean up leading space on first token for models with add_prefix_space
                     if first_token and response.text.startswith(' '):
                         response.text = response.text.lstrip()
@@ -295,6 +303,13 @@ class TextOnlyStrategy:
 
                     yield response
         finally:
+            # Log speculative decoding acceptance rate
+            if draft_total > 0:
+                rate = draft_accepted / draft_total
+                logging.info(
+                    f"Speculative decoding: {draft_accepted}/{draft_total} draft tokens accepted "
+                    f"({rate:.0%}), {len(generated_token_ids)} total generated"
+                )
             # Store KV snapshot in radix tree so future requests can reuse
             # the prefix. Also updates token tracking for context usage metrics.
             if self.model_id and prompt_cache and generation_cache:
@@ -306,10 +321,11 @@ class TextOnlyStrategy:
 class VLMTextOnlyStrategy:
     """Strategy for VLM text-only requests (using mlx-lm path with speculative decoding)."""
 
-    def __init__(self, draft_model=None, model_id=None):
+    def __init__(self, draft_model=None, model_id=None, model_config=None):
         self._cached_wrapper = None
         self.draft_model = draft_model
         self.model_id = model_id
+        self.model_config = model_config or {}
         self.cache_manager = get_global_cache_manager()
 
     @time_mlx_operation("generation", "vlm_text")
@@ -353,7 +369,7 @@ class VLMTextOnlyStrategy:
         if self.model_id:
             cache_config = {
                 'cache_type': effective_request.get('cache_type', 'standard'),
-                'kv_bits': effective_request.get('kv_bits', 8),
+                'kv_bits': effective_request.get('kv_bits'),
                 'kv_group_size': effective_request.get('kv_group_size', 64),
                 'max_kv_size': effective_request.get('max_kv_size')
             }
@@ -374,6 +390,8 @@ class VLMTextOnlyStrategy:
         # Pass the language model wrapper (not the full VLM) so wired_limit
         # calculates memory limits for the model that actually runs.
         generated_token_ids = []
+        draft_accepted = 0
+        draft_total = 0
         try:
             with wired_limit(self._cached_wrapper, [generation_stream]):
                 first_token = True
@@ -385,6 +403,7 @@ class VLMTextOnlyStrategy:
                     logits_processors=processors,
                     max_tokens=effective_request['max_tokens'],
                     draft_model=self.draft_model,
+                    num_draft_tokens=effective_request.get('num_draft_tokens', 3),
                     prompt_progress_callback=prompt_progress_callback,
                     prompt_cache=generation_cache if generation_cache else None
                 ):
@@ -392,6 +411,11 @@ class VLMTextOnlyStrategy:
                         logging.info("Generation aborted (vlm_text)")
                         break
                     generated_token_ids.append(response.token)
+                    # Track speculative decoding acceptance
+                    if hasattr(response, 'from_draft') and self.draft_model is not None:
+                        draft_total += 1
+                        if response.from_draft:
+                            draft_accepted += 1
                     if first_token and response.text.startswith(' '):
                         response.text = response.text.lstrip()
                         first_token = False
@@ -400,6 +424,13 @@ class VLMTextOnlyStrategy:
 
                     yield response
         finally:
+            # Log speculative decoding acceptance rate
+            if draft_total > 0:
+                rate = draft_accepted / draft_total
+                logging.info(
+                    f"VLM speculative decoding: {draft_accepted}/{draft_total} draft tokens accepted "
+                    f"({rate:.0%}), {len(generated_token_ids)} total generated"
+                )
             if self.model_id and prompt_cache and generation_cache:
                 full_tokens = prompt_tokens + generated_token_ids
                 store_generation_cache(prompt_cache, full_tokens, generation_cache)
@@ -772,7 +803,11 @@ class MLXProvider(BaseProvider):
         """Pre-compile generation strategies to avoid runtime branching."""
         if self.is_vlm:
             # Pass draft model to VLM text strategy for speculative decoding
-            self._strategies['vlm_text'] = VLMTextOnlyStrategy(draft_model=self.draft_model, model_id=self.model_id)
+            self._strategies['vlm_text'] = VLMTextOnlyStrategy(
+                draft_model=self.draft_model,
+                model_id=self.model_id,
+                model_config=self.config
+            )
             self._strategies['vlm_vision'] = VLMVisionStrategy()
         else:
             self._strategies['text_only'] = TextOnlyStrategy(
@@ -829,6 +864,13 @@ class MLXProvider(BaseProvider):
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                        'repetition_penalty', 'presence_penalty', 'enable_thinking']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
+
+        # Include cache and speculative decoding config from model config
+        cache_keys = ['cache_type', 'kv_bits', 'kv_group_size', 'max_kv_size',
+                      'quantized_kv_start', 'num_draft_tokens']
+        for key in cache_keys:
+            if key not in merged_config and key in self.config:
+                merged_config[key] = self.config[key]
 
         # Get only the scalar parameter fields from the request (highest priority)
         # Uses getattr instead of model_dump() to avoid serializing the entire message list

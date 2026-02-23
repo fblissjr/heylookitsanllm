@@ -122,7 +122,7 @@ class BatchChatResponse(BaseModel):
 class MLXModelConfig(BaseModel):
     model_path: str
     draft_model_path: Optional[str] = None
-    num_draft_tokens: Optional[int] = 6
+    num_draft_tokens: Optional[int] = 3
     vision: bool = False
     temperature: Optional[float] = None
     top_p: Optional[float] = None
