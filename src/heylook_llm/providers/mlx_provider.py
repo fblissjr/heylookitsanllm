@@ -669,13 +669,8 @@ class MLXProvider(BaseProvider):
 
                     # Reset MLX state on error to prevent stream context issues
                     try:
-                        import gc
                         gc.collect()
-                        mx.eval()  # Synchronize any pending operations
-
-                        # Clear any cached state in strategies
-                        self._strategies.clear()
-                        self._compile_strategies()
+                        mx.eval()  # Synchronize any pending MLX operations
                     except Exception as cleanup_error:
                         logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
 
