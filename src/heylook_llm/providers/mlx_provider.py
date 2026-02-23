@@ -11,18 +11,17 @@ from PIL import Image
 
 from mlx_lm.utils import load as lm_load
 from mlx_lm.generate import wired_limit
-from mlx_vlm.utils import load as vlm_load
+from mlx_lm.models.cache import make_prompt_cache
+from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics
 from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
-from .common.vlm_generation import stream_generate_vlm_vision
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import LanguageModelLogitsWrapper
-from .common.generation_core import generate_text
-from .mlx_batch_vision import BatchVisionEncoder
+from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 
@@ -170,49 +169,132 @@ class UnifiedTextStrategy:
         return self._cached_wrapper
 
 
+class _VisionTokenResponse:
+    """Lightweight response for the first token from VLM vision encoding.
+
+    Compatible with the GenerationResponse interface that api.py expects
+    (needs .text, optionally .token and .logprobs).
+    """
+    __slots__ = ('text', 'token', 'logprobs')
+
+    def __init__(self, text: str, token: int, logprobs=None):
+        self.text = text
+        self.token = token
+        self.logprobs = logprobs
+
+
 class VLMVisionStrategy:
-    """Strategy for VLM requests with images using mlx-lm sampling."""
+    """Strategy for VLM requests with images.
+
+    Uses the pre-filled cache pattern (inspired by vllm-mlx):
+    1. Prepare inputs via mlx_vlm.utils.prepare_inputs
+    2. Create KV cache for the language model
+    3. Run full VLM forward pass (vision + language), filling the cache
+    4. Sample first token from logits
+    5. Continue generation via generation_core.run_generation()
+
+    This gives vision requests the full sampler suite, abort support, and
+    speculative decoding from generation_core -- a single code path for all
+    MLX generation.
+    """
 
     def __init__(self):
-        self._batch_encoder = None
         self._batch_vision_processor = None
+        self._cached_wrapper = None
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
-        # Build sampler internally (VLM vision path uses processor's tokenizer)
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         sampler, processors = build_sampler(tokenizer, effective_request)
-
-        # Initialize batch encoder if needed
-        if self._batch_encoder is None:
-            self._batch_encoder = BatchVisionEncoder(model, processor)
 
         # Initialize batch vision processor for parallel image loading
         if self._batch_vision_processor is None:
             self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
 
-        # Prepare VLM inputs with parallel image loading
-        images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(request.messages, processor, model.config, model)
+        # Prepare VLM inputs: extract images, format prompt with chat template
+        images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(
+            request.messages, processor, model.config, model
+        )
 
-        logging.info(f"[VLM VISION] Processing {len(images)} image(s) | Model: {model.config.model_type if hasattr(model.config, 'model_type') else 'unknown'}")
+        num_images = len(images) if images else 0
+        model_type = getattr(model.config, 'model_type', 'unknown')
+        logging.info(f"[VLM VISION] Processing {num_images} image(s) | Model: {model_type}")
 
-        # Wrap generation in wired_limit context manager for optimal Metal memory management
+        # Tokenize and prepare pixel values via mlx_vlm.utils.prepare_inputs.
+        # This handles image_grid_thw for Qwen models automatically.
+        image_token_index = getattr(model.config, 'image_token_index', None)
+        inputs = vlm_prepare_inputs(
+            processor,
+            images=images if images else None,
+            prompts=formatted_prompt,
+            image_token_index=image_token_index,
+        )
+
+        input_ids = inputs["input_ids"]
+        pixel_values = inputs.get("pixel_values")
+        mask = inputs.get("attention_mask")
+        # Collect model-specific extras (e.g. image_grid_thw for Qwen)
+        extra_kwargs = {
+            k: v for k, v in inputs.items()
+            if k not in ("input_ids", "pixel_values", "attention_mask")
+        }
+
+        # Build kwargs for VLM forward pass
+        vlm_kwargs = dict(extra_kwargs)
+        if pixel_values is not None:
+            vlm_kwargs["pixel_values"] = pixel_values
+        if mask is not None:
+            vlm_kwargs["attention_mask"] = mask
+
+        # Ensure wrapper is cached for language model generation
+        if self._cached_wrapper is None:
+            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
+
+        # Create KV cache sized for the language model
+        request_cache = make_prompt_cache(self._cached_wrapper)
+
+        # Phase 1: Vision encoding -- run full VLM forward pass.
+        # The VLM passes cache= through to model.language_model(), so the
+        # language model writes KV state directly into request_cache.
         with wired_limit(model, [generation_stream]):
-            for response in stream_generate_vlm_vision(
-                model=model,
-                processor=processor,
-                prompt=formatted_prompt,
-                image=images,
-                sampler=sampler,
-                processors=processors,
-                max_tokens=effective_request['max_tokens'],
-                temperature=effective_request.get('temperature', 0.1),
-                top_p=effective_request.get('top_p', 1.0),
-                repetition_penalty=effective_request.get('repetition_penalty'),
-            ):
-                if abort_event and abort_event.is_set():
-                    logging.info("Generation aborted (vlm_vision)")
-                    break
-                yield response
+            if input_ids.ndim == 1:
+                input_ids = input_ids[None, :]
+
+            output = model(input_ids, cache=request_cache, **vlm_kwargs)
+
+            # Extract logits (may be LanguageModelOutput or raw tensor)
+            logits = output.logits if hasattr(output, 'logits') else output
+
+            # Sample first token
+            last_logits = logits[:, -1, :]
+            first_logprobs = last_logits - mx.logsumexp(last_logits, axis=-1, keepdims=True)
+            first_token_id = sampler(first_logprobs).item()
+            mx.eval(first_logprobs)
+
+        # Check abort before yielding
+        if abort_event and abort_event.is_set():
+            logging.info("Generation aborted during vision encoding")
+            return
+
+        # Yield the first token
+        first_text = tokenizer.decode([first_token_id])
+        yield _VisionTokenResponse(
+            text=first_text,
+            token=first_token_id,
+            logprobs=first_logprobs.squeeze(0),
+        )
+
+        # Phase 2: Continue generation using the language model wrapper
+        # with the pre-filled cache from the VLM forward pass.
+        yield from run_generation(
+            model=self._cached_wrapper,
+            tokenizer=tokenizer,
+            prompt_tokens=[first_token_id],
+            effective_request=effective_request,
+            sampler=sampler,
+            processors=processors,
+            abort_event=abort_event,
+            pre_filled_cache=request_cache,
+        )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""

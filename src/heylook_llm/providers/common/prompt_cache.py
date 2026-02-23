@@ -215,7 +215,7 @@ def process_prompt_with_cache(
     prompt_cache.cache = make_cache(model, cache_config)
     prompt_cache.tokens = new_tokens
     prompt_cache._radix_matched_len = 0
-    logging.debug(f"No radix cache hit, processing all {len(new_tokens)} tokens")
+    logging.info(f"Radix cache miss: processing all {len(new_tokens)} tokens (model={model_id})")
     return new_tokens, prompt_cache
 
 

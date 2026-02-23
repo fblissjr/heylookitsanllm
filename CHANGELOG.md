@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.18.0
+
+### Changed
+
+- **Vision path unification**: Replaced `mlx_vlm.generate.stream_generate` with a pre-filled cache pattern (inspired by vllm-mlx). The full VLM model runs a single forward pass to encode vision + text into a KV cache, then the language model generates tokens using `generation_core.run_generation()` -- the same code path as text-only requests. Vision requests now get the full sampler suite (top_k, min_p, presence_penalty, logit_bias, XTC), abort support, and speculative decoding acceptance tracking. Eliminates the hardcoded Qwen `[1, 24, 24]` image grid -- `mlx_vlm.utils.prepare_inputs` handles grid dimensions natively per model.
+- **Syntax check auto-discovery**: `scripts/syntax_check.py` now uses `glob.glob("src/heylook_llm/**/*.py")` instead of a hand-curated file list. Adding or removing source files no longer requires updating the script.
+- **Cache miss logging**: Radix cache misses now log at INFO level with model ID for observability parity with cache hits.
+
+### Removed
+
+- **`vlm_generation.py`**: Deleted entirely (55 lines). The `stream_generate_vlm_vision()` wrapper around `mlx_vlm.generate.stream_generate` is replaced by the pre-filled cache approach in `VLMVisionStrategy`. The Qwen model-type string sniffing for `image_grid_thw` is no longer needed.
+- **`BatchVisionEncoder` import**: Removed unused import from `mlx_provider.py`.
+
 ## 1.17.1
 
 ### Removed
