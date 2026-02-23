@@ -109,6 +109,11 @@ def main():
         default="INFO",
         help="Logging level"
     )
+    import_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactively customize sampler and KV cache settings for each discovered model"
+    )
 
     # Service command - manage background service (macOS/Linux)
     service_parser = subparsers.add_parser(

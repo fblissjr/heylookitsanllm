@@ -424,6 +424,65 @@ def import_models(args: Any) -> None:
         logging.warning("No models found!")
         return
 
+    # Interactive mode: let user customize sampler/KV cache settings per model
+    if getattr(args, 'interactive', False):
+        try:
+            import questionary
+            from heylook_llm.config_tui import ConfigEditor
+        except ImportError:
+            logging.error("Interactive mode requires 'questionary'. Install with: uv add questionary")
+            return
+
+        editor = ConfigEditor()
+        print(f"\nDiscovered {len(models)} model(s):")
+        for i, m in enumerate(models):
+            print(f"  [{i}] {m['id']} ({m['provider']})")
+
+        # Let user pick which models to customize
+        model_choices = [
+            questionary.Choice(title=f"{m['id']} ({m['provider']})", value=i)
+            for i, m in enumerate(models)
+        ]
+        selected_indices = questionary.checkbox(
+            "Which models would you like to customize?",
+            choices=model_choices,
+            style=editor.style,
+        ).ask()
+
+        if selected_indices is None:
+            # User cancelled (Ctrl+C)
+            print("Cancelled.")
+            return
+
+        for idx in selected_indices:
+            model = models[idx]
+            config = model.get('config', {})
+            print(f"\n--- Customizing: {model['id']} ---")
+
+            # Sampler params
+            before_sampler = {
+                k: config[k] for k in ('temperature', 'top_p', 'top_k', 'min_p',
+                                        'max_tokens', 'repetition_penalty', 'repetition_context_size')
+                if k in config
+            }
+            updated_sampler = editor.edit_sampler_params(before_sampler or None)
+            if editor.confirm_changes(before_sampler, updated_sampler):
+                config.update(updated_sampler)
+
+            # KV cache params (MLX only)
+            if model.get('provider') == 'mlx':
+                model_info = {
+                    'size_gb': config.get('size_gb', 0),
+                    'name': model['id'],
+                }
+                kv_params = editor.edit_kv_cache_params(model_info=model_info)
+                if kv_params:
+                    before_kv = {k: config.get(k) for k in kv_params}
+                    if editor.confirm_changes(before_kv, kv_params):
+                        config.update(kv_params)
+
+            model['config'] = config
+
     output_file = args.output or "models.toml"
     importer.generate_toml(models, output_file)
 
