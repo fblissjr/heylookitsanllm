@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.1
+
+### Removed
+
+- **`PerformanceMonitor`**: Deleted `performance_monitor.py` (234 lines) and all `@time_mlx_operation` decorators. No consumers, no tests, generator-wrapping overhead on every token. `/v1/performance` endpoint returns a stub response.
+- **`VLMGeneratorWithSampling` class**: Flattened to standalone `stream_generate_vlm_vision()` function (~55 lines, down from 161). Dead text-only branch, `LanguageModelLogitsWrapper` cache, and `lm_stream_generate` import removed -- all unreachable after phase 5 unification.
+- **Duplicate `_reconstruct_thinking`**: Deleted copy from `mlx_provider.py`. Canonical version lives in `providers/common/vlm_inputs.py`.
+
 ## 1.17.0
 
 ### Added

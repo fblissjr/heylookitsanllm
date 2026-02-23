@@ -18,8 +18,8 @@ from ..config import ChatRequest, ModelMetrics
 from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
-from .common.performance_monitor import time_mlx_operation, performance_monitor
-from .common.vlm_generation import create_vlm_generator_with_sampling
+from .common.vlm_generation import stream_generate_vlm_vision
+from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import LanguageModelLogitsWrapper
 from .common.generation_core import generate_text
 from .mlx_batch_vision import BatchVisionEncoder
@@ -53,21 +53,6 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
         messages,
         num_images=num_images or 0
     )
-
-
-def _reconstruct_thinking(msg_dict: dict) -> dict:
-    """Reconstruct model-specific thinking tags in assistant message content.
-
-    If an assistant message carries a 'thinking' field the frontend edited,
-    we prepend <think>...</think> tags so the tokenizer sees the full
-    thinking block as part of the content.  The 'thinking' key is removed
-    from the dict so it does not leak into the chat template.
-    """
-    thinking = msg_dict.pop('thinking', None)
-    if thinking and msg_dict.get('role') == 'assistant':
-        content = msg_dict.get('content', '')
-        msg_dict['content'] = f"<think>\n{thinking}\n</think>\n{content}"
-    return msg_dict
 
 
 class KeepaliveChunk:
@@ -106,7 +91,6 @@ class UnifiedTextStrategy:
         self._cached_wrapper = None
         self.cache_manager = get_global_cache_manager()
 
-    @time_mlx_operation("generation", "unified_text")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
@@ -190,19 +174,13 @@ class VLMVisionStrategy:
     """Strategy for VLM requests with images using mlx-lm sampling."""
 
     def __init__(self):
-        self._cached_generator = None
         self._batch_encoder = None
         self._batch_vision_processor = None
 
-    @time_mlx_operation("generation", "vlm_vision")
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         # Build sampler internally (VLM vision path uses processor's tokenizer)
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         sampler, processors = build_sampler(tokenizer, effective_request)
-
-        # Create generator with sampling (cached)
-        if self._cached_generator is None:
-            self._cached_generator = create_vlm_generator_with_sampling(model, processor)
 
         # Initialize batch encoder if needed
         if self._batch_encoder is None:
@@ -219,8 +197,9 @@ class VLMVisionStrategy:
 
         # Wrap generation in wired_limit context manager for optimal Metal memory management
         with wired_limit(model, [generation_stream]):
-            # Use generation with mlx-lm sampling
-            for response in self._cached_generator.stream_generate_with_sampling(
+            for response in stream_generate_vlm_vision(
+                model=model,
+                processor=processor,
                 prompt=formatted_prompt,
                 image=images,
                 sampler=sampler,
@@ -278,7 +257,6 @@ class MLXProvider(BaseProvider):
         self._active_generations = 0
         self._active_lock = threading.Lock()
 
-    @time_mlx_operation("model_loading")
     def load_model(self):
         model_path = self.config['model_path']
 
@@ -460,7 +438,6 @@ class MLXProvider(BaseProvider):
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy()
 
-    @time_mlx_operation("path_decision")
     def _detect_images_optimized(self, messages: List) -> bool:
         """Single-pass scan for images with early termination."""
         for msg in messages:
@@ -636,7 +613,6 @@ class MLXProvider(BaseProvider):
 
         return completions
 
-    @time_mlx_operation("chat_completion")
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
@@ -698,9 +674,8 @@ class MLXProvider(BaseProvider):
                         mx.eval()  # Synchronize any pending operations
 
                         # Clear any cached state in strategies
-                        for strategy in self._strategies.values():
-                            if hasattr(strategy, '_cached_generator'):
-                                strategy._cached_generator = None
+                        self._strategies.clear()
+                        self._compile_strategies()
                     except Exception as cleanup_error:
                         logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
 
@@ -713,19 +688,6 @@ class MLXProvider(BaseProvider):
                     self._active_generations -= 1
                 # Release MLX internal memory cache between requests
                 mx.clear_cache()
-
-    def log_performance_summary(self):
-        """Log current performance metrics."""
-        try:
-            summary = performance_monitor.get_performance_summary()
-            logging.info(f"MLX Provider Performance Summary for {self.model_id}:\n{summary}")
-
-            # Log path comparisons if available
-            path_comparison = performance_monitor.compare_paths("generation")
-            if path_comparison:
-                logging.info(f"Generation Path Performance Comparison: {path_comparison}")
-        except Exception as e:
-            logging.debug(f"Failed to log performance summary: {e}")
 
     def _get_context_capacity(self) -> int:
         """Get max context window size from model config."""
@@ -816,9 +778,6 @@ class MLXProvider(BaseProvider):
                     f"before unload ({elapsed:.1f}s elapsed)"
                 )
             time.sleep(0.1)
-
-        # Log performance summary before cleanup
-        self.log_performance_summary()
 
         # Clear caches
         self._strategies.clear()

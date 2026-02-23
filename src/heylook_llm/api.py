@@ -25,7 +25,6 @@ from heylook_llm.config import (
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse
 )
-from heylook_llm.providers.common.performance_monitor import performance_monitor
 from heylook_llm.system_metrics import SystemMetricsCollector
 from heylook_llm.utils import sanitize_request_for_debug, sanitize_dict_for_debug, log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.metrics_db_wrapper import get_metrics_db, init_metrics_db
@@ -1399,40 +1398,13 @@ async def extract_structured_hidden_states(
 
 
 @app.get("/v1/performance",
-    summary="Get Performance Metrics",
-    description="""
-Retrieve detailed performance metrics from all model providers.
-
-**Metrics Include:**
-- 📊 Token generation rates (tokens/second)
-- ⏱️ Time to first token (TTFT)
-- 🚀 Model loading times
-- 💾 Memory usage statistics
-- 📈 Request processing times
-- 🎯 Cache hit rates
-
-**Per-Model Statistics:**
-- Request count
-- Average/peak token generation speed
-- Total tokens generated
-- Error rates
-
-**Use Cases:**
-- Performance monitoring dashboards
-- Capacity planning
-- Model comparison
-- Troubleshooting slow inference
-- Identifying bottlenecks
-    """,
-    response_description="Detailed performance metrics and summaries",
+    summary="Get Performance Metrics (stub)",
+    description="Removed in v1.17.1. Use standard profiling tools.",
     tags=["Monitoring"]
 )
 async def performance_metrics():
-    """Get performance metrics from all providers."""
-    return {
-        "metrics": performance_monitor.get_metrics(),
-        "summary": performance_monitor.get_performance_summary()
-    }
+    """Stub -- PerformanceMonitor removed in v1.17.1."""
+    return {"message": "Removed in v1.17.1. Use standard profiling tools."}
 
 
 @app.get("/v1/data/summary",

@@ -13,7 +13,7 @@ import pytest
 @pytest.fixture
 def reconstruct_thinking(mock_mlx):  # noqa: ARG001 -- fixture dependency
     """Import _reconstruct_thinking with MLX mocked."""
-    from heylook_llm.providers.mlx_provider import _reconstruct_thinking
+    from heylook_llm.providers.common.vlm_inputs import _reconstruct_thinking
     return _reconstruct_thinking
 
 

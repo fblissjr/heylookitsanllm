@@ -52,7 +52,6 @@ files_to_check = [
     "src/heylook_llm/providers/common/__init__.py",
     "src/heylook_llm/providers/common/batch_vision.py",
     "src/heylook_llm/providers/common/cache_helpers.py",
-    "src/heylook_llm/providers/common/performance_monitor.py",
     "src/heylook_llm/providers/common/prompt_cache.py",
     "src/heylook_llm/providers/common/samplers.py",
     "src/heylook_llm/providers/common/vlm_generation.py"
