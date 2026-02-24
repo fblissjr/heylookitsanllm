@@ -563,57 +563,22 @@ class MLXHiddenStatesExtractor(HiddenStatesExtractor):
         return hidden
 
 
-class LlamaCppHiddenStatesExtractor(HiddenStatesExtractor):
-    """Extract hidden states from llama.cpp models."""
-
-    def __init__(self, model):
-        self.model = model
-
-    def extract(
-        self,
-        texts: List[str],
-        layer: int = -2,
-        max_length: int = 512,
-        return_attention_mask: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract hidden states from llama.cpp models.
-
-        Note: llama-cpp-python does not expose intermediate layer hidden states.
-        Only final layer embeddings are available via create_embedding().
-        See: https://github.com/abetlen/llama-cpp-python/issues/1695
-        """
-        raise NotImplementedError(
-            "Hidden state extraction from llama.cpp is not supported. "
-            "The llama-cpp-python library only provides access to final layer embeddings, "
-            "not intermediate layer hidden states. "
-            "Please use an MLX model (e.g., Qwen3-4B-mxfp4-mlx) for this functionality. "
-            "See: https://github.com/abetlen/llama-cpp-python/issues/1695"
-        )
-
-
 def create_hidden_states_extractor(
-    provider_type: str, model: Any, processor: Any = None
+    model: Any, processor: Any,
 ) -> HiddenStatesExtractor:
     """
-    Factory function to create the appropriate hidden states extractor.
+    Factory function to create an MLX hidden states extractor.
 
     Args:
-        provider_type: Type of provider ('mlx' or 'llama_cpp')
-        model: The loaded model
-        processor: The processor/tokenizer (required for MLX models)
+        model: The loaded MLX model
+        processor: The processor/tokenizer
 
     Returns:
-        Appropriate HiddenStatesExtractor instance
+        MLXHiddenStatesExtractor instance
     """
-    if provider_type == "mlx":
-        if processor is None:
-            raise ValueError("MLX models require a processor/tokenizer")
-        return MLXHiddenStatesExtractor(model, processor)
-    elif provider_type in ["llama_cpp", "gguf"]:
-        return LlamaCppHiddenStatesExtractor(model)
-    else:
-        raise ValueError(f"Unknown provider type: {provider_type}")
+    if processor is None:
+        raise ValueError("MLX models require a processor/tokenizer")
+    return MLXHiddenStatesExtractor(model, processor)
 
 
 async def create_hidden_states(
@@ -647,32 +612,13 @@ async def create_hidden_states(
             if max_length == 512:  # Default value in request
                 max_length = provider.config.get('default_max_length', 512)
 
-        # Determine provider type
-        provider_class_name = provider.__class__.__name__
-        if "MLX" in provider_class_name:
-            provider_type = "mlx"
-        elif "LlamaCpp" in provider_class_name:
-            provider_type = "llama_cpp"
-        else:
-            # Fallback: try to infer from model file extension
-            model_path = provider.config.get("model_path", "")
-            if ".gguf" in model_path.lower():
-                provider_type = "llama_cpp"
-            else:
-                provider_type = "mlx"
-
-        # Create the appropriate extractor
-        if provider_type == "mlx":
-            processor = getattr(provider, "processor", None)
-            if processor is None:
-                raise ValueError(
-                    f"MLX provider for model {request.model} has no processor/tokenizer"
-                )
-            extractor = create_hidden_states_extractor(
-                provider_type, provider.model, processor
+        # Create the extractor (MLX only)
+        processor = getattr(provider, "processor", None)
+        if processor is None:
+            raise ValueError(
+                f"MLX provider for model {request.model} has no processor/tokenizer"
             )
-        else:
-            extractor = create_hidden_states_extractor(provider_type, provider.model)
+        extractor = create_hidden_states_extractor(provider.model, processor)
 
         # Extract hidden states (using possibly model-config-overridden values)
         results = extractor.extract(

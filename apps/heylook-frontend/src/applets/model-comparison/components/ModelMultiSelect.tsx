@@ -18,7 +18,6 @@ function CapabilityBadge({ label }: { label: string }) {
 
 function providerLabel(model: Model): string {
   if (model.provider === 'mlx') return 'MLX'
-  if (model.provider === 'llama_cpp' || model.provider === 'gguf') return 'GGUF'
   return model.provider || model.owned_by || '?'
 }
 

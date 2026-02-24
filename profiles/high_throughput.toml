@@ -1,6 +1,6 @@
 [meta]
 name = "high_throughput"
-description = "Large context, large batch, GGUF-oriented"
+description = "Large context, large batch for high throughput"
 
 [defaults]
 temperature = 0.7

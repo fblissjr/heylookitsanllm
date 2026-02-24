@@ -144,15 +144,6 @@ class MLXModelConfig(BaseModel):
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
 
-class LlamaCppModelConfig(BaseModel):
-    model_path: str
-    mmproj_path: Optional[str] = None
-    chat_format: Optional[str] = None
-    chat_format_template: Optional[str] = None
-    n_gpu_layers: int = -1
-    n_ctx: int = 4096
-    vision: bool = False
-
 class MLXSTTModelConfig(BaseModel):
     """Configuration for MLX STT models (parakeet-mlx)."""
     model_path: str = "mlx-community/parakeet-tdt-0.6b-v3"  # HF repo or local path
@@ -165,8 +156,8 @@ class MLXSTTModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp", "gguf", "mlx_stt"]  # Support all providers
-    config: Union[MLXModelConfig, LlamaCppModelConfig, MLXSTTModelConfig]
+    provider: Literal["mlx", "mlx_stt"]
+    config: Union[MLXModelConfig, MLXSTTModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -178,8 +169,6 @@ class ModelConfig(BaseModel):
         provider = values.get('provider')
         if provider == 'mlx':
             return MLXModelConfig(**v)
-        elif provider in ['llama_cpp', 'gguf']:  # Support both names
-            return LlamaCppModelConfig(**v)
         elif provider == 'mlx_stt':
             return MLXSTTModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
@@ -363,7 +352,7 @@ class ScannedModelResponse(BaseModel):
     """A model discovered during filesystem scan."""
     id: str = Field(..., description="Auto-generated model identifier")
     path: str = Field(..., description="Filesystem path to model")
-    provider: Literal["mlx", "gguf"] = Field(..., description="Detected provider type")
+    provider: Literal["mlx"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
     vision: bool = Field(False, description="Whether model supports vision")
     quantization: Optional[str] = Field(None, description="Quantization level (4bit, 8bit, etc)")

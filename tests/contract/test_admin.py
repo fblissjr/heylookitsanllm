@@ -14,7 +14,7 @@ class TestAdminListModels:
         data = resp.json()
         assert "models" in data
         assert "total" in data
-        assert data["total"] == 2
+        assert data["total"] == 1
 
     def test_model_entries_have_full_config(self, client):
         """Admin model entries include config dict and enabled status."""

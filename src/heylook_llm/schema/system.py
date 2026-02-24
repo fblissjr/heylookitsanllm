@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 class ProviderCapability(BaseModel):
     """What a specific provider can do."""
-    name: str = Field(..., description="Provider name (mlx, llama_cpp, mlx_stt)")
+    name: str = Field(..., description="Provider name (mlx, mlx_stt)")
     supports_streaming: bool = True
     supports_vision: bool = False
     supports_thinking: bool = False

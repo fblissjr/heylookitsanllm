@@ -70,11 +70,6 @@ class ModelProfile:
     defaults: dict[str, Any] = field(default_factory=dict)
 
     # Provider-specific parameter sets
-    GGUF_ONLY_PARAMS = {
-        'n_ctx', 'n_batch', 'n_threads', 'n_gpu_layers',
-        'use_mmap', 'use_mlock', 'chat_format', 'chat_format_template',
-        'mmproj_path', 'parallel_slots'
-    }
     MLX_ONLY_PARAMS = {
         'cache_type', 'kv_bits', 'kv_group_size', 'quantized_kv_start',
         'max_kv_size', 'draft_model_path', 'num_draft_tokens'
@@ -83,19 +78,14 @@ class ModelProfile:
     def apply(self, config: dict[str, Any], model_info: dict[str, Any]) -> dict[str, Any]:
         """Apply profile defaults to config, overriding existing values.
 
-        Profile values take precedence over smart defaults. Provider-specific
-        parameters are still filtered (GGUF params skipped for MLX and vice versa).
+        Profile values take precedence over smart defaults. MLX-only parameters
+        are filtered out for non-MLX providers.
         """
         result = config.copy()
         provider = model_info.get('provider', 'mlx')
 
-        is_gguf = provider in ['llama_cpp', 'gguf', 'llama_server']
-        is_mlx = provider == 'mlx'
-
         for key, value in self.defaults.items():
-            if is_mlx and key in self.GGUF_ONLY_PARAMS:
-                continue
-            if is_gguf and key in self.MLX_ONLY_PARAMS:
+            if provider != 'mlx' and key in self.MLX_ONLY_PARAMS:
                 continue
 
             if callable(value):
@@ -238,21 +228,12 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     if provider == 'mlx':
         defaults['num_draft_tokens'] = 3
 
-    # Provider-specific
-    if provider in ['llama_cpp', 'gguf']:
-        defaults['n_gpu_layers'] = -1
-        defaults['n_ctx'] = 8192 if size_gb > 30 else 4096
-        defaults['n_batch'] = 512
-        defaults['use_mmap'] = True
-        defaults['use_mlock'] = False
-
     return defaults
 
 # Fields that require a model reload vs runtime-changeable
 RELOAD_REQUIRED_FIELDS = frozenset({
     "model_path", "vision", "cache_type", "kv_bits", "kv_group_size",
     "quantized_kv_start", "max_kv_size", "draft_model_path", "num_draft_tokens",
-    "n_gpu_layers", "n_ctx", "mmproj_path", "chat_format", "chat_format_template",
     "default_hidden_layer", "default_max_length", "supports_thinking",
     "fp32", "use_local_attention", "local_attention_context",
     "chunk_duration", "overlap_duration",
@@ -273,7 +254,7 @@ class ScannedModel:
     """A model discovered during filesystem scan."""
     id: str
     path: str
-    provider: str  # "mlx" or "gguf"
+    provider: str  # "mlx"
     size_gb: float
     vision: bool
     quantization: Optional[str] = None
@@ -746,7 +727,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "llama_cpp", "gguf", "mlx_stt"):
+        elif config_data["provider"] not in ("mlx", "mlx_stt"):
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})

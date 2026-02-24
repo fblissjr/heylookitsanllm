@@ -147,13 +147,6 @@ provider = "mlx"
 enabled = true
 [models.config]
 model_path = "/fake/mlx-model"
-
-[[models]]
-id = "test-gguf"
-provider = "llama_cpp"
-enabled = true
-[models.config]
-model_path = "/fake/model.gguf"
 """
     p = tmp_path / "models.toml"
     p.write_text(toml_content)

@@ -18,7 +18,7 @@ When to use each agent:
 
 | Agent | Use When |
 |-------|----------|
-| **windows-platform-architect** | Windows support, cross-platform compatibility, llama.cpp builds, CUDA/Vulkan configuration |
+| **windows-platform-architect** | Windows support, cross-platform compatibility |
 | **security-privacy-auditor** | Security review, dependency audit, privacy concerns, OWASP checks |
 | **internal-docs-coordinator** | After completing features - update internal docs and maintain living documentation |
 | **ui-ux-designer** | Frontend/React work, UI design, responsive layouts (for companion apps) |
@@ -44,9 +44,7 @@ Before modifying MLX/VLM code, read:
 
 | Platform | Backend | Notes |
 |----------|---------|-------|
-| macOS | MLX, llama.cpp, MLX STT | Full support |
-| Linux | llama.cpp | CUDA or CPU |
-| Windows | llama.cpp | CUDA or Vulkan |
+| macOS | MLX, MLX STT | Apple Silicon required |
 
 ---
 

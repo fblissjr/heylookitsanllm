@@ -134,8 +134,8 @@ def _infer_model_capabilities(model_config) -> list[str]:
     if provider == "mlx_stt":
         return ["transcription"]
 
-    # Chat models (MLX and llama_cpp)
-    if provider in ("mlx", "llama_cpp", "gguf"):
+    # Chat models (MLX)
+    if provider == "mlx":
         capabilities.append("chat")
 
         # Check for vision capability
@@ -988,8 +988,7 @@ Extract raw hidden states from a specific layer of an LLM model.
 - `return_attention_mask` (boolean, optional): Include attention mask
 - `encoding_format` (string, optional): "float" (default) or "base64"
 
-**Note:** Currently only supported for MLX models. llama.cpp models will
-return an error as intermediate layer access is not available.
+**Note:** Only supported for MLX models.
     """,
     response_description="Hidden states with shape metadata",
     tags=["OpenAI API"],
@@ -1029,7 +1028,7 @@ return an error as intermediate layer access is not available.
             "content": {
                 "application/json": {
                     "example": {
-                        "detail": "Hidden state extraction from llama.cpp is not supported."
+                        "detail": "Hidden state extraction is not supported for this model."
                     }
                 }
             }
@@ -1489,7 +1488,7 @@ async def root():
         },
         "endpoints": _get_api_endpoints(),
         "features": {
-            "model_providers": ["MLX (Apple Silicon)", "llama.cpp (GGUF)"],
+            "model_providers": ["MLX (Apple Silicon)"],
             "vision_models": True,
             "streaming": True,
             "batch_processing": True,
@@ -1516,10 +1515,9 @@ def custom_openapi():
 
 A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
 
-**Platform Support**: macOS, Linux, and Windows
-- macOS: All backends (MLX, llama.cpp, MLX STT)
-- Linux: llama.cpp backend
-- Windows: llama.cpp backend (CUDA, Vulkan, or CPU)
+**Platform Support**: macOS (Apple Silicon)
+- MLX backend for text and vision inference
+- MLX STT backend for speech-to-text
 
 ## 🎯 Key Features
 
@@ -1527,16 +1525,15 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 - **OpenAI API**: Full compatibility with OpenAI clients and libraries
 
 ### Model Support
-- **MLX Models**: Optimized for Apple Silicon with Metal acceleration (macOS only)
-- **GGUF Models**: Support via llama.cpp for broad compatibility (all platforms)
+- **MLX Models**: Optimized for Apple Silicon with Metal acceleration
 - **Vision Models**: Process images with vision-language models
-- **Speech-to-Text**: Parakeet MLX models (macOS only)
+- **Speech-to-Text**: Parakeet MLX models
 
 ### Performance Features
 - **Smart Model Caching**: LRU cache keeps 2 models in memory
 - **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image
 - **Async Processing**: Non-blocking request handling
-- **GPU Acceleration**: Metal (macOS), CUDA (NVIDIA), Vulkan (AMD/Intel)
+- **GPU Acceleration**: Metal (Apple Silicon)
 
 ## Quick Start
 

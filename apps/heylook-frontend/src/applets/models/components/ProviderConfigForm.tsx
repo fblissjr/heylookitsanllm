@@ -29,23 +29,6 @@ const MLX_FIELDS = [
   { key: 'num_draft_tokens', label: 'Draft Tokens', type: 'number' },
 ] as const
 
-/** GGUF-specific config fields */
-const GGUF_FIELDS = [
-  { key: 'model_path', label: 'Model Path', type: 'text', readOnly: true },
-  { key: 'vision', label: 'Vision', type: 'bool' },
-  { key: 'mmproj_path', label: 'MM Proj Path', type: 'text' },
-  { key: 'chat_format', label: 'Chat Format', type: 'text' },
-  { key: 'chat_format_template', label: 'Chat Template', type: 'text' },
-  { key: 'n_gpu_layers', label: 'GPU Layers', type: 'number' },
-  { key: 'n_ctx', label: 'Context Size', type: 'number' },
-  { key: 'temperature', label: 'Temperature', type: 'number', step: 0.1, min: 0, max: 2 },
-  { key: 'top_p', label: 'Top P', type: 'number', step: 0.05, min: 0, max: 1 },
-  { key: 'top_k', label: 'Top K', type: 'number', min: 0 },
-  { key: 'min_p', label: 'Min P', type: 'number', step: 0.01, min: 0, max: 1 },
-  { key: 'max_tokens', label: 'Max Tokens', type: 'number', min: 1 },
-  { key: 'repetition_penalty', label: 'Rep. Penalty', type: 'number', step: 0.05, min: 0.1, max: 2 },
-] as const
-
 /** STT-specific config fields */
 const STT_FIELDS = [
   { key: 'model_path', label: 'Model Path', type: 'text', readOnly: true },
@@ -61,8 +44,6 @@ type FieldDef = { key: string; label: string; type: string; readOnly?: boolean; 
 function getFieldsForProvider(provider: string): FieldDef[] {
   switch (provider) {
     case 'mlx': return MLX_FIELDS as unknown as FieldDef[]
-    case 'gguf':
-    case 'llama_cpp': return GGUF_FIELDS as unknown as FieldDef[]
     case 'mlx_stt': return STT_FIELDS as unknown as FieldDef[]
     default: return MLX_FIELDS as unknown as FieldDef[]
   }

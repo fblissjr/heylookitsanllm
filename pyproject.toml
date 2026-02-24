@@ -61,10 +61,6 @@ cli = [
 scripts = [
     "rich>=13.0.0",        # Used by scripts/metrics_dashboard.py
 ]
-gguf = [
-    # Phase Next: llama-server provider
-    # "llama-cpp-python>=0.2.0",
-]
 stt = [
     "parakeet-mlx",             # MLX-based speech-to-text (Parakeet TDT)
     "soundfile>=0.12.1",        # Audio file I/O

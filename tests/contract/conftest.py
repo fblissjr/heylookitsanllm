@@ -16,7 +16,7 @@ from heylook_llm.model_service import load_profiles
 
 
 # ---------------------------------------------------------------------------
-# Test model configs (one MLX, one GGUF)
+# Test model configs
 # ---------------------------------------------------------------------------
 
 TEST_MODELS_DATA = {
@@ -28,14 +28,6 @@ TEST_MODELS_DATA = {
             "tags": ["test"],
             "enabled": True,
             "config": {"model_path": "/fake/mlx-model", "vision": False},
-        },
-        {
-            "id": "test-gguf-model",
-            "provider": "gguf",
-            "description": "Test GGUF model for contract tests",
-            "tags": ["test", "gguf"],
-            "enabled": True,
-            "config": {"model_path": "/fake/model.gguf"},
         },
     ],
     "default_model": "test-mlx-model",

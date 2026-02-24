@@ -8,7 +8,6 @@ from heylook_llm.config import (
     ChatRequest,
     ImageContentPart,
     ImageUrl,
-    LlamaCppModelConfig,
     MLXModelConfig,
     MLXSTTModelConfig,
     ModelConfig,
@@ -129,22 +128,6 @@ class TestModelConfig:
         assert mc.provider == "mlx"
         assert isinstance(mc.config, MLXModelConfig)
         assert mc.config.model_path == "/fake/path"
-
-    def test_llama_cpp_model_config(self):
-        mc = ModelConfig(
-            id="test-gguf",
-            provider="llama_cpp",
-            config={"model_path": "/fake/model.gguf"},
-        )
-        assert isinstance(mc.config, LlamaCppModelConfig)
-
-    def test_gguf_alias(self):
-        mc = ModelConfig(
-            id="test-gguf",
-            provider="gguf",
-            config={"model_path": "/fake/model.gguf"},
-        )
-        assert isinstance(mc.config, LlamaCppModelConfig)
 
     def test_mlx_stt_config(self):
         mc = ModelConfig(

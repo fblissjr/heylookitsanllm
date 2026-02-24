@@ -248,12 +248,10 @@ def main():
     )
 
     # Check if any providers are available
-    from heylook_llm.router import HAS_MLX, HAS_LLAMA_CPP
-    if not HAS_MLX and not HAS_LLAMA_CPP:
-        logging.error("No model providers available! Please install at least one provider:")
-        logging.error("  - For MLX models: uv sync --extra mlx")
-        logging.error("  - For GGUF models: uv sync --extra llama-cpp")
-        logging.error("  - For both: uv sync --extra all")
+    from heylook_llm.router import HAS_MLX
+    if not HAS_MLX:
+        logging.error("No model providers available! Please install MLX:")
+        logging.error("  uv sync --extra mlx")
         sys.exit(1)
 
     # Use the app from api.py directly (single source of truth for endpoints)

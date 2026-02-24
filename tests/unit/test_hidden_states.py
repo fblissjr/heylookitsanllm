@@ -13,7 +13,6 @@ from heylook_llm.hidden_states import (
     TokenBoundary,
     ChatTemplateTokenizer,
     encode_hidden_states_base64,
-    LlamaCppHiddenStatesExtractor,
 )
 
 
@@ -160,30 +159,6 @@ class TestBase64Encoding:
         decoded_arr = np.frombuffer(decoded_bytes, dtype=np.float32).reshape(1, 2)
 
         np.testing.assert_array_almost_equal(decoded_arr, arr.astype(np.float32))
-
-
-class TestLlamaCppExtractor:
-    """Tests for LlamaCppHiddenStatesExtractor."""
-
-    def test_raises_not_implemented(self):
-        """Test that llama.cpp extractor raises NotImplementedError."""
-        extractor = LlamaCppHiddenStatesExtractor(model=None)
-
-        with pytest.raises(NotImplementedError) as exc_info:
-            extractor.extract(["test"])
-
-        assert "llama.cpp" in str(exc_info.value).lower()
-        assert "not supported" in str(exc_info.value).lower()
-
-    def test_error_message_includes_issue_link(self):
-        """Test that error message includes GitHub issue link."""
-        extractor = LlamaCppHiddenStatesExtractor(model=None)
-
-        with pytest.raises(NotImplementedError) as exc_info:
-            extractor.extract(["test"])
-
-        assert "github.com" in str(exc_info.value)
-        assert "1695" in str(exc_info.value)
 
 
 class TestLayerIndexNormalization:

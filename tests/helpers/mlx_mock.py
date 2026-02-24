@@ -1,8 +1,7 @@
 # tests/helpers/mlx_mock.py
 #
 # Reusable MLX mocking utilities for tests that need to import provider code
-# without having MLX installed.  The pattern is borrowed from
-# test_llama_cpp_provider.py (sys.modules patching) but extended for the full
+# without having MLX installed.  Uses sys.modules patching for the full
 # MLX module tree and all transitive dependencies.
 
 from unittest.mock import MagicMock

@@ -103,31 +103,15 @@ class TestProfileApplication:
         # Existing value not in profile should be preserved
         assert result["top_k"] == 50
 
-    def test_gguf_only_params_excluded_for_mlx(self):
-        """GGUF-only parameters are skipped when provider is MLX."""
-        profile = self._make_profile({
-            "temperature": 0.5,
-            "n_ctx": 8192,       # GGUF-only
-            "n_batch": 512,      # GGUF-only
-        })
-        config = {}
-        model_info = {"provider": "mlx"}
-
-        result = profile.apply(config, model_info)
-
-        assert result["temperature"] == 0.5
-        assert "n_ctx" not in result
-        assert "n_batch" not in result
-
-    def test_mlx_only_params_excluded_for_gguf(self):
-        """MLX-only parameters are skipped when provider is GGUF."""
+    def test_mlx_only_params_excluded_for_non_mlx(self):
+        """MLX-only parameters are skipped when provider is not MLX."""
         profile = self._make_profile({
             "temperature": 0.5,
             "cache_type": "quantized",  # MLX-only
             "kv_bits": 8,               # MLX-only
         })
         config = {}
-        model_info = {"provider": "gguf"}
+        model_info = {"provider": "mlx_stt"}
 
         result = profile.apply(config, model_info)
 
@@ -145,19 +129,6 @@ class TestProfileApplication:
 
         result = profile.apply(config, model_info)
         assert result["dynamic_val"] == "TEST-MODEL"
-
-    def test_llama_cpp_is_gguf_provider(self):
-        """llama_cpp provider is treated as GGUF (MLX params excluded)."""
-        profile = self._make_profile({
-            "cache_type": "quantized",
-            "n_ctx": 4096,
-        })
-        config = {}
-        model_info = {"provider": "llama_cpp"}
-
-        result = profile.apply(config, model_info)
-        assert "cache_type" not in result
-        assert result["n_ctx"] == 4096
 
     def test_unknown_profile_raises_valueerror(self):
         """ModelService.apply_profile raises ValueError for unknown profile name."""

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.21.0
+
+### Removed
+
+- **llama.cpp provider and all GGUF support**: Deleted `LlamaCppProvider`, `LlamaCppModelConfig`, `LlamaCppEmbeddingExtractor`, `LlamaCppHiddenStatesExtractor`, and all associated config types, router entries, factory functions, test fixtures, and frontend type unions. The `gguf` pyproject extra is removed. Provider type narrowed from `mlx | llama_cpp | gguf | mlx_stt` to `mlx | mlx_stt` throughout backend and frontend. GGUF model entries removed from `models.toml`. A future `llama-server` subprocess provider will replace this.
+
 ## 1.20.0
 
 ### Removed

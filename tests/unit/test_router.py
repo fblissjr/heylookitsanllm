@@ -31,7 +31,6 @@ class MockProvider(BaseProvider):
         return self.model_config.get("model_path")
 
 @patch('heylook_llm.router.MLXProvider', new=MockProvider)
-@patch('heylook_llm.router.LlamaCppProvider', new=MockProvider)
 class TestModelRouter(unittest.TestCase):
 
     def setUp(self):
@@ -48,7 +47,7 @@ class TestModelRouter(unittest.TestCase):
                 },
                 {
                     'id': 'model2-llama',
-                    'provider': 'llama_cpp',
+                    'provider': 'mlx',
                     'enabled': True,
                     'config': {'model_path': '/fake/path/model2'}
                 },

@@ -17,7 +17,7 @@ const mockModels: Model[] = [
     id: 'test-model-2',
     object: 'model',
     owned_by: 'test',
-    provider: 'llama_cpp',
+    provider: 'mlx',
     capabilities: ['chat', 'thinking', 'hidden_states'],
     context_window: 8192,
   },
@@ -356,7 +356,7 @@ describe('modelStore', () => {
 
       const newModel: LoadedModel = {
         id: 'test-model-2',
-        provider: 'llama_cpp',
+        provider: 'mlx',
         capabilities: {
           chat: true,
           vision: false,

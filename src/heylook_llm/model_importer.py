@@ -85,17 +85,6 @@ class ModelImporter:
                     models.append(model)
                     logging.info(f"Added MLX model: {model['id']}")
 
-            gguf_files = [f for f in files if f.endswith('.gguf') and not self._is_mmproj_file(Path(f))]
-            if gguf_files:
-                logging.info(f"Found {len(gguf_files)} GGUF model files in: {rel_path}")
-
-            for gguf_file in gguf_files:
-                logging.info(f"Processing GGUF: {gguf_file}")
-                model = self._create_gguf_entry(root_path / gguf_file)
-                if model:
-                    models.append(model)
-                    logging.info(f"Added GGUF model: {model['id']}")
-
         logging.info(f"Scan complete: {dirs_scanned} directories scanned, {len(models)} models imported")
         return models
 
@@ -130,24 +119,7 @@ class ModelImporter:
                     model['config']['model_path'] = str(snapshot_path)
                 models.append(model)
 
-        for gguf_file in snapshot_path.glob("*.gguf"):
-            if self._is_mmproj_file(gguf_file):
-                continue
-            model = self._create_gguf_entry(gguf_file)
-            if model:
-                parts = snapshot_path.parent.parent.name.split("--")
-                if len(parts) >= 2:
-                    base_id = f"{parts[1]}/{parts[2]}" if len(parts) > 2 else parts[1]
-                    model['id'] = f"{base_id}-{gguf_file.stem}"
-                    model['config']['model_path'] = str(gguf_file)
-                models.append(model)
-
         return models
-
-    def _is_mmproj_file(self, filepath: Path) -> bool:
-        """Check if a GGUF file is a vision projector (not a standalone model)."""
-        filename_lower = filepath.name.lower()
-        return 'mmproj' in filename_lower or 'vision' in filename_lower and 'proj' in filename_lower
 
     def _is_mlx_model(self, path: Path) -> bool:
         """Check if a directory contains an MLX model."""
@@ -201,8 +173,6 @@ class ModelImporter:
             total_size = 0
             for file in path.rglob("*.safetensors"):
                 total_size += file.stat().st_size
-            for file in path.rglob("*.gguf"):
-                total_size += file.stat().st_size
 
             if total_size > 0:
                 size_gb = total_size / (1024**3)
@@ -249,57 +219,6 @@ class ModelImporter:
             "tags": tags, "enabled": True, "config": config,
         }
 
-    def _create_gguf_entry(self, path: Path) -> Optional[dict]:
-        """Create a models.toml entry for a GGUF model."""
-        model_id = path.stem
-        if model_id in self.existing_ids:
-            return None
-        self.existing_ids.add(model_id)
-
-        mmproj_files = list(path.parent.glob("*mmproj*.gguf"))
-        is_vision = len(mmproj_files) > 0
-
-        quant_match = re.search(r'(q\d+_[kKmM]|Q\d+_[kKmM])', path.name)
-        quant = quant_match.group(1) if quant_match else "unknown"
-        is_quantized = quant != "unknown"
-
-        size_str, size_gb = self._get_model_size(path)
-        if not size_gb:
-            size_gb = path.stat().st_size / (1024**3)
-
-        model_info = {
-            'name': model_id, 'provider': 'gguf',
-            'is_quantized': is_quantized, 'is_vision': is_vision,
-            'size_gb': size_gb or 0,
-        }
-
-        tags = ["gguf"] + self._detect_tags(model_id, is_vision, False, size_gb)
-
-        config: dict[str, Any] = {"model_path": str(path), "vision": is_vision}
-        config.update(get_smart_defaults(model_info))
-
-        if self.profile:
-            config = self.profile.apply(config, model_info)
-        config.update(self.overrides)
-
-        if is_vision and mmproj_files:
-            config["mmproj_path"] = str(mmproj_files[0])
-
-        if 'chat_format' not in config:
-            model_lower = model_id.lower()
-            if 'llama' in model_lower:
-                config["chat_format"] = "llama-3"
-            elif 'qwen' in model_lower:
-                config["chat_format"] = "qwen"
-            elif 'mistral' in model_lower:
-                config["chat_format"] = "mistral"
-
-        return {
-            "id": model_id, "provider": "gguf",
-            "description": f"Auto-imported GGUF model ({quant}){' with vision' if is_vision else ''}{f' ({size_gb:.1f}GB)' if size_gb else ''}",
-            "tags": tags, "enabled": True, "config": config,
-        }
-
     def _detect_tags(self, model_id: str, is_vision: bool, is_quantized: bool, size_gb: Optional[float]) -> list[str]:
         """Detect tags from model characteristics."""
         tags = []
@@ -325,19 +244,11 @@ class ModelImporter:
 
     def generate_toml(self, models: list[dict], output_file: Optional[str] = None) -> str:
         """Generate models.toml content from discovered models."""
-        mlx_models = [m for m in models if m['provider'] == 'mlx']
-        gguf_models = [m for m in models if m['provider'] in ['llama_cpp', 'gguf', 'llama_server']]
-
         config = {
             "default_model": models[0]['id'] if models else "none",
             "max_loaded_models": 1,
-            "models": [],
+            "models": list(models),
         }
-
-        if mlx_models:
-            config["models"].extend(mlx_models)
-        if gguf_models:
-            config["models"].extend(gguf_models)
 
         toml_lines = [
             "# Auto-generated models configuration",
@@ -346,17 +257,11 @@ class ModelImporter:
             f'default_model = "{config["default_model"]}"',
             f'max_loaded_models = {config["max_loaded_models"]}',
             "",
+            "# --- MLX Models ---",
+            "",
         ]
 
-        if mlx_models:
-            toml_lines.extend(["# --- MLX Models ---", ""])
-        for model in mlx_models:
-            toml_lines.extend(self._model_to_toml_lines(model))
-            toml_lines.append("")
-
-        if gguf_models:
-            toml_lines.extend(["# --- GGUF Models ---", ""])
-        for model in gguf_models:
+        for model in models:
             toml_lines.extend(self._model_to_toml_lines(model))
             toml_lines.append("")
 

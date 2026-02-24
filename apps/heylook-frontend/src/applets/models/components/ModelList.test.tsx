@@ -54,7 +54,7 @@ describe('ModelList', () => {
 
     it('shows "no matches" when filters exclude all models', () => {
       defaultState.configs = [mockModel()]
-      defaultState.filters = { provider: ['gguf'], status: [], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx_stt'], status: [], capability: [], tag: [] }
       render(<ModelList />)
       expect(screen.getByText('No models match filters')).toBeTruthy()
     })
@@ -135,13 +135,13 @@ describe('ModelList', () => {
     it('filters by provider', () => {
       defaultState.configs = [
         mockModel({ id: 'mlx-model', provider: 'mlx' }),
-        mockModel({ id: 'gguf-model', provider: 'gguf' }),
+        mockModel({ id: 'stt-model', provider: 'mlx_stt' }),
       ]
       defaultState.filters = { provider: ['mlx'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
       expect(screen.getByText('mlx-model')).toBeTruthy()
-      expect(screen.queryByText('gguf-model')).toBeNull()
+      expect(screen.queryByText('stt-model')).toBeNull()
     })
 
     it('filters by status', () => {
@@ -171,7 +171,7 @@ describe('ModelList', () => {
     it('combines search and filters', () => {
       defaultState.configs = [
         mockModel({ id: 'mlx-llama', provider: 'mlx' }),
-        mockModel({ id: 'gguf-llama', provider: 'gguf' }),
+        mockModel({ id: 'stt-llama', provider: 'mlx_stt' }),
         mockModel({ id: 'mlx-qwen', provider: 'mlx' }),
       ]
       defaultState.searchQuery = 'llama'
@@ -179,7 +179,7 @@ describe('ModelList', () => {
       render(<ModelList />)
 
       expect(screen.getByText('mlx-llama')).toBeTruthy()
-      expect(screen.queryByText('gguf-llama')).toBeNull()
+      expect(screen.queryByText('stt-llama')).toBeNull()
       expect(screen.queryByText('mlx-qwen')).toBeNull()
     })
   })
@@ -219,19 +219,19 @@ describe('ModelList', () => {
     })
 
     it('shows chips for active filters', () => {
-      defaultState.filters = { provider: ['gguf'], status: ['disabled'], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx_stt'], status: ['disabled'], capability: [], tag: [] }
       render(<ModelList />)
 
-      expect(screen.getByText('gguf')).toBeTruthy()
+      expect(screen.getByText('mlx_stt')).toBeTruthy()
       expect(screen.getByText('disabled')).toBeTruthy()
     })
 
     it('removing a chip updates filters', () => {
-      defaultState.filters = { provider: ['gguf', 'mlx_stt'], status: [], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx', 'mlx_stt'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
-      // Click the 'x' button next to 'gguf'
-      const chip = screen.getByText('gguf')
+      // Click the 'x' button next to 'mlx'
+      const chip = screen.getByText('mlx')
       const removeBtn = chip.parentElement?.querySelector('button')
       if (removeBtn) fireEvent.click(removeBtn)
 

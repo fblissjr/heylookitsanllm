@@ -22,14 +22,6 @@ except ImportError as e:
     # Store the error for later logging
     MLX_IMPORT_ERROR = str(e)
 
-# Try to import llama.cpp provider
-try:
-    from heylook_llm.providers.llama_cpp_provider import LlamaCppProvider
-    HAS_LLAMA_CPP = True
-except ImportError:
-    LlamaCppProvider = None
-    HAS_LLAMA_CPP = False
-
 # Try to import MLX STT provider
 try:
     from heylook_llm.providers.mlx_stt_provider import MLXSTTProvider
@@ -63,11 +55,6 @@ class ModelRouter:
             else:
                 logging.debug("MLX provider not available. Install with: uv sync --extra mlx")
 
-        if HAS_LLAMA_CPP:
-            logging.debug("Llama.cpp provider is available")
-        else:
-            logging.debug("Llama.cpp provider not available. Install with: uv sync --extra llama-cpp")
-
         self.log_level = log_level
 
         # Fine-grained locking: separate locks for cache access and model loading
@@ -90,9 +77,6 @@ class ModelRouter:
             elif model_config.provider == "mlx" and not HAS_MLX:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires MLX provider which is not installed.")
                 initial_model_to_load = None
-            elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
-                logging.warning(f"Initial model '{initial_model_to_load}' requires llama.cpp provider which is not installed.")
-                initial_model_to_load = None
 
         # If no valid initial model, find first compatible one
         if not initial_model_to_load:
@@ -100,10 +84,6 @@ class ModelRouter:
                 if model.provider == "mlx" and HAS_MLX:
                     initial_model_to_load = model.id
                     logging.info(f"Selected MLX model '{initial_model_to_load}' as initial model.")
-                    break
-                elif model.provider in ["llama_cpp", "gguf"] and HAS_LLAMA_CPP:
-                    initial_model_to_load = model.id
-                    logging.info(f"Selected GGUF model '{initial_model_to_load}' as initial model.")
                     break
 
             if not initial_model_to_load:
@@ -244,9 +224,6 @@ class ModelRouter:
             provider_map = {}
             if MLXProvider:
                 provider_map["mlx"] = MLXProvider
-            if LlamaCppProvider:
-                provider_map["llama_cpp"] = LlamaCppProvider
-                provider_map["gguf"] = LlamaCppProvider  # Support both names
             if MLXSTTProvider:
                 provider_map["mlx_stt"] = MLXSTTProvider
 
@@ -254,8 +231,6 @@ class ModelRouter:
             if not provider_class:
                 if model_config.provider == "mlx" and not HAS_MLX:
                     raise ValueError(f"MLX provider requested but not installed. Run: uv sync --extra mlx")
-                elif model_config.provider in ["llama_cpp", "gguf"] and not HAS_LLAMA_CPP:
-                    raise ValueError(f"GGUF provider requested but not installed. Run: uv sync --extra llama-cpp")
                 elif model_config.provider == "mlx_stt" and not HAS_MLX_STT:
                     raise ValueError(f"MLX STT provider requested but not installed. Run: uv sync --extra stt")
                 else:

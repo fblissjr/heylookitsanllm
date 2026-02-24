@@ -14,7 +14,7 @@
 
 ## Get Up to Speed
 
-FastAPI backend (MLX, llama.cpp) + React frontend (6 applets, 711 tests).
+FastAPI backend (MLX) + React frontend (6 applets, 711 tests).
 
 - [README.md](./README.md) -- setup, install, commands
 - [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
@@ -32,11 +32,11 @@ Check before making changes:
 
 ### Backend: `src/heylook_llm/`
 
-Providers: MLXProvider (text+vision), LlamaCppProvider (GGUF, legacy), MLXSTTProvider (parakeet-mlx STT).
+Providers: MLXProvider (text+vision), MLXSTTProvider (parakeet-mlx STT).
 LRU cache hot-swaps up to 2 models. Config in `models.toml`.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
-- [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md, llama_cpp.md)
+- [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)
 - [internal/backend/api.md](./internal/backend/api.md) -- endpoint architecture
 - [internal/backend/router.md](./internal/backend/router.md) -- routing and LRU cache
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system

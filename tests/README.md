@@ -24,7 +24,6 @@ tests/
 Fast, isolated tests that don't require a running server:
 
 - **test_config.py** - Config loading validation
-- **test_llama_cpp_provider.py** - LlamaCppProvider unit tests with mocking (4 tests)
 - **test_router.py** - ModelRouter LRU cache and provider loading tests (5 tests)
 
 ### Integration Tests (tests/integration/)
@@ -68,7 +67,6 @@ cd tests && pytest -v             # Verbose
 | STT (MLX) | Good | test_stt_integration.py | No format validation |
 | Queueing | Good | test_queue_integration.py | No stress tests |
 | Keepalive/Caching | Basic | test_keepalive.py | No cache invalidation tests |
-| Llama.cpp Provider | Good | test_llama_cpp_provider.py | No vision support tests |
 | **MLX Provider** | **None** | -- | **No unit tests** |
 | **Error Handling** | **Poor** | Scattered | **No dedicated error tests** |
 
