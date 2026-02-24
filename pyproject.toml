@@ -43,7 +43,7 @@ dependencies = [
 
 # ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-mock>=3"]
+test = ["pytest>=8", "pytest-mock>=3", "httpx>=0.27"]
 performance = [
     "xxhash>=3.4.1",       # Fast hashing for caching
     "PyTurboJPEG>=1.7.5",  # Fast JPEG encoding/decoding
@@ -97,6 +97,7 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "unit: Unit tests (no external dependencies)",
+    "contract: Contract tests (TestClient, no running server)",
     "integration: Integration tests (requires server or model)",
     "mlx_perf: MLX performance optimization tests (requires MLX and model)",
     "slow: Slow tests (deselect with '-m \"not slow\"')",

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`gguf` placeholder extra**: Empty extra with commented `llama-cpp-python` for Phase Next.
 - **`scripts` extra**: Contains `rich` for dashboard scripts.
 - **`load_profiles()` / `get_available_profiles()` API**: Public functions for programmatic profile access.
+- **Contract test suite**: TestClient-based API tests (39 tests) covering `/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/v1/admin/models/`, and OpenAPI conformance. Runs in-process, no server or models needed.
+- **Profile unit tests**: 22 tests covering TOML profile loading, profile application with provider filtering, model size regex, and the `load_profiles()` caching API.
+- **`httpx` test dependency**: Added to `[test]` extra for Starlette TestClient support.
 
 ## 1.18.1
 

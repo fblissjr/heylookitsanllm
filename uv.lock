@@ -619,6 +619,7 @@ stt = [
     { name = "soundfile" },
 ]
 test = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-mock" },
 ]
@@ -635,6 +636,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'analytics'", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "heylookitsanllm", extras = ["performance", "analytics", "stt", "profile"], marker = "extra == 'all'" },
+    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
     { name = "mlx" },
     { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm.git" },
     { name = "mlx-vlm", git = "https://github.com/Blaizzy/mlx-vlm.git" },
