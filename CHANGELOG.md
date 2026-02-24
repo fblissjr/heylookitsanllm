@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.0
+
+### Fixed
+
+- **Profile apply bug**: `ModelProfile.apply()` now unconditionally sets profile values instead of only filling gaps. Previously, smart defaults ran first and set `top_k`, `max_tokens`, `cache_type`, etc., so profiles could never override them. Precedence is now: base -> smart_defaults -> profile overrides -> user `--override`.
+- **Sub-1B model size regex**: `Qwen3-0.6B` was reported as "(6B)" because the integer pattern `(\d+)b` matched before `(\d+\.\d+)b`. Swapped regex order so decimal patterns match first.
+
+### Changed
+
+- **Profiles moved to TOML files**: The 9 hardcoded Python profile definitions are now standalone TOML files in `profiles/`. Each file has `[meta]` (name, description) and `[defaults]` (flat key=value). Lambda-based dynamic values removed; size-based logic stays in `get_smart_defaults()`. Profiles are loaded once at module import via `tomllib`.
+- **Profile renames**: `fast` -> `tight_fast`, `balanced` -> `moderate`, `quality` -> `wide_sampling`, `performance` -> `high_throughput`, `max_quality` -> `widest_sampling`, `background` -> `low_resource`, `memory` -> `quantized_kv`, `interactive` -> `conversation`, `encoder` -> `embedding`.
+- **Dynamic profile discovery**: `--profile` choices in CLI are now discovered from `profiles/*.toml` filenames instead of a hardcoded list. Adding a new profile is just dropping a `.toml` file.
+- **Profile values printed on import**: When `--profile` is used, the parameter table is printed before writing. The "Available profiles" listing now includes a parameter summary for each profile.
+
+### Removed
+
+- **`/v1/performance` stub endpoint**: Deleted the stub that returned "Removed in v1.17.1". No consumers.
+- **`/v1/performance/profile/{time_range}` endpoint**: Deleted ~170 lines of DuckDB queries for performance profiling. The analytics SQL endpoint (`/v1/data/query`) provides equivalent ad-hoc access.
+- **`test_performance_monitoring()` integration test**: Deleted stale test that tested the removed endpoint.
+- **`mlx` optional extra**: Removed from pyproject.toml. `mlx`, `mlx-lm`, `mlx-vlm`, `transformers` are already in core `dependencies`; the extra duplicated them and added unused packages.
+- **Unused dependencies from extras**: Removed `torch`, `torchvision`, `opencv-python`, `scipy` (never imported in production code). Moved `datasets` to `analytics` extra (only used by data loader). Moved `rich` to `scripts` extra (only used by `scripts/metrics_dashboard.py`).
+
+### Added
+
+- **`gguf` placeholder extra**: Empty extra with commented `llama-cpp-python` for Phase Next.
+- **`scripts` extra**: Contains `rich` for dashboard scripts.
+- **`load_profiles()` / `get_available_profiles()` API**: Public functions for programmatic profile access.
+
 ## 1.18.1
 
 ### Added
