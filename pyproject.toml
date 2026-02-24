@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heylookitsanllm"
-version = "1.12.2"
+version = "1.19.0"
 description = "On-Device Multimodal LLM API server for local LLM models, using MLX"
 authors = [{ name = "Fred Bliss" }]
 readme = "README.md"
@@ -20,7 +20,6 @@ classifiers = [
 
 # -------------------------------------------------------------------
 # Core runtime deps – array of PEP 508 strings (required by spec)
-# Security-patched versions with proper version pinning
 # -------------------------------------------------------------------
 dependencies = [
     "mlx",
@@ -34,7 +33,6 @@ dependencies = [
     "tomli-w>=1.0.0",
     "questionary>=2.0.0",
     "requests>=2.31.0",
-    "rich>=13.0.0",
     "numpy>=1.24.0",
     "Pillow>=10.0.1",
     "tqdm>=4.65.0",
@@ -53,29 +51,24 @@ performance = [
     "cachetools>=5.3.2",   # Advanced caching with thread safety
 ]
 analytics = [
-    "duckdb>=1.0.0", # Analytics database
+    "duckdb>=1.0.0",       # Analytics database
+    "datasets>=2.19.1",    # HuggingFace datasets (data loader)
 ]
 profile = [
     "py-spy>=0.3.14",          # Sampling profiler
 ]
-mlx = [
-    "mlx",                      # Core MLX library
-    "mlx-lm",                   # MLX text generation
-    "mlx-vlm>=0.3.4",           # MLX vision generation (Qwen3-VL support requires >=0.3.4)
-    "datasets>=2.19.1",         # HuggingFace datasets
-    "transformers",     # HuggingFace transformers
-    "huggingface-hub",
-    "opencv-python>=4.8.1.78",  # Image processing for vision
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",      # Vision utilities
-    "scipy>=1.11.0",            # Required by mlx-vlm
-    "soundfile>=0.12.1",        # Audio processing support
+scripts = [
+    "rich>=13.0.0",        # Used by scripts/metrics_dashboard.py
+]
+gguf = [
+    # Phase Next: llama-server provider
+    # "llama-cpp-python>=0.2.0",
 ]
 stt = [
     "parakeet-mlx",             # MLX-based speech-to-text (Parakeet TDT)
     "soundfile>=0.12.1",        # Audio file I/O
 ]
-all = ["heylookitsanllm[performance,analytics,mlx,stt,profile]"]
+all = ["heylookitsanllm[performance,analytics,stt,profile]"]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"
