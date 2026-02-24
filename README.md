@@ -88,7 +88,7 @@ There are three ways to add models:
 **CLI** -- Scan a directory or HF cache and generate config:
 ```bash
 heylookllm import --folder ~/models --output models.toml
-heylookllm import --hf-cache --profile fast
+heylookllm import --hf-cache --profile tight_fast
 ```
 
 **API** -- Scan then import programmatically (server must be running):
@@ -101,7 +101,7 @@ curl -X POST http://localhost:8080/v1/admin/models/scan \
 # Import selected models from scan results
 curl -X POST http://localhost:8080/v1/admin/models/import \
   -H "Content-Type: application/json" \
-  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "fast"}'
+  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "tight_fast"}'
 ```
 
 If you edit `models.toml` directly while the server is running, reload the config:

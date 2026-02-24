@@ -86,3 +86,6 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 - Check `internal/` before modifying providers -- see [internal/bugs/](./internal/bugs/) for postmortems
 - Commits are fine without asking; never push unless the user explicitly says to
 - Check `internal/session/CURRENT.md` before starting work
+
+## Finishing a Plan, Task, Bugfix, or Feature
+- **Ask yourself what you would do differently:** Now that you've finished and done the analysis, how would you do it the right way? What would you do differently if you could start over with more time now that you have new insights and could reflect more? What, if anything, do you think is a poor short term fix? If you wouldn't change anything, that's totally cool as well.
