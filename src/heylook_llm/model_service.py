@@ -7,7 +7,7 @@ smart defaults, profile definitions, and profile application. Thread-safe for
 concurrent API access.
 
 This module is the single source of truth for:
-- Model profiles (PROFILES, ModelProfile)
+- Model profiles (load_profiles, PROFILES, ModelProfile) -- loaded from profiles/*.toml
 - Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
 - Config CRUD, scanning, import, validation
@@ -81,7 +81,11 @@ class ModelProfile:
     }
 
     def apply(self, config: dict[str, Any], model_info: dict[str, Any]) -> dict[str, Any]:
-        """Apply profile defaults to config, filtering provider-specific params."""
+        """Apply profile defaults to config, overriding existing values.
+
+        Profile values take precedence over smart defaults. Provider-specific
+        parameters are still filtered (GGUF params skipped for MLX and vice versa).
+        """
         result = config.copy()
         provider = model_info.get('provider', 'mlx')
 
@@ -94,144 +98,74 @@ class ModelProfile:
             if is_gguf and key in self.MLX_ONLY_PARAMS:
                 continue
 
-            if key not in result:
-                if callable(value):
-                    result[key] = value(model_info)
-                else:
-                    result[key] = value
+            if callable(value):
+                result[key] = value(model_info)
+            else:
+                result[key] = value
 
         return result
 
 
-PROFILES: dict[str, ModelProfile] = {
-    "fast": ModelProfile(
-        name="fast",
-        description="Optimized for speed - low latency, short responses",
-        defaults={
-            "temperature": 0.3,
-            "top_k": 10,
-            "min_p": 0.1,
-            "max_tokens": 256,
-            "repetition_penalty": 1.0,
-            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 13 else "standard"
-        }
-    ),
-    "balanced": ModelProfile(
-        name="balanced",
-        description="Balance between speed and quality - default recommended",
-        defaults={
-            "temperature": 0.7,
-            "top_k": 40,
-            "min_p": 0.05,
-            "max_tokens": 512,
-            "repetition_penalty": 1.05,
-            "cache_type": lambda m: "quantized" if m.get('size_gb', 0) > 13 else "standard"
-        }
-    ),
-    "quality": ModelProfile(
-        name="quality",
-        description="Optimized for quality - broader sampling, longer responses",
-        defaults={
-            "temperature": 0.8,
-            "top_p": 0.95,
-            "top_k": 50,
-            "max_tokens": 1024,
-            "repetition_penalty": 1.1,
-            "cache_type": "standard"
-        }
-    ),
-    "performance": ModelProfile(
-        name="performance",
-        description="Maximum performance and accuracy - no KV cache quantization, large context",
-        defaults={
-            "temperature": 0.7,
-            "top_k": 50,
-            "top_p": 0.95,
-            "max_tokens": 2048,
-            "repetition_penalty": 1.05,
-            "repetition_context_size": 20,
-            "cache_type": "standard",
-            "n_ctx": lambda m: 16384 if m.get('size_gb', 0) > 30 else 8192,
-            "n_batch": 1024,
-            "use_mmap": True,
-            "use_mlock": False
-        }
-    ),
-    "max_quality": ModelProfile(
-        name="max_quality",
-        description="Maximum quality - no quantization, full precision KV cache, unlimited context",
-        defaults={
-            "temperature": 0.7,
-            "top_k": 100,
-            "top_p": 0.98,
-            "max_tokens": 4096,
-            "repetition_penalty": 1.05,
-            "repetition_context_size": 20,
-            "cache_type": "standard",
-            "n_ctx": lambda m: 32768 if m.get('size_gb', 0) > 30 else 16384,
-            "n_batch": 2048,
-            "use_mmap": True,
-            "use_mlock": True
-        }
-    ),
-    "background": ModelProfile(
-        name="background",
-        description="Minimal resource usage for 24/7 operation - aggressive memory optimization",
-        defaults={
-            "temperature": 0.7,
-            "top_k": 20,
-            "min_p": 0.1,
-            "max_tokens": 256,
-            "repetition_penalty": 1.0,
-            "repetition_context_size": 10,
-            "cache_type": "quantized",
-            "kv_bits": 8,
-            "kv_group_size": 32,
-            "quantized_kv_start": 256,
-            "max_kv_size": 1024,
-            "n_ctx": 2048,
-            "n_batch": 256,
-            "use_mmap": True,
-            "use_mlock": False
-        }
-    ),
-    "memory": ModelProfile(
-        name="memory",
-        description="Optimized for low memory usage - moderate resource constraints",
-        defaults={
-            "cache_type": "quantized",
-            "kv_bits": 8,
-            "kv_group_size": 32,
-            "quantized_kv_start": 256,
-            "max_kv_size": 1024,
-            "max_tokens": 256
-        }
-    ),
-    "interactive": ModelProfile(
-        name="interactive",
-        description="Optimized for chat/interactive use - responsive and conversational",
-        defaults={
-            "temperature": 0.7,
-            "top_k": 30,
-            "min_p": 0.05,
-            "max_tokens": 512,
-            "repetition_penalty": 1.05,
-            "repetition_context_size": 20
-        }
-    ),
-    "encoder": ModelProfile(
-        name="encoder",
-        description="Optimized for hidden states extraction (text encoding for image generation)",
-        defaults={
-            "max_tokens": 2048,
-            "cache_type": "standard",
-            "temperature": 0.7,
-            "top_k": 50,
-            "top_p": 0.95,
-            "repetition_penalty": 1.0,
-        }
-    ),
-}
+def _load_profiles_from_toml(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
+    """Load profile definitions from TOML files in the profiles/ directory.
+
+    Each .toml file must have [meta] (name, description) and [defaults] tables.
+    Loaded once and cached module-level.
+    """
+    if profiles_dir is None:
+        # Default: profiles/ relative to project root (two levels up from this file)
+        profiles_dir = Path(__file__).parent.parent.parent / "profiles"
+
+    profiles: dict[str, ModelProfile] = {}
+
+    if not profiles_dir.is_dir():
+        logger.warning(f"Profiles directory not found: {profiles_dir}")
+        return profiles
+
+    for toml_file in sorted(profiles_dir.glob("*.toml")):
+        try:
+            with open(toml_file, 'rb') as f:
+                data = tomllib.load(f)
+            meta = data.get("meta", {})
+            defaults = data.get("defaults", {})
+
+            name = meta.get("name", toml_file.stem)
+            description = meta.get("description", "")
+
+            # Coerce numeric types: TOML reads all numbers as int or float,
+            # but booleans come through correctly
+            profiles[name] = ModelProfile(
+                name=name,
+                description=description,
+                defaults=defaults,
+            )
+        except Exception as e:
+            logger.error(f"Failed to load profile {toml_file.name}: {e}")
+
+    return profiles
+
+
+# Module-level cache: loaded once on first access
+_profiles_cache: dict[str, ModelProfile] | None = None
+
+
+def load_profiles(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
+    """Get all available profiles. Loads from TOML on first call, then cached."""
+    global _profiles_cache
+    if _profiles_cache is None or profiles_dir is not None:
+        loaded = _load_profiles_from_toml(profiles_dir)
+        if profiles_dir is None:
+            _profiles_cache = loaded
+        return loaded
+    return _profiles_cache
+
+
+def get_available_profiles() -> list[str]:
+    """Return sorted list of available profile names (for argparse choices)."""
+    return sorted(load_profiles().keys())
+
+
+PROFILES = load_profiles()
 
 
 # =============================================================================
@@ -246,7 +180,7 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     - max_tokens does NOT limit hidden states (request-level max_length does)
     - Temperature, top_k, etc. are ignored (no generation happens)
     - Only quantization level affects hidden state precision
-    - Use --profile encoder for encoder-focused defaults
+    - Use --profile embedding for encoder-focused defaults
     """
     defaults: dict[str, Any] = {}
 
@@ -721,7 +655,7 @@ class ModelService:
     def import_models(
         self,
         models_to_import: list[dict],
-        profile_name: str | None = "balanced",
+        profile_name: str | None = "moderate",
     ) -> list[ModelConfig]:
         """Import scanned models into config with optional profile."""
         with self._lock:

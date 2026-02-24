@@ -18,8 +18,10 @@ from typing import Any, Optional
 from heylook_llm.model_service import (
     PROFILES,
     ModelProfile,
+    get_available_profiles,
     get_hf_cache_paths,
     get_smart_defaults,
+    load_profiles,
 )
 
 # Re-export for backwards compatibility (server.py imports import_models from here)
@@ -27,9 +29,11 @@ __all__ = [
     "ModelImporter",
     "ModelProfile",
     "PROFILES",
+    "get_available_profiles",
     "get_hf_cache_paths",
     "get_smart_defaults",
     "import_models",
+    "load_profiles",
 ]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
@@ -41,7 +45,7 @@ class ModelImporter:
     def __init__(self, profile: Optional[str] = None, overrides: Optional[dict[str, Any]] = None):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
-        self.profile = PROFILES.get(profile, PROFILES['balanced']) if profile else None
+        self.profile = PROFILES.get(profile, PROFILES.get('moderate')) if profile else None
         self.overrides = overrides or {}
 
     def scan_directory(self, path: str) -> list[dict]:
@@ -178,8 +182,8 @@ class ModelImporter:
         path_str = str(path).lower()
 
         size_patterns = [
-            (r'(\d+)b', lambda x: (f"{x}B", float(x))),
             (r'(\d+\.\d+)b', lambda x: (f"{x}B", float(x))),
+            (r'(\d+)b', lambda x: (f"{x}B", float(x))),
             (r'(\d+)m', lambda x: (f"{int(x)/1000:.1f}B" if int(x) >= 1000 else f"{x}M", int(x)/1000)),
         ]
 
@@ -482,6 +486,14 @@ def import_models(args: Any) -> None:
 
             model['config'] = config
 
+    # Print profile details before writing
+    if hasattr(args, 'profile') and args.profile:
+        profile = PROFILES.get(args.profile)
+        if profile:
+            print(f"\nProfile: {profile.name}")
+            for key, value in profile.defaults.items():
+                print(f"  {key:<25} = {value}")
+
     output_file = args.output or "models.toml"
     importer.generate_toml(models, output_file)
 
@@ -502,6 +514,9 @@ def import_models(args: Any) -> None:
         print("\nTo use this configuration, rename to models.toml or copy desired entries.")
 
     if not hasattr(args, 'profile') or not args.profile:
-        print("\nAvailable profiles for different use cases:")
-        for name, profile in PROFILES.items():
-            print(f"  --profile {name:<12} {profile.description}")
+        print("\nAvailable profiles:")
+        for name, profile in sorted(PROFILES.items()):
+            summary_keys = [k for k in list(profile.defaults.keys())[:4]]
+            summary = ", ".join(f"{k}={profile.defaults[k]}" for k in summary_keys)
+            print(f"  --profile {name:<20} {profile.description}")
+            print(f"           {'':20} [{summary}]")
