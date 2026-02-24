@@ -28,22 +28,10 @@ def get_api_endpoints(app_instance):
 
 
 def _log_disk_usage(args):
-    """Log disk usage of analytics DB and log directory at startup."""
+    """Log disk usage of log directory at startup."""
     from pathlib import Path
-    from heylook_llm.analytics_config import analytics_config
 
     parts = []
-
-    # Analytics DB
-    if analytics_config.enabled:
-        db_path = Path(analytics_config.db_path).expanduser()
-        if db_path.exists():
-            size_mb = db_path.stat().st_size / (1024 * 1024)
-            parts.append(f"analytics DB: {size_mb:.1f}MB (limit: {analytics_config.max_db_size_mb}MB)")
-        else:
-            parts.append("analytics DB: not yet created")
-    else:
-        parts.append("analytics DB: disabled")
 
     # Log directory
     if args.file_log_level:
@@ -55,7 +43,8 @@ def _log_disk_usage(args):
     else:
         parts.append("file logging: disabled")
 
-    logging.info(f"Disk usage -- {', '.join(parts)}")
+    if parts:
+        logging.info(f"Disk usage -- {', '.join(parts)}")
 
 
 def main():
@@ -253,10 +242,6 @@ def main():
     # Log all optimization statuses
     from heylook_llm.optimizations.status import log_all_optimization_status
     log_all_optimization_status()
-
-    # Initialize metrics database (will auto-detect if enabled)
-    from heylook_llm.metrics_db_wrapper import init_metrics_db
-    init_metrics_db()
 
     # Initialize the router and store it in the app's state
     # Pass "models" without extension - router will try .toml first, then .yaml
