@@ -104,6 +104,9 @@ class MockRouter:
     def reload_config(self):
         pass
 
+    def clear_cache(self):
+        pass
+
     def unload_model(self, model_id):
         return self.providers.pop(model_id, None) is not None
 

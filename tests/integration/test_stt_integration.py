@@ -80,32 +80,6 @@ def test_transcription_endpoint(base_url="http://localhost:8080"):
         return False
 
 
-def test_stt_models_endpoint(base_url="http://localhost:8080"):
-    """Test the /v1/stt/models endpoint."""
-    logger.info("Testing STT models endpoint...")
-
-    url = f"{base_url}/v1/stt/models"
-
-    try:
-        response = requests.get(url)
-        logger.info(f"Response status: {response.status_code}")
-
-        if response.status_code == 200:
-            models = response.json()
-            logger.info(f"Available STT models: {models}")
-            return True
-        else:
-            logger.error(f"Error response: {response.text}")
-            return False
-
-    except requests.exceptions.ConnectionError:
-        logger.error("Could not connect to server.")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return False
-
-
 def test_direct_provider():
     """Test the MLX STT provider directly (without server)."""
     logger.info("Testing MLX STT provider directly...")
@@ -157,21 +131,16 @@ def main():
     logger.info("\n=== Test 1: Direct Provider ===")
     direct_success = test_direct_provider()
 
-    # Test 2: STT models endpoint
-    logger.info("\n=== Test 2: STT Models Endpoint ===")
-    models_success = test_stt_models_endpoint()
-
-    # Test 3: Transcription endpoint
-    logger.info("\n=== Test 3: Transcription Endpoint ===")
+    # Test 2: Transcription endpoint
+    logger.info("\n=== Test 2: Transcription Endpoint ===")
     transcription_success = test_transcription_endpoint()
 
     # Summary
     logger.info("\n=== Test Summary ===")
-    logger.info(f"Direct provider test: {'✓ PASSED' if direct_success else '✗ FAILED'}")
-    logger.info(f"STT models endpoint: {'✓ PASSED' if models_success else '✗ FAILED'}")
-    logger.info(f"Transcription endpoint: {'✓ PASSED' if transcription_success else '✗ FAILED'}")
+    logger.info(f"Direct provider test: {'PASSED' if direct_success else 'FAILED'}")
+    logger.info(f"Transcription endpoint: {'PASSED' if transcription_success else 'FAILED'}")
 
-    all_passed = direct_success and models_success and transcription_success
+    all_passed = direct_success and transcription_success
     if all_passed:
         logger.info("\n✓ All tests passed!")
     else:

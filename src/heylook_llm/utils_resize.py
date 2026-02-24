@@ -133,22 +133,14 @@ def process_image_url_with_resize(
             original_size = len(encoded)
             new_size = len(new_base64)
             size_reduction = ((original_size - new_size) / original_size) * 100
+            from .utils import _format_bytes
             logging.info(f"[IMAGE RESIZE] Base64 size reduced by {size_reduction:.1f}% "
                        f"({_format_bytes((original_size * 3) // 4)} → {_format_bytes((new_size * 3) // 4)})")
-            
+
             return new_url
-        
+
     except Exception as e:
         logging.error(f"[IMAGE RESIZE] Failed to process image: {e}")
-    
+
     # Return original if no resize or error
     return image_url
-
-
-def _format_bytes(bytes_count: int) -> str:
-    """Convert bytes to human readable format."""
-    for unit in ['B', 'KB', 'MB']:
-        if bytes_count < 1024:
-            return f"{bytes_count:.1f}{unit}"
-        bytes_count /= 1024
-    return f"{bytes_count:.1f}GB"
