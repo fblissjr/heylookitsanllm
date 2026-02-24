@@ -45,7 +45,12 @@ class ModelImporter:
     def __init__(self, profile: Optional[str] = None, overrides: Optional[dict[str, Any]] = None):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
-        self.profile = PROFILES.get(profile, PROFILES.get('moderate')) if profile else None
+        if profile:
+            self.profile = PROFILES.get(profile)
+            if not self.profile:
+                raise ValueError(f"Unknown profile: {profile}. Available: {sorted(PROFILES.keys())}")
+        else:
+            self.profile = None
         self.overrides = overrides or {}
 
     def scan_directory(self, path: str) -> list[dict]:
