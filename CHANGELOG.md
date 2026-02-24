@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.0
+
+### Removed
+
+- **14 dead/broken API endpoints**: Removed analytics endpoints (`/v1/data/summary`, `/v1/data/query`, `/v1/data/request/{id}`), evaluation endpoints (`/v1/eval/create`, `/v1/eval/run`, `/v1/eval/run/{id}`, `/v1/eval/list`), replay endpoint (`/v1/replay/{id}`), async batch processing (`/v1/batch/process`, `/v1/batch/{id}`), and server restart (`/v1/admin/restart`). All were broken at runtime or had no consumers.
+- **6 dead files**: `data_endpoint.py`, `api_capabilities.py`, `openapi_enhancements.py`, `analytics_config.py`, `metrics_db.py`, `metrics_db_wrapper.py` -- never imported or only consumed by removed endpoints.
+- **Analytics from core path**: Removed metrics database logging from chat completion request/response handlers and server startup initialization.
+- **STT dead endpoints**: Removed broken `/v1/audio/translations`, stub `/v1/stt/stream` WebSocket, hardcoded `/v1/stt/models`. Simplified transcription response to `json` and `text` formats only (removed fake `srt`, `vtt`, `verbose_json`).
+- **Sync streaming generator**: Removed unused `stream_response_generator()` (async version is what's actually used).
+
+### Changed
+
+- **`/v1/admin/reload` moved to admin_api.py**: New `admin_ops_router` with `/v1/admin` prefix, consistent with other admin endpoints.
+- **Image resize logic extracted**: Duplicate ~25-line resize blocks in `create_chat_completion` consolidated into `_apply_image_resize()` helper.
+- **Shared streaming utilities**: New `streaming_utils.py` with `async_generator_with_abort()`, `get_provider_or_503()`, and `consume_sync_generator()` -- used by both `api.py` and `messages_api.py`.
+- **`/v1/performance/profile/{time_range}`**: Re-added as a stub returning 503, so the frontend Performance applet gets a clean error instead of 404.
+
 ## 1.19.0
 
 ### Fixed

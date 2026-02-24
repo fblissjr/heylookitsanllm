@@ -345,40 +345,12 @@ async def _stream_messages(
     # Resolve abort event from provider (if MLX provider with abort support)
     abort_event = getattr(provider, '_abort_event', None) if provider else None
 
+    from heylook_llm.streaming_utils import async_generator_with_abort
+
     # message_start
     yield translator.message_start_event()
 
-    # Wrap sync generator for async iteration
-    loop = asyncio.get_event_loop()
-
-    def get_next():
-        try:
-            return next(generator)
-        except StopIteration:
-            return None
-
-    while True:
-        # Submit chunk retrieval to thread pool
-        chunk_future = loop.run_in_executor(None, get_next)
-
-        # Poll for disconnect while waiting for next token
-        if http_request and abort_event:
-            while not chunk_future.done():
-                if await http_request.is_disconnected():
-                    logging.info(f"[MESSAGES] Client disconnected (request {request_id[:12]})")
-                    abort_event.set()
-                    try:
-                        await chunk_future
-                    except Exception:
-                        pass
-                    return
-
-                await asyncio.sleep(0.1)
-
-        chunk = await chunk_future
-        if chunk is None:
-            break
-
+    async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
         # Capture provider metadata
         chunk_finish = getattr(chunk, "finish_reason", None)
         if chunk_finish:

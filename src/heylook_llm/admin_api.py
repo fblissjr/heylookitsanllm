@@ -382,3 +382,39 @@ scan_import_router.add_api_route(
     summary="Bulk Apply Profile",
     description="Apply a profile to multiple models at once.",
 )
+
+
+# =============================================================================
+# Server-level admin operations (prefix: /v1/admin, NOT /v1/admin/models)
+# =============================================================================
+
+admin_ops_router = APIRouter(
+    prefix="/v1/admin",
+    tags=["Admin"],
+)
+
+
+@admin_ops_router.post(
+    "/reload",
+    summary="Reload Models",
+    description=(
+        "Reload model configuration and clear model cache without restarting "
+        "the server. Clears loaded models, re-reads models.toml, and returns "
+        "the new model list."
+    ),
+)
+async def reload_models(request: Request):
+    """Reload model configuration without restarting."""
+    router = request.app.state.router_instance
+    try:
+        router.clear_cache()
+        router.reload_config()
+        return {
+            "status": "success",
+            "message": "Model configuration reloaded",
+            "cache_cleared": True,
+            "models_available": router.list_available_models(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to reload models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
