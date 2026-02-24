@@ -400,7 +400,7 @@ class ModelScanRequest(BaseModel):
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models."""
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    profile: Optional[str] = Field("balanced", description="Profile to apply to all imported models")
+    profile: Optional[str] = Field("moderate", description="Profile to apply to all imported models")
 
 
 class ModelUpdateRequest(BaseModel):

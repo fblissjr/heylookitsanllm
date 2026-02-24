@@ -88,10 +88,12 @@ def main():
         default="models.toml",
         help="Output file for generated configuration (default: models.toml)"
     )
+    from heylook_llm.model_service import get_available_profiles
+    profile_names = get_available_profiles()
     import_parser.add_argument(
         "--profile",
-        choices=["fast", "balanced", "quality", "performance", "max_quality", "background", "memory", "interactive"],
-        help="Apply a predefined profile for model defaults (max_quality=no quantization, performance=high throughput, background=24/7 low resource)"
+        choices=profile_names,
+        help="Apply a predefined profile for model defaults (see profiles/ directory for details)"
     )
     import_parser.add_argument(
         "--override",

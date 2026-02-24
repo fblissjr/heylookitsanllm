@@ -1,0 +1,10 @@
+[meta]
+name = "moderate"
+description = "Middle ground on temperature, sampling, and output length"
+
+[defaults]
+temperature = 0.7
+top_k = 40
+min_p = 0.05
+max_tokens = 512
+repetition_penalty = 1.05

@@ -1,0 +1,10 @@
+[meta]
+name = "tight_fast"
+description = "Low temperature, narrow sampling, short output"
+
+[defaults]
+temperature = 0.3
+top_k = 10
+min_p = 0.1
+max_tokens = 256
+repetition_penalty = 1.0
