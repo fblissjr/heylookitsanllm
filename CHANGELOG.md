@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Profile apply bug**: `ModelProfile.apply()` now unconditionally sets profile values instead of only filling gaps. Previously, smart defaults ran first and set `top_k`, `max_tokens`, `cache_type`, etc., so profiles could never override them. Precedence is now: base -> smart_defaults -> profile overrides -> user `--override`.
 - **Sub-1B model size regex**: `Qwen3-0.6B` was reported as "(6B)" because the integer pattern `(\d+)b` matched before `(\d+\.\d+)b`. Swapped regex order so decimal patterns match first.
+- **Admin `/status` route shadowed by catch-all**: `GET /v1/admin/models/{id}/status` was unreachable because the greedy `GET /{model_id:path}` catch-all was registered first. Reordered route registration so sub-resource routes (`/status`, `/toggle`, `/load`, `/unload`) register before catch-all routes.
 
 ### Changed
 

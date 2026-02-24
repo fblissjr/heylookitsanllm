@@ -71,7 +71,18 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
     )
 
 
-# --- List / Get ---
+# =============================================================================
+# Route registration order within admin_router matters!
+#
+# FastAPI matches routes in registration order. Because {model_id:path} uses
+# Starlette's :path converter (greedy, matches slashes), a request like
+# GET /v1/admin/models/my-model/status would be swallowed by a catch-all
+# GET /{model_id:path} if the catch-all is registered first.
+#
+# Order: fixed paths -> sub-resource paths -> catch-all paths
+# =============================================================================
+
+# --- List (fixed path, no conflict) ---
 
 @admin_router.get(
     "",
@@ -87,23 +98,7 @@ async def list_model_configs(request: Request):
     return AdminModelListResponse(models=models, total=len(models))
 
 
-@admin_router.get(
-    "/{model_id:path}",
-    summary="Get Model Config",
-    description="Get full configuration for a single model.",
-    response_model=AdminModelResponse,
-)
-async def get_model_config(model_id: str, request: Request):
-    service = _get_service(request)
-    config = service.get_config(model_id)
-    if not config:
-        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-
-    loaded_ids = _get_loaded_model_ids(request)
-    return _model_config_to_response(config, loaded_ids)
-
-
-# --- Create ---
+# --- Create (fixed path, no conflict) ---
 
 @admin_router.post(
     "",
@@ -127,57 +122,19 @@ async def add_model_config(request: Request, body: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# --- Update ---
+# --- Sub-resource routes (must register BEFORE catch-all) ---
 
-@admin_router.patch(
-    "/{model_id:path}",
-    summary="Update Model Config",
-    description="Update specific fields of a model's configuration. Returns which fields require reload.",
+@admin_router.get(
+    "/{model_id:path}/status",
+    summary="Get Model Status",
+    description="Get runtime status of a model (loaded state, memory, metrics).",
+    response_model=ModelStatusResponse,
 )
-async def update_model_config(model_id: str, request: Request, updates: ModelUpdateRequest):
-    service = _get_service(request)
-    try:
-        update_dict = updates.model_dump(exclude_none=True)
-        config, reload_fields = service.update_config(model_id, update_dict)
-        warning = _safe_reload_config(request)
-        loaded_ids = _get_loaded_model_ids(request)
-        response = _model_config_to_response(config, loaded_ids)
-        result = {
-            "model": response.model_dump(),
-            "reload_required_fields": reload_fields,
-        }
-        if warning:
-            result["warning"] = warning
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# --- Delete ---
-
-@admin_router.delete(
-    "/{model_id:path}",
-    summary="Remove Model Config",
-    description="Remove a model from configuration. Model files stay on disk.",
-)
-async def remove_model_config(model_id: str, request: Request):
-    service = _get_service(request)
+async def get_model_status(model_id: str, request: Request):
     router = request.app.state.router_instance
+    status = router.get_model_status(model_id)
+    return ModelStatusResponse(**status)
 
-    # Unload if currently loaded
-    router.unload_model(model_id)
-
-    if not service.remove_config(model_id):
-        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
-
-    warning = _safe_reload_config(request)
-    result: dict = {"status": "removed", "model_id": model_id}
-    if warning:
-        result["warning"] = warning
-    return result
-
-
-# --- Toggle ---
 
 @admin_router.post(
     "/{model_id:path}/toggle",
@@ -195,8 +152,6 @@ async def toggle_model(model_id: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-
-# --- Load / Unload ---
 
 @admin_router.post(
     "/{model_id:path}/load",
@@ -228,18 +183,68 @@ async def unload_model(model_id: str, request: Request):
         return {"status": "not_loaded", "model_id": model_id}
 
 
-# --- Status ---
+# --- Catch-all routes (LAST -- {model_id:path} is greedy) ---
 
 @admin_router.get(
-    "/{model_id:path}/status",
-    summary="Get Model Status",
-    description="Get runtime status of a model (loaded state, memory, metrics).",
-    response_model=ModelStatusResponse,
+    "/{model_id:path}",
+    summary="Get Model Config",
+    description="Get full configuration for a single model.",
+    response_model=AdminModelResponse,
 )
-async def get_model_status(model_id: str, request: Request):
+async def get_model_config(model_id: str, request: Request):
+    service = _get_service(request)
+    config = service.get_config(model_id)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    loaded_ids = _get_loaded_model_ids(request)
+    return _model_config_to_response(config, loaded_ids)
+
+
+@admin_router.patch(
+    "/{model_id:path}",
+    summary="Update Model Config",
+    description="Update specific fields of a model's configuration. Returns which fields require reload.",
+)
+async def update_model_config(model_id: str, request: Request, updates: ModelUpdateRequest):
+    service = _get_service(request)
+    try:
+        update_dict = updates.model_dump(exclude_none=True)
+        config, reload_fields = service.update_config(model_id, update_dict)
+        warning = _safe_reload_config(request)
+        loaded_ids = _get_loaded_model_ids(request)
+        response = _model_config_to_response(config, loaded_ids)
+        result = {
+            "model": response.model_dump(),
+            "reload_required_fields": reload_fields,
+        }
+        if warning:
+            result["warning"] = warning
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admin_router.delete(
+    "/{model_id:path}",
+    summary="Remove Model Config",
+    description="Remove a model from configuration. Model files stay on disk.",
+)
+async def remove_model_config(model_id: str, request: Request):
+    service = _get_service(request)
     router = request.app.state.router_instance
-    status = router.get_model_status(model_id)
-    return ModelStatusResponse(**status)
+
+    # Unload if currently loaded
+    router.unload_model(model_id)
+
+    if not service.remove_config(model_id):
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    warning = _safe_reload_config(request)
+    result: dict = {"status": "removed", "model_id": model_id}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 # --- Scan / Import ---

@@ -67,16 +67,26 @@ class TestAdminScan:
 
 
 class TestAdminModelStatus:
-    """Tests for GET /v1/admin/models/{model_id}/status.
+    """Tests for GET /v1/admin/models/{model_id}/status."""
 
-    NOTE: The /{model_id:path}/status route is shadowed by the catch-all
-    /{model_id:path} GET route in the current admin_router registration order.
-    The catch-all greedily matches "model-id/status" as the model_id.
-    This is a known limitation -- the test documents the current behavior.
-    """
-
-    def test_status_shadowed_by_catchall(self, client):
-        """Status endpoint is currently shadowed by the catch-all GET route."""
+    def test_status_for_known_model(self, client):
+        """Status endpoint returns load state for a known model."""
         resp = client.get("/v1/admin/models/test-mlx-model/status")
-        # Returns 404 because catch-all interprets "test-mlx-model/status" as model_id
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+
+        data = resp.json()
+        assert "loaded" in data
+        assert isinstance(data["loaded"], bool)
+
+    def test_status_not_shadowed_by_catchall(self, client):
+        """The /status sub-resource route is not swallowed by the catch-all GET.
+
+        This validates the route registration order fix: sub-resource routes
+        (/{model_id:path}/status) must register before the greedy catch-all
+        (/{model_id:path}).
+        """
+        # If shadowed, this would return 404 from the catch-all trying to
+        # look up model_id="test-mlx-model/status"
+        resp = client.get("/v1/admin/models/test-mlx-model/status")
+        assert resp.status_code == 200
+        assert "loaded" in resp.json()
