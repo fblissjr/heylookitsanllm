@@ -14,7 +14,7 @@ Architecture:
 
 import logging
 import time
-from typing import List, Dict, Generator, Optional, Union
+from typing import List, Optional, Union
 from dataclasses import dataclass
 
 import mlx.core as mx
@@ -178,70 +178,6 @@ class TextBatchProcessor:
         )
 
         return batch_results
-
-    def stream_batch(
-        self,
-        prompts: List[List[int]],
-        max_tokens: Optional[Union[List[int], int]] = None
-    ) -> Generator[Dict, None, None]:
-        """
-        Stream batch generation with per-sequence updates.
-
-        This is the streaming interface - yields updates as tokens are generated.
-
-        Args:
-            prompts: List of tokenized prompts
-            max_tokens: Per-prompt token limits (list or single int)
-
-        Yields:
-            {
-                'uid': int,           # Sequence ID
-                'token': int,         # Token ID
-                'text': str,          # Decoded token text
-                'finish_reason': Optional[str],  # 'stop' or 'length' or None
-                'logprobs': array     # Log probabilities
-            }
-        """
-        # Wrap in wired_limit for optimal Metal memory management
-        with wired_limit(self.model, [generation_stream]):
-            # Insert prompts into batch generator
-            uids = self.generator.insert(prompts, max_tokens)
-            results = {uid: [] for uid in uids}
-
-            # Stream tokens
-            while responses := self.generator.next():
-                for response in responses:
-                    results[response.uid].append(response.token)
-
-                    # Decode incrementally
-                    text = self.tokenizer.decode([response.token])
-
-                    yield {
-                        'uid': response.uid,
-                        'token': response.token,
-                        'text': text,
-                        'finish_reason': response.finish_reason,
-                        'logprobs': response.logprobs
-                    }
-
-    def get_stats(self) -> Dict:
-        """
-        Get batch generator statistics.
-
-        Returns:
-            Dictionary with generator stats
-        """
-        stats = self.generator.stats()
-        return {
-            'prompt_tokens': stats.prompt_tokens,
-            'prompt_time': stats.prompt_time,
-            'prompt_tps': stats.prompt_tps,
-            'generation_tokens': stats.generation_tokens,
-            'generation_time': stats.generation_time,
-            'generation_tps': stats.generation_tps,
-            'peak_memory_gb': stats.peak_memory
-        }
-
 
 def should_use_batching(num_requests: int, same_model: bool, no_streaming: bool) -> bool:
     """

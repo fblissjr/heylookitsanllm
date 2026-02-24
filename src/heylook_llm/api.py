@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="HeylookLLM - High-Performance Local LLM Server",
-    version="1.0.1",
+    version="1.20.0",
     description="A high-performance API server for local LLM inference with OpenAI-compatible endpoints",
     lifespan=lifespan,
     docs_url="/docs",
@@ -508,12 +508,6 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     from heylook_llm.streaming_utils import async_generator_with_abort
 
     async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
-        # Check if this is a keepalive message
-        if hasattr(chunk, 'is_keepalive') and chunk.is_keepalive:
-            # Send SSE comment for keepalive (invisible to clients but keeps connection alive)
-            yield f": keepalive prompt_processing {chunk.processed}/{chunk.total}\n\n"
-            continue
-
         # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
         # The final chunk may have empty text but still carry the finish_reason
         chunk_finish_reason = getattr(chunk, 'finish_reason', None)

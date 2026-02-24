@@ -22,24 +22,6 @@ DEFAULT_TOP_P = 0.95
 DEFAULT_REPETITION_PENALTY = 1.1
 
 
-def _mlx_unique(x: mx.array) -> mx.array:
-    """Pure-MLX unique values via sort + cumsum + scatter.
-
-    Returns sorted unique values (same contract as np.unique). Uses only
-    mx.* operations -- one int32 .item() sync to determine output size.
-    """
-    if x.size <= 1:
-        return x
-    sorted_x = mx.sort(x)
-    mask = mx.concatenate([mx.array([True]), sorted_x[1:] != sorted_x[:-1]])
-    compressed = mx.cumsum(mask.astype(mx.int32)) - 1
-    n_unique = compressed[-1].item() + 1
-    masked_values = mx.where(mask, sorted_x, mx.zeros_like(sorted_x))
-    result = mx.zeros(n_unique, dtype=sorted_x.dtype)
-    result = result.at[compressed].add(masked_values)
-    return result
-
-
 def _apply_presence_penalty(logits: mx.array, tokens: mx.array, penalty: float) -> mx.array:
     """Apply presence penalty via scatter-count -- zero GPU-CPU syncs.
 

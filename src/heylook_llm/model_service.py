@@ -254,7 +254,7 @@ RELOAD_REQUIRED_FIELDS = frozenset({
     "quantized_kv_start", "max_kv_size", "draft_model_path", "num_draft_tokens",
     "n_gpu_layers", "n_ctx", "mmproj_path", "chat_format", "chat_format_template",
     "default_hidden_layer", "default_max_length", "supports_thinking",
-    "thinking_token_ids", "fp32", "use_local_attention", "local_attention_context",
+    "fp32", "use_local_attention", "local_attention_context",
     "chunk_duration", "overlap_duration",
 })
 

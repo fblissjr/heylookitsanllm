@@ -564,7 +564,7 @@ wheels = [
 
 [[package]]
 name = "heylookitsanllm"
-version = "1.19.0"
+version = "1.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -578,10 +578,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "pyyaml" },
-    { name = "questionary" },
     { name = "requests" },
     { name = "tomli-w" },
-    { name = "tqdm" },
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -594,6 +592,7 @@ all = [
     { name = "parakeet-mlx" },
     { name = "py-spy" },
     { name = "pyturbojpeg" },
+    { name = "questionary" },
     { name = "soundfile" },
     { name = "uvloop" },
     { name = "xxhash" },
@@ -601,6 +600,9 @@ all = [
 analytics = [
     { name = "datasets" },
     { name = "duckdb" },
+]
+cli = [
+    { name = "questionary" },
 ]
 performance = [
     { name = "cachetools" },
@@ -635,7 +637,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'analytics'", specifier = ">=2.19.1" },
     { name = "duckdb", marker = "extra == 'analytics'", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.104.1" },
-    { name = "heylookitsanllm", extras = ["performance", "analytics", "stt", "profile"], marker = "extra == 'all'" },
+    { name = "heylookitsanllm", extras = ["performance", "analytics", "stt", "profile", "cli"], marker = "extra == 'all'" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
     { name = "mlx" },
     { name = "mlx-lm", git = "https://github.com/ml-explore/mlx-lm.git" },
@@ -652,18 +654,17 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "pyturbojpeg", marker = "extra == 'performance'", specifier = ">=1.7.5" },
     { name = "pyyaml", specifier = ">=6.0.1" },
-    { name = "questionary", specifier = ">=2.0.0" },
+    { name = "questionary", marker = "extra == 'cli'", specifier = ">=2.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "rich", marker = "extra == 'scripts'", specifier = ">=13.0.0" },
     { name = "soundfile", marker = "extra == 'stt'", specifier = ">=0.12.1" },
     { name = "tomli-w", specifier = ">=1.0.0" },
-    { name = "tqdm", specifier = ">=4.65.0" },
     { name = "transformers" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
     { name = "uvloop", marker = "extra == 'performance'", specifier = ">=0.19.0" },
     { name = "xxhash", marker = "extra == 'performance'", specifier = ">=3.4.1" },
 ]
-provides-extras = ["test", "performance", "analytics", "profile", "scripts", "gguf", "stt", "all"]
+provides-extras = ["test", "performance", "analytics", "profile", "cli", "scripts", "gguf", "stt", "all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.4.2" }]

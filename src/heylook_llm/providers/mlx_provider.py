@@ -4,7 +4,7 @@ import logging
 import json
 import threading
 import time
-from typing import Generator, Dict, List, Tuple, Protocol
+from typing import Generator, Dict, List, Tuple
 
 import mlx.core as mx
 from PIL import Image
@@ -52,23 +52,6 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
         messages,
         num_images=num_images or 0
     )
-
-
-class KeepaliveChunk:
-    """Special chunk type for SSE keepalive messages during prompt processing."""
-    def __init__(self, processed: int, total: int):
-        self.is_keepalive = True
-        self.processed = processed
-        self.total = total
-        self.text = None  # Not a regular text chunk
-
-
-class GenerationStrategy(Protocol):
-    """Protocol for generation strategies."""
-
-    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
-        """Generate response using this strategy."""
-        ...
 
 
 class UnifiedTextStrategy:

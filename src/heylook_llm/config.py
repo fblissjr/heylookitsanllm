@@ -143,7 +143,6 @@ class MLXModelConfig(BaseModel):
     default_max_length: int = 512
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
-    thinking_token_ids: Optional[List[int]] = None  # e.g., [151667, 151668] for <think>, </think>
 
 class LlamaCppModelConfig(BaseModel):
     model_path: str
@@ -238,24 +237,6 @@ class CacheInfo(BaseModel):
     tokens_cached: int = Field(..., description="Number of tokens in cache")
     size_mb: float = Field(..., description="Cache file size in MB")
     created_at: str = Field(..., description="ISO timestamp of creation")
-
-
-# Placeholder models for future /v1/cache/save endpoint (not yet implemented)
-class CacheSaveRequest(BaseModel):
-    """Request to save current prompt cache."""
-    model: str = Field(..., description="Model ID to save cache for")
-    name: str = Field(..., description="User-friendly name for the cache")
-    description: Optional[str] = Field(None, description="Optional description")
-
-
-class CacheSaveResponse(BaseModel):
-    """Response from cache save operation."""
-    cache_id: str
-    model: str
-    name: str
-    tokens_cached: int
-    size_mb: float
-    created_at: str
 
 
 class CacheListResponse(BaseModel):

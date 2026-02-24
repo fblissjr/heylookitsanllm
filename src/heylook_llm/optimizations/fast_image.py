@@ -5,10 +5,8 @@ Fast image processing optimizations.
 Provides drop-in replacements for image operations with 4-10x speedups.
 """
 
-import io
-import base64
 import logging
-from typing import Union, Optional, Tuple
+from typing import Optional
 from PIL import Image
 
 # Try to import faster alternatives
@@ -32,158 +30,6 @@ try:
 except ImportError:
     from collections import OrderedDict
     HAS_CACHETOOLS = False
-
-
-# Image cache with TTL
-if HAS_CACHETOOLS:
-    image_cache = TTLCache(maxsize=100, ttl=300)  # 100 images, 5 min TTL
-else:
-    image_cache = OrderedDict()  # Basic LRU
-
-
-def fast_hash(data: bytes) -> str:
-    """Ultra-fast hashing for cache keys."""
-    if HAS_XXHASH:
-        return xxhash.xxh64(data).hexdigest()
-    else:
-        return hashlib.sha256(data).hexdigest()
-
-
-def fast_decode_image(image_data: bytes, image_format: Optional[str] = None) -> Image.Image:
-    """Fast image decoding with TurboJPEG when available."""
-    if HAS_TURBOJPEG and (image_format == 'JPEG' or image_data[:2] == b'\xff\xd8'):
-        # Use TurboJPEG for JPEG images
-        try:
-            img_array = jpeg_decoder.decode(image_data)
-            return Image.fromarray(img_array)
-        except Exception as e:
-            logging.debug(f"TurboJPEG decode failed, falling back to Pillow: {e}")
-    
-    # Fallback to Pillow
-    return Image.open(io.BytesIO(image_data))
-
-
-def load_image_fast(source_str: str) -> Image.Image:
-    """
-    Fast drop-in replacement for load_image with caching and optimizations.
-    
-    4-6x faster for repeated images, 2x faster for JPEG decoding.
-    """
-    # Check cache first
-    cache_key = fast_hash(source_str.encode('utf-8'))
-    
-    if cache_key in image_cache:
-        logging.debug(f"Image cache hit: {cache_key[:8]}...")
-        return image_cache[cache_key].copy()  # Return copy to prevent mutations
-    
-    try:
-        if source_str.startswith("data:image"):
-            # Base64 image
-            try:
-                header, encoded = source_str.split(",", 1)
-                # Detect format from header
-                image_format = None
-                if 'jpeg' in header or 'jpg' in header:
-                    image_format = 'JPEG'
-                elif 'png' in header:
-                    image_format = 'PNG'
-                
-                image_data = base64.b64decode(encoded)
-                image = fast_decode_image(image_data, image_format)
-                
-            except Exception as e:
-                logging.error(f"Failed to decode base64 image: {e}")
-                image = Image.new('RGB', (64, 64), color='red')
-                
-        elif source_str.startswith("http"):
-            # URL - use requests
-            import requests
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15'
-            }
-            response = requests.get(source_str, headers=headers, stream=True, timeout=10)
-            response.raise_for_status()
-            
-            # Get format from content-type
-            content_type = response.headers.get('content-type', '')
-            image_format = 'JPEG' if 'jpeg' in content_type else None
-            
-            image_data = response.content
-            image = fast_decode_image(image_data, image_format)
-            
-        else:
-            # File path
-            with open(source_str, 'rb') as f:
-                image_data = f.read()
-            
-            # Detect format from extension
-            image_format = 'JPEG' if source_str.lower().endswith(('.jpg', '.jpeg')) else None
-            image = fast_decode_image(image_data, image_format)
-        
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Cache the result
-        image_cache[cache_key] = image.copy()
-        if not HAS_CACHETOOLS and len(image_cache) > 100:
-            # Basic LRU eviction
-            image_cache.popitem(last=False)
-        
-        return image
-        
-    except Exception as e:
-        logging.error(f"Failed to load image from {source_str[:100]}...: {e}")
-        return Image.new('RGB', (64, 64), color='red')
-
-
-def batch_load_images_fast(image_sources: list[str], max_workers: int = 4) -> list[Image.Image]:
-    """
-    Load multiple images in parallel with caching.
-    
-    Returns images in the same order as input.
-    """
-    import concurrent.futures
-    
-    if not image_sources:
-        return []
-    
-    # Check cache first
-    images = [None] * len(image_sources)
-    to_load = []
-    
-    for i, source in enumerate(image_sources):
-        cache_key = fast_hash(source.encode('utf-8'))
-        if cache_key in image_cache:
-            images[i] = image_cache[cache_key].copy()
-            logging.debug(f"Batch cache hit for image {i}")
-        else:
-            to_load.append((i, source))
-    
-    # Load missing images in parallel
-    if to_load:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_index = {
-                executor.submit(load_image_fast, source): i 
-                for i, source in to_load
-            }
-            
-            for future in concurrent.futures.as_completed(future_to_index):
-                index = future_to_index[future]
-                try:
-                    images[index] = future.result()
-                except Exception as e:
-                    logging.error(f"Failed to load image {index}: {e}")
-                    images[index] = Image.new('RGB', (64, 64), color='red')
-    
-    return images
-
-
-def clear_image_cache():
-    """Clear the image cache to free memory."""
-    global image_cache
-    image_cache.clear()
-    logging.info("Image cache cleared")
 
 
 def get_status():
@@ -244,13 +90,3 @@ class ImageCache:
         self._cache.clear()
 
 
-# Monkey-patch for drop-in replacement
-def install_fast_image_loader():
-    """Install fast image loader as drop-in replacement."""
-    import sys
-    
-    # Find and replace the load_image function
-    for module_name, module in sys.modules.items():
-        if hasattr(module, 'load_image'):
-            setattr(module, 'load_image', load_image_fast)
-            logging.info(f"Replaced load_image in {module_name} with fast version")

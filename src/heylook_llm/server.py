@@ -182,10 +182,6 @@ def main():
         from heylook_llm.service_manager import manage_service
         sys.exit(manage_service(args))
 
-    # Default port if not provided
-    if args.port is None:
-        args.port = 8080
-
     # Set up logging with separate console and file handlers
     import logging.handlers
     from pathlib import Path
