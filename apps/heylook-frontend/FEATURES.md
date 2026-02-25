@@ -120,7 +120,7 @@
 
 | Feature | Description | Complexity | Notes |
 |---------|-------------|------------|-------|
-| Markdown Rendering | Render markdown in messages | Medium | Need markdown library |
+| Markdown Rendering | Render markdown in messages | - | Complete (MarkdownRenderer in composed/) |
 | Code Highlighting | Syntax highlight code blocks | Medium | Need highlight.js or similar |
 | Conversation Rename | Manual title editing | Low | Update function exists |
 | Conversation Pinning | Pin important conversations | Low | Add pinned field |
@@ -155,7 +155,7 @@
 
 1. **No offline support**: Requires backend connection
 2. **No service worker**: Could improve load performance
-3. **No code splitting**: Single bundle (acceptable at current size)
+3. **Code splitting**: Each applet lazy-loaded via React.lazy (7 code-split boundaries)
 4. **No i18n**: English only
 5. **No accessibility audit**: May have a11y issues
 
@@ -214,22 +214,15 @@ To request a new feature, include:
 
 ---
 
-## Test Coverage by Feature
+## Test Coverage
 
-| Feature Area | Unit Tests | Component Tests | E2E Tests |
-|--------------|------------|-----------------|-----------|
-| Chat Store | 75 | - | 12 |
-| Model Store | 40 | - | 12 |
-| Settings Store | 25 | - | 6 |
-| UI Store | 35 | - | 2 |
-| ChatView | - | 18 | 8 |
-| MessageList | - | 25 | - |
-| ChatInput | - | 19 | 4 |
-| ModelSelector | - | 30 | 12 |
-| Sidebar | - | 38 | 4 |
-| Header | - | 24 | 2 |
-| Layout | - | 27 | - |
-| Persistence | - | - | 16 |
-| **Total** | 175 | 181 | 78 |
+858 tests across 37 test files (Vitest + React Testing Library). Test files live alongside their source in each applet and component directory.
 
-Note: 486 unit/component tests + 48 E2E tests = 534 total tests
+Key test areas:
+- Stores (chatStore, modelStore, settingsStore, uiStore, batchStore, comparisonStore, explorerStore, performanceStore, notebookStore, modelsStore)
+- Chat applet (ChatInput, ChatView, MessageList, EmptyState, ConfirmDeleteModal, Sidebar)
+- Shared components (ModelSelector, MarkdownRenderer, Modal, SettingsPanel, layout components)
+- Utility libraries (db, color, id, messages, stale, tokens)
+- API client
+
+Test utilities live in `src/test/`: `render.tsx` (renderWithProviders), `mocks.ts` (mockFileReader), `setup.ts`.

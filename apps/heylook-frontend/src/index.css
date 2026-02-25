@@ -1,9 +1,10 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Dynamic viewport height: accounts for mobile browser chrome */
 html, body, #root {
-  height: 100dvh;
-  height: 100vh; /* fallback for browsers without dvh support */
+  height: 100vh;
+  height: 100dvh; /* preferred: respects mobile browser chrome */
 }
 
 /* Touch scrolling for iOS momentum */
@@ -49,11 +50,11 @@ html, body, #root {
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #64748b;
 }
 
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #94a3b8;
 }
 
 /* Safe area insets for iOS */

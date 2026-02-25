@@ -25,12 +25,15 @@
     "idb": "^8.0.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.0",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
     "@playwright/test": "^1.57.0",
+    "@tailwindcss/typography": "^0.5.19",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",

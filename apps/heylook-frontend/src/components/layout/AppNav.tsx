@@ -20,12 +20,13 @@ export const navItems: NavItem[] = [
 
 export function AppNav() {
   return (
-    <nav className="w-14 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col items-center py-3 gap-2">
+    <nav className="w-14 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col items-center py-3 gap-2" aria-label="Main navigation">
       {navItems.map(({ to, label, icon: Icon }) => (
         <NavLink
           key={to}
           to={to}
           title={label}
+          aria-label={label}
           className={({ isActive }) => clsx(
             'w-10 h-10 rounded-xl flex items-center justify-center transition-colors',
             isActive

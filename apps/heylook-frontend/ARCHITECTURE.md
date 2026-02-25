@@ -290,22 +290,23 @@ Production Build:
 
 ## Applet Platform (v1.9.0+)
 
-The frontend uses a lazy-loaded applet architecture with 6 applets:
+The frontend uses a lazy-loaded applet architecture with 7 applets:
 
-| Applet | Route | Store | Tests |
-|--------|-------|-------|-------|
-| Chat | `/` | chatStore (applet-owned) | ~200 |
-| Batch | `/batch` | batchStore (applet-owned) | 18 |
-| Token Explorer | `/explore` | explorerStore (applet-owned) | 21 |
-| Model Comparison | `/compare` | comparisonStore (applet-owned) | 33 |
-| Performance | `/perf` | performanceStore (applet-owned) | ~50 |
-| Notebook | `/notebook` | notebookStore (applet-owned) | ~50 |
+| Applet | Route | Store | Directory |
+|--------|-------|-------|-----------|
+| Chat | `/` | chatStore (applet-owned) | `applets/chat/` |
+| Batch | `/batch` | batchStore (applet-owned) | `applets/batch/` |
+| Token Explorer | `/explore` | explorerStore (applet-owned) | `applets/token-explorer/` |
+| Model Comparison | `/compare` | comparisonStore (applet-owned) | `applets/model-comparison/` |
+| Performance | `/perf` | performanceStore (applet-owned) | `applets/performance/` |
+| Notebook | `/notebook` | notebookStore (applet-owned) | `applets/notebook/` |
+| Models | `/models` | modelsStore (applet-owned) | `applets/models/` |
 
 Shared stores (model, settings, UI) remain in `src/stores/`.
 Shared components live in `src/components/` (primitives/, composed/, icons/, layout/).
 Each applet is lazy-loaded via `React.lazy` for code splitting.
 
-**Total: 711 tests across 31 test files.**
+**Total: 858 tests across 37 test files.**
 
 ## Future Considerations
 

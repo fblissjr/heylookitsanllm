@@ -22,12 +22,13 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
-// Mock ResizeObserver
-window.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}))
+// Mock ResizeObserver as a proper class (required by libraries that use `new ResizeObserver()`)
+class ResizeObserverMock {
+  observe() { }
+  unobserve() { }
+  disconnect() { }
+}
+window.ResizeObserver = ResizeObserverMock as unknown as typeof window.ResizeObserver
 
 // Mock clipboard API (required for jsdom)
 Object.defineProperty(navigator, 'clipboard', {

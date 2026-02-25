@@ -81,30 +81,35 @@ export function SettingsPanel() {
           </label>
           <div className="flex flex-wrap gap-2">
             {presets.map(preset => (
-              <button
-                key={preset.id}
-                onClick={() => handleSelectPreset(preset)}
-                className={clsx(
-                  'px-3 py-1.5 text-xs rounded-full transition-colors flex items-center gap-1',
-                  activePreset?.id === preset.id
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-                )}
-              >
-                {preset.name}
+              <div key={preset.id} className="flex items-center gap-0.5">
+                <button
+                  onClick={() => handleSelectPreset(preset)}
+                  className={clsx(
+                    'px-3 py-1.5 text-xs rounded-full transition-colors',
+                    !preset.isBuiltIn && 'rounded-r-md',
+                    activePreset?.id === preset.id
+                      ? 'bg-primary text-white'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                  )}
+                >
+                  {preset.name}
+                </button>
                 {!preset.isBuiltIn && (
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDeletePreset(preset)
-                    }}
-                    className="ml-1 p-0.5 rounded hover:bg-red-500/20"
+                    onClick={() => handleDeletePreset(preset)}
+                    className={clsx(
+                      'p-1 text-xs rounded-full transition-colors',
+                      activePreset?.id === preset.id
+                        ? 'bg-primary text-white/70 hover:text-white'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-400 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                    )}
                     title="Delete preset"
+                    aria-label={`Delete preset ${preset.name}`}
                   >
                     <CloseIcon className="w-3 h-3" />
                   </button>
                 )}
-              </button>
+              </div>
             ))}
           </div>
         </div>

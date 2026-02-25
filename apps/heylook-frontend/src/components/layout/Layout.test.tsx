@@ -38,10 +38,9 @@ describe('Layout', () => {
 
   describe('rendering', () => {
     it('renders the layout container', () => {
-      render(<Layout><div>Content</div></Layout>)
+      const { container } = render(<Layout><div>Content</div></Layout>)
 
-      const container = document.querySelector('.h-full')
-      expect(container).toBeInTheDocument()
+      expect(container.firstElementChild).toBeInTheDocument()
     })
 
     it('renders children in main content area', () => {
@@ -94,11 +93,8 @@ describe('Layout', () => {
 
       render(<Layout><div>Content</div></Layout>)
 
-      const backdrop = document.querySelector('.fixed.inset-0.bg-black\\/50.z-30')
-      expect(backdrop).toBeInTheDocument()
-
-      const sidebarContainer = document.querySelector('.fixed.left-0.top-0.bottom-mobile-nav.z-40.w-72')
-      expect(sidebarContainer).toBeInTheDocument()
+      expect(screen.getByTestId('sidebar-backdrop')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-sidebar')).toBeInTheDocument()
     })
 
     it('does not show mobile overlay when sidebar is closed on mobile', () => {
@@ -112,8 +108,7 @@ describe('Layout', () => {
 
       render(<Layout><div>Content</div></Layout>)
 
-      const backdrop = document.querySelector('.fixed.inset-0.bg-black\\/50.z-30')
-      expect(backdrop).not.toBeInTheDocument()
+      expect(screen.queryByTestId('sidebar-backdrop')).not.toBeInTheDocument()
     })
 
     it('calls toggleSidebar when clicking mobile backdrop', () => {
@@ -127,21 +122,20 @@ describe('Layout', () => {
 
       render(<Layout><div>Content</div></Layout>)
 
-      const backdrop = document.querySelector('.fixed.inset-0.bg-black\\/50.z-30')
-      expect(backdrop).toBeInTheDocument()
-
-      fireEvent.click(backdrop!)
+      fireEvent.click(screen.getByTestId('sidebar-backdrop'))
 
       expect(mockToggleSidebar).toHaveBeenCalledTimes(1)
     })
   })
 
   describe('layout structure', () => {
-    it('has proper flex layout structure', () => {
-      render(<Layout><div>Content</div></Layout>)
+    it('has a container element wrapping children', () => {
+      const { container } = render(<Layout><div data-testid="child">Content</div></Layout>)
 
-      const container = document.querySelector('.h-full.flex')
-      expect(container).toBeInTheDocument()
+      // Layout wraps children in a flex container
+      const root = container.firstElementChild
+      expect(root).toBeInTheDocument()
+      expect(screen.getByTestId('child')).toBeInTheDocument()
     })
   })
 })

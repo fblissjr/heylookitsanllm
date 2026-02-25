@@ -19,6 +19,7 @@ export function Layout({ children }: LayoutProps) {
       {isMobile && isSidebarOpen && (
         <>
           <div
+            data-testid="sidebar-backdrop"
             className="fixed inset-0 bg-black/50 z-30"
             onClick={() => useUIStore.getState().toggleSidebar()}
           />

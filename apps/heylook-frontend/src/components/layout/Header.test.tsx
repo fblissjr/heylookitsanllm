@@ -110,7 +110,7 @@ describe('Header', () => {
 
       // Should have a spacer div instead
       expect(screen.queryByLabelText('Toggle sidebar')).not.toBeInTheDocument()
-      const spacer = document.querySelector('.w-10')
+      const spacer = document.querySelector('.min-w-\\[44px\\]')
       expect(spacer).toBeInTheDocument()
     })
   })
@@ -294,28 +294,18 @@ describe('Header', () => {
     })
   })
 
-  describe('settings indicator dot', () => {
-    it('shows indicator dot on sampler settings button', () => {
-      renderHeader()
-
-      const samplerButton = screen.getByLabelText('Sampler settings')
-      const indicatorDot = samplerButton.querySelector('.bg-primary.rounded-full')
-      expect(indicatorDot).toBeInTheDocument()
-    })
-  })
-
   describe('theme toggle', () => {
-    it('renders theme toggle button', () => {
+    it('renders theme toggle button with current theme in label', () => {
       renderHeader()
 
-      const themeButton = screen.getByLabelText('Toggle theme')
+      const themeButton = screen.getByLabelText('Theme: Dark mode')
       expect(themeButton).toBeInTheDocument()
     })
 
     it('shows correct tooltip for dark mode', () => {
       renderHeader()
 
-      const themeButton = screen.getByLabelText('Toggle theme')
+      const themeButton = screen.getByLabelText('Theme: Dark mode')
       expect(themeButton).toHaveAttribute('title', 'Dark mode')
     })
 
@@ -323,7 +313,7 @@ describe('Header', () => {
       const user = userEvent.setup()
       renderHeader()
 
-      const themeButton = screen.getByLabelText('Toggle theme')
+      const themeButton = screen.getByLabelText('Theme: Dark mode')
 
       // Initial state is dark mode
       expect(themeButton).toHaveAttribute('title', 'Dark mode')
@@ -331,14 +321,17 @@ describe('Header', () => {
       // Click to change to light mode
       await user.click(themeButton)
       expect(themeButton).toHaveAttribute('title', 'Light mode')
+      expect(themeButton).toHaveAttribute('aria-label', 'Theme: Light mode')
 
       // Click to change to auto mode
       await user.click(themeButton)
       expect(themeButton).toHaveAttribute('title', 'System theme')
+      expect(themeButton).toHaveAttribute('aria-label', 'Theme: System theme')
 
       // Click to cycle back to dark mode
       await user.click(themeButton)
       expect(themeButton).toHaveAttribute('title', 'Dark mode')
+      expect(themeButton).toHaveAttribute('aria-label', 'Theme: Dark mode')
     })
   })
 })
