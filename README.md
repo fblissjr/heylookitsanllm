@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
-    <img src="assets/heylookitsanllm.jpeg" alt="Hey Look, It's an LLM logo" width="400">
+    <img src="assets/heylookitsanllm.jpeg" alt="Hey Look It's an LLM" width="400">
   </a>
   <br>
 </p>
