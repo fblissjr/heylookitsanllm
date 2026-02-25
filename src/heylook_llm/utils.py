@@ -3,7 +3,6 @@ import base64
 import io
 import json
 import logging
-import re
 import requests
 import time
 import os
@@ -109,60 +108,6 @@ def sanitize_request_for_debug(chat_request) -> str:
 
     return json.dumps(request_dict, indent=2)
 
-def sanitize_dict_for_debug(data: Dict[str, Any]) -> str:
-    """
-    Create a debug-friendly JSON representation of a raw request dictionary
-    that truncates base64 image data to 1-2 lines max.
-
-    Why: Raw request dictionaries can contain base64 image data in different
-    structures depending on the API format.
-    """
-    # Deep copy to avoid modifying original
-    import copy
-    sanitized = copy.deepcopy(data)
-
-    # Track image metadata for summary
-    image_stats = _analyze_images_in_dict(sanitized)
-
-    # Handle different API formats that might contain images
-    _sanitize_dict_recursive(sanitized)
-
-    # Add image summary to the top for easy visibility
-    if image_stats['count'] > 0:
-        sanitized['_debug_image_summary'] = {
-            'image_count': image_stats['count'],
-            'total_size': image_stats['total_size'],
-            'avg_size': image_stats['avg_size'],
-            'sizes': image_stats['sizes']
-        }
-
-    return json.dumps(sanitized, indent=2)
-
-def _sanitize_dict_recursive(obj: Any) -> None:
-    """
-    Recursively walk through a dictionary/list structure and truncate image data.
-    Modifies the object in place.
-    """
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if key == 'url' and isinstance(value, str) and value.startswith('data:image'):
-                # Direct URL field with base64 image
-                obj[key] = _truncate_image_url(value)
-            elif key == 'image' and isinstance(value, str) and value.startswith('data:image'):
-                # Alternative image field format
-                obj[key] = _truncate_image_url(value)
-            elif key == 'images' and isinstance(value, list):
-                # Alternative images array format
-                for i, img in enumerate(value):
-                    if isinstance(img, str) and img.startswith('data:image'):
-                        value[i] = _truncate_image_url(img)
-            else:
-                # Recurse into nested structures
-                _sanitize_dict_recursive(value)
-    elif isinstance(obj, list):
-        for item in obj:
-            _sanitize_dict_recursive(item)
-
 def _analyze_images_in_request(request_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Analyze images in a ChatRequest structure and return metadata.
@@ -190,51 +135,6 @@ def _analyze_images_in_request(request_dict: Dict[str, Any]) -> Dict[str, Any]:
                                 image_stats['sizes'].append(_format_bytes(bytes_size))
                             except Exception:
                                 pass
-    
-    if image_stats['count'] > 0:
-        image_stats['total_size'] = _format_bytes(total_bytes)
-        image_stats['avg_size'] = _format_bytes(total_bytes // image_stats['count'])
-    
-    return image_stats
-
-def _analyze_images_in_dict(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze images in any dictionary structure and return metadata.
-    """
-    image_stats = {'count': 0, 'sizes': [], 'total_size': '0B', 'avg_size': '0B'}
-    total_bytes = 0
-    
-    def count_images_recursive(obj):
-        nonlocal total_bytes
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if key in ['url', 'image'] and isinstance(value, str) and value.startswith('data:image'):
-                    try:
-                        _, encoded = value.split(',', 1)
-                        bytes_size = (len(encoded) * 3) // 4
-                        total_bytes += bytes_size
-                        image_stats['count'] += 1
-                        image_stats['sizes'].append(_format_bytes(bytes_size))
-                    except Exception:
-                        pass
-                elif key == 'images' and isinstance(value, list):
-                    for img in value:
-                        if isinstance(img, str) and img.startswith('data:image'):
-                            try:
-                                _, encoded = img.split(',', 1)
-                                bytes_size = (len(encoded) * 3) // 4
-                                total_bytes += bytes_size
-                                image_stats['count'] += 1
-                                image_stats['sizes'].append(_format_bytes(bytes_size))
-                            except Exception:
-                                pass
-                else:
-                    count_images_recursive(value)
-        elif isinstance(obj, list):
-            for item in obj:
-                count_images_recursive(item)
-    
-    count_images_recursive(data)
     
     if image_stats['count'] > 0:
         image_stats['total_size'] = _format_bytes(total_bytes)
@@ -410,20 +310,6 @@ class RealTimeLogger:
 
         # Clean up
         del self.active_requests[request_id]
-
-    def log_active_requests(self):
-        """Log summary of currently active requests."""
-        if not self.active_requests:
-            return
-
-        logging.info(f"Active requests: {len(self.active_requests)}")
-        for request_id, metrics in self.active_requests.items():
-            elapsed = metrics.elapsed_time()
-            tps = metrics.tokens_per_second()
-            logging.info(
-                f"{request_id[:8]} | {metrics.stage} | {metrics.model_id} | "
-                f"{metrics.generated_tokens} tokens @ {tps:.1f} tok/s | {elapsed:.2f}s"
-            )
 
     def _get_memory_info(self) -> Dict[str, float]:
         """Get current memory usage information."""

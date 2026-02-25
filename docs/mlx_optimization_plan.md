@@ -227,11 +227,11 @@ On Apple Silicon, batch-size-1 generation is **memory bandwidth bound**, not com
 
 Meanwhile, unquantized float16 KV caches for 32K+ context windows consume 10GB+ of RAM. When the Mac starts swapping to SSD, TPS drops to near zero. Quantized KV caches (4-bit or 8-bit) cut this by 2-4x with minimal quality loss.
 
-### current state -- speculative decoding
+### state at time of planning (pre-v1.15.0)
 
-- `TextOnlyStrategy` and `VLMTextOnlyStrategy` already pass `draft_model` to `lm_stream_generate`
+- `UnifiedTextStrategy` passes `draft_model` to `lm_stream_generate` via `generation_core`
 - Draft model loading exists in `load_model()` via `config.get('draft_model_path')`
-- No automatic draft model selection, no acceptance rate monitoring, no tuning
+- Acceptance rate monitoring and DraftTuner added in v1.17.0
 
 ### current state -- kv quantization
 
@@ -287,109 +287,76 @@ Meanwhile, unquantized float16 KV caches for 32K+ context windows consume 10GB+ 
 
 ---
 
-## phase 5: provider unification
+## phase 5: vision path unification (DONE -- v1.18.0)
+
+> **Status**: DONE (v1.18.0) -- implemented via pre-filled cache, not `inputs_embeds`
 
 ### goal
 
-Merge the VLM vision path into a single unified provider. Vision becomes a preprocessor rather than a separate generation path.
+Route all generation (text + vision) through `generation_core.run_generation()` so vision requests get the full sampler suite, abort support, and future optimizations automatically.
 
-### current state
+### what was built (v1.16.0 through v1.18.0)
 
-Three generation strategies exist:
-- `TextOnlyStrategy` -- uses `mlx_lm.stream_generate` directly
-- `VLMTextOnlyStrategy` -- wraps VLM's `language_model` component with `LanguageModelLogitsWrapper`, uses `mlx_lm.stream_generate`
-- `VLMVisionStrategy` -- uses `mlx_vlm`'s custom generation with `create_vlm_generator_with_sampling`
+The original plan called for `inputs_embeds` support in `lm_stream_generate`, which upstream never added. Instead, a pre-filled cache pattern (inspired by vllm-mlx) achieved the same goal:
 
-The split means:
-- Optimizations (compilation, caching) must be implemented 3 times
-- Speculative decoding only works for text paths
-- Testing surface is 3x larger
+**Phase 5a (v1.16.0)**: Merged `TextOnlyStrategy` and `VLMTextOnlyStrategy` into `UnifiedTextStrategy`. Reduced 3 strategies to 2 (text + vision).
 
-### design
+**Phase 5b (v1.18.0)**: Replaced `mlx_vlm.generate.stream_generate` with the pre-filled cache approach:
 
-Vision as a preprocessor:
-```
-image -> vision_tower -> image_embeddings
-text -> tokenizer -> text_embeddings
-[image_embeddings, text_embeddings] -> unified_LLM_forward -> tokens
-```
+1. `mlx_vlm.utils.prepare_inputs` tokenizes text + images (handles model-specific grids, e.g. Qwen `image_grid_thw`)
+2. Full VLM forward pass fills a KV cache: `model(input_ids, cache=request_cache, pixel_values=...)`
+3. First token sampled from VLM output logits
+4. `run_generation(pre_filled_cache=request_cache)` continues using `lm_stream_generate`
 
-The key insight: VLM models already have a language model component that works the same as text-only models. The only difference is how the input embeddings are constructed. By extracting vision processing into a separate preprocessor step, the generation loop becomes identical for all modalities.
+This eliminated `vlm_generation.py` (55 lines) and gave vision the full sampler suite (top_k, min_p, presence_penalty, logit_bias, XTC), abort support, and DraftTuner acceptance tracking.
 
-### unified generation flow
+### remaining gaps
 
+- **First-token asymmetry**: First token sampled outside `run_generation()` (no DraftTuner for that token)
+- **No radix cache for vision**: Pre-filled cache includes vision embeddings; can't be stored in the token-based radix tree
+- **No speculative decode for vision prefill**: Draft model not passed to `run_generation()` for vision (pre-filled cache is incompatible with speculative prefill)
+
+### historical: original `inputs_embeds` design
+
+The original plan proposed passing `inputs_embeds` directly to `lm_stream_generate`:
 ```python
-class UnifiedStrategy:
-    def generate(self, request, ...):
-        # Step 1: Build input embeddings
-        if has_images:
-            embeddings = vision_preprocessor.encode(images, text, processor)
-        else:
-            embeddings = text_embeddings(text, tokenizer)
-
-        # Step 2: Generate (same code path for all modalities)
-        for token in lm_stream_generate(
-            model=language_model,
-            inputs_embeds=embeddings,  # key: pass embeddings, not tokens
-            sampler=sampler,
-            ...
-        ):
-            yield token
+# This approach was NOT implemented -- lm_stream_generate never added inputs_embeds support
+embeddings = vision_preprocessor.encode(images, text, processor)
+for token in lm_stream_generate(model=language_model, inputs_embeds=embeddings, ...):
+    yield token
 ```
 
-### prerequisites
-
-- Phase 3 (compiled decode) should be done first -- unification means one compilation path instead of three
-- Phase 4 (speculative decoding) should be done first -- draft model compatibility is simpler with unified path
-- `mlx_lm.stream_generate` must support `inputs_embeds` parameter (check upstream API)
-
-### key files
-
-- `providers/mlx_provider.py` -- merge three strategies into one
-- `providers/common/vlm_generation.py` -- refactor into vision preprocessor
-- `providers/common/vision_preprocessor.py` -- new file for image -> embeddings conversion
-
-### verification
-
-- Correctness: output comparison for text-only, VLM text-only, and VLM vision between unified and legacy paths
-- Performance: verify no regression from the indirection
-- Test reduction: merge 3 sets of strategy tests into 1
-
-### risk
-
-This is the highest-risk phase because it touches the core generation loop. Mitigation:
-- Keep legacy strategies as fallback behind a config flag
-- Extensive A/B testing before removing legacy code
-- Only proceed after Phases 3 and 4 prove the unified approach works
+The pre-filled cache approach achieves the same result (single decode path) without requiring upstream API changes.
 
 ---
 
 ## dependency graph
 
 ```
-Phase 1 (DONE)
+Phase 1 (DONE v1.13.0)
     |
-    +-- Phase 2 (radix-tree caching) -- independent
+    +-- Phase 2 (DONE v1.14.0) -- radix-tree caching
     |
-    +-- Phase 3 (compiled decode)
+    +-- Phase 3 (DONE v1.14.0) -- pure MLX samplers
     |       |
-    |       +-- Phase 4 (speculative decoding hardening)
+    |       +-- Phase 4 (DONE v1.15.0) -- speculative decoding hardening
     |               |
-    |               +-- Phase 5 (provider unification)
+    |               +-- Phase 5 (DONE v1.16.0-v1.18.0) -- vision path unification
     |
-    Phase 2 can proceed in parallel with Phase 3
+    +-- Phase 6 (DONE v1.17.0) -- generation core maturity
 ```
 
-Phases 2 and 3 are independent and can be worked on in parallel. Phase 4 depends on Phase 3 (compiled decode). Phase 5 depends on both 3 and 4.
+All phases complete. Remaining optimization opportunities (shape bucketing, `mx.compile`, automatic draft model selection) are tracked in `internal/session/TODO.md` as deferred items.
 
 ---
 
-## expected impact summary
+## impact summary (final)
 
-| Metric | Current | After Phase 2 | After Phase 3 | After Phase 4 | After Phase 5 |
-|--------|---------|---------------|---------------|---------------|---------------|
-| TTFT (multi-turn) | 1-3s | ~50ms | ~50ms | ~50ms | ~50ms |
-| TPS (decode) | baseline | baseline | +10-20% | +100-200% | +100-200% |
-| KV cache VRAM | 100% (fp16) | 100% (fp16) | 100% (fp16) | 25-50% (4-8 bit) | 25-50% (4-8 bit) |
-| Code complexity | 3 strategies | 3 strategies | 3 strategies | 3 strategies | 1 strategy |
-| JIT recompilations | per-token | per-token | 0 after first | 0 after first | 0 after first |
+| Metric | Before | After All Phases |
+|--------|--------|------------------|
+| TTFT (multi-turn) | 1-3s | ~50ms (radix cache) |
+| TPS (decode) | baseline | +100-200% (speculative decoding with DraftTuner) |
+| KV cache VRAM | 100% (fp16) | 25-50% (4-8 bit quantized KV) |
+| Code complexity | 3 strategies | 2 strategies, shared decode via `run_generation()` |
+| Vision sampling | limited (no top-k, min-p, XTC) | full sampler suite (pre-filled cache pattern) |
+| Deferred | -- | shape bucketing, `mx.compile`, auto draft selection |

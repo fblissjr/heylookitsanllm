@@ -1,0 +1,11 @@
+[meta]
+name = "wide_sampling"
+description = "Broader sampling, longer output, standard KV cache"
+
+[defaults]
+temperature = 0.8
+top_p = 0.95
+top_k = 50
+max_tokens = 1024
+repetition_penalty = 1.1
+cache_type = "standard"

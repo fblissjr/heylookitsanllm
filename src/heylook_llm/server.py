@@ -28,22 +28,10 @@ def get_api_endpoints(app_instance):
 
 
 def _log_disk_usage(args):
-    """Log disk usage of analytics DB and log directory at startup."""
+    """Log disk usage of log directory at startup."""
     from pathlib import Path
-    from heylook_llm.analytics_config import analytics_config
 
     parts = []
-
-    # Analytics DB
-    if analytics_config.enabled:
-        db_path = Path(analytics_config.db_path).expanduser()
-        if db_path.exists():
-            size_mb = db_path.stat().st_size / (1024 * 1024)
-            parts.append(f"analytics DB: {size_mb:.1f}MB (limit: {analytics_config.max_db_size_mb}MB)")
-        else:
-            parts.append("analytics DB: not yet created")
-    else:
-        parts.append("analytics DB: disabled")
 
     # Log directory
     if args.file_log_level:
@@ -55,7 +43,8 @@ def _log_disk_usage(args):
     else:
         parts.append("file logging: disabled")
 
-    logging.info(f"Disk usage -- {', '.join(parts)}")
+    if parts:
+        logging.info(f"Disk usage -- {', '.join(parts)}")
 
 
 def main():
@@ -88,10 +77,12 @@ def main():
         default="models.toml",
         help="Output file for generated configuration (default: models.toml)"
     )
+    from heylook_llm.model_service import get_available_profiles
+    profile_names = get_available_profiles()
     import_parser.add_argument(
         "--profile",
-        choices=["fast", "balanced", "quality", "performance", "max_quality", "background", "memory", "interactive"],
-        help="Apply a predefined profile for model defaults (max_quality=no quantization, performance=high throughput, background=24/7 low resource)"
+        choices=profile_names,
+        help="Apply a predefined profile for model defaults (see profiles/ directory for details)"
     )
     import_parser.add_argument(
         "--override",
@@ -108,6 +99,11 @@ def main():
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
         help="Logging level"
+    )
+    import_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Interactively customize sampler and KV cache settings for each discovered model"
     )
 
     # Service command - manage background service (macOS/Linux)
@@ -186,10 +182,6 @@ def main():
         from heylook_llm.service_manager import manage_service
         sys.exit(manage_service(args))
 
-    # Default port if not provided
-    if args.port is None:
-        args.port = 8080
-
     # Set up logging with separate console and file handlers
     import logging.handlers
     from pathlib import Path
@@ -247,10 +239,6 @@ def main():
     from heylook_llm.optimizations.status import log_all_optimization_status
     log_all_optimization_status()
 
-    # Initialize metrics database (will auto-detect if enabled)
-    from heylook_llm.metrics_db_wrapper import init_metrics_db
-    init_metrics_db()
-
     # Initialize the router and store it in the app's state
     # Pass "models" without extension - router will try .toml first, then .yaml
     router = ModelRouter(
@@ -260,12 +248,10 @@ def main():
     )
 
     # Check if any providers are available
-    from heylook_llm.router import HAS_MLX, HAS_LLAMA_CPP
-    if not HAS_MLX and not HAS_LLAMA_CPP:
-        logging.error("No model providers available! Please install at least one provider:")
-        logging.error("  - For MLX models: uv sync --extra mlx")
-        logging.error("  - For GGUF models: uv sync --extra llama-cpp")
-        logging.error("  - For both: uv sync --extra all")
+    from heylook_llm.router import HAS_MLX
+    if not HAS_MLX:
+        logging.error("No model providers available! Please install MLX:")
+        logging.error("  uv sync --extra mlx")
         sys.exit(1)
 
     # Use the app from api.py directly (single source of truth for endpoints)

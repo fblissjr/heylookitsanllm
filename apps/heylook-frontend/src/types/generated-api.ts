@@ -338,8 +338,7 @@ export interface paths {
          *     - `return_attention_mask` (boolean, optional): Include attention mask
          *     - `encoding_format` (string, optional): "float" (default) or "base64"
          *
-         *     **Note:** Currently only supported for MLX models. llama.cpp models will
-         *     return an error as intermediate layer access is not available.
+         *     **Note:** Only supported for MLX models.
          */
         post: operations["extract_hidden_states_endpoint_v1_hidden_states_post"];
         delete?: never;
@@ -2310,7 +2309,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "detail": "Hidden state extraction from llama.cpp is not supported."
+                     *       "detail": "Hidden state extraction is not supported for this model."
                      *     }
                      */
                     "application/json": unknown;

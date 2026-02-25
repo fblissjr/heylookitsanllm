@@ -1,0 +1,11 @@
+[meta]
+name = "conversation"
+description = "Moderate sampling tuned for chat and interactive use"
+
+[defaults]
+temperature = 0.7
+top_k = 30
+min_p = 0.05
+max_tokens = 512
+repetition_penalty = 1.05
+repetition_context_size = 20

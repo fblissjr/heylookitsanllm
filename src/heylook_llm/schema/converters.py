@@ -169,31 +169,3 @@ def from_openai_response_dict(
     )
 
 
-def to_openai_messages(request: MessageCreateRequest) -> List[Dict]:
-    """Convert MessageCreateRequest messages to OpenAI-format message dicts.
-
-    Useful for logging, debugging, or passing to external APIs.
-    """
-    messages = []
-    if request.system:
-        messages.append({"role": "system", "content": request.system})
-
-    for msg in request.messages:
-        if isinstance(msg.content, str):
-            messages.append({"role": msg.role, "content": msg.content})
-        else:
-            parts = []
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    parts.append({"type": "text", "text": block.text})
-                elif isinstance(block, ImageBlock):
-                    if block.source_type == "base64" and block.data:
-                        url = f"data:{block.media_type};base64,{block.data}"
-                    elif block.url:
-                        url = block.url
-                    else:
-                        continue
-                    parts.append({"type": "image_url", "image_url": {"url": url}})
-            messages.append({"role": msg.role, "content": parts})
-
-    return messages

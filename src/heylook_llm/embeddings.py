@@ -1,6 +1,5 @@
 # src/heylook_llm/embeddings.py
 import logging
-import time
 from typing import Dict, List, Union, Optional, Any
 from pydantic import BaseModel, Field
 import numpy as np
@@ -186,158 +185,17 @@ class MLXEmbeddingExtractor(EmbeddingExtractor):
             logging.error(f"Error extracting embeddings: {e}")
             raise
 
-class LlamaCppEmbeddingExtractor(EmbeddingExtractor):
-    """Extract embeddings from llama.cpp models."""
-    
-    def __init__(self, model):
-        self.model = model
-        
-    def extract(self, texts: List[str], normalize: bool = True) -> List[List[float]]:
-        """
-        Extract embeddings from llama.cpp models.
-        
-        Args:
-            texts: List of texts to embed
-            normalize: Whether to L2 normalize embeddings
-        """
-        embeddings = []
-        
-        # Check if model supports batch embedding
-        if hasattr(self.model, 'create_embedding'):
-            try:
-                # Try batch processing first (more efficient)
-                result = self.model.create_embedding(texts)
-                
-                # Handle the response format
-                if isinstance(result, dict):
-                    if 'data' in result:
-                        # OpenAI-style response format
-                        for item in result['data']:
-                            embedding = item.get('embedding', [])
-                            
-                            # Check if we got token-level embeddings (nested list)
-                            if embedding and isinstance(embedding[0], list):
-                                # We have token-level embeddings, need to aggregate
-                                # Use mean pooling across tokens
-                                embedding_array = np.array(embedding)  # Shape: [n_tokens, embedding_dim]
-                                embedding = np.mean(embedding_array, axis=0).tolist()  # Mean across tokens
-                                logging.debug(f"Aggregated {embedding_array.shape[0]} token embeddings to single vector")
-                            
-                            if normalize and embedding and any(e != 0 for e in embedding):
-                                norm = np.linalg.norm(embedding)
-                                if norm > 0:
-                                    embedding = (np.array(embedding) / norm).tolist()
-                            embeddings.append(embedding)
-                        return embeddings
-                    elif 'embedding' in result:
-                        # Single embedding response
-                        embedding = result['embedding']
-                        
-                        # Check if we got token-level embeddings (nested list)
-                        if embedding and isinstance(embedding[0], list):
-                            # We have token-level embeddings, need to aggregate
-                            embedding_array = np.array(embedding)  # Shape: [n_tokens, embedding_dim]
-                            embedding = np.mean(embedding_array, axis=0).tolist()  # Mean across tokens
-                            logging.debug(f"Aggregated {embedding_array.shape[0]} token embeddings to single vector")
-                        
-                        if normalize and embedding and any(e != 0 for e in embedding):
-                            norm = np.linalg.norm(embedding)
-                            if norm > 0:
-                                embedding = (np.array(embedding) / norm).tolist()
-                        return [embedding]  # Return as list of one embedding
-                        
-            except Exception as e:
-                logging.debug(f"Batch embedding failed, trying individual: {e}")
-        
-        # Fallback to individual embedding
-        for text in texts:
-            embedding = None
-            
-            # llama-cpp-python supports embeddings through create_embedding
-            if hasattr(self.model, 'create_embedding'):
-                try:
-                    # Use the create_embedding method which is the standard way
-                    result = self.model.create_embedding(text)
-                    if isinstance(result, dict):
-                        if 'data' in result and len(result['data']) > 0:
-                            # OpenAI-style response
-                            embedding = result['data'][0].get('embedding', [])
-                        elif 'embedding' in result:
-                            # Direct embedding response
-                            embedding = result['embedding']
-                    else:
-                        embedding = result
-                    
-                    # Check if we got token-level embeddings (nested list)
-                    if embedding and isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list):
-                        # We have token-level embeddings, need to aggregate
-                        embedding_array = np.array(embedding)  # Shape: [n_tokens, embedding_dim]
-                        embedding = np.mean(embedding_array, axis=0).tolist()  # Mean across tokens
-                        logging.debug(f"Aggregated {embedding_array.shape[0]} token embeddings to single vector")
-                except Exception as e:
-                    logging.warning(f"create_embedding failed: {e}, trying alternative methods")
-            
-            # Alternative: use embed method if available
-            if embedding is None and hasattr(self.model, 'embed'):
-                try:
-                    embedding = self.model.embed(text)
-                except Exception as e:
-                    logging.warning(f"embed method failed: {e}")
-            
-            # Fallback: get embeddings from evaluated tokens
-            if embedding is None:
-                try:
-                    # Tokenize the text
-                    tokens = self.model.tokenize(text.encode('utf-8'))
-                    
-                    # Reset context and evaluate tokens
-                    self.model.reset()
-                    self.model.eval(tokens)
-                    
-                    # Try to get embeddings from the model state
-                    # Note: This is model-dependent and may not work for all models
-                    if hasattr(self.model, 'n_embd'):
-                        n_embd = self.model.n_embd()
-                        # Create placeholder embeddings
-                        # In practice, this would need access to internal model state
-                        embedding = [0.0] * n_embd
-                        logging.warning("Using placeholder embeddings for llama.cpp model without embedding support")
-                except Exception as e:
-                    logging.error(f"Failed to extract embeddings: {e}")
-                    # Return zero vector as last resort
-                    embedding = [0.0] * 768  # Default embedding size
-            
-            # Ensure embedding is a list
-            if not isinstance(embedding, list):
-                embedding = list(embedding) if hasattr(embedding, '__iter__') else [embedding]
-            
-            # Normalize if requested
-            if normalize and embedding and any(e != 0 for e in embedding):
-                norm = np.linalg.norm(embedding)
-                if norm > 0:
-                    embedding = (np.array(embedding) / norm).tolist()
-            
-            embeddings.append(embedding)
-        
-        return embeddings
+def create_embedding_extractor(model: Any, processor: Any) -> MLXEmbeddingExtractor:
+    """
+    Factory function to create an MLX embedding extractor.
 
-def create_embedding_extractor(provider_type: str, model: Any, processor: Any = None) -> EmbeddingExtractor:
-    """
-    Factory function to create the appropriate embedding extractor.
-    
     Args:
-        provider_type: Type of provider ('mlx' or 'llama_cpp')
-        model: The loaded model
-        processor: The processor/tokenizer (for MLX models)
+        model: The loaded MLX model
+        processor: The processor/tokenizer
     """
-    if provider_type == "mlx":
-        if processor is None:
-            raise ValueError("MLX models require a processor/tokenizer")
-        return MLXEmbeddingExtractor(model, processor)
-    elif provider_type in ["llama_cpp", "gguf"]:
-        return LlamaCppEmbeddingExtractor(model)
-    else:
-        raise ValueError(f"Unknown provider type: {provider_type}")
+    if processor is None:
+        raise ValueError("MLX models require a processor/tokenizer")
+    return MLXEmbeddingExtractor(model, processor)
 
 async def create_embeddings(
     request: EmbeddingRequest,
@@ -345,7 +203,7 @@ async def create_embeddings(
 ) -> EmbeddingResponse:
     """
     Create embeddings for the given input text(s).
-    
+
     Args:
         request: The embedding request
         router: The model router instance
@@ -353,42 +211,16 @@ async def create_embeddings(
     try:
         # Ensure input is a list
         texts = request.input if isinstance(request.input, list) else [request.input]
-        
-        # Load the model (router.get_provider is synchronous, not async)
+
+        # Load the model
         provider = router.get_provider(request.model)
-        
-        # Determine provider type by checking the class
-        provider_class_name = provider.__class__.__name__
-        if 'MLX' in provider_class_name:
-            provider_type = 'mlx'
-        elif 'LlamaCpp' in provider_class_name:
-            provider_type = 'llama_cpp'
-        else:
-            # Fallback: try to infer from model file extension
-            model_path = provider.config.get('model_path', '')
-            if '.gguf' in model_path.lower():
-                provider_type = 'llama_cpp'
-            else:
-                provider_type = 'mlx'
-        
-        # Create the appropriate extractor
-        if provider_type == "mlx":
-            # MLX providers have a processor/tokenizer
-            processor = getattr(provider, 'processor', None)
-            if processor is None:
-                raise ValueError(f"MLX provider for model {request.model} has no processor/tokenizer")
-            extractor = create_embedding_extractor(
-                provider_type,
-                provider.model,
-                processor
-            )
-        else:  # llama_cpp
-            # Llama.cpp providers don't have a separate processor
-            extractor = create_embedding_extractor(
-                provider_type,
-                provider.model
-            )
-        
+
+        # MLX providers have a processor/tokenizer
+        processor = getattr(provider, 'processor', None)
+        if processor is None:
+            raise ValueError(f"Provider for model {request.model} has no processor/tokenizer")
+        extractor = create_embedding_extractor(provider.model, processor)
+
         # Extract embeddings
         embeddings = extractor.extract(texts)
         

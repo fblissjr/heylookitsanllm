@@ -194,16 +194,17 @@ def run_generation(
     draft_model=None,
     cache_manager=None,
     abort_event=None,
+    pre_filled_cache=None,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
     This is the only place lm_stream_generate is called for text. It handles:
     - Cache config construction from effective_request
-    - Radix-tree prompt cache lookup
+    - Radix-tree prompt cache lookup (skipped when pre_filled_cache provided)
     - lm_stream_generate call with wired_limit scope
     - Abort checking (Python bool, no GPU sync)
     - Speculative decoding acceptance tracking (Python ints only)
-    - Leading space cleanup on first token
+    - Leading space cleanup on first token (skipped for pre_filled_cache)
     - KV snapshot storage in finally block
 
     Args:
@@ -217,18 +218,30 @@ def run_generation(
         draft_model: Draft model for speculative decoding (or None)
         cache_manager: PromptCacheManager instance (or None for default)
         abort_event: AbortEvent for cooperative cancellation
+        pre_filled_cache: Pre-populated KV cache from VLM vision forward pass.
+            When provided, skips radix cache setup and leading space cleanup.
 
     Yields:
         Generation response objects from lm_stream_generate.
     """
-    if cache_manager is None:
-        cache_manager = get_global_cache_manager()
+    if pre_filled_cache is not None:
+        # Vision path: cache already populated by VLM forward pass.
+        # Skip radix cache -- vision embeddings can't be cached in the radix tree.
+        prompt_cache = None
+        tokens_to_process = prompt_tokens
+        generation_cache = pre_filled_cache
+        logging.info(
+            f"Using pre-filled cache for generation, processing {len(tokens_to_process)} token(s)"
+        )
+    else:
+        if cache_manager is None:
+            cache_manager = get_global_cache_manager()
 
-    cache_config = _build_cache_config(effective_request)
+        cache_config = _build_cache_config(effective_request)
 
-    prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
-        model_id, model, prompt_tokens, cache_config, cache_manager
-    )
+        prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
+            model_id, model, prompt_tokens, cache_config, cache_manager
+        )
 
     def prompt_progress_callback(processed: int, total: int):
         logging.debug(f"Prompt processing: {processed}/{total} tokens")
@@ -277,9 +290,10 @@ def run_generation(
                     if response.from_draft:
                         draft_accepted += 1
 
-                # Leading space cleanup (first token only)
+                # Leading space cleanup (first token only, skip for pre-filled cache
+                # where continuation starts mid-sequence)
                 if first_token:
-                    if response.text.startswith(' '):
+                    if pre_filled_cache is None and response.text.startswith(' '):
                         response.text = response.text.lstrip()
                     first_token = False
 

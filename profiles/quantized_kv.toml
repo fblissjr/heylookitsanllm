@@ -1,0 +1,11 @@
+[meta]
+name = "quantized_kv"
+description = "KV cache quantization only, no sampler changes"
+
+[defaults]
+cache_type = "quantized"
+kv_bits = 8
+kv_group_size = 32
+quantized_kv_start = 256
+max_kv_size = 1024
+max_tokens = 256

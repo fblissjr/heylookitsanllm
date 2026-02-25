@@ -702,7 +702,7 @@ const response = await extractStructuredHiddenStates({
 - Server applies Qwen3 chat template internally
 - Returns token indices showing where each section starts/ends
 - Supports pre-filled thinking and assistant content
-- MLX models only (not supported for llama.cpp)
+- MLX models only
 - Returns raw hidden states from specified layer (default: -2)
 
 **Token Boundaries:**
@@ -749,7 +749,7 @@ export interface Model {
   object: 'model';
   created?: number;
   owned_by: string;
-  provider?: 'mlx' | 'llama_cpp' | 'gguf' | 'mlx_stt';
+  provider?: 'mlx' | 'mlx_stt';
   capabilities?: string[];  // e.g., ['chat', 'vision', 'hidden_states', 'thinking']
 }
 

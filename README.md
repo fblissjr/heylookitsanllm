@@ -2,14 +2,13 @@
 
 Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a React web UI, and on-the-fly model swapping.
 
-Built on Apple MLX for text, vision, and speech-to-text, with llama.cpp support for cross-platform GGUF inference.
+Built on Apple MLX for text, vision, and speech-to-text.
 
 ## Key Features
 
 - **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic Messages-style `/v1/messages` with typed content blocks (text, image, thinking, logprobs, hidden states)
 - **Multi-Provider**:
   - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
-  - **llama.cpp**: Cross-platform GGUF via llama-server subprocess (CUDA, Vulkan, CPU)
   - **MLX STT**: Speech-to-text via [parakeet-mlx](https://github.com/senstella/parakeet-mlx)
 - **Thinking Blocks**: Qwen3-style `<think>` parsing with token-level detection, round-trip editing, and streaming
 - **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
@@ -36,9 +35,7 @@ See [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE
 
 ## Platform Support
 
-- **macOS**: MLX + llama.cpp backends, STT
-- **Linux**: llama.cpp backend (CUDA, CPU)
-- **Windows**: llama.cpp backend (CUDA, Vulkan, CPU)
+- **macOS (Apple Silicon)**: MLX backend + MLX STT
 
 ## Quick Start
 
@@ -88,7 +85,7 @@ There are three ways to add models:
 **CLI** -- Scan a directory or HF cache and generate config:
 ```bash
 heylookllm import --folder ~/models --output models.toml
-heylookllm import --hf-cache --profile fast
+heylookllm import --hf-cache --profile tight_fast
 ```
 
 **API** -- Scan then import programmatically (server must be running):
@@ -101,7 +98,7 @@ curl -X POST http://localhost:8080/v1/admin/models/scan \
 # Import selected models from scan results
 curl -X POST http://localhost:8080/v1/admin/models/import \
   -H "Content-Type: application/json" \
-  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "fast"}'
+  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "tight_fast"}'
 ```
 
 If you edit `models.toml` directly while the server is running, reload the config:

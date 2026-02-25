@@ -143,16 +143,6 @@ class MLXModelConfig(BaseModel):
     default_max_length: int = 512
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
-    thinking_token_ids: Optional[List[int]] = None  # e.g., [151667, 151668] for <think>, </think>
-
-class LlamaCppModelConfig(BaseModel):
-    model_path: str
-    mmproj_path: Optional[str] = None
-    chat_format: Optional[str] = None
-    chat_format_template: Optional[str] = None
-    n_gpu_layers: int = -1
-    n_ctx: int = 4096
-    vision: bool = False
 
 class MLXSTTModelConfig(BaseModel):
     """Configuration for MLX STT models (parakeet-mlx)."""
@@ -166,8 +156,8 @@ class MLXSTTModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "llama_cpp", "gguf", "mlx_stt"]  # Support all providers
-    config: Union[MLXModelConfig, LlamaCppModelConfig, MLXSTTModelConfig]
+    provider: Literal["mlx", "mlx_stt"]
+    config: Union[MLXModelConfig, MLXSTTModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -179,8 +169,6 @@ class ModelConfig(BaseModel):
         provider = values.get('provider')
         if provider == 'mlx':
             return MLXModelConfig(**v)
-        elif provider in ['llama_cpp', 'gguf']:  # Support both names
-            return LlamaCppModelConfig(**v)
         elif provider == 'mlx_stt':
             return MLXSTTModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
@@ -238,24 +226,6 @@ class CacheInfo(BaseModel):
     tokens_cached: int = Field(..., description="Number of tokens in cache")
     size_mb: float = Field(..., description="Cache file size in MB")
     created_at: str = Field(..., description="ISO timestamp of creation")
-
-
-# Placeholder models for future /v1/cache/save endpoint (not yet implemented)
-class CacheSaveRequest(BaseModel):
-    """Request to save current prompt cache."""
-    model: str = Field(..., description="Model ID to save cache for")
-    name: str = Field(..., description="User-friendly name for the cache")
-    description: Optional[str] = Field(None, description="Optional description")
-
-
-class CacheSaveResponse(BaseModel):
-    """Response from cache save operation."""
-    cache_id: str
-    model: str
-    name: str
-    tokens_cached: int
-    size_mb: float
-    created_at: str
 
 
 class CacheListResponse(BaseModel):
@@ -382,7 +352,7 @@ class ScannedModelResponse(BaseModel):
     """A model discovered during filesystem scan."""
     id: str = Field(..., description="Auto-generated model identifier")
     path: str = Field(..., description="Filesystem path to model")
-    provider: Literal["mlx", "gguf"] = Field(..., description="Detected provider type")
+    provider: Literal["mlx"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
     vision: bool = Field(False, description="Whether model supports vision")
     quantization: Optional[str] = Field(None, description="Quantization level (4bit, 8bit, etc)")
@@ -400,7 +370,7 @@ class ModelScanRequest(BaseModel):
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models."""
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    profile: Optional[str] = Field("balanced", description="Profile to apply to all imported models")
+    profile: Optional[str] = Field("moderate", description="Profile to apply to all imported models")
 
 
 class ModelUpdateRequest(BaseModel):

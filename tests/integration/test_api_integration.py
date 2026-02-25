@@ -299,52 +299,6 @@ def test_advanced_sampling_features():
     
     return len(successful_tests) == len(results)
 
-def test_performance_monitoring():
-    """Test that performance monitoring is working."""
-    print("📊 Testing Performance Monitoring...")
-    
-    if not check_server_running():
-        print("❌ Server not running on port 8080")
-        return False
-    
-    available_models = get_available_models()
-    if not available_models:
-        print("❌ No models available")
-        return False
-    
-    # Make a simple request to generate monitoring data
-    payload = {
-        "model": available_models[0],
-        "messages": [{"role": "user", "content": "Hello"}],
-        "max_tokens": 10,
-        "include_performance": True
-    }
-    
-    try:
-        response = requests.post(f"{BASE_URL}/v1/chat/completions", json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Check if performance metrics are included
-            if "performance" in data:
-                perf_data = data["performance"]
-                print(f"  ✅ Performance metrics captured:")
-                print(f"    Prompt TPS: {perf_data.get('prompt_tps', 'N/A')}")
-                print(f"    Generation TPS: {perf_data.get('generation_tps', 'N/A')}")
-                print(f"    Peak Memory: {perf_data.get('peak_memory_gb', 'N/A')} GB")
-                return True
-            else:
-                print(f"  ⚠️ Performance metrics not found in response")
-                return False
-        else:
-            print(f"  ❌ HTTP Error: {response.status_code}")
-            return False
-    
-    except Exception as e:
-        print(f"  ❌ Request failed: {e}")
-        return False
-
 def main():
     """Run all API integration tests."""
     print("🚀 MLX Provider Optimization - API Integration Tests")
@@ -365,7 +319,6 @@ def main():
     tests = [
         ("VLM Path Optimization", test_vlm_path_optimization),
         ("Advanced Sampling Features", test_advanced_sampling_features),
-        ("Performance Monitoring", test_performance_monitoring)
     ]
     
     results = []
@@ -398,7 +351,6 @@ def main():
         print("\n🏆 Validated Optimizations:")
         print("  ✅ VLM path optimization (10-20% faster text-only)")
         print("  ✅ Advanced sampling features")
-        print("  ✅ Performance monitoring")
         print("  ✅ API compatibility")
         
         return 0

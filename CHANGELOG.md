@@ -5,6 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.21.0
+
+### Removed
+
+- **llama.cpp provider and all GGUF support**: Deleted `LlamaCppProvider`, `LlamaCppModelConfig`, `LlamaCppEmbeddingExtractor`, `LlamaCppHiddenStatesExtractor`, and all associated config types, router entries, factory functions, test fixtures, and frontend type unions. The `gguf` pyproject extra is removed. Provider type narrowed from `mlx | llama_cpp | gguf | mlx_stt` to `mlx | mlx_stt` throughout backend and frontend. GGUF model entries removed from `models.toml`. A future `llama-server` subprocess provider will replace this.
+- **Dead scripts and config**: Removed `setup_analytics.py`, `analytics_config.json`, `.env.example` (analytics system removed in v1.20.0), and broken `tests/run_tests.sh`.
+
+### Changed
+
+- **tests/README.md**: Full rewrite -- documents all 34 backend test files (unit, contract, integration), corrected coverage matrix, updated run commands to `uv run pytest`.
+
+## 1.20.0
+
+### Removed
+
+- **14 dead/broken API endpoints**: Removed analytics endpoints (`/v1/data/summary`, `/v1/data/query`, `/v1/data/request/{id}`), evaluation endpoints (`/v1/eval/create`, `/v1/eval/run`, `/v1/eval/run/{id}`, `/v1/eval/list`), replay endpoint (`/v1/replay/{id}`), async batch processing (`/v1/batch/process`, `/v1/batch/{id}`), and server restart (`/v1/admin/restart`). All were broken at runtime or had no consumers.
+- **6 dead files**: `data_endpoint.py`, `api_capabilities.py`, `openapi_enhancements.py`, `analytics_config.py`, `metrics_db.py`, `metrics_db_wrapper.py` -- never imported or only consumed by removed endpoints.
+- **Analytics from core path**: Removed metrics database logging from chat completion request/response handlers and server startup initialization.
+- **STT dead endpoints**: Removed broken `/v1/audio/translations`, stub `/v1/stt/stream` WebSocket, hardcoded `/v1/stt/models`. Simplified transcription response to `json` and `text` formats only (removed fake `srt`, `vtt`, `verbose_json`).
+- **Sync streaming generator**: Removed unused `stream_response_generator()` (async version is what's actually used).
+
+### Changed
+
+- **`/v1/admin/reload` moved to admin_api.py**: New `admin_ops_router` with `/v1/admin` prefix, consistent with other admin endpoints.
+- **Image resize logic extracted**: Duplicate ~25-line resize blocks in `create_chat_completion` consolidated into `_apply_image_resize()` helper.
+- **Shared streaming utilities**: New `streaming_utils.py` with `async_generator_with_abort()`, `get_provider_or_503()`, and `consume_sync_generator()` -- used by both `api.py` and `messages_api.py`.
+- **`/v1/performance/profile/{time_range}`**: Re-added as a stub returning 503, so the frontend Performance applet gets a clean error instead of 404.
+
+## 1.19.0
+
+### Fixed
+
+- **Profile apply bug**: `ModelProfile.apply()` now unconditionally sets profile values instead of only filling gaps. Previously, smart defaults ran first and set `top_k`, `max_tokens`, `cache_type`, etc., so profiles could never override them. Precedence is now: base -> smart_defaults -> profile overrides -> user `--override`.
+- **Sub-1B model size regex**: `Qwen3-0.6B` was reported as "(6B)" because the integer pattern `(\d+)b` matched before `(\d+\.\d+)b`. Swapped regex order so decimal patterns match first.
+- **Admin `/status` route shadowed by catch-all**: `GET /v1/admin/models/{id}/status` was unreachable because the greedy `GET /{model_id:path}` catch-all was registered first. Reordered route registration so sub-resource routes (`/status`, `/toggle`, `/load`, `/unload`) register before catch-all routes.
+
+### Changed
+
+- **Profiles moved to TOML files**: The 9 hardcoded Python profile definitions are now standalone TOML files in `profiles/`. Each file has `[meta]` (name, description) and `[defaults]` (flat key=value). Lambda-based dynamic values removed; size-based logic stays in `get_smart_defaults()`. Profiles are loaded once at module import via `tomllib`.
+- **Profile renames**: `fast` -> `tight_fast`, `balanced` -> `moderate`, `quality` -> `wide_sampling`, `performance` -> `high_throughput`, `max_quality` -> `widest_sampling`, `background` -> `low_resource`, `memory` -> `quantized_kv`, `interactive` -> `conversation`, `encoder` -> `embedding`.
+- **Dynamic profile discovery**: `--profile` choices in CLI are now discovered from `profiles/*.toml` filenames instead of a hardcoded list. Adding a new profile is just dropping a `.toml` file.
+- **Profile values printed on import**: When `--profile` is used, the parameter table is printed before writing. The "Available profiles" listing now includes a parameter summary for each profile.
+
+### Removed
+
+- **`/v1/performance` stub endpoint**: Deleted the stub that returned "Removed in v1.17.1". No consumers.
+- **`/v1/performance/profile/{time_range}` endpoint**: Deleted ~170 lines of DuckDB queries for performance profiling. The analytics SQL endpoint (`/v1/data/query`) provides equivalent ad-hoc access.
+- **`test_performance_monitoring()` integration test**: Deleted stale test that tested the removed endpoint.
+- **`mlx` optional extra**: Removed from pyproject.toml. `mlx`, `mlx-lm`, `mlx-vlm`, `transformers` are already in core `dependencies`; the extra duplicated them and added unused packages.
+- **Unused dependencies from extras**: Removed `torch`, `torchvision`, `opencv-python`, `scipy` (never imported in production code). Moved `datasets` to `analytics` extra (only used by data loader). Moved `rich` to `scripts` extra (only used by `scripts/metrics_dashboard.py`).
+
+### Added
+
+- **`gguf` placeholder extra**: Empty extra with commented `llama-cpp-python` for Phase Next.
+- **`scripts` extra**: Contains `rich` for dashboard scripts.
+- **`load_profiles()` / `get_available_profiles()` API**: Public functions for programmatic profile access.
+- **Contract test suite**: TestClient-based API tests (39 tests) covering `/v1/models`, `/v1/chat/completions`, `/v1/messages`, `/v1/admin/models/`, and OpenAPI conformance. Runs in-process, no server or models needed.
+- **Profile unit tests**: 22 tests covering TOML profile loading, profile application with provider filtering, model size regex, and the `load_profiles()` caching API.
+- **`httpx` test dependency**: Added to `[test]` extra for Starlette TestClient support.
+
+## 1.18.1
+
+### Added
+
+- **`--interactive` flag for model import**: `heylookllm import --interactive` launches a TUI (via ConfigEditor) to customize sampler and KV cache settings for each discovered model before writing `models.toml`. Compatible with `--profile` (profile applies first, interactive tweaks override).
+
+### Changed
+
+- **Documentation refresh for v1.18.0**: Updated CLAUDE.md, architecture.md, mlx.md, mlx_optimization_plan.md, and TODO.md to reflect vision path unification via pre-filled cache pattern.
+
+## 1.18.0
+
+### Changed
+
+- **Vision path unification**: Replaced `mlx_vlm.generate.stream_generate` with a pre-filled cache pattern (inspired by vllm-mlx). The full VLM model runs a single forward pass to encode vision + text into a KV cache, then the language model generates tokens using `generation_core.run_generation()` -- the same code path as text-only requests. Vision requests now get the full sampler suite (top_k, min_p, presence_penalty, logit_bias, XTC), abort support, and speculative decoding acceptance tracking. Eliminates the hardcoded Qwen `[1, 24, 24]` image grid -- `mlx_vlm.utils.prepare_inputs` handles grid dimensions natively per model.
+- **Syntax check auto-discovery**: `scripts/syntax_check.py` now uses `glob.glob("src/heylook_llm/**/*.py")` instead of a hand-curated file list. Adding or removing source files no longer requires updating the script.
+- **Cache miss logging**: Radix cache misses now log at INFO level with model ID for observability parity with cache hits.
+
+### Removed
+
+- **`vlm_generation.py`**: Deleted entirely (55 lines). The `stream_generate_vlm_vision()` wrapper around `mlx_vlm.generate.stream_generate` is replaced by the pre-filled cache approach in `VLMVisionStrategy`. The Qwen model-type string sniffing for `image_grid_thw` is no longer needed.
+- **`BatchVisionEncoder` import**: Removed unused import from `mlx_provider.py`.
+
 ## 1.17.1
 
 ### Removed

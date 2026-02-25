@@ -282,7 +282,7 @@ describe('endpoints', () => {
     it('fetches and returns models array', async () => {
       const mockModels: Model[] = [
         { id: 'model-1', object: 'model', owned_by: 'local', provider: 'mlx' },
-        { id: 'model-2', object: 'model', owned_by: 'local', provider: 'llama_cpp' },
+        { id: 'model-2', object: 'model', owned_by: 'local', provider: 'mlx' },
       ]
       const mockResponse: ModelListResponse = {
         object: 'list',

@@ -243,37 +243,6 @@ class TestHiddenStatesErrors:
 
 
 @pytest.mark.integration
-class TestHiddenStatesLlamaCpp:
-    """Tests for llama.cpp model behavior (should return error)."""
-
-    def test_gguf_model_not_supported(self, api_client, check_server):
-        """Test that GGUF models return NotImplementedError."""
-        # Skip if no GGUF model is configured
-        resp = api_client.get("/v1/models")
-        models = resp.json().get("data", [])
-
-        gguf_model = None
-        for m in models:
-            model_id = m.get("id", "")
-            # Look for GGUF indicators
-            if "gguf" in model_id.lower() or "llama" in model_id.lower():
-                gguf_model = model_id
-                break
-
-        if gguf_model is None:
-            pytest.skip("No GGUF model available for testing")
-
-        resp = api_client.post("/v1/hidden_states", json={
-            "input": "test",
-            "model": gguf_model,
-        })
-
-        # Should return 422 (Unprocessable Entity) for unsupported model type
-        assert resp.status_code == 422
-        assert "not supported" in resp.json().get("detail", "").lower()
-
-
-@pytest.mark.integration
 class TestStructuredHiddenStatesEndpoint:
     """Integration tests for /v1/hidden_states/structured endpoint."""
 
@@ -442,7 +411,7 @@ class TestModelCapabilities:
 
         # Provider should be valid
         for model in models_with_provider:
-            assert model["provider"] in ["mlx", "llama_cpp", "gguf", "mlx_stt"]
+            assert model["provider"] in ["mlx", "mlx_stt"]
 
     def test_models_endpoint_structure(self, api_client, check_server):
         """Test /v1/models response structure."""

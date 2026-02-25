@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "heylookitsanllm"
-version = "1.12.2"
+version = "1.20.0"
 description = "On-Device Multimodal LLM API server for local LLM models, using MLX"
 authors = [{ name = "Fred Bliss" }]
 readme = "README.md"
@@ -20,7 +20,6 @@ classifiers = [
 
 # -------------------------------------------------------------------
 # Core runtime deps – array of PEP 508 strings (required by spec)
-# Security-patched versions with proper version pinning
 # -------------------------------------------------------------------
 dependencies = [
     "mlx",
@@ -32,12 +31,9 @@ dependencies = [
     "python-multipart>=0.0.6",
     "pyyaml>=6.0.1",
     "tomli-w>=1.0.0",
-    "questionary>=2.0.0",
     "requests>=2.31.0",
-    "rich>=13.0.0",
     "numpy>=1.24.0",
     "Pillow>=10.0.1",
-    "tqdm>=4.65.0",
     "psutil>=5.9.0",  # System metrics (RAM, CPU)
     "mlx-vlm>=0.3.11",
     "orjson>=3.9.15",  # Fast JSON serialization
@@ -45,7 +41,7 @@ dependencies = [
 
 # ─── Optional groups ────────────────────────────────────────────────────────
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-mock>=3"]
+test = ["pytest>=8", "pytest-mock>=3", "httpx>=0.27"]
 performance = [
     "xxhash>=3.4.1",       # Fast hashing for caching
     "PyTurboJPEG>=1.7.5",  # Fast JPEG encoding/decoding
@@ -53,29 +49,23 @@ performance = [
     "cachetools>=5.3.2",   # Advanced caching with thread safety
 ]
 analytics = [
-    "duckdb>=1.0.0", # Analytics database
+    "duckdb>=1.0.0",       # Analytics database
+    "datasets>=2.19.1",    # HuggingFace datasets (data loader)
 ]
 profile = [
     "py-spy>=0.3.14",          # Sampling profiler
 ]
-mlx = [
-    "mlx",                      # Core MLX library
-    "mlx-lm",                   # MLX text generation
-    "mlx-vlm>=0.3.4",           # MLX vision generation (Qwen3-VL support requires >=0.3.4)
-    "datasets>=2.19.1",         # HuggingFace datasets
-    "transformers",     # HuggingFace transformers
-    "huggingface-hub",
-    "opencv-python>=4.8.1.78",  # Image processing for vision
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",      # Vision utilities
-    "scipy>=1.11.0",            # Required by mlx-vlm
-    "soundfile>=0.12.1",        # Audio processing support
+cli = [
+    "questionary>=2.0.0",  # Interactive TUI for config_tui.py and model_importer.py
+]
+scripts = [
+    "rich>=13.0.0",        # Used by scripts/metrics_dashboard.py
 ]
 stt = [
     "parakeet-mlx",             # MLX-based speech-to-text (Parakeet TDT)
     "soundfile>=0.12.1",        # Audio file I/O
 ]
-all = ["heylookitsanllm[performance,analytics,mlx,stt,profile]"]
+all = ["heylookitsanllm[performance,analytics,stt,profile,cli]"]
 
 [project.scripts]
 heylookllm = "heylook_llm.server:main"
@@ -104,6 +94,7 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "unit: Unit tests (no external dependencies)",
+    "contract: Contract tests (TestClient, no running server)",
     "integration: Integration tests (requires server or model)",
     "mlx_perf: MLX performance optimization tests (requires MLX and model)",
     "slow: Slow tests (deselect with '-m \"not slow\"')",

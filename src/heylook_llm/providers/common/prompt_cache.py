@@ -149,19 +149,6 @@ class PromptCacheManager:
             return 0
 
 
-def find_common_prefix_length(cached_tokens: List[int], new_tokens: List[int]) -> int:
-    """Find the length of the common prefix between cached and new tokens.
-
-    Retained as a utility for callers that need linear prefix comparison.
-    The main cache path now uses radix tree lookup instead.
-    """
-    min_len = min(len(cached_tokens), len(new_tokens))
-    for i in range(min_len):
-        if cached_tokens[i] != new_tokens[i]:
-            return i
-    return min_len
-
-
 def process_prompt_with_cache(
     prompt_cache: PromptCache,
     new_tokens: List[int],
@@ -215,7 +202,7 @@ def process_prompt_with_cache(
     prompt_cache.cache = make_cache(model, cache_config)
     prompt_cache.tokens = new_tokens
     prompt_cache._radix_matched_len = 0
-    logging.debug(f"No radix cache hit, processing all {len(new_tokens)} tokens")
+    logging.info(f"Radix cache miss: processing all {len(new_tokens)} tokens (model={model_id})")
     return new_tokens, prompt_cache
 
 

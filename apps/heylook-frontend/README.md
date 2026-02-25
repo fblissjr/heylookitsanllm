@@ -8,7 +8,7 @@ A modern, responsive chat interface for interacting with local LLM models via th
 
 ## Features
 
-- **Multi-model support**: Select and switch between MLX, llama.cpp, and VLM models
+- **Multi-model support**: Select and switch between MLX text and VLM models
 - **Real-time streaming**: Token-by-token response streaming with thinking mode support
 - **Conversation management**: Create, switch, rename, and delete conversations
 - **Persistent storage**: IndexedDB for conversation history, localStorage for preferences

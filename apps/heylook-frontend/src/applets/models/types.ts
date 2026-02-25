@@ -14,7 +14,7 @@ export interface AdminModelConfig {
 export interface ScannedModel {
   id: string
   path: string
-  provider: 'mlx' | 'gguf'
+  provider: 'mlx' | 'mlx_stt'
   size_gb: number
   vision: boolean
   quantization?: string
