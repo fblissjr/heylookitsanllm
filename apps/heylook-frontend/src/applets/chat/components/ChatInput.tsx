@@ -203,7 +203,7 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     }
     const caps = getModelCapabilities(m)
     return caps.chat
-  })
+  }).sort((a, b) => a.id.localeCompare(b.id))
 
   // Render model option text - shorter on mobile
   const getModelOptionText = (modelId: string, isLoaded: boolean) => {
