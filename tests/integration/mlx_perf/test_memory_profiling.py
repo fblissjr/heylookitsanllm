@@ -25,7 +25,7 @@ def memory_baseline():
         gc.collect()
         mx.clear_cache()
         mx.synchronize()
-        return mx.metal.get_active_memory()
+        return mx.get_active_memory()
     except (ImportError, AttributeError):
         pytest.skip("MLX Metal memory API not available")
 
@@ -87,7 +87,7 @@ class TestMemoryUsage:
 
             mx.synchronize()
             gc.collect()
-            current_memory = mx.metal.get_active_memory()
+            current_memory = mx.get_active_memory()
             memory_samples.append(current_memory)
 
         # Calculate growth
@@ -109,7 +109,7 @@ class TestMemoryUsage:
         arrays = [mx.random.normal((1000, 1000)) for _ in range(10)]
         mx.synchronize()
 
-        memory_after_alloc = mx.metal.get_active_memory()
+        memory_after_alloc = mx.get_active_memory()
 
         # Clear references and cache
         del arrays
@@ -117,7 +117,7 @@ class TestMemoryUsage:
         mx.clear_cache()
         mx.synchronize()
 
-        memory_after_clear = mx.metal.get_active_memory()
+        memory_after_clear = mx.get_active_memory()
 
         released_mb = (memory_after_alloc - memory_after_clear) / (1024 * 1024)
         print(f"\nReleased {released_mb:.1f}MB after clear_cache()")
@@ -157,7 +157,7 @@ class TestMemoryLeaks:
         mx.clear_cache()
         mx.synchronize()
 
-        baseline = mx.metal.get_active_memory()
+        baseline = mx.get_active_memory()
         memory_readings = []
 
         # Many iterations to detect slow leaks
@@ -176,7 +176,7 @@ class TestMemoryLeaks:
                 gc.collect()
                 mx.clear_cache()
                 mx.synchronize()
-                memory_readings.append(mx.metal.get_active_memory())
+                memory_readings.append(mx.get_active_memory())
 
         # Calculate trend
         if len(memory_readings) >= 2:
@@ -203,7 +203,7 @@ class TestMemoryLeaks:
         gc.collect()
         mx.clear_cache()
         mx.synchronize()
-        baseline = mx.metal.get_active_memory()
+        baseline = mx.get_active_memory()
 
         # Run many iterations
         for _ in range(100):
@@ -215,7 +215,7 @@ class TestMemoryLeaks:
         gc.collect()
         mx.clear_cache()
         mx.synchronize()
-        final = mx.metal.get_active_memory()
+        final = mx.get_active_memory()
 
         growth_mb = (final - baseline) / (1024 * 1024)
         print(f"\nSampler memory growth over 100 iterations: {growth_mb:.2f}MB")
