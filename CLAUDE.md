@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-02-24 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-02-25 -->
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@
 
 ## Get Up to Speed
 
-FastAPI backend (MLX) + React frontend (7 applets, 781 tests).
+FastAPI backend (MLX) + React frontend (7 applets, 858 tests).
 
 - [README.md](./README.md) -- setup, install, commands
 - [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
@@ -45,7 +45,7 @@ Provider type: `Literal["mlx", "mlx_stt"]` -- no other providers exist.
 ### Frontend: `apps/heylook-frontend/`
 
 7 applets: Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook, Models.
-React + Zustand + Vite. 781 tests across 34 files.
+React + Zustand + Vite. 858 tests across 37 files.
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns

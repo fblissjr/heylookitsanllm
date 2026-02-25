@@ -775,7 +775,7 @@ class MLXProvider(BaseProvider):
     def get_metrics(self) -> ModelMetrics:
         """Get current metrics for this model (context usage, memory, etc.)."""
         try:
-            metal_memory_mb = mx.metal.get_active_memory() / (1024 * 1024)
+            metal_memory_mb = mx.get_active_memory() / (1024 * 1024)
             context_used = self._get_context_used()
             context_capacity = self._get_context_capacity()
             context_percent = (context_used / context_capacity * 100) if context_capacity > 0 else 0.0

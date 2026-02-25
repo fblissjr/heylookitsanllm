@@ -129,38 +129,27 @@ describe('AppShell', () => {
       expect(screen.getByTestId('mock-settings-panel')).toBeInTheDocument()
     })
 
-    it('shows aside with correct width', () => {
+    it('shows aside element when panel is active', () => {
       renderAppShell({ activePanel: 'models', isMobile: false })
-      const aside = document.querySelector('aside.w-80')
-      expect(aside).toBeInTheDocument()
+      expect(screen.getByRole('complementary')).toBeInTheDocument()
     })
   })
 
   describe('mobile panel behavior', () => {
     it('shows backdrop when panel open on mobile', () => {
       renderAppShell({ activePanel: 'models', isMobile: true })
-      const backdrop = document.querySelector('.fixed.inset-0.bg-black\\/50.z-30')
-      expect(backdrop).toBeInTheDocument()
+      expect(screen.getByTestId('panel-backdrop')).toBeInTheDocument()
     })
 
     it('calls setActivePanel(null) when clicking mobile backdrop', () => {
       renderAppShell({ activePanel: 'models', isMobile: true })
-      const backdrop = document.querySelector('.fixed.inset-0.bg-black\\/50.z-30')
-      expect(backdrop).toBeInTheDocument()
-      fireEvent.click(backdrop!)
+      fireEvent.click(screen.getByTestId('panel-backdrop'))
       expect(mockSetActivePanel).toHaveBeenCalledWith(null)
     })
 
-    it('panel has fixed positioning on mobile', () => {
-      renderAppShell({ activePanel: 'models', isMobile: true })
-      const aside = document.querySelector('aside.fixed.right-0.top-0.bottom-0.z-40')
-      expect(aside).toBeInTheDocument()
-    })
-
-    it('panel does not have fixed positioning on desktop', () => {
+    it('does not show backdrop on desktop', () => {
       renderAppShell({ activePanel: 'models', isMobile: false })
-      const aside = document.querySelector('aside.fixed')
-      expect(aside).not.toBeInTheDocument()
+      expect(screen.queryByTestId('panel-backdrop')).not.toBeInTheDocument()
     })
   })
 
@@ -193,11 +182,47 @@ describe('AppShell', () => {
     })
   })
 
+  describe('Escape key dismissal', () => {
+    it('calls setActivePanel(null) when Escape is pressed with active panel', () => {
+      renderAppShell({ activePanel: 'models' })
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(mockSetActivePanel).toHaveBeenCalledWith(null)
+    })
+
+    it('does not call setActivePanel when Escape is pressed without active panel', () => {
+      renderAppShell({ activePanel: null })
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(mockSetActivePanel).not.toHaveBeenCalled()
+    })
+
+    it('does not call setActivePanel for non-Escape keys', () => {
+      renderAppShell({ activePanel: 'models' })
+      fireEvent.keyDown(document, { key: 'Enter' })
+      expect(mockSetActivePanel).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('aside aria-label', () => {
+    it('labels aside "Model selector" when activePanel is models', () => {
+      renderAppShell({ activePanel: 'models' })
+      expect(screen.getByRole('complementary', { name: 'Model selector' })).toBeInTheDocument()
+    })
+
+    it('labels aside "System prompt" when activePanel is advanced', () => {
+      renderAppShell({ activePanel: 'advanced' })
+      expect(screen.getByRole('complementary', { name: 'System prompt' })).toBeInTheDocument()
+    })
+
+    it('labels aside "Generation settings" when activePanel is settings', () => {
+      renderAppShell({ activePanel: 'settings' })
+      expect(screen.getByRole('complementary', { name: 'Generation settings' })).toBeInTheDocument()
+    })
+  })
+
   describe('layout structure', () => {
     it('uses dvh for root height', () => {
-      renderAppShell()
-      const root = document.querySelector('.h-screen.flex.overflow-hidden')
-      expect(root).toBeInTheDocument()
+      const { container } = renderAppShell()
+      const root = container.firstElementChild
       expect(root).toHaveStyle({ height: '100dvh' })
     })
   })

@@ -1,8 +1,26 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useModelStore, getModelCapabilities } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
 import type { Model } from '../../types/api'
 import clsx from 'clsx'
+
+type SortOption = 'name-asc' | 'name-desc' | 'loaded-first'
+
+function sortModels(models: Model[], sort: SortOption, loadedModelId: string | undefined): Model[] {
+  const sorted = [...models]
+  switch (sort) {
+    case 'name-asc':
+      return sorted.sort((a, b) => a.id.localeCompare(b.id))
+    case 'name-desc':
+      return sorted.sort((a, b) => b.id.localeCompare(a.id))
+    case 'loaded-first':
+      return sorted.sort((a, b) => {
+        if (a.id === loadedModelId) return -1
+        if (b.id === loadedModelId) return 1
+        return a.id.localeCompare(b.id)
+      })
+  }
+}
 
 export function ModelSelector() {
   const { models, loadedModel, setLoadedModel, setModelStatus, setError } = useModelStore()
@@ -10,6 +28,12 @@ export function ModelSelector() {
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [contextWindow, setContextWindow] = useState(4096)
   const [isLoading, setIsLoading] = useState(false)
+  const [sortOption, setSortOption] = useState<SortOption>('name-asc')
+
+  const sortedModels = useMemo(
+    () => sortModels(models, sortOption, loadedModel?.id),
+    [models, sortOption, loadedModel?.id]
+  )
 
   const handleSelectModel = useCallback((model: Model) => {
     setSelectedModel(model)
@@ -70,17 +94,29 @@ export function ModelSelector() {
             <span className="text-sm font-medium text-primary">{loadedModel.id}</span>
           </div>
         )}
+        <div className="mt-2 flex items-center gap-2">
+          <label className="text-xs text-gray-500 dark:text-gray-400">Sort:</label>
+          <select
+            value={sortOption}
+            onChange={(e) => setSortOption(e.target.value as SortOption)}
+            className="text-xs bg-gray-100 dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer"
+          >
+            <option value="name-asc">Name (A-Z)</option>
+            <option value="name-desc">Name (Z-A)</option>
+            <option value="loaded-first">Loaded first</option>
+          </select>
+        </div>
       </div>
 
       {/* Model list */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {models.length === 0 ? (
+        {sortedModels.length === 0 ? (
           <div className="text-center py-8 text-gray-400 dark:text-gray-500">
             <p>No models available</p>
             <p className="text-sm mt-1">Make sure models.toml is configured</p>
           </div>
         ) : (
-          models.map((model) => (
+          sortedModels.map((model) => (
             <ModelCard
               key={model.id}
               model={model}

@@ -51,7 +51,7 @@ describe('modelsStore', () => {
       configs: [],
       selectedId: null,
       searchQuery: '',
-      filters: { provider: [], status: [], capability: [] },
+      filters: { provider: [], status: [], capability: [], tag: [] },
       profiles: [],
       importOpen: false,
       scanResults: [],
@@ -80,7 +80,7 @@ describe('modelsStore', () => {
     })
 
     it('starts with empty filters', () => {
-      expect(useModelsStore.getState().filters).toEqual({ provider: [], status: [], capability: [] })
+      expect(useModelsStore.getState().filters).toEqual({ provider: [], status: [], capability: [], tag: [] })
     })
 
     it('starts with no loading or error', () => {

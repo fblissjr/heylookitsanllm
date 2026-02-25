@@ -55,10 +55,10 @@ describe('AppletLayout', () => {
       expect(screen.queryByLabelText('Open controls panel')).not.toBeInTheDocument()
     })
 
-    it('renders side-by-side with flex layout', () => {
+    it('renders side-by-side with both panels visible', () => {
       renderLayout(false)
-      const container = document.querySelector('.h-full.flex.overflow-hidden')
-      expect(container).toBeInTheDocument()
+      expect(screen.getByTestId('left-panel')).toBeInTheDocument()
+      expect(screen.getByTestId('main-content')).toBeInTheDocument()
     })
   })
 
@@ -120,13 +120,13 @@ describe('AppletLayout', () => {
       expect(screen.queryByTestId('left-panel')).not.toBeInTheDocument()
     })
 
-    it('overlay avoids bottom nav with bottom-mobile-nav', () => {
+    it('shows left panel content in overlay when open', () => {
       renderLayout(true)
 
       fireEvent.click(screen.getByLabelText('Open controls panel'))
 
-      const overlay = document.querySelector('.fixed.left-0.top-0.bottom-mobile-nav.z-40')
-      expect(overlay).toBeInTheDocument()
+      expect(screen.getByTestId('left-panel')).toBeInTheDocument()
+      expect(screen.getByText('Left Panel Content')).toBeInTheDocument()
     })
   })
 })

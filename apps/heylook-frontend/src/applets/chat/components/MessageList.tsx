@@ -6,7 +6,7 @@ import { useUIStore } from '../../../stores/uiStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageMetricsFooter } from './MessageMetricsFooter'
 import { MessageDebugModal } from './MessageDebugModal'
-import { ThinkingBlock } from '../../../components/composed'
+import { ThinkingBlock, MarkdownRenderer } from '../../../components/composed'
 import { MessageActions } from '../../../components/composed/MessageActions'
 import { StaleBadge } from '../../../components/primitives/StaleBadge'
 import { isMessageStale } from '../../../lib/stale'
@@ -252,9 +252,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
           ) : (
             <>
               <div className="bg-gray-100 dark:bg-surface-dark px-4 py-3 rounded-2xl rounded-tl-sm border border-gray-200 dark:border-gray-700">
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                </div>
+                <MarkdownRenderer content={message.content} />
               </div>
               <div className="flex items-center justify-between mt-1 px-1">
                 <div className="flex items-center gap-2">

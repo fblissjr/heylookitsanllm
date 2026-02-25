@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.22.0
+
+### Added
+
+- **Performance profiling backend**: `GET /v1/performance/profile/{time_range}` now returns real aggregated data (was a 503 stub). In-memory ring buffer (10K events, ~2MB) records timing breakdown, per-model bottlenecks, hourly trends, and resource timeline. Background task collects system snapshots every 60s. Performance applet in frontend now renders live data.
+- **Benchmark script** (`scripts/benchmark.py`): HTTP-based benchmark for measuring TTFT, generation TPS, and memory against a running server. Supports both OpenAI and Messages endpoints, streaming and non-streaming modes, configurable prompt sets, and `--json` output for CI.
+
 ## 1.21.0
 
 ### Removed

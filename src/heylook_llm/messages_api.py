@@ -22,6 +22,8 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
+from heylook_llm.perf_collector import RequestEvent, get_perf_collector
+from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.thinking_parser import HybridThinkingParser, parse_thinking_content
 
 messages_router = APIRouter(prefix="/v1", tags=["Messages API"])
@@ -225,9 +227,12 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # Convert to internal ChatRequest
     chat_request = to_chat_request(msg_request)
 
+    provider_get_ms = 0.0
     try:
         # Get provider and create generator (CPU-bound, run in thread)
+        provider_get_start = time.time()
         provider = await asyncio.to_thread(router.get_provider, chat_request.model)
+        provider_get_ms = (time.time() - provider_get_start) * 1000
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
     except RuntimeError as e:
@@ -248,14 +253,28 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         logging.error(f"[MESSAGES] Provider error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Detect images in messages for perf tracking
+    had_images = any(
+        isinstance(block, ImageBlock)
+        for msg in msg_request.messages
+        if isinstance(msg.content, list)
+        for block in msg.content
+    )
+
+    perf_ctx = {
+        "request_start_time": request_start_time,
+        "provider_get_ms": provider_get_ms,
+        "had_images": had_images,
+    }
+
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx),
             media_type="text/event-stream",
         )
     else:
         return await _non_stream_messages(
-            generator, msg_request, request_id, request_start_time
+            generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx
         )
 
 
@@ -268,6 +287,7 @@ async def _non_stream_messages(
     msg_request: MessageCreateRequest,
     request_id: str,
     request_start_time: float,
+    perf_ctx: dict | None = None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -323,6 +343,29 @@ async def _non_stream_messages(
         f"tokens={total_tokens} | {elapsed:.2f}s"
     )
 
+    # Record perf event
+    if perf_ctx:
+        now = time.time()
+        tps = total_tokens / elapsed if elapsed > 0 and total_tokens > 0 else 0.0
+        p_get_ms = perf_ctx["provider_get_ms"]
+        had_imgs = perf_ctx.get("had_images", False)
+        get_perf_collector().record_request(RequestEvent(
+            timestamp=now,
+            model=msg_request.model or "unknown",
+            success=True,
+            total_ms=elapsed * 1000,
+            queue_ms=p_get_ms,
+            model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
+            image_processing_ms=0.0,
+            token_generation_ms=elapsed * 1000 - p_get_ms,
+            first_token_ms=0.0,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=total_tokens,
+            tokens_per_second=tps,
+            had_images=had_imgs,
+            was_streaming=False,
+        ))
+
     return response
 
 
@@ -336,6 +379,7 @@ async def _stream_messages(
     request_id: str,
     http_request=None,
     provider=None,
+    perf_ctx: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -375,3 +419,34 @@ async def _stream_messages(
     yield translator.message_stop_event()
 
     logging.info(f"[MESSAGES] {request_id[:12]} stream complete")
+
+    # Record perf event
+    if perf_ctx:
+        now = time.time()
+        total_ms = (now - perf_ctx["request_start_time"]) * 1000
+        gen_tokens = translator.completion_tokens or (translator.thinking_tokens + translator.content_tokens)
+        gen_time_s = now - translator.start_time
+        tps = gen_tokens / gen_time_s if gen_time_s > 0 and gen_tokens > 0 else 0.0
+        p_get_ms = perf_ctx["provider_get_ms"]
+        had_imgs = perf_ctx.get("had_images", False)
+
+        # Real TTFT: use the translator's tracked timing of first output token
+        first_output = translator.thinking_start or translator.content_start
+        ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
+
+        get_perf_collector().record_request(RequestEvent(
+            timestamp=now,
+            model=model,
+            success=True,
+            total_ms=total_ms,
+            queue_ms=p_get_ms,
+            model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
+            image_processing_ms=0.0,
+            token_generation_ms=gen_time_s * 1000,
+            first_token_ms=ttft_ms,
+            prompt_tokens=translator.prompt_tokens,
+            completion_tokens=gen_tokens,
+            tokens_per_second=tps,
+            had_images=had_imgs,
+            was_streaming=True,
+        ))

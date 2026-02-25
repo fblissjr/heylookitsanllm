@@ -203,7 +203,7 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     }
     const caps = getModelCapabilities(m)
     return caps.chat
-  })
+  }).sort((a, b) => a.id.localeCompare(b.id))
 
   // Render model option text - shorter on mobile
   const getModelOptionText = (modelId: string, isLoaded: boolean) => {
@@ -214,7 +214,7 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
   const isSelectDisabled = disabled || streaming.isStreaming
 
   return (
-    <div className="p-4 bg-white dark:bg-background-dark border-t border-gray-200 dark:border-gray-800">
+    <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white dark:bg-background-dark border-t border-gray-200 dark:border-gray-800">
       {/* Model selector - single responsive component */}
       <div className="mb-3 flex items-center gap-2">
         {/* Desktop label */}
@@ -272,7 +272,8 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
               />
               <button
                 onClick={() => removeImage(i)}
-                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 w-6 h-6 min-w-[24px] min-h-[24px] bg-red-500 text-white rounded-full flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                aria-label={`Remove image ${i + 1}`}
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -301,6 +302,7 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
             onClick={() => fileInputRef.current?.click()}
             className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0"
             title="Add image"
+            aria-label="Add image"
           >
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -338,8 +340,9 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
         {streaming.isStreaming ? (
           <button
             onClick={handleStop}
-            className="p-2.5 rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors shrink-0 shadow-md"
+            className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-red-500 hover:bg-red-600 text-white transition-colors shrink-0 shadow-md"
             title="Stop generation"
+            aria-label="Stop generation"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
               <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -350,12 +353,13 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
             onClick={handleSubmit}
             disabled={disabled || (!message.trim() && images.length === 0)}
             className={clsx(
-              'p-2.5 rounded-full transition-all shrink-0 shadow-md',
+              'p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full transition-all shrink-0 shadow-md',
               !disabled && (message.trim() || images.length > 0)
                 ? 'bg-primary hover:bg-primary-hover text-white'
                 : 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
             )}
             title="Send message"
+            aria-label="Send message"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />

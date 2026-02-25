@@ -35,18 +35,10 @@ describe('MobileBottomNav', () => {
     expect(screen.getByTestId('icon-explore')).toBeInTheDocument()
   })
 
-  it('renders as a nav element', () => {
+  it('renders as a nav element with accessible label', () => {
     renderWithProviders(<MobileBottomNav />, { routerProps: { initialEntries: ['/chat'] } })
 
-    const nav = document.querySelector('nav')
-    expect(nav).toBeInTheDocument()
-  })
-
-  it('has proper mobile bottom bar styling', () => {
-    renderWithProviders(<MobileBottomNav />, { routerProps: { initialEntries: ['/chat'] } })
-
-    const nav = document.querySelector('nav.bg-gray-900.border-t.h-mobile-nav')
-    expect(nav).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toBeInTheDocument()
   })
 
   it('highlights active route', () => {

@@ -577,6 +577,63 @@ describe('MessageList', () => {
     })
   })
 
+  describe('markdown rendering', () => {
+    it('renders assistant messages through MarkdownRenderer (bold becomes <strong>)', () => {
+      const messages = [
+        createMessage({ role: 'assistant', content: 'This is **bold** text' }),
+      ]
+
+      render(
+        <MessageList
+          messages={messages}
+          streaming={defaultStreamingState}
+          modelCapabilities={defaultModelCapabilities}
+        />
+      )
+
+      const bold = screen.getByText('bold')
+      expect(bold.tagName).toBe('STRONG')
+    })
+
+    it('renders user messages as plain text (no markdown processing)', () => {
+      const messages = [
+        createMessage({ role: 'user', content: 'This has **asterisks**' }),
+      ]
+
+      render(
+        <MessageList
+          messages={messages}
+          streaming={defaultStreamingState}
+          modelCapabilities={defaultModelCapabilities}
+        />
+      )
+
+      // User messages use whitespace-pre-wrap <p>, so the raw asterisks should be visible
+      expect(screen.getByText('This has **asterisks**')).toBeInTheDocument()
+    })
+
+    it('streaming messages use plain text, not markdown', () => {
+      const streamingState: StreamingState = {
+        isStreaming: true,
+        content: 'This is **bold** streaming',
+        thinking: '',
+        messageId: 'msg-streaming',
+      }
+
+      render(
+        <MessageList
+          messages={[]}
+          streaming={streamingState}
+          modelCapabilities={defaultModelCapabilities}
+        />
+      )
+
+      // Streaming content should not have <strong> -- it uses plain <p>
+      const text = screen.getByText(/This is \*\*bold\*\* streaming/)
+      expect(text.querySelector('strong')).toBeNull()
+    })
+  })
+
   describe('timestamp formatting', () => {
     it('shows formatted timestamp for messages', () => {
       // Create a message at a specific time

@@ -18,14 +18,43 @@ from heylook_llm.config import (
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse
 )
 from heylook_llm.system_metrics import SystemMetricsCollector
+from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 
+
+
+async def _resource_snapshot_loop(app: FastAPI) -> None:
+    """Background task: record a ResourceSnapshot every 60 seconds."""
+    collector = get_perf_collector()
+    while True:
+        await asyncio.sleep(60)
+        try:
+            router: ModelRouter = app.state.router_instance
+            metrics_collector = _get_metrics_collector(router)
+            metrics = metrics_collector.collect(force_refresh=True)
+
+            # Compute rolling TPS from events in the last 60s
+            now = time.time()
+            recent = [e for e in collector._events if e.timestamp >= now - 60]
+            avg_tps = (sum(e.tokens_per_second for e in recent) / len(recent)) if recent else 0.0
+
+            collector.record_resource_snapshot(ResourceSnapshot(
+                timestamp=now,
+                memory_gb=metrics.system.ram_used_gb,
+                gpu_percent=0.0,
+                tokens_per_second=avg_tps,
+                requests=len(recent),
+            ))
+        except Exception:
+            logging.debug("Resource snapshot collection failed", exc_info=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # The router is now initialized in server.py and passed in app.state
+    task = asyncio.create_task(_resource_snapshot_loop(app))
     yield
+    task.cancel()
     logging.info("Server shut down.")
 
 app = FastAPI(
@@ -211,12 +240,16 @@ async def get_system_metrics(request: Request, force_refresh: bool = False):
 
 @app.get("/v1/performance/profile/{time_range}",
     summary="Performance Profile",
-    description="Performance profiling data. Currently disabled.",
+    description="Aggregated performance profiling data for the Performance applet. "
+                "Valid time_range values: 1h, 6h, 24h, 7d.",
     tags=["Monitoring"],
 )
 async def get_performance_profile(time_range: str):
-    """Stub endpoint -- returns 503 so the frontend shows 'Analytics Disabled'."""
-    raise HTTPException(status_code=503, detail="Performance profiling not available")
+    """Return aggregated performance profile from in-memory ring buffer."""
+    valid_ranges = {"1h", "6h", "24h", "7d"}
+    if time_range not in valid_ranges:
+        raise HTTPException(status_code=400, detail=f"Invalid time_range. Must be one of: {', '.join(sorted(valid_ranges))}")
+    return get_perf_collector().build_profile(time_range)
 
 
 def _apply_image_resize(chat_request: ChatRequest) -> None:
@@ -340,7 +373,9 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         return batch_response.model_dump()
 
     # Standard processing for conversation mode or no processing_mode specified
+    image_resize_start = time.time()
     _apply_image_resize(chat_request)
+    image_resize_ms = (time.time() - image_resize_start) * 1000
 
     # Start real-time logging
     log_request_start(request_id, chat_request.model)
@@ -371,11 +406,14 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     if router.log_level <= logging.DEBUG:
         log_full_request_details(request_id, chat_request)
 
+    provider_get_ms = 0.0
     try:
         log_request_stage(request_id, "routing")
 
-        # Run CPU-bound operations in thread pool
+        # Run CPU-bound operations in thread pool (timed for perf collection)
+        provider_get_start = time.time()
         provider = await asyncio.to_thread(router.get_provider, chat_request.model)
+        provider_get_ms = (time.time() - provider_get_start) * 1000
 
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
@@ -389,6 +427,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         if "MODEL_BUSY" in str(e):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
+            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
 
             # Return 503 Service Unavailable with retry headers
             # This tells OpenAI client to retry automatically
@@ -412,22 +451,54 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             # Other runtime errors
             logging.error(f"Runtime error: {e}", exc_info=True)
             log_request_complete(request_id, success=False, error_msg=str(e))
+            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
             raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
+        _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Build perf context for handlers
+    perf_ctx = {
+        "request_start_time": request_start_time,
+        "provider_get_ms": provider_get_ms,
+        "image_resize_ms": image_resize_ms,
+        "had_images": image_stats['count'] > 0,
+    }
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider),
+            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx),
             media_type="text/event-stream"
         )
     else:
-        return await non_stream_response(generator, chat_request, router, request_id, request_start_time)
+        return await non_stream_response(generator, chat_request, router, request_id, request_start_time, perf_ctx=perf_ctx)
 
-async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None):
+def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool) -> None:
+    """Record a failed request event to perf collector."""
+    now = time.time()
+    total_ms = (now - request_start_time) * 1000
+    get_perf_collector().record_request(RequestEvent(
+        timestamp=now,
+        model=model,
+        success=False,
+        total_ms=total_ms,
+        queue_ms=provider_get_ms,
+        model_load_ms=provider_get_ms if provider_get_ms >= 100 else 0.0,
+        image_processing_ms=image_resize_ms if had_images else 0.0,
+        token_generation_ms=0.0,
+        first_token_ms=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        tokens_per_second=0.0,
+        had_images=had_images,
+        was_streaming=False,
+    ))
+
+
+async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None):
     """Async streaming response generator that runs generation in thread pool.
 
     Supports Qwen3 thinking tokens: streams delta.thinking during <think> blocks,
@@ -454,6 +525,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     # Enhanced timing tracking
     generation_start_time = time.time()
+    first_output_time = None  # Wall clock of first yielded token (TTFT)
     thinking_start_time = None
     thinking_end_time = None
     content_start_time = None
@@ -562,6 +634,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                         content_start_time = time.time()
                     content_tokens += 1
 
+                if first_output_time is None:
+                    first_output_time = time.time()
                 yield make_delta(delta_type, text, logprobs_delta)
                 logprobs_delta = None  # Only include logprobs in first delta for this token
 
@@ -648,9 +722,39 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     # Log completion
     log_request_complete(request_id, success=True)
+
+    # Record perf event
+    if perf_ctx:
+        now = time.time()
+        req_total_ms = (now - perf_ctx["request_start_time"]) * 1000
+        gen_tokens = completion_tokens or token_count
+        gen_time_s = (now - generation_start_time)
+        tps = gen_tokens / gen_time_s if gen_time_s > 0 and gen_tokens > 0 else 0.0
+        p_get_ms = perf_ctx["provider_get_ms"]
+
+        # Real TTFT: wall clock from generation start to first yielded token
+        ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
+
+        get_perf_collector().record_request(RequestEvent(
+            timestamp=now,
+            model=model_id or "unknown",
+            success=True,
+            total_ms=req_total_ms,
+            queue_ms=p_get_ms,
+            model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
+            image_processing_ms=perf_ctx["image_resize_ms"] if perf_ctx["had_images"] else 0.0,
+            token_generation_ms=total_duration_ms,
+            first_token_ms=ttft_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=gen_tokens,
+            tokens_per_second=tps,
+            had_images=perf_ctx["had_images"],
+            was_streaming=True,
+        ))
+
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, perf_ctx: dict | None = None):
     full_text = ""
     prompt_tokens = 0
     completion_tokens = 0
@@ -744,6 +848,29 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     # Log successful completion
     log_request_complete(request_id, success=True)
+
+    # Record perf event
+    if perf_ctx:
+        now = time.time()
+        gen_tokens = completion_tokens or token_count
+        tps = gen_tokens / processing_time if processing_time > 0 and gen_tokens > 0 else 0.0
+        p_get_ms = perf_ctx["provider_get_ms"]
+        get_perf_collector().record_request(RequestEvent(
+            timestamp=now,
+            model=chat_request.model or "unknown",
+            success=True,
+            total_ms=processing_time * 1000,
+            queue_ms=p_get_ms,
+            model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
+            image_processing_ms=perf_ctx["image_resize_ms"] if perf_ctx["had_images"] else 0.0,
+            token_generation_ms=processing_time * 1000 - p_get_ms,
+            first_token_ms=0.0,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=gen_tokens,
+            tokens_per_second=tps,
+            had_images=perf_ctx["had_images"],
+            was_streaming=False,
+        ))
 
     return response
 

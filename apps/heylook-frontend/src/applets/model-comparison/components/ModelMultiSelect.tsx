@@ -32,7 +32,7 @@ export function ModelMultiSelect({
   const chatModels = models.filter((m) => {
     if (!m.capabilities || m.capabilities.length === 0) return true
     return m.capabilities.includes('chat')
-  })
+  }).sort((a, b) => a.id.localeCompare(b.id))
 
   const handleToggle = (modelId: string) => {
     if (selectedModelIds.includes(modelId)) {

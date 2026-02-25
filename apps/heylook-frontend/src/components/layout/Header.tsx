@@ -69,7 +69,7 @@ export function Header() {
       {pathname.startsWith('/chat') ? (
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
+          className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
           aria-label="Toggle sidebar"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -77,19 +77,21 @@ export function Header() {
           </svg>
         </button>
       ) : (
-        <div className="w-10" />
+        <div className="min-w-[44px]" />
       )}
 
       {/* Center: Model selector */}
       <button
         onClick={() => togglePanel('models')}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-100 dark:bg-surface-dark border border-transparent hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+        className="flex items-center gap-2 px-3 py-1.5 min-h-[44px] rounded-full bg-gray-100 dark:bg-surface-dark border border-transparent hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+        aria-label="Select model"
+        aria-haspopup="true"
       >
-        <span className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
+        <span className={`w-2 h-2 rounded-full ${getStatusColor()}`} aria-hidden="true" />
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200 max-w-[150px] truncate">
           {currentModel?.id || 'Select Model'}
         </span>
-        <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
@@ -99,8 +101,8 @@ export function Header() {
         {/* Theme toggle */}
         <button
           onClick={cycleTheme}
-          className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
-          aria-label="Toggle theme"
+          className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark transition-colors"
+          aria-label={`Theme: ${getThemeLabel()}`}
           title={getThemeLabel()}
         >
           {getThemeIcon()}
@@ -109,7 +111,7 @@ export function Header() {
         {/* Advanced settings (system prompt, templates) */}
         <button
           onClick={() => togglePanel('advanced')}
-          className={`p-2 rounded-lg transition-colors ${
+          className={`p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors ${
             activePanel === 'advanced'
               ? 'bg-primary/20 text-primary'
               : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark'
@@ -125,7 +127,7 @@ export function Header() {
         {/* Sampler settings */}
         <button
           onClick={() => togglePanel('settings')}
-          className={`p-2 rounded-lg transition-colors relative ${
+          className={`p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors relative ${
             activePanel === 'settings'
               ? 'bg-primary/20 text-primary'
               : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-dark'
@@ -136,8 +138,6 @@ export function Header() {
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
           </svg>
-          {/* Indicator dot when settings are modified */}
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-primary rounded-full" />
         </button>
       </div>
     </header>

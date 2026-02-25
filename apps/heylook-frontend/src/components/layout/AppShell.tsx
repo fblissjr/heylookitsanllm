@@ -25,6 +25,16 @@ export function AppShell() {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
+  // Escape key dismisses active panel
+  useEffect(() => {
+    if (!activePanel) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActivePanel(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [activePanel, setActivePanel])
+
   return (
     <div
       style={{ height: '100dvh' }}
@@ -44,15 +54,19 @@ export function AppShell() {
             <>
               {isMobile && (
                 <div
+                  data-testid="panel-backdrop"
                   className="fixed inset-0 bg-black/50 z-30"
                   onClick={() => setActivePanel(null)}
                 />
               )}
-              <aside className={`
-                ${isMobile ? 'fixed right-0 top-0 bottom-0 z-40' : ''}
-                w-80 bg-white dark:bg-surface-dark border-l border-gray-200 dark:border-gray-700
-                flex flex-col overflow-hidden
-              `}>
+              <aside
+                aria-label={activePanel === 'models' ? 'Model selector' : activePanel === 'advanced' ? 'System prompt' : 'Generation settings'}
+                className={`
+                  ${isMobile ? 'fixed right-0 top-0 bottom-0 z-40' : ''}
+                  w-80 bg-white dark:bg-surface-dark border-l border-gray-200 dark:border-gray-700
+                  flex flex-col overflow-hidden
+                `}
+              >
                 {activePanel === 'models' && <ModelSelector />}
                 {activePanel === 'advanced' && <AdvancedPanel />}
                 {activePanel === 'settings' && <SettingsPanel />}

@@ -20,7 +20,7 @@ def _mlx_memory_pressure() -> bool:
     """Check if GPU memory exceeds 85% of recommended working set."""
     try:
         import mlx.core as mx
-        active = mx.metal.get_active_memory()
+        active = mx.get_active_memory()
         info = mx.metal.device_info()
         limit = info.get('max_recommended_working_set_size', float('inf'))
         return active > limit * 0.85
