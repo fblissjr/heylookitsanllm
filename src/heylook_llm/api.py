@@ -525,6 +525,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     # Enhanced timing tracking
     generation_start_time = time.time()
+    first_output_time = None  # Wall clock of first yielded token (TTFT)
     thinking_start_time = None
     thinking_end_time = None
     content_start_time = None
@@ -633,6 +634,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                         content_start_time = time.time()
                     content_tokens += 1
 
+                if first_output_time is None:
+                    first_output_time = time.time()
                 yield make_delta(delta_type, text, logprobs_delta)
                 logprobs_delta = None  # Only include logprobs in first delta for this token
 
@@ -728,6 +731,10 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         gen_time_s = (now - generation_start_time)
         tps = gen_tokens / gen_time_s if gen_time_s > 0 and gen_tokens > 0 else 0.0
         p_get_ms = perf_ctx["provider_get_ms"]
+
+        # Real TTFT: wall clock from generation start to first yielded token
+        ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
+
         get_perf_collector().record_request(RequestEvent(
             timestamp=now,
             model=model_id or "unknown",
@@ -737,7 +744,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
             image_processing_ms=perf_ctx["image_resize_ms"] if perf_ctx["had_images"] else 0.0,
             token_generation_ms=total_duration_ms,
-            first_token_ms=total_duration_ms / max(gen_tokens, 1) if gen_tokens > 0 else 0.0,
+            first_token_ms=ttft_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=gen_tokens,
             tokens_per_second=tps,
