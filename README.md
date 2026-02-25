@@ -5,7 +5,6 @@
     <img src="assets/heylookitsanllm.jpeg" alt="Hey Look, It's an LLM logo" width="400">
   </a>
   <br>
-  <em>derived from image created by fearnworks (click for full size)</em>
 </p>
 
 Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a React web UI, and on-the-fly model swapping.
