@@ -10,7 +10,7 @@ import { generateId } from '../../../lib/id'
 // Re-export StreamingState for components
 export type { StreamingState }
 
-const STREAM_TIMEOUT_MS = 30_000
+const DEFAULT_STREAM_TIMEOUT_MS = 30_000
 
 class ChatStreamManager {
   private controller: AbortController | null = null
@@ -27,7 +27,7 @@ class ChatStreamManager {
    * Run a streaming generation. Handles:
    * - Aborting any previous stream
    * - Creating/cleaning up AbortController
-   * - Timeout
+   * - Timeout (configurable via settings)
    * - Routing callbacks to the pinned conversationId
    */
   async run(
@@ -42,10 +42,14 @@ class ChatStreamManager {
     this.controller = new AbortController()
 
     const targetConversationId = conversationId
+    const timeoutMs = useSettingsStore.getState().samplerSettings.streamTimeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS
+
+    // Strip frontend-only settings before sending to API
+    const { streamTimeoutMs: _, ...apiRequest } = request as ChatCompletionRequest & { streamTimeoutMs?: number }
 
     try {
       await streamChat(
-        request,
+        apiRequest,
         {
           onToken: (token, rawEvent) => store.appendStreamContent(token, false, rawEvent),
           onThinking: (thinking, rawEvent) => store.appendStreamContent(thinking, true, rawEvent),
@@ -56,7 +60,7 @@ class ChatStreamManager {
           },
         },
         this.controller.signal,
-        STREAM_TIMEOUT_MS
+        timeoutMs
       )
     } finally {
       this.controller = null
