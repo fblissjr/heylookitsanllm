@@ -10,8 +10,6 @@ import { generateId } from '../../../lib/id'
 // Re-export StreamingState for components
 export type { StreamingState }
 
-const DEFAULT_STREAM_TIMEOUT_MS = 30_000
-
 class ChatStreamManager {
   private controller: AbortController | null = null
 
@@ -42,14 +40,11 @@ class ChatStreamManager {
     this.controller = new AbortController()
 
     const targetConversationId = conversationId
-    const timeoutMs = useSettingsStore.getState().samplerSettings.streamTimeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS
-
-    // Strip frontend-only settings before sending to API
-    const { streamTimeoutMs: _, ...apiRequest } = request as ChatCompletionRequest & { streamTimeoutMs?: number }
+    const timeoutMs = useSettingsStore.getState().streamTimeoutMs
 
     try {
       await streamChat(
-        apiRequest,
+        request,
         {
           onToken: (token, rawEvent) => store.appendStreamContent(token, false, rawEvent),
           onThinking: (thinking, rawEvent) => store.appendStreamContent(thinking, true, rawEvent),
@@ -391,9 +386,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: () => {
+    // Two-path cleanup:
+    // 1. abort() fires the AbortController, which causes streamChat() to reject,
+    //    the finally block nulls the controller, and onError calls finalizeStream().
+    // 2. If stop is called before run() creates a controller (or after it's already
+    //    been nulled in finally), abort() is a no-op and finalizeStream() won't fire.
+    //    Detect this via !streamManager.isActive and force-reset here.
     streamManager.abort()
-    // If the stream hasn't started yet (abort won't trigger onComplete),
-    // force-reset the streaming state
     const { streaming } = get()
     if (streaming.isStreaming && !streamManager.isActive) {
       set({

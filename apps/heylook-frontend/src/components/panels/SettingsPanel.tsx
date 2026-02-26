@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useModelStore } from '../../stores/modelStore'
-import { Toggle } from '../primitives'
+import { Toggle, Slider } from '../primitives'
 import { CloseIcon } from '../icons'
 import { SamplerControls } from '../composed/SamplerControls'
 import type { Preset, SamplerSettings } from '../../types/settings'
@@ -18,6 +18,8 @@ export function SettingsPanel() {
     savePreset,
     deletePreset,
     activeSamplerPresetId,
+    streamTimeoutMs,
+    setStreamTimeoutMs,
   } = useSettingsStore()
   const { setActivePanel } = useUIStore()
   const { loadedModel } = useModelStore()
@@ -118,6 +120,17 @@ export function SettingsPanel() {
         <SamplerControls
           settings={samplerSettings}
           onUpdate={handleUpdateSetting}
+        />
+
+        {/* Stream Timeout */}
+        <Slider
+          label="Stream Timeout (seconds)"
+          value={streamTimeoutMs / 1000}
+          min={10}
+          max={300}
+          step={5}
+          onChange={(v) => setStreamTimeoutMs(v * 1000)}
+          description="Seconds before a stalled generation times out"
         />
 
         {/* Thinking Mode Toggle */}

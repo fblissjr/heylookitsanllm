@@ -62,6 +62,21 @@ describe('settingsStore', () => {
     })
   })
 
+  describe('streamTimeoutMs', () => {
+    it('has default streamTimeoutMs', () => {
+      const { streamTimeoutMs } = useSettingsStore.getState()
+      expect(streamTimeoutMs).toBe(30_000)
+    })
+
+    it('updates streamTimeoutMs', () => {
+      const { setStreamTimeoutMs } = useSettingsStore.getState()
+
+      setStreamTimeoutMs(60_000)
+
+      expect(useSettingsStore.getState().streamTimeoutMs).toBe(60_000)
+    })
+  })
+
   describe('presets', () => {
     it('starts with no built-in system prompts (use model jinja2 template)', () => {
       const { getAllPresets } = useSettingsStore.getState()

@@ -42,6 +42,8 @@ const defaultSettingsState = {
   savePreset: mockSavePreset,
   deletePreset: mockDeletePreset,
   activeSamplerPresetId: null as string | null,
+  streamTimeoutMs: 30_000,
+  setStreamTimeoutMs: vi.fn(),
 }
 
 vi.mock('../../stores/settingsStore', () => ({

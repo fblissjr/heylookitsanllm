@@ -123,16 +123,6 @@ export function SamplerControls({ settings, onUpdate, showAllFlat = false }: Sam
             description="Reduce word repetition"
           />
 
-          <Slider
-            label="Stream Timeout (seconds)"
-            value={(settings.streamTimeoutMs ?? 30000) / 1000}
-            min={10}
-            max={300}
-            step={5}
-            onChange={(v) => onUpdate('streamTimeoutMs', v * 1000)}
-            description="Seconds before a stalled generation times out"
-          />
-
           {/* Seed */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">

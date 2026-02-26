@@ -46,7 +46,6 @@ export interface SamplerSettings {
   seed?: number;
   stop?: string[];
   enable_thinking: boolean;
-  streamTimeoutMs?: number;
   // Index signature for compatibility with Record<string, unknown>
   [key: string]: unknown;
 }
@@ -62,5 +61,4 @@ export const DEFAULT_SAMPLER_SETTINGS: SamplerSettings = {
   presence_penalty: 0.0,
   frequency_penalty: 0.0,
   enable_thinking: false,
-  streamTimeoutMs: 30_000,
 };

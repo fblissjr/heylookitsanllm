@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Chat: concurrent stream guard**: Sending a message while a stream was already in-flight silently started a second stream without aborting the first. Both streams wrote to the store simultaneously. A new `ChatStreamManager` singleton ensures the previous stream is aborted before any new one starts.
+- **Chat: AbortController leak**: The controller was only nulled on the success path; errors left a stale reference. The controller is now nulled in a `finally` block in all cases.
+- **Chat: wrong-conversation targeting**: `finalizeStream` read `activeConversationId` at callback time. Switching conversations mid-stream caused streamed content to be written into the newly active conversation. The conversation ID is now pinned when the stream starts and passed through to `finalizeStream`.
+- **Chat: orphaned streams on navigation**: Navigating away from the Chat applet did not stop in-flight streams. The backend kept generating and eventual callbacks wrote to a detached store. `ChatView` now calls `stopGeneration()` on unmount.
+- **Chat: no timeout**: A hung backend (stuck MLX kernel, stalled connection) left `isStreaming: true` permanently with no way to recover without a page reload. A 30-second timeout is now applied via `AbortSignal.timeout()`, producing a user-visible error message.
+
+### Added
+
+- **Stream timeout setting**: Configurable stream timeout (default 30s) in Generation Settings panel. Prevents permanently stuck streaming state when the backend hangs.
+
 ## 1.22.0
 
 ### Added

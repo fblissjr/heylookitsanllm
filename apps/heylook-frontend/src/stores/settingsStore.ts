@@ -18,6 +18,7 @@ interface SettingsState {
   systemPrompt: string
   jinjaTemplate: string | null
   samplerSettings: SamplerSettings
+  streamTimeoutMs: number
 
   // Presets (user-created, built-ins are separate)
   userPresets: Preset[]
@@ -31,6 +32,7 @@ interface SettingsState {
   setJinjaTemplate: (template: string | null) => void
   updateSamplerSettings: (settings: Partial<SamplerSettings>) => void
   resetSamplerToDefaults: () => void
+  setStreamTimeoutMs: (ms: number) => void
 
   // Actions - Presets
   getAllPresets: (type: PresetType) => Preset[]
@@ -48,6 +50,7 @@ export const useSettingsStore = create<SettingsState>()(
       systemPrompt: '',
       jinjaTemplate: null,
       samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
+      streamTimeoutMs: 30_000,
       userPresets: [],
       // No active presets by default - using empty/default values
       activeSystemPromptPresetId: null,
@@ -74,6 +77,8 @@ export const useSettingsStore = create<SettingsState>()(
           activeSamplerPresetId: null,
         })
       },
+
+      setStreamTimeoutMs: (ms) => set({ streamTimeoutMs: ms }),
 
       getAllPresets: (type) => {
         const { userPresets } = get()
@@ -179,6 +184,7 @@ export const useSettingsStore = create<SettingsState>()(
         userPresets: state.userPresets,
         systemPrompt: state.systemPrompt,
         samplerSettings: state.samplerSettings,
+        streamTimeoutMs: state.streamTimeoutMs,
         activeSystemPromptPresetId: state.activeSystemPromptPresetId,
         activeSamplerPresetId: state.activeSamplerPresetId,
       }),

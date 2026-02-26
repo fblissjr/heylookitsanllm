@@ -142,9 +142,18 @@ Component                Store               API Layer              Backend
 
 ### Streaming Architecture
 
+The API layer (`src/api/streaming.ts`) provides `streamChat(request, callbacks, signal?, timeoutMs?)`. The `timeoutMs` argument (4th, optional) combines with the abort signal via `AbortSignal.any()`. A `TimeoutError` produces a user-visible message rather than silently hanging.
+
+All chat stream lifecycle is managed by a `ChatStreamManager` singleton in `chatStore.ts`. It ensures:
+- Only one stream is active at a time (aborts the previous before starting a new one)
+- The `AbortController` is always nulled in a `finally` block
+- Callbacks receive a conversation ID pinned at stream-start, preventing wrong-conversation writes on navigation
+
 ```typescript
 // SSE Event Stream Processing
-EventSource Connection
+streamChat(request, callbacks, signal, timeoutMs)
+    │
+    │  [AbortSignal.any(signal, AbortSignal.timeout(timeoutMs))]
     │
     ├─── data: {"choices":[{"delta":{"content":"Hello"}}]}
     │         │
@@ -154,10 +163,17 @@ EventSource Connection
     │         │
     │         └──► onThinking("...") → appendStreamContent(isThinking=true)
     │
-    └─── data: [DONE]
+    ├─── data: [DONE] / usage chunk
+    │         │
+    │         └──► onComplete(data) → finalizeStream(data, pinnedConversationId)
+    │
+    └─── AbortError / TimeoutError
               │
-              └──► onComplete() → finalizeStream()
+              └──► AbortError: onComplete() (user cancelled, not an error)
+                   TimeoutError: onError("Generation timed out...")
 ```
+
+`ChatView` calls `stopGeneration()` on unmount to abort any in-flight stream when navigating away.
 
 ## Persistence Layer
 
@@ -239,7 +255,7 @@ EventSource Connection
 
 4. **Memoization**: Message list items are keyed by message ID for efficient React reconciliation
 
-5. **Abort Controllers**: Streaming can be cancelled to free up backend resources
+5. **Stream lifecycle management**: A `ChatStreamManager` singleton in `chatStore` owns the `AbortController`, enforces single-stream-at-a-time, and pins the conversation ID for callbacks. A 30s timeout via `AbortSignal.timeout()` prevents permanent hang on unresponsive backends.
 
 ### Bundle Size
 
