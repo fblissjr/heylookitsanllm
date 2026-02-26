@@ -30,7 +30,8 @@ export interface StreamCallbacks {
 export async function streamChat(
   request: ChatCompletionRequest,
   callbacks: StreamCallbacks,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs?: number
 ): Promise<void> {
   const { onToken, onThinking, onLogprobs, onComplete, onError } = callbacks
 
@@ -43,6 +44,12 @@ export async function streamChat(
     onComplete(data)
   }
 
+  // Combine user abort signal with timeout signal
+  const signals: AbortSignal[] = []
+  if (signal) signals.push(signal)
+  if (timeoutMs) signals.push(AbortSignal.timeout(timeoutMs))
+  const combinedSignal = signals.length > 0 ? AbortSignal.any(signals) : undefined
+
   try {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
@@ -52,7 +59,7 @@ export async function streamChat(
         stream: true,
         stream_options: { include_usage: true },
       }),
-      signal,
+      signal: combinedSignal,
     })
 
     if (!response.ok) {
@@ -99,6 +106,10 @@ export async function streamChat(
         if (!completedWithData) {
           onComplete()
         }
+        return
+      }
+      if (error.name === 'TimeoutError') {
+        onError(new Error('Generation timed out. The backend may be unresponsive.'))
         return
       }
       onError(error)

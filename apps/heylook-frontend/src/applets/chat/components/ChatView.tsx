@@ -41,6 +41,16 @@ export function ChatView() {
     await updateSystemPrompt(conversation.id, systemPrompt, shouldRegenerate)
   }, [conversation, updateSystemPrompt])
 
+  // Cleanup on unmount -- abort any in-flight stream (matches TokenExplorerView, NotebookView)
+  useEffect(() => {
+    return () => {
+      const { streaming, stopGeneration } = useChatStore.getState()
+      if (streaming.isStreaming) {
+        stopGeneration()
+      }
+    }
+  }, [])
+
   // Auto-scroll to bottom when new messages arrive or during streaming
   useEffect(() => {
     if (scrollRef.current) {

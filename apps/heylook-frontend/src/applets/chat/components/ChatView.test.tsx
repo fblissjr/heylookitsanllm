@@ -34,43 +34,46 @@ vi.mock('./EmptyState', () => ({
   )),
 }))
 
-// Mock stores
-const mockActiveConversation = vi.fn()
-const defaultChatState = {
-  activeConversation: mockActiveConversation,
-  streaming: {
-    isStreaming: false,
-    content: '',
-    thinking: '',
-    messageId: null,
-  },
-  updateConversationModel: vi.fn(),
-}
-
-const defaultModelState: {
-  loadedModel: LoadedModel | null
-  modelStatus: ModelStatus
-  models: { id: string }[]
-} = {
-  loadedModel: {
-    id: 'test-model',
-    provider: 'mlx',
-    capabilities: {
-      chat: true,
-      vision: false,
-      thinking: false,
-      hidden_states: false,
-      embeddings: false,
+// Mock stores -- use vi.hoisted so these are available in vi.mock factories
+const { mockActiveConversation, defaultChatState, defaultModelState } = vi.hoisted(() => {
+  const mockActiveConversation = vi.fn()
+  const defaultChatState = {
+    activeConversation: mockActiveConversation,
+    streaming: {
+      isStreaming: false,
+      content: '',
+      thinking: '',
+      messageId: null,
     },
-    contextWindow: 4096,
-  },
-  modelStatus: 'loaded',
-  models: [{ id: 'test-model' }],
-}
+    updateConversationModel: vi.fn(),
+  }
+  const defaultModelState = {
+    loadedModel: {
+      id: 'test-model',
+      provider: 'mlx',
+      capabilities: {
+        chat: true,
+        vision: false,
+        thinking: false,
+        hidden_states: false,
+        embeddings: false,
+      },
+      contextWindow: 4096,
+    } as LoadedModel | null,
+    modelStatus: 'loaded' as ModelStatus,
+    models: [{ id: 'test-model' }],
+  }
+  return { mockActiveConversation, defaultChatState, defaultModelState }
+})
 
-vi.mock('../stores/chatStore', () => ({
-  useChatStore: vi.fn(() => defaultChatState),
-}))
+vi.mock('../stores/chatStore', () => {
+  const fn = vi.fn(() => defaultChatState) as ReturnType<typeof vi.fn> & { getState: ReturnType<typeof vi.fn> }
+  fn.getState = vi.fn(() => ({
+    streaming: defaultChatState.streaming,
+    stopGeneration: vi.fn(),
+  }))
+  return { useChatStore: fn }
+})
 
 vi.mock('../../../stores/modelStore', () => ({
   useModelStore: vi.fn(() => defaultModelState),
@@ -111,6 +114,12 @@ describe('ChatView', () => {
     vi.mocked(useChatStore).mockReturnValue({
       ...defaultChatState,
       activeConversation: mockActiveConversation,
+    })
+    // Reset getState mock for unmount cleanup
+    const mockStore = useChatStore as unknown as { getState: ReturnType<typeof vi.fn> }
+    mockStore.getState.mockReturnValue({
+      streaming: defaultChatState.streaming,
+      stopGeneration: vi.fn(),
     })
     vi.mocked(useModelStore).mockReturnValue(defaultModelState)
   })
