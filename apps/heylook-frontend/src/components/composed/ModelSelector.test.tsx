@@ -52,7 +52,7 @@ const defaultModelStoreState = {
 }
 
 vi.mock('../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelStoreState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelStoreState) : defaultModelStoreState),
   getModelCapabilities: vi.fn((model: Model) => {
     const caps = model.capabilities || []
     return {
@@ -74,10 +74,13 @@ vi.mock('../../stores/uiStore', () => ({
 // Import mocks after defining
 import { useModelStore } from '../../stores/modelStore'
 
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
+
 describe('ModelSelector', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(useModelStore).mockReturnValue(defaultModelStoreState)
+    setModelMock(defaultModelStoreState)
   })
 
   describe('rendering', () => {
@@ -112,7 +115,7 @@ describe('ModelSelector', () => {
 
   describe('empty state', () => {
     it('shows empty state when no models available', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         models: [],
       })
@@ -267,7 +270,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })
@@ -284,7 +287,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })
@@ -304,7 +307,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })
@@ -324,7 +327,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })
@@ -407,7 +410,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })
@@ -436,7 +439,7 @@ describe('ModelSelector', () => {
         capabilities: defaultModelCapabilities,
       }
 
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         ...defaultModelStoreState,
         loadedModel,
       })

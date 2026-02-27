@@ -9,7 +9,9 @@ import { SystemPromptEditor } from './SystemPromptEditor'
 
 export function ChatView() {
   const { activeConversation, streaming, updateSystemPrompt, createConversation, updateConversationModel } = useChatStore()
-  const { loadedModel, modelStatus, models } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
+  const modelStatus = useModelStore((s) => s.modelStatus)
+  const models = useModelStore((s) => s.models)
   const systemPrompt = useSettingsStore((s) => s.systemPrompt)
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevModelRef = useRef<string | null>(loadedModel?.id ?? null)

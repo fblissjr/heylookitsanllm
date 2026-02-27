@@ -26,7 +26,7 @@ export function SettingsPanel() {
     setLogLevel,
   } = useSettingsStore()
   const { setActivePanel } = useUIStore()
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
   const [isCreatingPreset, setIsCreatingPreset] = useState(false)
   const [newPresetName, setNewPresetName] = useState('')
 

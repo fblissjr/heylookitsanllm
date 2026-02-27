@@ -75,7 +75,7 @@ vi.mock('../stores/chatStore', () => {
 })
 
 vi.mock('../../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelState) : defaultModelState),
 }))
 
 // Import after mocks
@@ -83,6 +83,9 @@ import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
+
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
 
 describe('ChatView', () => {
   const mockConversation: Conversation = {
@@ -120,12 +123,12 @@ describe('ChatView', () => {
       streaming: defaultChatState.streaming,
       stopGeneration: vi.fn(),
     })
-    vi.mocked(useModelStore).mockReturnValue(defaultModelState)
+    setModelMock(defaultModelState)
   })
 
   describe('empty states', () => {
     it('shows EmptyState type="no-model" when no model loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
         modelStatus: 'unloaded',
         models: [],
@@ -140,7 +143,7 @@ describe('ChatView', () => {
     })
 
     it('shows EmptyState type="no-model" when modelStatus is not loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'test-model',
           capabilities: {
@@ -224,7 +227,7 @@ describe('ChatView', () => {
     })
 
     it('passes modelCapabilities to MessageList', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'vision-model',
           capabilities: {
@@ -247,7 +250,7 @@ describe('ChatView', () => {
     })
 
     it('verifies MessageList is called with correct props', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'test-model',
           capabilities: {

@@ -4,7 +4,9 @@ import { useUIStore } from '../../stores/uiStore'
 import { useTheme, Theme } from '../../contexts/ThemeContext'
 
 export function Header() {
-  const { models, loadedModel, modelStatus } = useModelStore()
+  const models = useModelStore((s) => s.models)
+  const loadedModel = useModelStore((s) => s.loadedModel)
+  const modelStatus = useModelStore((s) => s.modelStatus)
   const { toggleSidebar, togglePanel, activePanel } = useUIStore()
   const { theme, resolvedTheme, setTheme } = useTheme()
   const { pathname } = useLocation()

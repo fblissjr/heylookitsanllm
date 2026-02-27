@@ -10,7 +10,8 @@ import type { SamplerSettings } from '../../../types/settings'
 import { DEFAULT_SAMPLER_SETTINGS } from '../../../types/settings'
 
 export function BatchCreateForm() {
-  const { loadedModel, capabilities } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
+  const capabilities = useModelStore((s) => s.capabilities)
   const globalSettings = useSettingsStore((s) => s.samplerSettings)
   const setActivePanel = useUIStore((s) => s.setActivePanel)
   const createJob = useBatchStore((s) => s.createJob)

@@ -16,7 +16,7 @@ function getContextColorClass(percent: number): string {
 
 export function SystemStatusBar({ className = '' }: SystemStatusBarProps) {
   const { metrics, isPolling } = useSystemStore()
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
 
   // Start/stop polling based on component mount
   // Use getState() to avoid stale closure issues with Zustand actions

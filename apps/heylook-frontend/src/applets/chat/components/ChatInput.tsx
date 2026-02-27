@@ -21,7 +21,7 @@ export function ChatInput({ conversationId, disabled }: ChatInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { sendMessage, stopGeneration, streaming } = useChatStore()
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
 
   // Get vision capability from the globally loaded model
   const hasVision = loadedModel?.capabilities?.vision ?? false

@@ -61,7 +61,7 @@ const defaultModelState = {
 }
 
 vi.mock('../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelState) : defaultModelState),
 }))
 
 // Mock SamplerControls to avoid rendering all sliders
@@ -80,7 +80,7 @@ function renderPanel(overrides: Partial<typeof defaultSettingsState> = {}, model
   const mergedSettings = { ...defaultSettingsState, ...overrides }
   const mergedModel = { ...defaultModelState, ...modelOverrides }
   vi.mocked(useSettingsStore).mockReturnValue(mergedSettings as ReturnType<typeof useSettingsStore>)
-  vi.mocked(useModelStore).mockReturnValue(mergedModel as ReturnType<typeof useModelStore>)
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(mergedModel) : mergedModel)
   return render(<SettingsPanel />)
 }
 

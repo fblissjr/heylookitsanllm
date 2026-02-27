@@ -23,7 +23,11 @@ function sortModels(models: Model[], sort: SortOption, loadedModelId: string | u
 }
 
 export function ModelSelector() {
-  const { models, loadedModel, setLoadedModel, setModelStatus, setError } = useModelStore()
+  const models = useModelStore((s) => s.models)
+  const loadedModel = useModelStore((s) => s.loadedModel)
+  const setLoadedModel = useModelStore((s) => s.setLoadedModel)
+  const setModelStatus = useModelStore((s) => s.setModelStatus)
+  const setError = useModelStore((s) => s.setError)
   const { setActivePanel } = useUIStore()
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
   const [contextWindow, setContextWindow] = useState(4096)

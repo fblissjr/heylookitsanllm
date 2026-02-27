@@ -29,12 +29,15 @@ const defaultMockModelState = {
 }
 
 vi.mock('../../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultMockModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultMockModelState) : defaultMockModelState),
 }))
 
 // Import the mocks after defining them
 import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
+
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
 
 describe('ChatInput', () => {
   const defaultProps = {
@@ -49,7 +52,7 @@ describe('ChatInput', () => {
     createObjectURLCounter = 0
     // Reset to default state before each test
     vi.mocked(useChatStore).mockReturnValue(defaultMockChatState)
-    vi.mocked(useModelStore).mockReturnValue(defaultMockModelState)
+    setModelMock(defaultMockModelState)
     // Mock URL APIs for image tests
     globalThis.URL.createObjectURL = vi.fn(() => `blob:mock-url-${++createObjectURLCounter}`)
     globalThis.URL.revokeObjectURL = vi.fn()
@@ -64,7 +67,7 @@ describe('ChatInput', () => {
     })
 
     it('renders placeholder mentioning images when loaded model has vision', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
       })
       render(<ChatInput {...defaultProps} />)
@@ -81,7 +84,7 @@ describe('ChatInput', () => {
     })
 
     it('shows add image button when loaded model has vision', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
       })
       render(<ChatInput {...defaultProps} />)
@@ -305,7 +308,7 @@ describe('ChatInput', () => {
 
   describe('image handling', () => {
     it('adds image preview when file dropped on vision model', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -326,7 +329,7 @@ describe('ChatInput', () => {
     })
 
     it('filters out non-image files', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -337,7 +340,7 @@ describe('ChatInput', () => {
     })
 
     it('calls URL.createObjectURL for each image file', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -349,7 +352,7 @@ describe('ChatInput', () => {
     })
 
     it('shows remove button for each image preview', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -360,7 +363,7 @@ describe('ChatInput', () => {
 
     it('removes image and revokes URL on remove click', async () => {
       const user = userEvent.setup()
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -375,7 +378,7 @@ describe('ChatInput', () => {
     })
 
     it('can add multiple images', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -388,7 +391,7 @@ describe('ChatInput', () => {
 
   describe('paste image handling', () => {
     it('adds image when pasting from clipboard', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
@@ -401,7 +404,7 @@ describe('ChatInput', () => {
     })
 
     it('does not add images when pasting text-only', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
@@ -413,7 +416,7 @@ describe('ChatInput', () => {
     })
 
     it('handles null from getAsFile safely', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
@@ -427,7 +430,7 @@ describe('ChatInput', () => {
 
   describe('drag and drop', () => {
     it('sets dragging state on dragOver when vision model active', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -446,7 +449,7 @@ describe('ChatInput', () => {
     })
 
     it('clears dragging state on drop', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -458,7 +461,7 @@ describe('ChatInput', () => {
     })
 
     it('clears dragging state on dragLeave', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -472,7 +475,7 @@ describe('ChatInput', () => {
 
   describe('image submission', () => {
     it('enables send button when images present even without text', () => {
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -486,7 +489,7 @@ describe('ChatInput', () => {
       const restore = mockFileReader()
 
       const user = userEvent.setup()
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -510,7 +513,7 @@ describe('ChatInput', () => {
       const restore = mockFileReader()
 
       const user = userEvent.setup()
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
@@ -530,7 +533,7 @@ describe('ChatInput', () => {
       const restore = mockFileReader()
 
       const user = userEvent.setup()
-      vi.mocked(useModelStore).mockReturnValue(visionModelState)
+      setModelMock(visionModelState)
       render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
