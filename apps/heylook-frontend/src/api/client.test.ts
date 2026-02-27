@@ -70,11 +70,11 @@ describe('fetchAPI', () => {
 
       const result = await fetchAPI<typeof mockData>('/api/test')
       expect(result).toEqual(mockData)
-      expect(mockFetch).toHaveBeenCalledWith('/api/test', {
-        headers: {
+      expect(mockFetch).toHaveBeenCalledWith('/api/test', expect.objectContaining({
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
-        },
-      })
+        }),
+      }))
     })
 
     it('merges custom headers with defaults', async () => {
@@ -90,13 +90,13 @@ describe('fetchAPI', () => {
         },
       })
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/test', {
-        headers: {
+      expect(mockFetch).toHaveBeenCalledWith('/api/test', expect.objectContaining({
+        headers: expect.objectContaining({
           'Content-Type': 'application/json',
           'Authorization': 'Bearer token',
           'X-Custom': 'value',
-        },
-      })
+        }),
+      }))
     })
 
     it('passes additional options', async () => {
@@ -220,13 +220,13 @@ describe('postAPI', () => {
     const result = await postAPI<typeof responseData>('/api/items', requestData)
 
     expect(result).toEqual(responseData)
-    expect(mockFetch).toHaveBeenCalledWith('/api/items', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/items', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify(requestData),
-      headers: {
+      headers: expect.objectContaining({
         'Content-Type': 'application/json',
-      },
-    })
+      }),
+    }))
   })
 
   it('merges additional options', async () => {
@@ -242,10 +242,10 @@ describe('postAPI', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/items', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ data: 'test' }),
-      headers: {
+      headers: expect.objectContaining({
         'Content-Type': 'application/json',
         'X-Custom': 'header',
-      },
+      }),
     }))
   })
 

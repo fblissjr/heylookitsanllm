@@ -118,8 +118,8 @@ export function LeftPanel() {
           </div>
         )}
 
-        {/* Images */}
-        {activeDoc && (
+        {/* Images (only shown for vision models) */}
+        {activeDoc && loadedModel?.capabilities?.vision && (
           <ImageAttachments
             images={activeDoc.images}
             onAdd={handleAddImage}

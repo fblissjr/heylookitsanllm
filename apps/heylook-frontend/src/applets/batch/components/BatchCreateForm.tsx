@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useModelStore } from '../../../stores/modelStore'
 import { useSettingsStore } from '../../../stores/settingsStore'
+import { useUIStore } from '../../../stores/uiStore'
 import { useBatchStore } from '../stores/batchStore'
 import { SamplerControls } from '../../../components/composed/SamplerControls'
 import { BoltIcon } from '../../../components/icons'
@@ -9,34 +10,35 @@ import type { SamplerSettings } from '../../../types/settings'
 import { DEFAULT_SAMPLER_SETTINGS } from '../../../types/settings'
 
 export function BatchCreateForm() {
-  const { models, loadedModel, capabilities } = useModelStore()
+  const { loadedModel, capabilities } = useModelStore()
   const globalSettings = useSettingsStore((s) => s.samplerSettings)
+  const setActivePanel = useUIStore((s) => s.setActivePanel)
   const createJob = useBatchStore((s) => s.createJob)
   const setView = useBatchStore((s) => s.setView)
   const jobs = useBatchStore((s) => s.jobs)
 
   const [prompts, setPrompts] = useState<string[]>([])
-  const [selectedModelId, setSelectedModelId] = useState(loadedModel?.id || '')
   const [localSettings, setLocalSettings] = useState<SamplerSettings>({ ...DEFAULT_SAMPLER_SETTINGS, ...globalSettings })
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const batchAvailable = capabilities?.endpoints?.batch_processing?.available ?? false
+  const isVLM = loadedModel?.capabilities?.vision ?? false
 
   const handleUpdateSetting = useCallback(<K extends keyof SamplerSettings>(key: K, value: SamplerSettings[K]) => {
     setLocalSettings((prev) => ({ ...prev, [key]: value }))
   }, [])
 
   const handleSubmit = useCallback(async () => {
-    if (prompts.length === 0 || !selectedModelId) return
+    if (prompts.length === 0 || !loadedModel) return
     setIsSubmitting(true)
     try {
-      await createJob(prompts, selectedModelId, localSettings)
+      await createJob(prompts, loadedModel.id, localSettings)
     } finally {
       setIsSubmitting(false)
     }
-  }, [prompts, selectedModelId, localSettings, createJob])
+  }, [prompts, loadedModel, localSettings, createJob])
 
-  const canSubmit = prompts.length > 0 && selectedModelId && !isSubmitting
+  const canSubmit = prompts.length > 0 && !!loadedModel && !isSubmitting && !isVLM
 
   return (
     <div className="h-full flex flex-col">
@@ -79,26 +81,36 @@ export function BatchCreateForm() {
           </div>
         )}
 
+        {/* VLM warning */}
+        {isVLM && (
+          <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+              Batch mode is text-only
+            </p>
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+              The loaded model ({loadedModel?.id}) has vision capability. Batch processing does not support VLM models. Load a text-only model to use batch mode.
+            </p>
+          </div>
+        )}
+
         {/* Prompt Input */}
         <PromptInput prompts={prompts} onPromptsChange={setPrompts} />
 
-        {/* Model Selection */}
+        {/* Model label (read-only, opens global selector) */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Model
           </label>
-          <select
-            value={selectedModelId}
-            onChange={(e) => setSelectedModelId(e.target.value)}
-            className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+          <button
+            onClick={() => setActivePanel('models')}
+            className="w-full text-left px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
           >
-            <option value="">Select a model...</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}{m.id === loadedModel?.id ? ' (loaded)' : ''}
-              </option>
-            ))}
-          </select>
+            {loadedModel ? (
+              <span className="text-primary font-medium">{loadedModel.id}</span>
+            ) : (
+              <span className="text-gray-400">No model loaded -- select one...</span>
+            )}
+          </button>
         </div>
 
         {/* Sampler Controls */}

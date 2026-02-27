@@ -103,11 +103,6 @@ export function ChatView() {
       {/* Input area */}
       <ChatInput
         conversationId={conversation.id}
-        defaultModelId={
-          (models.length > 0 && models.some(m => m.id === conversation.defaultModelId))
-            ? conversation.defaultModelId
-            : loadedModel.id
-        }
         disabled={streaming.isStreaming}
       />
     </div>

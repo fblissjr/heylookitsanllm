@@ -10,6 +10,7 @@ from pathlib import Path
 
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
+from heylook_llm.diagnostic_logger import diag_event
 
 # Try to import MLX provider
 try:
@@ -141,6 +142,7 @@ class ModelRouter:
         """Evict least recently used model. Must be called with cache_lock held."""
         lru_id, lru_provider = self.providers.popitem(last=False)
         logging.info(f"Cache full. Evicting model: {lru_id}")
+        diag_event("model_evict", model=lru_id)
 
         # Check if it's an MLX model before unloading
         is_mlx_model = False
@@ -266,6 +268,8 @@ class ModelRouter:
 
                 load_time = time.time() - load_start_time
                 logging.info(f"Successfully loaded model: {model_id} in {load_time:.2f}s")
+                diag_event("model_load", model=model_id, provider=model_config.provider,
+                           load_time_s=round(load_time, 2))
 
                 # Log cache state after loading
                 if self.log_level <= logging.DEBUG:

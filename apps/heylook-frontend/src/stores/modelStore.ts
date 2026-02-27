@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { Model, ServerCapabilities } from '../types/api'
 import type { LoadedModel, ModelCapabilities, ModelStatus } from '../types/models'
+import { withDiagnostics } from './diagnosticMiddleware'
+import { logger } from '../lib/diagnostics'
 
 interface ModelState {
   // Data
@@ -29,7 +31,7 @@ function parseCapabilities(caps?: string[]): ModelCapabilities {
   }
 }
 
-export const useModelStore = create<ModelState>((set) => ({
+export const useModelStore = create<ModelState>()(withDiagnostics('model', (set) => ({
   models: [],
   loadedModel: null,
   capabilities: null,
@@ -61,22 +63,24 @@ export const useModelStore = create<ModelState>((set) => ({
       set({ capabilities: data })
     } catch (error) {
       console.error('Failed to fetch capabilities:', error)
-      // Non-fatal, continue without capabilities
     }
   },
 
   setLoadedModel: (model) => {
+    logger.info('model_loaded', 'system', { modelId: model?.id ?? null })
     set({ loadedModel: model, modelStatus: model ? 'loaded' : 'unloaded' })
   },
 
   setModelStatus: (status) => {
+    logger.info('model_status', 'system', { status })
     set({ modelStatus: status })
   },
 
   setError: (error) => {
+    if (error) logger.warn('model_error', 'system', { error })
     set({ error })
   },
-}))
+})))
 
 // Helper to get capabilities for a specific model
 export function getModelCapabilities(model: Model): ModelCapabilities {

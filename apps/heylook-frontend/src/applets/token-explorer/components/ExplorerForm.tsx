@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react'
 import { useModelStore } from '../../../stores/modelStore'
+import { useUIStore } from '../../../stores/uiStore'
 import { useExplorerStore } from '../stores/explorerStore'
 import { Slider } from '../../../components/primitives'
 import { SparklesIcon, StopIcon } from '../../../components/icons'
 
 export function ExplorerForm() {
-  const models = useModelStore((s) => s.models)
   const loadedModel = useModelStore((s) => s.loadedModel)
+  const setActivePanel = useUIStore((s) => s.setActivePanel)
   const activeRunId = useExplorerStore((s) => s.activeRunId)
   const runs = useExplorerStore((s) => s.runs)
   const startRun = useExplorerStore((s) => s.startRun)
@@ -16,17 +17,16 @@ export function ExplorerForm() {
   const isStreaming = activeRun?.status === 'streaming'
 
   const [prompt, setPrompt] = useState('')
-  const [selectedModelId, setSelectedModelId] = useState(loadedModel?.id || '')
   const [topLogprobs, setTopLogprobs] = useState(5)
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(256)
 
-  const canSubmit = prompt.trim().length > 0 && selectedModelId && !isStreaming
+  const canSubmit = prompt.trim().length > 0 && !!loadedModel && !isStreaming
 
   const handleSubmit = useCallback(() => {
-    if (!canSubmit) return
-    startRun(prompt.trim(), selectedModelId, topLogprobs, temperature, maxTokens)
-  }, [canSubmit, prompt, selectedModelId, topLogprobs, temperature, maxTokens, startRun])
+    if (!canSubmit || !loadedModel) return
+    startRun(prompt.trim(), loadedModel.id, topLogprobs, temperature, maxTokens)
+  }, [canSubmit, prompt, loadedModel, topLogprobs, temperature, maxTokens, startRun])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -40,24 +40,22 @@ export function ExplorerForm() {
 
   return (
     <div className="space-y-4">
-      {/* Model */}
+      {/* Model label (read-only, opens global selector) */}
       <div>
         <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
           Model
         </label>
-        <select
-          value={selectedModelId}
-          onChange={(e) => setSelectedModelId(e.target.value)}
+        <button
+          onClick={() => setActivePanel('models')}
           disabled={isStreaming}
-          className="w-full px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+          className="w-full text-left px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-gray-300 dark:hover:border-gray-600 transition-colors disabled:opacity-50"
         >
-          <option value="">Select model...</option>
-          {models.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.id}{m.id === loadedModel?.id ? ' (loaded)' : ''}
-            </option>
-          ))}
-        </select>
+          {loadedModel ? (
+            <span className="text-primary font-medium truncate block">{loadedModel.id}</span>
+          ) : (
+            <span className="text-gray-400">No model loaded -- select one...</span>
+          )}
+        </button>
       </div>
 
       {/* Prompt */}

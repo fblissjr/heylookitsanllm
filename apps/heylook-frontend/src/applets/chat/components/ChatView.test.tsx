@@ -17,10 +17,9 @@ vi.mock('./MessageList', () => ({
 }))
 
 vi.mock('./ChatInput', () => ({
-  ChatInput: vi.fn(({ conversationId, defaultModelId, disabled }) => (
+  ChatInput: vi.fn(({ conversationId, disabled }) => (
     <div data-testid="chat-input">
       <span data-testid="input-conversation-id">{conversationId}</span>
-      <span data-testid="input-default-model-id">{defaultModelId}</span>
       <span data-testid="input-disabled">{disabled ? 'disabled' : 'enabled'}</span>
     </div>
   )),
@@ -282,37 +281,6 @@ describe('ChatView', () => {
       expect(screen.getByTestId('input-conversation-id')).toHaveTextContent('conv-123')
     })
 
-    it('passes defaultModelId to ChatInput from conversation', () => {
-      render(<ChatView />)
-
-      // Uses conversation.defaultModelId which is 'test-model'
-      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
-    })
-
-    it('falls back to loadedModel.id when conversation has no defaultModelId', () => {
-      vi.mocked(useChatStore).mockReturnValue({
-        activeConversation: () => ({
-          id: 'conv-123',
-          title: 'Test Conversation',
-          defaultModelId: '', // Empty - should fall back
-          messages: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }),
-        streaming: {
-          isStreaming: false,
-          content: '',
-          thinking: '',
-          messageId: null,
-        },
-      })
-
-      render(<ChatView />)
-
-      // Falls back to loadedModel.id which is 'test-model'
-      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
-    })
-
     it('passes disabled=false when not streaming', () => {
       render(<ChatView />)
 
@@ -351,7 +319,6 @@ describe('ChatView', () => {
       expect(ChatInput).toHaveBeenCalled()
       const callArgs = vi.mocked(ChatInput).mock.calls[0][0]
       expect(callArgs.conversationId).toBe('conv-123')
-      expect(callArgs.defaultModelId).toBe('test-model')
       expect(callArgs.disabled).toBe(true)
     })
   })

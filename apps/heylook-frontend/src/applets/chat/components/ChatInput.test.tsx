@@ -23,27 +23,13 @@ vi.mock('../stores/chatStore', () => ({
   useChatStore: vi.fn(() => defaultMockChatState),
 }))
 
-// Mock the modelStore
+// Mock the modelStore -- loadedModel drives vision and model ID
 const defaultMockModelState = {
-  models: [
-    { id: 'model-abc', capabilities: ['chat'], owned_by: 'test' },
-    { id: 'model-vision', capabilities: ['chat', 'vision'], owned_by: 'test' },
-  ],
   loadedModel: { id: 'model-abc', capabilities: { chat: true, vision: false, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
 }
 
 vi.mock('../../../stores/modelStore', () => ({
   useModelStore: vi.fn(() => defaultMockModelState),
-  getModelCapabilities: vi.fn((model) => {
-    const caps = model.capabilities || []
-    return {
-      chat: caps.includes('chat'),
-      vision: caps.includes('vision'),
-      thinking: caps.includes('thinking'),
-      hidden_states: caps.includes('hidden_states'),
-      embeddings: caps.includes('embeddings'),
-    }
-  }),
 }))
 
 // Import the mocks after defining them
@@ -53,7 +39,6 @@ import { useModelStore } from '../../../stores/modelStore'
 describe('ChatInput', () => {
   const defaultProps = {
     conversationId: 'conv-123',
-    defaultModelId: 'model-abc',
     disabled: false,
   }
 
@@ -78,13 +63,11 @@ describe('ChatInput', () => {
       expect(textarea).toBeInTheDocument()
     })
 
-    it('renders placeholder mentioning images when selected model has vision', () => {
-      // Mock a vision model being selected
+    it('renders placeholder mentioning images when loaded model has vision', () => {
       vi.mocked(useModelStore).mockReturnValue({
-        ...defaultMockModelState,
         loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
       })
-      render(<ChatInput {...defaultProps} defaultModelId="model-vision" />)
+      render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
       expect(textarea).toBeInTheDocument()
@@ -97,18 +80,17 @@ describe('ChatInput', () => {
       expect(sendButton).toBeInTheDocument()
     })
 
-    it('shows add image button when selected model has vision', () => {
+    it('shows add image button when loaded model has vision', () => {
       vi.mocked(useModelStore).mockReturnValue({
-        ...defaultMockModelState,
         loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
       })
-      render(<ChatInput {...defaultProps} defaultModelId="model-vision" />)
+      render(<ChatInput {...defaultProps} />)
 
       const addImageButton = screen.getByTitle('Add image')
       expect(addImageButton).toBeInTheDocument()
     })
 
-    it('hides add image button when selected model does not have vision', () => {
+    it('hides add image button when loaded model does not have vision', () => {
       render(<ChatInput {...defaultProps} />)
 
       const addImageButton = screen.queryByTitle('Add image')
@@ -142,7 +124,7 @@ describe('ChatInput', () => {
   })
 
   describe('submission', () => {
-    it('calls sendMessage when send button is clicked with text', async () => {
+    it('calls sendMessage with loadedModel.id when send button is clicked', async () => {
       const user = userEvent.setup()
       render(<ChatInput {...defaultProps} />)
 
@@ -299,13 +281,7 @@ describe('ChatInput', () => {
 
   // Helpers for image tests
   const visionModelState = {
-    ...defaultMockModelState,
     loadedModel: { id: 'model-vision', capabilities: { chat: true, vision: true, thinking: false, hidden_states: false, embeddings: false }, contextWindow: 4096 },
-  }
-
-  const visionProps = {
-    ...defaultProps,
-    defaultModelId: 'model-vision',
   }
 
   function createImageFile(name = 'photo.png', type = 'image/png') {
@@ -330,7 +306,7 @@ describe('ChatInput', () => {
   describe('image handling', () => {
     it('adds image preview when file dropped on vision model', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       const file = createImageFile()
@@ -351,7 +327,7 @@ describe('ChatInput', () => {
 
     it('filters out non-image files', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       const textFile = new File(['hello'], 'notes.txt', { type: 'text/plain' })
@@ -362,7 +338,7 @@ describe('ChatInput', () => {
 
     it('calls URL.createObjectURL for each image file', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       const file1 = createImageFile('a.png')
@@ -374,7 +350,7 @@ describe('ChatInput', () => {
 
     it('shows remove button for each image preview', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
@@ -385,7 +361,7 @@ describe('ChatInput', () => {
     it('removes image and revokes URL on remove click', async () => {
       const user = userEvent.setup()
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
@@ -400,7 +376,7 @@ describe('ChatInput', () => {
 
     it('can add multiple images', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile('a.png'), createImageFile('b.png')]))
@@ -413,7 +389,7 @@ describe('ChatInput', () => {
   describe('paste image handling', () => {
     it('adds image when pasting from clipboard', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
       const file = createImageFile()
@@ -426,7 +402,7 @@ describe('ChatInput', () => {
 
     it('does not add images when pasting text-only', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
       fireEvent.paste(textarea, createPasteEvent([
@@ -438,7 +414,7 @@ describe('ChatInput', () => {
 
     it('handles null from getAsFile safely', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const textarea = screen.getByPlaceholderText('Message... (paste or drag images)')
       fireEvent.paste(textarea, createPasteEvent([
@@ -452,7 +428,7 @@ describe('ChatInput', () => {
   describe('drag and drop', () => {
     it('sets dragging state on dragOver when vision model active', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.dragOver(container)
@@ -471,7 +447,7 @@ describe('ChatInput', () => {
 
     it('clears dragging state on drop', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.dragOver(container)
@@ -483,7 +459,7 @@ describe('ChatInput', () => {
 
     it('clears dragging state on dragLeave', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.dragOver(container)
@@ -497,7 +473,7 @@ describe('ChatInput', () => {
   describe('image submission', () => {
     it('enables send button when images present even without text', () => {
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
@@ -511,7 +487,7 @@ describe('ChatInput', () => {
 
       const user = userEvent.setup()
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
@@ -535,7 +511,7 @@ describe('ChatInput', () => {
 
       const user = userEvent.setup()
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
@@ -555,7 +531,7 @@ describe('ChatInput', () => {
 
       const user = userEvent.setup()
       vi.mocked(useModelStore).mockReturnValue(visionModelState)
-      render(<ChatInput {...visionProps} />)
+      render(<ChatInput {...defaultProps} />)
 
       const container = screen.getByPlaceholderText('Message... (paste or drag images)').closest('div')!
       fireEvent.drop(container, createDropEvent([createImageFile()]))
