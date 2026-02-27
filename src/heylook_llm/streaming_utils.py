@@ -59,6 +59,7 @@ async def async_generator_with_abort(
         # (releases _generation_lock, decrements _active_generations, clears MLX cache).
         # Without this, close() only runs when GC collects the abandoned generator.
         try:
+            logging.debug(f"{log_prefix}Closing provider generator")
             sync_gen.close()
         except Exception:
             pass
