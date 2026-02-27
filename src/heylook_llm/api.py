@@ -488,7 +488,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             headers={"X-Request-ID": request_id},
         )
     else:
-        result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, perf_ctx=perf_ctx)
+        result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
         diag_event("generation_complete", request_id=request_id,
                    total_ms=round((time.time() - request_start_time) * 1000, 1))
         if isinstance(result, dict):
@@ -566,11 +566,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     if chat_request.logprobs:
         try:
             from heylook_llm.logprobs import StreamingLogprobsCollector
-            # Get tokenizer from provider for decoding tokens
-            provider = router.get_provider(chat_request.model)
-            tokenizer = None
-            if hasattr(provider, 'processor') and provider.processor:
-                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
+            tokenizer = provider.get_tokenizer() if provider else None
             if tokenizer:
                 top_logprobs = chat_request.top_logprobs or 5
                 logprobs_collector = StreamingLogprobsCollector(tokenizer, top_logprobs=top_logprobs)
@@ -786,7 +782,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, perf_ctx: dict | None = None):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None):
     full_text = ""
     prompt_tokens = 0
     completion_tokens = 0
@@ -799,11 +795,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     if chat_request.logprobs:
         try:
             from heylook_llm.logprobs import LogprobsCollector
-            # Get tokenizer from provider for decoding tokens
-            provider = router.get_provider(chat_request.model)
-            tokenizer = None
-            if hasattr(provider, 'processor') and provider.processor:
-                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
+            tokenizer = provider.get_tokenizer() if provider else None
             if tokenizer:
                 top_logprobs = chat_request.top_logprobs or 5
                 logprobs_collector = LogprobsCollector(tokenizer, top_logprobs=top_logprobs)
@@ -819,6 +811,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     # Process generation in thread pool to avoid blocking event loop
     def consume_generator():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count
+        first_logprob_logged = False
         for chunk in generator:
             full_text += chunk.text
             token_count += 1
@@ -829,6 +822,12 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 chunk_logprobs = getattr(chunk, 'logprobs', None)
                 if token_id is not None and chunk_logprobs is not None:
                     logprobs_collector.add_token(token_id, chunk_logprobs)
+                elif not first_logprob_logged:
+                    first_logprob_logged = True
+                    diag_event("logprobs_missing_data", request_id=request_id, level="debug",
+                               has_token_id=token_id is not None,
+                               has_chunk_logprobs=chunk_logprobs is not None,
+                               streaming=False)
 
             # Update token count periodically for long responses
             if token_count % 25 == 0:

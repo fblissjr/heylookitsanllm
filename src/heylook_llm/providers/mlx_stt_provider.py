@@ -251,6 +251,10 @@ class MLXSTTProvider:
 
         return response
 
+    def get_tokenizer(self):
+        """STT provider has no tokenizer."""
+        return None
+
     def unload(self):
         """Unload model from memory."""
         self.model = None
