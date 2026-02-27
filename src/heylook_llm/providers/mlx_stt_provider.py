@@ -263,7 +263,7 @@ class MLXSTTProvider:
         try:
             import mlx.core as mx
             mx.metal.clear_cache()
-        except:
+        except Exception:
             pass
 
         logger.info(f"Model {self.model_id} unloaded")

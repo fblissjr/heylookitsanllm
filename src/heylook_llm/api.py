@@ -1372,7 +1372,7 @@ async def get_capabilities(request: Request):
             }
         else:
             metal_info = {"available": False}
-    except:
+    except Exception:
         metal_info = {"available": False}
 
     capabilities = {
