@@ -23,6 +23,7 @@ docs/archive
 docs/frontend-mocks/
 internal/
 logs/
+update-coderef.sh
 
 # configs
 model.toml
