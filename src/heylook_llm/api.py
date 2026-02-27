@@ -23,6 +23,32 @@ from heylook_llm.utils import log_request_start, log_request_stage, log_request_
 from heylook_llm.diagnostic_logger import diag_event
 
 
+def _init_logprobs_collector(chat_request, provider, request_id, streaming=True):
+    """Initialize logprobs collector if requested. Returns collector or None."""
+    if not chat_request.logprobs:
+        return None
+    try:
+        if streaming:
+            from heylook_llm.logprobs import StreamingLogprobsCollector as CollectorClass
+        else:
+            from heylook_llm.logprobs import LogprobsCollector as CollectorClass
+        tokenizer = provider.get_tokenizer() if provider else None
+        if tokenizer:
+            top_logprobs = chat_request.top_logprobs or 5
+            collector = CollectorClass(tokenizer, top_logprobs=top_logprobs)
+            diag_event("logprobs_init", request_id=request_id, level="debug",
+                       top_logprobs=top_logprobs, streaming=streaming)
+            return collector
+        else:
+            logging.warning("Logprobs requested but tokenizer not available from provider")
+            diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                       reason="tokenizer_not_available", streaming=streaming)
+    except Exception as e:
+        logging.warning(f"Failed to initialize logprobs collector: {e}")
+        diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                   reason=str(e), streaming=streaming)
+    return None
+
 
 async def _resource_snapshot_loop(app: FastAPI) -> None:
     """Background task: record a ResourceSnapshot every 60 seconds."""
@@ -562,24 +588,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     thinking_parser = HybridThinkingParser()
 
     # Initialize logprobs collector if requested
-    logprobs_collector = None
-    if chat_request.logprobs:
-        try:
-            from heylook_llm.logprobs import StreamingLogprobsCollector
-            tokenizer = provider.get_tokenizer() if provider else None
-            if tokenizer:
-                top_logprobs = chat_request.top_logprobs or 5
-                logprobs_collector = StreamingLogprobsCollector(tokenizer, top_logprobs=top_logprobs)
-                diag_event("logprobs_init", request_id=request_id, level="debug",
-                           top_logprobs=top_logprobs)
-            else:
-                logging.warning("Logprobs requested but tokenizer not available from provider")
-                diag_event("logprobs_init_failed", request_id=request_id, level="warn",
-                           reason="tokenizer_not_available")
-        except Exception as e:
-            logging.warning(f"Failed to initialize streaming logprobs collector: {e}")
-            diag_event("logprobs_init_failed", request_id=request_id, level="warn",
-                       reason=str(e))
+    logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=True)
 
     log_request_stage(request_id, "streaming")
 
@@ -787,26 +796,10 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     prompt_tokens = 0
     completion_tokens = 0
     token_count = 0
-    logprobs_collector = None
-
     log_request_stage(request_id, "processing_response")
 
     # Initialize logprobs collector if requested
-    if chat_request.logprobs:
-        try:
-            from heylook_llm.logprobs import LogprobsCollector
-            tokenizer = provider.get_tokenizer() if provider else None
-            if tokenizer:
-                top_logprobs = chat_request.top_logprobs or 5
-                logprobs_collector = LogprobsCollector(tokenizer, top_logprobs=top_logprobs)
-                diag_event("logprobs_init", request_id=request_id, level="debug",
-                           top_logprobs=top_logprobs, streaming=False)
-            else:
-                logging.warning("Logprobs requested but tokenizer not available from provider")
-                diag_event("logprobs_init_failed", request_id=request_id, level="warn",
-                           reason="tokenizer_not_available", streaming=False)
-        except Exception as e:
-            logging.warning(f"Failed to initialize logprobs collector: {e}")
+    logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=False)
 
     # Process generation in thread pool to avoid blocking event loop
     def consume_generator():
