@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Chat: wrong-conversation targeting**: `finalizeStream` read `activeConversationId` at callback time. Switching conversations mid-stream caused streamed content to be written into the newly active conversation. The conversation ID is now pinned when the stream starts and passed through to `finalizeStream`.
 - **Chat: orphaned streams on navigation**: Navigating away from the Chat applet did not stop in-flight streams. The backend kept generating and eventual callbacks wrote to a detached store. `ChatView` now calls `stopGeneration()` on unmount.
 - **Chat: no timeout**: A hung backend (stuck MLX kernel, stalled connection) left `isStreaming: true` permanently with no way to recover without a page reload. A 30-second timeout is now applied via `AbortSignal.timeout()`, producing a user-visible error message.
+- **Chat: "Failed to fetch" on cancel-and-resend**: Cancelling a streaming generation and immediately sending a new message caused `TypeError: Failed to fetch` because the browser HTTP connection from the aborted SSE stream was never released (relied on GC). The `ReadableStreamDefaultReader` is now explicitly cancelled on abort. `stopGeneration` saves partial content to the message. Stale-callback guards prevent old stream callbacks from corrupting a new stream's state.
 
 ## 1.22.0
 
