@@ -60,6 +60,10 @@ uv sync --extra stt          # Speech-to-text (macOS, parakeet-mlx)
 uv sync --extra analytics    # DuckDB analytics
 uv sync --extra performance  # xxhash, uvloop, turbojpeg, cachetools
 uv sync --extra all          # Everything
+
+# Frontend
+cd apps/heylook-frontend
+bun install
 ```
 
 ### Start Server
@@ -74,6 +78,16 @@ heylookllm import --folder ~/models
 heylookllm --log-level INFO
 heylookllm --port 8080
 ```
+
+### Start Frontend
+
+```bash
+cd apps/heylook-frontend
+bun run dev          # http://localhost:5173
+bun run dev:all      # frontend + backend together
+```
+
+See [apps/heylook-frontend/README.md](./apps/heylook-frontend/README.md) for testing, build, and project structure.
 
 ### Run as Background Service (macOS/Linux)
 
