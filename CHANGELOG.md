@@ -18,9 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **VLM guards**: Batch shows a warning when a VLM is loaded (batch mode is text-only, submit disabled). Notebook hides image attachment UI when a text-only model is loaded.
 - **Tokenizer extraction consolidated**: Provider base class now exposes `get_tokenizer()` method; tokenizer extraction consolidated from 2 duplicated call sites in api.py.
 - **Frontend re-render optimization**: Bare `useModelStore()` calls replaced with individual selectors in 9 components (reduces unnecessary re-renders).
+- **Logprobs init deduplication**: Logprobs collector initialization extracted into shared `_init_logprobs_collector()` helper (removes ~30 lines of duplication between streaming and non-streaming paths).
+- **Frontend package manager**: Migrated from npm to bun.
 
 ### Fixed
 
+- **Bare except handlers**: Replaced `except:` with `except Exception:` in Metal info query and STT cache cleanup (was swallowing SystemExit/KeyboardInterrupt).
+- **Logprobs helper exceptions**: `_decode_token` and `_get_token_bytes` exception handlers narrowed to specific types instead of broad `except Exception`.
+- **Non-streaming logprobs init error path**: Missing diagnostic event in non-streaming logprobs init `except` block (now shared via extracted helper).
 - **Logprobs exception handling**: `add_token()` exception handler narrowed from `except Exception` to specific types (IndexError, ValueError, RuntimeError, TypeError).
 - **Non-streaming logprobs diagnostic**: Non-streaming logprobs path now logs `logprobs_missing_data` diagnostic event (was streaming-only).
 - **Redundant provider lookup**: Removed redundant `router.get_provider()` call in streaming logprobs initialization.
