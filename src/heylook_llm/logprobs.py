@@ -140,14 +140,14 @@ class LogprobsCollector:
         try:
             # Use the tokenizer to decode
             return self.tokenizer.decode([token_id])
-        except Exception:
+        except (KeyError, IndexError, OverflowError, TypeError, ValueError):
             return f"<token_{token_id}>"
 
     def _get_token_bytes(self, token_text: str) -> List[int]:
         """Get UTF-8 bytes for a token."""
         try:
             return list(token_text.encode('utf-8'))
-        except Exception:
+        except UnicodeEncodeError:
             return []
 
     def _get_top_logprobs(self, logprobs: List[float]) -> List[TokenLogprob]:

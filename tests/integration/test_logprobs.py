@@ -113,6 +113,27 @@ class TestLogprobsEdgeCases:
         assert len(collector.content) == 0
 
 
+    def test_decode_token_returns_fallback_for_bad_id(self):
+        """_decode_token returns '<token_N>' when tokenizer.decode raises KeyError."""
+        from heylook_llm.logprobs import LogprobsCollector
+
+        class BadTokenizer:
+            def decode(self, token_ids):
+                raise KeyError(f"Unknown token id {token_ids[0]}")
+
+        collector = LogprobsCollector(BadTokenizer(), top_logprobs=1)
+        result = collector._decode_token(99999)
+        assert result == "<token_99999>"
+
+    def test_get_token_bytes_handles_surrogate(self):
+        """_get_token_bytes returns [] for strings with surrogate characters."""
+        from heylook_llm.logprobs import LogprobsCollector
+
+        collector = LogprobsCollector(MockTokenizer(), top_logprobs=1)
+        result = collector._get_token_bytes("\ud800")
+        assert result == []
+
+
 class TestStreamingLogprobsCollector:
     """Unit tests for StreamingLogprobsCollector."""
 
