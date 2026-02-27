@@ -1,5 +1,7 @@
 # heylook-frontend
 
+Last updated: 2026-02-27
+
 React-based web frontend for the heylookitsanllm local LLM server.
 
 ## Overview
@@ -70,7 +72,7 @@ bun run test:e2e:ui
 
 ### Test Coverage
 
-- **471 unit/component tests** across 17 test files
+- **874 unit/component tests** across 38 test files
 - **48 E2E tests** across 5 test files
 - Stores, components, utilities, and integration flows covered
 
@@ -81,39 +83,34 @@ src/
 ├── api/                    # Backend API communication
 │   ├── client.ts          # HTTP client with error handling
 │   ├── endpoints.ts       # API endpoint functions
-│   ├── streaming.ts       # SSE streaming handler
+│   ├── streaming.ts       # SSE streaming handler (timeout, abort)
 │   └── index.ts
+├── applets/               # Lazy-loaded applets (one dir per applet)
+│   ├── chat/              # Chat applet + chatStore
+│   ├── batch/             # Batch applet + batchStore
+│   ├── token-explorer/    # Token Explorer + explorerStore
+│   ├── model-comparison/  # Model Comparison + comparisonStore
+│   ├── performance/       # Performance + performanceStore
+│   ├── notebook/          # Notebook + notebookStore
+│   └── models/            # Models applet + modelsStore
 ├── components/
-│   ├── layout/            # App shell components
-│   │   ├── Header.tsx     # Top bar with model selector
-│   │   ├── Layout.tsx     # Main layout wrapper
-│   │   └── Sidebar.tsx    # Conversation list
-│   └── modals/
-│       └── ConfirmDeleteModal.tsx
-├── contexts/
-│   └── ThemeContext.tsx   # Dark/light theme provider
-├── features/
-│   ├── chat/components/   # Chat feature
-│   │   ├── ChatInput.tsx  # Message input with attachments
-│   │   ├── ChatView.tsx   # Main chat view
-│   │   ├── EmptyState.tsx # No conversation state
-│   │   └── MessageList.tsx # Message display
-│   └── models/components/
-│       └── ModelSelector.tsx # Model picker panel
-├── lib/
-│   └── db.ts              # IndexedDB operations
-├── stores/                # Zustand state management
-│   ├── chatStore.ts       # Conversations and messages
-│   ├── modelStore.ts      # Model state and loading
+│   ├── primitives/        # Low-level reusable components
+│   ├── composed/          # Higher-level composed components
+│   ├── icons/             # Icon components
+│   └── layout/            # App shell (Header, Layout, Sidebar)
+├── stores/                # Shared Zustand stores
+│   ├── modelStore.ts      # Global model state
 │   ├── settingsStore.ts   # Sampler parameters
-│   ├── uiStore.ts         # UI state (sidebar, panels)
-│   └── index.ts
+│   └── uiStore.ts         # UI state (sidebar, panels)
+├── lib/
+│   ├── db.ts              # IndexedDB operations
+│   └── color.ts           # Shared color utilities (probabilityToColor)
+├── test/                  # Test utilities
+│   ├── render.tsx         # renderWithProviders helper
+│   ├── mocks.ts           # Shared mock factories
+│   └── setup.ts           # Vitest setup
 ├── types/                 # TypeScript definitions
-│   ├── api.ts
-│   ├── chat.ts
-│   ├── models.ts
-│   └── settings.ts
-├── App.tsx                # Root component
+├── App.tsx                # Root component with lazy applet routing
 └── main.tsx               # Entry point
 ```
 
@@ -160,7 +157,7 @@ The frontend communicates with the heylookitsanllm backend via:
 - `POST /v1/models/unload` - Unload current model
 - `POST /v1/chat/completions` - Chat with streaming
 
-See [TECH_SPECS.md](./TECH_SPECS.md) for API details.
+See [docs/FRONTEND_HANDOFF.md](../../docs/FRONTEND_HANDOFF.md) for full API reference.
 
 ## Contributing
 

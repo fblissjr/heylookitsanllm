@@ -1,10 +1,10 @@
 # Test Suite
 
-last updated: 2026-02-24
+last updated: 2026-02-27
 
 ## Overview
 
-Backend tests for the heylookitsanllm API server. For frontend tests (781 tests across 34 files), see `apps/heylook-frontend/`.
+Backend tests for the heylookitsanllm API server. For frontend tests (874 tests across 38 files), see `apps/heylook-frontend/`.
 
 ## Organization
 
@@ -133,5 +133,5 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 
 ## Related
 
-- `apps/heylook-frontend/` -- Frontend tests (781 tests, 34 files, Vitest)
+- `apps/heylook-frontend/` -- Frontend tests (874 tests, 38 files, Vitest)
 - `docs/FRONTEND_HANDOFF.md` -- API reference for integration tests

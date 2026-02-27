@@ -1,5 +1,7 @@
 # Architecture Documentation
 
+Last updated: 2026-02-27
+
 ## System Overview
 
 heylook-frontend is a React single-page application (SPA) that provides a chat interface for the heylookitsanllm local LLM server. The architecture follows a unidirectional data flow pattern with centralized state management.
@@ -322,7 +324,7 @@ Shared stores (model, settings, UI) remain in `src/stores/`.
 Shared components live in `src/components/` (primitives/, composed/, icons/, layout/).
 Each applet is lazy-loaded via `React.lazy` for code splitting.
 
-**Total: 858 tests across 37 test files.**
+**Total: 874 tests across 38 test files.**
 
 ## Future Considerations
 
