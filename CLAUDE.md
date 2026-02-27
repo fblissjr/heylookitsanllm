@@ -94,7 +94,7 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 ## Running Tests
 
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
-- Frontend: `cd apps/heylook-frontend && npx vitest run` (must run from frontend dir, not repo root)
+- Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests -- do not investigate
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed
 - Zustand store mocks with `.getState()`: use `vi.hoisted()` to define mock state that `vi.mock()` factories reference (vitest hoists mock factories above variable declarations)

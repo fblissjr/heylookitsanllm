@@ -22,27 +22,27 @@ A modern, responsive chat interface for interacting with local LLM models via th
 ### Prerequisites
 
 - Node.js 18+
-- npm or pnpm
+- bun
 - heylookitsanllm backend running on localhost:8080
 
 ### Installation
 
 ```bash
 cd apps/heylook-frontend
-npm install
+bun install
 ```
 
 ### Development
 
 ```bash
 # Start frontend only
-npm run dev
+bun run dev
 
 # Start frontend + backend together
-npm run dev:all
+bun run dev:all
 
 # Start backend separately
-npm run dev:backend
+bun run dev:backend
 ```
 
 The app will be available at http://localhost:5173
@@ -50,22 +50,22 @@ The app will be available at http://localhost:5173
 ### Production Build
 
 ```bash
-npm run build
-npm run preview  # Preview production build
+bun run build
+bun run preview  # Preview production build
 ```
 
 ## Testing
 
 ```bash
 # Unit and component tests (Vitest)
-npm run test        # Watch mode
-npm run test:run    # Single run
-npm run test:ui     # Vitest UI
-npm run test:coverage
+bun run test        # Watch mode
+bun run test:run    # Single run
+bun run test:ui     # Vitest UI
+bun run test:coverage
 
 # E2E tests (Playwright) - requires backend running
-npm run test:e2e
-npm run test:e2e:ui
+bun run test:e2e
+bun run test:e2e:ui
 ```
 
 ### Test Coverage
