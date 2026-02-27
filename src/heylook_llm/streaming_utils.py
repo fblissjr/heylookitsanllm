@@ -34,22 +34,31 @@ async def async_generator_with_abort(
         except StopIteration:
             return None
 
-    while True:
-        chunk_future = loop.run_in_executor(None, get_next)
+    try:
+        while True:
+            chunk_future = loop.run_in_executor(None, get_next)
 
-        if http_request and abort_event:
-            while not chunk_future.done():
-                if await http_request.is_disconnected():
-                    logging.info(f"{log_prefix}Client disconnected during streaming")
-                    abort_event.set()
-                    try:
-                        await chunk_future
-                    except Exception:
-                        pass
-                    return
-                await asyncio.sleep(0.1)
+            if http_request and abort_event:
+                while not chunk_future.done():
+                    if await http_request.is_disconnected():
+                        logging.info(f"{log_prefix}Client disconnected during streaming")
+                        abort_event.set()
+                        try:
+                            await chunk_future
+                        except Exception:
+                            pass
+                        return
+                    await asyncio.sleep(0.1)
 
-        chunk = await chunk_future
-        if chunk is None:
-            break
-        yield chunk
+            chunk = await chunk_future
+            if chunk is None:
+                break
+            yield chunk
+    finally:
+        # Close the provider generator so its finally blocks run immediately
+        # (releases _generation_lock, decrements _active_generations, clears MLX cache).
+        # Without this, close() only runs when GC collects the abandoned generator.
+        try:
+            sync_gen.close()
+        except Exception:
+            pass
