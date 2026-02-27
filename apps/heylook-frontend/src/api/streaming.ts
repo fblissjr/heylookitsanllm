@@ -55,6 +55,8 @@ export async function streamChat(
   if (timeoutMs) signals.push(AbortSignal.timeout(timeoutMs))
   const combinedSignal = signals.length > 0 ? AbortSignal.any(signals) : undefined
 
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+
   try {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
@@ -80,7 +82,7 @@ export async function streamChat(
       throw new Error('No response body for streaming')
     }
 
-    const reader = response.body.getReader()
+    reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
 
@@ -110,6 +112,9 @@ export async function streamChat(
       onComplete()
     }
   } catch (error) {
+    // Release the browser HTTP connection immediately instead of waiting for GC
+    await reader?.cancel().catch(() => {})
+
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
         logger.info('sse_abort', 'sse', {}, requestId)

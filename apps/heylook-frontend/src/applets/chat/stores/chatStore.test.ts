@@ -757,6 +757,81 @@ describe('chatStore', () => {
     })
   })
 
+  describe('stopGeneration', () => {
+    it('saves partial content to the message', () => {
+      const { createConversation } = useChatStore.getState()
+
+      const convId = createConversation('test-model')
+      const msgId = useChatStore.getState().addMessage(convId, {
+        role: 'assistant',
+        content: '',
+        isRegenerating: true,
+      })
+
+      // Simulate mid-stream state
+      useChatStore.getState().setStreaming({
+        isStreaming: true,
+        content: 'Partial response so far',
+        thinking: 'Some thinking',
+        messageId: msgId,
+      })
+
+      useChatStore.getState().stopGeneration()
+
+      // Streaming state should be reset
+      const { streaming } = useChatStore.getState()
+      expect(streaming.isStreaming).toBe(false)
+      expect(streaming.messageId).toBeNull()
+
+      // Partial content should be saved to the message
+      const conversation = useChatStore.getState().getConversationById(convId)
+      const message = conversation?.messages.find(m => m.id === msgId)
+      expect(message?.content).toBe('Partial response so far')
+      expect(message?.thinking).toBe('Some thinking')
+      expect(message?.isRegenerating).toBe(false)
+    })
+
+    it('is a no-op when not streaming', () => {
+      // Should not throw
+      expect(() => useChatStore.getState().stopGeneration()).not.toThrow()
+
+      // Streaming state unchanged
+      expect(useChatStore.getState().streaming.isStreaming).toBe(false)
+    })
+
+    it('nulls messageId so finalizeStream becomes a no-op', () => {
+      const { createConversation } = useChatStore.getState()
+
+      const convId = createConversation('test-model')
+      const msgId = useChatStore.getState().addMessage(convId, {
+        role: 'assistant',
+        content: '',
+      })
+
+      // Simulate mid-stream
+      useChatStore.getState().setStreaming({
+        isStreaming: true,
+        content: 'Partial',
+        thinking: '',
+        messageId: msgId,
+      })
+
+      // Stop saves partial content and resets messageId to null
+      useChatStore.getState().stopGeneration()
+
+      // Now finalizeStream should be a no-op (messageId is null)
+      // Calling it should not overwrite the partial content we saved
+      useChatStore.getState().finalizeStream({ usage: { prompt_tokens: 10, completion_tokens: 50, total_tokens: 60 } })
+
+      const conversation = useChatStore.getState().getConversationById(convId)
+      const message = conversation?.messages.find(m => m.id === msgId)
+      // Content should still be the partial we saved, not overwritten
+      expect(message?.content).toBe('Partial')
+      // tokenCount should not have been set by finalizeStream
+      expect(message?.tokenCount).toBeUndefined()
+    })
+  })
+
   describe('edge cases', () => {
     it('handles operations on non-existent conversation gracefully', () => {
       // These should not throw

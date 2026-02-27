@@ -12,6 +12,7 @@ export type { StreamingState }
 
 class ChatStreamManager {
   private controller: AbortController | null = null
+  private pending: Promise<void> = Promise.resolve()
 
   /** Abort any in-flight stream and reset. */
   abort() {
@@ -24,6 +25,7 @@ class ChatStreamManager {
   /**
    * Run a streaming generation. Handles:
    * - Aborting any previous stream
+   * - Draining the previous connection before opening a new one
    * - Creating/cleaning up AbortController
    * - Timeout (configurable via settings)
    * - Routing callbacks to the pinned conversationId
@@ -37,34 +39,61 @@ class ChatStreamManager {
     }
   ): Promise<void> {
     this.abort()
-    this.controller = new AbortController()
 
+    // Wait for the previous stream to fully settle so the browser's
+    // HTTP connection is cleanly torn down before opening a new one.
+    // Timeout prevents a hang if reader.cancel() stalls in the old stream.
+    await Promise.race([
+      this.pending.catch(() => {}),
+      new Promise<void>(resolve => setTimeout(resolve, 2000)),
+    ])
+
+    const controller = new AbortController()
+    this.controller = controller
     const targetConversationId = conversationId
     const timeoutMs = useSettingsStore.getState().streamTimeoutMs
 
-    try {
-      await streamChat(
-        request,
-        {
-          onToken: (token, rawEvent) => store.appendStreamContent(token, false, rawEvent),
-          onThinking: (thinking, rawEvent) => store.appendStreamContent(thinking, true, rawEvent),
-          onComplete: (data) => store.finalizeStream(data, targetConversationId),
-          onError: (error) => {
-            console.error('Stream error:', error)
-            store.finalizeStream(undefined, targetConversationId)
-          },
+    // Guard: if a newer run() has replaced this.controller, this stream's
+    // callbacks are stale and must not touch shared state.
+    const isStale = () => this.controller !== controller
+
+    const streamPromise = streamChat(
+      request,
+      {
+        onToken: (token, rawEvent) => {
+          if (isStale()) return
+          store.appendStreamContent(token, false, rawEvent)
         },
-        this.controller.signal,
-        timeoutMs
-      )
+        onThinking: (thinking, rawEvent) => {
+          if (isStale()) return
+          store.appendStreamContent(thinking, true, rawEvent)
+        },
+        onComplete: (data) => {
+          if (isStale()) return
+          store.finalizeStream(data, targetConversationId)
+        },
+        onError: (error) => {
+          if (isStale()) return
+          console.error('Stream error:', error)
+          store.finalizeStream(undefined, targetConversationId)
+        },
+      },
+      controller.signal,
+      timeoutMs
+    )
+    this.pending = streamPromise
+
+    try {
+      await streamPromise
     } finally {
-      this.controller = null
+      // Only null the controller if we're still the active run.
+      // A newer run() may have already replaced this.controller.
+      if (this.controller === controller) {
+        this.controller = null
+      }
     }
   }
 
-  get isActive(): boolean {
-    return this.controller !== null
-  }
 }
 
 const streamManager = new ChatStreamManager()
@@ -338,6 +367,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // API Actions
   sendMessage: async (conversationId, content, modelId, images) => {
+    // Prevent concurrent sends (e.g. Enter key pressed while already streaming)
+    if (get().streaming.isStreaming) return
+
     const { addMessage, setStreaming, appendStreamContent, finalizeStream } = get()
     const conversation = get().conversations.find(c => c.id === conversationId)
     if (!conversation) return
@@ -386,24 +418,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   stopGeneration: () => {
-    // Two-path cleanup:
-    // 1. abort() fires the AbortController, which causes streamChat() to reject,
-    //    the finally block nulls the controller, and onError calls finalizeStream().
-    // 2. If stop is called before run() creates a controller (or after it's already
-    //    been nulled in finally), abort() is a no-op and finalizeStream() won't fire.
-    //    Detect this via !streamManager.isActive and force-reset here.
     streamManager.abort()
     const { streaming } = get()
-    if (streaming.isStreaming && !streamManager.isActive) {
-      set({
-        streaming: {
-          isStreaming: false,
-          content: '',
-          thinking: '',
-          messageId: null,
-        },
-      })
+    if (!streaming.isStreaming) return
+
+    // Save partial content to the message before resetting
+    if (streaming.messageId) {
+      const conversationId = get().activeConversationId
+      if (conversationId) {
+        get().updateMessage(conversationId, streaming.messageId, {
+          content: streaming.content,
+          thinking: streaming.thinking || undefined,
+          isRegenerating: false,
+        })
+      }
     }
+
+    set({
+      streaming: {
+        isStreaming: false,
+        content: '',
+        thinking: '',
+        messageId: null,
+      },
+    })
   },
 
   regenerateFromPosition: async (conversationId, position) => {
