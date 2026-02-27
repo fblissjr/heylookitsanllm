@@ -66,7 +66,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
   const [showDebugModal, setShowDebugModal] = useState(false)
 
   // Get model info for debug modal
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
 
   const { editMessageAndRegenerate, regenerateFromPosition, continueFromMessage, generateNextTurn } = useChatStore()
   const { setConfirmDelete } = useUIStore()

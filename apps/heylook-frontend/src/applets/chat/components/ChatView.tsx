@@ -9,7 +9,9 @@ import { SystemPromptEditor } from './SystemPromptEditor'
 
 export function ChatView() {
   const { activeConversation, streaming, updateSystemPrompt, createConversation, updateConversationModel } = useChatStore()
-  const { loadedModel, modelStatus, models } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
+  const modelStatus = useModelStore((s) => s.modelStatus)
+  const models = useModelStore((s) => s.models)
   const systemPrompt = useSettingsStore((s) => s.systemPrompt)
   const scrollRef = useRef<HTMLDivElement>(null)
   const prevModelRef = useRef<string | null>(loadedModel?.id ?? null)
@@ -40,6 +42,16 @@ export function ChatView() {
     if (!conversation) return
     await updateSystemPrompt(conversation.id, systemPrompt, shouldRegenerate)
   }, [conversation, updateSystemPrompt])
+
+  // Cleanup on unmount -- abort any in-flight stream (matches TokenExplorerView, NotebookView)
+  useEffect(() => {
+    return () => {
+      const { streaming, stopGeneration } = useChatStore.getState()
+      if (streaming.isStreaming) {
+        stopGeneration()
+      }
+    }
+  }, [])
 
   // Auto-scroll to bottom when new messages arrive or during streaming
   useEffect(() => {
@@ -93,11 +105,6 @@ export function ChatView() {
       {/* Input area */}
       <ChatInput
         conversationId={conversation.id}
-        defaultModelId={
-          (models.length > 0 && models.some(m => m.id === conversation.defaultModelId))
-            ? conversation.defaultModelId
-            : loadedModel.id
-        }
         disabled={streaming.isStreaming}
       />
     </div>

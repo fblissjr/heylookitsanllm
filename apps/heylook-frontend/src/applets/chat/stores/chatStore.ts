@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { Message, Conversation, StreamingState, EditState } from '../../../types/chat'
 import { buildAPIMessages } from '../../../lib/messages'
 import { streamChat, type StreamCompletionData } from '../../../api/streaming'
+import type { ChatCompletionRequest } from '../../../types/api'
 import { useSettingsStore } from '../../../stores/settingsStore'
 import * as db from '../../../lib/db'
 import { generateId } from '../../../lib/id'
@@ -9,8 +10,64 @@ import { generateId } from '../../../lib/id'
 // Re-export StreamingState for components
 export type { StreamingState }
 
-// Store abort controller for cancellation
-let abortController: AbortController | null = null
+class ChatStreamManager {
+  private controller: AbortController | null = null
+
+  /** Abort any in-flight stream and reset. */
+  abort() {
+    if (this.controller) {
+      this.controller.abort()
+      this.controller = null
+    }
+  }
+
+  /**
+   * Run a streaming generation. Handles:
+   * - Aborting any previous stream
+   * - Creating/cleaning up AbortController
+   * - Timeout (configurable via settings)
+   * - Routing callbacks to the pinned conversationId
+   */
+  async run(
+    conversationId: string,
+    request: ChatCompletionRequest,
+    store: {
+      appendStreamContent: (content: string, isThinking: boolean, rawEvent?: string) => void
+      finalizeStream: (data?: StreamCompletionData, conversationId?: string) => void
+    }
+  ): Promise<void> {
+    this.abort()
+    this.controller = new AbortController()
+
+    const targetConversationId = conversationId
+    const timeoutMs = useSettingsStore.getState().streamTimeoutMs
+
+    try {
+      await streamChat(
+        request,
+        {
+          onToken: (token, rawEvent) => store.appendStreamContent(token, false, rawEvent),
+          onThinking: (thinking, rawEvent) => store.appendStreamContent(thinking, true, rawEvent),
+          onComplete: (data) => store.finalizeStream(data, targetConversationId),
+          onError: (error) => {
+            console.error('Stream error:', error)
+            store.finalizeStream(undefined, targetConversationId)
+          },
+        },
+        this.controller.signal,
+        timeoutMs
+      )
+    } finally {
+      this.controller = null
+    }
+  }
+
+  get isActive(): boolean {
+    return this.controller !== null
+  }
+}
+
+const streamManager = new ChatStreamManager()
 
 // Debounced save to avoid too many DB writes
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
@@ -69,7 +126,7 @@ interface ChatState {
   // Streaming
   setStreaming: (state: Partial<StreamingState>) => void
   appendStreamContent: (content: string, isThinking: boolean, rawEvent?: string) => void
-  finalizeStream: (completionData?: StreamCompletionData) => void
+  finalizeStream: (completionData?: StreamCompletionData, targetConversationId?: string) => void
 
   // Edit mode
   startEditing: (messageId: string, content: string) => void
@@ -296,7 +353,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const assistantMessageId = addMessage(conversationId, {
       role: 'assistant',
       content: '',
-      modelId, // Track which model will generate this response
+      modelId,
     })
 
     // Start streaming
@@ -306,9 +363,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       thinking: '',
       messageId: assistantMessageId,
     })
-
-    // Create abort controller
-    abortController = new AbortController()
 
     // Get current settings
     const settings = useSettingsStore.getState()
@@ -320,29 +374,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
       { excludeId: assistantMessageId, systemPrompt: conversation.systemPrompt }
     )
 
-    await streamChat(
+    await streamManager.run(
+      conversationId,
       {
         model: modelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },
-      {
-        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
-        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (data) => finalizeStream(data),
-        onError: (error) => {
-          console.error('Stream error:', error)
-          finalizeStream()
-        },
-      },
-      abortController.signal
+      { appendStreamContent, finalizeStream }
     )
   },
 
   stopGeneration: () => {
-    if (abortController) {
-      abortController.abort()
-      abortController = null
+    // Two-path cleanup:
+    // 1. abort() fires the AbortController, which causes streamChat() to reject,
+    //    the finally block nulls the controller, and onError calls finalizeStream().
+    // 2. If stop is called before run() creates a controller (or after it's already
+    //    been nulled in finally), abort() is a no-op and finalizeStream() won't fire.
+    //    Detect this via !streamManager.isActive and force-reset here.
+    streamManager.abort()
+    const { streaming } = get()
+    if (streaming.isStreaming && !streamManager.isActive) {
+      set({
+        streaming: {
+          isStreaming: false,
+          content: '',
+          thinking: '',
+          messageId: null,
+        },
+      })
     }
   },
 
@@ -367,7 +427,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       role: 'assistant',
       content: '',
       isRegenerating: true,
-      modelId: updatedConversation.defaultModelId, // Track regeneration model
+      modelId: updatedConversation.defaultModelId,
     })
 
     // Start streaming
@@ -378,7 +438,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messageId: assistantMessageId,
     })
 
-    abortController = new AbortController()
     const settings = useSettingsStore.getState()
 
     // Refresh conversation reference after adding the message
@@ -390,22 +449,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       { excludeId: assistantMessageId, systemPrompt: currentConversation.systemPrompt }
     )
 
-    await streamChat(
+    await streamManager.run(
+      conversationId,
       {
         model: currentConversation.defaultModelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },
-      {
-        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
-        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (data) => finalizeStream(data),
-        onError: (error) => {
-          console.error('Regenerate error:', error)
-          finalizeStream()
-        },
-      },
-      abortController.signal
+      { appendStreamContent, finalizeStream }
     )
   },
 
@@ -488,25 +539,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       startTime: Date.now(),
     })
 
-    abortController = new AbortController()
     const settings = useSettingsStore.getState()
 
-    await streamChat(
+    await streamManager.run(
+      conversationId,
       {
         model: conversation.defaultModelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },
-      {
-        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
-        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (data) => finalizeStream(data),
-        onError: (error) => {
-          console.error('Continue error:', error)
-          finalizeStream()
-        },
-      },
-      abortController.signal
+      { appendStreamContent, finalizeStream }
     )
   },
 
@@ -535,25 +577,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messageId: assistantMessageId,
     })
 
-    abortController = new AbortController()
     const settings = useSettingsStore.getState()
 
-    await streamChat(
+    await streamManager.run(
+      conversationId,
       {
         model: conversation.defaultModelId,
         messages: apiMessages,
         ...settings.samplerSettings,
       },
-      {
-        onToken: (token, rawEvent) => appendStreamContent(token, false, rawEvent),
-        onThinking: (thinking, rawEvent) => appendStreamContent(thinking, true, rawEvent),
-        onComplete: (data) => finalizeStream(data),
-        onError: (error) => {
-          console.error('Next turn error:', error)
-          finalizeStream()
-        },
-      },
-      abortController.signal
+      { appendStreamContent, finalizeStream }
     )
   },
 
@@ -591,9 +624,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  finalizeStream: (completionData) => {
-    const { streaming, activeConversationId } = get()
-    if (!streaming.messageId || !activeConversationId) return
+  finalizeStream: (completionData, targetConversationId) => {
+    const { streaming } = get()
+    const conversationId = targetConversationId || get().activeConversationId
+    if (!streaming.messageId || !conversationId) return
 
     // Extract data from completion response
     const usage = completionData?.usage
@@ -618,7 +652,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       : undefined
 
     // Update the message with final content, token count, and performance metrics
-    get().updateMessage(activeConversationId, streaming.messageId, {
+    get().updateMessage(conversationId, streaming.messageId, {
       content: streaming.content,
       thinking: streaming.thinking || undefined,
       tokenCount,

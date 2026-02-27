@@ -39,7 +39,7 @@ vi.mock('../stores/chatStore', () => ({
 }))
 
 vi.mock('../../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelState) : defaultModelState),
 }))
 
 vi.mock('../../../stores/uiStore', () => ({
@@ -55,6 +55,9 @@ vi.mock('../../../stores/settingsStore', () => ({
 import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { useUIStore } from '../../../stores/uiStore'
+
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
 
 // Helper to create mock conversations with a fixed date
 function createMockConversation(overrides: Partial<Conversation> = {}): Conversation {
@@ -74,7 +77,7 @@ describe('Sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(useChatStore).mockReturnValue(defaultChatState)
-    vi.mocked(useModelStore).mockReturnValue(defaultModelState)
+    setModelMock(defaultModelState)
     vi.mocked(useUIStore).mockReturnValue(defaultUIState)
 
     // Mock Date for consistent date formatting tests
@@ -103,7 +106,7 @@ describe('Sidebar', () => {
 
   describe('New Chat button', () => {
     it('is enabled when a model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
 
@@ -114,7 +117,7 @@ describe('Sidebar', () => {
     })
 
     it('is disabled when no model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
 
@@ -125,7 +128,7 @@ describe('Sidebar', () => {
     })
 
     it('calls createConversation with model id when clicked', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
 
@@ -138,7 +141,7 @@ describe('Sidebar', () => {
     })
 
     it('toggles sidebar after creating conversation on mobile', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
       vi.mocked(useUIStore).mockReturnValue({
@@ -155,7 +158,7 @@ describe('Sidebar', () => {
     })
 
     it('does not toggle sidebar after creating conversation on desktop', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
       vi.mocked(useUIStore).mockReturnValue({
@@ -172,7 +175,7 @@ describe('Sidebar', () => {
     })
 
     it('does not create conversation when no model loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
 
@@ -185,7 +188,7 @@ describe('Sidebar', () => {
     })
 
     it('has disabled styling when no model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
 
@@ -202,7 +205,7 @@ describe('Sidebar', () => {
         ...defaultChatState,
         conversations: [],
       })
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
 
@@ -216,7 +219,7 @@ describe('Sidebar', () => {
         ...defaultChatState,
         conversations: [],
       })
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
 
@@ -454,7 +457,7 @@ describe('Sidebar', () => {
 
   describe('footer with loaded model info', () => {
     it('shows footer when model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
 
@@ -464,7 +467,7 @@ describe('Sidebar', () => {
     })
 
     it('does not show model info when no model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
       vi.mocked(useChatStore).mockReturnValue({
@@ -479,7 +482,7 @@ describe('Sidebar', () => {
     })
 
     it('shows Vision capability when model has vision', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           ...defaultLoadedModel,
           capabilities: { ...defaultLoadedModel.capabilities, vision: true },
@@ -492,7 +495,7 @@ describe('Sidebar', () => {
     })
 
     it('shows Thinking capability when model has thinking', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           ...defaultLoadedModel,
           capabilities: { ...defaultLoadedModel.capabilities, thinking: true },
@@ -505,7 +508,7 @@ describe('Sidebar', () => {
     })
 
     it('shows both Vision and Thinking when model has both', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           ...defaultLoadedModel,
           capabilities: { ...defaultLoadedModel.capabilities, vision: true, thinking: true },
@@ -521,7 +524,7 @@ describe('Sidebar', () => {
 
   describe('button styling', () => {
     it('new chat button has enabled styling when model loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: defaultLoadedModel,
       })
 
@@ -532,7 +535,7 @@ describe('Sidebar', () => {
     })
 
     it('new chat button has disabled styling when no model', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
       })
 

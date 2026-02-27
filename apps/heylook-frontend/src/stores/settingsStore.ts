@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware'
 import type { SamplerSettings, Preset, PresetType } from '../types/settings'
 import { DEFAULT_SAMPLER_SETTINGS } from '../types/settings'
 import { generateId } from '../lib/id'
+import { logger } from '../lib/diagnostics'
+import type { LogLevel } from '../lib/diagnostics'
 
 // Built-in system prompt presets removed - default is empty to use model's jinja2 chat template
 // Users can still create their own presets
@@ -18,6 +20,8 @@ interface SettingsState {
   systemPrompt: string
   jinjaTemplate: string | null
   samplerSettings: SamplerSettings
+  streamTimeoutMs: number
+  logLevel: LogLevel
 
   // Presets (user-created, built-ins are separate)
   userPresets: Preset[]
@@ -31,6 +35,8 @@ interface SettingsState {
   setJinjaTemplate: (template: string | null) => void
   updateSamplerSettings: (settings: Partial<SamplerSettings>) => void
   resetSamplerToDefaults: () => void
+  setStreamTimeoutMs: (ms: number) => void
+  setLogLevel: (level: LogLevel) => void
 
   // Actions - Presets
   getAllPresets: (type: PresetType) => Preset[]
@@ -48,6 +54,8 @@ export const useSettingsStore = create<SettingsState>()(
       systemPrompt: '',
       jinjaTemplate: null,
       samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
+      streamTimeoutMs: 30_000,
+      logLevel: 'info' as LogLevel,
       userPresets: [],
       // No active presets by default - using empty/default values
       activeSystemPromptPresetId: null,
@@ -73,6 +81,13 @@ export const useSettingsStore = create<SettingsState>()(
           samplerSettings: { ...DEFAULT_SAMPLER_SETTINGS },
           activeSamplerPresetId: null,
         })
+      },
+
+      setStreamTimeoutMs: (ms) => set({ streamTimeoutMs: ms }),
+
+      setLogLevel: (level) => {
+        logger.setLevel(level)
+        set({ logLevel: level })
       },
 
       getAllPresets: (type) => {
@@ -179,9 +194,17 @@ export const useSettingsStore = create<SettingsState>()(
         userPresets: state.userPresets,
         systemPrompt: state.systemPrompt,
         samplerSettings: state.samplerSettings,
+        streamTimeoutMs: state.streamTimeoutMs,
+        logLevel: state.logLevel,
         activeSystemPromptPresetId: state.activeSystemPromptPresetId,
         activeSamplerPresetId: state.activeSamplerPresetId,
       }),
+      onRehydrateStorage: () => (state) => {
+        // Sync persisted log level to the singleton on page load
+        if (state?.logLevel) {
+          logger.setLevel(state.logLevel)
+        }
+      },
     }
   )
 )

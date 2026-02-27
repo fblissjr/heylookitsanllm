@@ -340,7 +340,7 @@ export default defineConfig({
     trace: 'on-first-retry'
   },
   webServer: {
-    command: 'npm run dev',
+    command: 'bun run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: true
   }

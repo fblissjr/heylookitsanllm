@@ -9,6 +9,8 @@ import type {
   ChatCompletionRequest,
   TokenLogprob,
 } from '../types/api'
+import { generateId } from '../lib/id'
+import { logger } from '../lib/diagnostics'
 
 // Enhanced completion data from final SSE chunk
 export interface StreamCompletionData {
@@ -30,9 +32,13 @@ export interface StreamCallbacks {
 export async function streamChat(
   request: ChatCompletionRequest,
   callbacks: StreamCallbacks,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutMs?: number
 ): Promise<void> {
   const { onToken, onThinking, onLogprobs, onComplete, onError } = callbacks
+  const requestId = generateId('stream')
+
+  logger.info('sse_start', 'sse', { model: request.model, logprobs: !!request.logprobs }, requestId)
 
   // Track whether onComplete was already called with data to prevent double calls
   let completedWithData = false
@@ -43,20 +49,30 @@ export async function streamChat(
     onComplete(data)
   }
 
+  // Combine user abort signal with timeout signal
+  const signals: AbortSignal[] = []
+  if (signal) signals.push(signal)
+  if (timeoutMs) signals.push(AbortSignal.timeout(timeoutMs))
+  const combinedSignal = signals.length > 0 ? AbortSignal.any(signals) : undefined
+
   try {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Request-ID': requestId,
+      },
       body: JSON.stringify({
         ...request,
         stream: true,
         stream_options: { include_usage: true },
       }),
-      signal,
+      signal: combinedSignal,
     })
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: response.statusText }))
+      logger.warn('sse_http_error', 'sse', { status: response.status }, requestId)
       throw new Error(error.detail || `HTTP ${response.status}: ${response.statusText}`)
     }
 
@@ -90,19 +106,27 @@ export async function streamChat(
 
     // Only call onComplete if we didn't already complete with usage data
     if (!completedWithData) {
+      logger.info('sse_complete', 'sse', { withData: false }, requestId)
       onComplete()
     }
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
-        // User cancelled, not an error
+        logger.info('sse_abort', 'sse', {}, requestId)
         if (!completedWithData) {
           onComplete()
         }
         return
       }
+      if (error.name === 'TimeoutError') {
+        logger.warn('sse_timeout', 'sse', {}, requestId)
+        onError(new Error('Generation timed out. The backend may be unresponsive.'))
+        return
+      }
+      logger.error('sse_error', 'sse', { message: error.message }, requestId)
       onError(error)
     } else {
+      logger.error('sse_error', 'sse', { message: 'Unknown streaming error' }, requestId)
       onError(new Error('Unknown streaming error'))
     }
   }

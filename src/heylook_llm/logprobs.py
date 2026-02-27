@@ -132,22 +132,22 @@ class LogprobsCollector:
             )
             self.content.append(entry)
 
-        except Exception as e:
-            logging.warning(f"Failed to process logprobs for token {token_id}: {e}")
+        except (IndexError, ValueError, RuntimeError, TypeError) as e:
+            logging.warning(f"Failed to process logprobs for token {token_id}: {e}", exc_info=True)
 
     def _decode_token(self, token_id: int) -> str:
         """Decode a single token ID to text."""
         try:
             # Use the tokenizer to decode
             return self.tokenizer.decode([token_id])
-        except Exception:
+        except (KeyError, IndexError, OverflowError, TypeError, ValueError):
             return f"<token_{token_id}>"
 
     def _get_token_bytes(self, token_text: str) -> List[int]:
         """Get UTF-8 bytes for a token."""
         try:
             return list(token_text.encode('utf-8'))
-        except Exception:
+        except UnicodeEncodeError:
             return []
 
     def _get_top_logprobs(self, logprobs: List[float]) -> List[TokenLogprob]:

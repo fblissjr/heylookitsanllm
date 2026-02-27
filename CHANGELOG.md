@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Diagnostic logging**: Frontend ring buffer (5000 events) with JSONL download from Settings panel. Backend writes structured events to `logs/events.jsonl`. Request IDs (`X-Request-ID` header) correlate frontend and backend events. Console verbosity adjustable via Settings or `window.__setLogLevel()` in devtools.
+- **Stream timeout setting**: Configurable stream timeout (default 30s) in Generation Settings panel. Prevents permanently stuck streaming state when the backend hangs.
+
+### Changed
+
+- **Model selection consolidated**: Removed per-applet model dropdowns from Chat, Batch, and Token Explorer. All applets use the globally loaded model from the top-level selector. Model Comparison multi-select unchanged.
+- **VLM guards**: Batch shows a warning when a VLM is loaded (batch mode is text-only, submit disabled). Notebook hides image attachment UI when a text-only model is loaded.
+- **Tokenizer extraction consolidated**: Provider base class now exposes `get_tokenizer()` method; tokenizer extraction consolidated from 2 duplicated call sites in api.py.
+- **Frontend re-render optimization**: Bare `useModelStore()` calls replaced with individual selectors in 9 components (reduces unnecessary re-renders).
+- **Logprobs init deduplication**: Logprobs collector initialization extracted into shared `_init_logprobs_collector()` helper (removes ~30 lines of duplication between streaming and non-streaming paths).
+- **Frontend package manager**: Migrated from npm to bun.
+
+### Fixed
+
+- **Bare except handlers**: Replaced `except:` with `except Exception:` in Metal info query and STT cache cleanup (was swallowing SystemExit/KeyboardInterrupt).
+- **Logprobs helper exceptions**: `_decode_token` and `_get_token_bytes` exception handlers narrowed to specific types instead of broad `except Exception`.
+- **Non-streaming logprobs init error path**: Missing diagnostic event in non-streaming logprobs init `except` block (now shared via extracted helper).
+- **Logprobs exception handling**: `add_token()` exception handler narrowed from `except Exception` to specific types (IndexError, ValueError, RuntimeError, TypeError).
+- **Non-streaming logprobs diagnostic**: Non-streaming logprobs path now logs `logprobs_missing_data` diagnostic event (was streaming-only).
+- **Redundant provider lookup**: Removed redundant `router.get_provider()` call in streaming logprobs initialization.
+- **Token Explorer logprobs**: Added full traceback logging and diagnostic events to the logprobs pipeline. Silent exceptions in `logprobs.py` now log `exc_info=True`. Missing tokenizer logged at `WARNING` level instead of silently producing no logprobs.
+- **Chat: concurrent stream guard**: Sending a message while a stream was already in-flight silently started a second stream without aborting the first. Both streams wrote to the store simultaneously. A new `ChatStreamManager` singleton ensures the previous stream is aborted before any new one starts.
+- **Chat: AbortController leak**: The controller was only nulled on the success path; errors left a stale reference. The controller is now nulled in a `finally` block in all cases.
+- **Chat: wrong-conversation targeting**: `finalizeStream` read `activeConversationId` at callback time. Switching conversations mid-stream caused streamed content to be written into the newly active conversation. The conversation ID is now pinned when the stream starts and passed through to `finalizeStream`.
+- **Chat: orphaned streams on navigation**: Navigating away from the Chat applet did not stop in-flight streams. The backend kept generating and eventual callbacks wrote to a detached store. `ChatView` now calls `stopGeneration()` on unmount.
+- **Chat: no timeout**: A hung backend (stuck MLX kernel, stalled connection) left `isStreaming: true` permanently with no way to recover without a page reload. A 30-second timeout is now applied via `AbortSignal.timeout()`, producing a user-visible error message.
+
 ## 1.22.0
 
 ### Added

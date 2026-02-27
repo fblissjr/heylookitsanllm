@@ -1,5 +1,7 @@
 # Features Documentation
 
+Last updated: 2026-02-27
+
 ## Feature Status Overview
 
 | Category | Implemented | Planned | Out of Scope |
@@ -216,7 +218,7 @@ To request a new feature, include:
 
 ## Test Coverage
 
-858 tests across 37 test files (Vitest + React Testing Library). Test files live alongside their source in each applet and component directory.
+874 tests across 38 test files (Vitest + React Testing Library). Test files live alongside their source in each applet and component directory.
 
 Key test areas:
 - Stores (chatStore, modelStore, settingsStore, uiStore, batchStore, comparisonStore, explorerStore, performanceStore, notebookStore, modelsStore)

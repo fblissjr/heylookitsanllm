@@ -40,21 +40,23 @@ vi.mock('../../../stores/uiStore', () => ({
   })),
 }))
 
-vi.mock('../../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => ({
-    loadedModel: {
-      id: 'test-model',
-      provider: 'mlx',
-      capabilities: {
-        chat: true,
-        vision: false,
-        thinking: false,
-        hidden_states: false,
-        embeddings: false,
-      },
-      contextWindow: 4096,
+const defaultMsgListModelState = {
+  loadedModel: {
+    id: 'test-model',
+    provider: 'mlx',
+    capabilities: {
+      chat: true,
+      vision: false,
+      thinking: false,
+      hidden_states: false,
+      embeddings: false,
     },
-  })),
+    contextWindow: 4096,
+  },
+}
+
+vi.mock('../../../stores/modelStore', () => ({
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultMsgListModelState) : defaultMsgListModelState),
 }))
 
 

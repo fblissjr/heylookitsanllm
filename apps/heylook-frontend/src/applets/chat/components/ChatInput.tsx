@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent, DragEvent } from 'react'
 import { useChatStore } from '../stores/chatStore'
-import { useModelStore, getModelCapabilities } from '../../../stores/modelStore'
+import { useModelStore } from '../../../stores/modelStore'
 import clsx from 'clsx'
 
 interface ImagePreview {
@@ -10,68 +10,21 @@ interface ImagePreview {
 
 interface ChatInputProps {
   conversationId: string
-  defaultModelId: string
   disabled: boolean
 }
 
-export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInputProps) {
+export function ChatInput({ conversationId, disabled }: ChatInputProps) {
   const [message, setMessage] = useState('')
   const [images, setImages] = useState<ImagePreview[]>([])
   const [isDragging, setIsDragging] = useState(false)
-  const [selectedModelId, setSelectedModelId] = useState(defaultModelId)
-  const [showModelWarning, setShowModelWarning] = useState(false)
-  const [userChangedModel, setUserChangedModel] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const warningTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { sendMessage, stopGeneration, streaming } = useChatStore()
-  const { models, loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
 
-  // Get capabilities for selected model
-  const selectedModel = models.find(m => m.id === selectedModelId)
-  const hasVision = selectedModel ? getModelCapabilities(selectedModel).vision : false
-
-  // Sync selectedModelId with defaultModelId when conversation changes
-  // Reset userChangedModel flag since this is a new conversation context
-  useEffect(() => {
-    setSelectedModelId(defaultModelId)
-    setUserChangedModel(false)
-    setShowModelWarning(false)
-    // Clear any pending warning timeout
-    if (warningTimeoutRef.current) {
-      clearTimeout(warningTimeoutRef.current)
-      warningTimeoutRef.current = null
-    }
-  }, [defaultModelId])
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (warningTimeoutRef.current) {
-        clearTimeout(warningTimeoutRef.current)
-      }
-    }
-  }, [])
-
-  // Handle model change with warning
-  const handleModelChange = useCallback((newModelId: string) => {
-    const isModelSwitch = loadedModel && newModelId !== loadedModel.id
-    setSelectedModelId(newModelId)
-    setUserChangedModel(true)
-    if (isModelSwitch) {
-      setShowModelWarning(true)
-      // Clear any existing timeout
-      if (warningTimeoutRef.current) {
-        clearTimeout(warningTimeoutRef.current)
-      }
-      // Auto-hide warning after 3 seconds
-      warningTimeoutRef.current = setTimeout(() => {
-        setShowModelWarning(false)
-        warningTimeoutRef.current = null
-      }, 3000)
-    }
-  }, [loadedModel])
+  // Get vision capability from the globally loaded model
+  const hasVision = loadedModel?.capabilities?.vision ?? false
 
   // Auto-resize textarea
   useEffect(() => {
@@ -96,6 +49,7 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     const trimmedMessage = message.trim()
     if (!trimmedMessage && images.length === 0) return
     if (disabled) return
+    if (!loadedModel) return
 
     // Convert images to base64 only when sending (lazy conversion)
     let base64Images: string[] | undefined
@@ -106,14 +60,10 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     // Clean up preview URLs before clearing state
     images.forEach(img => URL.revokeObjectURL(img.previewUrl))
 
-    // Use selectedModelId only if user explicitly changed it, otherwise use defaultModelId
-    // This prevents race conditions where useEffect hasn't synced yet after conversation switch
-    const modelToUse = userChangedModel ? selectedModelId : defaultModelId
-    await sendMessage(conversationId, trimmedMessage, modelToUse, base64Images)
+    await sendMessage(conversationId, trimmedMessage, loadedModel.id, base64Images)
     setMessage('')
     setImages([])
-    setShowModelWarning(false)
-  }, [message, images, disabled, conversationId, selectedModelId, defaultModelId, userChangedModel, sendMessage, fileToBase64])
+  }, [message, images, disabled, conversationId, loadedModel, sendMessage, fileToBase64])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -194,72 +144,8 @@ export function ChatInput({ conversationId, defaultModelId, disabled }: ChatInpu
     })
   }, [])
 
-  // Filter to chat-capable models
-  // If model has capabilities array, check for 'chat'; otherwise assume all models are chat-capable
-  // (backend may not return capabilities for all models)
-  const chatModels = models.filter(m => {
-    if (!m.capabilities || m.capabilities.length === 0) {
-      return true // Assume chat-capable if no capabilities specified
-    }
-    const caps = getModelCapabilities(m)
-    return caps.chat
-  }).sort((a, b) => a.id.localeCompare(b.id))
-
-  // Render model option text - shorter on mobile
-  const getModelOptionText = (modelId: string, isLoaded: boolean) => {
-    // Options don't support responsive text, but we keep it concise
-    return isLoaded ? `${modelId} (loaded)` : modelId
-  }
-
-  const isSelectDisabled = disabled || streaming.isStreaming
-
   return (
     <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white dark:bg-background-dark border-t border-gray-200 dark:border-gray-800">
-      {/* Model selector - single responsive component */}
-      <div className="mb-3 flex items-center gap-2">
-        {/* Desktop label */}
-        <label className="hidden sm:block text-xs text-gray-500 dark:text-gray-400 font-medium">
-          Model:
-        </label>
-        {/* Mobile icon */}
-        <svg className="sm:hidden w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-        </svg>
-        {/* Unified select with responsive styling */}
-        <select
-          value={selectedModelId}
-          onChange={(e) => handleModelChange(e.target.value)}
-          disabled={isSelectDisabled}
-          className={clsx(
-            'text-sm bg-gray-100 dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg',
-            'text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary/50',
-            'transition-colors cursor-pointer',
-            // Mobile: full width, compact padding
-            'flex-1 sm:flex-none px-2 sm:px-3 py-1.5 truncate sm:truncate-none',
-            isSelectDisabled && 'opacity-50 cursor-not-allowed'
-          )}
-        >
-          {chatModels.map(model => (
-            <option key={model.id} value={model.id}>
-              {getModelOptionText(model.id, loadedModel?.id === model.id)}
-            </option>
-          ))}
-        </select>
-        {/* Desktop warning - inline */}
-        {showModelWarning && (
-          <span className="hidden sm:inline text-xs text-amber-600 dark:text-amber-400 animate-pulse">
-            Switching models may affect context
-          </span>
-        )}
-      </div>
-
-      {/* Mobile warning - separate line */}
-      {showModelWarning && (
-        <div className="sm:hidden mb-2 text-xs text-amber-600 dark:text-amber-400 text-center animate-pulse">
-          Switching models may affect context
-        </div>
-      )}
-
       {/* Image previews */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">

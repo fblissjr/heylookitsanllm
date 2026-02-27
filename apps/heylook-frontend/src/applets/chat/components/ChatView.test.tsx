@@ -17,10 +17,9 @@ vi.mock('./MessageList', () => ({
 }))
 
 vi.mock('./ChatInput', () => ({
-  ChatInput: vi.fn(({ conversationId, defaultModelId, disabled }) => (
+  ChatInput: vi.fn(({ conversationId, disabled }) => (
     <div data-testid="chat-input">
       <span data-testid="input-conversation-id">{conversationId}</span>
-      <span data-testid="input-default-model-id">{defaultModelId}</span>
       <span data-testid="input-disabled">{disabled ? 'disabled' : 'enabled'}</span>
     </div>
   )),
@@ -34,46 +33,49 @@ vi.mock('./EmptyState', () => ({
   )),
 }))
 
-// Mock stores
-const mockActiveConversation = vi.fn()
-const defaultChatState = {
-  activeConversation: mockActiveConversation,
-  streaming: {
-    isStreaming: false,
-    content: '',
-    thinking: '',
-    messageId: null,
-  },
-  updateConversationModel: vi.fn(),
-}
-
-const defaultModelState: {
-  loadedModel: LoadedModel | null
-  modelStatus: ModelStatus
-  models: { id: string }[]
-} = {
-  loadedModel: {
-    id: 'test-model',
-    provider: 'mlx',
-    capabilities: {
-      chat: true,
-      vision: false,
-      thinking: false,
-      hidden_states: false,
-      embeddings: false,
+// Mock stores -- use vi.hoisted so these are available in vi.mock factories
+const { mockActiveConversation, defaultChatState, defaultModelState } = vi.hoisted(() => {
+  const mockActiveConversation = vi.fn()
+  const defaultChatState = {
+    activeConversation: mockActiveConversation,
+    streaming: {
+      isStreaming: false,
+      content: '',
+      thinking: '',
+      messageId: null,
     },
-    contextWindow: 4096,
-  },
-  modelStatus: 'loaded',
-  models: [{ id: 'test-model' }],
-}
+    updateConversationModel: vi.fn(),
+  }
+  const defaultModelState = {
+    loadedModel: {
+      id: 'test-model',
+      provider: 'mlx',
+      capabilities: {
+        chat: true,
+        vision: false,
+        thinking: false,
+        hidden_states: false,
+        embeddings: false,
+      },
+      contextWindow: 4096,
+    } as LoadedModel | null,
+    modelStatus: 'loaded' as ModelStatus,
+    models: [{ id: 'test-model' }],
+  }
+  return { mockActiveConversation, defaultChatState, defaultModelState }
+})
 
-vi.mock('../stores/chatStore', () => ({
-  useChatStore: vi.fn(() => defaultChatState),
-}))
+vi.mock('../stores/chatStore', () => {
+  const fn = vi.fn(() => defaultChatState) as ReturnType<typeof vi.fn> & { getState: ReturnType<typeof vi.fn> }
+  fn.getState = vi.fn(() => ({
+    streaming: defaultChatState.streaming,
+    stopGeneration: vi.fn(),
+  }))
+  return { useChatStore: fn }
+})
 
 vi.mock('../../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelState) : defaultModelState),
 }))
 
 // Import after mocks
@@ -81,6 +83,9 @@ import { useChatStore } from '../stores/chatStore'
 import { useModelStore } from '../../../stores/modelStore'
 import { MessageList } from './MessageList'
 import { ChatInput } from './ChatInput'
+
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
 
 describe('ChatView', () => {
   const mockConversation: Conversation = {
@@ -112,12 +117,18 @@ describe('ChatView', () => {
       ...defaultChatState,
       activeConversation: mockActiveConversation,
     })
-    vi.mocked(useModelStore).mockReturnValue(defaultModelState)
+    // Reset getState mock for unmount cleanup
+    const mockStore = useChatStore as unknown as { getState: ReturnType<typeof vi.fn> }
+    mockStore.getState.mockReturnValue({
+      streaming: defaultChatState.streaming,
+      stopGeneration: vi.fn(),
+    })
+    setModelMock(defaultModelState)
   })
 
   describe('empty states', () => {
     it('shows EmptyState type="no-model" when no model loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: null,
         modelStatus: 'unloaded',
         models: [],
@@ -132,7 +143,7 @@ describe('ChatView', () => {
     })
 
     it('shows EmptyState type="no-model" when modelStatus is not loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'test-model',
           capabilities: {
@@ -216,7 +227,7 @@ describe('ChatView', () => {
     })
 
     it('passes modelCapabilities to MessageList', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'vision-model',
           capabilities: {
@@ -239,7 +250,7 @@ describe('ChatView', () => {
     })
 
     it('verifies MessageList is called with correct props', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         loadedModel: {
           id: 'test-model',
           capabilities: {
@@ -271,37 +282,6 @@ describe('ChatView', () => {
       render(<ChatView />)
 
       expect(screen.getByTestId('input-conversation-id')).toHaveTextContent('conv-123')
-    })
-
-    it('passes defaultModelId to ChatInput from conversation', () => {
-      render(<ChatView />)
-
-      // Uses conversation.defaultModelId which is 'test-model'
-      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
-    })
-
-    it('falls back to loadedModel.id when conversation has no defaultModelId', () => {
-      vi.mocked(useChatStore).mockReturnValue({
-        activeConversation: () => ({
-          id: 'conv-123',
-          title: 'Test Conversation',
-          defaultModelId: '', // Empty - should fall back
-          messages: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }),
-        streaming: {
-          isStreaming: false,
-          content: '',
-          thinking: '',
-          messageId: null,
-        },
-      })
-
-      render(<ChatView />)
-
-      // Falls back to loadedModel.id which is 'test-model'
-      expect(screen.getByTestId('input-default-model-id')).toHaveTextContent('test-model')
     })
 
     it('passes disabled=false when not streaming', () => {
@@ -342,7 +322,6 @@ describe('ChatView', () => {
       expect(ChatInput).toHaveBeenCalled()
       const callArgs = vi.mocked(ChatInput).mock.calls[0][0]
       expect(callArgs.conversationId).toBe('conv-123')
-      expect(callArgs.defaultModelId).toBe('test-model')
       expect(callArgs.disabled).toBe(true)
     })
   })

@@ -20,7 +20,34 @@ from heylook_llm.config import (
 from heylook_llm.system_metrics import SystemMetricsCollector
 from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
+from heylook_llm.diagnostic_logger import diag_event
 
+
+def _init_logprobs_collector(chat_request, provider, request_id, streaming=True):
+    """Initialize logprobs collector if requested. Returns collector or None."""
+    if not chat_request.logprobs:
+        return None
+    try:
+        if streaming:
+            from heylook_llm.logprobs import StreamingLogprobsCollector as CollectorClass
+        else:
+            from heylook_llm.logprobs import LogprobsCollector as CollectorClass
+        tokenizer = provider.get_tokenizer() if provider else None
+        if tokenizer:
+            top_logprobs = chat_request.top_logprobs or 5
+            collector = CollectorClass(tokenizer, top_logprobs=top_logprobs)
+            diag_event("logprobs_init", request_id=request_id, level="debug",
+                       top_logprobs=top_logprobs, streaming=streaming)
+            return collector
+        else:
+            logging.warning("Logprobs requested but tokenizer not available from provider")
+            diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                       reason="tokenizer_not_available", streaming=streaming)
+    except Exception as e:
+        logging.warning(f"Failed to initialize logprobs collector: {e}")
+        diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                   reason=str(e), streaming=streaming)
+    return None
 
 
 async def _resource_snapshot_loop(app: FastAPI) -> None:
@@ -88,6 +115,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 # Import and include STT router
@@ -313,9 +341,14 @@ Generate text completions from chat messages using the specified model.
 )
 async def create_chat_completion(request: Request, chat_request: ChatRequest):
     router = request.app.state.router_instance
-    request_id = f"req-{uuid.uuid4()}"
+    # Use client-provided request ID or generate one
+    request_id = request.headers.get("x-request-id") or f"req-{uuid.uuid4()}"
 
     request_start_time = time.time()
+
+    diag_event("request_start", request_id=request_id,
+               model=chat_request.model, stream=chat_request.stream,
+               logprobs=bool(chat_request.logprobs))
 
     try:
         # Add start time for processing time calculation
@@ -409,6 +442,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     provider_get_ms = 0.0
     try:
         log_request_stage(request_id, "routing")
+        diag_event("request_routed", request_id=request_id, model=chat_request.model)
 
         # Run CPU-bound operations in thread pool (timed for perf collection)
         provider_get_start = time.time()
@@ -419,6 +453,9 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
 
         log_request_stage(request_id, "generating")
+        diag_event("generation_start", request_id=request_id,
+                   provider=provider.__class__.__name__,
+                   provider_get_ms=round(provider_get_ms, 1))
         # Run model generation in thread pool
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
@@ -427,6 +464,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         if "MODEL_BUSY" in str(e):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
+            diag_event("request_error", request_id=request_id, level="warn", error="model_busy")
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
 
             # Return 503 Service Unavailable with retry headers
@@ -457,6 +495,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="error", error=str(e))
         _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -471,10 +510,16 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     if chat_request.stream:
         return StreamingResponse(
             stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
+            headers={"X-Request-ID": request_id},
         )
     else:
-        return await non_stream_response(generator, chat_request, router, request_id, request_start_time, perf_ctx=perf_ctx)
+        result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
+        diag_event("generation_complete", request_id=request_id,
+                   total_ms=round((time.time() - request_start_time) * 1000, 1))
+        if isinstance(result, dict):
+            return JSONResponse(content=result, headers={"X-Request-ID": request_id})
+        return result
 
 def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool) -> None:
     """Record a failed request event to perf collector."""
@@ -543,20 +588,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     thinking_parser = HybridThinkingParser()
 
     # Initialize logprobs collector if requested
-    logprobs_collector = None
-    if chat_request.logprobs:
-        try:
-            from heylook_llm.logprobs import StreamingLogprobsCollector
-            # Get tokenizer from provider for decoding tokens
-            provider = router.get_provider(chat_request.model)
-            tokenizer = None
-            if hasattr(provider, 'processor') and provider.processor:
-                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
-            if tokenizer:
-                top_logprobs = chat_request.top_logprobs or 5
-                logprobs_collector = StreamingLogprobsCollector(tokenizer, top_logprobs=top_logprobs)
-        except Exception as e:
-            logging.warning(f"Failed to initialize streaming logprobs collector: {e}")
+    logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=True)
 
     log_request_stage(request_id, "streaming")
 
@@ -612,6 +644,11 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             chunk_logprobs = getattr(chunk, 'logprobs', None)
             if token_id is not None and chunk_logprobs is not None:
                 logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)
+            elif token_count == 1:
+                # Log once on first token if logprobs data is missing
+                diag_event("logprobs_missing_data", request_id=request_id, level="debug",
+                           has_token_id=token_id is not None,
+                           has_chunk_logprobs=chunk_logprobs is not None)
 
         # Update token count periodically
         if token_count % 10 == 0:  # Update every 10 tokens for streaming
@@ -754,33 +791,20 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, perf_ctx: dict | None = None):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None):
     full_text = ""
     prompt_tokens = 0
     completion_tokens = 0
     token_count = 0
-    logprobs_collector = None
-
     log_request_stage(request_id, "processing_response")
 
     # Initialize logprobs collector if requested
-    if chat_request.logprobs:
-        try:
-            from heylook_llm.logprobs import LogprobsCollector
-            # Get tokenizer from provider for decoding tokens
-            provider = router.get_provider(chat_request.model)
-            tokenizer = None
-            if hasattr(provider, 'processor') and provider.processor:
-                tokenizer = getattr(provider.processor, 'tokenizer', provider.processor)
-            if tokenizer:
-                top_logprobs = chat_request.top_logprobs or 5
-                logprobs_collector = LogprobsCollector(tokenizer, top_logprobs=top_logprobs)
-        except Exception as e:
-            logging.warning(f"Failed to initialize logprobs collector: {e}")
+    logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=False)
 
     # Process generation in thread pool to avoid blocking event loop
     def consume_generator():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count
+        first_logprob_logged = False
         for chunk in generator:
             full_text += chunk.text
             token_count += 1
@@ -791,6 +815,12 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 chunk_logprobs = getattr(chunk, 'logprobs', None)
                 if token_id is not None and chunk_logprobs is not None:
                     logprobs_collector.add_token(token_id, chunk_logprobs)
+                elif not first_logprob_logged:
+                    first_logprob_logged = True
+                    diag_event("logprobs_missing_data", request_id=request_id, level="debug",
+                               has_token_id=token_id is not None,
+                               has_chunk_logprobs=chunk_logprobs is not None,
+                               streaming=False)
 
             # Update token count periodically for long responses
             if token_count % 25 == 0:
@@ -1335,7 +1365,7 @@ async def get_capabilities(request: Request):
             }
         else:
             metal_info = {"available": False}
-    except:
+    except Exception:
         metal_info = {"available": False}
 
     capabilities = {

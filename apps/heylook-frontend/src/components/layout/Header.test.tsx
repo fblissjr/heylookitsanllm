@@ -36,7 +36,7 @@ const defaultUIState = {
 }
 
 vi.mock('../../stores/modelStore', () => ({
-  useModelStore: vi.fn(() => defaultModelState),
+  useModelStore: vi.fn((sel?: any) => typeof sel === 'function' ? sel(defaultModelState) : defaultModelState),
 }))
 
 vi.mock('../../stores/uiStore', () => ({
@@ -47,11 +47,14 @@ vi.mock('../../stores/uiStore', () => ({
 import { useModelStore } from '../../stores/modelStore'
 import { useUIStore } from '../../stores/uiStore'
 
+const setModelMock = (state: any) =>
+  vi.mocked(useModelStore).mockImplementation((sel?: any) => typeof sel === 'function' ? sel(state) : state)
+
 describe('Header', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Reset mocks to default state
-    vi.mocked(useModelStore).mockReturnValue(defaultModelState)
+    setModelMock(defaultModelState)
     vi.mocked(useUIStore).mockReturnValue(defaultUIState)
   })
 
@@ -123,7 +126,7 @@ describe('Header', () => {
     })
 
     it('shows loaded model name when a model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         models: [{ id: 'my-model', capabilities: ['chat'] }],
         loadedModel: {
           id: 'my-model',
@@ -151,7 +154,7 @@ describe('Header', () => {
 
   describe('status indicator', () => {
     it('shows gray indicator when model is unloaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         models: [],
         loadedModel: null,
         modelStatus: 'unloaded' as const,
@@ -164,7 +167,7 @@ describe('Header', () => {
     })
 
     it('shows green indicator when model is loaded', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         models: [{ id: 'my-model', capabilities: ['chat'] }],
         loadedModel: {
           id: 'my-model',
@@ -181,7 +184,7 @@ describe('Header', () => {
     })
 
     it('shows pulsing amber indicator when model is loading', () => {
-      vi.mocked(useModelStore).mockReturnValue({
+      setModelMock({
         models: [],
         loadedModel: null,
         modelStatus: 'loading' as const,

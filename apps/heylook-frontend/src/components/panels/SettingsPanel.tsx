@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useUIStore } from '../../stores/uiStore'
 import { useModelStore } from '../../stores/modelStore'
-import { Toggle } from '../primitives'
+import { Toggle, Slider } from '../primitives'
 import { CloseIcon } from '../icons'
 import { SamplerControls } from '../composed/SamplerControls'
+import { logger } from '../../lib/diagnostics'
+import type { LogLevel } from '../../lib/diagnostics'
 import type { Preset, SamplerSettings } from '../../types/settings'
 import clsx from 'clsx'
 
@@ -18,9 +20,13 @@ export function SettingsPanel() {
     savePreset,
     deletePreset,
     activeSamplerPresetId,
+    streamTimeoutMs,
+    setStreamTimeoutMs,
+    logLevel,
+    setLogLevel,
   } = useSettingsStore()
   const { setActivePanel } = useUIStore()
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
   const [isCreatingPreset, setIsCreatingPreset] = useState(false)
   const [newPresetName, setNewPresetName] = useState('')
 
@@ -120,6 +126,17 @@ export function SettingsPanel() {
           onUpdate={handleUpdateSetting}
         />
 
+        {/* Stream Timeout */}
+        <Slider
+          label="Stream Timeout (seconds)"
+          value={streamTimeoutMs / 1000}
+          min={10}
+          max={300}
+          step={5}
+          onChange={(v) => setStreamTimeoutMs(v * 1000)}
+          description="Seconds before a stalled generation times out"
+        />
+
         {/* Thinking Mode Toggle */}
         {supportsThinking && (
           <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
@@ -173,7 +190,30 @@ export function SettingsPanel() {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700">
+      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
+        {/* Log Level */}
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-gray-500 dark:text-gray-400">Diagnostic Log Level</label>
+          <select
+            value={logLevel}
+            onChange={(e) => setLogLevel(e.target.value as LogLevel)}
+            className="text-xs px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300"
+          >
+            <option value="error">Error</option>
+            <option value="warn">Warn</option>
+            <option value="info">Info</option>
+            <option value="debug">Debug</option>
+          </select>
+        </div>
+
+        {/* Download Diagnostic Log */}
+        <button
+          onClick={() => logger.downloadAsJSONL()}
+          className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+        >
+          Download Diagnostic Log
+        </button>
+
         <button
           onClick={resetSamplerToDefaults}
           className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"

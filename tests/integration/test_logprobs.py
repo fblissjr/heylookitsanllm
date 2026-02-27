@@ -89,6 +89,51 @@ class TestLogprobsCollector:
         assert "top_logprobs" in result["content"][0]
 
 
+class TestLogprobsEdgeCases:
+    """Edge-case tests for LogprobsCollector."""
+
+    def test_add_token_out_of_range_token_id(self):
+        """Out-of-range token_id triggers IndexError, caught and logged, not raised."""
+        import logging
+        from heylook_llm.logprobs import LogprobsCollector
+
+        tokenizer = MockTokenizer()
+        collector = LogprobsCollector(tokenizer, top_logprobs=3)
+
+        # vocab has 5 entries, token_id=999 is out of range
+        logprobs = [-0.5, -1.0, -2.0, -3.0, -4.0]
+
+        with pytest.raises(IndexError):
+            _ = logprobs[999]  # confirm raw IndexError exists
+
+        # add_token should NOT raise -- the exception is caught internally
+        collector.add_token(999, logprobs)
+
+        # No entry added because the exception was caught
+        assert len(collector.content) == 0
+
+
+    def test_decode_token_returns_fallback_for_bad_id(self):
+        """_decode_token returns '<token_N>' when tokenizer.decode raises KeyError."""
+        from heylook_llm.logprobs import LogprobsCollector
+
+        class BadTokenizer:
+            def decode(self, token_ids):
+                raise KeyError(f"Unknown token id {token_ids[0]}")
+
+        collector = LogprobsCollector(BadTokenizer(), top_logprobs=1)
+        result = collector._decode_token(99999)
+        assert result == "<token_99999>"
+
+    def test_get_token_bytes_handles_surrogate(self):
+        """_get_token_bytes returns [] for strings with surrogate characters."""
+        from heylook_llm.logprobs import LogprobsCollector
+
+        collector = LogprobsCollector(MockTokenizer(), top_logprobs=1)
+        result = collector._get_token_bytes("\ud800")
+        assert result == []
+
+
 class TestStreamingLogprobsCollector:
     """Unit tests for StreamingLogprobsCollector."""
 

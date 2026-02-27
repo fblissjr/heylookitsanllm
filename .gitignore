@@ -23,6 +23,7 @@ docs/archive
 docs/frontend-mocks/
 internal/
 logs/
+update-coderef.sh
 
 # configs
 model.toml
@@ -51,6 +52,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 node_modules/
+package-lock.json
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

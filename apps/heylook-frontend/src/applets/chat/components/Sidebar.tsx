@@ -10,7 +10,7 @@ import type { Conversation } from '../../../types/chat'
 
 export function Sidebar() {
   const { conversations, activeConversationId, createConversation, setActiveConversation, loadFromDB } = useChatStore()
-  const { loadedModel } = useModelStore()
+  const loadedModel = useModelStore((s) => s.loadedModel)
   const { setConfirmDelete, isMobile, toggleSidebar } = useUIStore()
   const { systemPrompt } = useSettingsStore()
   const fileInputRef = useRef<HTMLInputElement>(null)

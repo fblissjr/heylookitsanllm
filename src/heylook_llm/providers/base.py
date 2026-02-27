@@ -39,6 +39,17 @@ class BaseProvider(ABC):
         """
         return False
 
+    def get_tokenizer(self):
+        """Return the tokenizer, or None if unavailable."""
+        processor = getattr(self, 'processor', None)
+        if processor is None:
+            return None
+        if hasattr(processor, '_tokenizer'):
+            return processor._tokenizer
+        if hasattr(processor, 'tokenizer'):
+            return processor.tokenizer
+        return processor if hasattr(processor, 'decode') else None
+
     def unload(self):
         """Optional method to explicitly release resources."""
         pass
