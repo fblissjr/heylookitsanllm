@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Generation lock deadlock after client disconnect**: `async_generator_with_abort` now calls `sync_gen.close()` in a finally block, deterministically releasing the provider's `_generation_lock` on all exit paths (disconnect, aclose, normal completion). Previously the abandoned generator only released the lock when GC collected it, causing the next request to hang for up to 30s.
 - **Bare except handlers**: Replaced `except:` with `except Exception:` in Metal info query and STT cache cleanup (was swallowing SystemExit/KeyboardInterrupt).
 - **Logprobs helper exceptions**: `_decode_token` and `_get_token_bytes` exception handlers narrowed to specific types instead of broad `except Exception`.
 - **Non-streaming logprobs init error path**: Missing diagnostic event in non-streaming logprobs init `except` block (now shared via extracted helper).
