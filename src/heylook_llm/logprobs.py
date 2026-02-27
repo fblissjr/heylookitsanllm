@@ -132,7 +132,7 @@ class LogprobsCollector:
             )
             self.content.append(entry)
 
-        except Exception as e:
+        except (IndexError, ValueError, RuntimeError, TypeError) as e:
             logging.warning(f"Failed to process logprobs for token {token_id}: {e}", exc_info=True)
 
     def _decode_token(self, token_id: int) -> str:
