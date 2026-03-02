@@ -197,7 +197,11 @@ class TestForwardPass:
         assert result.shape == (2, 32)
 
     def test_attention_mask_respected(self, tiny_model):
-        """Padding tokens should not affect output (via attention mask)."""
+        """Padding tokens should not affect output when attention mask is provided.
+
+        With a proper padding mask in the attention layers, identical content
+        with different amounts of padding should produce identical embeddings.
+        """
         # Same content, different padding
         ids_no_pad = mx.array([[1, 2, 3]])
         ids_with_pad = mx.array([[1, 2, 3, 0, 0]])
@@ -206,12 +210,13 @@ class TestForwardPass:
 
         result_no_pad = tiny_model(ids_no_pad, attention_mask=mask_no_pad)
         result_with_pad = tiny_model(ids_with_pad, attention_mask=mask_with_pad)
-        # With bidirectional attention and no mask on the attention layers,
-        # padding tokens DO see content tokens and vice versa. But mean pooling
-        # excludes padding. The results won't be identical because padding tokens
-        # affect the transformer hidden states. This test verifies shapes are correct
-        # and both produce valid normalized outputs.
+
         assert result_no_pad.shape == (1, 32)
         assert result_with_pad.shape == (1, 32)
-        norms = mx.sqrt(mx.sum(result_with_pad * result_with_pad, axis=-1))
-        assert mx.allclose(norms, mx.ones_like(norms), atol=1e-5).item()
+        # Both should be normalized
+        norms_no_pad = mx.sqrt(mx.sum(result_no_pad * result_no_pad, axis=-1))
+        norms_with_pad = mx.sqrt(mx.sum(result_with_pad * result_with_pad, axis=-1))
+        assert mx.allclose(norms_no_pad, mx.ones_like(norms_no_pad), atol=1e-5).item()
+        assert mx.allclose(norms_with_pad, mx.ones_like(norms_with_pad), atol=1e-5).item()
+        # Embeddings should be identical regardless of padding
+        assert mx.allclose(result_no_pad, result_with_pad, atol=1e-4).item()

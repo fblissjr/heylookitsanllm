@@ -6,7 +6,7 @@ mean pooling + dense projection layers + L2 normalization.
 
 Architecture (from google/embeddinggemma-300m):
   input_ids -> embed_tokens -> scale(sqrt(hidden_size))
-    -> 24 transformer layers (mask=None for bidirectional)
+    -> 24 transformer layers (bidirectional, padding-masked)
     -> final RMSNorm
     -> mean_pooling(hidden_states, attention_mask)
     -> Dense(768, 3072, no bias, no activation)
@@ -98,6 +98,27 @@ class EmbeddingGemmaModel(nn.Module):
             self.dense_layers.append(nn.Linear(in_dim, out_dim, bias=False))
             in_dim = out_dim
 
+    def _make_padding_mask(self, attention_mask: mx.array) -> Optional[mx.array]:
+        """Create an additive attention mask that masks padding key positions.
+
+        For bidirectional attention, we don't want a causal mask. We only need
+        to prevent query tokens from attending to padding key positions.
+
+        Args:
+            attention_mask: (batch, seq_len) with 1 for real tokens, 0 for padding.
+
+        Returns:
+            (batch, 1, 1, seq_len) additive mask: 0.0 for real tokens, -inf for padding.
+            Returns None if all tokens are real (no masking needed).
+        """
+        if mx.all(attention_mask).item():
+            return None
+
+        # (B, seq_len) -> (B, 1, 1, seq_len) for broadcasting across heads and queries
+        mask = attention_mask[:, None, None, :].astype(mx.float32)
+        # Convert: 1 -> 0.0 (attend), 0 -> -inf (mask)
+        return mx.where(mask, 0.0, mx.finfo(mx.float32).min)
+
     def __call__(
         self,
         input_ids: mx.array,
@@ -108,7 +129,8 @@ class EmbeddingGemmaModel(nn.Module):
         Args:
             input_ids: (batch, seq_len) integer token IDs.
             attention_mask: (batch, seq_len) with 1 for real tokens, 0 for padding.
-                Used for mean pooling only; attention layers see all tokens.
+                Used for both attention masking (prevents attending to padding)
+                and mean pooling (excludes padding from average).
 
         Returns:
             (batch, output_dim) L2-normalized embeddings.
@@ -117,9 +139,15 @@ class EmbeddingGemmaModel(nn.Module):
         h = self.model.embed_tokens(input_ids)
         h = h * mx.array(self.args.hidden_size**0.5, dtype=mx.bfloat16).astype(h.dtype)
 
-        # Forward through all layers with mask=None (bidirectional attention)
+        # Build padding mask for attention (None if no padding present)
+        attn_mask = None
+        if attention_mask is not None:
+            attn_mask = self._make_padding_mask(attention_mask)
+
+        # Forward through all layers -- bidirectional (no causal mask),
+        # but padding positions are masked out via attn_mask
         for layer in self.model.layers:
-            h = layer(h, mask=None, cache=None)
+            h = layer(h, mask=attn_mask, cache=None)
 
         # Final RMS norm
         h = self.model.norm(h)
