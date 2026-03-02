@@ -144,6 +144,11 @@ class MLXModelConfig(BaseModel):
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
 
+class MLXEmbeddingModelConfig(BaseModel):
+    """Configuration for MLX embedding models (embeddinggemma, etc)."""
+    model_path: str  # Local path or HF repo
+    max_length: int = 2048
+
 class MLXSTTModelConfig(BaseModel):
     """Configuration for MLX STT models (parakeet-mlx)."""
     model_path: str = "mlx-community/parakeet-tdt-0.6b-v3"  # HF repo or local path
@@ -156,8 +161,8 @@ class MLXSTTModelConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "mlx_stt"]
-    config: Union[MLXModelConfig, MLXSTTModelConfig]
+    provider: Literal["mlx", "mlx_stt", "mlx_embedding"]
+    config: Union[MLXModelConfig, MLXSTTModelConfig, MLXEmbeddingModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -171,6 +176,8 @@ class ModelConfig(BaseModel):
             return MLXModelConfig(**v)
         elif provider == 'mlx_stt':
             return MLXSTTModelConfig(**v)
+        elif provider == 'mlx_embedding':
+            return MLXEmbeddingModelConfig(**v)
         raise ValueError(f"Unknown provider '{provider}' for model config validation")
 
 class AppConfig(BaseModel):

@@ -32,6 +32,14 @@ except ImportError as e:
     HAS_MLX_STT = False
     MLX_STT_IMPORT_ERROR = str(e)
 
+# Try to import MLX Embedding provider
+try:
+    from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
+    HAS_MLX_EMBEDDING = True
+except ImportError as e:
+    MLXEmbeddingProvider = None
+    HAS_MLX_EMBEDDING = False
+
 
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
@@ -228,6 +236,8 @@ class ModelRouter:
                 provider_map["mlx"] = MLXProvider
             if MLXSTTProvider:
                 provider_map["mlx_stt"] = MLXSTTProvider
+            if MLXEmbeddingProvider:
+                provider_map["mlx_embedding"] = MLXEmbeddingProvider
 
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:

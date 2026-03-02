@@ -215,14 +215,16 @@ async def create_embeddings(
         # Load the model
         provider = router.get_provider(request.model)
 
-        # MLX providers have a processor/tokenizer
-        processor = getattr(provider, 'processor', None)
-        if processor is None:
-            raise ValueError(f"Provider for model {request.model} has no processor/tokenizer")
-        extractor = create_embedding_extractor(provider.model, processor)
-
-        # Extract embeddings
-        embeddings = extractor.extract(texts)
+        # Use native get_embeddings if available (MLXEmbeddingProvider)
+        if hasattr(provider, 'get_embeddings'):
+            embeddings = provider.get_embeddings(texts)
+        else:
+            # Legacy path: extract from MLX generative models
+            processor = getattr(provider, 'processor', None)
+            if processor is None:
+                raise ValueError(f"Provider for model {request.model} has no processor/tokenizer")
+            extractor = create_embedding_extractor(provider.model, processor)
+            embeddings = extractor.extract(texts)
         
         # Optionally truncate dimensions
         if request.dimensions:
