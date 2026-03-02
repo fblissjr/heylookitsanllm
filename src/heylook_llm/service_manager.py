@@ -34,11 +34,8 @@ def get_platform() -> str:
 
 def get_templates_dir() -> Path:
     """Get the path to service templates."""
-    # Templates are in the services/ directory at the repo root
-    module_dir = Path(__file__).parent
-    # Go up from src/heylook_llm to repo root
-    repo_root = module_dir.parent.parent
-    templates_dir = repo_root / "services"
+    import importlib.resources as resources
+    templates_dir = Path(str(resources.files("heylook_llm.data.services")))
 
     if not templates_dir.exists():
         # Fallback: check relative to current working directory

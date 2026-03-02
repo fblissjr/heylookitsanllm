@@ -78,7 +78,13 @@ class ModelImporter:
             if str(rel_path) != ".":
                 logging.debug(f"Scanning: {rel_path}")
 
-            if self._is_mlx_model(root_path):
+            if self._is_embedding_model(root_path):
+                logging.info(f"Found embedding model in: {rel_path}")
+                model = self._create_embedding_entry(root_path)
+                if model:
+                    models.append(model)
+                    logging.info(f"Added embedding model: {model['id']}")
+            elif self._is_mlx_model(root_path):
                 logging.info(f"Found MLX model in: {rel_path}")
                 model = self._create_mlx_entry(root_path)
                 if model:
@@ -110,16 +116,76 @@ class ModelImporter:
         """Scan a HF cache snapshot directory."""
         models = []
 
-        if self._is_mlx_model(snapshot_path):
+        if self._is_embedding_model(snapshot_path):
+            model = self._create_embedding_entry(snapshot_path)
+        elif self._is_mlx_model(snapshot_path):
             model = self._create_mlx_entry(snapshot_path)
-            if model:
-                parts = snapshot_path.parent.parent.name.split("--")
-                if len(parts) >= 2:
-                    model['id'] = f"{parts[1]}/{parts[2]}" if len(parts) > 2 else parts[1]
-                    model['config']['model_path'] = str(snapshot_path)
-                models.append(model)
+        else:
+            model = None
+
+        if model:
+            parts = snapshot_path.parent.parent.name.split("--")
+            if len(parts) >= 2:
+                model['id'] = f"{parts[1]}/{parts[2]}" if len(parts) > 2 else parts[1]
+                model['config']['model_path'] = str(snapshot_path)
+            models.append(model)
 
         return models
+
+    def _is_embedding_model(self, path: Path) -> bool:
+        """Check if a directory contains an embedding model.
+
+        Detects two signals (either is sufficient):
+        - config.json has "use_bidirectional_attention": true
+        - Presence of *_Dense subdirectories (sentence-transformer projection layers)
+        """
+        config_path = path / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config = json.load(f)
+                if config.get("use_bidirectional_attention") is True:
+                    return True
+            except Exception:
+                pass
+
+        # Check for sentence-transformer Dense projection dirs
+        if any(d.is_dir() and d.name.endswith("_Dense") for d in path.iterdir()):
+            return True
+
+        return False
+
+    def _create_embedding_entry(self, path: Path) -> Optional[dict]:
+        """Create a models.toml entry for an embedding model."""
+        model_id = path.name
+        if model_id in self.existing_ids:
+            return None
+        self.existing_ids.add(model_id)
+
+        is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
+
+        tags = ["embedding"]
+        model_lower = model_id.lower()
+        for family in ["llama", "qwen", "gemma", "mistral"]:
+            if family in model_lower:
+                tags.append(family)
+                break
+        if is_quantized:
+            tags.append("quantized")
+
+        config: dict[str, Any] = {
+            "model_path": str(path),
+            "max_length": 2048,
+        }
+
+        return {
+            "id": model_id,
+            "provider": "mlx_embedding",
+            "description": "Auto-imported embedding model",
+            "tags": tags,
+            "enabled": True,
+            "config": config,
+        }
 
     def _is_mlx_model(self, path: Path) -> bool:
         """Check if a directory contains an MLX model."""

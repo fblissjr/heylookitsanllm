@@ -3,6 +3,7 @@
 # Unit tests for the v1.19.0 profile system: TOML loading, profile application,
 # model size regex, and the public load_profiles() API.
 
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from heylook_llm.model_service import (
     ModelProfile,
     _load_profiles_from_toml,
+    get_smart_defaults,
     load_profiles,
 )
 from heylook_llm.model_importer import ModelImporter
@@ -19,7 +21,7 @@ from heylook_llm.model_importer import ModelImporter
 # Helpers
 # ---------------------------------------------------------------------------
 
-PROFILES_DIR = Path(__file__).parent.parent.parent / "profiles"
+PROFILES_DIR = Path(__file__).parent.parent.parent / "src" / "heylook_llm" / "data" / "profiles"
 
 
 @pytest.fixture(autouse=True)
@@ -225,3 +227,92 @@ class TestLoadProfiles:
         fresh = load_profiles(profiles_dir=PROFILES_DIR)
         # Both should have same content but fresh is not the cached object
         assert set(cached.keys()) == set(fresh.keys())
+
+
+# ---------------------------------------------------------------------------
+# Embedding model detection (ModelImporter)
+# ---------------------------------------------------------------------------
+
+class TestEmbeddingModelDetection:
+    """Tests for embedding model detection and entry creation."""
+
+    def _make_embedding_dir(self, tmp_path, *, bidirectional=True, dense_dirs=False):
+        """Create a tmp dir that looks like an embedding model."""
+        config = {"model_type": "gemma2", "hidden_size": 768}
+        if bidirectional:
+            config["use_bidirectional_attention"] = True
+        (tmp_path / "config.json").write_text(json.dumps(config))
+        (tmp_path / "model.safetensors").write_bytes(b"\x00" * 64)
+        if dense_dirs:
+            (tmp_path / "2_Dense").mkdir()
+            (tmp_path / "3_Dense").mkdir()
+        return tmp_path
+
+    def _make_generative_dir(self, tmp_path):
+        """Create a tmp dir that looks like a standard generative model."""
+        config = {"model_type": "llama", "hidden_size": 4096}
+        (tmp_path / "config.json").write_text(json.dumps(config))
+        (tmp_path / "model.safetensors").write_bytes(b"\x00" * 64)
+        return tmp_path
+
+    def test_detects_embedding_from_bidirectional_config(self, tmp_path):
+        """Bidirectional attention in config.json -> embedding model."""
+        self._make_embedding_dir(tmp_path, bidirectional=True)
+        importer = ModelImporter()
+        assert importer._is_embedding_model(tmp_path) is True
+
+    def test_detects_embedding_from_dense_dirs(self, tmp_path):
+        """Presence of *_Dense subdirs -> embedding model."""
+        self._make_embedding_dir(tmp_path, bidirectional=False, dense_dirs=True)
+        importer = ModelImporter()
+        assert importer._is_embedding_model(tmp_path) is True
+
+    def test_rejects_generative_model(self, tmp_path):
+        """Standard generative model is not detected as embedding."""
+        self._make_generative_dir(tmp_path)
+        importer = ModelImporter()
+        assert importer._is_embedding_model(tmp_path) is False
+
+    def test_create_embedding_entry_sets_provider(self, tmp_path):
+        """_create_embedding_entry produces correct provider and config shape."""
+        self._make_embedding_dir(tmp_path, bidirectional=True)
+        importer = ModelImporter()
+        entry = importer._create_embedding_entry(tmp_path)
+
+        assert entry is not None
+        assert entry["provider"] == "mlx_embedding"
+        assert entry["config"]["model_path"] == str(tmp_path)
+        assert entry["config"]["max_length"] == 2048
+        assert "vision" not in entry["config"]
+        assert "temperature" not in entry["config"]
+        assert "embedding" in entry["tags"]
+
+    def test_scan_finds_embedding_model(self, tmp_path):
+        """scan_directory discovers embedding models with correct provider."""
+        model_dir = tmp_path / "embeddinggemma-300m"
+        model_dir.mkdir()
+        self._make_embedding_dir(model_dir, bidirectional=True)
+
+        importer = ModelImporter()
+        models = importer.scan_directory(str(tmp_path))
+
+        assert len(models) == 1
+        assert models[0]["provider"] == "mlx_embedding"
+        assert "embedding" in models[0]["tags"]
+
+
+# ---------------------------------------------------------------------------
+# Smart defaults for embedding provider
+# ---------------------------------------------------------------------------
+
+class TestSmartDefaultsEmbedding:
+    """Tests for get_smart_defaults with mlx_embedding provider."""
+
+    def test_smart_defaults_embedding_minimal(self):
+        """mlx_embedding smart defaults return only max_length, nothing generative."""
+        defaults = get_smart_defaults({"provider": "mlx_embedding", "name": "test"})
+        assert defaults == {"max_length": 2048}
+        assert "temperature" not in defaults
+        assert "top_k" not in defaults
+        assert "cache_type" not in defaults
+        assert "repetition_penalty" not in defaults

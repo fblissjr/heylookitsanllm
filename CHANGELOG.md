@@ -5,12 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0]
+
+### Added
+
+- **PyPI packaging**: Package is now installable from PyPI via `pip install heylookitsanllm`. Profiles and service templates ship inside the wheel as package data (`heylook_llm.data.profiles`, `heylook_llm.data.services`).
+- **Dynamic version**: Single source of truth in `heylook_llm.__version__`, read by setuptools at build time.
+- **Platform guard**: `heylookllm` CLI exits with a clear error on non-macOS platforms.
+- **Project URLs**: Homepage, repository, and issues links in PyPI metadata.
+
+### Changed
+
+- **macOS-only deps**: `mlx`, `mlx-lm`, `mlx-vlm`, and `parakeet-mlx` now carry `sys_platform == 'darwin'` markers so pip can resolve the dependency tree on non-macOS (even though the server requires macOS to run).
+- **Classifiers**: Removed Linux/Windows OS classifiers; added Python 3.11/3.12/3.13, FastAPI, and AI topic classifiers.
+- **Data file paths**: `profiles/` and `services/` moved from repo root into `src/heylook_llm/data/`; path resolution uses `importlib.resources` instead of `__file__`-relative traversal (fixes broken paths when installed from wheel).
+- **License metadata**: Switched from `license = { file = "LICENSE" }` to SPDX expression `license = "MIT"` per PEP 639.
+
 ## [Unreleased]
 
 ### Added
 
 - **MLX Embedding Provider**: New `mlx_embedding` provider for EmbeddingGemma models. Produces contextual 768-dim embeddings via full bidirectional transformer forward pass with padding-aware attention masking, mean pooling, dense projections, and L2 normalization. Supports task-specific prefixes (query, document, code_retrieval, clustering) and quantized model loading (4bit, 8bit via nn.quantize). 30 unit tests.
 - **EmbeddingGemmaModel**: Pure MLX encoder reusing mlx-lm Gemma3 internals with bidirectional attention and padding mask. Located in `src/heylook_llm/models/embedding_gemma.py`.
+- **Embedding model import**: Model importer now detects embedding models (bidirectional attention config or `*_Dense` projection dirs) and imports them as `provider: "mlx_embedding"` with correct config (no vision/temperature/sampling params). Model service validates and imports `mlx_embedding` provider correctly.
 
 ### Fixed
 

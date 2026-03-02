@@ -53,6 +53,14 @@ def main():
     This script parses arguments, initializes the ModelRouter,
     and launches the uvicorn server process.
     """
+    if sys.platform != "darwin":
+        print(
+            "Error: heylookitsanllm requires macOS with Apple Silicon.\n"
+            "MLX only supports Apple Silicon Macs.\n"
+            "See: https://github.com/fblissjr/heylookitsanllm"
+        )
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="Hey Look It's an LLM Server")
 
     # Create subcommands

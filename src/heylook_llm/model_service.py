@@ -103,8 +103,8 @@ def _load_profiles_from_toml(profiles_dir: Path | None = None) -> dict[str, Mode
     Loaded once and cached module-level.
     """
     if profiles_dir is None:
-        # Default: profiles/ relative to project root (two levels up from this file)
-        profiles_dir = Path(__file__).parent.parent.parent / "profiles"
+        import importlib.resources as resources
+        profiles_dir = Path(str(resources.files("heylook_llm.data.profiles")))
 
     profiles: dict[str, ModelProfile] = {}
 
@@ -172,6 +172,10 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     - Only quantization level affects hidden state precision
     - Use --profile embedding for encoder-focused defaults
     """
+    provider = model_info.get('provider', 'mlx')
+    if provider == "mlx_embedding":
+        return {"max_length": 2048}
+
     defaults: dict[str, Any] = {}
 
     size_gb = model_info.get('size_gb', 0)
@@ -254,7 +258,7 @@ class ScannedModel:
     """A model discovered during filesystem scan."""
     id: str
     path: str
-    provider: str  # "mlx"
+    provider: str  # "mlx", "mlx_stt", "mlx_embedding"
     size_gb: float
     vision: bool
     quantization: Optional[str] = None
@@ -666,21 +670,28 @@ class ModelService:
                     "is_quantized": model_data.get("quantization") is not None,
                 }
 
-                # Start with base config
-                entry_config = {
-                    "model_path": model_path,
-                    "vision": vision,
-                }
+                if provider == "mlx_embedding":
+                    # Embedding models: no vision, no generation params, no profiles
+                    entry_config = {
+                        "model_path": model_path,
+                        "max_length": 2048,
+                    }
+                else:
+                    # Start with base config
+                    entry_config = {
+                        "model_path": model_path,
+                        "vision": vision,
+                    }
 
-                # Apply smart defaults
-                smart = get_smart_defaults(model_info)
-                entry_config.update(smart)
+                    # Apply smart defaults
+                    smart = get_smart_defaults(model_info)
+                    entry_config.update(smart)
 
-                # Apply profile if specified
-                if profile_name:
-                    profile = PROFILES.get(profile_name)
-                    if profile:
-                        entry_config = profile.apply(entry_config, model_info)
+                    # Apply profile if specified
+                    if profile_name:
+                        profile = PROFILES.get(profile_name)
+                        if profile:
+                            entry_config = profile.apply(entry_config, model_info)
 
                 # Apply any overrides from the import request
                 overrides = model_data.get("overrides", {})
@@ -727,7 +738,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "mlx_stt"):
+        elif config_data["provider"] not in ("mlx", "mlx_stt", "mlx_embedding"):
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})
