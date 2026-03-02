@@ -32,9 +32,9 @@ Check before making changes:
 
 ### Backend: `src/heylook_llm/`
 
-Providers: MLXProvider (text+vision), MLXSTTProvider (parakeet-mlx STT).
+Providers: MLXProvider (text+vision), MLXSTTProvider (parakeet-mlx STT), MLXEmbeddingProvider (embeddinggemma).
 LRU cache hot-swaps up to 2 models. Config in `models.toml`.
-Provider type: `Literal["mlx", "mlx_stt"]` -- no other providers exist.
+Provider type: `Literal["mlx", "mlx_stt", "mlx_embedding"]`.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
 - [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)

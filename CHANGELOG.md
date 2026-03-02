@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MLX Embedding Provider**: New `mlx_embedding` provider for EmbeddingGemma models. Produces contextual 768-dim embeddings via full bidirectional transformer forward pass with padding-aware attention masking, mean pooling, dense projections, and L2 normalization. Supports task-specific prefixes (query, document, code_retrieval, clustering) and quantized model loading (4bit, 8bit via nn.quantize). 30 unit tests.
+- **EmbeddingGemmaModel**: Pure MLX encoder reusing mlx-lm Gemma3 internals with bidirectional attention and padding mask. Located in `src/heylook_llm/models/embedding_gemma.py`.
+
+### Fixed
+
+- **Embedding padding attention**: Padding tokens no longer contaminate content token hidden states. EmbeddingGemmaModel now creates a (B, 1, 1, seq_len) additive padding mask instead of passing mask=None to all layers. Identical content with different padding now produces identical embeddings.
 - **Diagnostic logging**: Frontend ring buffer (5000 events) with JSONL download from Settings panel. Backend writes structured events to `logs/events.jsonl`. Request IDs (`X-Request-ID` header) correlate frontend and backend events. Console verbosity adjustable via Settings or `window.__setLogLevel()` in devtools.
 - **Stream timeout setting**: Configurable stream timeout (default 30s) in Generation Settings panel. Prevents permanently stuck streaming state when the backend hangs.
 
