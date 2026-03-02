@@ -78,7 +78,9 @@ class ModelImporter:
             if str(rel_path) != ".":
                 logging.debug(f"Scanning: {rel_path}")
 
-            if self._is_embedding_model(root_path):
+            config_data = self._read_model_config(root_path)
+
+            if self._is_embedding_model(root_path, config_data):
                 logging.info(f"Found embedding model in: {rel_path}")
                 model = self._create_embedding_entry(root_path)
                 if model:
@@ -86,7 +88,7 @@ class ModelImporter:
                     logging.info(f"Added embedding model: {model['id']}")
             elif self._is_mlx_model(root_path):
                 logging.info(f"Found MLX model in: {rel_path}")
-                model = self._create_mlx_entry(root_path)
+                model = self._create_mlx_entry(root_path, config_data)
                 if model:
                     models.append(model)
                     logging.info(f"Added MLX model: {model['id']}")
@@ -115,11 +117,12 @@ class ModelImporter:
     def _scan_hf_snapshot(self, snapshot_path: Path) -> list[dict]:
         """Scan a HF cache snapshot directory."""
         models = []
+        config_data = self._read_model_config(snapshot_path)
 
-        if self._is_embedding_model(snapshot_path):
+        if self._is_embedding_model(snapshot_path, config_data):
             model = self._create_embedding_entry(snapshot_path)
         elif self._is_mlx_model(snapshot_path):
-            model = self._create_mlx_entry(snapshot_path)
+            model = self._create_mlx_entry(snapshot_path, config_data)
         else:
             model = None
 
@@ -132,22 +135,29 @@ class ModelImporter:
 
         return models
 
-    def _is_embedding_model(self, path: Path) -> bool:
+    def _read_model_config(self, path: Path) -> Optional[dict]:
+        """Read and parse config.json from a model directory. Returns None on failure."""
+        config_path = path / "config.json"
+        if not config_path.exists():
+            return None
+        try:
+            with open(config_path) as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _is_embedding_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
         """Check if a directory contains an embedding model.
 
         Detects two signals (either is sufficient):
         - config.json has "use_bidirectional_attention": true
         - Presence of *_Dense subdirectories (sentence-transformer projection layers)
         """
-        config_path = path / "config.json"
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config = json.load(f)
-                if config.get("use_bidirectional_attention") is True:
-                    return True
-            except Exception:
-                pass
+        if config_data is None:
+            config_data = self._read_model_config(path)
+
+        if config_data and config_data.get("use_bidirectional_attention") is True:
+            return True
 
         # Check for sentence-transformer Dense projection dirs
         if any(d.is_dir() and d.name.endswith("_Dense") for d in path.iterdir()):
@@ -202,22 +212,19 @@ class ModelImporter:
                     return True
         return False
 
-    def _is_vision_model(self, path: Path) -> bool:
+    def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
         """Check if a model supports vision."""
         vision_files = ["mmproj", "vision_tower", "image_encoder", "visual_encoder"]
         for file in path.iterdir():
             if any(v in file.name.lower() for v in vision_files):
                 return True
 
-        config_path = path / "config.json"
-        if config_path.exists():
-            try:
-                with open(config_path) as f:
-                    config = json.load(f)
-                    if any(key in config for key in ["vision_config", "is_vision", "image_size"]):
-                        return True
-            except Exception:
-                pass
+        if config_data is None:
+            config_data = self._read_model_config(path)
+
+        if config_data and any(key in config_data for key in ["vision_config", "is_vision", "image_size"]):
+            return True
+
         return False
 
     def _get_model_size(self, path: Path) -> tuple[Optional[str], Optional[float]]:
@@ -249,7 +256,7 @@ class ModelImporter:
 
         return None, None
 
-    def _create_mlx_entry(self, path: Path) -> Optional[dict]:
+    def _create_mlx_entry(self, path: Path, config_data: Optional[dict] = None) -> Optional[dict]:
         """Create a models.toml entry for an MLX model."""
         model_id = path.name
         if model_id in self.existing_ids:
@@ -257,7 +264,7 @@ class ModelImporter:
         self.existing_ids.add(model_id)
 
         is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
-        is_vision = self._is_vision_model(path)
+        is_vision = self._is_vision_model(path, config_data)
         size_str, size_gb = self._get_model_size(path)
 
         model_info = {
