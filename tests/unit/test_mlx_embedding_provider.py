@@ -11,6 +11,7 @@ Covers:
 import pytest
 from unittest.mock import MagicMock, patch
 import mlx.core as mx
+import mlx.nn as nn
 
 from heylook_llm.providers.base import BaseProvider
 
@@ -175,3 +176,90 @@ class TestGetTokenizer:
         provider.processor = mock_tok
         # BaseProvider.get_tokenizer checks for decode attr -> returns processor
         assert provider.get_tokenizer() is mock_tok
+
+
+class TestQuantizationSupport:
+    """Test quantized model loading support."""
+
+    def test_quantize_applies_to_model(self):
+        """nn.quantize should work on EmbeddingGemmaModel (no structural issues)."""
+        from heylook_llm.models.embedding_gemma import EmbeddingGemmaModel, EmbeddingGemmaModelArgs
+
+        args = EmbeddingGemmaModelArgs(
+            model_type="gemma3_text",
+            hidden_size=32,
+            num_hidden_layers=1,
+            intermediate_size=64,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            head_dim=32,
+            vocab_size=128,
+            dense_out_features=[64, 32],
+        )
+        model = EmbeddingGemmaModel(args)
+        mx.eval(model.parameters())
+
+        # Apply quantization -- should not error
+        nn.quantize(model, group_size=32, bits=4)
+
+        # Model should still produce valid output
+        input_ids = mx.array([[1, 2, 3]])
+        result = model(input_ids)
+        assert result.shape == (1, 32)
+        norms = mx.sqrt(mx.sum(result * result, axis=-1))
+        assert mx.allclose(norms, mx.ones_like(norms), atol=1e-4).item()
+
+    def test_quantize_model_has_quantized_layers(self):
+        """After quantization, Linear layers should become QuantizedLinear."""
+        from heylook_llm.models.embedding_gemma import EmbeddingGemmaModel, EmbeddingGemmaModelArgs
+
+        args = EmbeddingGemmaModelArgs(
+            model_type="gemma3_text",
+            hidden_size=32,
+            num_hidden_layers=1,
+            intermediate_size=64,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            head_dim=32,
+            vocab_size=128,
+            dense_out_features=[64, 32],
+        )
+        model = EmbeddingGemmaModel(args)
+        mx.eval(model.parameters())
+
+        # Before quantization: should have nn.Linear
+        attn = model.model.layers[0].self_attn
+        assert isinstance(attn.q_proj, nn.Linear)
+
+        # Apply quantization
+        nn.quantize(model, group_size=32, bits=4)
+
+        # After quantization: q_proj should be QuantizedLinear
+        assert isinstance(attn.q_proj, nn.QuantizedLinear)
+
+    def test_quantized_model_produces_valid_embeddings(self):
+        """A quantized model should still produce normalized embeddings."""
+        from heylook_llm.models.embedding_gemma import EmbeddingGemmaModel, EmbeddingGemmaModelArgs
+
+        args = EmbeddingGemmaModelArgs(
+            model_type="gemma3_text",
+            hidden_size=32,
+            num_hidden_layers=1,
+            intermediate_size=64,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            head_dim=32,
+            vocab_size=128,
+            dense_out_features=[64, 32],
+        )
+        model = EmbeddingGemmaModel(args)
+        mx.eval(model.parameters())
+        nn.quantize(model, group_size=32, bits=4)
+
+        # Batch of 2
+        input_ids = mx.array([[1, 2, 3], [4, 5, 6]])
+        result = model(input_ids)
+        assert result.shape == (2, 32)
+        # Both outputs should be normalized
+        norms = mx.sqrt(mx.sum(result * result, axis=-1))
+        assert mx.allclose(norms, mx.ones(2), atol=1e-4).item()

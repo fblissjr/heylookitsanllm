@@ -126,6 +126,21 @@ class MLXEmbeddingProvider(BaseProvider):
         # Instantiate model
         model = EmbeddingGemmaModel(args)
 
+        # Apply quantization if the model config specifies it
+        # (mlx-community quantized variants include a "quantization" dict)
+        quantization = model_config.get("quantization")
+        if quantization is not None:
+            logger.info(
+                "applying quantization: bits=%d, group_size=%d",
+                quantization["bits"],
+                quantization["group_size"],
+            )
+            nn.quantize(
+                model,
+                group_size=quantization["group_size"],
+                bits=quantization["bits"],
+            )
+
         # Load transformer weights
         weights = {}
         for sf_path in local_path.glob("*.safetensors"):
