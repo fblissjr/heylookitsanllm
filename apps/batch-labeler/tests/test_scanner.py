@@ -1,10 +1,6 @@
 """Tests for scanner module: file hashing and directory scanning."""
 
-import os
-import tempfile
-from pathlib import Path
-
-from batch_labeler.scanner import file_hash, scan_images, IMAGE_EXTENSIONS
+from batch_labeler.scanner import file_hash, scan_images
 
 
 class TestFileHash:

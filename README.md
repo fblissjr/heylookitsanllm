@@ -134,58 +134,7 @@ Interactive docs at `http://localhost:8080/docs` when the server is running.
 
 ## Batch Vision Labeling
 
-Process directories of images through a VLM to generate structured JSON labels. Designed for large personal photo libraries (50K+ images).
-
-### How It Works
-
-1. Scans a directory for images (jpg, png, webp, heic, tiff, bmp)
-2. Computes a shared prefix cache from your system prompt (labeling instructions + JSON schema) -- paid once, reused for every image via copy-on-write forking
-3. Pins the VLM in the LRU cache to prevent eviction during multi-hour runs
-4. Processes each image and writes structured labels to a SQLite database
-5. Supports resume: re-running skips already-processed files (matched by content hash)
-
-### Start a Labeling Job
-
-```bash
-curl -X POST http://localhost:8080/v1/batch/vision/label \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_dir": "/path/to/photos",
-    "model": "your-vlm-model-id",
-    "output_db": "/path/to/labels.sqlite",
-    "system_prompt": "For each image, output a JSON object with: caption (string), scene_type (string), people_count (int), activities (array), objects (array), emotions (array), location_type (string), estimated_decade (string), time_of_day (string), is_screenshot (bool), has_text (bool). Output ONLY valid JSON.",
-    "max_tokens": 1024,
-    "temperature": 0.1,
-    "recursive": true
-  }'
-```
-
-### Poll Progress
-
-```bash
-curl http://localhost:8080/v1/batch/vision/label/{job_id}
-# → {"completed": 12847, "total_images": 52341, "failed": 3, "images_per_second": 1.8, "eta_seconds": 21930}
-```
-
-### Other Endpoints
-
-```bash
-# List all jobs
-curl http://localhost:8080/v1/batch/vision/label
-
-# Cancel a running job (cooperative -- finishes current image first)
-curl -X POST http://localhost:8080/v1/batch/vision/label/{job_id}/cancel
-```
-
-### SQLite Schema
-
-Results are stored in three layers: `files` (immutable metadata), `labels` (AI-generated, re-runnable per model), and `corrections` (human overrides, never overwritten). Query with standard SQLite JSON functions:
-
-```sql
-SELECT f.file_name, json_extract(l.label_json, '$.caption'), json_extract(l.label_json, '$.scene_type')
-FROM labels l JOIN files f ON l.file_hash = f.file_hash
-WHERE json_extract(l.label_json, '$.people_count') > 0;
-```
+Standalone CLI tool for labeling image directories with VLMs. See [`apps/batch-labeler/`](apps/batch-labeler/) for install and usage.
 
 ## Troubleshooting
 
