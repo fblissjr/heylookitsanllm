@@ -25,14 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Batch vision labeling pipeline**: Long-running job system for labeling image directories with VLMs. Key features: shared system prompt prefix cache (computed once, forked per-image via MLX copy-on-write), model pinning to prevent LRU eviction during multi-hour runs, SQLite three-layer result storage (file metadata, AI labels, human corrections) with resume support, periodic Metal memory cleanup. API: `POST /v1/batch/vision/label` (start), `GET .../label/{job_id}` (poll), `POST .../label/{job_id}/cancel`, `GET .../label` (list).
-- **Model pinning**: `pin_model()`/`unpin_model()` on ModelRouter prevent LRU eviction of models in active use by batch jobs.
+- **Model pinning**: `pin_model()`/`unpin_model()` on ModelRouter prevent LRU eviction of models in active use.
+
+### Removed
+
+- **Batch vision labeling pipeline**: Decoupled from backend into standalone client app at `apps/batch-labeler/`. Removes `batch_vision_pipeline.py`, 4 API endpoints, provider-specific prefix cache methods, and SQLite/threading infrastructure. The client app calls the existing `/v1/chat/completions` VLM endpoint instead.
 
 ### Fixed
 
-- **Batch vision JSON parsing**: Catch `ValueError`/`TypeError` instead of nonexistent `json.JSONDecodeError` from orjson-backed fast_json module.
 - **Thread safety in unpin_model**: `unpin_model()` now acquires `cache_lock` to prevent TOCTOU race with `_evict_lru_model()`.
-- **Batch vision API validation**: Vision model check uses `provider == "mlx"` + `getattr(config, 'vision', False)` instead of direct attribute access that crashes on STT/embedding models.
 
 ### Removed
 

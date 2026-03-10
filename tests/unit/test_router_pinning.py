@@ -8,6 +8,7 @@ mixing real MLX Metal state with MagicMock providers. We test selection logic
 directly and use careful fixture scoping to avoid the crash.
 """
 
+import atexit
 import sys
 import threading
 from collections import OrderedDict
@@ -17,10 +18,13 @@ import pytest
 
 from helpers.mlx_mock import create_mlx_module_mocks
 
-# Keep patch alive for entire module to avoid segfault from MLX C cleanup
+# Keep patch alive for entire module to avoid segfault from MLX C cleanup.
+# atexit safety net: if the process tears down before pytest cleanup,
+# stopping the patch prevents MLX C cleanup from colliding with MagicMock.
 _mlx_mocks = create_mlx_module_mocks()
 _patch = patch.dict(sys.modules, _mlx_mocks)
 _patch.start()
+atexit.register(_patch.stop)
 
 from heylook_llm.router import ModelRouter  # noqa: E402 -- must import after patch
 
