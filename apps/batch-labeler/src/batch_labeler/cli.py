@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         ) as progress:
             task = progress.add_task("Labeling", total=len(remaining))
 
-            for image_path, file_hash in remaining:
+            for image_path, fhash in remaining:
                 progress.update(task, description=f"[cyan]{image_path.name}[/cyan]")
 
                 gen_start = time.time()
@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
 
                     storage.append_result(args.output, {
                         "file_path": str(image_path),
-                        "file_hash": file_hash,
+                        "file_hash": fhash,
                         "file_name": image_path.name,
                         "model_id": args.model,
                         "label": orjson.loads(label_json),
@@ -135,6 +135,9 @@ def main(argv: list[str] | None = None) -> int:
                     })
                     completed += 1
 
+                except KeyboardInterrupt:
+                    console.print("\nInterrupted. Partial results saved.")
+                    break
                 except httpx.HTTPStatusError as e:
                     console.print(f"[red]HTTP {e.response.status_code} for {image_path.name}: {e.response.text[:200]}[/red]")
                     failed += 1
