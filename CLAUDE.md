@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-07 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-10 -->
 
 ## Table of Contents
 
@@ -82,7 +82,7 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 
 ## Rules: Code Style
 
-- When removing a provider/feature, grep the full repo first -- plans miss docstrings, OpenAPI descriptions, test fixtures, and frontend types
+- When removing a provider/feature, grep the full repo first -- plans miss docstrings, OpenAPI descriptions, test fixtures, frontend types, and README.md examples
 - `SamplerSettings` has `[key: string]: unknown` -- frontend-only fields (e.g. `streamTimeoutMs`) must be stripped before spreading into API requests
 - No emojis, no hype language ("Enhanced", "Advanced", etc.)
 - PEP-8 with 120-char lines, type hints throughout
@@ -103,6 +103,7 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests -- do not investigate
+- Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed
 - Zustand store mocks with `.getState()`: use `vi.hoisted()` to define mock state that `vi.mock()` factories reference (vitest hoists mock factories above variable declarations)
 
