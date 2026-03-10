@@ -93,6 +93,12 @@ class MockRouter:
             "requests_active": 0 if loaded else None,
         }
 
+    def pin_model(self, model_id):
+        pass
+
+    def unpin_model(self, model_id):
+        pass
+
     def reload_config(self):
         pass
 
