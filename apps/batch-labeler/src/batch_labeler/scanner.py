@@ -4,15 +4,29 @@ import hashlib
 import os
 from pathlib import Path
 
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tiff', '.tif', '.bmp'}
+# Single source of truth for supported image types.
+# IMAGE_EXTENSIONS is derived from MIME_TYPES so they stay in sync.
+MIME_TYPES = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+    '.tiff': 'image/tiff',
+    '.tif': 'image/tiff',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+}
+IMAGE_EXTENSIONS = set(MIME_TYPES.keys())
 
 
 def file_hash(path: str) -> str:
     """Fast file hash using first 8KB + file size. Good enough for dedup."""
     h = hashlib.blake2b(digest_size=16)
-    size = os.path.getsize(path)
-    h.update(size.to_bytes(8, 'little'))
     with open(path, 'rb') as f:
+        size = os.fstat(f.fileno()).st_size
+        h.update(size.to_bytes(8, 'little'))
         h.update(f.read(8192))
     return h.hexdigest()
 
@@ -29,6 +43,7 @@ def scan_images(
 
     ext = extensions or IMAGE_EXTENSIONS
     pattern = '**/*' if recursive else '*'
-    files = [p for p in root.glob(pattern) if p.is_file() and p.suffix.lower() in ext]
+    # Check suffix before is_file() to skip stat on non-image entries
+    files = [p for p in root.glob(pattern) if p.suffix.lower() in ext and p.is_file()]
     files.sort()
     return files

@@ -104,51 +104,52 @@ def main(argv: list[str] | None = None) -> int:
         ) as progress:
             task = progress.add_task("Labeling", total=len(remaining))
 
-            for image_path, fhash in remaining:
-                progress.update(task, description=f"[cyan]{image_path.name}[/cyan]")
+            try:
+                for image_path, fhash in remaining:
+                    progress.update(task, description=f"[cyan]{image_path.name}[/cyan]")
 
-                gen_start = time.time()
-                try:
-                    raw_output = client.label_image(
-                        http_client,
-                        model_id=args.model,
-                        system_prompt=system_prompt,
-                        image_path=image_path,
-                        max_tokens=args.max_tokens,
-                        temperature=args.temperature,
-                    )
-                    gen_ms = int((time.time() - gen_start) * 1000)
+                    gen_start = time.time()
+                    try:
+                        raw_output = client.label_image(
+                            http_client,
+                            model_id=args.model,
+                            system_prompt=system_prompt,
+                            image_path=image_path,
+                            max_tokens=args.max_tokens,
+                            temperature=args.temperature,
+                        )
+                        gen_ms = int((time.time() - gen_start) * 1000)
 
-                    label_json = storage.extract_json(raw_output)
-                    if label_json is None:
-                        label_json = orjson.dumps({"raw_caption": raw_output}).decode()
+                        label_json = storage.extract_json(raw_output)
+                        if label_json is None:
+                            label_json = orjson.dumps({"raw_caption": raw_output}).decode()
 
-                    storage.append_result(args.output, {
-                        "file_path": str(image_path),
-                        "file_hash": fhash,
-                        "file_name": image_path.name,
-                        "model_id": args.model,
-                        "label": orjson.loads(label_json),
-                        "raw_output": raw_output,
-                        "generation_time_ms": gen_ms,
-                        "timestamp": time.strftime('%Y-%m-%dT%H:%M:%S'),
-                    })
-                    completed += 1
+                        storage.append_result(args.output, {
+                            "file_path": str(image_path),
+                            "file_hash": fhash,
+                            "file_name": image_path.name,
+                            "model_id": args.model,
+                            "label": orjson.loads(label_json),
+                            "raw_output": raw_output,
+                            "generation_time_ms": gen_ms,
+                            "timestamp": time.strftime('%Y-%m-%dT%H:%M:%S'),
+                        })
+                        completed += 1
 
-                except KeyboardInterrupt:
-                    console.print("\nInterrupted. Partial results saved.")
-                    break
-                except httpx.HTTPStatusError as e:
-                    console.print(f"[red]HTTP {e.response.status_code} for {image_path.name}: {e.response.text[:200]}[/red]")
-                    failed += 1
-                except httpx.TimeoutException:
-                    console.print(f"[red]Timeout for {image_path.name}[/red]")
-                    failed += 1
-                except Exception as e:
-                    console.print(f"[red]Error on {image_path.name}: {e}[/red]")
-                    failed += 1
+                    except httpx.HTTPStatusError as e:
+                        console.print(f"[red]HTTP {e.response.status_code} for {image_path.name}: {e.response.text[:200]}[/red]")
+                        failed += 1
+                    except httpx.TimeoutException:
+                        console.print(f"[red]Timeout for {image_path.name}[/red]")
+                        failed += 1
+                    except Exception as e:
+                        console.print(f"[red]Error on {image_path.name}: {e}[/red]")
+                        failed += 1
 
-                progress.advance(task)
+                    progress.advance(task)
+
+            except KeyboardInterrupt:
+                console.print("\nInterrupted. Partial results saved.")
 
     finally:
         http_client.close()

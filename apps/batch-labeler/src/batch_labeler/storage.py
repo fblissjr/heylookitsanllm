@@ -38,26 +38,41 @@ def extract_json(text: str) -> str | None:
         except (orjson.JSONDecodeError, ValueError, TypeError):
             pass
 
+    # Try finding JSON array boundaries
+    start = text.find('[')
+    end = text.rfind(']')
+    if start != -1 and end > start:
+        try:
+            parsed = orjson.loads(text[start:end + 1])
+            return orjson.dumps(parsed).decode()
+        except (orjson.JSONDecodeError, ValueError, TypeError):
+            pass
+
     return None
 
 
 def load_processed(output_path: str) -> set[str]:
-    """Read existing JSONL file, return set of file hashes for resume."""
+    """Read existing JSONL file, return set of file hashes for resume.
+
+    Streams line-by-line to avoid loading the entire file into memory.
+    Uses binary mode so orjson.loads can skip the UTF-8 decode.
+    """
     path = Path(output_path)
     if not path.exists():
         return set()
 
     hashes = set()
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = orjson.loads(line)
-            if h := record.get('file_hash'):
-                hashes.add(h)
-        except (orjson.JSONDecodeError, ValueError, TypeError):
-            continue
+    with path.open('rb') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = orjson.loads(line)
+                if h := record.get('file_hash'):
+                    hashes.add(h)
+            except (orjson.JSONDecodeError, ValueError, TypeError):
+                continue
     return hashes
 
 

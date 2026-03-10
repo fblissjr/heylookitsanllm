@@ -43,6 +43,21 @@ class TestExtractJson:
         assert result is not None
         assert orjson.loads(result)["key"] == "value"
 
+    def test_json_array(self):
+        text = '[{"tag": "cat"}, {"tag": "dog"}]'
+        result = extract_json(text)
+        assert result is not None
+        parsed = orjson.loads(result)
+        assert len(parsed) == 2
+        assert parsed[0]["tag"] == "cat"
+
+    def test_json_array_with_surrounding_text(self):
+        text = 'Here are the labels:\n["cat", "dog"]\nDone.'
+        result = extract_json(text)
+        assert result is not None
+        parsed = orjson.loads(result)
+        assert parsed == ["cat", "dog"]
+
 
 class TestLoadProcessed:
     def test_nonexistent_file(self, tmp_path):

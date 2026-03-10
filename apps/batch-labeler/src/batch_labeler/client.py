@@ -6,19 +6,7 @@ from pathlib import Path
 
 import httpx
 
-
-MIME_TYPES = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp',
-    '.gif': 'image/gif',
-    '.bmp': 'image/bmp',
-    '.tiff': 'image/tiff',
-    '.tif': 'image/tiff',
-    '.heic': 'image/heic',
-    '.heif': 'image/heif',
-}
+from .scanner import MIME_TYPES
 
 
 def _detect_mime(path: Path) -> str:
