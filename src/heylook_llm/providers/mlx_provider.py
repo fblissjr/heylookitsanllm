@@ -21,7 +21,10 @@ from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import LanguageModelLogitsWrapper
-from .common.generation_core import generate_text, run_generation
+from .common.generation_core import (
+    generate_text, run_generation,
+    build_prefix_cache, fork_prefix_cache, PrefixCache,
+)
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 
@@ -677,6 +680,119 @@ class MLXProvider(BaseProvider):
             completions.append(completion)
 
         return completions
+
+    def build_shared_prefix(self, system_prompt: str) -> PrefixCache:
+        """Build a shared prefix cache for batch vision processing.
+
+        Pre-computes KV state for the system prompt so it can be forked
+        cheaply per-image. Only valid for VLM models.
+        """
+        if not self.is_vlm:
+            raise ValueError("Shared prefix cache is only supported for VLM models")
+
+        wrapper = LanguageModelLogitsWrapper(self.model.language_model)
+        tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+
+        cache_config = {
+            'cache_type': self.config.get('cache_type', 'standard'),
+            'kv_bits': self.config.get('kv_bits'),
+            'kv_group_size': self.config.get('kv_group_size', 64),
+        }
+
+        return build_prefix_cache(wrapper, tokenizer, system_prompt, cache_config)
+
+    def process_single_image_with_prefix(
+        self,
+        image_path: str,
+        prefix_cache: PrefixCache,
+        effective_request: dict,
+    ) -> str:
+        """Process one image using a pre-built prefix cache.
+
+        This is the per-image hot path for batch labeling:
+        1. Load and preprocess the image
+        2. Run VLM forward pass (vision encoder fills KV cache)
+        3. Fork the prefix cache and inject vision state
+        4. Generate structured JSON output
+
+        Returns the generated text (expected to be JSON).
+        """
+        tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+
+        # Load image
+        from ..utils import load_image
+        image = load_image(image_path)
+
+        # Build a single-image message for the VLM template
+        # The system prompt is already in the prefix cache, so we only need
+        # the user message with the image placeholder
+        messages = [{"role": "user", "content": "Analyze this image."}]
+        formatted_prompt = vlm_apply_chat_template(
+            self.processor, self.model.config, messages, num_images=1
+        )
+
+        # Prepare VLM inputs (tokenize + pixel values)
+        image_token_index = getattr(self.model.config, 'image_token_index', None)
+        inputs = vlm_prepare_inputs(
+            self.processor,
+            images=[image],
+            prompts=formatted_prompt,
+            image_token_index=image_token_index,
+        )
+
+        input_ids = inputs["input_ids"]
+        pixel_values = inputs.get("pixel_values")
+        mask = inputs.get("attention_mask")
+        extra_kwargs = {
+            k: v for k, v in inputs.items()
+            if k not in ("input_ids", "pixel_values", "attention_mask")
+        }
+
+        vlm_kwargs = dict(extra_kwargs)
+        if pixel_values is not None:
+            vlm_kwargs["pixel_values"] = pixel_values
+        if mask is not None:
+            vlm_kwargs["attention_mask"] = mask
+
+        wrapper = LanguageModelLogitsWrapper(self.model.language_model)
+
+        # Fork prefix cache (cheap copy-on-write)
+        cache_config = {
+            'cache_type': self.config.get('cache_type', 'standard'),
+            'kv_bits': self.config.get('kv_bits'),
+            'kv_group_size': self.config.get('kv_group_size', 64),
+        }
+        request_cache = fork_prefix_cache(prefix_cache, wrapper, cache_config)
+
+        # Phase 1: Vision encoding -- full VLM forward pass fills KV cache
+        sampler, processors = build_sampler(tokenizer, effective_request)
+
+        with wired_limit(self.model, [generation_stream]):
+            if input_ids.ndim == 1:
+                input_ids = input_ids[None, :]
+            output = self.model(input_ids, cache=request_cache, **vlm_kwargs)
+            logits = output.logits if hasattr(output, 'logits') else output
+            last_logits = logits[:, -1, :]
+            first_logprobs = last_logits - mx.logsumexp(last_logits, axis=-1, keepdims=True)
+            first_token_id = sampler(first_logprobs).item()
+            mx.eval(first_logprobs)
+
+        first_text = tokenizer.decode([first_token_id])
+
+        # Phase 2: Continue generation with pre-filled cache
+        generated_parts = [first_text]
+        for response in run_generation(
+            model=wrapper,
+            tokenizer=tokenizer,
+            prompt_tokens=[first_token_id],
+            effective_request=effective_request,
+            sampler=sampler,
+            processors=processors,
+            pre_filled_cache=request_cache,
+        ):
+            generated_parts.append(response.text)
+
+        return "".join(generated_parts)
 
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """

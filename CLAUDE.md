@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-02-27 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-07 -->
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Check before making changes:
 ### Backend: `src/heylook_llm/`
 
 Providers: MLXProvider (text+vision), MLXSTTProvider (parakeet-mlx STT), MLXEmbeddingProvider (embeddinggemma).
-LRU cache hot-swaps up to 2 models. Config in `models.toml`.
+LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
 Provider type: `Literal["mlx", "mlx_stt", "mlx_embedding"]`.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
@@ -50,6 +50,18 @@ Chat streaming uses `ChatStreamManager` singleton in chatStore.ts (abort-before-
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
+
+### Batch Vision Pipeline: `src/heylook_llm/batch_vision_pipeline.py`
+
+Long-running job system for labeling image directories with VLMs. Key components:
+- `BatchVisionLabelJob`: orchestrator that scans dirs, builds shared prefix cache, processes images sequentially with resume support
+- `BatchVisionJobManager`: thread-safe singleton managing background job threads
+- `ResultDatabase`: SQLite with three-layer schema (files/labels/corrections)
+- Prefix cache sharing: system prompt KV state computed once via `generation_core.build_prefix_cache()`, forked per-image via `fork_prefix_cache()` (MLX copy-on-write)
+- Model pinning via `router.pin_model()` prevents LRU eviction during multi-hour runs
+- Periodic `mx.clear_cache()` every 50 images to prevent Metal memory pool growth
+
+API: `POST /v1/batch/vision/label` (start), `GET .../label/{job_id}` (poll), `POST .../label/{job_id}/cancel`, `GET .../label` (list)
 
 ### API
 
@@ -69,8 +81,11 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 
 - All generation (text + vision) routes through `generation_core.run_generation()` calling `mlx_lm.generate.stream_generate`
 - Vision requests use a pre-filled cache pattern: VLM forward fills KV cache, then `run_generation()` continues
+- Batch vision uses `build_prefix_cache()` + `fork_prefix_cache()` for shared system prompt KV reuse (MLX copy-on-write semantics)
+- `snapshot_kv()` / `restore_kv_from_snapshot()` in `cache_helpers.py` handle KV state capture and forking -- MLX arrays are lazy graph nodes, snapshots are cheap
 - Use `mlx_vlm.prompt_utils.apply_chat_template` for VLM prompt formatting
 - Use `mlx_vlm.utils.prepare_inputs` for VLM input tokenization (handles image grid dimensions per model)
+- Vision encoder batching (stacking multiple images through ViT) is NOT implemented -- each model architecture (Qwen2-VL, LLaVA, MLLaMA) has different merge mechanics. ViT is ~10-15% of per-image time; LM decode is the bottleneck.
 - Verify a library is actually broken before implementing a workaround
 - See [internal/bugs/vlm_vision_bug.md](./internal/bugs/vlm_vision_bug.md)
 

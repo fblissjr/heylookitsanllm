@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Batch vision labeling pipeline**: Long-running job system for labeling image directories with VLMs. Key features: shared system prompt prefix cache (computed once, forked per-image via MLX copy-on-write), model pinning to prevent LRU eviction during multi-hour runs, SQLite three-layer result storage (file metadata, AI labels, human corrections) with resume support, periodic Metal memory cleanup. API: `POST /v1/batch/vision/label` (start), `GET .../label/{job_id}` (poll), `POST .../label/{job_id}/cancel`, `GET .../label` (list).
+- **Model pinning**: `pin_model()`/`unpin_model()` on ModelRouter prevent LRU eviction of models in active use by batch jobs.
+
+### Fixed
+
+- **Batch vision JSON parsing**: Catch `ValueError`/`TypeError` instead of nonexistent `json.JSONDecodeError` from orjson-backed fast_json module.
+- **Thread safety in unpin_model**: `unpin_model()` now acquires `cache_lock` to prevent TOCTOU race with `_evict_lru_model()`.
+- **Batch vision API validation**: Vision model check uses `provider == "mlx"` + `getattr(config, 'vision', False)` instead of direct attribute access that crashes on STT/embedding models.
+
+### Removed
+
+- **torchvision dependency**: Removed unused `torchvision` from core dependencies (nothing imports it; it just pulled in PyTorch unnecessarily).
+
 - **MLX Embedding Provider**: New `mlx_embedding` provider for EmbeddingGemma models. Produces contextual 768-dim embeddings via full bidirectional transformer forward pass with padding-aware attention masking, mean pooling, dense projections, and L2 normalization. Supports task-specific prefixes (query, document, code_retrieval, clustering) and quantized model loading (4bit, 8bit via nn.quantize). 30 unit tests.
 - **EmbeddingGemmaModel**: Pure MLX encoder reusing mlx-lm Gemma3 internals with bidirectional attention and padding mask. Located in `src/heylook_llm/models/embedding_gemma.py`.
 - **Embedding model import**: Model importer now detects embedding models (bidirectional attention config or `*_Dense` projection dirs) and imports them as `provider: "mlx_embedding"` with correct config (no vision/temperature/sampling params). Model service validates and imports `mlx_embedding` provider correctly.

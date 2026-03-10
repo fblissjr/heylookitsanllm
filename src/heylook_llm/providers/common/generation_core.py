@@ -18,11 +18,15 @@ MLX alignment:
 import logging
 import threading
 from collections import deque
-from typing import Generator
+from dataclasses import dataclass, field
+from typing import Generator, List, Any
+
+import mlx.core as mx
 
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
+from .cache_helpers import make_cache, snapshot_kv, restore_kv_from_snapshot
 
 
 class DraftTuner:
@@ -315,3 +319,94 @@ def run_generation(
             logging.debug(
                 f"Stored cache: {len(prompt_tokens)} prompt + {len(generated_token_ids)} generated"
             )
+
+
+# =============================================================================
+# Shared Prefix Cache for Batch Vision Pipeline
+#
+# When processing 50K+ images with the same system prompt, every image pays
+# the full prefill cost for the identical instruction tokens. PrefixCache
+# computes that KV state once, then fork() creates a cheap copy-on-write
+# clone for each image -- MLX arrays share memory until mutated.
+# =============================================================================
+
+@dataclass
+class PrefixCache:
+    """Pre-computed KV cache for a shared prompt prefix.
+
+    Built once via build_prefix_cache(), then forked per-image via fork().
+    The KV snapshot is a list of (keys, values) tuples per layer, captured
+    via snapshot_kv() so the original cache objects aren't mutated by
+    downstream generation.
+    """
+    tokens: List[int]
+    kv_snapshot: List[Any]  # Per-layer (keys, values) from snapshot_kv()
+    num_tokens: int = 0
+
+    def __post_init__(self):
+        self.num_tokens = len(self.tokens)
+
+
+def build_prefix_cache(
+    model,
+    tokenizer,
+    system_prompt: str,
+    cache_config: dict | None = None,
+) -> PrefixCache:
+    """Pre-compute KV cache for a shared system prompt prefix.
+
+    Runs a single forward pass through the language model to fill the KV
+    cache with the system prompt state. The result is snapshotted so it
+    can be forked cheaply for each image in a batch job.
+
+    Args:
+        model: The language model (or LanguageModelLogitsWrapper for VLMs).
+        tokenizer: Tokenizer for encoding the system prompt.
+        system_prompt: The full system prompt text (labeling instructions + schema).
+        cache_config: Cache type configuration (standard/quantized/rotating).
+
+    Returns:
+        PrefixCache with the pre-computed KV state.
+    """
+    cache_config = cache_config or {}
+    tokens = tokenizer.encode(system_prompt)
+    cache = make_cache(model, cache_config)
+
+    # Run prefill: forward pass fills the KV cache, we discard logits
+    input_ids = mx.array([tokens])
+    generation_stream = _get_generation_stream()
+    with wired_limit(model, [generation_stream]):
+        model(input_ids, cache=cache)
+        # Force materialization so the snapshot captures real values
+        mx.eval([c.state for c in cache if hasattr(c, 'state') and not c.empty()])
+
+    kv_snap = snapshot_kv(cache)
+    prefix = PrefixCache(tokens=tokens, kv_snapshot=kv_snap)
+
+    logging.info(
+        f"Built prefix cache: {prefix.num_tokens} tokens, "
+        f"{len(kv_snap)} layers"
+    )
+    return prefix
+
+
+def fork_prefix_cache(
+    prefix: PrefixCache,
+    model,
+    cache_config: dict | None = None,
+) -> List[Any]:
+    """Create a fresh KV cache initialized from a prefix snapshot.
+
+    MLX arrays are copy-on-write, so restoring from a snapshot is cheap --
+    memory is shared until the generation loop writes new KV entries.
+    Each call returns an independent cache suitable for one generation.
+
+    Args:
+        prefix: The PrefixCache to fork from.
+        model: The language model (needed to create correctly-typed cache objects).
+        cache_config: Cache configuration dict.
+
+    Returns:
+        A list of KV cache objects (one per layer) with prefix state restored.
+    """
+    return restore_kv_from_snapshot(prefix.kv_snapshot, model, cache_config or {})

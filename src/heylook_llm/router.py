@@ -71,6 +71,9 @@ class ModelRouter:
         self.loading_locks: Dict[str, threading.Lock] = {}  # Per-model loading locks
         self.loading_locks_lock = threading.Lock()  # Protect loading_locks dict
 
+        # Model pinning: prevents eviction during long-running batch jobs
+        self._pinned: set[str] = set()
+
         initial_model_to_load = initial_model_id or self.app_config.default_model
         enabled_models = self.app_config.get_enabled_models()
         if not enabled_models:
@@ -147,8 +150,22 @@ class ModelRouter:
             return None
 
     def _evict_lru_model(self):
-        """Evict least recently used model. Must be called with cache_lock held."""
-        lru_id, lru_provider = self.providers.popitem(last=False)
+        """Evict least recently used non-pinned model. Must be called with cache_lock held."""
+        # Find first non-pinned model (LRU order)
+        evict_id = None
+        for model_id in self.providers:
+            if model_id not in self._pinned:
+                evict_id = model_id
+                break
+
+        if evict_id is None:
+            raise RuntimeError(
+                f"All {len(self.providers)} loaded models are pinned. "
+                f"Cannot evict to make room. Pinned: {self._pinned}"
+            )
+
+        lru_provider = self.providers.pop(evict_id)
+        lru_id = evict_id
         logging.info(f"Cache full. Evicting model: {lru_id}")
         diag_event("model_evict", model=lru_id)
 
@@ -331,12 +348,18 @@ class ModelRouter:
             logging.error(f"Failed to reload configuration: {e}")
             raise
 
-    def unload_model(self, model_id: str) -> bool:
+    def unload_model(self, model_id: str, force: bool = False) -> bool:
         """Explicitly unload a specific model from cache.
 
         Returns True if the model was loaded and is now unloaded, False if it wasn't loaded.
+        Raises RuntimeError if model is pinned and force=False.
         """
         with self.cache_lock:
+            if model_id in self._pinned and not force:
+                raise RuntimeError(
+                    f"Model '{model_id}' is pinned (batch job in progress). "
+                    f"Use force=True to override."
+                )
             if model_id not in self.providers:
                 return False
 
@@ -374,6 +397,25 @@ class ModelRouter:
                         pass
 
         return status
+
+    def pin_model(self, model_id: str) -> None:
+        """Pin a model to prevent LRU eviction during long-running batch jobs.
+
+        The model must already be loaded. Pinned models are skipped during
+        eviction in _evict_lru_model(), so a batch job won't lose its model
+        when another request triggers a load.
+        """
+        with self.cache_lock:
+            if model_id not in self.providers:
+                raise ValueError(f"Cannot pin model '{model_id}': not currently loaded")
+            self._pinned.add(model_id)
+            logging.info(f"Pinned model: {model_id} (pinned: {self._pinned})")
+
+    def unpin_model(self, model_id: str) -> None:
+        """Remove pin from a model, allowing normal LRU eviction again."""
+        with self.cache_lock:
+            self._pinned.discard(model_id)
+            logging.info(f"Unpinned model: {model_id} (pinned: {self._pinned})")
 
     def reload_single_model(self, model_id: str) -> None:
         """Reload config for one model without clearing entire cache.

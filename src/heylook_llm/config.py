@@ -448,3 +448,38 @@ class ProfileInfo(BaseModel):
 class ProfileListResponse(BaseModel):
     """Response for listing available profiles."""
     profiles: List[ProfileInfo] = Field(default_factory=list)
+
+
+# =============================================================================
+# Batch Vision Labeling Models
+# =============================================================================
+
+class BatchVisionLabelRequest(BaseModel):
+    """Request to start a batch vision labeling job."""
+    image_dir: str = Field(..., description="Path to directory containing images")
+    model: str = Field(..., description="VLM model ID to use for labeling")
+    system_prompt: str = Field(..., description="System prompt with labeling instructions and JSON schema")
+    output_db: str = Field(..., description="Path to SQLite database for storing results")
+    max_tokens: int = Field(1024, gt=0, description="Max tokens for each image's JSON output")
+    temperature: float = Field(0.1, ge=0.0, le=2.0, description="Sampling temperature (low for structured output)")
+    recursive: bool = Field(True, description="Scan subdirectories for images")
+
+
+class BatchVisionJobResponse(BaseModel):
+    """Response when a batch vision job is created or queried."""
+    job_id: str
+    status: str
+    total_images: int = 0
+    completed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    images_per_second: float = 0.0
+    elapsed_seconds: float = 0.0
+    eta_seconds: float = 0.0
+    current_file: str = ""
+    error: str = ""
+
+
+class BatchVisionJobListResponse(BaseModel):
+    """Response for listing all batch vision jobs."""
+    jobs: List[BatchVisionJobResponse] = Field(default_factory=list)
