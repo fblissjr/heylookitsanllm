@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-10 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-12 -->
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@
 
 ## Get Up to Speed
 
-FastAPI backend (MLX) + React frontend (7 applets, 877 tests).
+FastAPI backend (MLX) + React frontend (7 applets, 874 tests).
 
 - [README.md](./README.md) -- setup, install, commands
 - [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
@@ -45,7 +45,7 @@ Provider type: `Literal["mlx", "mlx_stt", "mlx_embedding"]`.
 ### Frontend: `apps/heylook-frontend/`
 
 7 applets: Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook, Models.
-React + Zustand + Vite. 877 tests across 38 files.
+React + Zustand + Vite. 874 tests across 38 files.
 Chat streaming uses `ChatStreamManager` singleton in chatStore.ts (abort-before-start, pinned conversationId, timeout, drain with safety cap, stale-callback guards).
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
