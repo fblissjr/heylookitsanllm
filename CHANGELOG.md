@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile state persistence**: Chat and notebook stores now flush to IndexedDB on `visibilitychange`/`pagehide`, preventing data loss when mobile Safari kills the tab.
+- **iOS delete button**: Sidebar delete button fires from `onTouchEnd` directly, working around `touchAction:none` blocking click synthesis on iOS.
+- **Gitignore silently dropping src/lib/**: Python `lib/` ignore rule was catching `apps/heylook-frontend/src/lib/`. Added exclusion so frontend lib modules are tracked.
 - **Thread safety in unpin_model**: `unpin_model()` now acquires `cache_lock` to prevent TOCTOU race with `_evict_lru_model()`.
 
 ### Removed
