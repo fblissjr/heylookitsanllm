@@ -36,6 +36,9 @@ function getDB(): Promise<HeylookDB> {
           db.createObjectStore(NOTEBOOK_STORE, { keyPath: 'id' })
         }
       },
+    }).catch((err) => {
+      dbPromise = null
+      throw err
     })
   }
   return dbPromise

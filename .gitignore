@@ -54,6 +54,7 @@ share/python-wheels/
 MANIFEST
 node_modules/
 package-lock.json
+*.tsbuildinfo
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

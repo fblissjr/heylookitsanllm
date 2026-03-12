@@ -411,8 +411,8 @@ function ConversationItem({
           onTouchStart={(e) => e.stopPropagation()}
           onTouchEnd={(e) => {
             e.stopPropagation()
-            // On iOS Safari, touchAction:none on the parent prevents click
-            // synthesis for children. Fire the handler directly from touch.
+            // iOS Safari may not synthesize a click event for small tap targets
+            // inside scrollable lists. Fire the handler directly from touch.
             e.preventDefault()
             onDelete(e as unknown as React.MouseEvent, conversation.id, conversation.title)
           }}

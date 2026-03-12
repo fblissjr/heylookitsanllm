@@ -34,8 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Mobile state persistence**: Chat and notebook stores now flush to IndexedDB on `visibilitychange`/`pagehide`, preventing data loss when mobile Safari kills the tab.
-- **iOS delete button**: Sidebar delete button fires from `onTouchEnd` directly, working around `touchAction:none` blocking click synthesis on iOS.
+- **iOS delete button**: Sidebar delete button fires from `onTouchEnd` directly, working around iOS Safari not synthesizing click events for small tap targets in scrollable lists.
 - **Gitignore silently dropping src/lib/**: Python `lib/` ignore rule was catching `apps/heylook-frontend/src/lib/`. Added exclusion so frontend lib modules are tracked.
+- **DB connection retry**: `getDB()` no longer caches a rejected `openDB` promise forever. If IndexedDB open fails (quota, permissions), the next call retries instead of failing permanently.
 - **Thread safety in unpin_model**: `unpin_model()` now acquires `cache_lock` to prevent TOCTOU race with `_evict_lru_model()`.
 
 ### Removed

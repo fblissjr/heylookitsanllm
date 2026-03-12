@@ -411,6 +411,31 @@ describe('IndexedDB Wrapper', () => {
       expect(mockPut).toHaveBeenCalledTimes(2)
     })
 
+    it('retries openDB after a rejection', async () => {
+      // This test needs a fresh module to start with dbPromise = null.
+      // We use vi.resetModules + dynamic import to get a clean slate.
+      vi.resetModules()
+
+      const { openDB: mockOpenDB } = await import('idb')
+      const mockedOpenDB = vi.mocked(mockOpenDB)
+
+      // First call: openDB rejects
+      mockedOpenDB.mockImplementationOnce(() => Promise.reject(new Error('QuotaExceededError')))
+
+      // Second call: openDB succeeds
+      mockedOpenDB.mockImplementationOnce(() => Promise.resolve(mockDB as never))
+
+      // Re-import db module to get fresh module state
+      const { getAllConversations: freshGetAll } = await import('./db')
+
+      // First call should fail
+      await expect(freshGetAll()).rejects.toThrow('QuotaExceededError')
+
+      // Second call should succeed (dbPromise was reset by .catch handler)
+      const result = await freshGetAll()
+      expect(result).toEqual([])
+    })
+
     it('export round-trip preserves data', async () => {
       const original = createMockConversation({
         id: 'roundtrip',
