@@ -41,6 +41,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!apps/heylook-frontend/src/lib/
 lib64/
 parts/
 sdist/

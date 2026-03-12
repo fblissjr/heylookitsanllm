@@ -18,6 +18,7 @@ const SAVE_DEBOUNCE_MS = 500
 
 let abortController: AbortController | null = null
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
+let pendingNotebookSave: NotebookDocument | null = null
 
 /** Build API messages from notebook document state */
 export function buildMessages(doc: NotebookDocument, textBeforeCursor: string): APIMessage[] {
@@ -84,13 +85,38 @@ function serializeDoc(doc: NotebookDocument): PersistedNotebookDocument {
   }
 }
 
+function flushPendingNotebookSave() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+    saveTimeout = null
+  }
+  if (pendingNotebookSave) {
+    saveNotebookDocument(serializeDoc(pendingNotebookSave)).catch((e) =>
+      console.error('Failed to save notebook document:', e)
+    )
+    pendingNotebookSave = null
+  }
+}
+
 function debouncedSave(doc: NotebookDocument) {
   if (saveTimeout) clearTimeout(saveTimeout)
+  pendingNotebookSave = doc
   saveTimeout = setTimeout(() => {
     saveNotebookDocument(serializeDoc(doc)).catch((e) =>
       console.error('Failed to save notebook document:', e)
     )
+    pendingNotebookSave = null
+    saveTimeout = null
   }, SAVE_DEBOUNCE_MS)
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushPendingNotebookSave()
+  })
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPendingNotebookSave)
 }
 
 export const useNotebookStore = create<NotebookStoreState>((set, get) => ({

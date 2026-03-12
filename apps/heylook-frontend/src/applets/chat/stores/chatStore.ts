@@ -98,13 +98,43 @@ class ChatStreamManager {
 
 const streamManager = new ChatStreamManager()
 
-// Debounced save to avoid too many DB writes
+// Debounced save to avoid too many DB writes.
+// Tracks the latest pending conversation so we can flush it immediately
+// when the page is hidden (mobile Safari kills tabs aggressively).
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
+let pendingSave: Conversation | null = null
+
+function flushPendingSave() {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout)
+    saveTimeout = null
+  }
+  if (pendingSave) {
+    db.saveConversation(pendingSave).catch(console.error)
+    pendingSave = null
+  }
+}
+
 function debouncedSave(conversation: Conversation) {
   if (saveTimeout) clearTimeout(saveTimeout)
+  pendingSave = conversation
   saveTimeout = setTimeout(() => {
     db.saveConversation(conversation).catch(console.error)
+    pendingSave = null
+    saveTimeout = null
   }, 500)
+}
+
+// Flush any pending save when the tab is backgrounded or the page is
+// about to unload. This prevents data loss on mobile where the OS can
+// freeze/kill the tab at any moment after it leaves the foreground.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushPendingSave()
+  })
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPendingSave)
 }
 
 function generateTitle(messages: Message[]): string {

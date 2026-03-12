@@ -409,7 +409,13 @@ function ConversationItem({
         <button
           onClick={(e) => onDelete(e, conversation.id, conversation.title)}
           onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => {
+            e.stopPropagation()
+            // On iOS Safari, touchAction:none on the parent prevents click
+            // synthesis for children. Fire the handler directly from touch.
+            e.preventDefault()
+            onDelete(e as unknown as React.MouseEvent, conversation.id, conversation.title)
+          }}
           className={clsx(
             'p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500 transition-all',
             isMobile ? 'opacity-70' : 'opacity-0 group-hover:opacity-100'
