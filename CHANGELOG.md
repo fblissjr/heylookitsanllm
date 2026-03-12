@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **PyPI packaging**: Package is now installable from PyPI via `pip install heylookitsanllm`. Profiles and service templates ship inside the wheel as package data (`heylook_llm.data.profiles`, `heylook_llm.data.services`).
+- **Packaging**: Package is installable from git via `uv pip install git+https://github.com/fblissjr/heylookitsanllm`. Profiles and service templates ship inside the wheel as package data (`heylook_llm.data.profiles`, `heylook_llm.data.services`).
 - **Dynamic version**: Single source of truth in `heylook_llm.__version__`, read by setuptools at build time.
 - **Platform guard**: `heylookllm` CLI exits with a clear error on non-macOS platforms.
-- **Project URLs**: Homepage, repository, and issues links in PyPI metadata.
+- **Project URLs**: Homepage, repository, and issues links in package metadata.
 
 ### Changed
 
