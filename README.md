@@ -88,7 +88,7 @@ bun run dev:all      # frontend + backend together
 
 See [apps/heylook-frontend/README.md](./apps/heylook-frontend/README.md) for testing, build, and project structure.
 
-### Run as Background Service (macOS/Linux)
+### Run as Background Service
 
 ```bash
 heylookllm service install            # localhost only
