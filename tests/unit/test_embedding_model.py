@@ -33,9 +33,8 @@ def _make_tiny_model(pooling="mean", dense_out_features=None):
         pooling=pooling,
         dense_out_features=dense_out_features or [64, 32],
     )
-    # Materialize parameters (mx.eval is MLX graph evaluation, not Python eval)
     for v in model.parameters().values():
-        mx.eval(v)  # noqa: S307
+        mx.eval(v)  # noqa: S307  -- MLX graph materialization, not Python eval
     return model
 
 

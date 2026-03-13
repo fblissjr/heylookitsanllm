@@ -89,6 +89,7 @@ def load_backbone(model_config: dict):
     # Instantiate the full causal LM model, then extract the transformer body
     full_model = ModelClass(args)
     backbone = full_model.model
+    del full_model  # release lm_head wrapper before weight materialization
 
     return backbone, args
 
@@ -113,6 +114,13 @@ class EmbeddingModel(nn.Module):
         self.args = args
         self.model = backbone
         self.pooling = pooling
+
+        # Pre-compute embedding scale factor (Gemma-family models need sqrt(hidden_size))
+        model_type = getattr(args, "model_type", "")
+        if model_type.startswith("gemma"):
+            self._embed_scale = mx.array(args.hidden_size**0.5, dtype=mx.bfloat16)
+        else:
+            self._embed_scale = None
 
         # Dense projection layers (sentence-transformers 2_Dense, 3_Dense)
         self.dense_layers = []
@@ -156,9 +164,10 @@ class EmbeddingModel(nn.Module):
             If pooling is "mean" or "cls": (batch, output_dim) L2-normalized embeddings.
             If pooling is "none": (batch, seq_len, output_dim) per-token embeddings.
         """
-        # Token embeddings + scaling (same as Gemma-style models)
+        # Token embeddings (+ Gemma-family scaling if applicable)
         h = self.model.embed_tokens(input_ids)
-        h = h * mx.array(self.args.hidden_size**0.5, dtype=mx.bfloat16).astype(h.dtype)
+        if self._embed_scale is not None:
+            h = h * self._embed_scale.astype(h.dtype)
 
         # Build padding mask for attention (None if no padding present)
         attn_mask = None

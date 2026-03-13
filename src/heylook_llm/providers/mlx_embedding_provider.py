@@ -94,8 +94,9 @@ class MLXEmbeddingProvider(BaseProvider):
             model_config = orjson.loads(f.read())
 
         # Detect dense projection layer dimensions from 2_Dense, 3_Dense dirs
+        dense_dirs = sorted(local_path.glob("*_Dense"))
         dense_out_features = []
-        for dense_dir in sorted(local_path.glob("*_Dense")):
+        for dense_dir in dense_dirs:
             dense_config_path = dense_dir / "config.json"
             if dense_config_path.exists():
                 with open(dense_config_path, "rb") as f:
@@ -116,7 +117,7 @@ class MLXEmbeddingProvider(BaseProvider):
             backbone=backbone,
             args=args,
             pooling=pooling,
-            dense_out_features=dense_out_features if dense_out_features else [3072, 768],
+            dense_out_features=dense_out_features or None,
         )
 
         # Apply quantization if the model config specifies it
@@ -139,7 +140,7 @@ class MLXEmbeddingProvider(BaseProvider):
             weights.update(mx.load(str(sf_path)))
 
         # Load dense projection weights
-        for i, dense_dir in enumerate(sorted(local_path.glob("*_Dense"))):
+        for i, dense_dir in enumerate(dense_dirs):
             sf_path = dense_dir / "model.safetensors"
             if sf_path.exists():
                 dense_weights = mx.load(str(sf_path))
@@ -151,7 +152,7 @@ class MLXEmbeddingProvider(BaseProvider):
         weights = model.sanitize(weights)
         model.load_weights(list(weights.items()))
         # Force weight materialization on Metal
-        [mx.eval(v) for v in model.parameters().values()]
+        mx.eval(model.parameters())  # noqa: S307
 
         self.model = model
 

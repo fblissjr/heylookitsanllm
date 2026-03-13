@@ -31,10 +31,6 @@ const MLX_FIELDS = [
 
 type FieldDef = { key: string; label: string; type: string; readOnly?: boolean; step?: number; min?: number; max?: number; options?: readonly string[] }
 
-function getFieldsForProvider(_provider: string): FieldDef[] {
-  return MLX_FIELDS as unknown as FieldDef[]
-}
-
 interface Props {
   model: AdminModelConfig
   onUpdate: (updates: Record<string, unknown>) => Promise<void>
@@ -44,7 +40,7 @@ export function ProviderConfigForm({ model, onUpdate }: Props) {
   const [editState, setEditState] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
 
-  const fields = getFieldsForProvider(model.provider)
+  const fields = MLX_FIELDS as unknown as FieldDef[]
   const hasPending = Object.keys(editState).length > 0
 
   const getValue = (key: string) => {

@@ -16,6 +16,8 @@ import mlx.core as mx
 from mlx_lm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
 
+from .stop_tokens import resolve_stop_tokens
+
 # Default hyper-parameters from mlx-lm/generate.py
 DEFAULT_TEMP = 1.0
 DEFAULT_TOP_P = 0.95
@@ -64,7 +66,6 @@ def _xtc_special_tokens(tokenizer: PreTrainedTokenizer | None) -> list[int]:
     if tokenizer is None:
         return []
     try:
-        from .stop_tokens import resolve_stop_tokens
         newline_token = tokenizer.encode("\n")
         return newline_token + list(resolve_stop_tokens(tokenizer))
     except Exception:
