@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 # HuggingFace cache paths (platform-specific)
 # =============================================================================
 
+
 def get_hf_cache_paths() -> list[str]:
     """Get platform-specific HuggingFace cache paths."""
     if platform.system() == "Windows":
@@ -59,33 +60,42 @@ def get_hf_cache_paths() -> list[str]:
 # Model profiles
 # =============================================================================
 
+
 @dataclass
 class ModelProfile:
     """Profile with smart defaults for different model types.
 
     Automatically filters provider-specific parameters.
     """
+
     name: str
     description: str
     defaults: dict[str, Any] = field(default_factory=dict)
 
     # Provider-specific parameter sets
     MLX_ONLY_PARAMS = {
-        'cache_type', 'kv_bits', 'kv_group_size', 'quantized_kv_start',
-        'max_kv_size', 'draft_model_path', 'num_draft_tokens'
+        "cache_type",
+        "kv_bits",
+        "kv_group_size",
+        "quantized_kv_start",
+        "max_kv_size",
+        "draft_model_path",
+        "num_draft_tokens",
     }
 
-    def apply(self, config: dict[str, Any], model_info: dict[str, Any]) -> dict[str, Any]:
+    def apply(
+        self, config: dict[str, Any], model_info: dict[str, Any]
+    ) -> dict[str, Any]:
         """Apply profile defaults to config, overriding existing values.
 
         Profile values take precedence over smart defaults. MLX-only parameters
         are filtered out for non-MLX providers.
         """
         result = config.copy()
-        provider = model_info.get('provider', 'mlx')
+        provider = model_info.get("provider", "mlx")
 
         for key, value in self.defaults.items():
-            if provider != 'mlx' and key in self.MLX_ONLY_PARAMS:
+            if provider != "mlx" and key in self.MLX_ONLY_PARAMS:
                 continue
 
             if callable(value):
@@ -96,14 +106,17 @@ class ModelProfile:
         return result
 
 
-def _load_profiles_from_toml(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
-    """Load profile definitions from TOML files in the profiles/ directory.
+def _load_profiles_from_toml(
+    profiles_dir: Path | None = None,
+) -> dict[str, ModelProfile]:
+    """Load profile definitions from TOML files in the src/heylook_llm/data/profiles directory.
 
     Each .toml file must have [meta] (name, description) and [defaults] tables.
     Loaded once and cached module-level.
     """
     if profiles_dir is None:
         import importlib.resources as resources
+
         profiles_dir = Path(str(resources.files("heylook_llm.data.profiles")))
 
     profiles: dict[str, ModelProfile] = {}
@@ -114,7 +127,7 @@ def _load_profiles_from_toml(profiles_dir: Path | None = None) -> dict[str, Mode
 
     for toml_file in sorted(profiles_dir.glob("*.toml")):
         try:
-            with open(toml_file, 'rb') as f:
+            with open(toml_file, "rb") as f:
                 data = tomllib.load(f)
             meta = data.get("meta", {})
             defaults = data.get("defaults", {})
@@ -162,6 +175,7 @@ PROFILES = load_profiles()
 # Smart defaults
 # =============================================================================
 
+
 def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     """Generate smart defaults based on model characteristics.
 
@@ -172,90 +186,114 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     - Only quantization level affects hidden state precision
     - Use --profile embedding for encoder-focused defaults
     """
-    provider = model_info.get('provider', 'mlx')
+    provider = model_info.get("provider", "mlx")
     if provider == "mlx_embedding":
         return {"max_length": 2048}
 
     defaults: dict[str, Any] = {}
 
-    size_gb = model_info.get('size_gb', 0)
-    is_vision = model_info.get('is_vision', False)
-    provider = model_info.get('provider', 'mlx')
+    size_gb = model_info.get("size_gb", 0)
+    is_vision = model_info.get("is_vision", False)
+    provider = model_info.get("provider", "mlx")
 
     # Temperature based on model type
-    if 'instruct' in model_info.get('name', '').lower():
-        defaults['temperature'] = 0.7
-    elif 'chat' in model_info.get('name', '').lower():
-        defaults['temperature'] = 0.8
+    if "instruct" in model_info.get("name", "").lower():
+        defaults["temperature"] = 0.7
+    elif "chat" in model_info.get("name", "").lower():
+        defaults["temperature"] = 0.8
     else:
-        defaults['temperature'] = 0.9
+        defaults["temperature"] = 0.9
 
     # Cache strategy based on size
-    if provider == 'mlx':
+    if provider == "mlx":
         if size_gb > 30:
-            defaults['cache_type'] = 'quantized'
-            defaults['kv_bits'] = 8
-            defaults['kv_group_size'] = 32
-            defaults['quantized_kv_start'] = 512
-            defaults['max_kv_size'] = 2048
+            defaults["cache_type"] = "quantized"
+            defaults["kv_bits"] = 8
+            defaults["kv_group_size"] = 32
+            defaults["quantized_kv_start"] = 512
+            defaults["max_kv_size"] = 2048
         elif size_gb > 13:
-            defaults['cache_type'] = 'quantized'
-            defaults['kv_bits'] = 8
-            defaults['kv_group_size'] = 64
-            defaults['quantized_kv_start'] = 1024
+            defaults["cache_type"] = "quantized"
+            defaults["kv_bits"] = 8
+            defaults["kv_group_size"] = 64
+            defaults["quantized_kv_start"] = 1024
         else:
-            defaults['cache_type'] = 'standard'
+            defaults["cache_type"] = "standard"
 
     # Sampling strategy
     if size_gb > 30:
-        defaults['top_k'] = 20
-        defaults['min_p'] = 0.05
-        defaults['max_tokens'] = 256
+        defaults["top_k"] = 20
+        defaults["min_p"] = 0.05
+        defaults["max_tokens"] = 256
     elif size_gb < 3:
-        defaults['top_k'] = 50
-        defaults['top_p'] = 0.95
-        defaults['max_tokens'] = 1024
+        defaults["top_k"] = 50
+        defaults["top_p"] = 0.95
+        defaults["max_tokens"] = 1024
     else:
-        defaults['top_k'] = 40
-        defaults['min_p'] = 0.05
-        defaults['max_tokens'] = 512
+        defaults["top_k"] = 40
+        defaults["min_p"] = 0.05
+        defaults["max_tokens"] = 512
 
     # Vision model specifics
     if is_vision:
-        defaults['max_tokens'] = min(defaults.get('max_tokens', 512), 512)
+        defaults["max_tokens"] = min(defaults.get("max_tokens", 512), 512)
 
     # Repetition penalty
-    defaults['repetition_penalty'] = 1.05
-    defaults['repetition_context_size'] = 20
+    defaults["repetition_penalty"] = 1.05
+    defaults["repetition_context_size"] = 20
 
     # Speculative decoding default (used when draft_model_path is set)
-    if provider == 'mlx':
-        defaults['num_draft_tokens'] = 3
+    if provider == "mlx":
+        defaults["num_draft_tokens"] = 3
 
     return defaults
 
-# Fields that require a model reload vs runtime-changeable
-RELOAD_REQUIRED_FIELDS = frozenset({
-    "model_path", "vision", "cache_type", "kv_bits", "kv_group_size",
-    "quantized_kv_start", "max_kv_size", "draft_model_path", "num_draft_tokens",
-    "default_hidden_layer", "default_max_length", "supports_thinking",
-    "fp32", "use_local_attention", "local_attention_context",
-    "chunk_duration", "overlap_duration",
-})
 
-RUNTIME_CHANGEABLE_FIELDS = frozenset({
-    "temperature", "top_p", "top_k", "min_p", "max_tokens",
-    "repetition_penalty", "presence_penalty", "enable_thinking",
-    "repetition_context_size",
-})
+# Fields that require a model reload vs runtime-changeable
+RELOAD_REQUIRED_FIELDS = frozenset(
+    {
+        "model_path",
+        "vision",
+        "cache_type",
+        "kv_bits",
+        "kv_group_size",
+        "quantized_kv_start",
+        "max_kv_size",
+        "draft_model_path",
+        "num_draft_tokens",
+        "default_hidden_layer",
+        "default_max_length",
+        "supports_thinking",
+        "fp32",
+        "use_local_attention",
+        "local_attention_context",
+        "chunk_duration",
+        "overlap_duration",
+    }
+)
+
+RUNTIME_CHANGEABLE_FIELDS = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "max_tokens",
+        "repetition_penalty",
+        "presence_penalty",
+        "enable_thinking",
+        "repetition_context_size",
+    }
+)
 
 # Valid model ID pattern: alphanumeric, hyphens, underscores, dots, slashes
-MODEL_ID_PATTERN = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$')
+MODEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$")
 
 
 @dataclass
 class ScannedModel:
     """A model discovered during filesystem scan."""
+
     id: str
     path: str
     provider: str  # "mlx", "mlx_stt", "mlx_embedding"
@@ -270,6 +308,7 @@ class ScannedModel:
 @dataclass
 class ValidationResult:
     """Result of config validation."""
+
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -278,6 +317,7 @@ class ValidationResult:
 @dataclass
 class PathValidation:
     """Result of path validation."""
+
     valid: bool
     resolved_path: str = ""
     error: str = ""
@@ -291,8 +331,8 @@ class ModelService:
 
     def __init__(self, config_path: str):
         self.config_path = Path(config_path)
-        if self.config_path.suffix != '.toml':
-            self.config_path = self.config_path.with_suffix('.toml')
+        if self.config_path.suffix != ".toml":
+            self.config_path = self.config_path.with_suffix(".toml")
         self._lock = threading.Lock()
         self._allowed_roots = self._compute_allowed_roots()
 
@@ -332,21 +372,21 @@ class ModelService:
         """Read and parse the models.toml file."""
         if not self.config_path.exists():
             return {"models": [], "default_model": "none", "max_loaded_models": 1}
-        with open(self.config_path, 'rb') as f:
+        with open(self.config_path, "rb") as f:
             return tomllib.load(f)
 
     def _write_toml(self, data: dict) -> None:
         """Atomic write: write to .tmp, validate, rename. Creates backup."""
-        tmp_path = self.config_path.with_suffix('.toml.tmp')
-        backup_path = self.config_path.with_suffix('.toml.bak')
+        tmp_path = self.config_path.with_suffix(".toml.tmp")
+        backup_path = self.config_path.with_suffix(".toml.bak")
 
         # Write to temp file
-        toml_bytes = tomli_w.dumps(data).encode('utf-8')
+        toml_bytes = tomli_w.dumps(data).encode("utf-8")
         tmp_path.write_bytes(toml_bytes)
 
         # Validate the written file can be parsed back
         try:
-            with open(tmp_path, 'rb') as f:
+            with open(tmp_path, "rb") as f:
                 parsed = tomllib.load(f)
             # Validate it produces a valid AppConfig
             AppConfig(**parsed)
@@ -367,6 +407,7 @@ class ModelService:
     def scan_directory(self, path: str) -> list[ScannedModel]:
         """Scan a directory for importable models."""
         from heylook_llm.model_importer import ModelImporter
+
         importer = ModelImporter()
         raw_models = importer.scan_directory(path)
         configured_ids = {m.id for m in self.list_configs()}
@@ -375,12 +416,15 @@ class ModelService:
     def scan_hf_cache(self) -> list[ScannedModel]:
         """Scan HuggingFace cache directories for models."""
         from heylook_llm.model_importer import ModelImporter
+
         importer = ModelImporter()
         raw_models = importer.scan_hf_cache()
         configured_ids = {m.id for m in self.list_configs()}
         return [self._raw_to_scanned(m, configured_ids) for m in raw_models]
 
-    def scan_paths(self, paths: list[str] | None = None, scan_hf: bool = True) -> list[ScannedModel]:
+    def scan_paths(
+        self, paths: list[str] | None = None, scan_hf: bool = True
+    ) -> list[ScannedModel]:
         """Scan multiple paths and optionally HF cache."""
         results: list[ScannedModel] = []
         seen_ids: set[str] = set()
@@ -456,7 +500,9 @@ class ModelService:
         """Apply a named profile to config."""
         profile = PROFILES.get(profile_name)
         if not profile:
-            raise ValueError(f"Unknown profile: {profile_name}. Available: {list(PROFILES.keys())}")
+            raise ValueError(
+                f"Unknown profile: {profile_name}. Available: {list(PROFILES.keys())}"
+            )
         return profile.apply(config, model_info)
 
     # --- Config CRUD ---
@@ -469,7 +515,9 @@ class ModelService:
             try:
                 configs.append(ModelConfig(**model_data))
             except Exception as e:
-                logger.warning(f"Skipping invalid model config '{model_data.get('id', '?')}': {e}")
+                logger.warning(
+                    f"Skipping invalid model config '{model_data.get('id', '?')}': {e}"
+                )
         return configs
 
     def get_config(self, model_id: str) -> ModelConfig | None:
@@ -518,7 +566,9 @@ class ModelService:
 
             return validated
 
-    def update_config(self, model_id: str, updates: dict) -> tuple[ModelConfig, list[str]]:
+    def update_config(
+        self, model_id: str, updates: dict
+    ) -> tuple[ModelConfig, list[str]]:
         """Update model config fields. Returns (updated_config, reload_required_fields).
 
         The reload_required_fields list tells the caller which changed fields
@@ -588,7 +638,11 @@ class ModelService:
             # Update default_model if we removed it -- prefer enabled models
             if data.get("default_model") == model_id:
                 enabled_models = [m for m in models if m.get("enabled", True)]
-                data["default_model"] = enabled_models[0]["id"] if enabled_models else ("none" if not models else models[0]["id"])
+                data["default_model"] = (
+                    enabled_models[0]["id"]
+                    if enabled_models
+                    else ("none" if not models else models[0]["id"])
+                )
 
             data["models"] = models
             self._write_toml(data)
@@ -609,7 +663,9 @@ class ModelService:
 
             raise ValueError(f"Model '{model_id}' not found")
 
-    def bulk_apply_profile(self, model_ids: list[str], profile_name: str) -> list[ModelConfig]:
+    def bulk_apply_profile(
+        self, model_ids: list[str], profile_name: str
+    ) -> list[ModelConfig]:
         """Apply a profile to multiple models at once."""
         profile = PROFILES.get(profile_name)
         if not profile:
@@ -700,7 +756,9 @@ class ModelService:
                 entry = {
                     "id": model_id,
                     "provider": provider,
-                    "description": model_data.get("description", f"Imported {provider.upper()} model"),
+                    "description": model_data.get(
+                        "description", f"Imported {provider.upper()} model"
+                    ),
                     "tags": model_data.get("tags", []),
                     "enabled": model_data.get("enabled", True),
                     "config": entry_config,
@@ -775,7 +833,9 @@ class ModelService:
             return PathValidation(valid=False, error=f"Invalid path: {e}")
 
         if not p.exists():
-            return PathValidation(valid=False, resolved_path=str(p), error="Path does not exist")
+            return PathValidation(
+                valid=False, resolved_path=str(p), error="Path does not exist"
+            )
 
         # Check it's under an allowed root
         for root in self._allowed_roots:
