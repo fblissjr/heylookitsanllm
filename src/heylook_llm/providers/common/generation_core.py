@@ -261,6 +261,7 @@ def run_generation(
     generated_token_ids = []
     draft_accepted = 0
     draft_total = 0
+    generation_failed = False
 
     try:
         with wired_limit(model, [generation_stream]):
@@ -298,6 +299,9 @@ def run_generation(
                     first_token = False
 
                 yield response
+    except Exception:
+        generation_failed = True
+        raise
     finally:
         # Feed acceptance data to DraftTuner for dynamic adjustment
         if draft_total > 0:
@@ -308,8 +312,10 @@ def run_generation(
             )
             if model_id:
                 get_draft_tuner().record(model_id, draft_accepted, draft_total)
-        # Store KV snapshot in radix tree for future prefix reuse
-        if model_id and prompt_cache and generation_cache:
+        # Store KV snapshot in radix tree for future prefix reuse.
+        # Skip on error: a failed prefill leaves partially-populated cache
+        # layers that would corrupt future requests via cascade failures.
+        if not generation_failed and model_id and prompt_cache and generation_cache:
             full_tokens = prompt_tokens + generated_token_ids
             store_generation_cache(prompt_cache, full_tokens, generation_cache)
             logging.debug(

@@ -147,6 +147,17 @@ class UnifiedTextStrategy:
         prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
         gen_model = self._get_generation_model(model)
 
+        # VLM models (e.g. Qwen3.5) cache _position_ids and _rope_deltas on
+        # the LanguageModel instance across requests. With radix cache, a new
+        # request may restore KV state at a non-zero offset, but stale
+        # _position_ids from the previous request causes shape mismatches in
+        # rotary embedding computation. Reset before each request.
+        if self.is_vlm:
+            lm = model.language_model
+            if hasattr(lm, '_position_ids'):
+                lm._position_ids = None
+                lm._rope_deltas = None
+
         yield from generate_text(
             model=gen_model,
             tokenizer=tokenizer,

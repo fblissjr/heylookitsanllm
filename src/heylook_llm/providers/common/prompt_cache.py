@@ -181,8 +181,12 @@ def process_prompt_with_cache(
         matched_len, kv_snapshot = radix.longest_prefix_match(new_tokens)
 
         if kv_snapshot is not None and matched_len > 0:
-            # Restore KV state from radix tree snapshot
-            prompt_cache.cache = restore_kv_from_snapshot(kv_snapshot, model, cache_config)
+            # Restore KV state from radix tree snapshot, trimming to the
+            # matched prefix length. Snapshots may contain KV entries for
+            # tokens beyond the prefix (prompt + generated from a prior request).
+            prompt_cache.cache = restore_kv_from_snapshot(
+                kv_snapshot, model, cache_config, trim_to=matched_len
+            )
             prompt_cache._radix_matched_len = matched_len
 
             # Ensure at least one token to process (mlx-lm requirement)

@@ -74,6 +74,7 @@ def restore_kv_from_snapshot(
     snapshot: List[tuple | None],
     model: Any,
     cache_config: dict | None = None,
+    trim_to: int | None = None,
 ) -> List[Any]:
     """Create fresh KV cache objects initialized from a snapshot.
 
@@ -81,6 +82,9 @@ def restore_kv_from_snapshot(
         snapshot: Per-layer (keys, values) tuples from snapshot_kv().
         model: The model (used to create correctly-sized cache objects).
         cache_config: Cache configuration dict.
+        trim_to: If set, trim KVCache layers to this many tokens. Required
+            when the snapshot was stored from a longer sequence than the
+            matched prefix (e.g. prompt + generated tokens > matched prefix).
 
     Returns:
         A new cache list with state restored from the snapshot.
@@ -89,4 +93,17 @@ def restore_kv_from_snapshot(
     for layer, state in zip(new_cache, snapshot):
         if state is not None:
             layer.state = state
+            # Trim KVCache layers whose offset exceeds the matched prefix.
+            # Snapshots are taken at end-of-generation and may contain KV
+            # entries for tokens beyond the prefix boundary.
+            if (
+                trim_to is not None
+                and hasattr(layer, 'offset')
+                and hasattr(layer, 'keys')
+                and layer.keys is not None
+                and layer.offset > trim_to
+            ):
+                layer.keys = layer.keys[..., :trim_to, :]
+                layer.values = layer.values[..., :trim_to, :]
+                layer.offset = trim_to
     return new_cache

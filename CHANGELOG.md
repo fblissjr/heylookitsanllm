@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Radix cache crash on VLM hybrid models (Qwen3.5)**: Editing/deleting messages caused `broadcast_shapes` ValueError when the radix cache restored a partial prefix match. Three root causes: (1) VLM `LanguageModel._position_ids` persisted across requests, causing stale position slicing; (2) KV snapshots contained entries beyond the matched prefix length, corrupting cache offsets; (3) failed prefill stored broken snapshots that cascaded into future requests. Fixed by resetting VLM position state per-request, trimming KVCache to matched prefix on restore, and skipping snapshot storage on generation errors.
 - **VLM model loading crash with transformers 5.x**: Four bugs in transformers 5.x prevent VLM processor loading when torchvision is absent (the correct state for MLX-only setups). Patched at import time in `mlx_provider.py`: `VIDEO_PROCESSOR_MAPPING_NAMES` None values, `auto_docstring` IndexError, `AutoVideoProcessor.from_pretrained` hard-fail, and `ProcessorMixin` type-check rejection of optional `None` sub-processors. Qwen3.5 VLM models now load correctly.
 - **Batch processor eos_token_ids null safety**: `hasattr` returns `True` when attribute is `None`; switched to `getattr(..., None) or set()` to handle tokenizers that define `eos_token_ids` as `None`.
 - **transformers version**: Pinned `>=5.0.0` to match mlx-lm 0.30.8 requirement. Added `override-dependencies` in `[tool.uv]` to force latest regardless of transitive pins.
