@@ -71,7 +71,13 @@ def load_backbone(model_config: dict):
         (backbone, args) where backbone is the transformer body (nn.Module)
         and args is the dataclass of model args.
     """
-    from mlx_lm.utils import _get_classes
+    try:
+        from mlx_lm.utils import _get_classes
+    except ImportError as exc:
+        raise ImportError(
+            "mlx-lm's _get_classes() API has moved or been removed. "
+            "Update load_backbone() for the new mlx-lm version."
+        ) from exc
 
     ModelClass, ArgsClass = _get_classes(model_config)
 
