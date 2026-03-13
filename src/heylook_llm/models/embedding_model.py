@@ -199,18 +199,24 @@ class EmbeddingModel(nn.Module):
     def sanitize(self, weights: Dict[str, mx.array]) -> Dict[str, mx.array]:
         """Remap HF checkpoint keys to our model structure.
 
-        Handles two weight layouts:
-        1. Flat keys from HF checkpoint: embed_tokens.weight, layers.0.*, norm.weight
-           -> Need 'model.' prefix added (our self.model is the backbone)
-        2. Already prefixed: model.embed_tokens.weight, etc.
-           -> Pass through
-
-        Also removes lm_head weights (we don't use them).
+        Handles architecture-agnostic weight cleanup:
+        - Drops lm_head (embedding models don't use it)
+        - Strips precomputed rotary frequencies (recomputed at inference)
+        - Strips vision tower / multimodal projector weights (text backbone only)
+        - Adds 'model.' prefix for flat HF checkpoint keys
         """
         result = {}
         for key, value in weights.items():
             # Drop LM head -- we're an embedding model
             if key.startswith("lm_head"):
+                continue
+
+            # Drop precomputed rotary frequencies (Llama, Qwen2, Mistral, etc.)
+            if "rotary_emb.inv_freq" in key:
+                continue
+
+            # Drop vision encoder weights (multimodal backbones used as text-only)
+            if key.startswith(("vision_tower.", "vision_model.", "multi_modal_projector.")):
                 continue
 
             # If key is flat (no model. prefix) and matches transformer structure,

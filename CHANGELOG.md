@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dynamic embedding backbone**: Embedding provider loads any mlx-lm-supported architecture via `load_backbone()`, replacing the hardcoded Gemma3 import.
 - **Pooling config**: Embedding models accept `pooling` field (`mean`, `cls`, `none`) for future multi-vector/ColBERT support.
 - **Stop-token utility**: Shared `resolve_stop_tokens()` standardizes EOS token resolution across all generation paths.
+- **Embedding weight sanitization**: Strips rotary embedding frequencies, vision tower weights, and multimodal projector keys for architecture-agnostic backbone loading.
 
 ### Changed
 

@@ -146,6 +146,73 @@ class TestWeightSanitize:
         assert "model.layers.0.self_attn.q_proj.weight" in sanitized
         assert "model.norm.weight" in sanitized
 
+    def test_strips_rotary_emb_inv_freq(self):
+        """Precomputed rotary frequencies should be dropped (Llama, Qwen2, etc.)."""
+        model = _make_tiny_model()
+        weights = {
+            "model.embed_tokens.weight": mx.zeros((128, 32)),
+            "model.layers.0.self_attn.rotary_emb.inv_freq": mx.zeros((16,)),
+            "model.layers.0.self_attn.q_proj.weight": mx.zeros((32, 32)),
+        }
+        sanitized = model.sanitize(weights)
+        assert "model.layers.0.self_attn.rotary_emb.inv_freq" not in sanitized
+        assert "model.layers.0.self_attn.q_proj.weight" in sanitized
+
+    def test_strips_vision_tower_keys(self):
+        """Vision encoder weights should be dropped for text-only embedding."""
+        model = _make_tiny_model()
+        weights = {
+            "model.embed_tokens.weight": mx.zeros((128, 32)),
+            "vision_tower.encoder.layers.0.weight": mx.zeros((64, 64)),
+            "vision_model.embeddings.weight": mx.zeros((32, 32)),
+            "multi_modal_projector.linear.weight": mx.zeros((32, 64)),
+        }
+        sanitized = model.sanitize(weights)
+        assert "model.embed_tokens.weight" in sanitized
+        assert not any(k.startswith("vision_tower.") for k in sanitized)
+        assert not any(k.startswith("vision_model.") for k in sanitized)
+        assert not any(k.startswith("multi_modal_projector.") for k in sanitized)
+
+    def test_preserves_dense_layer_keys(self):
+        """Dense projection layer keys should pass through unchanged."""
+        model = _make_tiny_model()
+        weights = {
+            "model.embed_tokens.weight": mx.zeros((128, 32)),
+            "dense_layers.0.weight": mx.zeros((64, 32)),
+            "dense_layers.1.weight": mx.zeros((32, 64)),
+        }
+        sanitized = model.sanitize(weights)
+        assert "dense_layers.0.weight" in sanitized
+        assert "dense_layers.1.weight" in sanitized
+
+    def test_mixed_llama_style_weights(self):
+        """Full Llama-style weight set: flat keys, rotary freqs, lm_head."""
+        model = _make_tiny_model()
+        weights = {
+            "embed_tokens.weight": mx.zeros((128, 32)),
+            "layers.0.self_attn.q_proj.weight": mx.zeros((32, 32)),
+            "layers.0.self_attn.k_proj.weight": mx.zeros((32, 32)),
+            "layers.0.self_attn.v_proj.weight": mx.zeros((32, 32)),
+            "layers.0.self_attn.o_proj.weight": mx.zeros((32, 32)),
+            "layers.0.self_attn.rotary_emb.inv_freq": mx.zeros((16,)),
+            "layers.0.mlp.gate_proj.weight": mx.zeros((64, 32)),
+            "layers.0.mlp.up_proj.weight": mx.zeros((64, 32)),
+            "layers.0.mlp.down_proj.weight": mx.zeros((32, 64)),
+            "norm.weight": mx.zeros((32,)),
+            "lm_head.weight": mx.zeros((128, 32)),
+        }
+        sanitized = model.sanitize(weights)
+        # lm_head dropped
+        assert "lm_head.weight" not in sanitized
+        # rotary freqs dropped
+        assert not any("rotary_emb" in k for k in sanitized)
+        # all transformer keys get model. prefix
+        assert "model.embed_tokens.weight" in sanitized
+        assert "model.layers.0.self_attn.q_proj.weight" in sanitized
+        assert "model.norm.weight" in sanitized
+        # 9 keys total (11 - lm_head - rotary)
+        assert len(sanitized) == 9
+
 
 class TestForwardPass:
     """Test EmbeddingModel forward pass with tiny weights."""
