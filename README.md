@@ -9,21 +9,20 @@
 
 Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a React web UI, and on-the-fly model swapping.
 
-Built on Apple MLX for text, vision, and speech-to-text.
+Built on Apple MLX for text and vision.
 
 ## Key Features
 
 - **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic Messages-style `/v1/messages` with typed content blocks (text, image, thinking, logprobs, hidden states)
 - **Multi-Provider**:
   - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
-  - **MLX STT**: Speech-to-text via [parakeet-mlx](https://github.com/senstella/parakeet-mlx)
+  - **MLX Embedding**: Sentence embeddings with dynamic backbone loading (any mlx-lm architecture)
 - **Thinking Blocks**: Qwen3-style `<think>` parsing with token-level detection, round-trip editing, and streaming
 - **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
 - **Model Management**: Scan, import, configure, load/unload models from the web UI or API
 - **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
-- **Batch Vision Labeling**: Long-running VLM pipeline for labeling image directories with structured JSON, shared prefix caching, SQLite storage, and resume support
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
 
@@ -43,7 +42,7 @@ See [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE
 
 ## Platform Support
 
-- **macOS (Apple Silicon)**: MLX backend + MLX STT
+- **macOS (Apple Silicon)**: MLX backend
 
 ## Quick Start
 
@@ -57,7 +56,6 @@ cd heylookitsanllm
 uv sync
 
 # Optional extras
-uv sync --extra stt          # Speech-to-text (macOS, parakeet-mlx)
 uv sync --extra analytics    # DuckDB analytics
 uv sync --extra performance  # xxhash, uvloop, turbojpeg, cachetools
 uv sync --extra all          # Everything
