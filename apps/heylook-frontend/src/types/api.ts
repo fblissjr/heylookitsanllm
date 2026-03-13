@@ -56,7 +56,7 @@ export interface Model {
   object: 'model';
   created?: number;
   owned_by: string;
-  provider?: 'mlx' | 'mlx_stt';
+  provider?: 'mlx';
   capabilities?: string[];
   context_window?: number;
 }

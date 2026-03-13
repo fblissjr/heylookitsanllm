@@ -1,8 +1,8 @@
-"""MLX Embedding Provider for EmbeddingGemma models.
+"""MLX Embedding Provider.
 
-Loads EmbeddingGemma (or compatible sentence-transformer style) models
-and produces contextual embeddings via the full transformer forward pass
-with bidirectional attention.
+Loads any mlx-lm-supported architecture as an embedding backbone and produces
+contextual embeddings via the full transformer forward pass with bidirectional
+attention.
 
 Supports task prefixes from the sentence-transformers config for optimal
 embedding quality on different tasks (search, code retrieval, clustering, etc).
@@ -24,7 +24,7 @@ from .base import BaseProvider
 
 logger = logging.getLogger(__name__)
 
-# Task prefix mappings from EmbeddingGemma's config_sentence_transformers.json
+# Task prefix mappings from sentence-transformers config
 TASK_PREFIXES = {
     "query": "task: search result | query: ",
     "document": "title: none | text: ",
@@ -56,7 +56,7 @@ def apply_task_prefix(text: str, task: Optional[str] = None) -> str:
 
 
 class MLXEmbeddingProvider(BaseProvider):
-    """Embedding-only provider using EmbeddingGemma on MLX.
+    """Embedding-only provider using MLX.
 
     Does NOT support chat completion -- only embedding extraction.
     """
@@ -69,16 +69,20 @@ class MLXEmbeddingProvider(BaseProvider):
         self.max_length = config.get("max_length", 2048)
 
     def load_model(self):
-        """Load EmbeddingGemma model and tokenizer from local path or HF hub."""
-        from ..models.embedding_gemma import EmbeddingGemmaModel, EmbeddingGemmaModelArgs
+        """Load embedding model and tokenizer from local path or HF hub.
+
+        Uses dynamic backbone loading via mlx-lm's _get_classes() so any
+        architecture mlx-lm supports can serve as an embedding backbone.
+        """
+        from ..models.embedding_model import EmbeddingModel, load_backbone
 
         model_path = self.config["model_path"]
+        pooling = self.config.get("pooling", "mean")
 
         # Resolve model path
         if os.path.isdir(model_path):
             local_path = Path(model_path)
         else:
-            # Try HF hub download
             from huggingface_hub import snapshot_download
             local_path = Path(snapshot_download(model_path))
 
@@ -98,36 +102,24 @@ class MLXEmbeddingProvider(BaseProvider):
                     dc = orjson.loads(f.read())
                 dense_out_features.append(dc["out_features"])
 
-        # Handle sliding_window_pattern field name variants
-        swp = model_config.get(
-            "sliding_window_pattern",
-            model_config.get("_sliding_window_pattern", 6),
-        )
+        # Handle sliding_window_pattern field name variants (Gemma-specific)
+        if "sliding_window_pattern" not in model_config:
+            swp = model_config.get("_sliding_window_pattern")
+            if swp is not None:
+                model_config["sliding_window_pattern"] = swp
 
-        args = EmbeddingGemmaModelArgs(
-            model_type=model_config["model_type"],
-            hidden_size=model_config["hidden_size"],
-            num_hidden_layers=model_config["num_hidden_layers"],
-            intermediate_size=model_config["intermediate_size"],
-            num_attention_heads=model_config["num_attention_heads"],
-            num_key_value_heads=model_config["num_key_value_heads"],
-            head_dim=model_config["head_dim"],
-            vocab_size=model_config["vocab_size"],
-            rms_norm_eps=model_config.get("rms_norm_eps", 1e-6),
-            rope_theta=model_config.get("rope_theta", 1_000_000.0),
-            rope_local_base_freq=model_config.get("rope_local_base_freq", 10_000.0),
-            sliding_window=model_config.get("sliding_window", 512),
-            sliding_window_pattern=swp,
-            max_position_embeddings=model_config.get("max_position_embeddings", 2048),
-            query_pre_attn_scalar=model_config.get("query_pre_attn_scalar", 256),
+        # Load backbone dynamically via mlx-lm
+        backbone, args = load_backbone(model_config)
+
+        # Build embedding model with pooling config
+        model = EmbeddingModel(
+            backbone=backbone,
+            args=args,
+            pooling=pooling,
             dense_out_features=dense_out_features if dense_out_features else [3072, 768],
         )
 
-        # Instantiate model
-        model = EmbeddingGemmaModel(args)
-
         # Apply quantization if the model config specifies it
-        # (mlx-community quantized variants include a "quantization" dict)
         quantization = model_config.get("quantization")
         if quantization is not None:
             logger.info(
@@ -152,27 +144,28 @@ class MLXEmbeddingProvider(BaseProvider):
             if sf_path.exists():
                 dense_weights = mx.load(str(sf_path))
                 for key, value in dense_weights.items():
-                    # Map 'linear.weight' -> 'dense_layers.{i}.weight'
                     new_key = key.replace("linear.", f"dense_layers.{i}.")
                     weights[new_key] = value
 
         # Sanitize and load weights
         weights = model.sanitize(weights)
         model.load_weights(list(weights.items()))
-        mx.eval(model.parameters())
+        # Force weight materialization on Metal
+        [mx.eval(v) for v in model.parameters().values()]
 
         self.model = model
 
         # Load tokenizer
         from transformers import AutoTokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(str(local_path))
-        self.processor = self.tokenizer  # For BaseProvider.get_tokenizer()
+        self.processor = self.tokenizer
 
         logger.info(
-            "loaded embedding model: %d layers, hidden_size=%d, output_dim=%d",
+            "loaded embedding model: %d layers, hidden_size=%d, output_dim=%d, pooling=%s",
             args.num_hidden_layers,
             args.hidden_size,
-            args.dense_out_features[-1] if args.dense_out_features else args.hidden_size,
+            dense_out_features[-1] if dense_out_features else args.hidden_size,
+            pooling,
         )
 
     def create_chat_completion(self, request: ChatRequest) -> Generator:

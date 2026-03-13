@@ -87,7 +87,6 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 - **test_hidden_states_api.py** -- Hidden states endpoints (raw + structured)
 - **test_logprobs.py** -- Log probability extraction
 - **test_api_integration.py** -- API endpoint validation, MLX provider
-- **test_stt_integration.py** -- MLX STT transcription
 - **test_batch_integration.py** -- Batch text processing
 - **test_embeddings_integration.py** -- Embeddings API
 - **test_keepalive.py** -- Keepalive and prompt caching
@@ -117,7 +116,6 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 | Samplers | Basic | unit/test_samplers.py | 5 tests |
 | OpenAPI Conformance | Good | contract/test_openapi_conformance.py | Schema validation |
 | Admin API | Good | contract/test_admin.py | Config, profiles, scan |
-| STT | Basic | integration/test_stt_integration.py | Requires server |
 | Batch Processing | Basic | integration/test_batch_integration.py | Requires server |
 | Embeddings | Basic | integration/test_embeddings_integration.py | Requires server |
 | **Error Handling** | **Poor** | Scattered | **No dedicated error tests** |

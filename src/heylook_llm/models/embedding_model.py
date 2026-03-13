@@ -1,26 +1,23 @@
-"""EmbeddingGemma model for MLX.
+"""Generic embedding model for MLX.
 
-Reuses mlx-lm's Gemma3 transformer internals (optimized for Apple Silicon)
-but replaces causal attention with bidirectional attention and adds
-mean pooling + dense projection layers + L2 normalization.
+Loads any mlx-lm-supported transformer as a backbone and adds
+mean/cls/none pooling + optional dense projection layers + L2 normalization.
 
-Architecture (from google/embeddinggemma-300m):
-  input_ids -> embed_tokens -> scale(sqrt(hidden_size))
-    -> 24 transformer layers (bidirectional, padding-masked)
-    -> final RMSNorm
-    -> mean_pooling(hidden_states, attention_mask)
-    -> Dense(768, 3072, no bias, no activation)
-    -> Dense(3072, 768, no bias, no activation)
+The backbone is loaded dynamically via mlx_lm.utils._get_classes(), so any
+architecture that mlx-lm supports (Gemma, Llama, Qwen, etc.) works here
+without hard-coding import paths.
+
+Architecture:
+  input_ids -> backbone(embed_tokens -> transformer layers -> norm)
+    -> pooling(hidden_states, attention_mask)
+    -> Dense chain (optional)
     -> L2 normalize
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
-
-from mlx_lm.models.gemma3_text import Gemma3Model, ModelArgs
 
 
 def mean_pooling(
@@ -40,10 +37,8 @@ def mean_pooling(
     if attention_mask is None:
         return mx.mean(hidden_states, axis=1)
 
-    # Expand mask to (batch, seq_len, 1) for broadcasting
     mask_expanded = attention_mask[:, :, None].astype(hidden_states.dtype)
     summed = mx.sum(hidden_states * mask_expanded, axis=1)
-    # Clamp to avoid division by zero
     counts = mx.maximum(mx.sum(mask_expanded, axis=1), 1e-9)
     return summed / counts
 
@@ -62,41 +57,64 @@ def normalize_embeddings(x: mx.array) -> mx.array:
     return x / norms
 
 
-@dataclass
-class EmbeddingGemmaModelArgs(ModelArgs):
-    """Extends Gemma3 ModelArgs with embedding-specific fields."""
+def load_backbone(model_config: dict):
+    """Load any mlx-lm transformer as an embedding backbone.
 
-    dense_out_features: List[int] = field(default_factory=lambda: [3072, 768])
+    Uses mlx_lm.utils._get_classes() for dynamic architecture resolution.
+    The returned Model is a causal LM wrapper; we extract .model (the
+    transformer body with embed_tokens, layers, norm).
 
-    def __post_init__(self):
-        # ModelArgs uses _sliding_window_pattern but the HF config key is
-        # _sliding_window_pattern. Handle both names.
-        if not hasattr(self, "sliding_window_pattern") or self.sliding_window_pattern is None:
-            swp = getattr(self, "_sliding_window_pattern", None)
-            if swp is not None:
-                self.sliding_window_pattern = swp
+    Args:
+        model_config: dict with at minimum 'model_type' key.
+
+    Returns:
+        (backbone, args) where backbone is the transformer body (nn.Module)
+        and args is the dataclass of model args.
+    """
+    from mlx_lm.utils import _get_classes
+
+    ModelClass, ArgsClass = _get_classes(model_config)
+
+    # Filter config to only keys the ArgsClass accepts
+    valid_keys = ArgsClass.__dataclass_fields__
+    filtered = {k: v for k, v in model_config.items() if k in valid_keys}
+    args = ArgsClass(**filtered)
+
+    # Instantiate the full causal LM model, then extract the transformer body
+    full_model = ModelClass(args)
+    backbone = full_model.model
+
+    return backbone, args
 
 
-class EmbeddingGemmaModel(nn.Module):
-    """Pure MLX EmbeddingGemma encoder.
+class EmbeddingModel(nn.Module):
+    """Generic MLX embedding encoder.
 
-    Uses Gemma3Model from mlx-lm for the transformer body (embed_tokens +
-    layers + norm), then adds mean pooling, dense projections, and L2 norm.
-    The key difference from the generative Gemma3 model: all attention is
-    bidirectional (mask=None).
+    Uses any mlx-lm transformer body as backbone, then adds pooling,
+    optional dense projections, and L2 normalization.
+    The key difference from the generative model: all attention is
+    bidirectional (mask=None for non-padding tokens).
     """
 
-    def __init__(self, args: EmbeddingGemmaModelArgs):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        args,
+        pooling: Literal["mean", "cls", "none"] = "mean",
+        dense_out_features: Optional[List[int]] = None,
+    ):
         super().__init__()
         self.args = args
-        self.model = Gemma3Model(args)
+        self.model = backbone
+        self.pooling = pooling
 
         # Dense projection layers (sentence-transformers 2_Dense, 3_Dense)
-        in_dim = args.hidden_size
         self.dense_layers = []
-        for out_dim in args.dense_out_features:
-            self.dense_layers.append(nn.Linear(in_dim, out_dim, bias=False))
-            in_dim = out_dim
+        if dense_out_features:
+            in_dim = args.hidden_size
+            for out_dim in dense_out_features:
+                self.dense_layers.append(nn.Linear(in_dim, out_dim, bias=False))
+                in_dim = out_dim
 
     def _make_padding_mask(self, attention_mask: mx.array) -> Optional[mx.array]:
         """Create an additive attention mask that masks padding key positions.
@@ -114,9 +132,7 @@ class EmbeddingGemmaModel(nn.Module):
         if mx.all(attention_mask).item():
             return None
 
-        # (B, seq_len) -> (B, 1, 1, seq_len) for broadcasting across heads and queries
         mask = attention_mask[:, None, None, :].astype(mx.float32)
-        # Convert: 1 -> 0.0 (attend), 0 -> -inf (mask)
         return mx.where(mask, 0.0, mx.finfo(mx.float32).min)
 
     def __call__(
@@ -129,13 +145,12 @@ class EmbeddingGemmaModel(nn.Module):
         Args:
             input_ids: (batch, seq_len) integer token IDs.
             attention_mask: (batch, seq_len) with 1 for real tokens, 0 for padding.
-                Used for both attention masking (prevents attending to padding)
-                and mean pooling (excludes padding from average).
 
         Returns:
-            (batch, output_dim) L2-normalized embeddings.
+            If pooling is "mean" or "cls": (batch, output_dim) L2-normalized embeddings.
+            If pooling is "none": (batch, seq_len, output_dim) per-token embeddings.
         """
-        # Token embeddings + scaling (same as Gemma3Model)
+        # Token embeddings + scaling (same as Gemma-style models)
         h = self.model.embed_tokens(input_ids)
         h = h * mx.array(self.args.hidden_size**0.5, dtype=mx.bfloat16).astype(h.dtype)
 
@@ -152,8 +167,12 @@ class EmbeddingGemmaModel(nn.Module):
         # Final RMS norm
         h = self.model.norm(h)
 
-        # Mean pooling
-        h = mean_pooling(h, attention_mask)
+        # Pooling
+        if self.pooling == "mean":
+            h = mean_pooling(h, attention_mask)
+        elif self.pooling == "cls":
+            h = h[:, 0, :]
+        # "none" returns per-token embeddings (B, seq, dim)
 
         # Dense projections (Identity activation = just linear)
         for dense in self.dense_layers:
@@ -167,7 +186,7 @@ class EmbeddingGemmaModel(nn.Module):
 
         Handles two weight layouts:
         1. Flat keys from HF checkpoint: embed_tokens.weight, layers.0.*, norm.weight
-           -> Need 'model.' prefix added (our self.model is a Gemma3Model)
+           -> Need 'model.' prefix added (our self.model is the backbone)
         2. Already prefixed: model.embed_tokens.weight, etc.
            -> Pass through
 

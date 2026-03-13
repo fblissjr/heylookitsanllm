@@ -118,10 +118,6 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 
-# Import and include STT router
-from heylook_llm.stt_api import stt_router
-app.include_router(stt_router)
-
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
@@ -186,10 +182,6 @@ def _infer_model_capabilities(model_config) -> list[str]:
     capabilities = []
     provider = model_config.provider
     config = model_config.config
-
-    # STT models have transcription capability, not chat
-    if provider == "mlx_stt":
-        return ["transcription"]
 
     # Chat models (MLX)
     if provider == "mlx":
@@ -1674,7 +1666,6 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 
 **Platform Support**: macOS (Apple Silicon)
 - MLX backend for text and vision inference
-- MLX STT backend for speech-to-text
 
 ## 🎯 Key Features
 
@@ -1684,8 +1675,6 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 ### Model Support
 - **MLX Models**: Optimized for Apple Silicon with Metal acceleration
 - **Vision Models**: Process images with vision-language models
-- **Speech-to-Text**: Parakeet MLX models
-
 ### Performance Features
 - **Smart Model Caching**: LRU cache keeps 2 models in memory
 - **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image

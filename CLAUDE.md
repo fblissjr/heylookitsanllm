@@ -32,9 +32,9 @@ Check before making changes:
 
 ### Backend: `src/heylook_llm/`
 
-Providers: MLXProvider (text+vision), MLXSTTProvider (parakeet-mlx STT), MLXEmbeddingProvider (embeddinggemma).
+Providers: MLXProvider (text+vision), MLXEmbeddingProvider (dynamic backbone via mlx-lm).
 LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
-Provider type: `Literal["mlx", "mlx_stt", "mlx_embedding"]`.
+Provider type: `Literal["mlx", "mlx_embedding"]`.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
 - [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)
@@ -51,10 +51,6 @@ Chat streaming uses `ChatStreamManager` singleton in chatStore.ts (abort-before-
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
 
-### Batch Vision Labeling
-
-Decoupled to standalone client app in `apps/batch-labeler/`. Calls `/v1/chat/completions` VLM endpoint.
-
 ### API
 
 OpenAI-compatible + Anthropic Messages-inspired endpoints. Live Swagger at `/docs`.
@@ -65,7 +61,7 @@ OpenAI-compatible + Anthropic Messages-inspired endpoints. Live Swagger at `/doc
 ## Change Tracking
 
 - [CHANGELOG.md](./CHANGELOG.md) -- public, user-facing release history (semver)
-- `internal/log/` -- detailed daily development logs (naming: `log_YYYY-MM-DD.md`)
+- `internal/log/` -- **ALWAYS UPDATE THIS AFTER EVERY ITERATION** - detailed daily development logs (naming: `log_YYYY-MM-DD.md`)
 
 CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing work, update both: add a CHANGELOG entry for anything user-visible, and log implementation details in the daily log.
 

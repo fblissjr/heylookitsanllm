@@ -28,7 +28,7 @@ dependencies = [
     "mlx>=0.22.0; sys_platform == 'darwin'",
     "mlx-lm>=0.21.0; sys_platform == 'darwin'",
     "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
-    "transformers",
+    "transformers>=5.3.0",
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.5.0",
@@ -64,11 +64,7 @@ cli = [
 scripts = [
     "rich>=13.0.0",        # Used by scripts/metrics_dashboard.py
 ]
-stt = [
-    "parakeet-mlx; sys_platform == 'darwin'",  # MLX-based speech-to-text (Parakeet TDT)
-    "soundfile>=0.12.1",                       # Audio file I/O
-]
-all = ["heylookitsanllm[performance,analytics,stt,profile,cli]"]
+all = ["heylookitsanllm[performance,analytics,profile,cli]"]
 
 [project.urls]
 Homepage = "https://github.com/fblissjr/heylookitsanllm"
@@ -91,10 +87,15 @@ where = ["src"]
 [tool.setuptools.dynamic]
 version = {attr = "heylook_llm.__version__"}
 
+[tool.uv]
+# Force latest transformers regardless of what mlx-lm/mlx-vlm pin.
+# transformers 5.x has a bug in video_processing_auto.py (NoneType when
+# torchvision is absent) -- patched in mlx_provider.py.
+override-dependencies = ["transformers>=5.3.0"]
+
 [tool.uv.sources]
 mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git" }
 mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git" }
-parakeet-mlx = { git = "https://github.com/senstella/parakeet-mlx.git" }
 
 [dependency-groups]
 dev = [

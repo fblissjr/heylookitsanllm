@@ -54,7 +54,7 @@ describe('ModelList', () => {
 
     it('shows "no matches" when filters exclude all models', () => {
       defaultState.configs = [mockModel()]
-      defaultState.filters = { provider: ['mlx_stt'], status: [], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx_embedding'], status: [], capability: [], tag: [] }
       render(<ModelList />)
       expect(screen.getByText('No models match filters')).toBeTruthy()
     })
@@ -135,7 +135,7 @@ describe('ModelList', () => {
     it('filters by provider', () => {
       defaultState.configs = [
         mockModel({ id: 'mlx-model', provider: 'mlx' }),
-        mockModel({ id: 'stt-model', provider: 'mlx_stt' }),
+        mockModel({ id: 'stt-model', provider: 'mlx_embedding' }),
       ]
       defaultState.filters = { provider: ['mlx'], status: [], capability: [], tag: [] }
       render(<ModelList />)
@@ -171,7 +171,7 @@ describe('ModelList', () => {
     it('combines search and filters', () => {
       defaultState.configs = [
         mockModel({ id: 'mlx-llama', provider: 'mlx' }),
-        mockModel({ id: 'stt-llama', provider: 'mlx_stt' }),
+        mockModel({ id: 'stt-llama', provider: 'mlx_embedding' }),
         mockModel({ id: 'mlx-qwen', provider: 'mlx' }),
       ]
       defaultState.searchQuery = 'llama'
@@ -219,15 +219,15 @@ describe('ModelList', () => {
     })
 
     it('shows chips for active filters', () => {
-      defaultState.filters = { provider: ['mlx_stt'], status: ['disabled'], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx_embedding'], status: ['disabled'], capability: [], tag: [] }
       render(<ModelList />)
 
-      expect(screen.getByText('mlx_stt')).toBeTruthy()
+      expect(screen.getByText('mlx_embedding')).toBeTruthy()
       expect(screen.getByText('disabled')).toBeTruthy()
     })
 
     it('removing a chip updates filters', () => {
-      defaultState.filters = { provider: ['mlx', 'mlx_stt'], status: [], capability: [], tag: [] }
+      defaultState.filters = { provider: ['mlx', 'mlx_embedding'], status: [], capability: [], tag: [] }
       render(<ModelList />)
 
       // Click the 'x' button next to 'mlx'
@@ -235,7 +235,7 @@ describe('ModelList', () => {
       const removeBtn = chip.parentElement?.querySelector('button')
       if (removeBtn) fireEvent.click(removeBtn)
 
-      expect(defaultState.setFilters).toHaveBeenCalledWith({ provider: ['mlx_stt'] })
+      expect(defaultState.setFilters).toHaveBeenCalledWith({ provider: ['mlx_embedding'] })
     })
   })
 })

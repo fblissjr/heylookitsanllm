@@ -113,7 +113,7 @@ class TestProfileApplication:
             "kv_bits": 8,               # MLX-only
         })
         config = {}
-        model_info = {"provider": "mlx_stt"}
+        model_info = {"provider": "mlx_embedding"}
 
         result = profile.apply(config, model_info)
 

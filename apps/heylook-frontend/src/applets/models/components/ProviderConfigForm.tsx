@@ -29,24 +29,10 @@ const MLX_FIELDS = [
   { key: 'num_draft_tokens', label: 'Draft Tokens', type: 'number' },
 ] as const
 
-/** STT-specific config fields */
-const STT_FIELDS = [
-  { key: 'model_path', label: 'Model Path', type: 'text', readOnly: true },
-  { key: 'chunk_duration', label: 'Chunk Duration (s)', type: 'number' },
-  { key: 'overlap_duration', label: 'Overlap Duration (s)', type: 'number' },
-  { key: 'use_local_attention', label: 'Local Attention', type: 'bool' },
-  { key: 'local_attention_context', label: 'Local Attn Context', type: 'number' },
-  { key: 'fp32', label: 'FP32 Mode', type: 'bool' },
-] as const
-
 type FieldDef = { key: string; label: string; type: string; readOnly?: boolean; step?: number; min?: number; max?: number; options?: readonly string[] }
 
-function getFieldsForProvider(provider: string): FieldDef[] {
-  switch (provider) {
-    case 'mlx': return MLX_FIELDS as unknown as FieldDef[]
-    case 'mlx_stt': return STT_FIELDS as unknown as FieldDef[]
-    default: return MLX_FIELDS as unknown as FieldDef[]
-  }
+function getFieldsForProvider(_provider: string): FieldDef[] {
+  return MLX_FIELDS as unknown as FieldDef[]
 }
 
 interface Props {

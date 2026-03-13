@@ -25,6 +25,73 @@ from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 
+# -- transformers 5.x compatibility patches (no torchvision) --
+# On MLX-only setups, torchvision is absent. transformers 5.x has several bugs
+# in this scenario that prevent VLM processor loading:
+#   1. VIDEO_PROCESSOR_MAPPING_NAMES values set to None -> TypeError
+#   2. auto_docstring IndexError on empty tuples when importing processor classes
+#   3. AutoVideoProcessor.from_pretrained hard-fails with ImportError
+#   4. ProcessorMixin.__init__ rejects None for video_processor sub-processor
+# All four trace back to the same root: torchvision is assumed present.
+# These patches make video processor loading gracefully degrade to None.
+_log = logging.getLogger(__name__)
+
+
+def _apply_transformers_patches():
+    try:
+        from transformers.models.auto import video_processing_auto as vpa
+        for k, v in list(vpa.VIDEO_PROCESSOR_MAPPING_NAMES.items()):
+            if v is None:
+                vpa.VIDEO_PROCESSOR_MAPPING_NAMES[k] = ""
+    except Exception as e:
+        _log.debug("transformers patch 1 (video mapping) skipped: %s", e)
+
+    try:
+        from transformers.utils import auto_docstring as ads
+        _orig_placeholders = ads.get_placeholders_dict
+
+        def _safe_get_placeholders(placeholders, model_name):
+            try:
+                return _orig_placeholders(placeholders, model_name)
+            except (IndexError, KeyError):
+                return {}
+
+        ads.get_placeholders_dict = _safe_get_placeholders
+    except Exception as e:
+        _log.debug("transformers patch 2 (auto_docstring) skipped: %s", e)
+
+    try:
+        from transformers.models.auto.video_processing_auto import AutoVideoProcessor
+        _orig_vp_from_pretrained = AutoVideoProcessor.from_pretrained.__func__
+
+        @classmethod
+        def _soft_vp_from_pretrained(cls, *args, **kwargs):
+            try:
+                return _orig_vp_from_pretrained(cls, *args, **kwargs)
+            except (ImportError, TypeError, ValueError):
+                return None
+
+        AutoVideoProcessor.from_pretrained = _soft_vp_from_pretrained
+    except Exception as e:
+        _log.debug("transformers patch 3 (AutoVideoProcessor) skipped: %s", e)
+
+    try:
+        from transformers import processing_utils as pu
+        _orig_check = pu.ProcessorMixin.check_argument_for_proper_class
+
+        def _lenient_check(self, attribute_name, arg):
+            if arg is None and "video" in attribute_name:
+                return None
+            return _orig_check(self, attribute_name, arg)
+
+        pu.ProcessorMixin.check_argument_for_proper_class = _lenient_check
+    except Exception as e:
+        _log.debug("transformers patch 4 (ProcessorMixin) skipped: %s", e)
+
+
+_apply_transformers_patches()
+del _apply_transformers_patches
+
 # Create dedicated generation stream for better Metal utilization
 # This allows async evaluation and improves pipeline performance
 generation_stream = mx.new_stream(mx.default_device())

@@ -23,15 +23,6 @@ except ImportError as e:
     # Store the error for later logging
     MLX_IMPORT_ERROR = str(e)
 
-# Try to import MLX STT provider
-try:
-    from heylook_llm.providers.mlx_stt_provider import MLXSTTProvider
-    HAS_MLX_STT = True
-except ImportError as e:
-    MLXSTTProvider = None
-    HAS_MLX_STT = False
-    MLX_STT_IMPORT_ERROR = str(e)
-
 # Try to import MLX Embedding provider
 try:
     from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
@@ -251,8 +242,6 @@ class ModelRouter:
             provider_map = {}
             if MLXProvider:
                 provider_map["mlx"] = MLXProvider
-            if MLXSTTProvider:
-                provider_map["mlx_stt"] = MLXSTTProvider
             if MLXEmbeddingProvider:
                 provider_map["mlx_embedding"] = MLXEmbeddingProvider
 
@@ -260,8 +249,6 @@ class ModelRouter:
             if not provider_class:
                 if model_config.provider == "mlx" and not HAS_MLX:
                     raise ValueError(f"MLX provider requested but not installed. Run: uv sync --extra mlx")
-                elif model_config.provider == "mlx_stt" and not HAS_MLX_STT:
-                    raise ValueError(f"MLX STT provider requested but not installed. Run: uv sync --extra stt")
                 else:
                     raise ValueError(f"Unknown provider: {model_config.provider}")
 
@@ -313,13 +300,6 @@ class ModelRouter:
     def list_available_models(self) -> list[str]:
         return [m.id for m in self.app_config.get_enabled_models()]
 
-    def get_stt_provider(self, model_id: str):
-        """Get an STT provider instance."""
-        provider = self.get_provider(model_id)
-        if not MLXSTTProvider or not isinstance(provider, MLXSTTProvider):
-            raise ValueError(f"Model '{model_id}' is not an STT model")
-        return provider
-    
     def clear_cache(self):
         """Clear all loaded models from cache."""
         with self.cache_lock:

@@ -9,7 +9,6 @@ from heylook_llm.config import (
     ImageContentPart,
     ImageUrl,
     MLXModelConfig,
-    MLXSTTModelConfig,
     ModelConfig,
     TextContentPart,
 )
@@ -128,14 +127,6 @@ class TestModelConfig:
         assert mc.provider == "mlx"
         assert isinstance(mc.config, MLXModelConfig)
         assert mc.config.model_path == "/fake/path"
-
-    def test_mlx_stt_config(self):
-        mc = ModelConfig(
-            id="test-stt",
-            provider="mlx_stt",
-            config={"model_path": "mlx-community/parakeet"},
-        )
-        assert isinstance(mc.config, MLXSTTModelConfig)
 
     def test_invalid_config_for_provider_rejected(self):
         """Config missing required fields raises validation error."""

@@ -411,7 +411,7 @@ class TestModelCapabilities:
 
         # Provider should be valid
         for model in models_with_provider:
-            assert model["provider"] in ["mlx", "mlx_stt"]
+            assert model["provider"] in ["mlx", "mlx_embedding"]
 
     def test_models_endpoint_structure(self, api_client, check_server):
         """Test /v1/models response structure."""

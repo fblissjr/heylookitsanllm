@@ -26,13 +26,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Model pinning**: `pin_model()`/`unpin_model()` on ModelRouter prevent LRU eviction of models in active use.
+- **Dynamic embedding backbone**: Embedding provider loads any mlx-lm-supported architecture via `load_backbone()`, replacing the hardcoded Gemma3 import.
+- **Pooling config**: Embedding models accept `pooling` field (`mean`, `cls`, `none`) for future multi-vector/ColBERT support.
+- **Stop-token utility**: Shared `resolve_stop_tokens()` standardizes EOS token resolution across all generation paths.
+
+### Changed
+
+- Pydantic validators migrated from V1 (`@validator`) to V2 (`@field_validator`, `@model_validator`).
 
 ### Removed
 
+- **STT provider**: Removed `mlx_stt` provider, `/v1/audio/transcriptions` endpoint, `parakeet-mlx` dependency, and `stt` optional dependency group.
 - **Batch vision labeling pipeline**: Decoupled from backend into standalone client app at `apps/batch-labeler/`. Removes `batch_vision_pipeline.py`, 4 API endpoints, provider-specific prefix cache methods, and SQLite/threading infrastructure. The client app calls the existing `/v1/chat/completions` VLM endpoint instead.
 
 ### Fixed
 
+- **VLM model loading crash with transformers 5.x**: Four bugs in transformers 5.x prevent VLM processor loading when torchvision is absent (the correct state for MLX-only setups). Patched at import time in `mlx_provider.py`: `VIDEO_PROCESSOR_MAPPING_NAMES` None values, `auto_docstring` IndexError, `AutoVideoProcessor.from_pretrained` hard-fail, and `ProcessorMixin` type-check rejection of optional `None` sub-processors. Qwen3.5 VLM models now load correctly.
+- **Batch processor eos_token_ids null safety**: `hasattr` returns `True` when attribute is `None`; switched to `getattr(..., None) or set()` to handle tokenizers that define `eos_token_ids` as `None`.
+- **transformers version**: Pinned `>=5.0.0` to match mlx-lm 0.30.8 requirement. Added `override-dependencies` in `[tool.uv]` to force latest regardless of transitive pins.
 - **Mobile state persistence**: Chat and notebook stores now flush to IndexedDB on `visibilitychange`/`pagehide`, preventing data loss when mobile Safari kills the tab.
 - **iOS delete button**: Sidebar delete button fires from `onTouchEnd` directly, working around iOS Safari not synthesizing click events for small tap targets in scrollable lists.
 - **Gitignore silently dropping src/lib/**: Python `lib/` ignore rule was catching `apps/heylook-frontend/src/lib/`. Added exclusion so frontend lib modules are tracked.

@@ -64,9 +64,9 @@ def _xtc_special_tokens(tokenizer: PreTrainedTokenizer | None) -> list[int]:
     if tokenizer is None:
         return []
     try:
+        from .stop_tokens import resolve_stop_tokens
         newline_token = tokenizer.encode("\n")
-        eos_tokens = list(getattr(tokenizer, 'eos_token_ids', [tokenizer.eos_token_id]))
-        return newline_token + eos_tokens
+        return newline_token + list(resolve_stop_tokens(tokenizer))
     except Exception:
         return []
 

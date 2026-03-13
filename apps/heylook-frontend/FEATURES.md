@@ -135,7 +135,7 @@ Last updated: 2026-02-27
 |---------|-------------|-------|
 | Embeddings UI | /v1/embeddings endpoint | Specialized use case |
 | Hidden States UI | /v1/hidden_states endpoint | Research/debugging use case |
-| Audio Transcription UI | /v1/audio/transcriptions | macOS only, requires STT provider |
+| Audio Transcription UI | /v1/audio/transcriptions | Removed (STT provider deprecated) |
 
 ---
 

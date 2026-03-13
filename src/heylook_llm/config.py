@@ -1,5 +1,5 @@
 # src/heylook_llm/config.py
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):
@@ -62,7 +62,8 @@ class ChatRequest(BaseModel):
     # Streaming options (OpenAI-compatible)
     stream_options: Optional[Dict] = Field(None, description="Options for streaming: {include_usage: true} to get usage stats")
 
-    @validator('messages')
+    @field_validator('messages', mode='before')
+    @classmethod
     def validate_messages(cls, v):
         if not v:
             raise ValueError("Messages list cannot be empty")
@@ -93,7 +94,8 @@ class BatchChatRequest(BaseModel):
     prefill_batch_size: Optional[int] = Field(8, description="Max prefill parallelism")
     prefill_step_size: Optional[int] = Field(2048, description="Chunk size for prefill")
 
-    @validator('requests')
+    @field_validator('requests', mode='before')
+    @classmethod
     def validate_requests(cls, v):
         if not v:
             raise ValueError("Requests list cannot be empty")
@@ -145,40 +147,35 @@ class MLXModelConfig(BaseModel):
     supports_thinking: bool = False
 
 class MLXEmbeddingModelConfig(BaseModel):
-    """Configuration for MLX embedding models (embeddinggemma, etc)."""
+    """Configuration for MLX embedding models."""
     model_path: str  # Local path or HF repo
     max_length: int = 2048
-
-class MLXSTTModelConfig(BaseModel):
-    """Configuration for MLX STT models (parakeet-mlx)."""
-    model_path: str = "mlx-community/parakeet-tdt-0.6b-v3"  # HF repo or local path
-    chunk_duration: int = 120  # Chunk duration in seconds (0 to disable)
-    overlap_duration: int = 15  # Overlap duration in seconds
-    use_local_attention: bool = False
-    local_attention_context: int = 256
-    fp32: bool = False  # Use fp32 instead of bf16
-    cache_dir: Optional[str] = None  # HuggingFace cache directory
+    pooling: Literal["mean", "cls", "none"] = "mean"
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "mlx_stt", "mlx_embedding"]
-    config: Union[MLXModelConfig, MLXSTTModelConfig, MLXEmbeddingModelConfig]
+    provider: Literal["mlx", "mlx_embedding"]
+    config: Union[MLXModelConfig, MLXEmbeddingModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
     # Model capabilities for discovery (e.g., ["hidden_states", "chat", "thinking", "vision"])
     capabilities: List[str] = Field(default_factory=list)
 
-    @validator('config', pre=True)
-    def validate_config_type(cls, v, values):
-        provider = values.get('provider')
-        if provider == 'mlx':
-            return MLXModelConfig(**v)
-        elif provider == 'mlx_stt':
-            return MLXSTTModelConfig(**v)
-        elif provider == 'mlx_embedding':
-            return MLXEmbeddingModelConfig(**v)
-        raise ValueError(f"Unknown provider '{provider}' for model config validation")
+    @model_validator(mode='before')
+    @classmethod
+    def validate_config_type(cls, data):
+        if isinstance(data, dict):
+            provider = data.get('provider')
+            v = data.get('config')
+            if isinstance(v, dict):
+                if provider == 'mlx':
+                    data['config'] = MLXModelConfig(**v)
+                elif provider == 'mlx_embedding':
+                    data['config'] = MLXEmbeddingModelConfig(**v)
+                else:
+                    raise ValueError(f"Unknown provider '{provider}' for model config validation")
+        return data
 
 class AppConfig(BaseModel):
     models: List[ModelConfig]

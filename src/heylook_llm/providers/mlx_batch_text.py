@@ -20,6 +20,8 @@ from dataclasses import dataclass
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator, wired_limit
 
+from .common.stop_tokens import resolve_stop_tokens
+
 # Import generation stream from mlx_provider
 from .mlx_provider import generation_stream
 
@@ -90,7 +92,7 @@ class TextBatchProcessor:
         self.generator = BatchGenerator(
             model=model,
             max_tokens=max_tokens,
-            stop_tokens=tokenizer.eos_token_ids if hasattr(tokenizer, 'eos_token_ids') else set(),
+            stop_tokens=resolve_stop_tokens(tokenizer),
             completion_batch_size=completion_batch_size,
             prefill_batch_size=prefill_batch_size,
             prefill_step_size=prefill_step_size

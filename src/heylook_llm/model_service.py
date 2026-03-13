@@ -296,7 +296,7 @@ class ScannedModel:
 
     id: str
     path: str
-    provider: str  # "mlx", "mlx_stt", "mlx_embedding"
+    provider: str  # "mlx", "mlx_embedding"
     size_gb: float
     vision: bool
     quantization: Optional[str] = None
@@ -796,7 +796,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "mlx_stt", "mlx_embedding"):
+        elif config_data["provider"] not in ("mlx", "mlx_embedding"):
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})

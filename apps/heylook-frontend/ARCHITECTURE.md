@@ -38,7 +38,7 @@ heylook-frontend is a React single-page application (SPA) that provides a chat i
 │                   (localhost:8080)                               │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
 │  │   FastAPI   │  │   Router    │  │      Providers          │  │
-│  │  Endpoints  │◄─┤   (LRU)     │◄─┤  (MLX, MLX STT)         │  │
+│  │  Endpoints  │◄─┤   (LRU)     │◄─┤  (MLX, MLX Embedding)   │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```

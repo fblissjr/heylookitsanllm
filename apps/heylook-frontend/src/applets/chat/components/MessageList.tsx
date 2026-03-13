@@ -289,7 +289,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
                   id: loadedModel.id,
                   object: 'model' as const,
                   owned_by: loadedModel.provider ?? 'unknown',
-                  provider: loadedModel.provider as 'mlx' | 'mlx_stt' | undefined,
+                  provider: loadedModel.provider as 'mlx' | undefined,
                   capabilities: Object.entries(loadedModel.capabilities)
                     .filter(([, v]) => v)
                     .map(([k]) => k),
