@@ -7,6 +7,32 @@ invalidate the entire cache. Each tree node holds a block of BLOCK_SIZE
 tokens and optionally a KV cache snapshot taken at the end of that block.
 
 Thread-safe: all public methods are protected by a reentrant lock.
+
+Known limitation -- hybrid models (e.g. Qwen3.5):
+
+    Models with mixed cache types (KVCache for attention layers, ArraysCache
+    for SSM/recurrent layers) have a fundamental mismatch with radix caching.
+
+    KVCache is position-indexed: keys[i] corresponds to token at position i.
+    Trimming to a prefix is a simple slice (keys[:N]).
+
+    ArraysCache holds recurrent state (conv buffers, SSM state) that is a
+    compressed summary of ALL tokens seen so far. There is no way to "rewind"
+    it to an earlier position without reprocessing from scratch.
+
+    When a snapshot is taken at end-of-generation (prompt + generated tokens)
+    and later restored for a partial prefix match, the KVCache layers are
+    trimmed to the matched prefix via restore_kv_from_snapshot(trim_to=N).
+    ArraysCache layers keep whatever state the snapshot had -- which may
+    reflect tokens beyond the matched prefix. This is technically incorrect
+    but does not crash; the SSM layers will produce slightly different outputs
+    than a fresh computation from just the prefix tokens.
+
+    If strict correctness is needed for hybrid models, consider bypassing the
+    radix cache entirely (detect mixed cache types in make_cache and skip the
+    radix path in process_prompt_with_cache).
+
+    See internal/bugs/radix_cache_vlm_crash.md for the full postmortem.
 """
 from __future__ import annotations
 
@@ -92,6 +118,15 @@ class RadixCache:
 
         Only creates nodes at block boundaries. The kv_snapshot is attached
         to the final complete block node.
+
+        IMPORTANT: The snapshot typically contains KV state for the FULL
+        sequence (prompt + generated tokens), not just up to the deepest
+        block boundary. When a future request matches a shorter prefix,
+        restore_kv_from_snapshot must trim KVCache layers to the matched
+        length. Without trimming, the restored cache offset exceeds the
+        prefix boundary, corrupting position computations in models that
+        derive position IDs from cache.offset (e.g. Qwen3.5 mRoPE).
+        See internal/bugs/radix_cache_vlm_crash.md.
 
         Args:
             tokens: Full token sequence (including the already-matched prefix).

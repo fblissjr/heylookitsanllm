@@ -64,6 +64,9 @@ React + Zustand + Vite. 874 tests across 38 files.
 - Use `mlx_vlm.prompt_utils.apply_chat_template` for VLM prompt formatting
 - Use `mlx_vlm.utils.prepare_inputs` for VLM input tokenization (handles image grid dimensions per model)
 - Verify a library is actually broken before implementing a workaround
+- VLM models cache `_position_ids` and `_rope_deltas` on the LanguageModel instance -- must reset before each new request when using radix cache
+- Radix cache snapshots contain full end-of-generation KV state; `restore_kv_from_snapshot(trim_to=matched_len)` trims KVCache layers to the prefix boundary
+- Hybrid models (KVCache + ArraysCache like Qwen3.5) have limited radix cache correctness: ArraysCache can't be trimmed to a prefix. See [internal/bugs/radix_cache_vlm_crash.md](./internal/bugs/radix_cache_vlm_crash.md)
 - See [internal/bugs/vlm_vision_bug.md](./internal/bugs/vlm_vision_bug.md)
 
 ## Rules: Code Style

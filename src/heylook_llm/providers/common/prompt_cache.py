@@ -5,6 +5,20 @@ Cross-request prompt cache management for MLX models.
 Uses a radix tree per model for multi-prefix KV cache reuse. Editing earlier
 messages, branching, or regenerating no longer invalidates the entire cache --
 only the divergent suffix needs re-prefilling.
+
+Snapshot offset invariant:
+
+    Snapshots are taken at end-of-generation and contain KV entries for the
+    full sequence (prompt + generated tokens). When restored for a partial
+    prefix match, the snapshot's KVCache layers may have offsets exceeding
+    the matched prefix length. restore_kv_from_snapshot(trim_to=matched_len)
+    trims these layers so cache.offset equals the prefix boundary.
+
+    Without this trim, models that compute position IDs from cache.offset
+    (VLMs with mRoPE like Qwen3.5) get incorrect positions, causing
+    broadcast shape mismatches in rotary embedding computation.
+
+    See internal/bugs/radix_cache_vlm_crash.md for the full postmortem.
 """
 
 import logging

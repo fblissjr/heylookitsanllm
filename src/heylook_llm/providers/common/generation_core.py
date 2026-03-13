@@ -13,6 +13,12 @@ MLX alignment:
 - response.token is already a Python int from mlx-lm (no .item() needed)
 - generation_stream is mlx-lm's internal stream -- we don't create our own
 - Logging happens in finally (outside the hot loop)
+
+Error handling:
+- Radix tree snapshot storage is skipped on generation errors. A failed prefill
+  leaves partially-populated cache layers (some layers updated, others fresh).
+  Storing this state would cascade into shape mismatches on future requests.
+  See internal/bugs/radix_cache_vlm_crash.md.
 """
 
 import logging

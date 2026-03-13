@@ -1,4 +1,15 @@
 # src/heylook_llm/providers/common/cache_helpers.py
+"""
+KV cache construction, snapshot, and restore utilities.
+
+Snapshot/restore is used by the radix cache to persist KV state across requests.
+Key invariant: restore_kv_from_snapshot(trim_to=N) must trim KVCache layers to N
+tokens, because snapshots are taken at end-of-generation and may contain entries
+for tokens beyond the matched prefix. Without trimming, hybrid models (Qwen3.5)
+crash due to incorrect cache.offset in position computations.
+
+See internal/bugs/radix_cache_vlm_crash.md for the full postmortem.
+"""
 from typing import Any, List
 import mlx.nn as nn
 import logging
