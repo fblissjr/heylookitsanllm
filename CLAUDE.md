@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-12 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-13 -->
 
 ## Table of Contents
 
@@ -38,7 +38,7 @@ Provider type: `Literal["mlx", "mlx_embedding"]`.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
 - [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)
-- [internal/backend/api.md](./internal/backend/api.md) -- endpoint architecture
+- [internal/backend/api.md](./internal/backend/api.md) -- endpoint architecture, API reference
 - [internal/backend/router.md](./internal/backend/router.md) -- routing and LRU cache
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system
 
@@ -46,40 +46,29 @@ Provider type: `Literal["mlx", "mlx_embedding"]`.
 
 7 applets: Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook, Models.
 React + Zustand + Vite. 874 tests across 38 files.
-Chat streaming uses `ChatStreamManager` singleton in chatStore.ts (abort-before-start, pinned conversationId, timeout, drain with safety cap, stale-callback guards).
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
 
-### API
-
-OpenAI-compatible + Anthropic Messages-inspired endpoints. Live Swagger at `/docs`.
-
-- [internal/backend/api.md](./internal/backend/api.md) -- endpoint design
-- [docs/FRONTEND_HANDOFF.md](./docs/FRONTEND_HANDOFF.md) -- complete API reference
-
 ## Change Tracking
 
-- [CHANGELOG.md](./CHANGELOG.md) -- public, user-facing release history (semver)
-- `internal/log/` -- **ALWAYS UPDATE THIS AFTER EVERY ITERATION** - detailed daily development logs (naming: `log_YYYY-MM-DD.md`)
-
-CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing work, update both: add a CHANGELOG entry for anything user-visible, and log implementation details in the daily log.
+- [CHANGELOG.md](./CHANGELOG.md) -- user-facing release history (semver)
+- `internal/log/` -- **ALWAYS UPDATE** after every iteration (`log_YYYY-MM-DD.md`)
 
 ## Rules: Library APIs
 
 - All generation (text + vision) routes through `generation_core.run_generation()` calling `mlx_lm.generate.stream_generate`
 - Vision requests use a pre-filled cache pattern: VLM forward fills KV cache, then `run_generation()` continues
-- `snapshot_kv()` / `restore_kv_from_snapshot()` in `cache_helpers.py` handle KV state capture and forking -- MLX arrays are lazy graph nodes, snapshots are cheap
+- Embedding backbone loading uses `mlx_lm.utils._get_classes(config_dict)` (private API, takes a dict not keyword). Returns (CausalLM wrapper, ArgsClass) -- extract `.model` for the transformer body.
+- Gemma models need `sqrt(hidden_size)` embedding scaling; other architectures do not. `EmbeddingModel` gates on `model_type.startswith("gemma")`.
 - Use `mlx_vlm.prompt_utils.apply_chat_template` for VLM prompt formatting
 - Use `mlx_vlm.utils.prepare_inputs` for VLM input tokenization (handles image grid dimensions per model)
-- Vision encoder batching (stacking multiple images through ViT) is NOT implemented -- each model architecture (Qwen2-VL, LLaVA, MLLaMA) has different merge mechanics. ViT is ~10-15% of per-image time; LM decode is the bottleneck.
 - Verify a library is actually broken before implementing a workaround
 - See [internal/bugs/vlm_vision_bug.md](./internal/bugs/vlm_vision_bug.md)
 
 ## Rules: Code Style
 
-- When removing a provider/feature, grep the full repo first -- plans miss docstrings, OpenAPI descriptions, test fixtures, frontend types, and README.md examples
-- `SamplerSettings` has `[key: string]: unknown` -- frontend-only fields (e.g. `streamTimeoutMs`) must be stripped before spreading into API requests
+- When removing a provider/feature, grep the full repo then check: `config.py` (Literal + Union), `router.py`, `api.py`, `generated-api.ts`, `FEATURES.md`, `ARCHITECTURE.md`, `README.md`, `pyproject.toml` extras, frontend type unions, test fixtures
 - No emojis, no hype language ("Enhanced", "Advanced", etc.)
 - PEP-8 with 120-char lines, type hints throughout
 - Import order: standard, third-party, local (blank line separated)
@@ -98,10 +87,7 @@ CHANGELOG.md is the summary. `internal/log/` is the raw record. When completing 
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)
-- Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests -- do not investigate
+- Pre-existing failures: 5 router tests (YAML config vs TOML parser), ~15 mlx_perf tests -- do not investigate
+- MLX embedding/sampler tests fail in full suite (Metal context conflicts) but pass individually -- pre-existing, not a regression
 - Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed
-- Zustand store mocks with `.getState()`: use `vi.hoisted()` to define mock state that `vi.mock()` factories reference (vitest hoists mock factories above variable declarations)
-
-## Finishing a Plan, Task, Bugfix, or Feature
-- **Ask yourself what you would do differently:** Now that you've finished and done the analysis, how would you do it the right way? What would you do differently if you could start over with more time now that you have new insights and could reflect more? What, if anything, do you think is a poor short term fix? If you wouldn't change anything, that's totally cool as well.
