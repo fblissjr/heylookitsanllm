@@ -106,7 +106,6 @@ async function getModels(): Promise<Model[]> {
 | `/v1/embeddings` | POST | Generate embeddings | No | No | No |
 | `/v1/batch/chat/completions` | POST | Batch text generation | No | No | No |
 | `/v1/capabilities` | GET | Server features/limits | No | N/A | No |
-| `/v1/audio/transcriptions` | POST | Speech-to-text (macOS) | No | No | No |
 | `/v1/hidden_states` | POST | Extract hidden states | No | No | No |
 | `/v1/hidden_states/structured` | POST | Structured hidden states with token boundaries | No | No | No |
 | `/v1/admin/reload` | POST | Hot-reload model config | No | N/A | No |
@@ -579,40 +578,7 @@ const response = await fetch(`${BASE_URL}/v1/chat/completions`, {
 
 **Note:** Logprobs are only available for text-only requests. Vision requests do not support logprobs.
 
-### H. Audio Transcription (macOS only)
-
-Speech-to-text using MLX STT (parakeet-mlx).
-
-```typescript
-async function transcribeAudio(
-  audioFile: File,
-  model: string,
-  language?: string
-): Promise<{ text: string }> {
-  const formData = new FormData();
-  formData.append('file', audioFile);
-  formData.append('model', model);
-  if (language) {
-    formData.append('language', language);
-  }
-
-  const response = await fetch(`${BASE_URL}/v1/audio/transcriptions`, {
-    method: 'POST',
-    body: formData
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || `HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
-
-// Supported formats: mp3, wav, m4a, webm, flac, ogg, mp4, mpeg
-```
-
-### I. Structured Hidden States (MLX only)
+### H. Structured Hidden States (MLX only)
 
 Extract hidden states with server-side chat template application and token boundary tracking. This is useful for:
 - Z-Image embeddings with precise template control
@@ -749,7 +715,7 @@ export interface Model {
   object: 'model';
   created?: number;
   owned_by: string;
-  provider?: 'mlx' | 'mlx_stt';
+  provider?: 'mlx' | 'mlx_embedding';
   capabilities?: string[];  // e.g., ['chat', 'vision', 'hidden_states', 'thinking']
 }
 
@@ -1509,9 +1475,6 @@ POST /v1/batch/chat/completions
 
 # Server capabilities
 GET /v1/capabilities
-
-# Audio transcription
-POST /v1/audio/transcriptions
 
 # Admin: reload config
 POST /v1/admin/reload

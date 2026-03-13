@@ -87,7 +87,7 @@ React + Zustand + Vite. 874 tests across 38 files.
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)
-- Pre-existing failures: 5 router tests (YAML config vs TOML parser), ~15 mlx_perf tests -- do not investigate
+- Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests (removed mlx_batch_vision module) -- do not investigate
 - MLX embedding/sampler tests fail in full suite (Metal context conflicts) but pass individually -- pre-existing, not a regression
 - Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed
