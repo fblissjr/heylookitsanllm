@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1]
+
+### Fixed
+
+- **VLM vision**: pass mask as `mask` kwarg (not `attention_mask`) to VLM models, fixing `Model.__call__() missing 1 required positional argument: 'mask'` for mistral3, pixtral, and llava_next architectures
+
 ## [1.21.0]
 
 ### Added

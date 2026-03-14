@@ -303,8 +303,11 @@ class VLMVisionStrategy:
         vlm_kwargs = dict(extra_kwargs)
         if pixel_values is not None:
             vlm_kwargs["pixel_values"] = pixel_values
-        if mask is not None:
-            vlm_kwargs["attention_mask"] = mask
+        # VLM models expect `mask` (not `attention_mask`). Default to all-ones
+        # so models with a required mask positional arg (mistral3, pixtral, llava_next) don't fail.
+        if mask is None:
+            mask = mx.ones(input_ids.shape, dtype=mx.int32)
+        vlm_kwargs["mask"] = mask
 
         # Ensure wrapper is cached for language model generation
         if self._cached_wrapper is None:
