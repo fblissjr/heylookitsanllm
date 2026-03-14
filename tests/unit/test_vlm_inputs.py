@@ -125,28 +125,24 @@ class TestPrepareVlmInputsParallel:
         assert "answer" in assistant_msg["content"]
 
     def test_template_error_recovery(self, mock_mlx):
+        """When vlm template fails, fall back to tokenizer.apply_chat_template."""
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 
         messages = [FakeMessage("user", "hello")]
         mock_processor = MagicMock()
+        mock_processor.tokenizer.apply_chat_template.return_value = "tokenizer fallback"
         mock_config = MagicMock()
         mock_batch = MagicMock()
 
-        call_count = 0
-
         def failing_template(proc, cfg, msgs, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise ValueError("template error")
-            return "fallback formatted"
+            raise ValueError("template error")
 
         images, prompt, has_images = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, failing_template
         )
 
-        assert prompt == "fallback formatted"
-        assert call_count == 2
+        assert prompt == "tokenizer fallback"
+        mock_processor.tokenizer.apply_chat_template.assert_called_once()
 
     def test_template_total_fallback(self, mock_mlx):
         """When all template calls fail, fall back to manual formatting."""
@@ -154,6 +150,7 @@ class TestPrepareVlmInputsParallel:
 
         messages = [FakeMessage("user", "hello")]
         mock_processor = MagicMock()
+        mock_processor.tokenizer.apply_chat_template.side_effect = TypeError("also fails")
         mock_config = MagicMock()
         mock_batch = MagicMock()
 

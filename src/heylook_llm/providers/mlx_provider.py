@@ -101,8 +101,10 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
-    This uses the library's apply_chat_template which properly formats messages
-    with image tokens based on num_images and model_type.
+    Uses mlx-vlm to build messages with image tokens, then flattens any
+    list-typed content to strings before passing to the tokenizer's
+    apply_chat_template.  Some models (mistral3, pixtral) produce list
+    content that their own Jinja templates cannot render.
 
     Args:
         processor: The model processor (contains tokenizer)
@@ -113,12 +115,47 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
     Returns:
         str: Formatted prompt string with proper image tokens
     """
-    return mlx_vlm_apply_chat_template(
-        processor,
-        config,
-        messages,
-        num_images=num_images or 0
+    num_images = num_images or 0
+
+    # Step 1: let mlx-vlm insert image tokens into the messages structure
+    formatted_messages = mlx_vlm_apply_chat_template(
+        processor, config, messages, num_images=num_images, return_messages=True
     )
+
+    # Step 2: flatten any list content to strings so all tokenizer
+    # Jinja templates can handle them
+    tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    image_token = getattr(processor, "image_token",
+                          getattr(tokenizer, "image_token", "<image>"))
+
+    for msg in formatted_messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    item_type = item.get("type", "")
+                    if item_type in ("text", "input_text"):
+                        text = item.get("text", "") or item.get("content", "")
+                        if text:
+                            parts.append(text)
+                    elif item_type in ("image", "image_url", "input_image"):
+                        parts.append(image_token)
+                elif isinstance(item, str):
+                    parts.append(item)
+            msg["content"] = " ".join(parts).strip() if parts else ""
+
+    # Step 3: apply the tokenizer's own chat template
+    try:
+        return tokenizer.apply_chat_template(
+            formatted_messages, tokenize=False, add_generation_prompt=True
+        )
+    except TypeError:
+        # Tokenizer template still can't handle the messages -- manual fallback
+        return "\n".join(
+            f"{msg.get('role', 'user')}: {msg.get('content', '')}"
+            for msg in formatted_messages
+        )
 
 
 class UnifiedTextStrategy:

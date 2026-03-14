@@ -103,34 +103,33 @@ def prepare_vlm_inputs_parallel(
     else:
         images = []
 
-    # Format prompt
-    try:
-        # Ensure all content is strings (some templates have bugs with non-string content)
-        safe_messages = []
-        for msg in text_messages:
-            safe_msg = {
-                "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
-                "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"]
-            }
-            safe_messages.append(safe_msg)
+    # Format prompt -- ensure all content is strings (some templates
+    # have bugs with non-string content)
+    safe_messages = [
+        {
+            "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
+            "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"],
+        }
+        for msg in text_messages
+    ]
 
+    try:
         formatted_prompt = vlm_apply_chat_template_fn(
             processor, config, safe_messages, num_images=len(images)
         )
     except Exception as e:
         logging.error(f"Chat template error: {e}")
         logging.error(f"Text messages: {text_messages}")
-        # Fallback: Try without num_images parameter
+        # Fallback: apply the tokenizer's own chat template with string content
+        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         try:
-            formatted_prompt = vlm_apply_chat_template_fn(
-                processor, config, text_messages
+            formatted_prompt = tokenizer.apply_chat_template(
+                safe_messages, tokenize=False, add_generation_prompt=True
             )
         except Exception as fallback_error:
             logging.error(f"Fallback template error: {fallback_error}")
-            # Final fallback: manually format messages
-            formatted_prompt = "\n".join([
-                f"{msg['role']}: {msg['content']}"
-                for msg in text_messages
-            ])
+            formatted_prompt = "\n".join(
+                f"{msg['role']}: {msg['content']}" for msg in text_messages
+            )
 
     return images, formatted_prompt, has_images
