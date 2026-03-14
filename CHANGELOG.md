@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **VLM vision**: pass mask as `mask` kwarg (not `attention_mask`) to VLM models, fixing `Model.__call__() missing 1 required positional argument: 'mask'` for mistral3, pixtral, and llava_next architectures
+- **VLM chat template**: flatten list content before applying tokenizer chat template, fixing `can only concatenate str (not "list") to str` for mistral3/pixtral models
 
 ## [1.21.0]
 
