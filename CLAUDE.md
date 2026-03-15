@@ -35,6 +35,7 @@ Check before making changes:
 Providers: MLXProvider (text+vision), MLXEmbeddingProvider (dynamic backbone via mlx-lm).
 LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
 Provider type: `Literal["mlx", "mlx_embedding"]`.
+RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip).
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
 - [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)
@@ -71,6 +72,7 @@ React + Zustand + Vite. 874 tests across 38 files.
 
 ## Rules: Code Style
 
+- Adding a new endpoint: create module with `APIRouter(tags=["Name"])`, add tag to `openapi_tags` list + `app.include_router()` in `api.py`
 - When removing a provider/feature, grep the full repo then check: `config.py` (Literal + Union), `router.py`, `api.py`, `generated-api.ts`, `FEATURES.md`, `ARCHITECTURE.md`, `README.md`, `pyproject.toml` extras, frontend type unions, test fixtures
 - No emojis, no hype language ("Enhanced", "Advanced", etc.)
 - PEP-8 with 120-char lines, type hints throughout
@@ -87,6 +89,7 @@ React + Zustand + Vite. 874 tests across 38 files.
 
 ## Running Tests
 
+- Sandbox mode blocks uv cache access -- run `uv run pytest` with sandbox disabled if uv cache errors occur
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)

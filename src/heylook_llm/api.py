@@ -98,6 +98,10 @@ app = FastAPI(
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
         },
         {
+            "name": "RLM",
+            "description": "Recursive Language Model inference -- iterative code-driven exploration of long contexts"
+        },
+        {
             "name": "Admin",
             "description": "Model management endpoints for CRUD, scanning, importing, and monitoring models"
         },
@@ -121,6 +125,10 @@ app.add_middleware(
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
+
+# Import and include RLM router
+from heylook_llm.rlm import rlm_router
+app.include_router(rlm_router)
 
 # Import and include Admin API routers (order matters: fixed paths before catch-all)
 from heylook_llm.admin_api import scan_import_router, admin_router, admin_ops_router
