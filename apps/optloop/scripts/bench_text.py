@@ -42,6 +42,7 @@ from bench_common import (
     load_baseline,
     load_config,
     print_results,
+    resolve_model_from_toml,
     save_baseline,
     save_run,
     sync_barrier,
@@ -88,13 +89,21 @@ PROMPTS = [
 
 
 def resolve_model_path(model_path: str | None, config: dict) -> str:
-    """Resolve model path -- use provided path, config, or default HF model ID."""
+    """Resolve model path from CLI arg, bench_config.toml, or models.toml.
+
+    Priority: CLI --model-path > bench_config.toml model ID looked up in
+    models.toml > HF download fallback.
+    """
     if model_path:
         return model_path
-    # Check config
     text_config = config.get("bench", {}).get("text", {})
-    model_id = text_config.get("model", "mlx-community/google_gemma-3-27b-it-mlx-bf16")
-    # Try HF cache first via hub
+    model_id = text_config.get("model", "google_gemma-3-27b-it-mlx-bf16")
+    # Look up local path from models.toml
+    local_path = resolve_model_from_toml(model_id)
+    if local_path:
+        return local_path
+    # Fallback to HF download
+    print(f"WARNING: model '{model_id}' not found in models.toml, falling back to HF download", file=sys.stderr)
     try:
         from huggingface_hub import snapshot_download
         return snapshot_download(model_id)

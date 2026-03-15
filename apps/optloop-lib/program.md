@@ -1,8 +1,12 @@
 # Library-Level Inference Optimization Loop
 
-Agent instructions for autonomous optimization of mlx-lm and mlx-vlm library internals. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
+Human-readable reference for library-level optimization of mlx-lm and mlx-vlm internals. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
 
 Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
+
+> **Agent invocation**: Use `/optloop-lib <run-tag>` in Claude Code. The skill handles setup,
+> pre-flight reads, and references loading automatically. This file is the human-readable
+> companion; the agent-consumable instructions live in `.claude/skills/optloop-lib/`.
 
 ## Setup
 

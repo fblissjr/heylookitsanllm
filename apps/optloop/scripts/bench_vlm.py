@@ -47,6 +47,7 @@ from bench_common import (
     load_baseline,
     load_config,
     print_results,
+    resolve_model_from_toml,
     save_baseline,
     save_run,
     sync_barrier,
@@ -126,11 +127,21 @@ VISION_PROMPTS = [
 
 
 def resolve_model_path(model_path: str | None, config: dict) -> str:
-    """Resolve model path -- use provided path, config, or default HF model ID."""
+    """Resolve model path from CLI arg, bench_config.toml, or models.toml.
+
+    Priority: CLI --model-path > bench_config.toml model ID looked up in
+    models.toml > HF download fallback.
+    """
     if model_path:
         return model_path
     vlm_config = config.get("bench", {}).get("vlm", {})
-    model_id = vlm_config.get("model", "mlx-community/Qwen3.5-27B-mxfp8-mlx")
+    model_id = vlm_config.get("model", "Qwen3.5-27B-mxfp8-mlx")
+    # Look up local path from models.toml
+    local_path = resolve_model_from_toml(model_id)
+    if local_path:
+        return local_path
+    # Fallback to HF download
+    print(f"WARNING: model '{model_id}' not found in models.toml, falling back to HF download", file=sys.stderr)
     try:
         from huggingface_hub import snapshot_download
         return snapshot_download(model_id)

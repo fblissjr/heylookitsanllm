@@ -1,8 +1,12 @@
 # Inference Optimization Loop
 
-Agent instructions for autonomous inference optimization. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
+Human-readable reference for the app-level optimization loop. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
 
 Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
+
+> **Agent invocation**: Use `/optloop <run-tag>` in Claude Code. The skill handles setup,
+> pre-flight reads, and references loading automatically. This file is the human-readable
+> companion; the agent-consumable instructions live in `.claude/skills/optloop/`.
 
 ## Setup
 

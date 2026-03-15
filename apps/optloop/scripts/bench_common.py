@@ -31,6 +31,36 @@ VLM_DIR = DATA_DIR / "vlm"
 CYCLES_DIR = DATA_DIR / "cycles"
 RESULTS_TSV = OPTLOOP_ROOT / "results.tsv"
 CONFIG_PATH = OPTLOOP_ROOT / "bench_config.toml"
+MODELS_TOML = REPO_ROOT / "models.toml"
+
+
+def load_models_toml() -> list[dict]:
+    """Load models from the project root models.toml. Returns list of model entries."""
+    if not MODELS_TOML.exists():
+        return []
+    with open(MODELS_TOML, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("models", [])
+
+
+def resolve_model_from_toml(model_id: str) -> str | None:
+    """Look up a model ID in models.toml and return its local model_path.
+
+    Matches on the 'id' field. Also tries stripping an org/ prefix
+    (e.g. 'mlx-community/foo' -> 'foo') as a fallback.
+    """
+    models = load_models_toml()
+    # Direct match
+    for m in models:
+        if m.get("id") == model_id:
+            return m.get("config", {}).get("model_path")
+    # Fallback: strip org prefix
+    if "/" in model_id:
+        short_id = model_id.split("/", 1)[1]
+        for m in models:
+            if m.get("id") == short_id:
+                return m.get("config", {}).get("model_path")
+    return None
 
 
 def ensure_dirs():
@@ -153,7 +183,7 @@ class TimingContext:
         self._start = time.perf_counter()
         return self
 
-    def __exit__(self, *_exc):
+    def __exit__(self, _t: object, _v: object, _tb: object) -> None:
         sync_barrier()
         self.elapsed_ms = (time.perf_counter() - self._start) * 1000
 
