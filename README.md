@@ -22,6 +22,7 @@ Built on Apple MLX for text and vision.
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
 - **Model Management**: Scan, import, configure, load/unload models from the web UI or API
 - **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
+- **RLM**: Recursive Language Model endpoint -- the model writes Python code to iteratively explore long contexts via a sandboxed REPL
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
@@ -129,6 +130,8 @@ curl -X POST http://localhost:8080/v1/admin/reload
 ## API
 
 Interactive docs at `http://localhost:8080/docs` when the server is running.
+
+Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`. See [internal/backend/api.md](internal/backend/api.md) for full reference.
 
 ## Batch Vision Labeling
 
