@@ -45,10 +45,26 @@ Create a text file with labeling instructions:
 
 ```bash
 cat > instructions.txt << 'EOF'
-You are an image classifier. For each image, respond with a JSON object:
-{"category": "...", "description": "...", "confidence": 0.0-1.0}
+You are an image labeling assistant. Analyze each image carefully and respond with a single JSON object on one line. Do not include any other text.
 
-Categories: landscape, portrait, object, text, diagram, other
+Schema:
+{"category": "<string>", "subcategory": "<string>", "description": "<string>", "objects": ["<string>", ...], "dominant_colors": ["<string>", ...], "mood": "<string>", "confidence": <float 0.0-1.0>}
+
+Categories and subcategories:
+- landscape: natural, urban, aerial, underwater
+- portrait: human, animal, group
+- object: food, vehicle, electronics, furniture, clothing, tool
+- text: document, sign, screenshot, handwritten
+- diagram: flowchart, graph, schematic, map
+- art: painting, illustration, sculpture, digital
+- other: abstract, unclear
+
+Rules:
+- "objects" lists the 1-5 most prominent items visible in the image.
+- "dominant_colors" lists 1-3 primary colors (use simple color names like "blue", "dark green", "off-white").
+- "mood" is a single word: neutral, cheerful, somber, dramatic, calm, chaotic, clinical, nostalgic.
+- Set "confidence" below 0.5 if the image is blurry, ambiguous, or doesn't fit any category well.
+- If the image contains text, include a brief summary of the text content in "description".
 EOF
 ```
 
@@ -60,7 +76,7 @@ Or pass the prompt inline with `--system-prompt "..."`.
 cd apps/batch-labeler
 uv run batch-labeler \
   --image-dir /path/to/my-images \
-  --model "mlx-community/Qwen2.5-VL-7B-Instruct-8bit" \
+  --model "mlx-community/Qwen3.5-27B-mxfp8-mlx" \
   --system-prompt-file instructions.txt \
   --output results.jsonl \
   --server http://localhost:8000
@@ -77,8 +93,8 @@ Each line in `results.jsonl` is a JSON object:
   "file_path": "/path/to/my-images/photo1.jpg",
   "file_hash": "abc123...",
   "file_name": "photo1.jpg",
-  "model_id": "mlx-community/Qwen2.5-VL-7B-Instruct-8bit",
-  "label": {"category": "landscape", "description": "Mountain scene", "confidence": 0.95},
+  "model_id": "mlx-community/Qwen3.5-27B-mxfp8-mlx",
+  "label": {"category": "landscape", "subcategory": "natural", "description": "Mountain scene with snow-capped peaks and alpine lake", "objects": ["mountain", "lake", "trees"], "dominant_colors": ["blue", "white", "dark green"], "mood": "calm", "confidence": 0.95},
   "raw_output": "...",
   "generation_time_ms": 1234,
   "timestamp": "2026-03-10T12:00:00"
