@@ -8,28 +8,76 @@ from pathlib import Path
 import httpx
 import orjson
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
-from . import scanner, client, storage
+from . import client, scanner, storage
 
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog='batch-labeler',
-        description='Label images in a directory using a VLM via OpenAI-compatible API.',
+        prog="batch-labeler",
+        description="Label images in a directory using a VLM via OpenAI-compatible API.",
     )
-    p.add_argument('--image-dir', required=True, help='Path to directory containing images')
-    p.add_argument('--model', required=True, help='VLM model ID to use')
-    p.add_argument('--system-prompt', help='System prompt with labeling instructions')
-    p.add_argument('--system-prompt-file', type=Path, help='Read system prompt from file')
-    p.add_argument('--output', default='results.jsonl', help='Output JSONL file (default: results.jsonl)')
-    p.add_argument('--server', default='http://localhost:8000', help='Server base URL (default: http://localhost:8000)')
-    p.add_argument('--max-tokens', type=int, default=1024, help='Max tokens per response (default: 1024)')
-    p.add_argument('--temperature', type=float, default=0.1, help='Sampling temperature (default: 0.1)')
-    p.add_argument('--recursive', action='store_true', default=True, help='Scan subdirectories (default)')
-    p.add_argument('--no-recursive', action='store_false', dest='recursive', help='Only scan top-level directory')
-    p.add_argument('--dry-run', action='store_true', help='Scan and report counts without processing')
-    p.add_argument('--timeout', type=float, default=120.0, help='Per-request timeout in seconds (default: 120)')
+    p.add_argument(
+        "--image-dir", required=True, help="Path to directory containing images"
+    )
+    p.add_argument("--model", required=True, help="VLM model ID to use")
+    p.add_argument("--system-prompt", help="System prompt with labeling instructions")
+    p.add_argument(
+        "--system-prompt-file", type=Path, help="Read system prompt from file"
+    )
+    p.add_argument(
+        "--output",
+        default="results.jsonl",
+        help="Output JSONL file (default: results.jsonl)",
+    )
+    p.add_argument(
+        "--server",
+        default="http://localhost:8080",
+        help="Server base URL (default: http://localhost:8000)",
+    )
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Max tokens per response (default: 1024)",
+    )
+    p.add_argument(
+        "--temperature",
+        type=float,
+        default=0.1,
+        help="Sampling temperature (default: 0.1)",
+    )
+    p.add_argument(
+        "--recursive",
+        action="store_true",
+        default=True,
+        help="Scan subdirectories (default)",
+    )
+    p.add_argument(
+        "--no-recursive",
+        action="store_false",
+        dest="recursive",
+        help="Only scan top-level directory",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scan and report counts without processing",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Per-request timeout in seconds (default: 120)",
+    )
     return p
 
 
@@ -40,7 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     # Resolve system prompt
     if args.system_prompt_file:
         if not args.system_prompt_file.exists():
-            console.print(f"[red]System prompt file not found: {args.system_prompt_file}[/red]")
+            console.print(
+                f"[red]System prompt file not found: {args.system_prompt_file}[/red]"
+            )
             return 1
         system_prompt = args.system_prompt_file.read_text().strip()
     elif args.system_prompt:
@@ -74,7 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             remaining.append((img, h))
 
-    console.print(f"Total: {len(images)}, already done: {skipped}, remaining: {len(remaining)}")
+    console.print(
+        f"Total: {len(images)}, already done: {skipped}, remaining: {len(remaining)}"
+    )
 
     if args.dry_run:
         console.print("Dry run -- exiting.")
@@ -122,22 +174,29 @@ def main(argv: list[str] | None = None) -> int:
 
                         label_json = storage.extract_json(raw_output)
                         if label_json is None:
-                            label_json = orjson.dumps({"raw_caption": raw_output}).decode()
+                            label_json = orjson.dumps(
+                                {"raw_caption": raw_output}
+                            ).decode()
 
-                        storage.append_result(args.output, {
-                            "file_path": str(image_path),
-                            "file_hash": fhash,
-                            "file_name": image_path.name,
-                            "model_id": args.model,
-                            "label": orjson.loads(label_json),
-                            "raw_output": raw_output,
-                            "generation_time_ms": gen_ms,
-                            "timestamp": time.strftime('%Y-%m-%dT%H:%M:%S'),
-                        })
+                        storage.append_result(
+                            args.output,
+                            {
+                                "file_path": str(image_path),
+                                "file_hash": fhash,
+                                "file_name": image_path.name,
+                                "model_id": args.model,
+                                "label": orjson.loads(label_json),
+                                "raw_output": raw_output,
+                                "generation_time_ms": gen_ms,
+                                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            },
+                        )
                         completed += 1
 
                     except httpx.HTTPStatusError as e:
-                        console.print(f"[red]HTTP {e.response.status_code} for {image_path.name}: {e.response.text[:200]}[/red]")
+                        console.print(
+                            f"[red]HTTP {e.response.status_code} for {image_path.name}: {e.response.text[:200]}[/red]"
+                        )
                         failed += 1
                     except httpx.TimeoutException:
                         console.print(f"[red]Timeout for {image_path.name}[/red]")
@@ -159,5 +218,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if failed == 0 else 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

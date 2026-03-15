@@ -79,7 +79,7 @@ uv run batch-labeler \
   --model "mlx-community/Qwen3.5-27B-mxfp8-mlx" \
   --system-prompt-file instructions.txt \
   --output results.jsonl \
-  --server http://localhost:8000
+  --server http://localhost:8080
 ```
 
 Progress is printed to stderr. Each completed image appends a line to the output JSONL.

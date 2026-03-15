@@ -11,7 +11,9 @@ from .scanner import MIME_TYPES
 
 def _detect_mime(path: Path) -> str:
     ext = path.suffix.lower()
-    return MIME_TYPES.get(ext, mimetypes.guess_type(str(path))[0] or 'application/octet-stream')
+    return MIME_TYPES.get(
+        ext, mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    )
 
 
 def label_image(
@@ -39,7 +41,7 @@ def label_image(
         httpx.HTTPStatusError: On non-2xx responses.
     """
     image_data = image_path.read_bytes()
-    b64 = base64.b64encode(image_data).decode('ascii')
+    b64 = base64.b64encode(image_data).decode("ascii")
     mime = _detect_mime(image_path)
     data_url = f"data:{mime};base64,{b64}"
 
