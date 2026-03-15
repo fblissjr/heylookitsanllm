@@ -23,9 +23,9 @@ prefill_tps_weight = 0.20         # prompt processing speed
 memory_weight = 0.15              # peak GPU memory (lower = better)
 
 [scoring.decision]
-# These thresholds are read by the agent from program.md instructions,
-# NOT by bench scripts. Changing values here has no effect without
-# also updating program.md.
+# These thresholds are read by the agent from .claude/skills/optloop-lib/references/loop-protocol.md.
+# The reference file instructs the agent to read values from this config at runtime.
+# Bench scripts do not use these values directly.
 both_improved_min = 1.00          # both scores >= this = KEEP
 cross_regression_tolerance = 0.02 # max regression in one bench when other improves
 cross_improvement_min = 0.03      # min improvement in one bench to tolerate regression in other

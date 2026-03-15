@@ -10,10 +10,12 @@ seed = 42                         # deterministic sampling
 timeout_seconds = 600             # per-bench timeout (10 min)
 
 [bench.text]
-model = "mlx-community/google_gemma-3-27b-it-mlx-bf16"
+# Model ID from models.toml (resolved to local path automatically)
+model = "google_gemma-3-27b-it-mlx-bf16"
 
 [bench.vlm]
-model = "mlx-community/Qwen3.5-27B-mxfp8-mlx"
+# Model ID from models.toml (resolved to local path automatically)
+model = "Qwen3.5-27B-mxfp8-mlx"
 
 [scoring]
 # Weights must sum to 1.0. Adjust these to shift optimization pressure.
@@ -23,9 +25,9 @@ prefill_tps_weight = 0.20         # prompt processing speed
 memory_weight = 0.15              # peak GPU memory (lower = better)
 
 [scoring.decision]
-# These thresholds are read by the agent from program.md instructions,
-# NOT by bench scripts. Changing values here has no effect without
-# also updating program.md.
+# These thresholds are read by the agent from .claude/skills/optloop/references/loop-protocol.md.
+# The reference file instructs the agent to read values from this config at runtime.
+# Bench scripts do not use these values directly.
 both_improved_min = 1.00          # both scores >= this = KEEP
 cross_regression_tolerance = 0.02 # max regression in one bench when other improves
 cross_improvement_min = 0.03      # min improvement in one bench to tolerate regression in other
