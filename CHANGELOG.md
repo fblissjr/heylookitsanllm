@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0]
+
+### Added
+
+- **Bench harness**: Direct-load benchmark scripts for text (`bench_text.py`) and VLM (`bench_vlm.py`) inference paths -- no HTTP server required
+- **Composite scoring**: Weighted metric (40% gen_tps, 25% TTFT, 20% prefill_tps, 15% memory) with hard constraint checks and baseline tracking
+- **Bench analysis**: `bench_analysis.py` reads results.tsv and per-run JSON to produce summary tables and progress charts
+- **Optimization loop**: `optloop.md` agent instructions for continuous autonomous inference optimization with dual-bench scoring
+
 ## [1.21.1]
 
 ### Fixed

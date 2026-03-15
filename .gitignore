@@ -28,8 +28,10 @@ update-coderef.sh
 # configs
 model.toml
 models.toml
-model.yaml
-models.yaml
+
+# bench data
+results.tsv
+data/bench/
 .claude
 
 # Distribution / packaging
