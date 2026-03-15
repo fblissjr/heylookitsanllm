@@ -3,14 +3,14 @@
 
 Loads a VLM model directly via mlx-vlm and measures generation performance
 with both text-only and vision prompts. Produces grep-friendly stdout and
-detailed JSON results.
+detailed JSON results. Includes output fingerprinting for correctness verification.
 
 Usage:
-    uv run scripts/bench_vlm.py
-    uv run scripts/bench_vlm.py --model-path <path>
-    uv run scripts/bench_vlm.py --reset-baseline
-    uv run scripts/bench_vlm.py --text-only
-    uv run scripts/bench_vlm.py --vision-only
+    uv run apps/optloop/scripts/bench_vlm.py
+    uv run apps/optloop/scripts/bench_vlm.py --model-path <path>
+    uv run apps/optloop/scripts/bench_vlm.py --reset-baseline
+    uv run apps/optloop/scripts/bench_vlm.py --text-only
+    uv run apps/optloop/scripts/bench_vlm.py --vision-only
 """
 
 import argparse
@@ -32,34 +32,25 @@ from bench_common import (
     VLM_DIR,
     baseline_metrics_from_result,
     build_result_data,
+    check_fingerprints,
     check_hard_constraints,
+    check_per_prompt_constraints,
+    check_suspicion,
+    check_variance,
     compute_composite_score,
     ensure_dirs,
+    fingerprint_output,
+    get_bench_params,
+    get_constraints,
     get_hardware_info,
+    get_scoring_weights,
     load_baseline,
+    load_config,
     print_results,
     save_baseline,
     save_run,
     sync_barrier,
 )
-
-
-# ---------------------------------------------------------------------------
-# Default model
-# ---------------------------------------------------------------------------
-
-DEFAULT_MODEL = "Qwen3.5-27B-mxfp8-mlx"
-
-
-def resolve_model_path(model_path: str | None) -> str:
-    """Resolve model path -- use provided path or default HF model ID."""
-    if model_path:
-        return model_path
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download(f"mlx-community/{DEFAULT_MODEL}")
-    except Exception:
-        return f"mlx-community/{DEFAULT_MODEL}"
 
 
 # ---------------------------------------------------------------------------
@@ -79,15 +70,10 @@ def make_complex_image() -> Image.Image:
     """Create a 448x448 image with geometric shapes."""
     img = Image.new("RGB", (448, 448), (240, 240, 240))
     draw = ImageDraw.Draw(img)
-    # Red rectangle
     draw.rectangle([50, 50, 200, 150], fill=(220, 50, 50), outline=(0, 0, 0))
-    # Blue circle
     draw.ellipse([250, 80, 400, 230], fill=(50, 50, 220), outline=(0, 0, 0))
-    # Green rectangle
     draw.rectangle([100, 280, 300, 400], fill=(50, 180, 50), outline=(0, 0, 0))
-    # Yellow triangle
     draw.polygon([(350, 350), (420, 430), (280, 430)], fill=(220, 220, 50), outline=(0, 0, 0))
-    # Small circles
     for i in range(5):
         x = 60 + i * 80
         draw.ellipse([x, 220, x + 30, 250], fill=(150, 50, 150))
@@ -138,8 +124,18 @@ VISION_PROMPTS = [
     },
 ]
 
-MAX_TOKENS = 256
-SEED = 42
+
+def resolve_model_path(model_path: str | None, config: dict) -> str:
+    """Resolve model path -- use provided path, config, or default HF model ID."""
+    if model_path:
+        return model_path
+    vlm_config = config.get("bench", {}).get("vlm", {})
+    model_id = vlm_config.get("model", "mlx-community/Qwen3.5-27B-mxfp8-mlx")
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download(model_id)
+    except Exception:
+        return model_id
 
 
 # ---------------------------------------------------------------------------
@@ -173,34 +169,33 @@ def bench_text_prompt(
     model,
     processor,
     prompt: dict,
-    max_tokens: int = MAX_TOKENS,
+    max_tokens: int = 256,
+    seed: int = 42,
 ) -> dict:
     """Run a text-only prompt through the VLM text path."""
     tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
     messages = prompt["messages"]
 
-    # Apply chat template
     formatted = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
     )
     prompt_tokens = tokenizer.encode(formatted)
     num_prompt_tokens = len(prompt_tokens)
 
-    # Build sampler
-    mx.random.seed(SEED)
+    mx.random.seed(seed)
     sampler = make_sampler(temp=0.0)
 
-    # Use the language model wrapper for text generation through VLM
     wrapper = _LogitsWrapper(model.language_model)
 
     completion_tokens = 0
+    token_ids = []
     ttft_ms = 0.0
     gen_start = 0.0
 
     sync_barrier()
     start = time.perf_counter()
 
-    for _ in lm_stream_generate(
+    for response in lm_stream_generate(
         model=wrapper,
         tokenizer=tokenizer,
         prompt=prompt_tokens,
@@ -212,10 +207,17 @@ def bench_text_prompt(
             now = time.perf_counter()
             ttft_ms = (now - start) * 1000
             gen_start = now
+
+        if hasattr(response, "token"):
+            token_ids.append(int(response.token))
+
         completion_tokens += 1
 
     sync_barrier()
     end = time.perf_counter()
+
+    if completion_tokens == 0:
+        raise RuntimeError(f"No tokens generated for prompt '{prompt['name']}'")
 
     if completion_tokens > 1 and gen_start > 0:
         gen_time_s = end - gen_start
@@ -224,7 +226,9 @@ def bench_text_prompt(
         gen_tps = 0.0
 
     prefill_time_s = ttft_ms / 1000 if ttft_ms > 0 else 0.001
-    prefill_tps = num_prompt_tokens / prefill_time_s
+    prefill_tps = num_prompt_tokens / prefill_time_s if prefill_time_s > 0 else 0.0
+
+    fp = fingerprint_output(token_ids) if token_ids else ""
 
     return {
         "name": prompt["name"],
@@ -234,6 +238,8 @@ def bench_text_prompt(
         "completion_tokens": completion_tokens,
         "prompt_tokens": num_prompt_tokens,
         "had_images": False,
+        "token_ids": token_ids,
+        "fingerprint": fp,
     }
 
 
@@ -246,12 +252,12 @@ def bench_vision_prompt(
     processor,
     prompt: dict,
     test_image: Image.Image,
-    max_tokens: int = MAX_TOKENS,
+    max_tokens: int = 256,
+    seed: int = 42,
 ) -> dict:
     """Run a vision prompt through the VLM vision path (pre-filled cache pattern)."""
     tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
 
-    # Format prompt with chat template
     messages = prompt["messages"]
     num_images = 1
 
@@ -262,7 +268,6 @@ def bench_vision_prompt(
         processor, model.config, messages, num_images=num_images,
     )
 
-    # Prepare inputs (tokenize + image processing)
     image_token_index = getattr(model.config, "image_token_index", None)
     inputs = vlm_prepare_inputs(
         processor,
@@ -282,7 +287,6 @@ def bench_vision_prompt(
         if k not in ("input_ids", "pixel_values", "attention_mask")
     }
 
-    # Build VLM forward kwargs
     vlm_kwargs = dict(extra_kwargs)
     if pixel_values is not None:
         vlm_kwargs["pixel_values"] = pixel_values
@@ -292,25 +296,23 @@ def bench_vision_prompt(
 
     num_prompt_tokens = input_ids.size
 
-    # Create KV cache and wrapper
     wrapper = _LogitsWrapper(model.language_model)
     request_cache = make_prompt_cache(wrapper)
 
-    # Build sampler
-    mx.random.seed(SEED)
+    mx.random.seed(seed)
     sampler = make_sampler(temp=0.0)
 
     # Phase 1: Vision encoding (fills KV cache)
     sync_barrier()
     vision_start = time.perf_counter()
 
+    first_token_id = None
     with wired_limit(model, [mx.default_stream(mx.default_device())]):
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
         output = model(input_ids, cache=request_cache, **vlm_kwargs)
         logits = output.logits if hasattr(output, "logits") else output
 
-        # Sample first token
         last_logits = logits[:, -1, :]
         first_logprobs = last_logits - mx.logsumexp(last_logits, axis=-1, keepdims=True)
         first_token_id = int(sampler(first_logprobs).item())
@@ -321,10 +323,11 @@ def bench_vision_prompt(
     ttft_ms = img_time_ms + vision_time_ms
 
     # Phase 2: Text generation with pre-filled cache
-    completion_tokens = 1  # first token already sampled
+    completion_tokens = 1
+    token_ids = [first_token_id]
     gen_start = time.perf_counter()
 
-    for _ in lm_stream_generate(
+    for response in lm_stream_generate(
         model=wrapper,
         tokenizer=tokenizer,
         prompt=[first_token_id],
@@ -332,19 +335,24 @@ def bench_vision_prompt(
         max_tokens=max_tokens - 1,
         prompt_cache=request_cache,
     ):
+        if hasattr(response, "token"):
+            token_ids.append(int(response.token))
+
         completion_tokens += 1
 
     sync_barrier()
     end = time.perf_counter()
 
-    if completion_tokens > 1:
-        gen_time_s = end - gen_start
-        gen_tps = (completion_tokens - 1) / gen_time_s if gen_time_s > 0 else 0.0
-    else:
-        gen_tps = 0.0
+    if completion_tokens <= 1:
+        raise RuntimeError(f"No tokens generated in decode phase for prompt '{prompt['name']}'")
+
+    gen_time_s = end - gen_start
+    gen_tps = (completion_tokens - 1) / gen_time_s if gen_time_s > 0 else 0.0
 
     prefill_time_s = ttft_ms / 1000 if ttft_ms > 0 else 0.001
-    prefill_tps = num_prompt_tokens / prefill_time_s
+    prefill_tps = num_prompt_tokens / prefill_time_s if prefill_time_s > 0 else 0.0
+
+    fp = fingerprint_output(token_ids) if token_ids else ""
 
     return {
         "name": prompt["name"],
@@ -356,6 +364,8 @@ def bench_vision_prompt(
         "had_images": True,
         "vision_ms": vision_time_ms,
         "img_processing_ms": img_time_ms,
+        "token_ids": token_ids,
+        "fingerprint": fp,
     }
 
 
@@ -367,31 +377,32 @@ def run_benchmark(
     model_path: str,
     runs: int = 3,
     warmup: int = 1,
+    max_tokens: int = 256,
+    seed: int = 42,
     reset_baseline: bool = False,
     text_only: bool = False,
     vision_only: bool = False,
+    scoring_weights: dict | None = None,
+    constraints: dict | None = None,
 ) -> dict:
     """Run the full VLM benchmark suite."""
     ensure_dirs()
 
-    # Load model
     print(f"Loading model: {model_path}", file=sys.stderr)
     model, processor = vlm_load(model_path)
     model_name = Path(model_path).name if "/" not in model_path or Path(model_path).exists() else model_path.split("/")[-1]
     print(f"Model loaded: {model_name}", file=sys.stderr)
 
-    # Reset peak memory tracking
     mx.reset_peak_memory()
 
-    # Generate test images
     simple_img = make_simple_image()
     complex_img = make_complex_image()
     test_images = {"vision_simple": simple_img, "vision_complex": complex_img}
 
     hardware = get_hardware_info()
     all_prompt_results = []
+    all_run_results = []
 
-    # Select prompts
     prompts_to_run = []
     if not vision_only:
         for p in TEXT_PROMPTS:
@@ -402,27 +413,26 @@ def run_benchmark(
             prompts_to_run.append(("vision", p, img))
 
     for prompt_type, prompt, img in prompts_to_run:
-        # Warmup
         for w in range(warmup):
             print(f"  warmup {w + 1}/{warmup}: {prompt['name']}...", end="\r", file=sys.stderr)
             if prompt_type == "text":
-                bench_text_prompt(model, processor, prompt)
+                bench_text_prompt(model, processor, prompt, max_tokens=max_tokens, seed=seed)
             else:
-                bench_vision_prompt(model, processor, prompt, img)
+                bench_vision_prompt(model, processor, prompt, img, max_tokens=max_tokens, seed=seed)
             mx.clear_cache()
 
-        # Measured runs
         prompt_runs = []
         for r in range(runs):
             print(f"  run {r + 1}/{runs}: {prompt['name']}...   ", end="\r", file=sys.stderr)
             if prompt_type == "text":
-                result = bench_text_prompt(model, processor, prompt)
+                result = bench_text_prompt(model, processor, prompt, max_tokens=max_tokens, seed=seed)
             else:
-                result = bench_vision_prompt(model, processor, prompt, img)
+                result = bench_vision_prompt(model, processor, prompt, img, max_tokens=max_tokens, seed=seed)
             prompt_runs.append(result)
             mx.clear_cache()
 
-        # Average across runs
+        all_run_results.append(prompt_runs)
+
         avg_result = {
             "name": prompt["name"],
             "gen_tps": sum(r["gen_tps"] for r in prompt_runs) / len(prompt_runs),
@@ -431,8 +441,8 @@ def run_benchmark(
             "completion_tokens": sum(r["completion_tokens"] for r in prompt_runs) / len(prompt_runs),
             "prompt_tokens": prompt_runs[0]["prompt_tokens"],
             "had_images": prompt_runs[0]["had_images"],
+            "fingerprint": prompt_runs[-1]["fingerprint"],
         }
-        # Vision-specific averages
         if prompt_runs[0].get("vision_ms") is not None:
             avg_result["vision_ms"] = sum(r["vision_ms"] for r in prompt_runs) / len(prompt_runs)
             avg_result["img_processing_ms"] = sum(r["img_processing_ms"] for r in prompt_runs) / len(prompt_runs)
@@ -441,16 +451,15 @@ def run_benchmark(
         extra = f", vision={avg_result.get('vision_ms', 0):.1f}ms" if avg_result.get("vision_ms") else ""
         print(f"  {prompt['name']}: gen={avg_result['gen_tps']:.1f} tps, "
               f"ttft={avg_result['ttft_ms']:.1f}ms, "
-              f"prefill={avg_result['prefill_tps']:.1f} tps{extra}", file=sys.stderr)
+              f"prefill={avg_result['prefill_tps']:.1f} tps{extra}, "
+              f"fp={avg_result['fingerprint']}", file=sys.stderr)
 
-    # Aggregate metrics
     avg_gen_tps = sum(r["gen_tps"] for r in all_prompt_results) / len(all_prompt_results)
     avg_ttft_ms = sum(r["ttft_ms"] for r in all_prompt_results) / len(all_prompt_results)
     avg_prefill_tps = sum(r["prefill_tps"] for r in all_prompt_results) / len(all_prompt_results)
     peak_memory_gb = mx.get_peak_memory() / (1024 ** 3)
     total_runs = len(prompts_to_run) * runs
 
-    # Vision-specific aggregate
     vision_results = [r for r in all_prompt_results if r.get("vision_ms") is not None]
     avg_vision_ms = sum(r["vision_ms"] for r in vision_results) / len(vision_results) if vision_results else 0.0
 
@@ -464,8 +473,12 @@ def run_benchmark(
     if avg_vision_ms > 0:
         metrics["avg_vision_ms"] = round(avg_vision_ms, 1)
 
-    # Baseline
     baseline_data = load_baseline(VLM_DIR)
+    fingerprint_match = True
+    all_violations = []
+    suspicion_warnings = []
+    variance_warnings = []
+
     if baseline_data is None or reset_baseline:
         result_data = build_result_data(
             bench="vlm", model=model_name, timestamp=timestamp,
@@ -479,26 +492,61 @@ def run_benchmark(
     else:
         baseline_metrics = baseline_metrics_from_result(baseline_data)
         composite_score = compute_composite_score(
-            avg_gen_tps, avg_ttft_ms, avg_prefill_tps, peak_memory_gb, baseline_metrics,
+            avg_gen_tps, avg_ttft_ms, avg_prefill_tps, peak_memory_gb,
+            baseline_metrics, weights=scoring_weights,
         )
         avg_completion = sum(r["completion_tokens"] for r in all_prompt_results) / len(all_prompt_results)
+
         violations = check_hard_constraints(
             avg_gen_tps, avg_ttft_ms, avg_prefill_tps, peak_memory_gb,
-            avg_completion, baseline_metrics,
+            avg_completion, baseline_metrics, constraints=constraints,
         )
-        if violations:
+        all_violations.extend(violations)
+
+        per_prompt_violations = check_per_prompt_constraints(
+            all_prompt_results, baseline_data, constraints=constraints,
+        )
+        all_violations.extend(per_prompt_violations)
+
+        fp_violations = check_fingerprints(all_prompt_results, baseline_data)
+        if fp_violations:
+            fingerprint_match = False
+            all_violations.extend(fp_violations)
+
+        suspicion_warnings = check_suspicion(composite_score, constraints=constraints)
+
+        transposed_runs = []
+        for run_idx in range(runs):
+            run_slice = [per_prompt[run_idx] for per_prompt in all_run_results]
+            transposed_runs.append(run_slice)
+        variance_warnings = check_variance(transposed_runs, constraints=constraints)
+
+        if all_violations:
             print(f"\nHard constraint violations:", file=sys.stderr)
-            for v in violations:
+            for v in all_violations:
                 print(f"  - {v}", file=sys.stderr)
+
+        if suspicion_warnings:
+            print(f"\nSuspicion warnings:", file=sys.stderr)
+            for w in suspicion_warnings:
+                print(f"  - {w}", file=sys.stderr)
+
+        if variance_warnings:
+            print(f"\nVariance warnings:", file=sys.stderr)
+            for w in variance_warnings:
+                print(f"  - {w}", file=sys.stderr)
 
         result_data = build_result_data(
             bench="vlm", model=model_name, timestamp=timestamp,
             composite_score=round(composite_score, 4), metrics=metrics,
             per_prompt=all_prompt_results, hardware=hardware,
         )
+        result_data["fingerprint_match"] = fingerprint_match
+        result_data["hard_constraint_violations"] = all_violations
+        result_data["suspicion_warnings"] = suspicion_warnings
+        result_data["variance_warnings"] = variance_warnings
         save_run(VLM_DIR, result_data, timestamp.replace(":", ""))
 
-    # Print grep-friendly output
     extra_lines = {}
     if avg_vision_ms > 0:
         extra_lines["avg_vision_ms"] = f"{avg_vision_ms:.1f}"
@@ -512,6 +560,7 @@ def run_benchmark(
         runs=total_runs,
         model=model_name,
         bench="vlm",
+        fingerprint_match=fingerprint_match if not reset_baseline else None,
         extra_lines=extra_lines if extra_lines else None,
     )
 
@@ -525,25 +574,41 @@ def run_benchmark(
 def main():
     parser = argparse.ArgumentParser(description="Vision benchmark (mlx-vlm path)")
     parser.add_argument("--model-path", default=None, help="Model path or HF repo ID")
-    parser.add_argument("--runs", type=int, default=3, help="Measured runs per prompt")
-    parser.add_argument("--warmup", type=int, default=1, help="Warmup runs per prompt")
+    parser.add_argument("--runs", type=int, default=None, help="Measured runs per prompt (overrides config)")
+    parser.add_argument("--warmup", type=int, default=None, help="Warmup runs per prompt (overrides config)")
+    parser.add_argument("--max-tokens", type=int, default=None, help="Max generation tokens (overrides config)")
     parser.add_argument("--reset-baseline", action="store_true", help="Re-establish baseline")
     parser.add_argument("--text-only", action="store_true", help="Skip vision prompts")
     parser.add_argument("--vision-only", action="store_true", help="Skip text prompts")
+    parser.add_argument("--config", default=None, help="Path to bench_config.toml")
     args = parser.parse_args()
 
     if args.text_only and args.vision_only:
         print("Cannot specify both --text-only and --vision-only", file=sys.stderr)
         sys.exit(1)
 
-    model_path = resolve_model_path(args.model_path)
+    config = load_config(Path(args.config) if args.config else None)
+    bench_params = get_bench_params(config)
+    scoring_weights = get_scoring_weights(config)
+    constraints = get_constraints(config)
+
+    runs = args.runs if args.runs is not None else bench_params["runs"]
+    warmup = args.warmup if args.warmup is not None else bench_params["warmup"]
+    max_tokens = args.max_tokens if args.max_tokens is not None else bench_params["max_tokens"]
+    seed = bench_params["seed"]
+
+    model_path = resolve_model_path(args.model_path, config)
     run_benchmark(
         model_path=model_path,
-        runs=args.runs,
-        warmup=args.warmup,
+        runs=runs,
+        warmup=warmup,
+        max_tokens=max_tokens,
+        seed=seed,
         reset_baseline=args.reset_baseline,
         text_only=args.text_only,
         vision_only=args.vision_only,
+        scoring_weights=scoring_weights,
+        constraints=constraints,
     )
 
 

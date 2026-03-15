@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Benchmark results analysis tool.
 
-Reads results.tsv and per-run JSON files to produce summary tables,
-per-metric breakdowns, and progress charts.
+Reads results.tsv, per-run JSON files, and per-cycle JSON logs to produce
+summary tables, per-metric breakdowns, trendlines, and progress charts.
 
 Usage:
-    uv run scripts/bench_analysis.py
-    uv run scripts/bench_analysis.py --no-chart
+    uv run apps/optloop/scripts/bench_analysis.py
+    uv run apps/optloop/scripts/bench_analysis.py --no-chart
 """
 
 import argparse
@@ -15,10 +15,7 @@ from pathlib import Path
 
 import orjson
 
-from bench_common import DATA_DIR, REPO_ROOT, TEXT_DIR, VLM_DIR
-
-
-RESULTS_TSV = REPO_ROOT / "results.tsv"
+from bench_common import DATA_DIR, RESULTS_TSV, TEXT_DIR, VLM_DIR, load_cycles
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +48,11 @@ def load_json_runs(bench_dir: Path) -> list[dict]:
         return []
     runs = []
     for path in sorted(bench_dir.glob("run_*.json")):
-        with open(path, "rb") as f:
-            runs.append(orjson.loads(f.read()))
+        try:
+            with open(path, "rb") as f:
+                runs.append(orjson.loads(f.read()))
+        except (ValueError, OSError) as exc:
+            print(f"WARNING: skipping corrupt run file {path.name}: {exc}", file=sys.stderr)
     return runs
 
 
@@ -121,18 +121,70 @@ def print_metric_breakdown(bench_type: str, runs: list[dict]):
 
 
 # ---------------------------------------------------------------------------
+# Cycle analysis
+# ---------------------------------------------------------------------------
+
+def print_cycle_analysis(cycles: list[dict]):
+    """Print per-cycle trendline analysis."""
+    if not cycles:
+        print("No cycle data found.")
+        return
+
+    print("=== Cycle Trendlines ===")
+    header = (
+        f"{'Cycle':>5} {'Decision':<10} {'TxtScore':>10} {'VlmScore':>10} "
+        f"{'TxtTPS':>8} {'VlmTPS':>8} {'Description'}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for c in cycles:
+        cid = c.get("cycle_id", "?")
+        decision = c.get("decision", "?")
+        text_score = ""
+        vlm_score = ""
+        text_tps = ""
+        vlm_tps = ""
+
+        results = c.get("results", {})
+        if "text" in results:
+            text_score = f"{results['text'].get('composite_score', 0):.4f}"
+            text_tps = f"{results['text'].get('metrics', {}).get('avg_gen_tps', 0):.1f}"
+        if "vlm" in results:
+            vlm_score = f"{results['vlm'].get('composite_score', 0):.4f}"
+            vlm_tps = f"{results['vlm'].get('metrics', {}).get('avg_gen_tps', 0):.1f}"
+
+        desc = c.get("optimizer", {}).get("description", "")[:50]
+        print(f"{cid:>5} {decision:<10} {text_score:>10} {vlm_score:>10} "
+              f"{text_tps:>8} {vlm_tps:>8} {desc}")
+    print()
+
+    # Cumulative drift from original baseline
+    if cycles and cycles[-1].get("cumulative"):
+        cum = cycles[-1]["cumulative"]
+        print("=== Cumulative Drift from Original Baseline ===")
+        vs = cum.get("vs_original_baseline", {})
+        for key, val in vs.items():
+            print(f"  {key}: {val:+.1f}%")
+        print(f"  Cycles: {cum.get('cycles_since_baseline', '?')}")
+        print(f"  Kept: {cum.get('total_kept', '?')}")
+        print(f"  Discarded: {cum.get('total_discarded', '?')}")
+        print(f"  Crashed: {cum.get('total_crashed', '?')}")
+        print()
+
+
+# ---------------------------------------------------------------------------
 # Combined ranking
 # ---------------------------------------------------------------------------
 
 def print_rankings(rows: list[dict]):
     """Rank kept experiments by combined score delta."""
-    kept = [r for r in rows if r.get("status") == "keep" and r.get("status") != "baseline"]
+    kept = [r for r in rows if r.get("status") == "keep"]
 
     if not kept:
         print("No kept experiments to rank.")
         return
 
-    # Compute combined delta
     ranked = []
     for r in kept:
         try:
@@ -161,7 +213,7 @@ def print_rankings(rows: list[dict]):
 # Progress chart
 # ---------------------------------------------------------------------------
 
-def generate_chart(rows: list[dict]):
+def generate_chart(rows: list[dict], cycles: list[dict]):
     """Generate progress.png chart with dual-axis scores."""
     try:
         import matplotlib
@@ -171,28 +223,41 @@ def generate_chart(rows: list[dict]):
         print("matplotlib not installed -- skipping chart generation.", file=sys.stderr)
         return
 
-    kept = [r for r in rows if r.get("status") in ("keep", "baseline")]
-    if len(kept) < 2:
+    # Prefer cycle data if available
+    if cycles and len(cycles) >= 2:
+        indices = [c["cycle_id"] for c in cycles]
+        text_scores = []
+        vlm_scores = []
+        for c in cycles:
+            results = c.get("results", {})
+            text_scores.append(results.get("text", {}).get("composite_score", 1.0))
+            vlm_scores.append(results.get("vlm", {}).get("composite_score", 1.0))
+        xlabel = "Cycle #"
+    elif rows and len(rows) >= 2:
+        kept = [r for r in rows if r.get("status") in ("keep", "baseline")]
+        if len(kept) < 2:
+            print("Not enough data points for chart.", file=sys.stderr)
+            return
+        indices = list(range(len(kept)))
+        text_scores = []
+        vlm_scores = []
+        for r in kept:
+            try:
+                text_scores.append(float(r.get("text_score", 1.0)))
+            except (ValueError, TypeError):
+                text_scores.append(1.0)
+            try:
+                vlm_scores.append(float(r.get("vlm_score", 1.0)))
+            except (ValueError, TypeError):
+                vlm_scores.append(1.0)
+        xlabel = "Experiment #"
+    else:
         print("Not enough data points for chart.", file=sys.stderr)
         return
 
-    indices = list(range(len(kept)))
-    text_scores = []
-    vlm_scores = []
-
-    for r in kept:
-        try:
-            text_scores.append(float(r.get("text_score", 1.0)))
-        except (ValueError, TypeError):
-            text_scores.append(1.0)
-        try:
-            vlm_scores.append(float(r.get("vlm_score", 1.0)))
-        except (ValueError, TypeError):
-            vlm_scores.append(1.0)
-
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
-    ax1.set_xlabel("Experiment #")
+    ax1.set_xlabel(xlabel)
     ax1.set_ylabel("Text Score", color="tab:blue")
     ax1.plot(indices, text_scores, "o-", color="tab:blue", label="Text")
     ax1.tick_params(axis="y", labelcolor="tab:blue")
@@ -234,9 +299,13 @@ def main():
     print_metric_breakdown("text", text_runs)
     print_metric_breakdown("vlm", vlm_runs)
 
+    # Cycle analysis
+    cycles = load_cycles()
+    print_cycle_analysis(cycles)
+
     # Chart
-    if not args.no_chart and rows:
-        generate_chart(rows)
+    if not args.no_chart and (rows or cycles):
+        generate_chart(rows, cycles)
 
 
 if __name__ == "__main__":

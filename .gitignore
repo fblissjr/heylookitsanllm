@@ -29,9 +29,17 @@ update-coderef.sh
 model.toml
 models.toml
 
-# bench data
+# bench data (legacy paths)
 results.tsv
 data/bench/
+# optloop bench data
+apps/optloop/results.tsv
+apps/optloop/data/
+# optloop-lib bench data + fork clones
+apps/optloop-lib/results.tsv
+apps/optloop-lib/data/
+apps/optloop-lib/repos/
+apps/optloop-lib/uv.lock
 .claude
 
 # Distribution / packaging

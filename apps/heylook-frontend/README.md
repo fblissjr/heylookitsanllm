@@ -19,41 +19,82 @@ A modern, responsive chat interface for interacting with local LLM models via th
 - **Dark theme**: Native dark mode with system preference detection
 - **Responsive design**: Works on desktop and mobile browsers
 
-## Quick Start
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 18+
 - bun
 - heylookitsanllm backend running on localhost:8080
 
-### Installation
+## End-to-End Tutorial
+
+### 1. Install dependencies
 
 ```bash
 cd apps/heylook-frontend
 bun install
 ```
 
-### Development
+### 2. Start the backend
+
+In a separate terminal, from the repo root:
 
 ```bash
-# Start frontend only
-bun run dev
+uv run uvicorn heylook_llm.api:app --host 0.0.0.0 --port 8080
+```
 
-# Start frontend + backend together
-bun run dev:all
+Or use the convenience script from the frontend dir:
 
-# Start backend separately
+```bash
 bun run dev:backend
 ```
 
-The app will be available at http://localhost:5173
+### 3. Start the frontend
 
-### Production Build
+```bash
+bun run dev
+```
+
+The app will be available at http://localhost:5173.
+
+### 4. Load a model
+
+Open the app in your browser. Navigate to the **Models** applet (sidebar). Select a model from the list and click "Load". The backend will download (if needed) and load the model into memory.
+
+### 5. Use the applets
+
+- **Chat**: Send messages, stream responses token-by-token. Attach images for VLM models. Adjust sampler settings (temperature, top_p, top_k) in the sidebar.
+- **Batch**: Queue multiple prompts for sequential processing.
+- **Token Explorer**: Visualize tokenization and token probabilities.
+- **Model Comparison**: Run the same prompt through different models side-by-side.
+- **Performance**: Monitor generation speed, memory usage, and latency.
+- **Notebook**: Multi-cell prompt workspace with persistent state.
+- **Models**: Browse, load, and unload models.
+
+### 6. Run tests
+
+```bash
+bun run test:run    # Single run (874 tests)
+bun run test        # Watch mode
+```
+
+### 7. Build for production
 
 ```bash
 bun run build
-bun run preview  # Preview production build
+bun run preview     # Preview production build locally
+```
+
+### Development shortcuts
+
+```bash
+# Start frontend + backend together
+bun run dev:all
+
+# Run with Vitest UI
+bun run test:ui
+
+# E2E tests (requires backend running)
+bun run test:e2e
 ```
 
 ## Testing

@@ -1,0 +1,85 @@
+# Eval configuration for the library-level inference optimization loop.
+# Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
+# This file is OFF-LIMITS to the optimizer agent.
+
+[bench]
+runs = 3                          # measured runs per prompt
+warmup = 1                        # warmup runs per prompt
+max_tokens = 256                  # generation limit
+seed = 42                         # deterministic sampling
+timeout_seconds = 600             # per-bench timeout (10 min)
+
+[bench.text]
+model = "mlx-community/google_gemma-3-27b-it-mlx-bf16"
+
+[bench.vlm]
+model = "mlx-community/Qwen3.5-27B-mxfp8-mlx"
+
+[scoring]
+# Weights must sum to 1.0. Adjust these to shift optimization pressure.
+gen_tps_weight = 0.40             # generation tokens/sec
+ttft_weight = 0.25                # time to first token (lower = better)
+prefill_tps_weight = 0.20         # prompt processing speed
+memory_weight = 0.15              # peak GPU memory (lower = better)
+
+[scoring.decision]
+# These thresholds are read by the agent from program.md instructions,
+# NOT by bench scripts. Changing values here has no effect without
+# also updating program.md.
+both_improved_min = 1.00          # both scores >= this = KEEP
+cross_regression_tolerance = 0.02 # max regression in one bench when other improves
+cross_improvement_min = 0.03      # min improvement in one bench to tolerate regression in other
+
+[constraints]
+max_single_metric_regression = 0.30   # 30% regression in any metric = auto-fail
+max_token_deviation = 0.20            # 20% token count deviation = correctness fail
+per_prompt_regression_check = true    # apply constraints per-prompt, not just averages
+require_fingerprint_match = true      # output must be byte-identical to baseline (greedy decode)
+require_tests_pass = true             # unit/contract tests must pass
+max_suspicion_gain = 0.30             # >30% gain in one cycle = flag for review
+variance_max_cv = 0.15                # coefficient of variation threshold
+
+[optimizer]
+# Scope controls. The optimizer agent reads these to know its boundaries.
+allowed_paths = [
+    "repos/mlx-lm/mlx_lm/",
+    "repos/mlx-vlm/mlx_vlm/",
+]
+banned_files = [
+    "repos/mlx-lm/setup.py",
+    "repos/mlx-vlm/pyproject.toml",
+    "apps/optloop-lib/bench_config.toml",
+]
+banned_paths = [
+    "apps/optloop-lib/scripts/",
+    "apps/optloop-lib/data/",
+    "apps/optloop-lib/tests/",
+    "repos/mlx-lm/tests/",
+    "repos/mlx-vlm/mlx_vlm/tests/",
+    "src/",
+]
+banned_diff_patterns = [
+    "apps/optloop-lib/",
+    "src/",
+    "setup\\.py",
+    "pyproject\\.toml",
+]
+
+[optimizer.scope]
+# Tier 1: hot paths
+tier1 = [
+    "mlx_lm/generate.py",
+    "mlx_lm/models/cache.py",
+    "mlx_lm/sample_utils.py",
+]
+# Tier 2: model architectures + quantization
+tier2 = [
+    "mlx_lm/models/*.py",
+    "mlx_lm/quant/*.py",
+]
+# Tier 3: VLM pipeline
+tier3 = [
+    "mlx_vlm/generate.py",
+    "mlx_vlm/prompt_utils.py",
+    "mlx_vlm/utils.py",
+]

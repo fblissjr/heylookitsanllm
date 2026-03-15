@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.6]
+
+### Changed
+
+- **Python version**: Bump minimum from 3.11 to 3.12 across all pyproject.toml files (main, optloop-lib, batch-labeler)
+- **optloop-lib**: Remove stale dependency floor pins (bare package names, let uv resolve latest)
+- **optloop-lib**: Switch build system from hatchling to setuptools (no package to build)
+
+### Added
+
+- **optloop-lib**: Smoke import tests for bench_text, bench_vlm, bench_analysis (60 tests total)
+
+## [1.23.5]
+
+### Added
+
+- **optloop-lib**: Library-level inference optimizer targeting mlx-lm and mlx-vlm internals via editable installs from GitHub fork clones (`apps/optloop-lib/repos/`)
+
+## [1.23.4]
+
+### Fixed
+
+- **Optloop JSON error handling**: `load_baseline()`, `load_cycles()`, and `load_json_runs()` now catch corrupt JSON instead of crashing the entire run (warn to stderr, skip bad files)
+- **Optloop lazy MLX import**: `bench_common.py` defers `import mlx.core` to `sync_barrier()` so pure functions can be imported without triggering Metal initialization
+
+### Added
+
+- **Optloop test coverage**: 18 new tests covering `baseline_metrics_from_result`, `get_bench_params`, `get_constraints`, TTFT per-prompt regression, prefill/memory hard constraints, partial fingerprint matches, zero-variance guard, and corrupt JSON handling (52 total)
+
+## [1.23.3]
+
+### Fixed
+
+- **Optloop prefill_tps guard**: bench_vlm.py now guards `prefill_tps` division with `if prefill_time_s > 0 else 0.0`, matching bench_text.py
+- **Optloop dead code**: bench_analysis.py `print_rankings` removed redundant `and r.get("status") != "baseline"` condition (always true when first condition is true)
+
+### Added
+
+- **Optloop unit tests**: 34 tests for bench_common pure functions (scoring, variance, constraints, suspicion, fingerprinting, config extraction) in `apps/optloop/tests/`
+
+## [1.23.2]
+
+### Fixed
+
+- **Optloop variance**: bench_common.py used population variance (N divisor) instead of sample variance (N-1), causing CV threshold to pass too easily with runs=3
+- **Optloop zero-token guard**: bench_text.py and bench_vlm.py now raise RuntimeError if generation produces 0 tokens instead of silently recording all-zero metrics
+- **Optloop atomic writes**: save_baseline, save_run, and save_cycle now write to tmp file and rename to prevent corruption on crash
+- **Optloop weight validation**: compute_composite_score warns to stderr if scoring weights don't sum to 1.0
+- **Optloop dead config docs**: bench_config.toml `[scoring.decision]` comments now clarify these values are read by the agent from program.md, not by bench scripts
+
+### Changed
+
+- **Optloop README**: full rewrite with detailed end-to-end tutorial, configuration reference, scoring explanation, verification walkthrough, and troubleshooting guide
+
+## [1.23.1]
+
+### Fixed
+
+- **Optloop skill names**: program.md referenced `/mlx` and `/mlx-lm` instead of `/mlx-skills:mlx` and `/mlx-skills:mlx-lm`
+- **Variance transposition shadowing**: list comprehension variable `prompt_runs` shadowed outer scope in both bench scripts
+- **TimingContext `__exit__`**: renamed unused `*exc` to `*_exc` to suppress linter warning
+
+### Added
+
+- **Local source mode docs**: program.md documents how to use editable mlx-lm/mlx-vlm installs for library-level optimization
+- **Commented coderef config**: bench_config.toml has commented-out `allowed_paths` and `banned_diff_patterns` for local source mode
+
+## [1.23.0]
+
+### Added
+
+- **Output fingerprinting**: SHA-256 hash of token ID sequences for greedy decode correctness verification -- mismatch = auto-reject
+- **Per-cycle structured logging**: `data/cycles/cycle_NNNN.json` with git info, optimizer hypothesis, verification results, cumulative drift tracking
+- **Config-driven bench**: `bench_config.toml` controls scoring weights, constraint thresholds, model paths, and optimizer scope
+- **Verification phase**: diff inspection, per-prompt regression checks, suspicion flags, variance checks built into the optimization loop
+- **Optloop skill**: `/optloop` skill replaces the old `optloop.md` slash command
+
+### Changed
+
+- **Bench scripts relocated**: moved from `scripts/` to `apps/optloop/scripts/` following the batch-labeler self-contained app pattern
+- **Scoring weights configurable**: `compute_composite_score()` accepts weights dict from config instead of module-level constants
+- **Constraint thresholds configurable**: `check_hard_constraints()` reads thresholds from config
+- **CLI args override config**: bench scripts load `bench_config.toml` as defaults, CLI flags take precedence
+
+### Removed
+
+- `scripts/optloop.md` (replaced by `apps/optloop/program.md` + `/optloop` skill)
+
 ## [1.22.0]
 
 ### Added
