@@ -22,6 +22,8 @@ Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
    - `repos/mlx-lm/mlx_lm/sample_utils.py`
 4. Load `/mlx-skills:mlx` and `/mlx-skills:mlx-lm` skills for MLX optimization knowledge
 5. Read `apps/optloop-lib/bench_config.toml` -- this is your config. Do NOT modify it.
+5b. Read `docs/optimization_log.md` -- cross-session knowledge base (shared with optloop). Check baselines and prior findings before repeating work.
+5c. Read `apps/optloop-lib/AGENTS.md` -- library internals knowledge base (populated during optimization cycles).
 6. Establish baselines:
    ```
    cd apps/optloop-lib && uv run scripts/bench_text.py --reset-baseline 2>&1
@@ -71,6 +73,8 @@ LOOP FOREVER:
 1. Snapshot fork HEADs:
    Use bench_common.snapshot_coderef() conceptually -- record current branch + commit
    for both repos before making changes.
+1b. Read results.tsv -- check what's been tried this session, identify patterns
+1c. On first iteration: also read docs/optimization_log.md and AGENTS.md for cross-session context
 
 2. Choose optimization target (tier-guided, prefer tier 1 early)
 
@@ -213,6 +217,20 @@ Use `bench_common.next_cycle_id()`, `bench_common.save_cycle()`, and `bench_comm
 - Fork tests must continue passing
 - Do NOT modify bench scripts, test files, or bench_config.toml
 - Log every experiment, even crashes
+
+## Session End
+
+When the session ends (interrupted, wrapping up):
+
+1. Run analysis if cycle data exists
+2. Distill findings into `docs/optimization_log.md` on main:
+   - New baselines achieved (if improved over prior best)
+   - Approaches that worked (with magnitude)
+   - Approaches that failed (with reasoning)
+   - Technical discoveries and gotchas
+3. Update `apps/optloop-lib/AGENTS.md` with any new library internals knowledge
+4. Commit updates on main
+5. Write session log to `internal/log/log_YYYY-MM-DD.md`
 
 ## Never stop
 

@@ -27,6 +27,7 @@ Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
    - `src/heylook_llm/config.py`
 4. Load `/mlx-skills:mlx` and `/mlx-skills:mlx-lm` skills for MLX optimization knowledge
 5. Read `apps/optloop/bench_config.toml` -- this is your config. Do NOT modify it.
+5b. Read `docs/optimization_log.md` -- cross-session knowledge base with baselines, findings, and known dead-ends from prior sessions. Do not repeat failed approaches without a new angle.
 6. Run both baselines:
    ```
    uv run apps/optloop/scripts/bench_text.py --reset-baseline 2>&1
@@ -43,6 +44,10 @@ Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
 ## Scope
 
 Read scope from `[optimizer]` section of `bench_config.toml`.
+
+### Cross-session knowledge
+
+`docs/optimization_log.md` accumulates findings across sessions: baselines, what worked, what failed, technical gotchas. Read it during setup; update it at session end (on main, after merge).
 
 ### What you CAN modify
 
@@ -75,6 +80,8 @@ Requirements for local source mode:
 ```
 LOOP FOREVER:
 1. git status / git log --oneline -5
+1b. Read results.tsv -- check what's been tried this session, identify patterns in kept/discarded experiments
+1c. On first iteration: also read docs/optimization_log.md for cross-session findings
 2. Choose an optimization idea (use /mlx and /mlx-lm skills for guidance)
 3. Record your hypothesis: what you're changing and why you expect it to help
 4. Implement the change
@@ -236,6 +243,22 @@ vlm_apply_chat_template() -> vlm_prepare_inputs()
 - All unit/contract tests must pass
 - Do NOT modify bench scripts, test files, or bench_config.toml
 - Log every experiment, even crashes
+
+## Session End
+
+When the session ends (interrupted, wrapping up, or switching branches):
+
+1. Remove .pth file: `rm -f .venv/lib/python3.13/site-packages/heylook_llm_patches.pth`
+2. Run analysis if cycle data exists: `uv run apps/optloop/scripts/bench_analysis.py`
+3. Switch to main: `git checkout main`
+4. Distill findings into `docs/optimization_log.md`:
+   - New baselines achieved (if improved over prior best)
+   - Approaches that worked (with magnitude)
+   - Approaches that failed (with reasoning)
+   - Technical discoveries and gotchas
+   - Updated open questions
+5. Commit `docs/optimization_log.md`
+6. Write session log to `internal/log/log_YYYY-MM-DD.md`
 
 ## Never stop
 

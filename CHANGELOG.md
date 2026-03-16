@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2]
+
+### Added
+
+- **Optloop user guides**: `docs/optloop_guide.md` (user walkthrough, scoring, monitoring) and `docs/optloop_advanced.md` (bench activation gap, monkey patching, performance ceilings, failure modes, FAQ)
+- **Optloop data artifact reference**: inventory table documenting what gets created, where it lives, persistence rules, and audience
+- **Session-end protocol**: documented in program.md files, README, and user guides (teardown, analysis, optimization log update)
+- **Cross-session memory references**: both program.md files now reference `docs/optimization_log.md` in setup and loop steps; optloop-lib also references AGENTS.md
+
+## [1.24.1]
+
+### Added
+
+- **Optloop cross-session memory**: `docs/optimization_log.md` accumulates findings across optloop sessions (baselines, what worked/failed, technical gotchas). Optloop pre-flight, loop iteration, and session-end protocol updated to read and write it.
+
 ## [1.24.0]
 
 ### Fixed

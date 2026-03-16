@@ -150,13 +150,14 @@ In Claude Code, invoke the optloop skill with a run tag:
 This triggers the agent to:
 
 1. Read `CLAUDE.md`, `bench_config.toml`, and all in-scope source files
-2. Load `/mlx-skills:mlx` and `/mlx-skills:mlx-lm` domain knowledge
-3. Create branch `optloop/mar15` from current HEAD
-4. Run both benchmarks with `--reset-baseline` to set starting points
-5. Initialize `results.tsv` with headers and a baseline row
-6. Run existing tests to confirm a clean starting state
-7. Read `references/loop-protocol.md` and `references/optimization-guide.md`
-8. Begin the optimize-test-bench-verify loop (runs indefinitely until `Ctrl+C`)
+2. Read `docs/optimization_log.md` for cross-session knowledge (baselines, prior findings, known dead-ends)
+3. Load `/mlx-skills:mlx` and `/mlx-skills:mlx-lm` domain knowledge
+4. Create branch `optloop/mar15` from current HEAD
+5. Run both benchmarks with `--reset-baseline` to set starting points
+6. Initialize `results.tsv` with headers and a baseline row
+7. Run existing tests to confirm a clean starting state
+8. Read `references/loop-protocol.md` and `references/optimization-guide.md`
+9. Begin the optimize-test-bench-verify loop (runs indefinitely until `Ctrl+C`)
 
 There are two additional skills for related workflows:
 
@@ -496,3 +497,69 @@ uv run apps/optloop/scripts/bench_vlm.py --reset-baseline 2>&1
 By default, `/optloop` only modifies `src/heylook_llm/`. The hot paths (stream_generate, KVCache, samplers) live in mlx-lm and mlx-vlm.
 
 For library-level optimization of those internals, use the separate `/optloop-lib` skill which operates on fork repos at `apps/optloop-lib/repos/`. See `apps/optloop-lib/program.md` for details.
+
+## Cross-Session Memory
+
+`docs/optimization_log.md` accumulates findings across optloop sessions. It is committed to main (not gitignored) and persists between branches and sessions.
+
+Contents:
+
+- **Performance baselines**: Historical numbers per model and hardware
+- **Performance ceilings**: Theoretical max based on hardware bandwidth
+- **What works**: Confirmed improvements with magnitude and context
+- **What doesn't work**: Failed approaches with reasoning
+- **Technical findings**: Library quirks, gotchas, and workarounds
+- **Open questions**: Untested ideas for future sessions
+
+The optloop agent reads this file during setup and updates it at session end. See [docs/optloop_guide.md](../../docs/optloop_guide.md) for the full user walkthrough.
+
+## Data Artifacts
+
+| Artifact | Path | Gitignored | Persists Across Sessions | Audience |
+|----------|------|------------|--------------------------|----------|
+| baseline.json | `data/{text,vlm}/` | Yes | Yes (until --reset-baseline) | Agent + Human |
+| run_*.json | `data/{text,vlm}/` | Yes | Yes (accumulates) | Agent + Analysis |
+| cycle_*.json | `data/cycles/` | Yes | Yes (accumulates) | Agent + Human |
+| results.tsv | `apps/optloop/` | Yes | Yes (accumulates) | Agent + Human |
+| progress.png | `data/` | Yes | Regenerated on analysis | Human |
+| optimization_log.md | `docs/` | No (committed) | Yes (on main) | Both |
+| AGENTS.md | `apps/optloop-lib/` | No (committed) | Yes | Agent |
+| bench_config.toml | `apps/optloop*/` | No (committed) | Yes (locked) | Both |
+| .pth file | `.venv/.../` | N/A | Must be removed at teardown | Agent |
+
+## Session End
+
+When stopping an optloop session:
+
+1. **Remove .pth file**: `rm -f .venv/lib/python3.13/site-packages/heylook_llm_patches.pth`
+   The .pth file is branch-agnostic (shared across branches). Leaving it active on a branch without `patches.py` causes import errors.
+
+2. **Run analysis**: `uv run apps/optloop/scripts/bench_analysis.py` (or `/optloop-analysis app` in Claude Code)
+
+3. **Distill findings**: Switch to main and update `docs/optimization_log.md` with:
+   - New baselines (if improved)
+   - Approaches that worked or failed
+   - Technical discoveries
+   - Updated open questions
+
+4. **Commit**: `git add docs/optimization_log.md && git commit -m "chore(docs): update optimization log"`
+
+5. **Write session log**: Create `internal/log/log_YYYY-MM-DD.md` with session details
+
+## What Gets Merged to Main
+
+**From the optloop branch:**
+- `src/heylook_llm/providers/common/patches.py` and any other `src/` changes
+
+**Updated on main after merge:**
+- `docs/optimization_log.md` (new baselines, findings)
+- `CHANGELOG.md` (version bump describing improvements)
+- `internal/log/` session log
+
+**Not merged (gitignored):**
+- `results.tsv`, `data/` directory, `.pth` file
+
+## User Guides
+
+- [docs/optloop_guide.md](../../docs/optloop_guide.md) -- step-by-step user walkthrough, scoring, monitoring, configuration
+- [docs/optloop_advanced.md](../../docs/optloop_advanced.md) -- bench activation gap, monkey patching, performance ceilings, failure modes, FAQ
