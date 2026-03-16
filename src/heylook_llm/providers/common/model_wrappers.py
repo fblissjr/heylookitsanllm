@@ -13,8 +13,6 @@ The wrapper is a transparent nn.Module that must not interfere with:
 - Future mx.compile wrapping
 """
 
-import logging
-
 import mlx.nn as nn
 
 
@@ -61,24 +59,12 @@ class LanguageModelLogitsWrapper(nn.Module):
             self._cache_populated = True
 
     def __call__(self, *args, **kwargs):
-        """Direct logits extraction - the core optimization."""
-        # Direct logits extraction avoids creating intermediate objects
-        try:
-            result = self.language_model(*args, **kwargs)
-            # Check if result has logits attribute
-            if hasattr(result, 'logits'):
-                return result.logits
-            # If result is already logits (tensor), return it
-            elif hasattr(result, 'shape'):
-                return result
-            # Otherwise try to extract logits
-            else:
-                # Log for debugging
-                logging.debug(f"LanguageModelLogitsWrapper: Unexpected result type: {type(result)}")
-                return result
-        except Exception as e:
-            logging.error(f"LanguageModelLogitsWrapper error: {e}")
-            raise
+        """Direct logits extraction -- hot path, no try/except overhead."""
+        result = self.language_model(*args, **kwargs)
+        logits = getattr(result, 'logits', None)
+        if logits is not None:
+            return logits
+        return result
 
     @property
     def layers(self):

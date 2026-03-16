@@ -31,6 +31,29 @@ from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
 
 
+def _reset_vlm_positions(model) -> None:
+    """Reset mRoPE position state cached on VLM language models.
+
+    Qwen3.5-style models cache _position_ids and _rope_deltas on the
+    LanguageModel instance during forward(). These must be cleared between
+    fresh generations (no pre-filled cache) to prevent broadcast shape
+    mismatches in rotary embedding computation. Handles LogitsWrapper-style
+    wrapping by unwrapping first.
+    """
+    target = model
+    for attr in ('_lm', 'language_model'):
+        inner = getattr(target, attr, None)
+        if inner is not None:
+            target = inner
+            break
+    for attr in ('_position_ids', '_rope_deltas'):
+        if hasattr(target, attr):
+            try:
+                object.__setattr__(target, attr, None)
+            except Exception:
+                pass
+
+
 class DraftTuner:
     """Dynamically adjusts num_draft_tokens based on acceptance rate.
 
@@ -106,6 +129,13 @@ class DraftTuner:
                     f"DraftTuner: {model_id} acceptance {rate:.0%} -- "
                     f"decreasing draft tokens {current} -> {current - 1}"
                 )
+
+    def ensure_and_get(self, model_id: str, configured_default: int) -> int:
+        """Ensure baseline exists and return current draft token count. Single lock."""
+        with self._lock:
+            if model_id not in self._current:
+                self._current[model_id] = configured_default
+            return self._current[model_id]
 
     def _ensure_baseline(self, model_id: str, configured_default: int) -> None:
         """Set the baseline for a model if not already tracked."""
@@ -230,6 +260,15 @@ def run_generation(
     Yields:
         Generation response objects from lm_stream_generate.
     """
+    # Reset VLM mRoPE position state for fresh text generations.
+    # Qwen3.5-style models cache _position_ids and _rope_deltas on the
+    # language_model instance. Stale values from a prior generation cause
+    # broadcast shape mismatches in rotary embedding computation.
+    # Skip when pre_filled_cache is set -- the vision forward pass sets
+    # correct position state that must be preserved.
+    if pre_filled_cache is None:
+        _reset_vlm_positions(model)
+
     if pre_filled_cache is not None:
         # Vision path: cache already populated by VLM forward pass.
         # Skip radix cache -- vision embeddings can't be cached in the radix tree.
@@ -254,12 +293,11 @@ def run_generation(
 
     generation_stream = _get_generation_stream()
 
-    # Consult DraftTuner for dynamic draft token count
+    # Consult DraftTuner for dynamic draft token count (single lock acquisition)
     configured_draft = effective_request.get('num_draft_tokens', 3)
     if draft_model is not None and model_id:
         tuner = get_draft_tuner()
-        tuner._ensure_baseline(model_id, configured_draft)
-        num_draft_tokens = tuner.get_num_draft_tokens(model_id, configured_draft)
+        num_draft_tokens = tuner.ensure_and_get(model_id, configured_draft)
     else:
         num_draft_tokens = configured_draft
 

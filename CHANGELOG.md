@@ -7,12 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.24.0]
 
-### Added
+### Fixed
 
-- **Inference monkey patches**: `.pth`-activated runtime patches for mlx-lm (`patches.py`). Loaded at interpreter startup, including standalone bench scripts
-  - Cache `wired_limit` tree walk by `id(model)` -- eliminates repeated tree_reduce over model parameters
-  - Skip logsumexp in `generate_step` for greedy decode (temp=0, no logits processors) -- saves one full vocab-sized GPU op per token
-  - Skip per-token `peak_memory` in `stream_generate` -- deferred to final yield only
+- **VLM position state bleeding**: Qwen3.5 mRoPE models cache `_position_ids` and `_rope_deltas` on the language model instance. Stale values between fresh generations caused broadcast shape mismatches. Position state is now reset before each fresh generation in `run_generation()`
 
 ### Changed
 
