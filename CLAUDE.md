@@ -35,13 +35,14 @@ Check before making changes:
 Providers: MLXProvider (text+vision), MLXEmbeddingProvider (dynamic backbone via mlx-lm).
 LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
 Provider type: `Literal["mlx", "mlx_embedding"]`.
-RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip).
+RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip). Supports compaction (history summarization), recursive depth (`rlm_query()` child RLMs), and `max_errors` threshold.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
 - [internal/backend/providers/](./internal/backend/providers/) -- per-provider deep-dives (mlx.md)
 - [internal/backend/api.md](./internal/backend/api.md) -- endpoint architecture, API reference
 - [internal/backend/router.md](./internal/backend/router.md) -- routing and LRU cache
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system
+- [docs/rlm_guide.md](./docs/rlm_guide.md) -- RLM endpoint usage, request fields, examples
 
 ### Frontend: `apps/heylook-frontend/`
 

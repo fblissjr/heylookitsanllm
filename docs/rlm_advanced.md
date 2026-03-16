@@ -223,8 +223,8 @@ query = "Identify all causal relationships described in this text and draw a dep
 # Try fast model first
 result = rlm(context, query, model="Qwen3-4B", max_iterations=10)
 
-if result["finish_reason"] == "max_iterations":
-    print(f"Small model ran out of iterations ({result['rlm']['iterations']}), escalating...")
+if result["finish_reason"] in ("max_iterations", "error_threshold"):
+    print(f"Small model failed ({result['finish_reason']}), escalating...")
     result = rlm(context, query, model="Qwen3-30B", max_iterations=20)
 
 print(result["answer"])
@@ -282,6 +282,76 @@ The RLM loop naturally handles errors -- if code throws an exception, the error 
 ```
 
 The model might try CSV parsing, fail, try JSON, fail, try custom delimiters, succeed. Each error gives it information about the actual format. This is fundamentally different from single-shot prompting where you have to know the format upfront.
+
+## Pattern: Long-running with compaction
+
+For tasks that need many iterations (20+), enable compaction to prevent hitting the context window.
+
+```python
+result = rlm(
+    open("huge_dataset.csv").read(),
+    "Clean this data: find and fix inconsistencies, remove duplicates, "
+    "standardize formats. Report every change you make.",
+    max_iterations=40,
+    compaction=True,
+    compaction_threshold=0.8,
+    max_context_tokens=32768,  # Match your model's actual context window
+    max_errors=5,              # Don't waste iterations on repeated failures
+)
+
+print(f"Compacted {result['rlm']['compactions']} times")
+```
+
+When history exceeds 80% of the context window, the engine asks the model to summarize its progress, then replaces the full history with the summary. The REPL namespace (all variables) is preserved -- only the chat messages get compacted. This lets a 4B model work through 40+ iterations without losing early context.
+
+## Pattern: Recursive decomposition with `rlm_query()`
+
+Use `max_depth=2+` to let the model spawn child RLMs for complex sub-problems. Unlike `llm_query()` (single-shot), `rlm_query()` gives the child its own REPL loop.
+
+```python
+result = rlm(
+    open("annual_report.txt").read(),
+    "For each section of this report, write a detailed analysis. "
+    "Use rlm_query() for sections that need multi-step investigation "
+    "(e.g., financial data that requires computation). "
+    "Use llm_query() for sections that just need summarization.",
+    max_depth=2,
+    max_iterations=25,
+    sub_max_tokens=1024,
+)
+
+print(result["answer"])
+print(f"Child RLMs spawned: {len(result['rlm']['child_traces'] or [])}")
+for i, child in enumerate(result["rlm"]["child_traces"] or []):
+    print(f"  Child {i+1}: {child['iterations']} iterations, {child['sub_queries']} sub-queries")
+```
+
+`max_depth=2` means the parent can spawn children, but children can only use `llm_query()`. Use `max_depth=3` sparingly -- it allows grandchildren, which can get expensive.
+
+## Pattern: Error-bounded exploration
+
+Use `max_errors` to stop the model from spinning on unsolvable sub-tasks, combined with retry-with-escalation.
+
+```python
+# Try with sandbox + error bound
+result = rlm(
+    data,
+    "Parse this data and compute statistics",
+    sandbox=True,
+    max_errors=3,
+    max_iterations=10,
+)
+
+if result["finish_reason"] == "error_threshold":
+    # Model kept hitting sandbox restrictions -- retry without sandbox
+    result = rlm(
+        data,
+        "Parse this data and compute statistics. You may use any Python library.",
+        sandbox=False,
+        max_errors=5,
+        max_iterations=15,
+    )
+```
 
 ## Combining patterns
 
