@@ -21,7 +21,7 @@ import time
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
-from typing import Generator
+from typing import Callable, Generator
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -32,6 +32,26 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelRouter
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Reserved namespace names (used by SHOW_VARS and custom tools validation)
+# ---------------------------------------------------------------------------
+
+_RESERVED_NAMES = frozenset({
+    "context", "FINAL", "FINAL_VAR", "SHOW_VARS", "llm_query", "llm_query_batched",
+    "rlm_query", "rlm_query_batched", "_rlm_final", "__builtins__",
+})
+
+
+# ---------------------------------------------------------------------------
+# Callback type aliases
+# ---------------------------------------------------------------------------
+
+OnIterationStart = Callable[[int], None] | None
+OnIterationComplete = Callable[[int, float], None] | None
+OnSubcallStart = Callable[[int, str], None] | None
+OnSubcallComplete = Callable[[int, str, float], None] | None
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +82,7 @@ class RLMRequest(BaseModel):
     max_context_tokens: int = Field(8192, ge=512)
     max_depth: int = Field(1, ge=1, le=5)
     max_errors: int | None = Field(None, ge=1, le=20)
+    max_timeout: float | None = Field(None, ge=1.0)
 
 
 class RLMTraceEntry(BaseModel):
@@ -380,17 +401,62 @@ def _build_feedback(stdout: str, stderr: str) -> str:
 class RLMEngine:
     """Runs the RLM iteration loop using provider.create_chat_completion() directly."""
 
-    def __init__(self, router: ModelRouter):
+    def __init__(
+        self,
+        router: ModelRouter,
+        custom_tools: list | None = None,
+        on_iteration_start: OnIterationStart = None,
+        on_iteration_complete: OnIterationComplete = None,
+        on_subcall_start: OnSubcallStart = None,
+        on_subcall_complete: OnSubcallComplete = None,
+    ):
         self.router = router
+        self.on_iteration_start = on_iteration_start
+        self.on_iteration_complete = on_iteration_complete
+        self.on_subcall_start = on_subcall_start
+        self.on_subcall_complete = on_subcall_complete
+
+        # Parse and validate custom tools
+        self._custom_tools: dict[str, dict] = {}
+        if custom_tools:
+            for tool in custom_tools:
+                if isinstance(tool, dict):
+                    fn = tool.get("tool")
+                    desc = tool.get("description", "No description")
+                    if fn is None or not callable(fn):
+                        raise ValueError("Custom tool dict must have a callable 'tool' key")
+                    name = fn.__name__
+                elif callable(tool):
+                    name = tool.__name__
+                    fn = tool
+                    desc = tool.__doc__ or "No description"
+                else:
+                    raise ValueError(f"Custom tool must be a callable or dict, got {type(tool)}")
+                if name in _RESERVED_NAMES:
+                    raise ValueError(f"Custom tool name {name!r} conflicts with a reserved name")
+                self._custom_tools[name] = {"callable": fn, "description": desc}
 
     def _build_system_prompt(self, query: str, system: str | None, max_depth: int = 1) -> str:
         prompt = RLM_SYSTEM_PROMPT
+        prompt += "- `SHOW_VARS() -> str`: List all user-defined variables in the REPL (name: type)\n"
+        prompt += (
+            "- `llm_query_batched(prompts: list[str]) -> list[str]`: Run multiple sub-queries. "
+            "Uses GPU batching when available. Faster than a for loop with llm_query().\n"
+        )
         if max_depth > 1:
             prompt += (
-                "\n- `rlm_query(prompt: str) -> str`: Spawn a child RLM with its own REPL loop "
+                "- `rlm_query(prompt: str) -> str`: Spawn a child RLM with its own REPL loop "
                 "to work through a sub-problem iteratively. Use this for complex sub-tasks that "
                 "need multiple steps of exploration. For simple single-shot questions, prefer `llm_query()`.\n"
             )
+            prompt += (
+                "- `rlm_query_batched(prompts: list[str]) -> list[str]`: Run multiple recursive "
+                "sub-calls sequentially.\n"
+            )
+        if self._custom_tools:
+            prompt += "\n## Custom Tools\n\n"
+            for name, info in self._custom_tools.items():
+                prompt += f"- `{name}`: {info['description']}\n"
         if system:
             prompt += f"\n# Additional Instructions\n\n{system}\n"
         prompt += f"\n# Task\n\n{query}\n"
@@ -497,8 +563,15 @@ class RLMEngine:
         """Create the rlm_query() closure that spawns a child RLM."""
         def rlm_query(prompt: str) -> str:
             sub_query_counter[0] += 1
+            model_id = request.sub_model or request.model
+            try:
+                if self.on_subcall_start:
+                    self.on_subcall_start(request.max_depth, prompt[:100])
+            except Exception:
+                pass
+            t0 = time.time()
             child_request = RLMRequest(
-                model=request.sub_model or request.model,
+                model=model_id,
                 context=prompt,
                 query="Answer this question using the context provided.",
                 max_iterations=max(1, request.max_iterations // 2),
@@ -516,6 +589,11 @@ class RLMEngine:
             )
             answer, metadata = self._run_child(child_request)
             child_traces_list.append(metadata)
+            try:
+                if self.on_subcall_complete:
+                    self.on_subcall_complete(request.max_depth, model_id, time.time() - t0)
+            except Exception:
+                pass
             return answer
         return rlm_query
 
@@ -526,6 +604,13 @@ class RLMEngine:
             model_id = request.sub_model or request.model
             provider = self.router.get_provider(model_id)
 
+            try:
+                if self.on_subcall_start:
+                    self.on_subcall_start(0, query[:100])
+            except Exception:
+                pass
+            t0 = time.time()
+
             chat_req = ChatRequest(
                 model=model_id,
                 messages=[ChatMessage(role="user", content=query)],
@@ -535,8 +620,70 @@ class RLMEngine:
             )
             gen = provider.create_chat_completion(chat_req)
             text, _, _ = self._consume_generator(gen)
+
+            try:
+                if self.on_subcall_complete:
+                    self.on_subcall_complete(0, model_id, time.time() - t0)
+            except Exception:
+                pass
             return text
         return llm_query
+
+    def _make_llm_query_batched(self, request: RLMRequest, counter: list[int]):
+        """Create the llm_query_batched() closure for batch sub-queries."""
+        def llm_query_batched(prompts: list[str]) -> list[str]:
+            if not prompts:
+                return []
+            counter[0] += len(prompts)
+            model_id = request.sub_model or request.model
+            provider = self.router.get_provider(model_id)
+
+            # Try GPU batching first
+            if hasattr(provider, "create_batch_chat_completion"):
+                try:
+                    chat_reqs = [
+                        ChatRequest(
+                            model=model_id,
+                            messages=[ChatMessage(role="user", content=p)],
+                            max_tokens=request.sub_max_tokens or request.max_tokens,
+                            temperature=request.sub_temperature if request.sub_temperature is not None else request.temperature,
+                            top_p=request.sub_top_p if request.sub_top_p is not None else request.top_p,
+                        )
+                        for p in prompts
+                    ]
+                    results = provider.create_batch_chat_completion(chat_reqs)
+                    return [r["text"] for r in results]
+                except (ValueError, RuntimeError):
+                    pass  # Fall through to sequential
+
+            # Sequential fallback (counter already incremented)
+            results = []
+            for p in prompts:
+                chat_req = ChatRequest(
+                    model=model_id,
+                    messages=[ChatMessage(role="user", content=p)],
+                    max_tokens=request.sub_max_tokens or request.max_tokens,
+                    temperature=request.sub_temperature if request.sub_temperature is not None else request.temperature,
+                    top_p=request.sub_top_p if request.sub_top_p is not None else request.top_p,
+                )
+                gen = provider.create_chat_completion(chat_req)
+                text, _, _ = self._consume_generator(gen)
+                results.append(text)
+            return results
+        return llm_query_batched
+
+    def _make_rlm_query_batched(
+        self,
+        request: RLMRequest,
+        sub_query_counter: list[int],
+        child_traces_list: list[RLMMetadata],
+    ):
+        """Create the rlm_query_batched() closure -- sequential delegation to rlm_query."""
+        rlm_query = self._make_rlm_query(request, sub_query_counter, child_traces_list)
+
+        def rlm_query_batched(prompts: list[str]) -> list[str]:
+            return [rlm_query(p) for p in prompts]
+        return rlm_query_batched
 
     def _init_namespace(
         self,
@@ -556,12 +703,39 @@ class RLMEngine:
             else:
                 namespace["_rlm_final"] = f"[Variable {name!r} not found]"
 
+        def show_vars() -> str:
+            internals = _RESERVED_NAMES | {"__builtins__"}
+            user_vars = {
+                k: type(v).__name__
+                for k, v in namespace.items()
+                if not k.startswith("_") and k not in internals
+            }
+            return str(user_vars) if user_vars else "{}"
+
         namespace["FINAL"] = final_fn
         namespace["FINAL_VAR"] = final_var_fn
+        namespace["SHOW_VARS"] = show_vars
         namespace["llm_query"] = self._make_llm_query(request, sub_query_counter)
+        namespace["llm_query_batched"] = self._make_llm_query_batched(request, sub_query_counter)
         if request.max_depth > 1 and child_traces_list is not None:
             namespace["rlm_query"] = self._make_rlm_query(request, sub_query_counter, child_traces_list)
+            namespace["rlm_query_batched"] = self._make_rlm_query_batched(
+                request, sub_query_counter, child_traces_list,
+            )
+
+        # Inject custom tools
+        for name, info in self._custom_tools.items():
+            namespace[name] = info["callable"]
+
         return namespace
+
+    def _fire_callback(self, cb, *args):
+        """Safely invoke a callback, swallowing any exception."""
+        if cb is not None:
+            try:
+                cb(*args)
+            except Exception:
+                pass
 
     def _iter_loop(
         self,
@@ -590,8 +764,18 @@ class RLMEngine:
         response_text = ""
         consecutive_errors = 0
         compaction_count = 0
+        best_partial = ""
+        start_time = time.time()
 
         for iteration in range(request.max_iterations):
+            # Wall-clock timeout check
+            if request.max_timeout is not None and time.time() - start_time > request.max_timeout:
+                final_answer = best_partial or response_text or "[Stopped: timeout]"
+                trace.append(RLMTraceEntry(iteration=iteration + 1, action="timeout"))
+                finish_reason = "timeout"
+                self._fire_callback(self.on_iteration_complete, iteration + 1, time.time() - start_time)
+                break
+
             # Compaction check before each iteration
             if request.compaction:
                 est_tokens = self._estimate_tokens(messages)
@@ -604,6 +788,8 @@ class RLMEngine:
                     yield _Compaction(iteration=iteration + 1, compaction_count=compaction_count)
 
             yield _IterStart(iteration=iteration + 1)
+            self._fire_callback(self.on_iteration_start, iteration + 1)
+            iter_start_time = time.time()
 
             chat_req = ChatRequest(
                 model=request.model,
@@ -622,6 +808,10 @@ class RLMEngine:
 
             yield _AssistantResponse(iteration=iteration + 1, text=response_text)
 
+            # Track best partial answer (non-code text responses)
+            if extract_repl_block(response_text) is None and response_text.strip():
+                best_partial = response_text.strip()
+
             detail = request.include_trace_detail
             code = extract_repl_block(response_text)
             if code is None:
@@ -632,6 +822,7 @@ class RLMEngine:
                     response=response_text if detail else None,
                 ))
                 finish_reason = "direct_response"
+                self._fire_callback(self.on_iteration_complete, iteration + 1, time.time() - iter_start_time)
                 break
 
             stdout, stderr = run_code_in_namespace(
@@ -662,6 +853,7 @@ class RLMEngine:
                 entry.action = "FINAL"
                 trace.append(entry)
                 finish_reason = "final"
+                self._fire_callback(self.on_iteration_complete, iteration + 1, time.time() - iter_start_time)
                 break
 
             # Consecutive error tracking
@@ -673,19 +865,24 @@ class RLMEngine:
             if request.max_errors is not None and consecutive_errors >= request.max_errors:
                 entry.action = "error_threshold"
                 trace.append(entry)
-                final_answer = response_text or "[Stopped: too many consecutive errors]"
+                final_answer = best_partial or response_text or "[Stopped: too many consecutive errors]"
                 finish_reason = "error_threshold"
+                self._fire_callback(self.on_iteration_complete, iteration + 1, time.time() - iter_start_time)
                 break
 
             trace.append(entry)
             messages.append(ChatMessage(role="assistant", content=response_text))
-            messages.append(ChatMessage(role="user", content=_build_feedback(stdout, stderr)))
+            feedback = _build_feedback(stdout, stderr)
+            if iteration > 0:
+                feedback += f"\n\nOriginal task: {request.query}"
+            messages.append(ChatMessage(role="user", content=feedback))
+            self._fire_callback(self.on_iteration_complete, iteration + 1, time.time() - iter_start_time)
         else:
             if namespace["_rlm_final"] is not None:
                 final_answer = namespace["_rlm_final"]
                 finish_reason = "final"
             else:
-                final_answer = response_text or "[Max iterations reached]"
+                final_answer = best_partial or response_text or "[Max iterations reached]"
                 trace.append(RLMTraceEntry(iteration=request.max_iterations, action="max_iterations"))
 
         yield _LoopResult(

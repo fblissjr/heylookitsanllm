@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0]
+
+### Added
+
+- **Inference monkey patches**: `.pth`-activated runtime patches for mlx-lm (`patches.py`). Loaded at interpreter startup, including standalone bench scripts
+  - Cache `wired_limit` tree walk by `id(model)` -- eliminates repeated tree_reduce over model parameters
+  - Skip logsumexp in `generate_step` for greedy decode (temp=0, no logits processors) -- saves one full vocab-sized GPU op per token
+  - Skip per-token `peak_memory` in `stream_generate` -- deferred to final yield only
+
+### Changed
+
+- **DraftTuner**: `ensure_and_get()` replaces separate `_ensure_baseline` + `get_num_draft_tokens` (single lock acquisition per request)
+- **LanguageModelLogitsWrapper**: simplified `__call__` hot path -- removed try/except, reduced to single `getattr` check
+
+## [1.23.9]
+
+### Added
+
+- **RLM SHOW_VARS**: `SHOW_VARS()` function in REPL namespace lists user-defined variables with their types
+- **RLM root prompt re-injection**: original query is appended to feedback after iteration 0, keeping the model on-task during long runs
+- **RLM best partial answer tracking**: fallback paths (max_iterations, error_threshold, timeout) prefer the best text answer seen over raw code block text
+- **RLM max_timeout**: wall-clock timeout for the entire RLM loop (`max_timeout` request field, `"timeout"` finish reason). Checked per-iteration
+- **RLM llm_query_batched**: `llm_query_batched(prompts)` runs multiple sub-queries with GPU batching when available, sequential fallback otherwise
+- **RLM rlm_query_batched**: `rlm_query_batched(prompts)` runs multiple recursive sub-calls sequentially (requires `max_depth >= 2`)
+- **RLM custom tools**: `RLMEngine(router, custom_tools=[...])` injects server-registered Python functions into the REPL namespace. Propagates to child RLMs
+- **RLM event callbacks**: `on_iteration_start`, `on_iteration_complete`, `on_subcall_start`, `on_subcall_complete` callbacks on `RLMEngine.__init__()` for programmatic monitoring
+
 ## [1.23.8]
 
 ### Added

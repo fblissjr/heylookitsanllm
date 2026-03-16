@@ -134,7 +134,10 @@ The main model slices the text into chapters, then calls `llm_query(f"Summarize 
 5. The model calls `FINAL("answer")` or `FINAL_VAR("variable_name")` when done
 6. If it responds without a code block, that text becomes the answer directly
 
-The model also has `llm_query("sub-question")` -- it can call itself on smaller pieces of the context.
+The model also has:
+- `llm_query("sub-question")` -- call itself on smaller pieces of the context
+- `llm_query_batched(["q1", "q2"])` -- batch multiple sub-queries (uses GPU batching when available)
+- `SHOW_VARS()` -- list all user-defined variables in the REPL
 
 ## Request fields
 
@@ -162,7 +165,8 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
   "compaction_threshold": 0.8,
   "max_context_tokens": 8192,
   "max_depth": 1,
-  "max_errors": null
+  "max_errors": null,
+  "max_timeout": null
 }
 ```
 
@@ -188,6 +192,7 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
 | `max_context_tokens` | 8192 | Model's context window size, used for compaction threshold calculation |
 | `max_depth` | 1 | Recursive depth. 1 = no recursion (default). 2+ enables `rlm_query()` which spawns child RLMs |
 | `max_errors` | null | Stop after N consecutive code execution errors. null = no limit |
+| `max_timeout` | null | Wall-clock timeout in seconds for the entire RLM loop. Checked per-iteration. null = no limit |
 
 ## Response
 
@@ -223,6 +228,7 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
 - `"direct_response"` -- Model responded without a code block
 - `"max_iterations"` -- Hit the iteration limit
 - `"error_threshold"` -- Hit `max_errors` consecutive code execution errors
+- `"timeout"` -- Hit `max_timeout` wall-clock limit
 
 The `trace` shows what happened each iteration: how much code was written, how much output it produced, and whether it terminated.
 

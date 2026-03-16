@@ -353,6 +353,86 @@ if result["finish_reason"] == "error_threshold":
     )
 ```
 
+## Pattern: Batched sub-queries
+
+Use `llm_query_batched()` inside the REPL to process multiple sub-questions in one call. When the backend provider supports GPU batching, all queries run in a single GPU pass.
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...a document with multiple sections...",
+  "query": "Summarize each section in one sentence",
+  "max_iterations": 10,
+  "sub_max_tokens": 256,
+  "sub_temperature": 0.0
+}
+```
+
+The model might write:
+
+```python
+sections = context.split("\n\n")
+summaries = llm_query_batched([f"Summarize: {s}" for s in sections])
+for i, s in enumerate(summaries):
+    print(f"Section {i+1}: {s}")
+FINAL("\n".join(summaries))
+```
+
+This is faster than `for s in sections: llm_query(...)` because the backend can batch the GPU work. Falls back to sequential automatically if batching isn't available.
+
+`rlm_query_batched()` works the same way but spawns child RLMs (requires `max_depth >= 2`). Each child runs sequentially since they need their own REPL loops.
+
+## Pattern: Custom tools (programmatic use)
+
+When using `RLMEngine` directly (not through the HTTP endpoint), you can inject custom Python functions as tools available in the REPL.
+
+```python
+from heylook_llm.rlm import RLMEngine, RLMRequest
+
+def fetch_url(url: str) -> str:
+    """Fetch a URL and return its text content."""
+    import httpx
+    return httpx.get(url).text
+
+def query_db(sql: str) -> str:
+    """Run a SQL query and return results as text."""
+    # ... your db logic
+    return results
+
+engine = RLMEngine(
+    router,
+    custom_tools=[
+        fetch_url,
+        {"tool": query_db, "description": "Run a read-only SQL query"},
+    ],
+)
+
+result = engine.run(RLMRequest(
+    model="YOUR_MODEL_ID",
+    context="Analyze data from these sources",
+    query="Compare web prices with database prices",
+    sandbox=False,  # Custom tools need full Python access
+))
+```
+
+Custom tools appear in the system prompt and are available in child RLMs. Names cannot conflict with builtins (`FINAL`, `llm_query`, etc.). Tools bypass the sandbox since they're server-registered and trusted.
+
+## Pattern: Event callbacks (programmatic use)
+
+Monitor RLM execution with callbacks for logging, metrics, or progress tracking.
+
+```python
+engine = RLMEngine(
+    router,
+    on_iteration_start=lambda i: print(f"Starting iteration {i}"),
+    on_iteration_complete=lambda i, dur: print(f"Iteration {i} took {dur:.2f}s"),
+    on_subcall_start=lambda depth, preview: print(f"Sub-call at depth {depth}: {preview}"),
+    on_subcall_complete=lambda depth, model, dur: print(f"Sub-call done: {model} in {dur:.2f}s"),
+)
+```
+
+Callback exceptions are caught and swallowed -- they never crash the RLM loop.
+
 ## Combining patterns
 
 These patterns compose. A real workflow might:
