@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.8]
+
+### Added
+
+- **RLM compaction**: history summarization when context fills up (`compaction`, `compaction_threshold`, `max_context_tokens` request fields). Prevents hitting context window limits on long runs while preserving REPL namespace
+- **RLM recursive depth**: `rlm_query()` spawns child RLMs with their own REPL loops for divide-and-conquer over sub-problems (`max_depth` request field, `child_traces` in response metadata)
+- **RLM max errors**: stop after N consecutive code execution errors to prevent infinite error loops (`max_errors` request field, `error_threshold` finish reason)
+
 ## [1.23.7]
 
 ### Added

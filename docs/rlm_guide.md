@@ -157,7 +157,12 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
   "sub_max_tokens": null,
   "sub_temperature": null,
   "sub_top_p": null,
-  "enable_thinking": null
+  "enable_thinking": null,
+  "compaction": false,
+  "compaction_threshold": 0.8,
+  "max_context_tokens": 8192,
+  "max_depth": 1,
+  "max_errors": null
 }
 ```
 
@@ -178,6 +183,11 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
 | `sub_temperature` | null | Override temperature for sub-calls |
 | `sub_top_p` | null | Override top_p for sub-calls |
 | `enable_thinking` | null | Enable thinking mode (Qwen3 models) |
+| `compaction` | false | Enable history compaction when context fills up |
+| `compaction_threshold` | 0.8 | Compact when estimated tokens exceed this fraction of `max_context_tokens` (0.5-0.95) |
+| `max_context_tokens` | 8192 | Model's context window size, used for compaction threshold calculation |
+| `max_depth` | 1 | Recursive depth. 1 = no recursion (default). 2+ enables `rlm_query()` which spawns child RLMs |
+| `max_errors` | null | Stop after N consecutive code execution errors. null = no limit |
 
 ## Response
 
@@ -197,6 +207,8 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
   "rlm": {
     "iterations": 3,
     "sub_queries": 1,
+    "compactions": 0,
+    "child_traces": null,
     "trace": [
       {"iteration": 1, "code_len": 45, "stdout_len": 120, "stderr_len": 0, "action": null},
       {"iteration": 2, "code_len": 80, "stdout_len": 50, "stderr_len": 0, "action": null},
@@ -210,6 +222,7 @@ The model also has `llm_query("sub-question")` -- it can call itself on smaller 
 - `"final"` -- Model called `FINAL()` or `FINAL_VAR()`
 - `"direct_response"` -- Model responded without a code block
 - `"max_iterations"` -- Hit the iteration limit
+- `"error_threshold"` -- Hit `max_errors` consecutive code execution errors
 
 The `trace` shows what happened each iteration: how much code was written, how much output it produced, and whether it terminated.
 
@@ -251,6 +264,61 @@ data: {"iteration": 2}
 event: rlm_complete
 data: {"answer": "...", "finish_reason": "final", "usage": {...}, "rlm": {...}}
 ```
+
+## Compaction
+
+On long runs (15+ iterations), message history grows until it approaches the model's context window. Compaction prevents this by summarizing the history when it gets too large, while keeping the REPL namespace (all computed variables) intact.
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...very long document...",
+  "query": "Detailed multi-step analysis",
+  "max_iterations": 30,
+  "compaction": true,
+  "compaction_threshold": 0.8,
+  "max_context_tokens": 32768
+}
+```
+
+When estimated tokens in the message history exceed `compaction_threshold * max_context_tokens`, the engine asks the model to summarize its progress, then replaces the full history with system prompt + summary + "continue from here." The `compactions` field in the response metadata shows how many times this happened.
+
+Set `max_context_tokens` to match your model's actual context window. The token estimate is rough (~4 chars per token) -- the goal is preventing context overflow, not exact counting.
+
+## Recursive depth (`rlm_query`)
+
+`llm_query()` does a single-shot LLM call on a sub-question. For complex sub-problems that need their own iteration loop, `rlm_query()` spawns a child RLM with its own REPL namespace and message history.
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...data requiring divide-and-conquer...",
+  "query": "Analyze each section and synthesize findings",
+  "max_depth": 2,
+  "max_iterations": 20
+}
+```
+
+- `max_depth=1` (default): no recursion, `rlm_query` not available
+- `max_depth=2`: parent can spawn child RLMs, children use `llm_query` only
+- `max_depth=3+`: children can spawn grandchildren (use with care)
+
+Child RLMs inherit sandbox settings, timeout, and error thresholds. They get half the parent's iteration budget. The child's trace metadata appears in `rlm.child_traces` in the parent response.
+
+## Max errors
+
+Prevent infinite error loops by stopping after N consecutive code execution errors:
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "data",
+  "query": "Process this",
+  "max_errors": 5
+}
+```
+
+The counter resets to 0 on any successful execution (no stderr). When the threshold is hit, `finish_reason` is `"error_threshold"`. Default is null (no limit).
 
 ## Using sub-calls
 

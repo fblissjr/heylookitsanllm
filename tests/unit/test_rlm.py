@@ -673,3 +673,393 @@ class TestTraceDetail:
         assert "code" not in trace_entry
         assert "stdout" not in trace_entry
         assert "stderr" not in trace_entry
+
+
+# ---------------------------------------------------------------------------
+# Max errors threshold
+# ---------------------------------------------------------------------------
+
+class TestMaxErrors:
+    def test_stops_after_n_consecutive_errors(self):
+        """N consecutive errors triggers error_threshold finish reason."""
+        responses = ['```repl\n1/0\n```'] * 10
+        router = _mock_router(responses)
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=10, max_errors=3,
+        )
+        result = engine.run(req)
+
+        assert result.finish_reason == "error_threshold"
+        assert result.rlm.trace[-1].action == "error_threshold"
+        # Should stop at 3 iterations (3 consecutive errors)
+        assert result.rlm.iterations == 3
+
+    def test_counter_resets_on_success(self):
+        """A successful execution resets the consecutive error counter."""
+        responses = [
+            '```repl\n1/0\n```',                     # error 1
+            '```repl\n1/0\n```',                     # error 2
+            '```repl\nprint("ok")\n```',              # success -> reset
+            '```repl\n1/0\n```',                     # error 1
+            '```repl\n1/0\n```',                     # error 2
+            '```repl\nFINAL("done")\n```',           # success -> FINAL
+        ]
+        router = _mock_router(responses)
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=10, max_errors=3,
+        )
+        result = engine.run(req)
+
+        assert result.finish_reason == "final"
+        assert result.answer == "done"
+
+    def test_no_limit_when_none(self):
+        """max_errors=None means no error limit (current default behavior)."""
+        responses = ['```repl\n1/0\n```'] * 5 + ['```repl\nFINAL("done")\n```']
+        router = _mock_router(responses)
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=10, max_errors=None,
+        )
+        result = engine.run(req)
+
+        assert result.finish_reason == "final"
+        assert result.answer == "done"
+
+    def test_max_errors_request_validation(self):
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", max_errors=0)
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", max_errors=21)
+
+
+# ---------------------------------------------------------------------------
+# Compaction (history summarization)
+# ---------------------------------------------------------------------------
+
+class TestCompaction:
+    def test_compaction_triggers_when_threshold_exceeded(self):
+        """Compaction replaces history when estimated tokens exceed threshold."""
+        router = MagicMock()
+        provider = MagicMock()
+        call_count = [0]
+
+        def fake_completion(req):
+            call_count[0] += 1
+            messages = req.messages
+            # Compaction summary call: returns a summary
+            if any("Summarize your progress" in m.content for m in messages):
+                yield _make_chunk("Summary: computed x=42, next step is FINAL")
+            elif call_count[0] <= 2:
+                yield _make_chunk('```repl\nprint("iteration output " * 500)\n```')
+            else:
+                yield _make_chunk('```repl\nFINAL("done")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        # System prompt is ~1000 chars (~250 tokens). With threshold at 50% of 512 = 256 tokens,
+        # compaction triggers once messages exceed ~1024 chars (i.e., after 1 iteration of output).
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=10,
+            compaction=True,
+            compaction_threshold=0.5,
+            max_context_tokens=512,
+        )
+        result = engine.run(req)
+
+        assert result.rlm.compactions > 0
+        assert result.finish_reason == "final"
+
+    def test_compaction_disabled_by_default(self):
+        """No compaction when compaction=False (default)."""
+        responses = ['```repl\nprint("hi")\n```'] * 3 + ['```repl\nFINAL("done")\n```']
+        router = _mock_router(responses)
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?", max_iterations=5)
+        result = engine.run(req)
+
+        assert result.rlm.compactions == 0
+
+    def test_namespace_survives_compaction(self):
+        """Variables in the REPL namespace persist through compaction."""
+        router = MagicMock()
+        provider = MagicMock()
+        iteration_calls = [0]  # Only counts non-compaction calls
+
+        def fake_completion(req):
+            messages = req.messages
+            if any("Summarize your progress" in m.content for m in messages):
+                yield _make_chunk("Summary: set x = 42")
+                return
+            iteration_calls[0] += 1
+            if iteration_calls[0] == 1:
+                # Set a variable with large output to trigger compaction next iteration
+                yield _make_chunk('```repl\nx = 42\nprint("x set " * 200)\n```')
+            else:
+                # After compaction, x should still be in namespace
+                yield _make_chunk('```repl\nFINAL_VAR("x")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        # max_context_tokens=1024 with threshold=0.5 means 512 token threshold (~2048 chars).
+        # Initial messages are ~1100 chars (~275 tokens) -- below threshold.
+        # After iteration 1 adds ~1000 chars of output feedback, total crosses threshold.
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=5,
+            compaction=True,
+            compaction_threshold=0.5,
+            max_context_tokens=1024,
+        )
+        result = engine.run(req)
+
+        assert result.answer == "42"
+        assert result.rlm.compactions > 0
+
+    def test_compaction_streaming_event(self):
+        """Streaming yields a compaction event when history is compacted."""
+        router = MagicMock()
+        provider = MagicMock()
+        call_count = [0]
+
+        def fake_completion(req):
+            call_count[0] += 1
+            messages = req.messages
+            if any("Summarize your progress" in m.content for m in messages):
+                yield _make_chunk("Summary text")
+            elif call_count[0] <= 2:
+                yield _make_chunk('```repl\nprint("big output " * 500)\n```')
+            else:
+                yield _make_chunk('```repl\nFINAL("done")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_iterations=10,
+            compaction=True,
+            compaction_threshold=0.5,
+            max_context_tokens=512,
+        )
+
+        events = list(engine.run_streaming(req))
+        event_types = [e.split("\n")[0].replace("event: ", "") for e in events]
+        assert "compaction" in event_types
+
+    def test_compaction_threshold_validation(self):
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", compaction_threshold=0.4)
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", compaction_threshold=0.96)
+
+    def test_estimate_tokens(self):
+        engine = RLMEngine(MagicMock())
+        from heylook_llm.config import ChatMessage
+        messages = [
+            ChatMessage(role="system", content="x" * 400),
+            ChatMessage(role="user", content="y" * 400),
+        ]
+        est = engine._estimate_tokens(messages)
+        assert est == 200  # 800 chars / 4
+
+
+# ---------------------------------------------------------------------------
+# Recursive depth (rlm_query)
+# ---------------------------------------------------------------------------
+
+class TestRecursiveDepth:
+    def test_rlm_query_not_injected_at_depth_1(self):
+        """At max_depth=1 (default), rlm_query is not available in namespace."""
+        router = _mock_router(['```repl\nFINAL(str("rlm_query" in dir()))\n```'])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?", max_depth=1)
+        result = engine.run(req)
+        # rlm_query should NOT be in the namespace
+        # The FINAL call returns whether "rlm_query" is in the REPL globals.
+        # Since sandbox restricts dir(), let's check the namespace directly.
+        # Actually, we can test the namespace setup directly:
+        ns = engine._init_namespace(req, [0], [])
+        assert "rlm_query" not in ns
+
+    def test_rlm_query_injected_at_depth_2(self):
+        """At max_depth=2, rlm_query is available in namespace."""
+        engine = RLMEngine(MagicMock())
+        req = RLMRequest(model="test", context="data", query="what?", max_depth=2)
+        ns = engine._init_namespace(req, [0], [])
+        assert "rlm_query" in ns
+        assert callable(ns["rlm_query"])
+
+    def test_child_rlm_spawned_at_depth_2(self):
+        """rlm_query() spawns a child RLM with reduced depth."""
+        router = MagicMock()
+        provider = MagicMock()
+        call_count = [0]
+
+        def fake_completion(req):
+            call_count[0] += 1
+            messages = req.messages
+            # Child RLM calls -- detect by "Answer this question" in system prompt
+            if any("Answer this question" in m.content for m in messages):
+                yield _make_chunk('```repl\nFINAL("child answer")\n```')
+            elif call_count[0] == 1:
+                yield _make_chunk('```repl\nresult = rlm_query("sub problem")\nFINAL(result)\n```')
+            else:
+                yield _make_chunk('```repl\nFINAL("fallback")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_depth=2, max_iterations=5,
+        )
+        result = engine.run(req)
+
+        assert result.answer == "child answer"
+        assert result.rlm.child_traces is not None
+        assert len(result.rlm.child_traces) == 1
+
+    def test_child_falls_back_to_llm_query_at_max_depth(self):
+        """At max_depth=1, rlm_query is not available so model uses llm_query."""
+        # Just verify rlm_query is not injected
+        engine = RLMEngine(MagicMock())
+        req = RLMRequest(model="test", context="data", query="what?", max_depth=1)
+        ns = engine._init_namespace(req, [0], [])
+        assert "rlm_query" not in ns
+        assert "llm_query" in ns
+
+    def test_child_depth_reduced(self):
+        """Child RLM request has max_depth decremented by 1."""
+        router = MagicMock()
+        provider = MagicMock()
+        captured_child_depth = []
+
+        original_iter_loop = RLMEngine._iter_loop
+
+        def tracking_iter_loop(self_engine, request, prov, req_id):
+            if "child" in req_id:
+                captured_child_depth.append(request.max_depth)
+            yield from original_iter_loop(self_engine, request, prov, req_id)
+
+        call_count = [0]
+
+        def fake_completion(req):
+            call_count[0] += 1
+            messages = req.messages
+            if any("Answer this question" in m.content for m in messages):
+                yield _make_chunk('```repl\nFINAL("child done")\n```')
+            elif call_count[0] == 1:
+                yield _make_chunk('```repl\nresult = rlm_query("sub")\nFINAL(result)\n```')
+            else:
+                yield _make_chunk('```repl\nFINAL("x")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        engine._iter_loop = lambda req, prov, rid: tracking_iter_loop(engine, req, prov, rid)
+
+        req = RLMRequest(model="test", context="data", query="what?", max_depth=3)
+        engine.run(req)
+
+        assert len(captured_child_depth) >= 1
+        assert captured_child_depth[0] == 2  # parent was 3, child should be 2
+
+    def test_max_depth_request_validation(self):
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", max_depth=0)
+        with pytest.raises(Exception):
+            RLMRequest(model="m", context="c", query="q", max_depth=6)
+
+    def test_system_prompt_mentions_rlm_query_at_depth_2(self):
+        engine = RLMEngine(MagicMock())
+        prompt = engine._build_system_prompt("task", None, max_depth=2)
+        assert "rlm_query" in prompt
+
+    def test_system_prompt_no_rlm_query_at_depth_1(self):
+        engine = RLMEngine(MagicMock())
+        prompt = engine._build_system_prompt("task", None, max_depth=1)
+        assert "rlm_query" not in prompt
+
+    def test_child_traces_in_metadata(self):
+        """Child trace metadata is captured in parent's response."""
+        router = MagicMock()
+        provider = MagicMock()
+        call_count = [0]
+
+        def fake_completion(req):
+            call_count[0] += 1
+            messages = req.messages
+            if any("Answer this question" in m.content for m in messages):
+                yield _make_chunk('```repl\nprint("child working")\n```')
+                return
+            if call_count[0] == 1:
+                yield _make_chunk('```repl\nresult = rlm_query("sub")\nFINAL(result)\n```')
+            else:
+                yield _make_chunk('```repl\nFINAL("done")\n```')
+
+        provider.create_chat_completion.side_effect = fake_completion
+        router.get_provider.return_value = provider
+
+        engine = RLMEngine(router)
+        req = RLMRequest(
+            model="test", context="data", query="what?",
+            max_depth=2, max_iterations=5,
+        )
+        result = engine.run(req)
+
+        assert result.rlm.child_traces is not None
+        child = result.rlm.child_traces[0]
+        assert isinstance(child, RLMMetadata)
+        assert child.iterations > 0
+
+    def test_no_child_traces_when_depth_1(self):
+        """No child_traces field when max_depth=1."""
+        router = _mock_router(['```repl\nFINAL("done")\n```'])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?", max_depth=1)
+        result = engine.run(req)
+        assert result.rlm.child_traces is None
+
+
+# ---------------------------------------------------------------------------
+# New metadata fields
+# ---------------------------------------------------------------------------
+
+class TestNewMetadataFields:
+    def test_metadata_compactions_default(self):
+        meta = RLMMetadata(iterations=1, sub_queries=0, trace=[])
+        assert meta.compactions == 0
+        assert meta.child_traces is None
+
+    def test_metadata_child_traces_serialization(self):
+        child = RLMMetadata(iterations=2, sub_queries=0, trace=[])
+        parent = RLMMetadata(
+            iterations=3, sub_queries=1, trace=[],
+            compactions=1, child_traces=[child],
+        )
+        dumped = parent.model_dump()
+        assert dumped["compactions"] == 1
+        assert len(dumped["child_traces"]) == 1
+        assert dumped["child_traces"][0]["iterations"] == 2
+
+    def test_new_request_defaults(self):
+        req = RLMRequest(model="m", context="c", query="q")
+        assert req.compaction is False
+        assert req.compaction_threshold == 0.8
+        assert req.max_context_tokens == 8192
+        assert req.max_depth == 1
+        assert req.max_errors is None

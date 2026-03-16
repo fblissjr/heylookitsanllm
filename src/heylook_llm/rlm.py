@@ -57,6 +57,11 @@ class RLMRequest(BaseModel):
     sub_top_p: float | None = None
     enable_thinking: bool | None = None
     include_trace_detail: bool = False
+    compaction: bool = False
+    compaction_threshold: float = Field(0.8, ge=0.5, le=0.95)
+    max_context_tokens: int = Field(8192, ge=512)
+    max_depth: int = Field(1, ge=1, le=5)
+    max_errors: int | None = Field(None, ge=1, le=20)
 
 
 class RLMTraceEntry(BaseModel):
@@ -76,6 +81,11 @@ class RLMMetadata(BaseModel):
     iterations: int
     sub_queries: int
     trace: list[RLMTraceEntry]
+    compactions: int = 0
+    child_traces: list["RLMMetadata"] | None = None
+
+
+RLMMetadata.model_rebuild()
 
 
 class RLMResponse(BaseModel):
@@ -115,6 +125,11 @@ class _CodeOutput:
     code_len: int
 
 @dataclass
+class _Compaction:
+    iteration: int
+    compaction_count: int
+
+@dataclass
 class _LoopResult:
     answer: str
     finish_reason: str
@@ -122,6 +137,8 @@ class _LoopResult:
     completion_tokens: int
     trace: list[RLMTraceEntry] = field(default_factory=list)
     sub_queries: int = 0
+    compactions: int = 0
+    child_traces: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +383,14 @@ class RLMEngine:
     def __init__(self, router: ModelRouter):
         self.router = router
 
-    def _build_system_prompt(self, query: str, system: str | None) -> str:
+    def _build_system_prompt(self, query: str, system: str | None, max_depth: int = 1) -> str:
         prompt = RLM_SYSTEM_PROMPT
+        if max_depth > 1:
+            prompt += (
+                "\n- `rlm_query(prompt: str) -> str`: Spawn a child RLM with its own REPL loop "
+                "to work through a sub-problem iteratively. Use this for complex sub-tasks that "
+                "need multiple steps of exploration. For simple single-shot questions, prefer `llm_query()`.\n"
+            )
         if system:
             prompt += f"\n# Additional Instructions\n\n{system}\n"
         prompt += f"\n# Task\n\n{query}\n"
@@ -398,6 +421,104 @@ class RLMEngine:
 
         return "".join(text_parts), prompt_tokens, generation_tokens
 
+    def _estimate_tokens(self, messages: list[ChatMessage]) -> int:
+        """Rough token estimate: ~4 chars per token."""
+        return sum(len(m.content) for m in messages) // 4
+
+    def _compact_history(
+        self,
+        messages: list[ChatMessage],
+        provider,
+        request: RLMRequest,
+        compaction_count: int,
+    ) -> tuple[list[ChatMessage], int, int]:
+        """Summarize message history to reduce context length.
+
+        Returns (compacted_messages, prompt_tokens, completion_tokens).
+        """
+        summary_request = ChatMessage(
+            role="user",
+            content=(
+                "Summarize your progress so far. Include:\n"
+                "1. What steps you have completed\n"
+                "2. Key intermediate results (preserve exact values)\n"
+                "3. What you were about to do next\n"
+                "Be concise but preserve all computed values."
+            ),
+        )
+        chat_req = ChatRequest(
+            model=request.model,
+            messages=messages + [summary_request],
+            max_tokens=request.max_tokens,
+            temperature=0.0,
+        )
+        gen = provider.create_chat_completion(chat_req)
+        summary_text, pt, ct = self._consume_generator(gen)
+
+        system_msg = messages[0]
+        compacted = [
+            system_msg,
+            ChatMessage(
+                role="user",
+                content=(
+                    f"[History compacted (#{compaction_count + 1})]\n\n"
+                    f"Summary of progress so far:\n{summary_text}\n\n"
+                    "All REPL namespace variables from previous iterations are still available. "
+                    "Continue from where you left off. Do not repeat completed work."
+                ),
+            ),
+        ]
+        return compacted, pt, ct
+
+    def _run_child(self, request: RLMRequest) -> tuple[str, RLMMetadata]:
+        """Run a child RLM loop. No pin/unpin -- parent owns the pin."""
+        provider = self.router.get_provider(request.model)
+        request_id = f"rlm-child-{uuid.uuid4().hex[:8]}"
+        result: _LoopResult | None = None
+        for event in self._iter_loop(request, provider, request_id):
+            if isinstance(event, _LoopResult):
+                result = event
+        assert result is not None
+        metadata = RLMMetadata(
+            iterations=len(result.trace),
+            sub_queries=result.sub_queries,
+            trace=result.trace,
+            compactions=result.compactions,
+            child_traces=result.child_traces or None,
+        )
+        return result.answer, metadata
+
+    def _make_rlm_query(
+        self,
+        request: RLMRequest,
+        sub_query_counter: list[int],
+        child_traces_list: list[RLMMetadata],
+    ):
+        """Create the rlm_query() closure that spawns a child RLM."""
+        def rlm_query(prompt: str) -> str:
+            sub_query_counter[0] += 1
+            child_request = RLMRequest(
+                model=request.sub_model or request.model,
+                context=prompt,
+                query="Answer this question using the context provided.",
+                max_iterations=max(1, request.max_iterations // 2),
+                max_tokens=request.sub_max_tokens or request.max_tokens,
+                temperature=request.sub_temperature if request.sub_temperature is not None else request.temperature,
+                top_p=request.sub_top_p if request.sub_top_p is not None else request.top_p,
+                sandbox=request.sandbox,
+                timeout=request.timeout,
+                max_output_chars=request.max_output_chars,
+                max_depth=request.max_depth - 1,
+                max_errors=request.max_errors,
+                compaction=request.compaction,
+                compaction_threshold=request.compaction_threshold,
+                max_context_tokens=request.max_context_tokens,
+            )
+            answer, metadata = self._run_child(child_request)
+            child_traces_list.append(metadata)
+            return answer
+        return rlm_query
+
     def _make_llm_query(self, request: RLMRequest, counter: list[int]):
         """Create the llm_query() closure injected into the REPL namespace."""
         def llm_query(query: str) -> str:
@@ -417,8 +538,13 @@ class RLMEngine:
             return text
         return llm_query
 
-    def _init_namespace(self, request: RLMRequest, sub_query_counter: list[int]) -> dict:
-        """Build the REPL namespace with context, FINAL/FINAL_VAR, and llm_query."""
+    def _init_namespace(
+        self,
+        request: RLMRequest,
+        sub_query_counter: list[int],
+        child_traces_list: list[RLMMetadata] | None = None,
+    ) -> dict:
+        """Build the REPL namespace with context, FINAL/FINAL_VAR, llm_query, and optionally rlm_query."""
         namespace: dict = {"context": request.context, "_rlm_final": None}
 
         def final_fn(value=""):
@@ -433,6 +559,8 @@ class RLMEngine:
         namespace["FINAL"] = final_fn
         namespace["FINAL_VAR"] = final_var_fn
         namespace["llm_query"] = self._make_llm_query(request, sub_query_counter)
+        if request.max_depth > 1 and child_traces_list is not None:
+            namespace["rlm_query"] = self._make_rlm_query(request, sub_query_counter, child_traces_list)
         return namespace
 
     def _iter_loop(
@@ -440,12 +568,13 @@ class RLMEngine:
         request: RLMRequest,
         provider,
         request_id: str,
-    ) -> Generator[_IterStart | _AssistantResponse | _CodeOutput | _LoopResult, None, None]:
+    ) -> Generator[_IterStart | _AssistantResponse | _CodeOutput | _Compaction | _LoopResult, None, None]:
         """Core iteration loop. Yields typed events consumed by both sync and streaming paths."""
         sub_query_counter: list[int] = [0]
-        namespace = self._init_namespace(request, sub_query_counter)
+        child_traces_list: list[RLMMetadata] = []
+        namespace = self._init_namespace(request, sub_query_counter, child_traces_list)
 
-        system_prompt = self._build_system_prompt(request.query, request.system)
+        system_prompt = self._build_system_prompt(request.query, request.system, request.max_depth)
         context_msg = self._build_context_metadata(request.context)
 
         messages = [
@@ -459,8 +588,21 @@ class RLMEngine:
         final_answer = ""
         finish_reason = "max_iterations"
         response_text = ""
+        consecutive_errors = 0
+        compaction_count = 0
 
         for iteration in range(request.max_iterations):
+            # Compaction check before each iteration
+            if request.compaction:
+                est_tokens = self._estimate_tokens(messages)
+                threshold = int(request.compaction_threshold * request.max_context_tokens)
+                if est_tokens > threshold:
+                    messages, pt, ct = self._compact_history(messages, provider, request, compaction_count)
+                    total_prompt_tokens += pt
+                    total_completion_tokens += ct
+                    compaction_count += 1
+                    yield _Compaction(iteration=iteration + 1, compaction_count=compaction_count)
+
             yield _IterStart(iteration=iteration + 1)
 
             chat_req = ChatRequest(
@@ -522,6 +664,19 @@ class RLMEngine:
                 finish_reason = "final"
                 break
 
+            # Consecutive error tracking
+            if stderr:
+                consecutive_errors += 1
+            else:
+                consecutive_errors = 0
+
+            if request.max_errors is not None and consecutive_errors >= request.max_errors:
+                entry.action = "error_threshold"
+                trace.append(entry)
+                final_answer = response_text or "[Stopped: too many consecutive errors]"
+                finish_reason = "error_threshold"
+                break
+
             trace.append(entry)
             messages.append(ChatMessage(role="assistant", content=response_text))
             messages.append(ChatMessage(role="user", content=_build_feedback(stdout, stderr)))
@@ -540,6 +695,8 @@ class RLMEngine:
             completion_tokens=total_completion_tokens,
             trace=trace,
             sub_queries=sub_query_counter[0],
+            compactions=compaction_count,
+            child_traces=child_traces_list,
         )
 
     def run(self, request: RLMRequest) -> RLMResponse:
@@ -572,6 +729,8 @@ class RLMEngine:
                     iterations=len(result.trace),
                     sub_queries=result.sub_queries,
                     trace=result.trace,
+                    compactions=result.compactions,
+                    child_traces=result.child_traces or None,
                 ),
             )
         finally:
@@ -592,7 +751,12 @@ class RLMEngine:
             })
 
             for event in self._iter_loop(request, provider, request_id):
-                if isinstance(event, _IterStart):
+                if isinstance(event, _Compaction):
+                    yield format_sse("compaction", {
+                        "iteration": event.iteration,
+                        "compaction_count": event.compaction_count,
+                    })
+                elif isinstance(event, _IterStart):
                     yield format_sse("iteration_start", {"iteration": event.iteration})
                 elif isinstance(event, _AssistantResponse):
                     yield format_sse("assistant_response", {
@@ -616,6 +780,8 @@ class RLMEngine:
                         iterations=len(event.trace),
                         sub_queries=event.sub_queries,
                         trace=event.trace,
+                        compactions=event.compactions,
+                        child_traces=event.child_traces or None,
                     )
                     yield format_sse("rlm_complete", {
                         "answer": event.answer,
