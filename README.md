@@ -22,7 +22,7 @@ Built on Apple MLX for text and vision.
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
 - **Model Management**: Scan, import, configure, load/unload models from the web UI or API
 - **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
-- **RLM**: Recursive Language Model endpoint -- the model writes Python code to iteratively explore long contexts via a sandboxed REPL
+- **RLM**: Recursive Language Model endpoint -- the model writes Python code to iteratively explore long contexts via a sandboxed REPL ([guide](docs/rlm_guide.md), [advanced patterns](docs/rlm_advanced.md))
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
@@ -136,6 +136,15 @@ Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hi
 ## Batch Vision Labeling
 
 Standalone CLI tool for labeling image directories with VLMs. See [`apps/batch-labeler/`](apps/batch-labeler/) for install and usage.
+
+## Inference Optimization
+
+Two self-contained optimization loops for autonomous inference tuning on Apple Silicon:
+
+- **[`apps/optloop/`](apps/optloop/)** -- Application-level optimization. Tunes `src/heylook_llm/` code with dual text+VLM benchmarks, composite scoring, output fingerprinting, and structured cycle logging.
+- **[`apps/optloop-lib/`](apps/optloop-lib/)** -- Library-level optimization. Same loop targeting local forks of mlx-lm and mlx-vlm in `repos/`.
+
+Both are configured via `bench_config.toml` (scoring weights, decision thresholds, constraint limits, optimizer scope). See the README in each directory for details.
 
 ## Troubleshooting
 
