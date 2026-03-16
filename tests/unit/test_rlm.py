@@ -4,7 +4,6 @@
 All tests mock the provider -- no MLX/GPU needed.
 """
 
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -109,7 +108,6 @@ class TestCodeExecution:
         assert len(stdout) < 200
         assert "truncated" in stdout
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="SIGALRM not available on Windows")
     def test_timeout_enforcement(self):
         ns = {}
         code = "import time; time.sleep(10)"

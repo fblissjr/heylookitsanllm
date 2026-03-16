@@ -12,11 +12,11 @@ across all iterations via pin_model().
 import ast
 import asyncio
 import builtins as _builtins_module
+import ctypes
 import io
 import logging
 import re
-import signal
-import sys
+import threading
 import time
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -232,6 +232,19 @@ def _check_ast_safety(code: str) -> tuple[ast.Module, None] | tuple[None, str]:
     return tree, None
 
 
+def _async_raise(tid: int, exc_type: type) -> None:
+    """Raise an exception in another thread via CPython's PyThreadState_SetAsyncExc."""
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(tid), ctypes.py_object(exc_type)
+    )
+    if res == 0:
+        raise ValueError(f"Invalid thread id: {tid}")
+    if res > 1:
+        # Revert if multiple threads affected (shouldn't happen)
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), None)
+        raise SystemError("PyThreadState_SetAsyncExc failed")
+
+
 def run_code_in_namespace(
     code: str,
     namespace: dict,
@@ -264,29 +277,43 @@ def run_code_in_namespace(
     ):
         namespace["__builtins__"] = _SANDBOX_BUILTINS.copy()
 
-    old_handler = None
-    use_alarm = sys.platform != "win32" and timeout > 0
-
-    if use_alarm:
-        def _timeout_handler(_signum, _frame):
-            raise TimeoutError(f"Code execution timed out after {timeout}s")
-
-        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(timeout)
-
     try:
         if compiled_code is None:
             compiled_code = compile(code, "<rlm-repl>", "exec")
-        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            exec(compiled_code, namespace)  # noqa: S102 -- sandboxed REPL, intentional
+
+        if timeout > 0:
+            # Thread-safe timeout: run exec in a worker thread, kill it if it hangs.
+            # Works from any thread (unlike signal.SIGALRM which requires main thread).
+            exec_error: list[Exception] = []
+
+            def _run():
+                try:
+                    with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                        exec(compiled_code, namespace)  # noqa: S102 -- sandboxed REPL
+                except Exception as e:
+                    exec_error.append(e)
+
+            worker = threading.Thread(target=_run, daemon=True)
+            worker.start()
+            worker.join(timeout=timeout)
+
+            if worker.is_alive():
+                # Thread is stuck -- raise TimeoutError in it via CPython API
+                if worker.ident is not None:
+                    _async_raise(worker.ident, TimeoutError)
+                worker.join(timeout=2)  # Give it a moment to unwind
+                raise TimeoutError(f"Code execution timed out after {timeout}s")
+
+            if exec_error:
+                raise exec_error[0]
+        else:
+            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                exec(compiled_code, namespace)  # noqa: S102 -- sandboxed REPL
+
     except TimeoutError as e:
         stderr_buf.write(str(e))
     except Exception as e:
         stderr_buf.write(f"{type(e).__name__}: {e}")
-    finally:
-        if use_alarm:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
 
     stdout = stdout_buf.getvalue()
     stderr = stderr_buf.getvalue()
