@@ -11,11 +11,9 @@ Based on the paper by Zhang, Kraska, and Khattab (arxiv 2512.24601v2), which sho
 - **Data processing**: Parse, filter, aggregate -- anything you'd write a script for
 - **Tasks where "show your work" matters**: The trace gives you full visibility into what the model did
 
-When NOT to use it: simple Q&A, creative writing, conversations. Use `/v1/chat/completions` for those.
+When NOT to use it: simple Q&A, creative writing, short conversations. If the answer fits in one generation, use `/v1/chat/completions` instead.
 
 ## Quick start
-
-Start the server, then:
 
 ```bash
 curl -X POST http://localhost:8080/v1/rlm/completions \
@@ -27,24 +25,105 @@ curl -X POST http://localhost:8080/v1/rlm/completions \
   }'
 ```
 
-The model will write code like:
+The model explores the data across multiple iterations (this is a real response):
 
-```python
-# Iteration 1: explore the data
-lines = context.split(". ")
-for line in lines:
-    print(line)
+```
+Iteration 1: print(context)         -> sees the raw text
+Iteration 2: regex extraction       -> parses names/counts, prints results
+Iteration 3: FINAL("Alice: 3...")   -> formats and returns answer
 ```
 
-Then after seeing the output, it might write:
+## Use cases that actually matter
 
-```python
-# Iteration 2: extract and compute
-import re
-counts = re.findall(r'(\w+) has (\d+) (\w+)', context)
-total = sum(int(c[1]) for c in counts)
-FINAL(f"Alice: 3 cats, Bob: 5 dogs, Carol: 2 fish. Total: {total} animals.")
+The quick start above works, but it's a toy example -- a regular chat call handles that fine. RLM's value shows up on tasks like these:
+
+### Analyzing a large codebase or log file
+
+```bash
+# Feed in a big log file and ask a question that requires searching
+curl -X POST http://localhost:8080/v1/rlm/completions \
+  -H "Content-Type: application/json" \
+  -d "$(python3 -c "
+import orjson
+print(orjson.dumps({
+    'model': 'YOUR_MODEL_ID',
+    'context': open('server.log').read(),
+    'query': 'Find all error patterns, group by type, and identify the root cause of the most frequent one',
+    'max_iterations': 15
+}).decode())
+")"
 ```
+
+The model will typically: check length and structure, search for ERROR/Exception lines, group them, count frequencies, then drill into the most common one. A single-shot LLM would struggle with a 50K-line log -- it can't search, filter, or count reliably in one pass.
+
+### Structured data extraction from unstructured text
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...a long contract or legal document...",
+  "query": "Extract all monetary amounts, the parties involved, key dates, and any penalty clauses. Return as JSON.",
+  "system": "Return your final answer as valid JSON with keys: parties, amounts, dates, penalties",
+  "max_iterations": 15
+}
+```
+
+The model can scan sections, build up partial results, cross-reference, and assemble the final JSON. The `system` field shapes the output format.
+
+### Cross-referencing multiple sections of a document
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...a research paper or technical report...",
+  "query": "Does the methodology section support the claims made in the conclusion? List any unsupported claims.",
+  "max_iterations": 20
+}
+```
+
+The model will typically find the methodology and conclusion sections by searching, extract claims from each, then compare. This is the kind of task where vanilla LLMs hallucinate -- they "remember" the conclusion but can't actually re-read the methodology to verify.
+
+### Comparing two datasets embedded in one context
+
+```bash
+# Combine two CSVs into one context
+CONTEXT="=== Q1 Sales ===
+$(cat q1_sales.csv)
+
+=== Q2 Sales ===
+$(cat q2_sales.csv)"
+
+curl -X POST http://localhost:8080/v1/rlm/completions \
+  -H "Content-Type: application/json" \
+  -d "$(python3 -c "
+import orjson
+context = '''$CONTEXT'''
+print(orjson.dumps({
+    'model': 'YOUR_MODEL_ID',
+    'context': context,
+    'query': 'Compare Q1 and Q2. Which products grew? Which declined? What is the overall revenue change?',
+    'max_iterations': 10
+}).decode())
+")"
+```
+
+The model can parse both CSVs, compute diffs per product, and aggregate -- tasks that require actual arithmetic, not just pattern matching.
+
+### Using sub-calls for divide-and-conquer
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "context": "...a 200-page book or very long document...",
+  "query": "Write a chapter-by-chapter summary",
+  "sub_model": "YOUR_MODEL_ID",
+  "sub_max_tokens": 512,
+  "sub_temperature": 0.3,
+  "max_iterations": 30
+}
+```
+
+The main model slices the text into chapters, then calls `llm_query(f"Summarize this chapter: {chapter_text}")` for each one. Each sub-call is a separate generation with its own token budget. The main model aggregates the summaries at the end.
 
 ## How it works
 
@@ -245,8 +324,15 @@ with httpx.stream("POST", "http://localhost:8080/v1/rlm/completions", json={
 
 ## Tips
 
-- **Start with low `max_iterations`** (3-5) while testing. The model often converges fast.
-- **Use `system` for format instructions**: "Return your answer as JSON" or "Use bullet points".
-- **Small models work**: The REPL loop compensates for smaller context windows and weaker reasoning. A 4B model with 10 iterations often beats a single-shot 30B.
-- **Check the trace**: If the model is looping without progress, the trace shows exactly where it got stuck.
-- **Sub-calls are expensive**: Each `llm_query()` is a full generation. Use `sub_max_tokens` to keep them short.
+- **Start with low `max_iterations`** (3-5) while testing. Bump to 10-20 for real tasks. The model often converges in 3-5 iterations but complex tasks need room to explore.
+- **Use `system` for output format**: "Return your final answer as JSON", "Use markdown tables", "Be concise". This shapes what `FINAL()` produces.
+- **Bigger context = bigger win**: RLM's advantage over vanilla chat scales with context size. For short texts (<1K chars), just use `/v1/chat/completions`. For 10K+ chars, RLM starts to dominate.
+- **Small models work**: The REPL loop compensates for smaller context windows and weaker reasoning. A 4B model with 10 iterations often beats a single-shot 30B because it can verify its work.
+- **Check the trace**: If `iterations` equals `max_iterations`, the model ran out of budget. Look at the trace to see if it was making progress or stuck in a loop. Bump `max_iterations` or rephrase the query.
+- **Sub-calls are expensive**: Each `llm_query()` is a full generation call. Set `sub_max_tokens` low (256-512) to keep them fast. Use `sub_temperature: 0.0` for deterministic sub-answers.
+- **Sandbox doesn't have `re` or `json`**: The sandbox blocks `import`. The model has to work with string methods, list comprehensions, and builtins only. This is usually enough. If you need imports, set `"sandbox": false`.
+- **The model pins itself**: During an RLM run, the model is pinned in the LRU cache so it can't be evicted by another request. Long-running RLM jobs won't lose their model mid-execution.
+
+## Next steps
+
+See [rlm_advanced.md](./rlm_advanced.md) for composable patterns: pipelines, fan-out/fan-in, structured extraction with validation, streaming progress monitors, retry with escalation, and batch processing.
