@@ -144,7 +144,7 @@ Two self-contained optimization loops for autonomous inference tuning on Apple S
 - **[`apps/optloop/`](apps/optloop/)** -- Application-level optimization. Tunes `src/heylook_llm/` code with dual text+VLM benchmarks, composite scoring, output fingerprinting, and structured cycle logging.
 - **[`apps/optloop-lib/`](apps/optloop-lib/)** -- Library-level optimization. Same loop targeting local forks of mlx-lm and mlx-vlm in `repos/`.
 
-Both are configured via `bench_config.toml` (scoring weights, decision thresholds, constraint limits, optimizer scope). See the README in each directory for details.
+Both are configured via `bench_config.toml` (scoring weights, decision thresholds, constraint limits, optimizer scope). See the [user guide](docs/optloop_guide.md) for a walkthrough, or the [advanced guide](docs/optloop_advanced.md) for the bench activation gap, monkey patching, and failure modes.
 
 ## Troubleshooting
 

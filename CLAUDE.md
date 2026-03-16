@@ -58,6 +58,10 @@ Autonomous inference tuning with dual text+VLM benchmarks, composite scoring, an
 `optloop` targets application code (`src/`); `optloop-lib` targets library forks (`repos/`).
 Config: `bench_config.toml` in each directory.
 
+- [docs/optloop_guide.md](./docs/optloop_guide.md) -- optloop user walkthrough, scoring, configuration
+- [docs/optloop_advanced.md](./docs/optloop_advanced.md) -- bench activation gap, monkey patching, failure modes, FAQ
+- [docs/optimization_log.md](./docs/optimization_log.md) -- cross-session knowledge base (baselines, findings)
+
 ## Change Tracking
 
 - [CHANGELOG.md](./CHANGELOG.md) -- user-facing release history (semver)
@@ -79,6 +83,7 @@ Config: `bench_config.toml` in each directory.
 
 ## Rules: Code Style
 
+- Pre-commit hook rejects files containing literal `/Users/<username>/` paths -- use generic placeholders in docs/examples
 - Adding a new endpoint: create module with `APIRouter(tags=["Name"])`, add tag to `openapi_tags` list + `app.include_router()` in `api.py`
 - When removing a provider/feature, grep the full repo then check: `config.py` (Literal + Union), `router.py`, `api.py`, `generated-api.ts`, `FEATURES.md`, `ARCHITECTURE.md`, `README.md`, `pyproject.toml` extras, frontend type unions, test fixtures
 - No emojis, no hype language ("Enhanced", "Advanced", etc.)
@@ -96,7 +101,8 @@ Config: `bench_config.toml` in each directory.
 
 ## Running Tests
 
-- Sandbox mode blocks uv cache access -- run `uv run pytest` with sandbox disabled if uv cache errors occur
+- Sandbox mode blocks uv cache access -- `additionalWritePaths` in `settings.local.json` covers `~/.cache/uv` and `.venv/`; if uv cache errors still occur, run with sandbox disabled
+- GPG signing (`commit.gpgsign`) requires 1Password agent running -- if `git commit` fails with socket errors, use `-c commit.gpgsign=false`
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)
