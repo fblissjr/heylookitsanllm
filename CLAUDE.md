@@ -51,10 +51,16 @@ React + Zustand + Vite. 874 tests across 38 files.
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
 
+### Optimization Loops: `apps/optloop/`, `apps/optloop-lib/`
+
+Autonomous inference tuning with dual text+VLM benchmarks, composite scoring, and config-driven thresholds.
+`optloop` targets application code (`src/`); `optloop-lib` targets library forks (`repos/`).
+Config: `bench_config.toml` in each directory.
+
 ## Change Tracking
 
 - [CHANGELOG.md](./CHANGELOG.md) -- user-facing release history (semver)
-- `internal/log/` -- **ALWAYS UPDATE** after every iteration (`log_YYYY-MM-DD.md`)
+- `internal/log/` -- **ALWAYS UPDATE** before ending a session: write `log_YYYY-MM-DD.md` with what changed, why, bugs found, and what to look into next
 
 ## Rules: Library APIs
 
