@@ -56,6 +56,7 @@ class RLMRequest(BaseModel):
     sub_temperature: float | None = None
     sub_top_p: float | None = None
     enable_thinking: bool | None = None
+    include_trace_detail: bool = False
 
 
 class RLMTraceEntry(BaseModel):
@@ -64,6 +65,11 @@ class RLMTraceEntry(BaseModel):
     stdout_len: int = 0
     stderr_len: int = 0
     action: str | None = None
+    # Populated when include_trace_detail=True
+    response: str | None = None
+    code: str | None = None
+    stdout: str | None = None
+    stderr: str | None = None
 
 
 class RLMMetadata(BaseModel):
@@ -81,6 +87,11 @@ class RLMResponse(BaseModel):
     finish_reason: str
     usage: dict
     rlm: RLMMetadata
+
+    def model_dump(self, **kwargs):
+        """Exclude None trace detail fields by default for clean output."""
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -469,10 +480,15 @@ class RLMEngine:
 
             yield _AssistantResponse(iteration=iteration + 1, text=response_text)
 
+            detail = request.include_trace_detail
             code = extract_repl_block(response_text)
             if code is None:
                 final_answer = response_text
-                trace.append(RLMTraceEntry(iteration=iteration + 1, action="direct_response"))
+                trace.append(RLMTraceEntry(
+                    iteration=iteration + 1,
+                    action="direct_response",
+                    response=response_text if detail else None,
+                ))
                 finish_reason = "direct_response"
                 break
 
@@ -493,6 +509,10 @@ class RLMEngine:
                 code_len=len(code),
                 stdout_len=len(stdout),
                 stderr_len=len(stderr),
+                response=response_text if detail else None,
+                code=code if detail else None,
+                stdout=stdout if detail else None,
+                stderr=stderr if detail else None,
             )
 
             if namespace["_rlm_final"] is not None:

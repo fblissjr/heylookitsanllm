@@ -609,3 +609,67 @@ class TestSubCallParams:
         sub_req = captured_requests[1]
         assert sub_req.max_tokens == 4096
         assert sub_req.temperature == 0.7
+
+
+# ---------------------------------------------------------------------------
+# Trace detail (include_trace_detail)
+# ---------------------------------------------------------------------------
+
+class TestTraceDetail:
+    def test_detail_off_by_default(self):
+        router = _mock_router(['```repl\nprint("hi")\n```', '```repl\nFINAL("done")\n```'])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?")
+        result = engine.run(req)
+
+        for entry in result.rlm.trace:
+            assert entry.response is None
+            assert entry.code is None
+            assert entry.stdout is None
+            assert entry.stderr is None
+
+    def test_detail_captures_code_and_output(self):
+        router = _mock_router([
+            '```repl\nprint(len(context))\n```',
+            '```repl\nFINAL("answer")\n```',
+        ])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="hello world", query="what?", include_trace_detail=True)
+        result = engine.run(req)
+
+        first = result.rlm.trace[0]
+        assert first.response is not None
+        assert "```repl" in first.response
+        assert first.code == "print(len(context))"
+        assert first.stdout is not None
+        assert "11" in first.stdout  # len("hello world")
+        assert first.stderr == ""
+
+        second = result.rlm.trace[1]
+        assert second.code is not None
+        assert "FINAL" in second.code
+        assert second.action == "FINAL"
+
+    def test_detail_captures_direct_response(self):
+        router = _mock_router(["Just a direct answer."])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?", include_trace_detail=True)
+        result = engine.run(req)
+
+        entry = result.rlm.trace[0]
+        assert entry.action == "direct_response"
+        assert entry.response == "Just a direct answer."
+
+    def test_detail_excluded_from_serialization_when_off(self):
+        router = _mock_router(['```repl\nFINAL("x")\n```'])
+        engine = RLMEngine(router)
+        req = RLMRequest(model="test", context="data", query="what?")
+        result = engine.run(req)
+
+        dumped = result.model_dump()
+        trace_entry = dumped["rlm"]["trace"][0]
+        # None fields should be excluded
+        assert "response" not in trace_entry
+        assert "code" not in trace_entry
+        assert "stdout" not in trace_entry
+        assert "stderr" not in trace_entry
