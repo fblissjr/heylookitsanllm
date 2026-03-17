@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures'
 
 /**
  * E2E tests for the chat interface.
@@ -65,106 +65,29 @@ test.describe('Chat Page', () => {
 })
 
 test.describe('Chat Interface (requires backend)', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/')
-
-    // Wait for connection attempt
-    await page.waitForTimeout(3000)
-
-    // Skip these tests if backend is not running
-    const connectionFailed = page.getByText('Connection Failed')
-    if (await connectionFailed.isVisible()) {
-      test.skip(true, 'Backend not running - skipping connected UI tests')
-    }
-  })
-
-  test('model selector is visible in header', async ({ page }) => {
-    // The header should contain a model selector button
-    // It shows "Select Model" when no model is loaded
+  test('model selector is visible in header', async ({ backendPage: page }) => {
     const modelSelector = page.getByRole('button', { name: /select model/i })
     await expect(modelSelector).toBeVisible()
   })
 
-  test('sidebar toggle works', async ({ page }) => {
-    // Find the sidebar toggle button (hamburger menu)
+  test('sidebar toggle works', async ({ backendPage: page }) => {
     const sidebarToggle = page.getByRole('button', { name: /toggle sidebar/i })
     await expect(sidebarToggle).toBeVisible()
 
-    // Click it to toggle sidebar
     await sidebarToggle.click()
-
-    // Give animation time to complete
     await page.waitForTimeout(300)
 
-    // Click again to toggle back
     await sidebarToggle.click()
   })
 
-  test('shows empty state when no model loaded', async ({ page }) => {
-    // When no model is loaded, should show the "No Model Loaded" heading
+  test('shows empty state when no model loaded', async ({ backendPage: page }) => {
     const emptyState = page.getByRole('heading', { name: /no model loaded/i })
     await expect(emptyState).toBeVisible({ timeout: 10000 })
   })
 })
 
 test.describe('Chat Input (requires model loaded)', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/')
-
-    // Wait for connection
-    await page.waitForTimeout(2000)
-
-    // Skip if backend not running
-    const connectionFailed = page.getByText('Connection Failed')
-    if (await connectionFailed.isVisible()) {
-      test.skip(true, 'Backend not running')
-    }
-
-    // Step 1: Open the models panel
-    const modelSelector = page.getByRole('button', { name: /select model/i })
-    if (!(await modelSelector.isVisible())) {
-      test.skip(true, 'Model selector not visible')
-    }
-    await modelSelector.click()
-
-    // Step 2: Wait for models panel to open and find a model card
-    await page.waitForTimeout(500)
-    const modelsHeading = page.getByRole('heading', { name: 'Models' })
-    if (!(await modelsHeading.isVisible())) {
-      test.skip(true, 'Models panel did not open')
-    }
-
-    // Step 3: Click a model card (buttons in the model list containing model names)
-    // Look for a small/fast model first for quicker testing
-    const modelCard = page.locator('button').filter({ hasText: /qwen3-4b|gemma.*4b|llama.*1b/i }).first()
-    const anyModelCard = page.locator('button').filter({ hasText: /qwen|gemma|llama/i }).first()
-
-    if (await modelCard.isVisible()) {
-      await modelCard.click()
-    } else if (await anyModelCard.isVisible()) {
-      await anyModelCard.click()
-    } else {
-      test.skip(true, 'No model cards found')
-    }
-
-    // Step 4: Click the "Load Model" button
-    await page.waitForTimeout(300)
-    const loadButton = page.getByRole('button', { name: /load model/i })
-    if (!(await loadButton.isVisible())) {
-      test.skip(true, 'Load Model button not visible')
-    }
-    await loadButton.click()
-
-    // Step 5: Wait for chat input to appear (model loaded + conversation created)
-    const chatInput = page.locator('textarea')
-    try {
-      await expect(chatInput).toBeVisible({ timeout: 10000 })
-    } catch {
-      test.skip(true, 'Chat input not visible after loading model')
-    }
-  })
-
-  test('can type in chat input', async ({ page }) => {
+  test('can type in chat input', async ({ modelPage: page }) => {
     const chatInput = page.locator('textarea')
     await expect(chatInput).toBeVisible({ timeout: 5000 })
 
@@ -172,7 +95,7 @@ test.describe('Chat Input (requires model loaded)', () => {
     await expect(chatInput).toHaveValue('Hello, this is a test message')
   })
 
-  test('send button state changes with input', async ({ page }) => {
+  test('send button state changes with input', async ({ modelPage: page }) => {
     const chatInput = page.locator('textarea')
     await expect(chatInput).toBeVisible({ timeout: 5000 })
 
@@ -186,7 +109,3 @@ test.describe('Chat Input (requires model loaded)', () => {
     await expect(sendButton).toBeEnabled()
   })
 })
-
-// Keyboard navigation tests are covered in the Chat Input tests above
-// These tests require a model to be loaded which takes time
-// Skipping standalone keyboard tests to keep E2E suite fast

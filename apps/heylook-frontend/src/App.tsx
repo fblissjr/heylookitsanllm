@@ -1,10 +1,9 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppShell } from './components/layout/AppShell'
 import { Layout } from './components/layout/Layout'
 import { ChatView } from './applets/chat/components/ChatView'
 import { ConfirmDeleteModal } from './applets/chat/components/ConfirmDeleteModal'
-import { useModelStore } from './stores/modelStore'
 import { useConnectionStore } from './stores/connectionStore'
 import { initReconnectionDetection } from './lib/reconnect'
 
@@ -45,35 +44,23 @@ function ReconnectingBanner() {
   if (!isReconnecting) return null
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-sm py-1.5 px-4">
+    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-sm py-1.5 px-4 pt-safe">
       Reconnecting to server...
     </div>
   )
 }
 
 function App() {
-  const [isConnected, setIsConnected] = useState<boolean | null>(null)
-  const fetchModels = useModelStore((state) => state.fetchModels)
-  const fetchCapabilities = useModelStore((state) => state.fetchCapabilities)
+  const isConnected = useConnectionStore((s) => s.isConnected)
+  const checkConnection = useConnectionStore((s) => s.checkConnection)
 
   useEffect(() => {
     initReconnectionDetection()
   }, [])
 
   useEffect(() => {
-    // Check connection and fetch models + capabilities on startup
-    const init = async () => {
-      try {
-        await fetchModels()
-        // Fetch capabilities in parallel (non-blocking)
-        fetchCapabilities()
-        setIsConnected(true)
-      } catch {
-        setIsConnected(false)
-      }
-    }
-    init()
-  }, [fetchModels, fetchCapabilities])
+    checkConnection()
+  }, [checkConnection])
 
   if (isConnected === null) {
     return (
@@ -98,8 +85,7 @@ function App() {
           <div>
             <h2 className="text-xl font-semibold text-white mb-2">Connection Failed</h2>
             <p className="text-gray-400 text-sm max-w-md">
-              Could not connect to the heylookitsanllm server at localhost:8080.
-              Make sure the server is running with <code className="text-primary">heylookllm</code>
+              Could not connect to the backend server. Make sure it is running.
             </p>
           </div>
           <button

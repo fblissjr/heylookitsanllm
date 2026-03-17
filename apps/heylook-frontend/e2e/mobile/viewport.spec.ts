@@ -34,11 +34,12 @@ test.describe('Mobile Layout', () => {
       // Sidebar should either be hidden or positioned off-screen
       const sidebarBox = await sidebar.boundingBox().catch(() => null)
       if (sidebarBox) {
-        // If visible, it should be an overlay (positioned absolutely)
-        // or it should be off-screen
+        // Sidebar must not push main content off-screen. It should either
+        // be fully off-screen (hidden) or overlay without affecting layout.
         const isOffscreen = sidebarBox.x + sidebarBox.width <= 0
-        const isOverlay = sidebarBox.x >= 0 // If on-screen, that's ok for overlay behavior
-        expect(isOffscreen || isOverlay).toBe(true)
+        const mainContent = await page.locator('main').first().boundingBox().catch(() => null)
+        const mainNotPushed = mainContent ? mainContent.x >= 0 && mainContent.x < viewport.width : true
+        expect(isOffscreen || mainNotPushed).toBe(true)
       }
       // sidebar not found at all is also fine for mobile
     }
@@ -84,7 +85,7 @@ test.describe('Touch Targets', () => {
 
     const box = await sendButton.boundingBox()
     if (box) {
-      // Minimum touch target: 44x44px (Apple HIG recommendation)
+      // Minimum 32px touch target (Apple HIG recommends 44px)
       expect(box.width).toBeGreaterThanOrEqual(32)
       expect(box.height).toBeGreaterThanOrEqual(32)
     }

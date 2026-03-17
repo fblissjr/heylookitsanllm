@@ -139,7 +139,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
 
   if (message.role === 'system') {
     return (
-      <div className="flex justify-center">
+      <div data-role="system" className="flex justify-center">
         <div className="group bg-gray-100 dark:bg-surface-dark px-4 py-2 rounded-lg text-sm text-gray-500 dark:text-gray-400 max-w-[90%]">
           <span className="font-medium">System:</span> {message.content.slice(0, 100)}
           {message.content.length > 100 && '...'}
@@ -151,7 +151,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
 
   if (message.role === 'user') {
     return (
-      <div className="flex flex-col items-end gap-2">
+      <div data-role="user" className="flex flex-col items-end gap-2">
         {/* Images if present */}
         {message.images && message.images.length > 0 && (
           <div className="flex flex-wrap gap-2 max-w-[85%]">
@@ -202,7 +202,7 @@ function MessageBubble({ message, index, totalMessages, modelCapabilities, isSta
 
   // Assistant message
   return (
-    <div className="flex items-start gap-3 max-w-full">
+    <div data-role="assistant" className="flex items-start gap-3 max-w-full">
       {/* Avatar */}
       <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
         <ComputerIcon className="w-4 h-4 text-white" />

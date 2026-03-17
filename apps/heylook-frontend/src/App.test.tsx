@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import App from './App'
+import { useConnectionStore } from './stores/connectionStore'
 
 // Mock the AppShell to pass through children via Outlet
 vi.mock('./components/layout/AppShell', () => ({
@@ -29,16 +30,29 @@ vi.mock('./applets/chat/components/ConfirmDeleteModal', () => ({
   ConfirmDeleteModal: () => <div data-testid="confirm-delete-modal">ConfirmDeleteModal</div>,
 }))
 
-// Mock fetchModels and fetchCapabilities functions
-const mockFetchModels = vi.fn()
-const mockFetchCapabilities = vi.fn()
-
-// Mock the model store
-vi.mock('./stores/modelStore', () => ({
-  useModelStore: vi.fn((selector: (state: { fetchModels: typeof mockFetchModels; fetchCapabilities: typeof mockFetchCapabilities }) => unknown) =>
-    selector({ fetchModels: mockFetchModels, fetchCapabilities: mockFetchCapabilities })
-  ),
+// vi.hoisted ensures these are available to vi.mock factories (which are hoisted)
+const { mockFetchModels, mockFetchCapabilities } = vi.hoisted(() => ({
+  mockFetchModels: vi.fn(),
+  mockFetchCapabilities: vi.fn(),
 }))
+
+vi.mock('./stores/modelStore', () => {
+  const state = {
+    fetchModels: mockFetchModels,
+    fetchCapabilities: mockFetchCapabilities,
+    // initialize delegates to fetchModels so tests control behavior via mockFetchModels
+    initialize: async () => {
+      await mockFetchModels()
+      mockFetchCapabilities().catch(() => {})
+    },
+  }
+  return {
+    useModelStore: Object.assign(
+      vi.fn((selector: (s: typeof state) => unknown) => selector(state)),
+      { getState: () => state }
+    ),
+  }
+})
 
 function renderApp() {
   return render(
@@ -52,7 +66,9 @@ describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockFetchModels.mockReset()
-    mockFetchCapabilities.mockReset()
+    mockFetchCapabilities.mockReset().mockResolvedValue(undefined)
+    // Reset connection store to initial state between tests
+    useConnectionStore.setState({ isConnected: null, isReconnecting: false })
   })
 
   afterEach(() => {
@@ -87,12 +103,14 @@ describe('App', () => {
       expect(container).toBeInTheDocument()
     })
 
-    it('calls fetchModels on mount', () => {
+    it('calls fetchModels on mount', async () => {
       mockFetchModels.mockReturnValue(new Promise(() => {}))
 
       renderApp()
 
-      expect(mockFetchModels).toHaveBeenCalledTimes(1)
+      await waitFor(() => {
+        expect(mockFetchModels).toHaveBeenCalledTimes(1)
+      })
     })
   })
 
@@ -107,23 +125,13 @@ describe('App', () => {
       })
     })
 
-    it('displays error message with server address', async () => {
+    it('displays generic error message', async () => {
       mockFetchModels.mockRejectedValue(new Error('Network error'))
 
       renderApp()
 
       await waitFor(() => {
-        expect(screen.getByText(/localhost:8080/)).toBeInTheDocument()
-      })
-    })
-
-    it('shows heylookllm command in error message', async () => {
-      mockFetchModels.mockRejectedValue(new Error('Network error'))
-
-      renderApp()
-
-      await waitFor(() => {
-        expect(screen.getByText('heylookllm')).toBeInTheDocument()
+        expect(screen.getByText(/could not connect to the backend server/i)).toBeInTheDocument()
       })
     })
 

@@ -3,33 +3,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Mock zustand stores before importing the module
 const mockSetReconnecting = vi.fn()
 const mockSetConnected = vi.fn()
-const mockFetchModels = vi.fn().mockResolvedValue(undefined)
+const mockCheckConnection = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('../stores/connectionStore', () => ({
   useConnectionStore: {
     getState: () => ({
       setReconnecting: mockSetReconnecting,
       setConnected: mockSetConnected,
-    }),
-  },
-}))
-
-vi.mock('../stores/modelStore', () => ({
-  useModelStore: {
-    getState: () => ({
-      fetchModels: mockFetchModels,
+      checkConnection: mockCheckConnection,
     }),
   },
 }))
 
 // Import after mocks are set up
-import { initReconnectionDetection } from './reconnect'
+import { initReconnectionDetection, _resetReconnectionState } from './reconnect'
 
 describe('reconnect', () => {
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(() => {
     originalFetch = globalThis.fetch
+    _resetReconnectionState()
     vi.clearAllMocks()
     vi.useFakeTimers()
   })
@@ -44,6 +38,18 @@ describe('reconnect', () => {
       const addSpy = vi.spyOn(document, 'addEventListener')
       initReconnectionDetection()
       expect(addSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+      addSpy.mockRestore()
+    })
+
+    it('is idempotent -- duplicate calls register only one listener', () => {
+      const addSpy = vi.spyOn(document, 'addEventListener')
+      initReconnectionDetection()
+      initReconnectionDetection()
+      initReconnectionDetection()
+      const visibilityCalls = addSpy.mock.calls.filter(
+        ([event]) => event === 'visibilitychange'
+      )
+      expect(visibilityCalls).toHaveLength(1)
       addSpy.mockRestore()
     })
   })
@@ -79,7 +85,7 @@ describe('reconnect', () => {
       expect(mockSetConnected).toHaveBeenCalledWith(true)
     })
 
-    it('refreshes model list after successful reconnect', async () => {
+    it('refreshes server state after successful reconnect', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({ ok: true })
 
       initReconnectionDetection()
@@ -89,7 +95,7 @@ describe('reconnect', () => {
 
       await vi.advanceTimersByTimeAsync(0)
 
-      expect(mockFetchModels).toHaveBeenCalled()
+      expect(mockCheckConnection).toHaveBeenCalled()
     })
 
     it('retries with backoff on failed ping', async () => {

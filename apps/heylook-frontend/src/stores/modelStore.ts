@@ -13,6 +13,8 @@ interface ModelState {
   error: string | null
 
   // Actions
+  /** Fetch models + capabilities. Throws if backend unreachable (used for connectivity checks). */
+  initialize: () => Promise<void>
   fetchModels: () => Promise<void>
   fetchCapabilities: () => Promise<void>
   setLoadedModel: (model: LoadedModel | null) => void
@@ -37,6 +39,12 @@ export const useModelStore = create<ModelState>()(withDiagnostics('model', (set)
   capabilities: null,
   modelStatus: 'unloaded',
   error: null,
+
+  initialize: async () => {
+    await useModelStore.getState().fetchModels()
+    // Fire-and-forget: capabilities are non-critical for initial render
+    useModelStore.getState().fetchCapabilities().catch(() => {})
+  },
 
   fetchModels: async () => {
     try {

@@ -1,5 +1,4 @@
-import { test, expect } from './fixtures'
-import { setupWithLoadedModel } from './fixtures'
+import { test, expect, setupWithLoadedModel } from './fixtures'
 
 /**
  * E2E tests for data persistence.

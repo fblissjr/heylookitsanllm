@@ -53,7 +53,7 @@ heylook-frontend is a React single-page application (SPA) that provides a chat i
 │  Components: Header, Sidebar, ChatView, ModelSelector, etc.  │
 ├─────────────────────────────────────────────────────────────┤
 │                      State Layer                             │
-│  Stores: chatStore, modelStore, settingsStore, uiStore       │
+│  Stores: chatStore, modelStore, connectionStore, settings, ui │
 ├─────────────────────────────────────────────────────────────┤
 │                      Data Layer                              │
 │  API Client, Streaming Handler, IndexedDB Operations         │
@@ -92,17 +92,17 @@ App
 ┌──────────────────────────────────────────────────────────────────┐
 │                         State Stores                              │
 ├────────────────┬─────────────────┬───────────────┬───────────────┤
-│   chatStore    │   modelStore    │ settingsStore │   uiStore     │
-├────────────────┼─────────────────┼───────────────┼───────────────┤
-│ conversations  │ models[]        │ temperature   │ sidebarOpen   │
-│ activeConvId   │ loadedModel     │ topP          │ activePanel   │
-│ streaming      │ loadingState    │ topK          │ confirmDelete │
-│ editState      │ error           │ maxTokens     │               │
-├────────────────┼─────────────────┼───────────────┼───────────────┤
-│ CRUD ops       │ fetchModels()   │ updateParam() │ toggleSidebar │
-│ sendMessage()  │ loadModel()     │ resetToPreset │ openPanel()   │
-│ stopGen()      │ unloadModel()   │               │ closePanel()  │
-└────────────────┴─────────────────┴───────────────┴───────────────┘
+│   chatStore    │   modelStore    │ connectionStore │ settingsStore │   uiStore     │
+├────────────────┼─────────────────┼─────────────────┼───────────────┼───────────────┤
+│ conversations  │ models[]        │ isConnected     │ temperature   │ sidebarOpen   │
+│ activeConvId   │ loadedModel     │ isReconnecting  │ topP          │ activePanel   │
+│ streaming      │ loadingState    │                 │ topK          │ confirmDelete │
+│ editState      │ error           │                 │ maxTokens     │               │
+├────────────────┼─────────────────┼─────────────────┼───────────────┼───────────────┤
+│ CRUD ops       │ fetchModels()   │ checkConnection │ updateParam() │ toggleSidebar │
+│ sendMessage()  │ initialize()    │ setConnected()  │ resetToPreset │ openPanel()   │
+│ stopGen()      │ unloadModel()   │ setReconnecting │               │ closePanel()  │
+└────────────────┴─────────────────┴─────────────────┴───────────────┴───────────────┘
 ```
 
 ### Data Flow
@@ -320,7 +320,7 @@ The frontend uses a lazy-loaded applet architecture with 7 applets:
 | Notebook | `/notebook` | notebookStore (applet-owned) | `applets/notebook/` |
 | Models | `/models` | modelsStore (applet-owned) | `applets/models/` |
 
-Shared stores (model, settings, UI) remain in `src/stores/`.
+Shared stores (model, connection, settings, UI) remain in `src/stores/`.
 Shared components live in `src/components/` (primitives/, composed/, icons/, layout/).
 Each applet is lazy-loaded via `React.lazy` for code splitting.
 

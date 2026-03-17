@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.1]
+
+### Fixed
+
+- **Single source of truth for connection state**: Removed duplicate `isConnected` state in `App.tsx` -- connection status now lives exclusively in `connectionStore`, eliminating drift between the reconnection banner and the app's connection gate
+- **Reconnection banner safe area**: Banner now uses `env(safe-area-inset-top)` so it isn't hidden behind iPhone notch/dynamic island
+- **Duplicate listener registration**: `initReconnectionDetection()` is now idempotent -- StrictMode double-fire no longer registers two `visibilitychange` listeners
+- **Dead streams on tab restore**: After successful reconnect, stale streaming state is cleaned up so the UI doesn't show a spinner indefinitely
+- **Connection error message**: Replaced hardcoded "localhost:8080" with generic message that works for LAN connections
+- **E2E sidebar assertion**: Replaced tautological `isOffscreen || isOverlay` check with actual verification that sidebar doesn't push main content off-screen
+- **Event listener leak**: `_resetReconnectionState()` now removes the `visibilitychange` listener, preventing stacked listeners in tests and HMR
+
+### Changed
+
+- `chat.spec.ts` refactored to use shared `backendPage`/`modelPage` fixtures instead of inline `beforeEach` blocks
+- `connectionStore` now uses `withDiagnostics` middleware for consistency with `modelStore`
+- Reconnect module delegates to `connectionStore.checkConnection()` instead of calling `fetchModels` directly -- single code path for refreshing server state
+- `modelStore.initialize()` owns the startup sequence (fetchModels + fetchCapabilities), called by both initial connection and reconnection
+- Dead-stream cleanup in reconnect is now fire-and-forget (`.then()` instead of `await`) to stay off the critical path
+- Safe-area banner uses `.pt-safe` CSS class (matching existing `.pb-safe`/`.mb-safe` pattern) instead of inline style
+- Removed no-op `hmr.host: undefined` from `vite.config.ts`
+- Consolidated duplicate imports in `persistence.spec.ts` and `conversation.spec.ts`
+- Added `data-role` attributes to message wrappers in `MessageList.tsx` (fixes `conversationPage` fixture selector)
+- Added idempotent init test to `reconnect.test.ts`
+
 ## [1.25.0]
 
 ### Fixed
