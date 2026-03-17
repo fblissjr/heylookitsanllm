@@ -84,6 +84,65 @@ PROMPTS = [
             )},
         ],
     },
+    # -- Multi-turn prompts (test context carry and growing KV cache) -----------
+    {
+        "name": "multi_turn_short",
+        "messages": [
+            {"role": "user", "content": "What are the three laws of thermodynamics?"},
+            {"role": "assistant", "content": (
+                "The three laws of thermodynamics are: (1) Energy cannot be created or "
+                "destroyed, only transformed from one form to another (conservation of energy). "
+                "(2) The total entropy of an isolated system always increases over time; heat "
+                "flows spontaneously from hot to cold, never the reverse. (3) As temperature "
+                "approaches absolute zero, the entropy of a perfect crystal approaches zero."
+            )},
+            {"role": "user", "content": (
+                "How does the second law relate to the concept of heat death of the universe?"
+            )},
+        ],
+    },
+    {
+        "name": "multi_turn_long",
+        "messages": [
+            {"role": "system", "content": (
+                "You are a database architect with expertise in distributed storage systems. "
+                "Give precise, implementation-oriented answers."
+            )},
+            {"role": "user", "content": (
+                "What is the difference between B-trees and LSM-trees for on-disk storage?"
+            )},
+            {"role": "assistant", "content": (
+                "B-trees store data in a balanced tree of fixed-size pages, typically 4-16 KB. "
+                "Reads are fast because locating a key requires O(log N) page reads. Writes "
+                "require random I/O to update pages in place, plus WAL writes for crash safety. "
+                "LSM-trees buffer writes in an in-memory memtable, then flush sorted runs to "
+                "disk. Reads may need to check multiple levels and merge results. Writes are "
+                "sequential and fast, but background compaction is required to bound read "
+                "amplification. B-trees favor read-heavy workloads; LSM-trees favor write-heavy "
+                "workloads."
+            )},
+            {"role": "user", "content": (
+                "Given that trade-off, how do modern systems like RocksDB tune compaction "
+                "strategies to reduce read amplification while maintaining write throughput?"
+            )},
+            {"role": "assistant", "content": (
+                "RocksDB offers several compaction strategies. Level compaction (default) "
+                "organizes data into levels where each level is ~10x larger than the previous. "
+                "When a level fills, its SST files are merged into the next level. This bounds "
+                "read amplification to the number of levels but causes significant write "
+                "amplification. Universal compaction reduces write amplification by allowing "
+                "more sorted runs before triggering compaction, at the cost of higher read "
+                "amplification. FIFO compaction simply drops the oldest data and is used for "
+                "time-series workloads. Subcompactions parallelize work within a single "
+                "compaction job. Bloom filters on each SST file reduce point-read I/O."
+            )},
+            {"role": "user", "content": (
+                "How would you design a compaction scheduler that adapts its strategy based on "
+                "real-time workload characteristics, switching between level and universal "
+                "compaction depending on the current read/write ratio?"
+            )},
+        ],
+    },
 ]
 
 

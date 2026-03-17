@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile E2E tests**: Viewport tests (layout at mobile width, sidebar behavior, touch target sizes) and persistence tests (visibilitychange flush, rapid-send-then-background)
 - **Playwright browser matrix**: Added WebKit (Desktop Safari), Mobile Safari (iPhone 13), and Mobile Chrome (Pixel 5) projects with 60s timeout for mobile
 - **Reconnection unit tests**: 6 tests covering ping success/failure, backoff retry, visibility change listener, and model list refresh
+- **Optloop multi-turn prompts**: `bench_text.py` gains `multi_turn_short` (2-turn Q&A follow-up) and `multi_turn_long` (3-turn conversation with system prompt and growing KV cache). `bench_vlm.py` gains `vision_multi_turn` (image analysis followed by text follow-up). Both optloop and optloop-lib benchmark suites updated in sync.
 
 ## [1.24.2]
 

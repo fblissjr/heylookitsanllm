@@ -1,6 +1,6 @@
 # Inference Optimization Loop
 
-Human-readable reference for the app-level optimization loop. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
+Human-readable reference for the app-level optimization loop. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging. Benchmarks include single-turn and multi-turn prompts to test both raw generation speed and context-carry performance with growing KV caches.
 
 Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
 
@@ -185,6 +185,7 @@ Use `bench_common.next_cycle_id()`, `bench_common.save_cycle()`, and `bench_comm
 - Lock contention reduction
 - Type promotion avoidance (float32 vs float16 operations)
 - Memory pool tuning for 192GB unified memory
+- Multi-turn KV cache efficiency: prefill performance with prior conversation context already in cache
 
 ### Text-specific (mlx-lm path)
 - Radix tree lookup optimization (block size, fewer allocations)
@@ -219,6 +220,8 @@ tokenizer.apply_chat_template() -> tokenizer.encode()
   -> yield responses
 ```
 
+Multi-turn text prompts follow the same path but with longer tokenized input (prior turns baked into the prompt). This stresses prefill throughput with growing token counts.
+
 ### Vision (mlx-vlm)
 ```
 vlm_apply_chat_template() -> vlm_prepare_inputs()
@@ -228,6 +231,8 @@ vlm_apply_chat_template() -> vlm_prepare_inputs()
   -> run_generation(pre_filled_cache=request_cache) [text decode]
   -> yield responses
 ```
+
+Multi-turn vision prompts include a text follow-up after the initial image analysis, testing the pattern of image encoding followed by continued text conversation using the same KV cache.
 
 ### Shared code
 - `generation_core.py:run_generation()` -- unified decode loop (both paths)

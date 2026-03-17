@@ -1,6 +1,6 @@
 # Library-Level Inference Optimization Loop
 
-Human-readable reference for library-level optimization of mlx-lm and mlx-vlm internals. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging.
+Human-readable reference for library-level optimization of mlx-lm and mlx-vlm internals. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging. Benchmarks include single-turn and multi-turn prompts to test both raw generation speed and context-carry performance with growing KV caches.
 
 Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
 
@@ -189,6 +189,7 @@ Use `bench_common.next_cycle_id()`, `bench_common.save_cycle()`, and `bench_comm
 - `sample_utils.py`: skip no-op processors, pre-compute constants
 - Strategic GPU synchronization placement
 - Type promotion avoidance (float32 vs float16 operations)
+- Multi-turn KV cache efficiency: prefill performance with prior conversation context already in cache
 
 ### Tier 2: Model architectures
 - Attention implementations: fused operations, memory-efficient attention
@@ -200,6 +201,7 @@ Use `bench_common.next_cycle_id()`, `bench_common.save_cycle()`, and `bench_comm
 - Image processing pipeline
 - Prompt template construction
 - Pre-filled cache pattern optimization
+- Multi-turn vision conversations: text follow-up generation after image encoding with shared KV cache
 
 ## Git Hygiene
 

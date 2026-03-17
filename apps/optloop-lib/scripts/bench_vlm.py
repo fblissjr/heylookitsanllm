@@ -122,6 +122,27 @@ VISION_PROMPTS = [
         ],
         "image_factory": make_complex_image,
     },
+    # -- Multi-turn vision prompt (image analysis -> text follow-up) -----------
+    {
+        "name": "vision_multi_turn",
+        "messages": [
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "text", "text": "Describe the shapes and colors you see in this image."},
+            ]},
+            {"role": "assistant", "content": (
+                "The image contains several geometric shapes on a light gray background. "
+                "There is a red rectangle in the upper left area, a blue ellipse to its right, "
+                "a green rectangle in the lower center, and a yellow triangle in the lower right. "
+                "There are also five small purple circles arranged in a horizontal row between "
+                "the upper and lower shapes."
+            )},
+            {"role": "user", "content": (
+                "Based on what you described, which shape has the largest area and why?"
+            )},
+        ],
+        "image_factory": make_complex_image,
+    },
 ]
 
 
@@ -398,7 +419,7 @@ def run_benchmark(
 
     simple_img = make_simple_image()
     complex_img = make_complex_image()
-    test_images = {"vision_simple": simple_img, "vision_complex": complex_img}
+    test_images = {"vision_simple": simple_img, "vision_complex": complex_img, "vision_multi_turn": complex_img}
 
     hardware = get_hardware_info()
     all_prompt_results = []
