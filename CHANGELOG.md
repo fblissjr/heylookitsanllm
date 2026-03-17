@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0]
+
+### Fixed
+
+- **iOS Safari meta tag**: Changed `mobile-web-app-capable` to `apple-mobile-web-app-capable` in `index.html` -- Safari now treats the app as a web app and is less aggressive about killing the tab under memory pressure
+- **Vite HMR over LAN**: Configured `server.hmr` to auto-detect hostname from request and disabled error overlay to prevent reload loops when iOS Safari freezes and restores the tab's websocket
+- **Playwright config**: Changed `npm run dev` to `bun run dev` to match actual package manager
+- **Persistence test DB name**: Fixed `heylook-db` to `heylook` in `persistence.spec.ts` (tests were passing by accident since `indexedDB.open` creates any DB name)
+- **Persistence test assertions**: Replaced weak `body.toBeVisible()` checks with actual data verification (message text presence, conversation count)
+
+### Added
+
+- **Reconnection detection**: New `reconnect.ts` module detects dead connections after iOS Safari tab restore. Pings `/v1/models`, retries with exponential backoff, shows "Reconnecting..." banner via `connectionStore.ts`
+- **Shared E2E fixtures**: New `e2e/fixtures.ts` with `backendPage`, `modelPage`, and `conversationPage` fixtures -- eliminates copy-pasted `setupWithLoadedModel` across 4 test files
+- **Navigation E2E tests**: All 7 applet routes tested for rendering, lazy loading, unknown-route redirect, and state preservation across navigation
+- **Applet E2E coverage**: New test files for Notebook, Models, Batch, Token Explorer, Model Comparison, and Performance applets (previously zero E2E coverage)
+- **Multi-turn E2E test**: Conversation test that sends a message, waits for response, then sends follow-up to verify context is maintained
+- **Mobile E2E tests**: Viewport tests (layout at mobile width, sidebar behavior, touch target sizes) and persistence tests (visibilitychange flush, rapid-send-then-background)
+- **Playwright browser matrix**: Added WebKit (Desktop Safari), Mobile Safari (iPhone 13), and Mobile Chrome (Pixel 5) projects with 60s timeout for mobile
+- **Reconnection unit tests**: 6 tests covering ping success/failure, backoff retry, visibility change listener, and model list refresh
+
 ## [1.24.2]
 
 ### Added

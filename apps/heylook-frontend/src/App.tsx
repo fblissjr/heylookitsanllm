@@ -5,6 +5,8 @@ import { Layout } from './components/layout/Layout'
 import { ChatView } from './applets/chat/components/ChatView'
 import { ConfirmDeleteModal } from './applets/chat/components/ConfirmDeleteModal'
 import { useModelStore } from './stores/modelStore'
+import { useConnectionStore } from './stores/connectionStore'
+import { initReconnectionDetection } from './lib/reconnect'
 
 const BatchView = lazy(() =>
   import('./applets/batch').then((m) => ({ default: m.BatchView }))
@@ -38,10 +40,25 @@ function LazyFallback() {
   )
 }
 
+function ReconnectingBanner() {
+  const isReconnecting = useConnectionStore((s) => s.isReconnecting)
+  if (!isReconnecting) return null
+
+  return (
+    <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-600 text-white text-center text-sm py-1.5 px-4">
+      Reconnecting to server...
+    </div>
+  )
+}
+
 function App() {
   const [isConnected, setIsConnected] = useState<boolean | null>(null)
   const fetchModels = useModelStore((state) => state.fetchModels)
   const fetchCapabilities = useModelStore((state) => state.fetchCapabilities)
+
+  useEffect(() => {
+    initReconnectionDetection()
+  }, [])
 
   useEffect(() => {
     // Check connection and fetch models + capabilities on startup
@@ -98,6 +115,7 @@ function App() {
 
   return (
     <>
+      <ReconnectingBanner />
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/chat" element={
