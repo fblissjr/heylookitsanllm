@@ -65,13 +65,13 @@ class ModelRouter:
         # Model pinning: prevents eviction during long-running batch jobs
         self._pinned: set[str] = set()
 
-        initial_model_to_load = initial_model_id or self.app_config.default_model
+        initial_model_to_load = initial_model_id or self.app_config.default_model or None
         enabled_models = self.app_config.get_enabled_models()
         if not enabled_models:
             logging.error("No enabled models found in models.toml. Server cannot serve requests.")
             return
 
-        # Check if the initial model is available and its provider is installed
+        # Validate the requested initial model
         if initial_model_to_load:
             model_config = self.app_config.get_model_config(initial_model_to_load)
             if not model_config:
@@ -81,16 +81,8 @@ class ModelRouter:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires MLX provider which is not installed.")
                 initial_model_to_load = None
 
-        # If no valid initial model, find first compatible one
         if not initial_model_to_load:
-            for model in enabled_models:
-                if model.provider == "mlx" and HAS_MLX:
-                    initial_model_to_load = model.id
-                    logging.info(f"Selected MLX model '{initial_model_to_load}' as initial model.")
-                    break
-
-            if not initial_model_to_load:
-                logging.warning("No compatible models found for installed providers. Models will be loaded on first request.")
+            logging.info("No default model configured. Models will be loaded on first request.")
 
         if initial_model_to_load:
             try:
