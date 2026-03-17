@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.2]
+
+### Fixed
+
+- **OOM on model swap**: Router evicted the old model AFTER loading the new one, holding both in memory simultaneously. With `max_loaded_models: 1`, swapping from a 27B to a 120B model would OOM-kill the process. Eviction now happens BEFORE the new model loads.
+
 ## [1.25.1]
 
 ### Fixed

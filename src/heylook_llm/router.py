@@ -259,6 +259,11 @@ class ModelRouter:
             logging.info(f"Model path: {model_path}")
 
             try:
+                # Evict BEFORE loading so we don't hold two models in memory
+                with self.cache_lock:
+                    if len(self.providers) >= self.max_loaded_models:
+                        self._evict_lru_model()
+
                 # Create provider instance
                 new_provider = provider_class(
                     model_config.id,
@@ -271,13 +276,8 @@ class ModelRouter:
                 # Load model (this is the expensive operation)
                 new_provider.load_model()
 
-                # Add to cache with cache lock
+                # Add to cache
                 with self.cache_lock:
-                    # Check if we need to evict
-                    if len(self.providers) >= self.max_loaded_models:
-                        self._evict_lru_model()
-
-                    # Add new provider to cache
                     self.providers[model_id] = new_provider
 
                 load_time = time.time() - load_start_time
