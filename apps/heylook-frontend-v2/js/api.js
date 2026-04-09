@@ -34,6 +34,8 @@ export const listModels = () => request('GET', '/v1/models')
 export const listAdminModels = () => request('GET', '/v1/admin/models')
 export const loadModel = (id) => request('POST', `/v1/admin/models/${id}/load`)
 export const unloadModel = (id) => request('POST', `/v1/admin/models/${id}/unload`)
+export const scanModels = (opts = {}) => request('POST', '/v1/admin/models/scan', opts)
+export const importModels = (data) => request('POST', '/v1/admin/models/import', data)
 
 // System
 export const getCapabilities = () => request('GET', '/v1/capabilities')

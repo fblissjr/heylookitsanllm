@@ -20,13 +20,21 @@ export function mount(el) {
   state = freshState()
   buildShell()
   refresh()
-  pollInterval = setInterval(refreshMetrics, 5000)
+  schedulePoll()
   return { teardown }
 }
 
 function teardown() {
-  if (pollInterval) { clearInterval(pollInterval); pollInterval = null }
+  if (pollInterval) { clearTimeout(pollInterval); pollInterval = null }
+  state = null
   container = null
+}
+
+async function schedulePoll() {
+  await new Promise(r => { pollInterval = setTimeout(r, 5000) })
+  if (!state || !container) return
+  await refreshMetrics()
+  if (state && container) schedulePoll()
 }
 
 function buildShell() {
@@ -48,23 +56,23 @@ async function refresh() {
 }
 
 async function refreshMetrics() {
+  if (!state) return
   try {
     state.metrics = await api.getMetrics()
-    renderMetrics()
+    if (state) renderMetrics()
   } catch (e) {
-    state.error = e.message
-    renderMetrics()
+    if (state) { state.error = e.message; renderMetrics() }
   }
 }
 
 async function refreshProfile() {
+  if (!state) return
   try {
     state.profile = await api.request('GET', `/v1/performance/profile/${state.timeRange}`)
-    renderProfile()
+    if (state) renderProfile()
   } catch {
     // Analytics may not be enabled (503)
-    state.profile = null
-    renderProfile()
+    if (state) { state.profile = null; renderProfile() }
   }
 }
 

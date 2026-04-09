@@ -2,7 +2,7 @@
 // NOTE: innerHTML usage is exclusively through renderMarkdown() which sanitizes via DOMPurify.
 
 import * as api from '../api.js'
-import { renderMarkdown, ensureMarked, sanitize } from '../components/markdown.js'
+import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 
 let container = null
 let state = null
@@ -170,7 +170,7 @@ function buildResults() {
     const content = createEl('div', { class: 'result-card-content' })
     const text = resp.choices?.[0]?.message?.content || ''
     // Sanitized through DOMPurify via renderMarkdown
-    content.innerHTML = sanitize(renderMarkdown(text))
+    content.innerHTML = renderMarkdown(text)
 
     card.append(header, content)
     section.append(card)

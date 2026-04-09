@@ -53,7 +53,8 @@ async function loadModels() {
     state.models = data.models || []
     render()
   } catch (e) {
-    setContent(`<p class="error-text">Failed to load models: ${esc(e.message)}</p>`)
+    const el = container?.querySelector('#models-content')
+    if (el) el.replaceChildren(createEl('p', { class: 'error-text' }, `Failed to load models: ${e.message}`))
   }
 }
 
@@ -192,7 +193,7 @@ async function handleScan() {
   btn.disabled = true
 
   try {
-    const data = await api.request('POST', '/v1/admin/models/scan', { scan_hf_cache: true })
+    const data = await api.scanModels({ scan_hf_cache: true })
     state.scanResults = data.models || []
   } catch (e) {
     console.error('Scan failed:', e)
@@ -204,8 +205,11 @@ async function handleScan() {
 }
 
 async function handleImport(result) {
+  if (state.importing) return
+  state.importing = true
+  render()
   try {
-    await api.request('POST', '/v1/admin/models/import', {
+    await api.importModels({
       models: [{ id: result.id, path: result.path, provider: result.provider }],
     })
     // Remove from scan results and refresh model list
@@ -213,16 +217,10 @@ async function handleImport(result) {
     await loadModels()
   } catch (e) {
     console.error('Import failed:', e)
+  } finally {
+    state.importing = false
+    render()
   }
-}
-
-function setContent(html) {
-  const el = container?.querySelector('#models-content')
-  if (el) el.textContent = html
-}
-
-function esc(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function createEl(tag, attrs, text) {
