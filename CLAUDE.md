@@ -49,10 +49,17 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 
 ### Frontend v2: `apps/heylook-frontend-v2/`
 
-Vanilla JS + Pretext (text layout library). No React, no bundler, no node_modules.
+Vanilla JS, no framework, no bundler, no node_modules. ~2,400 lines JS + ~800 lines CSS.
 Conversations stored server-side in SQLite (`/v1/conversations` API).
-Served at `/v2` by the FastAPI backend. Hash-based routing.
-Applets: Chat (working), Batch, Models, Performance, Notebook (placeholders).
+Served at `/v2` by the FastAPI backend. Hash-based routing. `marked` + `DOMPurify` loaded from CDN.
+Pages: Chat, Batch, Models, Performance (all working). Notebook (placeholder). Token Explorer (planned).
+
+Key patterns:
+- Each page exports `mount(el)` returning `{ teardown() }`. Module state reset via `freshState()` on mount.
+- `teardown()` must null `state`, stop streams/intervals, and clean up handlers on persistent DOM (sidebar, nav).
+- Streaming display uses RAF throttling (one render per frame, not per token).
+- Static file serving at `/v2` uses `resolve()` + `is_relative_to()` for path traversal prevention.
+- All `innerHTML` writes go through DOMPurify via `renderMarkdown()`. No raw user content in innerHTML.
 
 ### Frontend (legacy): `apps/heylook-frontend/`
 
@@ -95,6 +102,7 @@ Config: `bench_config.toml` in each directory.
 - Server sets `mx.set_wired_limit(max_recommended_working_set_size)` at startup; per-generation `wired_limit()` CM is still needed for stream synchronization
 - Radix cache tracks `snapshot_bytes` per node and `_total_bytes` per tree for byte-level budget enforcement (`--prompt-cache-bytes` CLI flag)
 - Radix nodes have `segment_type` ("system"/"assistant") for priority-based eviction; system prompt KV evicted last
+- Radix cache node replacement must subtract the replaced subtree's bytes and node count (`_subtree_bytes`, `_subtree_count`) -- otherwise byte budget drifts
 
 ## Rules: Code Style
 
@@ -121,8 +129,10 @@ Config: `bench_config.toml` in each directory.
 - GPG signing (`commit.gpgsign`) requires 1Password agent running -- if `git commit` fails with socket errors, use `git -c commit.gpgsign=false commit` (the `-c` must come before `commit`)
 - `--timeout` flag is not installed; pytest runs without it
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
-- Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
-- Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)
+- Conversation API: `uv run pytest tests/unit/test_conversation_api.py -v` (22 tests, in-memory SQLite)
+- Frontend v2: no build step, no tests yet. Manual test at `http://localhost:8000/v2` when server is running
+- Frontend (legacy): `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
+- Frontend (legacy) build: `cd apps/heylook-frontend && bun run build` (verify production build)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests (removed mlx_batch_vision module) -- do not investigate
 - MLX embedding/sampler tests fail in full suite (Metal context conflicts) but pass individually -- pre-existing, not a regression
 - Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
