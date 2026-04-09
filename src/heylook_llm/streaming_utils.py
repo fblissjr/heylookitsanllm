@@ -8,7 +8,7 @@ from typing import AsyncGenerator
 from fastapi import Request
 
 
-class _KeepaliveMarker:
+class KeepaliveMarker:
     """Sentinel yielded during long prefill to keep SSE connections alive.
 
     The API layer checks for this type and emits an SSE comment (`: keepalive`)
@@ -18,8 +18,7 @@ class _KeepaliveMarker:
     pass
 
 
-KEEPALIVE_MARKER = _KeepaliveMarker()
-_KEEPALIVE_MARKER = KEEPALIVE_MARKER  # Module-level singleton
+KEEPALIVE_MARKER = KeepaliveMarker()
 
 
 async def async_generator_with_abort(
@@ -49,7 +48,7 @@ async def async_generator_with_abort(
             return None
 
     keepalive_interval = 5.0  # seconds between keepalive comments
-    last_keepalive = asyncio.get_event_loop().time()
+    last_keepalive = loop.time()
     first_chunk_received = False
 
     try:
@@ -68,9 +67,9 @@ async def async_generator_with_abort(
                         return
                     # Emit SSE keepalive comments during long prefill to
                     # prevent connection timeouts. Only before first chunk.
-                    now = asyncio.get_event_loop().time()
+                    now = loop.time()
                     if not first_chunk_received and (now - last_keepalive) >= keepalive_interval:
-                        yield _KEEPALIVE_MARKER
+                        yield KEEPALIVE_MARKER
                         last_keepalive = now
                     await asyncio.sleep(0.1)
 

@@ -644,11 +644,10 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Resolve abort event from provider (if MLX provider with abort support)
     abort_event = getattr(provider, '_abort_event', None) if provider else None
 
-    from heylook_llm.streaming_utils import async_generator_with_abort, _KeepaliveMarker
+    from heylook_llm.streaming_utils import async_generator_with_abort, KeepaliveMarker
 
     async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
-        # Emit SSE keepalive comment during long prefill (prevents connection timeout)
-        if isinstance(chunk, _KeepaliveMarker):
+        if isinstance(chunk, KeepaliveMarker):
             yield ": keepalive\n\n"
             continue
 

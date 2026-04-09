@@ -46,10 +46,12 @@ BLOCK_SIZE = 32  # tokens per node -- configurable at module level
 
 # Eviction priority order: assistant caches are evicted first (lowest value),
 # system caches last (highest value). Matches mlx-lm's LRUPromptCache.CacheOrder.
+SEGMENT_SYSTEM = "system"
+SEGMENT_ASSISTANT = "assistant"
+
 EVICTION_PRIORITY: dict[str, int] = {
-    "assistant": 0,
-    "user": 1,
-    "system": 2,
+    SEGMENT_ASSISTANT: 0,
+    SEGMENT_SYSTEM: 1,
 }
 
 
@@ -62,7 +64,7 @@ class RadixNode:
     last_access: float = field(default_factory=time.monotonic)
     depth: int = 0
     snapshot_bytes: int = 0                          # byte size of kv_snapshot for budget tracking
-    segment_type: str = "assistant"                   # "system" | "user" | "assistant" for eviction priority
+    segment_type: str = SEGMENT_ASSISTANT               # SEGMENT_SYSTEM or SEGMENT_ASSISTANT for eviction priority
 
 
 class RadixCache:
@@ -184,37 +186,31 @@ class RadixCache:
                     # Node already exists, just update access time
                     child.last_access = time.monotonic()
                     node = child
-                elif child is not None and child.token_block != block:
-                    # Different block with same first token -- replace
-                    # (rare: two blocks share first token but differ later)
-                    block_end = (i + 1) * BLOCK_SIZE
-                    seg_type = "system" if block_end <= system_prefix_len else "assistant"
-                    new_node = RadixNode(
-                        token_block=block,
-                        children={},
-                        depth=i + 1,
-                        segment_type=seg_type,
-                    )
-                    node.children[first_token] = new_node
-                    # Don't decrement _node_count for replaced node's subtree
-                    # since eviction handles cleanup -- just replace the leaf
-                    node = new_node
+                    continue
+
+                # Compute segment type once for both replace and insert paths
+                block_end = (i + 1) * BLOCK_SIZE
+                seg_type = SEGMENT_SYSTEM if block_end <= system_prefix_len else SEGMENT_ASSISTANT
+
+                if child is not None:
+                    # Different block with same first token -- replace.
+                    # Subtract replaced subtree's bytes to prevent budget drift.
+                    self._total_bytes -= self._subtree_bytes(child)
+                    self._node_count -= self._subtree_count(child)
                 else:
-                    # Evict if needed before inserting (node count OR memory pressure)
+                    # New insertion -- evict if at capacity
                     if self._node_count >= self.max_nodes or self._check_memory_pressure():
                         self._evict_lru_unlocked()
 
-                    block_end = (i + 1) * BLOCK_SIZE
-                    seg_type = "system" if block_end <= system_prefix_len else "assistant"
-                    new_node = RadixNode(
-                        token_block=block,
-                        children={},
-                        depth=i + 1,
-                        segment_type=seg_type,
-                    )
-                    node.children[first_token] = new_node
-                    self._node_count += 1
-                    node = new_node
+                new_node = RadixNode(
+                    token_block=block,
+                    children={},
+                    depth=i + 1,
+                    segment_type=seg_type,
+                )
+                node.children[first_token] = new_node
+                self._node_count += 1
+                node = new_node
 
             # Attach snapshot to the deepest node we reached
             if node is not self.root:
@@ -272,6 +268,22 @@ class RadixCache:
             return self._memory_pressure_fn()
         except Exception:
             return False
+
+    @staticmethod
+    def _subtree_bytes(node: RadixNode) -> int:
+        """Total snapshot bytes in a subtree (inclusive)."""
+        total = node.snapshot_bytes
+        for child in node.children.values():
+            total += RadixCache._subtree_bytes(child)
+        return total
+
+    @staticmethod
+    def _subtree_count(node: RadixNode) -> int:
+        """Total node count in a subtree (inclusive)."""
+        total = 1
+        for child in node.children.values():
+            total += RadixCache._subtree_count(child)
+        return total
 
     @staticmethod
     def _chunk_tokens(tokens: list[int]) -> list[tuple[int, ...]]:

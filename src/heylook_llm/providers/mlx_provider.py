@@ -352,7 +352,7 @@ class VLMVisionStrategy:
     def __init__(self):
         self._batch_vision_processor = None
         self._cached_wrapper = None
-        self._vision_cache: VisionFeatureCache | None = None
+        self._vision_cache = VisionFeatureCache(max_entries=20)
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
@@ -361,10 +361,6 @@ class VLMVisionStrategy:
         # Initialize batch vision processor for parallel image loading
         if self._batch_vision_processor is None:
             self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
-
-        # Initialize vision feature cache (one per VLM strategy instance)
-        if self._vision_cache is None:
-            self._vision_cache = VisionFeatureCache(max_entries=20)
 
         # Prepare VLM inputs: extract images, format prompt with chat template
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(

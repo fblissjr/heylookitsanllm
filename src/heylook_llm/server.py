@@ -317,7 +317,7 @@ def main():
 
         cache_bytes = _parse_size(args.prompt_cache_bytes)
         mgr = get_global_cache_manager()
-        mgr._max_cache_bytes = cache_bytes
+        mgr.set_byte_budget(cache_bytes)
         logging.info(f"Prompt cache byte budget: {cache_bytes / (1024**3):.2f} GB")
 
     # Log all optimization statuses

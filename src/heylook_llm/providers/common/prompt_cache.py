@@ -80,6 +80,11 @@ class PromptCacheManager:
         self._access_order: list[str] = []
         self._lock = threading.RLock()
 
+    def set_byte_budget(self, max_bytes: int | None) -> None:
+        """Set the maximum byte budget for all radix caches combined."""
+        with self._lock:
+            self._max_cache_bytes = max_bytes
+
     def get_or_create_cache(self, model_id: str, model: Any, cache_config: dict = None) -> PromptCache:
         """Get working cache for a model (thread-safe).
 
@@ -282,7 +287,6 @@ def store_generation_cache(
     prompt_cache: PromptCache,
     full_tokens: List[int],
     generation_cache: List[Any],
-    system_prefix_len: int = 0,
 ) -> None:
     """Store KV cache snapshot in the radix tree after generation completes.
 
@@ -302,10 +306,8 @@ def store_generation_cache(
         return
 
     kv_snap = snapshot_kv(generation_cache)
-    # Use system_prefix_len from parameter or from prompt_cache
-    effective_sys_len = system_prefix_len or prompt_cache.system_prefix_len
     radix.insert(full_tokens, kv_snap, prompt_cache._radix_matched_len,
-                 system_prefix_len=effective_sys_len)
+                 system_prefix_len=prompt_cache.system_prefix_len)
     prompt_cache.tokens = full_tokens
 
     logging.debug(

@@ -322,17 +322,19 @@ class TestSegmentStats:
 
 class TestKeepaliveMarker:
     def test_marker_type(self):
-        from heylook_llm.streaming_utils import _KeepaliveMarker, KEEPALIVE_MARKER
-        assert isinstance(KEEPALIVE_MARKER, _KeepaliveMarker)
+        from heylook_llm.streaming_utils import KeepaliveMarker, KEEPALIVE_MARKER
+        assert isinstance(KEEPALIVE_MARKER, KeepaliveMarker)
 
     def test_marker_is_singleton(self):
-        from heylook_llm.streaming_utils import KEEPALIVE_MARKER, _KEEPALIVE_MARKER
-        assert KEEPALIVE_MARKER is _KEEPALIVE_MARKER
+        from heylook_llm.streaming_utils import KEEPALIVE_MARKER
+        # Importing twice returns the same object
+        from heylook_llm.streaming_utils import KEEPALIVE_MARKER as m2
+        assert KEEPALIVE_MARKER is m2
 
     def test_marker_detected_by_isinstance(self):
-        from heylook_llm.streaming_utils import _KeepaliveMarker, KEEPALIVE_MARKER
-        assert isinstance(KEEPALIVE_MARKER, _KeepaliveMarker)
-        assert not isinstance("data: chunk", _KeepaliveMarker)
+        from heylook_llm.streaming_utils import KeepaliveMarker, KEEPALIVE_MARKER
+        assert isinstance(KEEPALIVE_MARKER, KeepaliveMarker)
+        assert not isinstance("data: chunk", KeepaliveMarker)
 
 
 # ---------------------------------------------------------------------------
