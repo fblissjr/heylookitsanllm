@@ -2,9 +2,9 @@
 
 const routes = {
   '#/chat': () => import('./pages/chat.js'),
-  '#/batch': () => import('./pages/placeholder.js'),
-  '#/models': () => import('./pages/placeholder.js'),
-  '#/perf': () => import('./pages/placeholder.js'),
+  '#/batch': () => import('./pages/batch.js'),
+  '#/models': () => import('./pages/models.js'),
+  '#/perf': () => import('./pages/perf.js'),
   '#/notebook': () => import('./pages/placeholder.js'),
 }
 
