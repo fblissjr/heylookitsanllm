@@ -1,0 +1,33 @@
+// App shell -- hash router, theme, init
+
+const routes = {
+  '#/chat': () => import('./pages/chat.js'),
+  '#/batch': () => import('./pages/placeholder.js'),
+  '#/models': () => import('./pages/placeholder.js'),
+  '#/perf': () => import('./pages/placeholder.js'),
+  '#/notebook': () => import('./pages/placeholder.js'),
+}
+
+let currentPage = null
+const main = document.getElementById('main')
+
+async function router() {
+  const hash = location.hash || '#/chat'
+
+  if (currentPage?.teardown) currentPage.teardown()
+  main.replaceChildren()
+
+  const loader = routes[hash] || routes['#/chat']
+  const mod = await loader()
+
+  const name = hash.replace('#/', '')
+  currentPage = mod.mount(main, name)
+
+  // Update nav active state
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.toggle('nav-item--active', item.dataset.page === name)
+  })
+}
+
+window.addEventListener('hashchange', router)
+router()

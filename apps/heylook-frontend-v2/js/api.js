@@ -1,0 +1,39 @@
+// API client -- fetch wrappers for backend endpoints
+
+const BASE = ''  // Same origin; override for dev
+
+async function request(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  }
+  if (body !== undefined) opts.body = JSON.stringify(body)
+  const res = await fetch(`${BASE}${path}`, opts)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `${res.status} ${res.statusText}`)
+  }
+  return res.json()
+}
+
+// Conversations
+export const listConversations = () => request('GET', '/v1/conversations')
+export const getConversation = (id) => request('GET', `/v1/conversations/${id}`)
+export const createConversation = (data = {}) => request('POST', '/v1/conversations', data)
+export const updateConversation = (id, data) => request('PUT', `/v1/conversations/${id}`, data)
+export const deleteConversation = (id) => request('DELETE', `/v1/conversations/${id}`)
+
+// Messages
+export const appendMessage = (convId, data) => request('POST', `/v1/conversations/${convId}/messages`, data)
+export const updateMessage = (convId, msgId, data) => request('PUT', `/v1/conversations/${convId}/messages/${msgId}`, data)
+export const truncateMessages = (convId, afterPos) => request('DELETE', `/v1/conversations/${convId}/messages?after=${afterPos}`)
+
+// Models
+export const listModels = () => request('GET', '/v1/models')
+export const listAdminModels = () => request('GET', '/v1/admin/models')
+export const loadModel = (id) => request('POST', `/v1/admin/models/${id}/load`)
+export const unloadModel = (id) => request('POST', `/v1/admin/models/${id}/unload`)
+
+// System
+export const getCapabilities = () => request('GET', '/v1/capabilities')
+export const getMetrics = () => request('GET', '/v1/system/metrics')

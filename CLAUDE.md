@@ -14,11 +14,12 @@
 
 ## Get Up to Speed
 
-FastAPI backend (MLX) + React frontend (7 applets, 874 tests).
+FastAPI backend (MLX) + two frontends: React (legacy, 7 applets) and vanilla JS v2 (in progress).
 
 - [README.md](./README.md) -- setup, install, commands
 - [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
-- [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- frontend architecture
+- [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- legacy React frontend architecture
+- [apps/heylook-frontend-v2/](./apps/heylook-frontend-v2/) -- new vanilla JS frontend (no framework, Pretext for text layout)
 - [docs/FRONTEND_HANDOFF.md](./docs/FRONTEND_HANDOFF.md) -- API reference for frontend
 - [tests/README.md](./tests/README.md) -- testing guide and coverage matrix
 
@@ -35,6 +36,8 @@ Check before making changes:
 Providers: MLXProvider (text+vision), MLXEmbeddingProvider (dynamic backbone via mlx-lm).
 LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
 Provider type: `Literal["mlx", "mlx_embedding"]`.
+`coderef/` contains reference forks of mlx-lm and mlx-vlm for comparing upstream patterns (gitignored).
+Conversation storage: SQLite via aiosqlite (`db.py`), CRUD endpoints in `conversation_api.py`. DB auto-creates at `data/conversations.db` (override via `HEYLOOK_DB_PATH` env var). Linear message model with `UNIQUE(conversation_id, position)`.
 RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip). Supports compaction (history summarization), recursive depth (`rlm_query()` child RLMs), and `max_errors` threshold.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
@@ -44,10 +47,17 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system
 - [docs/rlm_guide.md](./docs/rlm_guide.md) -- RLM endpoint usage, request fields, examples
 
-### Frontend: `apps/heylook-frontend/`
+### Frontend v2: `apps/heylook-frontend-v2/`
+
+Vanilla JS + Pretext (text layout library). No React, no bundler, no node_modules.
+Conversations stored server-side in SQLite (`/v1/conversations` API).
+Served at `/v2` by the FastAPI backend. Hash-based routing.
+Applets: Chat (working), Batch, Models, Performance, Notebook (placeholders).
+
+### Frontend (legacy): `apps/heylook-frontend/`
 
 7 applets: Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook, Models.
-React + Zustand + Vite. 874 tests across 38 files.
+React + Zustand + Vite. 874 tests across 38 files. Being replaced by v2.
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
@@ -80,6 +90,11 @@ Config: `bench_config.toml` in each directory.
 - Radix cache snapshots contain full end-of-generation KV state; `restore_kv_from_snapshot(trim_to=matched_len)` trims KVCache layers to the prefix boundary
 - Hybrid models (KVCache + ArraysCache like Qwen3.5) have limited radix cache correctness: ArraysCache can't be trimmed to a prefix. See [internal/bugs/radix_cache_vlm_crash.md](./internal/bugs/radix_cache_vlm_crash.md)
 - See [internal/bugs/vlm_vision_bug.md](./internal/bugs/vlm_vision_bug.md)
+- VLM vision feature caching: models with `encode_image()` support `cached_image_features` kwarg in their forward pass, bypassing the vision tower. `VisionFeatureCache` in `providers/common/vision_feature_cache.py` manages LRU cache keyed by image URL (with pixel-hash fallback for base64 sources).
+- `prepare_vlm_inputs_parallel()` returns 4-tuple: `(images, formatted_prompt, has_images, image_urls)` -- tests must destructure all 4
+- Server sets `mx.set_wired_limit(max_recommended_working_set_size)` at startup; per-generation `wired_limit()` CM is still needed for stream synchronization
+- Radix cache tracks `snapshot_bytes` per node and `_total_bytes` per tree for byte-level budget enforcement (`--prompt-cache-bytes` CLI flag)
+- Radix nodes have `segment_type` ("system"/"assistant") for priority-based eviction; system prompt KV evicted last
 
 ## Rules: Code Style
 
@@ -91,6 +106,7 @@ Config: `bench_config.toml` in each directory.
 - Import order: standard, third-party, local (blank line separated)
 - Conventional commits: `feat(router):`, `fix(mlx):`, `chore(docs):`
 - Use `uv` for all Python deps (never pip). Use `orjson` for JSON.
+- Security hook false-positives on `mx.eval` (MLX graph materializer, not Python's). Use `mx.async_eval` where possible, or acknowledge the warning.
 
 ## Rules: Agent Behavior
 
@@ -102,7 +118,8 @@ Config: `bench_config.toml` in each directory.
 ## Running Tests
 
 - Sandbox mode blocks uv cache access -- `additionalWritePaths` in `settings.local.json` covers `~/.cache/uv` and `.venv/`; if uv cache errors still occur, run with sandbox disabled
-- GPG signing (`commit.gpgsign`) requires 1Password agent running -- if `git commit` fails with socket errors, use `-c commit.gpgsign=false`
+- GPG signing (`commit.gpgsign`) requires 1Password agent running -- if `git commit` fails with socket errors, use `git -c commit.gpgsign=false commit` (the `-c` must come before `commit`)
+- `--timeout` flag is not installed; pytest runs without it
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Frontend: `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend build: `cd apps/heylook-frontend && bun run build` (verify production build)

@@ -29,7 +29,16 @@ Built on Apple MLX for text and vision.
 
 ## Web UI
 
-7 applets built with React + Zustand + Vite:
+### v2 Frontend (in progress)
+
+Vanilla JS frontend at `/v2` -- no React, no bundler, no node_modules. Conversations stored server-side in SQLite.
+
+- **Chat** -- Streaming conversation with thinking blocks, message editing, regenerate
+- Batch, Models, Performance, Notebook -- coming soon
+
+### Legacy Frontend
+
+7 applets built with React + Zustand + Vite at `apps/heylook-frontend/`:
 
 - **Chat** -- Streaming conversation with thinking blocks, message editing, continue/regenerate
 - **Batch** -- Multi-prompt batch jobs with result dashboard

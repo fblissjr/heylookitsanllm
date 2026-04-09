@@ -154,6 +154,22 @@ app.include_router(admin_ops_router)
 from heylook_llm.conversation_api import conversation_router
 app.include_router(conversation_router)
 
+# Serve v2 frontend static files at /v2
+import pathlib as _pathlib
+_v2_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v2"
+if _v2_frontend_dir.is_dir():
+    from starlette.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    @app.get("/v2")
+    @app.get("/v2/{rest:path}")
+    async def serve_v2_frontend(rest: str = ""):
+        """Serve the v2 frontend SPA -- all routes return index.html."""
+        file_path = _v2_frontend_dir / rest
+        if rest and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_v2_frontend_dir / "index.html")
+
 @app.get("/v1/models",
     summary="List Available Models",
     description="""
