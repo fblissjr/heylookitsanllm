@@ -158,16 +158,16 @@ app.include_router(conversation_router)
 import pathlib as _pathlib
 _v2_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v2"
 if _v2_frontend_dir.is_dir():
-    from starlette.staticfiles import StaticFiles
     from starlette.responses import FileResponse
 
     @app.get("/v2")
     @app.get("/v2/{rest:path}")
     async def serve_v2_frontend(rest: str = ""):
         """Serve the v2 frontend SPA -- all routes return index.html."""
-        file_path = _v2_frontend_dir / rest
-        if rest and file_path.is_file():
-            return FileResponse(file_path)
+        if rest:
+            resolved = (_v2_frontend_dir / rest).resolve()
+            if resolved.is_relative_to(_v2_frontend_dir) and resolved.is_file():
+                return FileResponse(resolved)
         return FileResponse(_v2_frontend_dir / "index.html")
 
 @app.get("/v1/models",

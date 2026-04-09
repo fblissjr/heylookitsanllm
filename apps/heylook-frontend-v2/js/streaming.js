@@ -1,5 +1,9 @@
 // SSE streaming client -- ported from streaming.ts
 
+function requestId() {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 /**
  * Stream a chat completion via SSE.
  *
@@ -22,7 +26,10 @@ export async function streamChat(request, callbacks, signal, timeoutMs) {
   try {
     const response = await fetch('/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Request-ID': requestId(),
+      },
       body: JSON.stringify({
         ...request,
         stream: true,
@@ -80,7 +87,7 @@ function processLines(lines, callbacks, markCompleted) {
     if (!trimmed || !trimmed.startsWith('data: ')) continue
 
     const data = trimmed.slice(6)
-    if (data === '[DONE]') return
+    if (data === '[DONE]') break
 
     try {
       const chunk = JSON.parse(data)
@@ -94,9 +101,10 @@ function processLines(lines, callbacks, markCompleted) {
         onComplete({
           usage: chunk.usage,
           timing: chunk.timing,
+          generationConfig: chunk.generation_config,
           stopReason: chunk.stop_reason,
         })
-        return
+        break
       }
     } catch {
       // Skip invalid JSON

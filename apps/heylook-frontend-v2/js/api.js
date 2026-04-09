@@ -3,9 +3,10 @@
 const BASE = ''  // Same origin; override for dev
 
 async function request(method, path, body) {
+  const reqId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Request-ID': reqId },
   }
   if (body !== undefined) opts.body = JSON.stringify(body)
   const res = await fetch(`${BASE}${path}`, opts)

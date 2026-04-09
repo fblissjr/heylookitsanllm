@@ -8,18 +8,24 @@ import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 
 let container = null
-let state = {
-  conversations: [],
-  activeId: null,
-  messages: [],
-  models: [],
-  selectedModel: null,
-  streaming: { active: false, content: '', thinking: '', controller: null },
-  editingMsgId: null,
+let state = null
+let _streamRafPending = false
+
+function freshState() {
+  return {
+    conversations: [],
+    activeId: null,
+    messages: [],
+    models: [],
+    selectedModel: null,
+    streaming: { active: false, content: '', thinking: '', controller: null },
+    editingMsgId: null,
+  }
 }
 
 export function mount(el) {
   container = el
+  state = freshState()
   buildShell()
 
   const input = container.querySelector('#chat-input')
@@ -89,6 +95,11 @@ function buildShell() {
 
 function teardown() {
   stopStream()
+  // Clean up handlers on persistent sidebar elements (outside #main)
+  const list = document.getElementById('conversation-list')
+  if (list) list.onclick = null
+  const newBtn = document.getElementById('new-chat-btn')
+  if (newBtn) newBtn.onclick = null
   container = null
 }
 
@@ -420,31 +431,39 @@ async function startStream() {
 }
 
 function updateStreamingDisplay() {
-  const msgEl = container?.querySelector('[data-streaming]')
-  if (!msgEl) {
-    renderMessages()
+  // Throttle to display frame rate -- tokens arrive faster than 60fps
+  if (_streamRafPending) return
+  _streamRafPending = true
+  requestAnimationFrame(() => {
+    _streamRafPending = false
+    if (!state.streaming.active) return
+
+    const msgEl = container?.querySelector('[data-streaming]')
+    if (!msgEl) {
+      renderMessages()
+      scrollToBottom()
+      return
+    }
+
+    const contentEl = msgEl.querySelector('.message-content')
+    if (contentEl) {
+      // Content sanitized through DOMPurify via renderMarkdown
+      const rendered = renderMarkdown(state.streaming.content)
+      contentEl.innerHTML = rendered
+      const cursor = document.createElement('span')
+      cursor.className = 'streaming-cursor'
+      contentEl.append(cursor)
+    }
+
+    const thinkingEl = msgEl.querySelector('.thinking-content')
+    if (thinkingEl && state.streaming.thinking) {
+      thinkingEl.textContent = state.streaming.thinking
+    } else if (!thinkingEl && state.streaming.thinking) {
+      renderMessages()
+    }
+
     scrollToBottom()
-    return
-  }
-
-  const contentEl = msgEl.querySelector('.message-content')
-  if (contentEl) {
-    // Content sanitized through DOMPurify via renderMarkdown
-    const rendered = renderMarkdown(state.streaming.content)
-    contentEl.innerHTML = rendered
-    const cursor = document.createElement('span')
-    cursor.className = 'streaming-cursor'
-    contentEl.append(cursor)
-  }
-
-  const thinkingEl = msgEl.querySelector('.thinking-content')
-  if (thinkingEl && state.streaming.thinking) {
-    thinkingEl.textContent = state.streaming.thinking
-  } else if (!thinkingEl && state.streaming.thinking) {
-    renderMessages()
-  }
-
-  scrollToBottom()
+  })
 }
 
 function stopStream() {

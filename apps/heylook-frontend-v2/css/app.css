@@ -532,5 +532,5 @@ html, body {
   .message-actions { display: flex; }
 
   #app { flex-direction: column; }
-  .main { padding-bottom: var(--bottom-nav-height); }
+  .main { padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom)); }
 }

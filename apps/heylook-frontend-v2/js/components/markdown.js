@@ -5,13 +5,18 @@ let _purify = null
 
 export async function ensureMarked() {
   if (_marked && _purify) return
-  const [markedMod, purifyMod] = await Promise.all([
-    import('https://esm.run/marked@17'),
-    import('https://esm.run/dompurify@3'),
-  ])
-  markedMod.marked.setOptions({ gfm: true, breaks: false })
-  _marked = markedMod.marked
-  _purify = purifyMod.default
+  try {
+    const [markedMod, purifyMod] = await Promise.all([
+      import('https://esm.run/marked@17'),
+      import('https://esm.run/dompurify@3'),
+    ])
+    markedMod.marked.use({ gfm: true, breaks: false })
+    _marked = markedMod.marked
+    _purify = purifyMod.default
+  } catch {
+    // CDN unreachable -- renderMarkdown falls back to escapeHtml
+    console.warn('Failed to load marked/DOMPurify from CDN, markdown disabled')
+  }
 }
 
 export function renderMarkdown(text) {
@@ -29,10 +34,11 @@ export function sanitize(html) {
   return _purify.sanitize(html)
 }
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
