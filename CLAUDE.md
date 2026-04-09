@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-03-13 -->
+<!-- Nav hub -- link out, don't duplicate. Last verified: 2026-04-09 -->
 
 ## Table of Contents
 
@@ -38,6 +38,7 @@ LRU cache hot-swaps up to 2 models with model pinning support for long-running b
 Provider type: `Literal["mlx", "mlx_embedding"]`.
 `coderef/` contains reference forks of mlx-lm and mlx-vlm for comparing upstream patterns (gitignored).
 Conversation storage: SQLite via aiosqlite (`db.py`), CRUD endpoints in `conversation_api.py`. DB auto-creates at `data/conversations.db` (override via `HEYLOOK_DB_PATH` env var). Linear message model with `UNIQUE(conversation_id, position)`.
+Single shared aiosqlite connection with `timeout=10` -- serializes writes, fine for personal use. Dynamic SQL field names must go through `_UPDATABLE_MESSAGE_FIELDS` allowlist in `db.py`.
 RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip). Supports compaction (history summarization), recursive depth (`rlm_query()` child RLMs), and `max_errors` threshold.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
@@ -115,6 +116,10 @@ Config: `bench_config.toml` in each directory.
 - Conventional commits: `feat(router):`, `fix(mlx):`, `chore(docs):`
 - Use `uv` for all Python deps (never pip). Use `orjson` for JSON.
 - Security hook false-positives on `mx.eval` (MLX graph materializer, not Python's). Use `mx.async_eval` where possible, or acknowledge the warning.
+- Frontend v2: `marked.use()` not `marked.setOptions()` (removed in marked v5+). `renderMarkdown()` already sanitizes via DOMPurify -- never double-wrap with `sanitize()`.
+- Frontend v2: Pydantic update endpoints must use `model_fields_set` to distinguish "not sent" from "explicitly null" (see `conversation_api.py` pattern)
+- Frontend v2: SPA sub-path serving needs `<base href="/v2/">` in HTML so relative paths resolve correctly. Static file handler must `resolve()` + `is_relative_to()` before serving.
+- Frontend v2: Polling pages use recursive `setTimeout` (not `setInterval`) to prevent overlapping requests when backend is slow
 
 ## Rules: Agent Behavior
 
@@ -130,7 +135,7 @@ Config: `bench_config.toml` in each directory.
 - `--timeout` flag is not installed; pytest runs without it
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Conversation API: `uv run pytest tests/unit/test_conversation_api.py -v` (22 tests, in-memory SQLite)
-- Frontend v2: no build step, no tests yet. Manual test at `http://localhost:8000/v2` when server is running
+- Frontend v2: no build step, no tests yet. Manual test at `http://localhost:8080/v2` when server is running (port from server.py, default 8080)
 - Frontend (legacy): `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend (legacy) build: `cd apps/heylook-frontend && bun run build` (verify production build)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests (removed mlx_batch_vision module) -- do not investigate
