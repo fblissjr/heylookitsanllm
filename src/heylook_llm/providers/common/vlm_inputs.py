@@ -37,7 +37,7 @@ def prepare_vlm_inputs_parallel(
     batch_vision_processor,
     vlm_apply_chat_template_fn,
     model=None,
-) -> Tuple[List[Image.Image], str, bool]:
+) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
     Args:
@@ -49,7 +49,7 @@ def prepare_vlm_inputs_parallel(
         model: Optional model instance (unused currently, reserved for future)
 
     Returns:
-        Tuple of (images, formatted_prompt, has_images)
+        Tuple of (images, formatted_prompt, has_images, image_urls)
     """
     image_urls = []
     text_messages = []
@@ -132,4 +132,4 @@ def prepare_vlm_inputs_parallel(
                 f"{msg['role']}: {msg['content']}" for msg in text_messages
             )
 
-    return images, formatted_prompt, has_images
+    return images, formatted_prompt, has_images, image_urls

@@ -195,6 +195,12 @@ def main():
         default=None,
         help="Optional ID of a model to load on startup.",
     )
+    parser.add_argument(
+        "--prompt-cache-bytes",
+        type=str,
+        default=None,
+        help="Max prompt cache memory (e.g. '2G', '512M'). Default: unlimited.",
+    )
 
     args = parser.parse_args()
 
@@ -281,6 +287,38 @@ def main():
         logging.info("Using uvloop for improved async performance")
     else:
         logging.info("uvloop not available - using standard asyncio event loop")
+
+    # Set process-wide wired memory limit for Metal.
+    # mlx-lm does this at server startup (server.py main()) to keep model weights
+    # wired between requests. Without this, the OS can page out model weights
+    # between requests, causing memory churn and slower time-to-first-token.
+    # The per-generation wired_limit() context manager still applies on top of this.
+    import mlx.core as mx
+
+    if mx.metal.is_available():
+        wired_limit = int(mx.device_info()["max_recommended_working_set_size"])
+        mx.set_wired_limit(wired_limit)
+        logging.info(
+            f"Set wired memory limit: {wired_limit / (1024**3):.1f} GB "
+            f"(max recommended working set)"
+        )
+
+    # Configure prompt cache byte budget if specified
+    if args.prompt_cache_bytes:
+        from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
+
+        def _parse_size(s: str) -> int:
+            """Parse size string like '2G', '512M', '1024K' to bytes."""
+            s = s.strip().upper()
+            multipliers = {'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}
+            if s[-1] in multipliers:
+                return int(float(s[:-1]) * multipliers[s[-1]])
+            return int(s)
+
+        cache_bytes = _parse_size(args.prompt_cache_bytes)
+        mgr = get_global_cache_manager()
+        mgr._max_cache_bytes = cache_bytes
+        logging.info(f"Prompt cache byte budget: {cache_bytes / (1024**3):.2f} GB")
 
     # Log all optimization statuses
     from heylook_llm.optimizations.status import log_all_optimization_status

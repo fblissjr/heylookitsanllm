@@ -8,6 +8,20 @@ from typing import AsyncGenerator
 from fastapi import Request
 
 
+class _KeepaliveMarker:
+    """Sentinel yielded during long prefill to keep SSE connections alive.
+
+    The API layer checks for this type and emits an SSE comment (`: keepalive`)
+    instead of a data chunk. SSE comments are ignored by conformant parsers
+    but prevent HTTP connection timeouts during long prompt processing.
+    """
+    pass
+
+
+KEEPALIVE_MARKER = _KeepaliveMarker()
+_KEEPALIVE_MARKER = KEEPALIVE_MARKER  # Module-level singleton
+
+
 async def async_generator_with_abort(
     sync_gen,
     http_request: Request | None,
@@ -34,6 +48,10 @@ async def async_generator_with_abort(
         except StopIteration:
             return None
 
+    keepalive_interval = 5.0  # seconds between keepalive comments
+    last_keepalive = asyncio.get_event_loop().time()
+    first_chunk_received = False
+
     try:
         while True:
             chunk_future = loop.run_in_executor(None, get_next)
@@ -48,11 +66,18 @@ async def async_generator_with_abort(
                         except Exception:
                             pass
                         return
+                    # Emit SSE keepalive comments during long prefill to
+                    # prevent connection timeouts. Only before first chunk.
+                    now = asyncio.get_event_loop().time()
+                    if not first_chunk_received and (now - last_keepalive) >= keepalive_interval:
+                        yield _KEEPALIVE_MARKER
+                        last_keepalive = now
                     await asyncio.sleep(0.1)
 
             chunk = await chunk_future
             if chunk is None:
                 break
+            first_chunk_received = True
             yield chunk
     finally:
         # Close the provider generator so its finally blocks run immediately

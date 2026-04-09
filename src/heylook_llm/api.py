@@ -80,7 +80,17 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     # The router is now initialized in server.py and passed in app.state
     task = asyncio.create_task(_resource_snapshot_loop(app))
+
+    # Initialize conversation database
+    from heylook_llm.db import get_connection
+    app.state.db = await get_connection()
+
     yield
+
+    # Close database connection
+    if hasattr(app.state, "db") and app.state.db:
+        await app.state.db.close()
+
     task.cancel()
     logging.info("Server shut down.")
 
@@ -108,6 +118,10 @@ app = FastAPI(
         {
             "name": "Monitoring",
             "description": "Performance monitoring and server status endpoints"
+        },
+        {
+            "name": "Conversations",
+            "description": "Conversation storage and message management"
         }
     ]
 )
@@ -135,6 +149,10 @@ from heylook_llm.admin_api import scan_import_router, admin_router, admin_ops_ro
 app.include_router(scan_import_router)
 app.include_router(admin_router)
 app.include_router(admin_ops_router)
+
+# Import and include Conversation API router
+from heylook_llm.conversation_api import conversation_router
+app.include_router(conversation_router)
 
 @app.get("/v1/models",
     summary="List Available Models",
@@ -567,6 +585,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     token_count = 0
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens = 0
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -609,9 +628,14 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Resolve abort event from provider (if MLX provider with abort support)
     abort_event = getattr(provider, '_abort_event', None) if provider else None
 
-    from heylook_llm.streaming_utils import async_generator_with_abort
+    from heylook_llm.streaming_utils import async_generator_with_abort, _KeepaliveMarker
 
     async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
+        # Emit SSE keepalive comment during long prefill (prevents connection timeout)
+        if isinstance(chunk, _KeepaliveMarker):
+            yield ": keepalive\n\n"
+            continue
+
         # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
         # The final chunk may have empty text but still carry the finish_reason
         chunk_finish_reason = getattr(chunk, 'finish_reason', None)
@@ -629,6 +653,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         # Also capture token counts from chunks (including final empty chunk)
         prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
         completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+        cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
 
         if not chunk.text:
             continue
@@ -713,6 +738,12 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             "completion_tokens": final_completion_tokens,
             "total_tokens": final_prompt_tokens + final_completion_tokens
         }
+
+        # Report cached token count (from radix tree prompt cache)
+        if cached_tokens > 0:
+            usage_data["prompt_tokens_details"] = {
+                "cached_tokens": cached_tokens,
+            }
 
         # Add thinking-specific fields if there were thinking tokens
         if thinking_tokens > 0:
@@ -802,8 +833,10 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=False)
 
     # Process generation in thread pool to avoid blocking event loop
+    cached_tokens = 0
+
     def consume_generator():
-        nonlocal full_text, prompt_tokens, completion_tokens, token_count
+        nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
         first_logprob_logged = False
         for chunk in generator:
             full_text += chunk.text
@@ -829,6 +862,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
             prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
             completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+            cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
 
     await asyncio.to_thread(consume_generator)
 
@@ -837,6 +871,12 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         "completion_tokens": completion_tokens or token_count,  # Fallback to our count
         "total_tokens": (prompt_tokens or 0) + (completion_tokens or token_count)
     }
+
+    # Report cached token count (from radix tree prompt cache)
+    if cached_tokens > 0:
+        usage_dict["prompt_tokens_details"] = {
+            "cached_tokens": cached_tokens,
+        }
 
     # Parse thinking content from Qwen3 models
     from heylook_llm.thinking_parser import parse_thinking_content

@@ -24,6 +24,7 @@ from .common.model_wrappers import LanguageModelLogitsWrapper
 from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
+from .common.vision_feature_cache import VisionFeatureCache
 
 # -- transformers 5.x compatibility patches (no torchvision) --
 # On MLX-only setups, torchvision is absent. transformers 5.x has several bugs
@@ -184,6 +185,12 @@ class UnifiedTextStrategy:
         prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
         gen_model = self._get_generation_model(model)
 
+        # Compute system prompt token boundary for segment-aware cache eviction.
+        # Only re-tokenizes the system prefix (not the full prompt again).
+        system_prefix_len = self._find_system_boundary(
+            messages_for_template, prompt_tokens, tokenizer, processor, model, effective_request
+        )
+
         # VLM models (e.g. Qwen3.5) cache _position_ids and _rope_deltas on
         # the LanguageModel instance across requests. With radix cache, a new
         # request may restore KV state at a non-zero offset, but stale
@@ -204,6 +211,7 @@ class UnifiedTextStrategy:
             draft_model=self.draft_model,
             cache_manager=self.cache_manager,
             abort_event=abort_event,
+            system_prefix_len=system_prefix_len,
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -252,6 +260,46 @@ class UnifiedTextStrategy:
             return tokenizer.encode(prompt)
         return prompt
 
+    def _find_system_boundary(self, messages, prompt_tokens, tokenizer, processor, model, effective_request) -> int:
+        """Find the token boundary where system prompt ends.
+
+        Tokenizes just the system messages + empty user message, then compares
+        against the already-computed prompt_tokens to find the divergence point.
+        Only one extra tokenization (the system prefix), not two.
+
+        Returns 0 if no system messages or computation fails.
+        """
+        # Count leading system messages
+        num_system = 0
+        for msg in messages:
+            if msg.get('role') == 'system':
+                num_system += 1
+            else:
+                break
+
+        if num_system == 0:
+            return 0
+
+        try:
+            # Tokenize system messages + empty user to find boundary
+            sys_messages = messages[:num_system] + [{"role": "user", "content": ""}]
+            sys_tokens = self._apply_template(sys_messages, tokenizer, processor, model, effective_request)
+
+            # Find divergence point against already-computed full prompt
+            sys_end = 0
+            for i, (a, b) in enumerate(zip(sys_tokens, prompt_tokens)):
+                if a != b:
+                    sys_end = i
+                    break
+            else:
+                sys_end = min(len(sys_tokens), len(prompt_tokens))
+
+            if sys_end > 0:
+                logging.debug(f"System prefix: {sys_end} tokens ({num_system} system messages)")
+            return sys_end
+        except Exception:
+            return 0
+
     def _get_generation_model(self, model):
         """Return raw model for text-only, LanguageModelLogitsWrapper for VLM.
 
@@ -291,6 +339,11 @@ class VLMVisionStrategy:
     4. Sample first token from logits
     5. Continue generation via generation_core.run_generation()
 
+    Vision feature caching (inspired by mlx-vlm VisionFeatureCache):
+    When a model supports encode_image(), vision encoder outputs are cached
+    by image URL so multi-turn conversations skip the expensive vision tower
+    forward pass on repeated images.
+
     This gives vision requests the full sampler suite, abort support, and
     speculative decoding from generation_core -- a single code path for all
     MLX generation.
@@ -299,6 +352,7 @@ class VLMVisionStrategy:
     def __init__(self):
         self._batch_vision_processor = None
         self._cached_wrapper = None
+        self._vision_cache: VisionFeatureCache | None = None
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
@@ -308,8 +362,12 @@ class VLMVisionStrategy:
         if self._batch_vision_processor is None:
             self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
 
+        # Initialize vision feature cache (one per VLM strategy instance)
+        if self._vision_cache is None:
+            self._vision_cache = VisionFeatureCache(max_entries=20)
+
         # Prepare VLM inputs: extract images, format prompt with chat template
-        images, formatted_prompt, _ = self._prepare_vlm_inputs_parallel(
+        images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
             request.messages, processor, model.config, model
         )
 
@@ -346,6 +404,29 @@ class VLMVisionStrategy:
             mask = mx.ones(input_ids.shape, dtype=mx.int32)
         vlm_kwargs["mask"] = mask
 
+        # Vision feature caching: reuse cached vision encoder outputs across turns.
+        # Follows mlx-vlm's pattern (generate.py:656-664):
+        # - If model has encode_image(), we can compute and cache vision features
+        # - cached_image_features kwarg bypasses the vision tower in the model's
+        #   get_input_embeddings() method
+        has_encode_image = hasattr(model, 'encode_image')
+        cache_key = image_urls if image_urls else None
+        if has_encode_image and pixel_values is not None:
+            # Try URL-based key first; fall back to pixel content hash for
+            # base64/PIL images that don't have a stable URL.
+            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values)
+            if cached_features is not None:
+                vlm_kwargs["cached_image_features"] = cached_features
+                logging.info("[VLM VISION] Using cached vision features (skipping vision encoder)")
+            else:
+                # Compute and cache vision features separately
+                with wired_limit(model, [generation_stream]):
+                    features = model.encode_image(pixel_values)
+                    mx.async_eval(features)
+                self._vision_cache.put(cache_key, features, pixel_values=pixel_values)
+                vlm_kwargs["cached_image_features"] = features
+                logging.info("[VLM VISION] Computed and cached vision features")
+
         # Ensure wrapper is cached for language model generation
         if self._cached_wrapper is None:
             self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
@@ -356,6 +437,8 @@ class VLMVisionStrategy:
         # Phase 1: Vision encoding -- run full VLM forward pass.
         # The VLM passes cache= through to model.language_model(), so the
         # language model writes KV state directly into request_cache.
+        # When cached_image_features is set, the vision tower is skipped
+        # inside the model's get_input_embeddings().
         with wired_limit(model, [generation_stream]):
             if input_ids.ndim == 1:
                 input_ids = input_ids[None, :]
@@ -397,7 +480,7 @@ class VLMVisionStrategy:
             pre_filled_cache=request_cache,
         )
 
-    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool]:
+    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
@@ -956,6 +1039,19 @@ class MLXProvider(BaseProvider):
                     f"before unload ({elapsed:.1f}s elapsed)"
                 )
             time.sleep(0.1)
+
+        # Clear vision feature cache before dropping strategy references
+        vision_strategy = self._strategies.get('vision')
+        if vision_strategy is not None and hasattr(vision_strategy, '_vision_cache'):
+            cache = vision_strategy._vision_cache
+            if cache is not None:
+                stats = cache.stats()
+                if stats["hits"] + stats["misses"] > 0:
+                    logging.info(
+                        f"Vision feature cache stats: {stats['hits']} hits, "
+                        f"{stats['misses']} misses, {stats['hit_rate']:.0%} hit rate"
+                    )
+                cache.clear()
 
         # Clear caches
         self._strategies.clear()

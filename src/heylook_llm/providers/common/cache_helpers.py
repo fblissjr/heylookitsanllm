@@ -63,6 +63,22 @@ def make_cache(model: nn.Module, config: dict) -> List[Any]:
         raise ValueError(f"Unknown cache_type: {cache_type}")
 
 
+def snapshot_nbytes(snapshot: List[tuple | None]) -> int:
+    """Compute total byte size of a KV cache snapshot.
+
+    Each snapshot entry is a (keys, values) tuple of mx.arrays. Returns
+    the sum of nbytes across all arrays. Used by the radix cache for
+    byte-level budget enforcement.
+    """
+    total = 0
+    for state in snapshot:
+        if state is not None:
+            for arr in state:
+                if hasattr(arr, 'nbytes'):
+                    total += arr.nbytes
+    return total
+
+
 def snapshot_kv(cache: List[Any]) -> List[tuple]:
     """Capture KV cache state for radix tree storage.
 

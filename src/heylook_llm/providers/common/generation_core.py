@@ -199,6 +199,7 @@ def generate_text(
     draft_model=None,
     cache_manager=None,
     abort_event=None,
+    system_prefix_len: int = 0,
 ) -> Generator:
     """High-level entry point for text-based generation.
 
@@ -216,6 +217,7 @@ def generate_text(
         sampler, processors,
         model_id=model_id, draft_model=draft_model,
         cache_manager=cache_manager, abort_event=abort_event,
+        system_prefix_len=system_prefix_len,
     )
 
 
@@ -231,6 +233,7 @@ def run_generation(
     cache_manager=None,
     abort_event=None,
     pre_filled_cache=None,
+    system_prefix_len: int = 0,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
@@ -287,6 +290,9 @@ def run_generation(
         prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
             model_id, model, prompt_tokens, cache_config, cache_manager
         )
+        # Store system prefix length for segment-aware eviction
+        if prompt_cache and system_prefix_len > 0:
+            prompt_cache.system_prefix_len = system_prefix_len
 
     def prompt_progress_callback(processed: int, total: int):
         logging.debug(f"Prompt processing: {processed}/{total} tokens")
@@ -306,6 +312,9 @@ def run_generation(
     draft_accepted = 0
     draft_total = 0
     generation_failed = False
+
+    # Compute how many tokens came from cache for reporting in API responses
+    cached_count = len(prompt_tokens) - len(tokens_to_process)
 
     try:
         with wired_limit(model, [generation_stream]):
@@ -340,6 +349,8 @@ def run_generation(
                 if first_token:
                     if pre_filled_cache is None and response.text.startswith(' '):
                         response.text = response.text.lstrip()
+                    # Attach cache stats for API response reporting
+                    response.cached_tokens = cached_count
                     first_token = False
 
                 yield response

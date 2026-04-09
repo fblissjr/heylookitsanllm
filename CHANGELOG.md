@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0]
+
+### Added
+
+- **Conversation storage API**: New `/v1/conversations` CRUD endpoints backed by SQLite (aiosqlite). Stores conversations and messages server-side, enabling simpler frontends that don't need client-side persistence. Endpoints: list, create, get (with messages), update, delete (cascade), append message, edit message, truncate messages after position.
+
+## [1.26.0]
+
+### Added
+
+- **Process-wide wired memory limit**: Server now calls `mx.set_wired_limit(max_recommended_working_set_size)` at startup, matching mlx-lm's server. Model weights stay wired between requests, reducing memory churn and improving time-to-first-token.
+- **Vision feature cache**: VLM requests cache vision encoder outputs by image URL. Multi-turn conversations with the same image skip the 200-500ms vision tower forward pass. LRU cache with 20 entries, cleared on model unload. Uses mlx-vlm's `cached_image_features` / `encode_image` API.
+- **Byte-level prompt cache budget**: New `--prompt-cache-bytes` CLI flag (e.g. `2G`, `512M`) caps total KV cache memory in the radix tree. Radix cache tracks snapshot sizes and evicts LRU leaves when over budget.
+- **Cache stats in API responses**: `usage.prompt_tokens_details.cached_tokens` reports how many prompt tokens were served from the radix cache, matching the OpenAI API format.
+- **Segment-aware cache eviction**: Radix tree nodes are tagged with segment type (system/assistant). System prompt KV caches are evicted last, keeping shared system prompts alive longer across conversations.
+- **SSE keepalive during long prefill**: Streaming responses emit SSE comments (`: keepalive`) every 5 seconds during prompt processing to prevent connection timeouts on long prompts.
+
 ## [1.25.2]
 
 ### Fixed

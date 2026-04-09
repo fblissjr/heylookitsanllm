@@ -44,6 +44,14 @@ from typing import Any
 
 BLOCK_SIZE = 32  # tokens per node -- configurable at module level
 
+# Eviction priority order: assistant caches are evicted first (lowest value),
+# system caches last (highest value). Matches mlx-lm's LRUPromptCache.CacheOrder.
+EVICTION_PRIORITY: dict[str, int] = {
+    "assistant": 0,
+    "user": 1,
+    "system": 2,
+}
+
 
 @dataclass
 class RadixNode:
@@ -53,6 +61,8 @@ class RadixNode:
     kv_snapshot: list[Any] | None = None             # KV cache state at END of this block
     last_access: float = field(default_factory=time.monotonic)
     depth: int = 0
+    snapshot_bytes: int = 0                          # byte size of kv_snapshot for budget tracking
+    segment_type: str = "assistant"                   # "system" | "user" | "assistant" for eviction priority
 
 
 class RadixCache:
@@ -67,8 +77,15 @@ class RadixCache:
         self.root = RadixNode(token_block=(), children={}, depth=0)
         self.max_nodes = max_nodes
         self._node_count = 0
+        self._total_bytes = 0
         self._lock = threading.RLock()
         self._memory_pressure_fn = memory_pressure_fn
+
+    @property
+    def nbytes(self) -> int:
+        """Total bytes of KV snapshots stored in this tree."""
+        with self._lock:
+            return self._total_bytes
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,7 +130,8 @@ class RadixCache:
 
             return matched, best_snapshot
 
-    def insert(self, tokens: list[int], kv_snapshot: list[Any], matched_length: int) -> None:
+    def insert(self, tokens: list[int], kv_snapshot: list[Any], matched_length: int,
+               system_prefix_len: int = 0) -> None:
         """Insert KV state for a token sequence from matched_length onward.
 
         Only creates nodes at block boundaries. The kv_snapshot is attached
@@ -169,10 +187,13 @@ class RadixCache:
                 elif child is not None and child.token_block != block:
                     # Different block with same first token -- replace
                     # (rare: two blocks share first token but differ later)
+                    block_end = (i + 1) * BLOCK_SIZE
+                    seg_type = "system" if block_end <= system_prefix_len else "assistant"
                     new_node = RadixNode(
                         token_block=block,
                         children={},
                         depth=i + 1,
+                        segment_type=seg_type,
                     )
                     node.children[first_token] = new_node
                     # Don't decrement _node_count for replaced node's subtree
@@ -183,10 +204,13 @@ class RadixCache:
                     if self._node_count >= self.max_nodes or self._check_memory_pressure():
                         self._evict_lru_unlocked()
 
+                    block_end = (i + 1) * BLOCK_SIZE
+                    seg_type = "system" if block_end <= system_prefix_len else "assistant"
                     new_node = RadixNode(
                         token_block=block,
                         children={},
                         depth=i + 1,
+                        segment_type=seg_type,
                     )
                     node.children[first_token] = new_node
                     self._node_count += 1
@@ -194,14 +218,47 @@ class RadixCache:
 
             # Attach snapshot to the deepest node we reached
             if node is not self.root:
+                # Subtract old snapshot bytes if replacing
+                if node.kv_snapshot is not None:
+                    self._total_bytes -= node.snapshot_bytes
+
                 node.kv_snapshot = kv_snapshot
                 node.last_access = time.monotonic()
+
+                # Track snapshot size for byte budget
+                from .cache_helpers import snapshot_nbytes
+                snap_bytes = snapshot_nbytes(kv_snapshot) if kv_snapshot else 0
+                node.snapshot_bytes = snap_bytes
+                self._total_bytes += snap_bytes
 
     def clear(self) -> None:
         """Remove all cached entries."""
         with self._lock:
             self.root.children.clear()
             self._node_count = 0
+            self._total_bytes = 0
+
+    def stats_by_segment_type(self) -> dict[str, dict[str, int]]:
+        """Return node count and byte totals grouped by segment type.
+
+        Returns dict like:
+            {"system": {"nodes": 3, "bytes": 1048576},
+             "assistant": {"nodes": 12, "bytes": 8388608}}
+        """
+        with self._lock:
+            result: dict[str, dict[str, int]] = {}
+            self._collect_segment_stats(self.root, result)
+            return result
+
+    def _collect_segment_stats(self, node: RadixNode, result: dict[str, dict[str, int]]) -> None:
+        """Recursively sum node counts and bytes by segment type."""
+        for child in node.children.values():
+            seg = child.segment_type
+            if seg not in result:
+                result[seg] = {"nodes": 0, "bytes": 0}
+            result[seg]["nodes"] += 1
+            result[seg]["bytes"] += child.snapshot_bytes
+            self._collect_segment_stats(child, result)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -224,8 +281,23 @@ class RadixCache:
             for i in range(0, len(tokens), BLOCK_SIZE)
         ]
 
+    def trim_to_bytes(self, max_bytes: int) -> None:
+        """Evict LRU leaves until total bytes is at or below max_bytes.
+
+        Used by PromptCacheManager to enforce a process-wide byte budget.
+        """
+        with self._lock:
+            while self._total_bytes > max_bytes and self._node_count > 0:
+                self._evict_lru_unlocked()
+
     def _evict_lru_unlocked(self) -> None:
-        """Remove the least-recently-accessed leaf node. Must hold lock."""
+        """Remove the least-recently-accessed leaf node. Must hold lock.
+
+        Segment-aware eviction: assistant nodes are evicted first, user nodes
+        next, system nodes last. Within the same segment type, oldest (by
+        last_access) is evicted first. This keeps system prompt KV caches
+        alive longer, matching mlx-lm's LRUPromptCache priority ordering.
+        """
         # Collect all leaf nodes with their parents
         leaves: list[tuple[float, int, RadixNode, RadixNode]] = []
         self._collect_leaves(self.root, leaves)
@@ -233,14 +305,22 @@ class RadixCache:
         if not leaves:
             return
 
-        # Sort by last_access (oldest first)
-        leaves.sort(key=lambda x: x[0])
+        # Sort by (segment_priority ASC, last_access ASC) -- assistant first, oldest first
+        leaves.sort(key=lambda x: (
+            EVICTION_PRIORITY.get(x[2].segment_type, 0),
+            x[0],
+        ))
 
-        # Remove the oldest leaf
+        # Remove the highest-priority eviction candidate
         _, first_token_key, leaf, parent = leaves[0]
         del parent.children[first_token_key]
         self._node_count -= 1
-        logging.debug(f"Evicted radix cache leaf (depth={leaf.depth}, age={time.monotonic() - leaf.last_access:.1f}s)")
+        self._total_bytes -= leaf.snapshot_bytes
+        logging.debug(
+            f"Evicted radix cache leaf (depth={leaf.depth}, "
+            f"bytes={leaf.snapshot_bytes}, "
+            f"age={time.monotonic() - leaf.last_access:.1f}s)"
+        )
 
     def _collect_leaves(
         self,

@@ -54,6 +54,7 @@ class PromptCache:
     model_key: Tuple[str, Optional[str]] = ("", None)
     tokens: List[int] = field(default_factory=list)
     _radix_matched_len: int = 0  # How many tokens were restored from radix cache
+    system_prefix_len: int = 0   # Tokens belonging to system prompt (for segment-aware eviction)
 
     def __str__(self):
         return f"PromptCache(tokens={len(self.tokens)}, model={self.model_key[0]})"
@@ -69,11 +70,13 @@ class PromptCacheManager:
     Thread-safe: all public methods are protected by a reentrant lock.
     """
 
-    def __init__(self, max_cache_entries: int = 10, max_radix_nodes: int = 128):
+    def __init__(self, max_cache_entries: int = 10, max_radix_nodes: int = 128,
+                 max_cache_bytes: int | None = None):
         self._radix_caches: dict[str, RadixCache] = {}
         self._working_caches: dict[str, PromptCache] = {}
         self._max_entries = max_cache_entries
         self._max_radix_nodes = max_radix_nodes
+        self._max_cache_bytes = max_cache_bytes
         self._access_order: list[str] = []
         self._lock = threading.RLock()
 
@@ -141,17 +144,68 @@ class PromptCacheManager:
             self._access_order.clear()
             logging.debug("Cleared all prompt caches")
 
+    @property
+    def total_cache_bytes(self) -> int:
+        """Total bytes across all radix caches (O(1) via running total on each tree)."""
+        with self._lock:
+            return sum(rc.nbytes for rc in self._radix_caches.values())
+
+    def enforce_byte_budget(self) -> None:
+        """Trim radix caches if total bytes exceeds budget.
+
+        Uses the O(1) nbytes property on each radix cache (running total)
+        to avoid re-scanning all nodes. Evicts from the largest cache first.
+        """
+        if self._max_cache_bytes is None:
+            return
+
+        with self._lock:
+            total = self.total_cache_bytes
+            if total <= self._max_cache_bytes:
+                return
+
+            # Evict from largest caches first
+            while total > self._max_cache_bytes:
+                largest_id = max(
+                    self._radix_caches,
+                    key=lambda mid: self._radix_caches[mid].nbytes,
+                    default=None,
+                )
+                if largest_id is None:
+                    break
+
+                rc = self._radix_caches[largest_id]
+                if rc.nbytes == 0:
+                    break
+
+                old_bytes = rc.nbytes
+                rc.trim_to_bytes(max(0, self._max_cache_bytes - (total - rc.nbytes)))
+                freed = old_bytes - rc.nbytes
+                total -= freed
+                logging.debug(
+                    f"Byte budget: trimmed {freed / (1024**2):.1f} MB from {largest_id}, "
+                    f"total now {total / (1024**2):.1f} MB"
+                )
+
     def get_cache_info(self) -> dict:
-        """Get information about cached prompts (thread-safe)."""
+        """Get information about cached prompts (thread-safe).
+
+        Includes per-model stats with segment-type breakdown (system vs assistant
+        node counts and byte usage).
+        """
         with self._lock:
             info = {}
             for model_id, working in self._working_caches.items():
                 radix = self._radix_caches.get(model_id)
-                info[model_id] = {
+                model_info: dict = {
                     "tokens_cached": len(working.tokens),
                     "cache_layers": len(working.cache),
                     "radix_nodes": radix._node_count if radix else 0,
+                    "radix_bytes": radix.nbytes if radix else 0,
                 }
+                if radix:
+                    model_info["segment_stats"] = radix.stats_by_segment_type()
+                info[model_id] = model_info
             return info
 
     def get_context_usage(self, model_id: str) -> int:
@@ -228,6 +282,7 @@ def store_generation_cache(
     prompt_cache: PromptCache,
     full_tokens: List[int],
     generation_cache: List[Any],
+    system_prefix_len: int = 0,
 ) -> None:
     """Store KV cache snapshot in the radix tree after generation completes.
 
@@ -247,13 +302,19 @@ def store_generation_cache(
         return
 
     kv_snap = snapshot_kv(generation_cache)
-    radix.insert(full_tokens, kv_snap, prompt_cache._radix_matched_len)
+    # Use system_prefix_len from parameter or from prompt_cache
+    effective_sys_len = system_prefix_len or prompt_cache.system_prefix_len
+    radix.insert(full_tokens, kv_snap, prompt_cache._radix_matched_len,
+                 system_prefix_len=effective_sys_len)
     prompt_cache.tokens = full_tokens
 
     logging.debug(
         f"Stored radix snapshot: {len(full_tokens)} tokens "
         f"(matched={prompt_cache._radix_matched_len}, new={len(full_tokens) - prompt_cache._radix_matched_len})"
     )
+
+    # Enforce byte budget after each insert
+    manager.enforce_byte_budget()
 
 
 # Global cache manager instance

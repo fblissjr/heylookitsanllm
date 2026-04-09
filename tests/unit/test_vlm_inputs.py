@@ -45,7 +45,7 @@ class TestPrepareVlmInputsParallel:
         mock_batch = MagicMock()
         mock_template_fn = MagicMock(return_value="formatted")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, mock_template_fn
         )
 
@@ -67,7 +67,7 @@ class TestPrepareVlmInputsParallel:
         mock_batch.load_images_parallel.return_value = [MagicMock()]
         mock_template_fn = MagicMock(return_value="formatted with image")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, mock_template_fn
         )
 
@@ -88,7 +88,7 @@ class TestPrepareVlmInputsParallel:
         mock_batch.load_images_parallel.return_value = [MagicMock()]
         mock_template_fn = MagicMock(return_value="formatted")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, mock_template_fn
         )
 
@@ -114,7 +114,7 @@ class TestPrepareVlmInputsParallel:
             captured_messages.extend(msgs)
             return "formatted"
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, capture_template
         )
 
@@ -137,7 +137,7 @@ class TestPrepareVlmInputsParallel:
         def failing_template(proc, cfg, msgs, **kwargs):
             raise ValueError("template error")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, failing_template
         )
 
@@ -157,7 +157,7 @@ class TestPrepareVlmInputsParallel:
         def always_failing(proc, cfg, msgs, **kwargs):
             raise ValueError("always fails")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, always_failing
         )
 
@@ -177,7 +177,7 @@ class TestPrepareVlmInputsParallel:
         mock_batch.load_images_parallel.return_value = [MagicMock(), MagicMock()]
         mock_template_fn = MagicMock(return_value="formatted")
 
-        images, prompt, has_images = prepare_vlm_inputs_parallel(
+        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
             messages, mock_processor, mock_config, mock_batch, mock_template_fn
         )
 
