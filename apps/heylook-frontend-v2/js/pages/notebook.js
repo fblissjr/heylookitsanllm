@@ -3,8 +3,8 @@
 
 import * as api from '../api.js'
 import { streamChat } from '../streaming.js'
-import { createEl } from '../utils.js'
-import { getSettings } from '../settings.js'
+import { createEl, beforeUnloadGuard } from '../utils.js'
+import { samplerParams } from '../settings.js'
 
 let container = null
 let state = null
@@ -263,7 +263,7 @@ async function handleGenerate() {
   state.generating = true
   const controller = new AbortController()
   state.controller = controller
-  window.addEventListener('beforeunload', _beforeUnloadGuard)
+  window.addEventListener('beforeunload', beforeUnloadGuard)
 
   const genBtn = container?.querySelector('#gen-btn')
   const stopBtn = container?.querySelector('#stop-btn')
@@ -282,10 +282,9 @@ async function handleGenerate() {
   messages.push({ role: 'user', content: beforeCursor || 'Continue writing.' })
 
   let generated = ''
-  const settings = getSettings()
 
   await streamChat(
-    { model, messages, temperature: settings.temperature, top_p: settings.top_p, max_tokens: settings.max_tokens },
+    { model, messages, ...samplerParams() },
     {
       onToken(token) {
         if (!state) return
@@ -309,7 +308,7 @@ async function handleGenerate() {
         state.generating = false
         state.controller = null
         _genRafPending = false
-        window.removeEventListener('beforeunload', _beforeUnloadGuard)
+        window.removeEventListener('beforeunload', beforeUnloadGuard)
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
         scheduleSave()
@@ -319,7 +318,7 @@ async function handleGenerate() {
         state.generating = false
         state.controller = null
         _genRafPending = false
-        window.removeEventListener('beforeunload', _beforeUnloadGuard)
+        window.removeEventListener('beforeunload', beforeUnloadGuard)
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
         console.error('Generation error:', err)
@@ -335,14 +334,10 @@ function stopGeneration() {
     state.controller = null
     state.generating = false
     _genRafPending = false
-    window.removeEventListener('beforeunload', _beforeUnloadGuard)
+    window.removeEventListener('beforeunload', beforeUnloadGuard)
     const genBtn = container?.querySelector('#gen-btn')
     const stopBtn = container?.querySelector('#stop-btn')
     if (genBtn) genBtn.style.display = ''
     if (stopBtn) stopBtn.style.display = 'none'
   }
-}
-
-function _beforeUnloadGuard(e) {
-  e.preventDefault()
 }

@@ -1,12 +1,13 @@
 // Shared sampler settings -- persisted to localStorage
+// null values mean "use backend/model default" -- only explicitly set values are sent
 
 const STORAGE_KEY = 'heylook-v2-settings'
 
 const DEFAULTS = {
-  temperature: 0.7,
-  top_p: 1.0,
-  top_k: 0,
-  max_tokens: 2048,
+  temperature: null,
+  top_p: null,
+  top_k: null,
+  max_tokens: null,
 }
 
 let _cache = null
@@ -51,6 +52,17 @@ export function updateSettings(obj) {
 export function resetSettings() {
   _cache = { ...DEFAULTS }
   save()
+}
+
+/** Build request params from settings, omitting null (backend-default) values. */
+export function samplerParams() {
+  const s = load()
+  const params = {}
+  if (s.temperature != null) params.temperature = s.temperature
+  if (s.top_p != null) params.top_p = s.top_p
+  if (s.top_k != null && s.top_k > 0) params.top_k = s.top_k
+  if (s.max_tokens != null) params.max_tokens = s.max_tokens
+  return params
 }
 
 export { DEFAULTS }

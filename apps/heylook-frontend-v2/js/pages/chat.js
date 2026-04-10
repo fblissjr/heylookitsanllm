@@ -6,8 +6,8 @@ import * as api from '../api.js'
 import bus from '../bus.js'
 import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
-import { createEl } from '../utils.js'
-import { getSettings } from '../settings.js'
+import { createEl, beforeUnloadGuard } from '../utils.js'
+import { samplerParams } from '../settings.js'
 
 let container = null
 let state = null
@@ -97,11 +97,12 @@ function buildShell() {
 
 function teardown() {
   stopStream()
-  // Clean up handlers on persistent sidebar elements (outside #main)
+  _streamRafPending = false
   const list = document.getElementById('conversation-list')
   if (list) list.onclick = null
   const newBtn = document.getElementById('new-chat-btn')
   if (newBtn) newBtn.onclick = null
+  state = null
   container = null
 }
 
@@ -386,19 +387,15 @@ async function startStream() {
 
   const controller = new AbortController()
   state.streaming = { active: true, content: '', thinking: '', controller }
-  window.addEventListener('beforeunload', _beforeUnloadGuard)
+  window.addEventListener('beforeunload', beforeUnloadGuard)
   renderMessages()
   scrollToBottom()
 
-  const settings = getSettings()
   const request = {
     model: state.selectedModel,
     messages: buildApiMessages(),
-    temperature: settings.temperature,
-    top_p: settings.top_p,
-    max_tokens: settings.max_tokens,
+    ...samplerParams(),
   }
-  if (settings.top_k > 0) request.top_k = settings.top_k
 
   const targetConvId = state.activeId
 
@@ -418,7 +415,7 @@ async function startStream() {
       const content = state.streaming.content
       const thinking = state.streaming.thinking || null
       state.streaming = { active: false, content: '', thinking: '', controller: null }
-      window.removeEventListener('beforeunload', _beforeUnloadGuard)
+      window.removeEventListener('beforeunload', beforeUnloadGuard)
 
       if (content) {
         const msg = await api.appendMessage(targetConvId, {
@@ -433,7 +430,7 @@ async function startStream() {
     },
     onError(error) {
       state.streaming = { active: false, content: '', thinking: '', controller: null }
-      window.removeEventListener('beforeunload', _beforeUnloadGuard)
+      window.removeEventListener('beforeunload', beforeUnloadGuard)
       renderMessages()
       setStatus(`Error: ${error.message}`)
     },
@@ -480,12 +477,8 @@ function stopStream() {
   if (state.streaming.controller) {
     state.streaming.controller.abort()
     state.streaming.controller = null
-    window.removeEventListener('beforeunload', _beforeUnloadGuard)
+    window.removeEventListener('beforeunload', beforeUnloadGuard)
   }
-}
-
-function _beforeUnloadGuard(e) {
-  e.preventDefault()
 }
 
 function buildApiMessages() {

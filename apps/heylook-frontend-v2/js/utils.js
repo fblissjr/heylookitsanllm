@@ -7,6 +7,10 @@ export function createEl(tag, attrs, text) {
   return el
 }
 
+export function beforeUnloadGuard(e) {
+  e.preventDefault()
+}
+
 export function statCard(label, value) {
   const card = createEl('div', { class: 'stat-card' })
   card.append(

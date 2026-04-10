@@ -4,19 +4,18 @@
 import * as api from '../api.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 import { createEl, statCard } from '../utils.js'
-import { getSettings, updateSettings } from '../settings.js'
+import { getSetting, updateSettings } from '../settings.js'
 
 let container = null
 let state = null
 
 function freshState() {
-  const s = getSettings()
   return {
     models: [],
     selectedModel: null,
     prompts: ['', ''],
-    temperature: s.temperature,
-    maxTokens: s.max_tokens,
+    temperature: getSetting('temperature') ?? 0.7,
+    maxTokens: getSetting('max_tokens') ?? 512,
     running: false,
     results: null,
     error: null,
