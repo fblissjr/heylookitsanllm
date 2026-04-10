@@ -23,7 +23,9 @@ async function router() {
   const name = hash.replace('#/', '')
   currentPage = mod.mount(main, name)
 
-  // Update nav active state
+  // Update nav active state + sidebar visibility
+  const app = document.getElementById('app')
+  app.dataset.page = name
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('nav-item--active', item.dataset.page === name)
   })

@@ -7,6 +7,7 @@ import bus from '../bus.js'
 import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 import { createEl } from '../utils.js'
+import { getSettings } from '../settings.js'
 
 let container = null
 let state = null
@@ -385,13 +386,19 @@ async function startStream() {
 
   const controller = new AbortController()
   state.streaming = { active: true, content: '', thinking: '', controller }
+  window.addEventListener('beforeunload', _beforeUnloadGuard)
   renderMessages()
   scrollToBottom()
 
+  const settings = getSettings()
   const request = {
     model: state.selectedModel,
     messages: buildApiMessages(),
+    temperature: settings.temperature,
+    top_p: settings.top_p,
+    max_tokens: settings.max_tokens,
   }
+  if (settings.top_k > 0) request.top_k = settings.top_k
 
   const targetConvId = state.activeId
 
@@ -411,6 +418,7 @@ async function startStream() {
       const content = state.streaming.content
       const thinking = state.streaming.thinking || null
       state.streaming = { active: false, content: '', thinking: '', controller: null }
+      window.removeEventListener('beforeunload', _beforeUnloadGuard)
 
       if (content) {
         const msg = await api.appendMessage(targetConvId, {
@@ -425,6 +433,7 @@ async function startStream() {
     },
     onError(error) {
       state.streaming = { active: false, content: '', thinking: '', controller: null }
+      window.removeEventListener('beforeunload', _beforeUnloadGuard)
       renderMessages()
       setStatus(`Error: ${error.message}`)
     },
@@ -471,7 +480,12 @@ function stopStream() {
   if (state.streaming.controller) {
     state.streaming.controller.abort()
     state.streaming.controller = null
+    window.removeEventListener('beforeunload', _beforeUnloadGuard)
   }
+}
+
+function _beforeUnloadGuard(e) {
+  e.preventDefault()
 }
 
 function buildApiMessages() {
@@ -540,6 +554,7 @@ async function handleMessageAction(e) {
     }
 
     case 'delete': {
+      if (!confirm('Delete this message and everything after it?')) break
       const msg = state.messages.find(m => m.id === msgId)
       if (!msg) break
       const prevPos = msg.position - 1

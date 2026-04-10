@@ -1,37 +1,28 @@
 // Markdown renderer using marked + DOMPurify for sanitization
+// Libraries vendored locally in js/vendor/ (no CDN dependency)
 
-let _marked = null
-let _purify = null
+import { marked } from '../vendor/marked.esm.js'
+import DOMPurify from '../vendor/purify.es.mjs'
 
-export async function ensureMarked() {
-  if (_marked && _purify) return
-  try {
-    const [markedMod, purifyMod] = await Promise.all([
-      import('https://esm.run/marked@17'),
-      import('https://esm.run/dompurify@3'),
-    ])
-    markedMod.marked.use({ gfm: true, breaks: false })
-    _marked = markedMod.marked
-    _purify = purifyMod.default
-  } catch {
-    // CDN unreachable -- renderMarkdown falls back to escapeHtml
-    console.warn('Failed to load marked/DOMPurify from CDN, markdown disabled')
-  }
+marked.use({ gfm: true, breaks: false })
+
+export function ensureMarked() {
+  // No-op -- libraries are now loaded synchronously via static imports.
+  // Kept for API compatibility with pages that call ensureMarked() in init().
 }
 
 export function renderMarkdown(text) {
-  if (!_marked || !_purify || !text) return escapeHtml(text || '')
+  if (!text) return ''
   try {
-    const raw = _marked.parse(text)
-    return _purify.sanitize(raw)
+    const raw = marked.parse(text)
+    return DOMPurify.sanitize(raw)
   } catch {
     return escapeHtml(text)
   }
 }
 
 export function sanitize(html) {
-  if (!_purify) return escapeHtml(html)
-  return _purify.sanitize(html)
+  return DOMPurify.sanitize(html)
 }
 
 export function escapeHtml(str) {

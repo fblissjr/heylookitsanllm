@@ -799,6 +799,10 @@ html, body {
 .breakdown-count { color: var(--text-dim); min-width: 70px; }
 .breakdown-pct { color: var(--accent); min-width: 40px; text-align: right; }
 
+/* Hide sidebar on non-chat pages */
+#app:not([data-page="chat"]) .sidebar { display: none; }
+#app:not([data-page="chat"]) .sidebar-toggle { display: none; }
+
 /* Sidebar toggle (mobile) */
 .sidebar-toggle {
   display: none;

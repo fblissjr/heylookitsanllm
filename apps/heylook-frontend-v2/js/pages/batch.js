@@ -4,17 +4,19 @@
 import * as api from '../api.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 import { createEl, statCard } from '../utils.js'
+import { getSettings, updateSettings } from '../settings.js'
 
 let container = null
 let state = null
 
 function freshState() {
+  const s = getSettings()
   return {
     models: [],
     selectedModel: null,
     prompts: ['', ''],
-    temperature: 0.7,
-    maxTokens: 512,
+    temperature: s.temperature,
+    maxTokens: s.max_tokens,
     running: false,
     results: null,
     error: null,
@@ -107,9 +109,9 @@ function renderForm() {
   // Sampler params
   const paramsRow = createEl('div', { class: 'form-row form-row--inline' })
   const tempInput = createEl('input', { type: 'number', class: 'form-input form-input--sm', value: String(state.temperature), step: '0.1', min: '0', max: '2' })
-  tempInput.addEventListener('change', () => { state.temperature = parseFloat(tempInput.value) || 0.7 })
+  tempInput.addEventListener('change', () => { state.temperature = parseFloat(tempInput.value) || 0.7; updateSettings({ temperature: state.temperature }) })
   const maxInput = createEl('input', { type: 'number', class: 'form-input form-input--sm', value: String(state.maxTokens), step: '64', min: '1' })
-  maxInput.addEventListener('change', () => { state.maxTokens = parseInt(maxInput.value) || 512 })
+  maxInput.addEventListener('change', () => { state.maxTokens = parseInt(maxInput.value) || 512; updateSettings({ max_tokens: state.maxTokens }) })
   paramsRow.append(
     createEl('label', { class: 'form-label form-label--sm' }, 'Temp'),
     tempInput,
