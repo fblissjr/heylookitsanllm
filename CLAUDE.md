@@ -53,7 +53,7 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 Vanilla JS, no framework, no bundler, no node_modules. ~2,400 lines JS + ~800 lines CSS.
 Conversations stored server-side in SQLite (`/v1/conversations` API).
 Served at `/v2` by the FastAPI backend. Hash-based routing. `marked` + `DOMPurify` loaded from CDN.
-Pages: Chat, Batch, Models, Performance (all working). Notebook (placeholder). Token Explorer (planned).
+Pages: Chat, Batch, Models, Performance, Notebook (all working). Token Explorer (planned).
 
 Key patterns:
 - Each page exports `mount(el)` returning `{ teardown() }`. Module state reset via `freshState()` on mount.
@@ -61,6 +61,8 @@ Key patterns:
 - Streaming display uses RAF throttling (one render per frame, not per token).
 - Static file serving at `/v2` uses `resolve()` + `is_relative_to()` for path traversal prevention.
 - All `innerHTML` writes go through DOMPurify via `renderMarkdown()`. No raw user content in innerHTML.
+- Shared helpers (`createEl`, `statCard`) live in `js/utils.js`. New pages import from there.
+- Route handler DB access uses `get_db()` from `db.py` (shared, not per-module copies).
 
 ### Frontend (legacy): `apps/heylook-frontend/`
 
@@ -135,6 +137,7 @@ Config: `bench_config.toml` in each directory.
 - `--timeout` flag is not installed; pytest runs without it
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`
 - Conversation API: `uv run pytest tests/unit/test_conversation_api.py -v` (22 tests, in-memory SQLite)
+- Notebook API: `uv run pytest tests/unit/test_notebook_api.py -v` (11 tests, in-memory SQLite)
 - Frontend v2: no build step, no tests yet. Manual test at `http://localhost:8080/v2` when server is running (port from server.py, default 8080)
 - Frontend (legacy): `cd apps/heylook-frontend && bunx vitest run` (must run from frontend dir, not repo root)
 - Frontend (legacy) build: `cd apps/heylook-frontend && bun run build` (verify production build)
