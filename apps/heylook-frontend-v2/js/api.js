@@ -37,6 +37,13 @@ export const unloadModel = (id) => request('POST', `/v1/admin/models/${id}/unloa
 export const scanModels = (opts = {}) => request('POST', '/v1/admin/models/scan', opts)
 export const importModels = (data) => request('POST', '/v1/admin/models/import', data)
 
+// Notebooks
+export const listNotebooks = () => request('GET', '/v1/notebooks')
+export const getNotebook = (id) => request('GET', `/v1/notebooks/${id}`)
+export const createNotebook = (data = {}) => request('POST', '/v1/notebooks', data)
+export const updateNotebook = (id, data) => request('PUT', `/v1/notebooks/${id}`, data)
+export const deleteNotebook = (id) => request('DELETE', `/v1/notebooks/${id}`)
+
 // System
 export const getCapabilities = () => request('GET', '/v1/capabilities')
 export const getMetrics = () => request('GET', '/v1/system/metrics')

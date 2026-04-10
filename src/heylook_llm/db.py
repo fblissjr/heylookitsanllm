@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _SCHEMA_VERSION = 1
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
+_UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id"})
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS conversations (
@@ -44,6 +45,16 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conv_pos
     ON messages(conversation_id, position);
+
+CREATE TABLE IF NOT EXISTS notebooks (
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL DEFAULT 'Untitled',
+    content       TEXT NOT NULL DEFAULT '',
+    system_prompt TEXT,
+    model_id      TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
@@ -320,3 +331,92 @@ async def truncate_messages_after(
     )
     await db.commit()
     return cursor.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Notebook CRUD
+# ---------------------------------------------------------------------------
+
+async def list_notebooks(db: aiosqlite.Connection) -> list[dict]:
+    """Return all notebooks ordered by updated_at desc."""
+    async with db.execute(
+        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
+        "FROM notebooks ORDER BY updated_at DESC"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_notebook(db: aiosqlite.Connection, notebook_id: str) -> dict | None:
+    """Return a notebook or None."""
+    async with db.execute(
+        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
+        "FROM notebooks WHERE id = ?",
+        (notebook_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def create_notebook(
+    db: aiosqlite.Connection,
+    *,
+    title: str = "Untitled",
+    content: str = "",
+    system_prompt: str | None = None,
+    model_id: str | None = None,
+) -> dict:
+    """Create a new notebook and return it."""
+    nb_id = new_id()
+    now = _now_iso()
+    await db.execute(
+        "INSERT INTO notebooks (id, title, content, system_prompt, model_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (nb_id, title, content, system_prompt, model_id, now, now),
+    )
+    await db.commit()
+    return {
+        "id": nb_id, "title": title, "content": content,
+        "system_prompt": system_prompt, "model_id": model_id,
+        "created_at": now, "updated_at": now,
+    }
+
+
+async def update_notebook(
+    db: aiosqlite.Connection,
+    notebook_id: str,
+    **fields: str | None,
+) -> dict | None:
+    """Update notebook fields. Returns updated notebook or None if not found."""
+    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_NOTEBOOK_FIELDS}
+    if not updates:
+        raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_NOTEBOOK_FIELDS)})")
+
+    async with db.execute(
+        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
+        "FROM notebooks WHERE id = ?",
+        (notebook_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+
+    existing = dict(row)
+    now = _now_iso()
+
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [now, notebook_id]
+    await db.execute(
+        f"UPDATE notebooks SET {set_clause}, updated_at=? WHERE id=?",
+        values,
+    )
+    await db.commit()
+    existing.update(**updates, updated_at=now)
+    return existing
+
+
+async def delete_notebook(db: aiosqlite.Connection, notebook_id: str) -> bool:
+    """Delete a notebook. Returns True if it existed."""
+    cursor = await db.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
+    await db.commit()
+    return cursor.rowcount > 0

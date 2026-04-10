@@ -5,7 +5,7 @@ const routes = {
   '#/batch': () => import('./pages/batch.js'),
   '#/models': () => import('./pages/models.js'),
   '#/perf': () => import('./pages/perf.js'),
-  '#/notebook': () => import('./pages/placeholder.js'),
+  '#/notebook': () => import('./pages/notebook.js'),
 }
 
 let currentPage = null

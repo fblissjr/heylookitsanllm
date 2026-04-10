@@ -122,6 +122,10 @@ app = FastAPI(
         {
             "name": "Conversations",
             "description": "Conversation storage and message management"
+        },
+        {
+            "name": "Notebooks",
+            "description": "Notebook storage for text documents with LLM generation"
         }
     ]
 )
@@ -153,6 +157,10 @@ app.include_router(admin_ops_router)
 # Import and include Conversation API router
 from heylook_llm.conversation_api import conversation_router
 app.include_router(conversation_router)
+
+# Import and include Notebook API router
+from heylook_llm.notebook_api import notebook_router
+app.include_router(notebook_router)
 
 # Serve v2 frontend static files at /v2
 import pathlib as _pathlib

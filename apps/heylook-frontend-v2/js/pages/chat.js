@@ -6,6 +6,7 @@ import * as api from '../api.js'
 import bus from '../bus.js'
 import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
+import { createEl } from '../utils.js'
 
 let container = null
 let state = null
@@ -579,11 +580,4 @@ function toggleOverlay(show) {
   } else if (!show && overlay) {
     overlay.remove()
   }
-}
-
-function createEl(tag, attrs, text) {
-  const el = document.createElement(tag)
-  if (attrs) for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
-  if (text) el.textContent = text
-  return el
 }
