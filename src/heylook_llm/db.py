@@ -104,6 +104,15 @@ async def get_connection(path: Path | str | None = None) -> aiosqlite.Connection
     return db
 
 
+def get_db(request):
+    """Get the shared database connection from app state. For use in FastAPI route handlers."""
+    from fastapi import HTTPException
+    conn = getattr(request.app.state, "db", None)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    return conn
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -338,9 +347,9 @@ async def truncate_messages_after(
 # ---------------------------------------------------------------------------
 
 async def list_notebooks(db: aiosqlite.Connection) -> list[dict]:
-    """Return all notebooks ordered by updated_at desc."""
+    """Return all notebooks ordered by updated_at desc. Excludes content for efficiency."""
     async with db.execute(
-        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
+        "SELECT id, title, system_prompt, model_id, created_at, updated_at "
         "FROM notebooks ORDER BY updated_at DESC"
     ) as cur:
         rows = await cur.fetchall()

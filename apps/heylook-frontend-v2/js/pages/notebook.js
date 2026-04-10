@@ -8,6 +8,7 @@ import { createEl } from '../utils.js'
 let container = null
 let state = null
 let saveTimeout = null
+let _genRafPending = false
 
 function freshState() {
   return {
@@ -33,14 +34,16 @@ function teardown() {
   stopGeneration()
   flushSave()
   if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
+  _genRafPending = false
   state = null
   container = null
 }
 
 async function init() {
   await Promise.all([loadModels(), loadNotebooks()])
+  if (!state) return
   renderList()
-  if (state?.notebooks.length > 0) {
+  if (state.notebooks.length > 0) {
     await selectNotebook(state.notebooks[0].id)
   }
 }
@@ -135,13 +138,11 @@ function renderEditor(nb) {
 
   editor.replaceChildren()
 
-  // Title
   const titleInput = createEl('input', {
     class: 'notebook-title-input', type: 'text', placeholder: 'Title', value: nb.title,
   })
-  titleInput.addEventListener('input', () => scheduleSave({ title: titleInput.value }))
+  titleInput.addEventListener('input', () => scheduleSave())
 
-  // Model selector
   const modelRow = createEl('div', { class: 'notebook-model-row' })
   const select = createEl('select', { class: 'form-select' })
   for (const m of state.models) {
@@ -153,22 +154,20 @@ function renderEditor(nb) {
   }
   select.addEventListener('change', () => {
     state.selectedModel = select.value
-    scheduleSave({ model_id: select.value })
+    scheduleSave()
   })
   if (nb.model_id) state.selectedModel = nb.model_id
   modelRow.append(createEl('label', { class: 'form-label form-label--sm' }, 'Model'), select)
 
-  // System prompt (collapsible)
   const sysBlock = createEl('details', { class: 'notebook-system-block' })
   const sysSummary = createEl('summary', {}, 'System prompt')
   const sysInput = createEl('textarea', {
     class: 'form-textarea', rows: '2', placeholder: 'Optional system prompt...',
   })
   sysInput.value = nb.system_prompt || ''
-  sysInput.addEventListener('input', () => scheduleSave({ system_prompt: sysInput.value }))
+  sysInput.addEventListener('input', () => scheduleSave())
   sysBlock.append(sysSummary, sysInput)
 
-  // Content textarea
   const contentArea = createEl('textarea', {
     class: 'notebook-content', id: 'nb-content',
     placeholder: 'Start writing...',
@@ -176,10 +175,9 @@ function renderEditor(nb) {
   contentArea.value = nb.content || ''
   contentArea.addEventListener('input', () => {
     autoResize(contentArea)
-    scheduleSave({ content: contentArea.value })
+    scheduleSave()
   })
 
-  // Actions
   const actions = createEl('div', { class: 'notebook-actions' })
   const genBtn = createEl('button', { class: 'btn btn-primary', id: 'gen-btn' }, 'Generate')
   genBtn.addEventListener('click', handleGenerate)
@@ -196,32 +194,30 @@ function autoResize(textarea) {
   textarea.style.height = textarea.scrollHeight + 'px'
 }
 
-function scheduleSave(fields) {
+function scheduleSave() {
   if (!state) return
   state.dirty = true
   if (saveTimeout) clearTimeout(saveTimeout)
-  saveTimeout = setTimeout(() => flushSave(fields), 500)
+  saveTimeout = setTimeout(() => flushSave(), 500)
 }
 
-function flushSave(fields) {
+function flushSave() {
   if (!state?.activeId || !state.dirty) return
   const id = state.activeId
 
-  // Gather current field values from the DOM if not provided
-  if (!fields) {
-    const titleEl = container?.querySelector('.notebook-title-input')
-    const contentEl = container?.querySelector('#nb-content')
-    const sysEl = container?.querySelector('.notebook-system-block textarea')
-    fields = {}
-    if (titleEl) fields.title = titleEl.value
-    if (contentEl) fields.content = contentEl.value
-    if (sysEl) fields.system_prompt = sysEl.value
-  }
+  const titleEl = container?.querySelector('.notebook-title-input')
+  const contentEl = container?.querySelector('#nb-content')
+  const sysEl = container?.querySelector('.notebook-system-block textarea')
+  const selectEl = container?.querySelector('.notebook-model-row select')
+  const fields = {}
+  if (titleEl) fields.title = titleEl.value
+  if (contentEl) fields.content = contentEl.value
+  if (sysEl) fields.system_prompt = sysEl.value
+  if (selectEl) fields.model_id = selectEl.value
 
   state.dirty = false
   api.updateNotebook(id, fields).catch(() => {})
 
-  // Update sidebar title
   const nb = state.notebooks.find(n => n.id === id)
   if (nb && fields.title) {
     nb.title = fields.title
@@ -238,7 +234,13 @@ async function handleNew() {
 
 async function handleDelete(id) {
   if (!state) return
+  if (state.activeId === id) {
+    stopGeneration()
+    if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
+    state.dirty = false
+  }
   await api.deleteNotebook(id)
+  if (!state) return
   state.notebooks = state.notebooks.filter(n => n.id !== id)
   if (state.activeId === id) {
     state.activeId = null
@@ -284,23 +286,34 @@ async function handleGenerate() {
       onToken(token) {
         if (!state) return
         generated += token
-        contentArea.value = beforeCursor + generated + afterCursor
-        autoResize(contentArea)
-        contentArea.selectionStart = contentArea.selectionEnd = cursorPos + generated.length
+        // RAF-throttle DOM writes to avoid forced reflows at token rate
+        if (_genRafPending) return
+        _genRafPending = true
+        requestAnimationFrame(() => {
+          _genRafPending = false
+          if (!state) return
+          contentArea.value = beforeCursor + generated + afterCursor
+          autoResize(contentArea)
+          contentArea.selectionStart = contentArea.selectionEnd = cursorPos + generated.length
+        })
       },
       onThinking() {},
       onComplete() {
         if (!state) return
+        // Final sync in case last RAF hasn't fired
+        contentArea.value = beforeCursor + generated + afterCursor
         state.generating = false
         state.controller = null
+        _genRafPending = false
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
-        scheduleSave({ content: contentArea.value })
+        scheduleSave()
       },
       onError(err) {
         if (!state) return
         state.generating = false
         state.controller = null
+        _genRafPending = false
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
         console.error('Generation error:', err)
@@ -315,6 +328,7 @@ function stopGeneration() {
     state.controller.abort()
     state.controller = null
     state.generating = false
+    _genRafPending = false
     const genBtn = container?.querySelector('#gen-btn')
     const stopBtn = container?.querySelector('#stop-btn')
     if (genBtn) genBtn.style.display = ''

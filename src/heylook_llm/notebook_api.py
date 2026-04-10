@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from heylook_llm import db
+from heylook_llm.db import get_db as _get_db
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,6 @@ class NotebookUpdate(BaseModel):
     content: str | None = None
     system_prompt: str | None = None
     model_id: str | None = None
-
-
-def _get_db(request: Request):
-    conn = getattr(request.app.state, "db", None)
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database not initialized")
-    return conn
 
 
 @notebook_router.get(
@@ -87,10 +81,9 @@ async def get_notebook(notebook_id: str, request: Request):
 async def update_notebook(notebook_id: str, request: Request, body: NotebookUpdate):
     conn = _get_db(request)
     kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "content", "system_prompt", "model_id"}}
-    try:
-        nb = await db.update_notebook(conn, notebook_id, **kwargs)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if not kwargs:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    nb = await db.update_notebook(conn, notebook_id, **kwargs)
     if nb is None:
         raise HTTPException(status_code=404, detail="Notebook not found")
     return nb

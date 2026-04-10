@@ -1,7 +1,7 @@
 // Performance page -- system metrics + performance profile
 
 import * as api from '../api.js'
-import { createEl } from '../utils.js'
+import { createEl, statCard } from '../utils.js'
 
 let container = null
 let state = null
@@ -208,13 +208,4 @@ function renderProfile() {
   }
 
   el.replaceChildren(fragment)
-}
-
-function statCard(label, value) {
-  const card = createEl('div', { class: 'stat-card' })
-  card.append(
-    createEl('div', { class: 'stat-value' }, String(value)),
-    createEl('div', { class: 'stat-label' }, label),
-  )
-  return card
 }

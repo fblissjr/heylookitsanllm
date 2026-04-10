@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from heylook_llm import db
+from heylook_llm.db import get_db as _get_db
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +45,6 @@ class MessageCreate(BaseModel):
 class MessageUpdate(BaseModel):
     content: str | None = None
     thinking: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _get_db(request: Request):
-    """Get the shared database connection from app state."""
-    conn = getattr(request.app.state, "db", None)
-    if conn is None:
-        raise HTTPException(status_code=503, detail="Database not initialized")
-    return conn
 
 
 # ---------------------------------------------------------------------------

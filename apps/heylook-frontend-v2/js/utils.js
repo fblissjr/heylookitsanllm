@@ -6,3 +6,12 @@ export function createEl(tag, attrs, text) {
   if (text) el.textContent = text
   return el
 }
+
+export function statCard(label, value) {
+  const card = createEl('div', { class: 'stat-card' })
+  card.append(
+    createEl('div', { class: 'stat-value' }, String(value)),
+    createEl('div', { class: 'stat-label' }, label),
+  )
+  return card
+}

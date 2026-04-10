@@ -3,7 +3,7 @@
 
 import * as api from '../api.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
-import { createEl } from '../utils.js'
+import { createEl, statCard } from '../utils.js'
 
 let container = null
 let state = null
@@ -178,15 +178,6 @@ function buildResults() {
   }
 
   return section
-}
-
-function statCard(label, value) {
-  const card = createEl('div', { class: 'stat-card' })
-  card.append(
-    createEl('div', { class: 'stat-value' }, String(value)),
-    createEl('div', { class: 'stat-label' }, label),
-  )
-  return card
 }
 
 async function handleRun() {
