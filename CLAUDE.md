@@ -50,19 +50,12 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 
 ### Frontend v2: `apps/heylook-frontend-v2/`
 
-Vanilla JS, no framework, no bundler, no node_modules. ~2,400 lines JS + ~800 lines CSS.
+Vanilla JS, no framework, no bundler, no node_modules.
 Conversations stored server-side in SQLite (`/v1/conversations` API).
-Served at `/v2` by the FastAPI backend. Hash-based routing. `marked` + `DOMPurify` loaded from CDN.
+Served at `/v2` by the FastAPI backend. Hash-based routing. `marked` + `DOMPurify` vendored locally.
 Pages: Chat, Batch, Models, Performance, Notebook (all working). Token Explorer (planned).
 
-Key patterns:
-- Each page exports `mount(el)` returning `{ teardown() }`. Module state reset via `freshState()` on mount.
-- `teardown()` must null `state`, stop streams/intervals, and clean up handlers on persistent DOM (sidebar, nav).
-- Streaming display uses RAF throttling (one render per frame, not per token).
-- Static file serving at `/v2` uses `resolve()` + `is_relative_to()` for path traversal prevention.
-- All `innerHTML` writes go through DOMPurify via `renderMarkdown()`. No raw user content in innerHTML.
-- Shared helpers (`createEl`, `statCard`) live in `js/utils.js`. New pages import from there.
-- Route handler DB access uses `get_db()` from `db.py` (shared, not per-module copies).
+- [apps/heylook-frontend-v2/CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md) -- file structure, page pattern, rules, gotchas
 
 ### Frontend (legacy): `apps/heylook-frontend/`
 
@@ -118,10 +111,9 @@ Config: `bench_config.toml` in each directory.
 - Conventional commits: `feat(router):`, `fix(mlx):`, `chore(docs):`
 - Use `uv` for all Python deps (never pip). Use `orjson` for JSON.
 - Security hook false-positives on `mx.eval` (MLX graph materializer, not Python's). Use `mx.async_eval` where possible, or acknowledge the warning.
-- Frontend v2: `marked.use()` not `marked.setOptions()` (removed in marked v5+). `renderMarkdown()` already sanitizes via DOMPurify -- never double-wrap with `sanitize()`.
+- Frontend v2: see [apps/heylook-frontend-v2/CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md) for page patterns, sanitization rules, and gotchas
 - Frontend v2: Pydantic update endpoints must use `model_fields_set` to distinguish "not sent" from "explicitly null" (see `conversation_api.py` pattern)
 - Frontend v2: SPA sub-path serving needs `<base href="/v2/">` in HTML so relative paths resolve correctly. Static file handler must `resolve()` + `is_relative_to()` before serving.
-- Frontend v2: Polling pages use recursive `setTimeout` (not `setInterval`) to prevent overlapping requests when backend is slow
 
 ## Rules: Agent Behavior
 
