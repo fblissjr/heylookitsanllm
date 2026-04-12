@@ -9,6 +9,13 @@ import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 import { createEl, beforeUnloadGuard, throttleToFrame } from '../utils.js'
 import { samplerParams } from '../settings.js'
 import { buildSettingsPanel } from '../components/settings_panel.js'
+import {
+  prepareMessageTemplate, buildConversationFrame, findVisibleRange,
+  getMaxChatWidth, getOcclusionBannerHeight, MESSAGE_SIDE_PADDING,
+} from '../components/pretext_chat_model.js'
+import {
+  projectVisibleRows, renderMessageContents, createMessageShell, projectMessageNode,
+} from '../components/pretext_chat_renderer.js'
 
 let container = null
 let state = null
@@ -23,6 +30,11 @@ function freshState() {
     selectedModel: null,
     streaming: { active: false, content: '', thinking: '', controller: null },
     editingMsgId: null,
+    // Pretext virtualization state
+    pretextFrame: null,
+    pretextRows: [],
+    pretextMounted: { start: 0, end: 0 },
+    usePretext: true, // toggle for Pretext vs legacy rendering
   }
 }
 
@@ -128,8 +140,18 @@ function teardown() {
   container = null
 }
 
+function handleChatScroll() {
+  if (!state?.usePretext || !state.pretextFrame) return
+  renderMessagesPretext()
+}
+
 async function init() {
   await ensureMarked()
+
+  // Pretext scroll-driven re-rendering
+  const messagesEl = container?.querySelector('#chat-messages')
+  if (messagesEl) messagesEl.addEventListener('scroll', handleChatScroll, { passive: true })
+
   await Promise.all([loadModels(), loadConversations()])
   renderConversationList()
 
@@ -285,11 +307,93 @@ async function selectConversation(id) {
   scrollToBottom()
 }
 
-// -- Message rendering (DOM-based, user content goes through DOMPurify) --
+// -- Message rendering --
 
 function renderMessages() {
+  if (state?.usePretext && !state.editingMsgId) {
+    renderMessagesPretext()
+  } else {
+    renderMessagesLegacy()
+  }
+}
+
+function renderMessagesPretext() {
+  const el = container?.querySelector('#chat-messages')
+  if (!el || !state) return
+
+  // Build Pretext templates from current messages
+  const templates = state.messages.map(msg =>
+    prepareMessageTemplate(msg.content || '', msg.role)
+  )
+
+  // Add streaming message as the last template if active
+  if (state.streaming.active && state.streaming.content) {
+    templates.push(prepareMessageTemplate(state.streaming.content, 'assistant'))
+  }
+
+  if (templates.length === 0) {
+    el.replaceChildren()
+    state.pretextFrame = null
+    return
+  }
+
+  const chatWidth = getMaxChatWidth(el.clientWidth)
+  const frame = buildConversationFrame(templates, chatWidth)
+  state.pretextFrame = frame
+
+  // Set canvas height for scroll
+  el.style.position = 'relative'
+  el.style.height = ''  // let CSS handle outer height
+  const canvas = el
+
+  // Create an inner div for absolute positioning if not present
+  let inner = el.querySelector('.pretext-canvas')
+  if (!inner) {
+    inner = createEl('div', { class: 'pretext-canvas' })
+    inner.style.position = 'relative'
+    el.replaceChildren(inner)
+  }
+  inner.style.height = `${frame.totalHeight}px`
+
+  // Find visible range
+  const scrollTop = el.scrollTop
+  const viewportHeight = el.clientHeight
+  const { start, end } = findVisibleRange(frame, scrollTop, viewportHeight, 0, 0)
+
+  // Project visible rows
+  const result = projectVisibleRows(
+    frame, start, end, true,
+    inner, state.pretextRows,
+    state.pretextMounted.start, state.pretextMounted.end,
+  )
+  state.pretextMounted = { start: result.mountedStart, end: result.mountedEnd }
+
+  // Add streaming cursor if active
+  if (state.streaming.active) {
+    let cursor = inner.querySelector('.streaming-cursor')
+    if (!cursor) {
+      cursor = createEl('span', { class: 'streaming-cursor' })
+      cursor.style.position = 'absolute'
+    }
+    // Position cursor after last message
+    const lastMsg = frame.messages[frame.messages.length - 1]
+    if (lastMsg) {
+      cursor.style.top = `${lastMsg.top + lastMsg.frame.totalHeight - 4}px`
+      cursor.style.left = `${MESSAGE_SIDE_PADDING + 4}px`
+    }
+    inner.append(cursor)
+  }
+}
+
+function renderMessagesLegacy() {
   const el = container?.querySelector('#chat-messages')
   if (!el) return
+
+  // Reset Pretext state when falling back to legacy
+  state.pretextFrame = null
+  state.pretextRows = []
+  state.pretextMounted = { start: 0, end: 0 }
+  el.style.position = ''
 
   const fragment = document.createDocumentFragment()
   for (const msg of state.messages) {
@@ -515,6 +619,14 @@ async function startStream() {
 function _doStreamUpdate() {
   if (!state?.streaming?.active) return
 
+  // In Pretext mode, re-render the full frame (streaming message is the last template)
+  if (state.usePretext && !state.editingMsgId) {
+    renderMessagesPretext()
+    scrollToBottom()
+    return
+  }
+
+  // Legacy mode: targeted DOM update
   const msgEl = container?.querySelector('[data-streaming]')
   if (!msgEl) {
     renderMessages()
@@ -524,7 +636,6 @@ function _doStreamUpdate() {
 
   const contentEl = msgEl.querySelector('.message-content')
   if (contentEl) {
-    // Content sanitized through DOMPurify via renderMarkdown
     const rendered = renderMarkdown(state.streaming.content)
     contentEl.innerHTML = rendered
     const cursor = document.createElement('span')

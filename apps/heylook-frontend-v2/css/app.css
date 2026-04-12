@@ -934,6 +934,104 @@ html, body {
 }
 
 /* Notebook page */
+/* Pretext chat rendering */
+.pretext-canvas { position: relative; }
+
+.pretext-canvas .msg {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  padding-inline: 22px;
+  display: flex;
+}
+
+.pretext-canvas .msg--assistant { justify-content: flex-start; }
+.pretext-canvas .msg--user { justify-content: flex-end; }
+
+.pretext-canvas .msg-bubble {
+  position: relative;
+  flex: 0 0 auto;
+  max-width: 100%;
+  border-radius: 16px;
+}
+
+.pretext-canvas .msg--user .msg-bubble {
+  background: var(--user-bubble);
+  box-shadow: inset 0 0 0 1px var(--user-bubble-border);
+}
+
+.pretext-canvas .msg--assistant .msg-bubble {
+  border: 0;
+  border-radius: 0;
+}
+
+.pretext-canvas .block {
+  position: absolute;
+  left: 0;
+  width: 100%;
+}
+
+.pretext-canvas .line-row {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  width: max-content;
+}
+
+.pretext-canvas .frag {
+  display: inline-block;
+  white-space: pre;
+  line-height: 1;
+  color: var(--text);
+}
+
+.pretext-canvas .frag--body { font: 400 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.pretext-canvas .frag--heading-1 { font: 700 20px/1 "Iowan Old Style", Georgia, serif; color: var(--text-bright); }
+.pretext-canvas .frag--heading-2 { font: 700 17px/1 "Iowan Old Style", Georgia, serif; color: var(--text-bright); }
+.pretext-canvas .frag--code { padding: 2px 6px 3px; border-radius: 8px; background: var(--code-bg); font: 600 12px/1 "SF Mono", ui-monospace, Menlo, monospace; }
+.pretext-canvas .frag--chip { display: inline-flex; align-items: center; padding: 0 7px; min-height: 18px; border-radius: 999px; background: var(--code-bg); color: var(--accent); font: 700 11px/1 sans-serif; }
+
+.pretext-canvas .is-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.pretext-canvas .is-em { font-style: italic; }
+.pretext-canvas .is-strong { font-weight: 700; }
+.pretext-canvas .is-del { text-decoration: line-through; }
+
+.pretext-canvas .code-box {
+  position: absolute;
+  border-radius: 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+}
+
+.pretext-canvas .code-line {
+  position: absolute;
+  white-space: pre;
+  font: 500 12px/18px "SF Mono", ui-monospace, Menlo, monospace;
+  color: var(--text);
+}
+
+.pretext-canvas .rule-line {
+  position: absolute;
+  height: 1px;
+  background: var(--border);
+}
+
+.pretext-canvas .quote-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 999px;
+  background: rgba(158, 166, 178, 0.18);
+}
+
+.pretext-canvas .block-marker {
+  position: absolute;
+  white-space: pre;
+  color: var(--text-dim);
+  font: 600 11px/1 "SF Mono", ui-monospace, Menlo, monospace;
+}
+
 /* Token Explorer */
 .explore-input-row {
   display: flex;
