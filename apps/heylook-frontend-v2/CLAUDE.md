@@ -21,6 +21,8 @@ js/
   components/
     markdown.js          -- marked + DOMPurify (vendored), renderMarkdown()
     settings_panel.js    -- collapsible sampler controls (Core + Advanced sections)
+    pretext_chat_model.js   -- Pretext layout math (translated from markdown-chat.model.ts)
+    pretext_chat_renderer.js -- Pretext virtualized DOM rendering (translated from markdown-chat.ts)
   pages/
     chat.js              -- conversations, streaming, edit+regenerate
     batch.js             -- multi-prompt batch completions
@@ -32,6 +34,7 @@ js/
   vendor/
     marked.esm.js        -- marked v17 (vendored, no CDN)
     purify.es.mjs        -- DOMPurify v3 (vendored, no CDN)
+    pretext/             -- @chenglou/pretext v0.0.5 (built from ~/workspace/pretext)
 ```
 
 ## Page Pattern
