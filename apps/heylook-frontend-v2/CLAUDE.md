@@ -17,7 +17,7 @@ js/
   bus.js                -- EventTarget event bus
   settings.js           -- localStorage sampler settings, samplerParams()
   streaming.js          -- SSE client (fetch + ReadableStream)
-  utils.js              -- shared: createEl, statCard, beforeUnloadGuard
+  utils.js              -- shared: createEl, statCard, beforeUnloadGuard, throttleToFrame
   components/
     markdown.js          -- marked + DOMPurify (vendored), renderMarkdown()
     settings_panel.js    -- collapsible sampler controls (Core + Advanced sections)
@@ -27,6 +27,7 @@ js/
     models.js            -- admin model list, load/unload, scan+import
     perf.js              -- system metrics polling, performance profile
     notebook.js          -- text scratchpad with LLM generation
+    explore.js           -- token explorer with logprobs visualization
     placeholder.js       -- stub for unbuilt pages
   vendor/
     marked.esm.js        -- marked v17 (vendored, no CDN)
@@ -68,7 +69,8 @@ function teardown() {
 - **Settings**: `samplerParams()` from `settings.js` builds request params. Null values mean "use backend default" -- only sends explicitly set params. `save()` is debounced (300ms) -- cache updates immediately, localStorage persistence deferred.
 - **Settings cascade**: Backend applies global defaults -> thinking mode -> models.toml per-model -> request params. Send null to respect model defaults.
 - **Polling**: use recursive `setTimeout` (not `setInterval`) to prevent overlapping requests.
-- **Imports**: use `createEl`, `statCard`, `beforeUnloadGuard` from `utils.js`. Don't redefine locally.
+- **Imports**: use `createEl`, `statCard`, `beforeUnloadGuard`, `throttleToFrame` from `utils.js`. Don't redefine locally.
+- **Throttle cleanup**: null module-level throttle variables in `teardown()` (not just `.reset()`) to prevent stale closures across mounts.
 - **beforeunload**: add listener during streaming, remove on complete/error/stop/teardown.
 - **Delete**: always `confirm()` before destructive actions.
 - **Sidebar**: only visible on `#/chat`. Router sets `data-page` on `#app`, CSS hides sidebar on other pages.

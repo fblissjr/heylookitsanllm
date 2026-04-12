@@ -53,7 +53,7 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 Vanilla JS, no framework, no bundler, no node_modules.
 Conversations stored server-side in SQLite (`/v1/conversations` API).
 Served at `/v2` by the FastAPI backend. Hash-based routing. `marked` + `DOMPurify` vendored locally.
-Pages: Chat, Batch, Models, Performance, Notebook (all working). Token Explorer (planned).
+Pages: Chat, Batch, Models, Performance, Notebook, Token Explorer (all working).
 
 - [apps/heylook-frontend-v2/CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md) -- file structure, page pattern, rules, gotchas
 
