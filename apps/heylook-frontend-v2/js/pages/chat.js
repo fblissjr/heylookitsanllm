@@ -20,6 +20,7 @@ import {
 let container = null
 let state = null
 let _throttledStreamUpdate = null
+let _throttledScroll = null
 
 function freshState() {
   return {
@@ -132,6 +133,11 @@ function teardown() {
   stopStream()
   _throttledStreamUpdate?.reset()
   _throttledStreamUpdate = null
+  // Clean up Pretext scroll listener
+  const messagesEl = container?.querySelector('#chat-messages')
+  if (messagesEl && _throttledScroll) messagesEl.removeEventListener('scroll', _throttledScroll)
+  _throttledScroll?.reset()
+  _throttledScroll = null
   const list = document.getElementById('conversation-list')
   if (list) list.onclick = null
   const newBtn = document.getElementById('new-chat-btn')
@@ -141,16 +147,30 @@ function teardown() {
 }
 
 function handleChatScroll() {
+  // Scroll-only path: re-project visible range against cached frame (no template rebuild)
   if (!state?.usePretext || !state.pretextFrame) return
-  renderMessagesPretext()
+  const el = container?.querySelector('#chat-messages')
+  if (!el) return
+  const inner = el.querySelector('.pretext-canvas')
+  if (!inner) return
+  const { start, end } = findVisibleRange(state.pretextFrame, el.scrollTop, el.clientHeight, 0, 0)
+  const result = projectVisibleRows(
+    state.pretextFrame, start, end, false,
+    inner, state.pretextRows,
+    state.pretextMounted.start, state.pretextMounted.end,
+  )
+  state.pretextMounted = { start: result.mountedStart, end: result.mountedEnd }
 }
 
 async function init() {
   await ensureMarked()
 
-  // Pretext scroll-driven re-rendering
+  // Pretext scroll-driven re-rendering (RAF-throttled)
   const messagesEl = container?.querySelector('#chat-messages')
-  if (messagesEl) messagesEl.addEventListener('scroll', handleChatScroll, { passive: true })
+  if (messagesEl) {
+    _throttledScroll = throttleToFrame(handleChatScroll)
+    messagesEl.addEventListener('scroll', _throttledScroll, { passive: true })
+  }
 
   await Promise.all([loadModels(), loadConversations()])
   renderConversationList()
@@ -290,6 +310,10 @@ async function selectConversation(id) {
   stopStream()
   state.activeId = id
   state.editingMsgId = null
+  // Reset Pretext cache for new conversation
+  state.pretextFrame = null
+  state.pretextRows = []
+  state.pretextMounted = { start: 0, end: 0 }
 
   try {
     const conv = await api.getConversation(id)
@@ -304,7 +328,7 @@ async function selectConversation(id) {
 
   renderMessages()
   renderConversationList()
-  scrollToBottom()
+  scrollToBottom(true)
 }
 
 // -- Message rendering --
@@ -549,7 +573,7 @@ async function handleSend() {
   input.style.height = 'auto'
 
   renderMessages()
-  scrollToBottom()
+  scrollToBottom(true)
 
   if (state.messages.length === 1) {
     api.updateConversation(state.activeId, { title: content.slice(0, 50) }).catch(() => {})
@@ -568,7 +592,7 @@ async function startStream() {
   state.streaming = { active: true, content: '', thinking: '', controller }
   window.addEventListener('beforeunload', beforeUnloadGuard)
   renderMessages()
-  scrollToBottom()
+  scrollToBottom(true)
 
   const request = {
     model: state.selectedModel,
@@ -751,9 +775,12 @@ async function handleMessageAction(e) {
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
   const el = container?.querySelector('#chat-messages')
-  if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+  if (!el) return
+  // Only auto-scroll if user is already near bottom (within 100px) or forced
+  const nearBottom = force || (el.scrollHeight - el.scrollTop - el.clientHeight < 100)
+  if (nearBottom) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
 }
 
 function setStatus(text) {
