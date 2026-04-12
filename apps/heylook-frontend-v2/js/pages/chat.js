@@ -6,13 +6,13 @@ import * as api from '../api.js'
 import bus from '../bus.js'
 import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
-import { createEl, beforeUnloadGuard } from '../utils.js'
+import { createEl, beforeUnloadGuard, throttleToFrame } from '../utils.js'
 import { samplerParams } from '../settings.js'
 import { buildSettingsPanel } from '../components/settings_panel.js'
 
 let container = null
 let state = null
-let _streamRafPending = false
+let _throttledStreamUpdate = null
 
 function freshState() {
   return {
@@ -118,7 +118,7 @@ function buildShell() {
 
 function teardown() {
   stopStream()
-  _streamRafPending = false
+  _throttledStreamUpdate?.reset()
   const list = document.getElementById('conversation-list')
   if (list) list.onclick = null
   const newBtn = document.getElementById('new-chat-btn')
@@ -458,40 +458,40 @@ async function startStream() {
   }, controller.signal)
 }
 
-function updateStreamingDisplay() {
-  // Throttle to display frame rate -- tokens arrive faster than 60fps
-  if (_streamRafPending) return
-  _streamRafPending = true
-  requestAnimationFrame(() => {
-    _streamRafPending = false
-    if (!state.streaming.active) return
+function _doStreamUpdate() {
+  if (!state?.streaming?.active) return
 
-    const msgEl = container?.querySelector('[data-streaming]')
-    if (!msgEl) {
-      renderMessages()
-      scrollToBottom()
-      return
-    }
-
-    const contentEl = msgEl.querySelector('.message-content')
-    if (contentEl) {
-      // Content sanitized through DOMPurify via renderMarkdown
-      const rendered = renderMarkdown(state.streaming.content)
-      contentEl.innerHTML = rendered
-      const cursor = document.createElement('span')
-      cursor.className = 'streaming-cursor'
-      contentEl.append(cursor)
-    }
-
-    const thinkingEl = msgEl.querySelector('.thinking-content')
-    if (thinkingEl && state.streaming.thinking) {
-      thinkingEl.textContent = state.streaming.thinking
-    } else if (!thinkingEl && state.streaming.thinking) {
-      renderMessages()
-    }
-
+  const msgEl = container?.querySelector('[data-streaming]')
+  if (!msgEl) {
+    renderMessages()
     scrollToBottom()
-  })
+    return
+  }
+
+  const contentEl = msgEl.querySelector('.message-content')
+  if (contentEl) {
+    // Content sanitized through DOMPurify via renderMarkdown
+    const rendered = renderMarkdown(state.streaming.content)
+    contentEl.innerHTML = rendered
+    const cursor = document.createElement('span')
+    cursor.className = 'streaming-cursor'
+    contentEl.append(cursor)
+  }
+
+  const thinkingEl = msgEl.querySelector('.thinking-content')
+  if (thinkingEl && state.streaming.thinking) {
+    thinkingEl.textContent = state.streaming.thinking
+  } else if (!thinkingEl && state.streaming.thinking) {
+    renderMessages()
+  }
+
+  scrollToBottom()
+}
+
+// Initialized in mount(), reset in teardown()
+function updateStreamingDisplay() {
+  if (!_throttledStreamUpdate) _throttledStreamUpdate = throttleToFrame(_doStreamUpdate)
+  _throttledStreamUpdate()
 }
 
 function stopStream() {

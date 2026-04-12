@@ -3,13 +3,13 @@
 
 import * as api from '../api.js'
 import { streamChat } from '../streaming.js'
-import { createEl, beforeUnloadGuard } from '../utils.js'
+import { createEl, beforeUnloadGuard, throttleToFrame } from '../utils.js'
 import { samplerParams } from '../settings.js'
 
 let container = null
 let state = null
 let saveTimeout = null
-let _genRafPending = false
+let _throttledGenUpdate = null
 
 function freshState() {
   return {
@@ -35,7 +35,7 @@ function teardown() {
   stopGeneration()
   flushSave()
   if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = null }
-  _genRafPending = false
+  _throttledGenUpdate?.reset()
   state = null
   container = null
 }
@@ -283,31 +283,28 @@ async function handleGenerate() {
 
   let generated = ''
 
+  _throttledGenUpdate = throttleToFrame(() => {
+    if (!state) return
+    contentArea.value = beforeCursor + generated + afterCursor
+    autoResize(contentArea)
+    contentArea.selectionStart = contentArea.selectionEnd = cursorPos + generated.length
+  })
+
   await streamChat(
     { model, messages, ...samplerParams() },
     {
       onToken(token) {
         if (!state) return
         generated += token
-        // RAF-throttle DOM writes to avoid forced reflows at token rate
-        if (_genRafPending) return
-        _genRafPending = true
-        requestAnimationFrame(() => {
-          _genRafPending = false
-          if (!state) return
-          contentArea.value = beforeCursor + generated + afterCursor
-          autoResize(contentArea)
-          contentArea.selectionStart = contentArea.selectionEnd = cursorPos + generated.length
-        })
+        _throttledGenUpdate()
       },
       onThinking() {},
       onComplete() {
         if (!state) return
-        // Final sync in case last RAF hasn't fired
         contentArea.value = beforeCursor + generated + afterCursor
         state.generating = false
         state.controller = null
-        _genRafPending = false
+        _throttledGenUpdate?.reset()
         window.removeEventListener('beforeunload', beforeUnloadGuard)
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
@@ -317,7 +314,7 @@ async function handleGenerate() {
         if (!state) return
         state.generating = false
         state.controller = null
-        _genRafPending = false
+        _throttledGenUpdate?.reset()
         window.removeEventListener('beforeunload', beforeUnloadGuard)
         if (genBtn) genBtn.style.display = ''
         if (stopBtn) stopBtn.style.display = 'none'
@@ -333,7 +330,7 @@ function stopGeneration() {
     state.controller.abort()
     state.controller = null
     state.generating = false
-    _genRafPending = false
+    _throttledGenUpdate?.reset()
     window.removeEventListener('beforeunload', beforeUnloadGuard)
     const genBtn = container?.querySelector('#gen-btn')
     const stopBtn = container?.querySelector('#stop-btn')

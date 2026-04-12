@@ -3,12 +3,13 @@
 
 import * as api from '../api.js'
 import { streamChat } from '../streaming.js'
-import { createEl, beforeUnloadGuard } from '../utils.js'
+import { createEl, beforeUnloadGuard, throttleToFrame } from '../utils.js'
 import { samplerParams } from '../settings.js'
 import { buildSettingsPanel } from '../components/settings_panel.js'
 
 let container = null
 let state = null
+let _throttledRender = null
 
 function freshState() {
   return {
@@ -62,6 +63,7 @@ export function mount(el) {
 
 function teardown() {
   stopStream()
+  _throttledRender?.reset()
   document.removeEventListener('keydown', handleKeyNav)
   state = null
   container = null
@@ -158,7 +160,8 @@ async function handleRun() {
           top_logprobs: entry.top_logprobs || [],
         })
       }
-      renderTokens()
+      if (!_throttledRender) _throttledRender = throttleToFrame(renderTokens)
+      _throttledRender()
     },
     onComplete() {
       if (!state) return

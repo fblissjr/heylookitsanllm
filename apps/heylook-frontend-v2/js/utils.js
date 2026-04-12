@@ -11,6 +11,22 @@ export function beforeUnloadGuard(e) {
   e.preventDefault()
 }
 
+/**
+ * Throttle a function to run at most once per animation frame.
+ * Calls are coalesced -- only the latest args are used when the frame fires.
+ * Call throttled.reset() in teardown to prevent stale pending frames.
+ */
+export function throttleToFrame(fn) {
+  let pending = false
+  const throttled = (...args) => {
+    if (pending) return
+    pending = true
+    requestAnimationFrame(() => { pending = false; fn(...args) })
+  }
+  throttled.reset = () => { pending = false }
+  return throttled
+}
+
 export function statCard(label, value) {
   const card = createEl('div', { class: 'stat-card' })
   card.append(

@@ -63,7 +63,7 @@ function teardown() {
 ## Rules
 
 - **State**: reset via `freshState()` on every `mount()`. Null `state` in `teardown()`. Guard async callbacks with `if (!state) return`.
-- **Streaming**: RAF-throttle DOM writes. Never update DOM per-token -- accumulate in state, flush in `requestAnimationFrame`. Use `_rafPending` flag pattern.
+- **Streaming**: RAF-throttle DOM writes via `throttleToFrame()` from `utils.js`. Never update DOM per-token -- accumulate in state, the throttle flushes at frame rate. Call `throttled.reset()` in teardown.
 - **Sanitization**: all user-generated HTML goes through `renderMarkdown()` (DOMPurify). Never set `innerHTML` with raw user content.
 - **Settings**: `samplerParams()` from `settings.js` builds request params. Null values mean "use backend default" -- only sends explicitly set params. `save()` is debounced (300ms) -- cache updates immediately, localStorage persistence deferred.
 - **Settings cascade**: Backend applies global defaults -> thinking mode -> models.toml per-model -> request params. Send null to respect model defaults.

@@ -745,7 +745,7 @@ class MLXProvider(BaseProvider):
 
         # Apply model config overrides
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                       'repetition_penalty', 'presence_penalty', 'enable_thinking']
+                       'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
 
         # Include cache and speculative decoding config from model config
@@ -758,7 +758,7 @@ class MLXProvider(BaseProvider):
         # Get only the scalar parameter fields from the request (highest priority)
         # Uses getattr instead of model_dump() to avoid serializing the entire message list
         request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                          'repetition_penalty', 'presence_penalty', 'enable_thinking', 'seed']
+                          'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking', 'seed']
         for field in request_fields:
             val = getattr(request, field, None)
             if val is not None:
