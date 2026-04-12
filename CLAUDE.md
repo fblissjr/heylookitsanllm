@@ -39,6 +39,7 @@ Provider type: `Literal["mlx", "mlx_embedding"]`.
 `coderef/` contains reference forks of mlx-lm and mlx-vlm for comparing upstream patterns (gitignored).
 Conversation storage: SQLite via aiosqlite (`db.py`), CRUD endpoints in `conversation_api.py`. DB auto-creates at `data/conversations.db` (override via `HEYLOOK_DB_PATH` env var). Linear message model with `UNIQUE(conversation_id, position)`.
 Single shared aiosqlite connection with `timeout=10` -- serializes writes, fine for personal use. Dynamic SQL field names must go through `_UPDATABLE_MESSAGE_FIELDS` allowlist in `db.py`.
+`POST /v1/data/clear` deletes all conversations, messages, and notebooks. Frontend exposes this on the Models page.
 RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL, uses providers directly (no HTTP round-trip). Supports compaction (history summarization), recursive depth (`rlm_query()` child RLMs), and `max_errors` threshold.
 
 - [internal/backend/architecture.md](./internal/backend/architecture.md) -- system overview, provider pattern
