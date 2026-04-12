@@ -117,6 +117,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def clear_all_data(db: aiosqlite.Connection) -> dict:
+    """Delete all conversations, messages, and notebooks. Returns counts."""
+    async with db.execute("SELECT COUNT(*) FROM conversations") as cur:
+        row = await cur.fetchone()
+        conv_count = row[0] if row else 0
+    async with db.execute("SELECT COUNT(*) FROM notebooks") as cur:
+        row = await cur.fetchone()
+        nb_count = row[0] if row else 0
+
+    await db.execute("DELETE FROM messages")
+    await db.execute("DELETE FROM conversations")
+    await db.execute("DELETE FROM notebooks")
+    await db.commit()
+    return {"conversations_deleted": conv_count, "notebooks_deleted": nb_count}
+
+
 def new_id() -> str:
     return uuid.uuid4().hex
 

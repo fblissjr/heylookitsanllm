@@ -18,6 +18,7 @@ function freshState() {
     prompt: '',
     tokens: [],       // { token, logprob, top_logprobs[] }
     thinkingTokens: [],
+    renderedCount: 0,
     selectedIdx: null,
     streaming: false,
     controller: null,
@@ -127,6 +128,7 @@ async function handleRun() {
   state.prompt = prompt
   state.tokens = []
   state.thinkingTokens = []
+  state.renderedCount = 0
   state.selectedIdx = null
   state.streaming = true
   state.controller = new AbortController()
@@ -209,13 +211,46 @@ function renderTokens() {
   const el = container?.querySelector('#explore-content')
   if (!el || !state) return
 
+  // Full rebuild needed when: first render, selection changed, or streaming just ended
+  const needsFullRebuild = state.renderedCount === 0 || state.selectedIdx != null || !state.streaming
+
+  if (needsFullRebuild) {
+    renderTokensFull(el)
+    return
+  }
+
+  // Incremental: append only new chips to existing flow
+  let flow = el.querySelector('.token-flow:not(.token-flow--thinking)')
+  if (!flow) {
+    // First tokens arriving -- create the section
+    const contentSection = createEl('div', { class: 'explore-tokens' })
+    flow = createEl('div', { class: 'token-flow' })
+    contentSection.append(flow)
+    // Insert before streaming cursor if present
+    const cursor = el.querySelector('.streaming-cursor')
+    if (cursor) el.insertBefore(contentSection, cursor)
+    else el.append(contentSection)
+  }
+
+  for (let i = state.renderedCount; i < state.tokens.length; i++) {
+    flow.append(buildTokenChip(state.tokens[i], i))
+  }
+  state.renderedCount = state.tokens.length
+
+  // Ensure streaming cursor exists
+  if (!el.querySelector('.streaming-cursor')) {
+    el.append(createEl('span', { class: 'streaming-cursor' }))
+  }
+}
+
+function renderTokensFull(el) {
+  if (!state) return
   const fragment = document.createDocumentFragment()
 
-  // Thinking tokens (dimmed)
   if (state.thinkingTokens.length > 0) {
     const thinkSection = createEl('div', { class: 'explore-thinking' })
     thinkSection.append(createEl('div', { class: 'explore-section-label' }, 'Thinking'))
-    const thinkFlow = createEl('div', { class: 'token-flow' })
+    const thinkFlow = createEl('div', { class: 'token-flow token-flow--thinking' })
     for (const t of state.thinkingTokens) {
       const chip = createEl('span', { class: 'token-chip token-chip--thinking' })
       chip.textContent = displayToken(t.token)
@@ -225,7 +260,6 @@ function renderTokens() {
     fragment.append(thinkSection)
   }
 
-  // Content tokens
   if (state.tokens.length > 0) {
     const contentSection = createEl('div', { class: 'explore-tokens' })
     if (state.thinkingTokens.length > 0) {
@@ -233,32 +267,34 @@ function renderTokens() {
     }
     const flow = createEl('div', { class: 'token-flow' })
     for (let i = 0; i < state.tokens.length; i++) {
-      const t = state.tokens[i]
-      const prob = Math.exp(t.logprob)
-      const chip = createEl('span', {
-        class: `token-chip${i === state.selectedIdx ? ' token-chip--selected' : ''}`,
-        'data-idx': String(i),
-      })
-      chip.style.backgroundColor = probabilityToColor(prob)
-      chip.textContent = displayToken(t.token)
-      chip.addEventListener('click', () => selectToken(i))
-      flow.append(chip)
+      flow.append(buildTokenChip(state.tokens[i], i))
     }
     contentSection.append(flow)
     fragment.append(contentSection)
   }
 
-  // Streaming indicator
   if (state.streaming) {
     fragment.append(createEl('span', { class: 'streaming-cursor' }))
   }
 
-  // Detail panel
   if (state.selectedIdx != null && state.tokens[state.selectedIdx]) {
     fragment.append(buildDetailPanel(state.tokens[state.selectedIdx], state.selectedIdx))
   }
 
+  state.renderedCount = state.tokens.length
   el.replaceChildren(fragment)
+}
+
+function buildTokenChip(t, i) {
+  const prob = Math.exp(t.logprob)
+  const chip = createEl('span', {
+    class: `token-chip${i === state.selectedIdx ? ' token-chip--selected' : ''}`,
+    'data-idx': String(i),
+  })
+  chip.style.backgroundColor = probabilityToColor(prob)
+  chip.textContent = displayToken(t.token)
+  chip.addEventListener('click', () => selectToken(i))
+  return chip
 }
 
 function buildDetailPanel(tokenData, idx) {

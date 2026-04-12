@@ -25,6 +25,7 @@ export function mount(el) {
 }
 
 function teardown() {
+  state = null
   container = null
 }
 
@@ -51,6 +52,7 @@ function buildShell() {
 async function loadModels() {
   try {
     const data = await api.listAdminModels()
+    if (!state) return
     state.models = data.models || []
     render()
   } catch (e) {
@@ -79,6 +81,16 @@ function render() {
       fragment.append(buildModelCard(model))
     }
   }
+
+  // Data management section
+  const dataSection = createEl('div', { class: 'perf-section', style: 'margin-top:24px' })
+  dataSection.append(createEl('h3', { class: 'section-title' }, 'Data'))
+  const dataInfo = createEl('p', { class: 'empty-text', style: 'margin-bottom:8px' },
+    'Conversations and notebooks are stored on the server in SQLite (data/conversations.db).')
+  const clearBtn = createEl('button', { class: 'btn btn-sm btn-danger' }, 'Clear all conversations & notebooks')
+  clearBtn.addEventListener('click', handleClearData)
+  dataSection.append(dataInfo, clearBtn)
+  fragment.append(dataSection)
 
   el.replaceChildren(fragment)
 }
@@ -202,6 +214,18 @@ async function handleScan() {
     state.scanning = false
     if (btn) { btn.textContent = 'Scan'; btn.disabled = false }
     render()
+  }
+}
+
+async function handleClearData() {
+  if (!state) return
+  if (!confirm('This will permanently delete ALL conversations and notebooks. Are you sure?')) return
+  try {
+    const result = await api.clearAllData()
+    if (!state) return
+    alert(`Cleared ${result.conversations_deleted} conversations and ${result.notebooks_deleted} notebooks.`)
+  } catch (e) {
+    console.error('Clear data failed:', e)
   }
 }
 

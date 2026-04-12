@@ -44,6 +44,9 @@ export const createNotebook = (data = {}) => request('POST', '/v1/notebooks', da
 export const updateNotebook = (id, data) => request('PUT', `/v1/notebooks/${id}`, data)
 export const deleteNotebook = (id) => request('DELETE', `/v1/notebooks/${id}`)
 
+// Data management
+export const clearAllData = () => request('POST', '/v1/data/clear')
+
 // System
 export const getCapabilities = () => request('GET', '/v1/capabilities')
 export const getMetrics = () => request('GET', '/v1/system/metrics')

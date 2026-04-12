@@ -88,6 +88,12 @@ function teardown() {
 
 Route handler DB access: `get_db()` from `db.py` (shared helper, not per-module).
 
+## Data Storage
+
+- **Server-side (SQLite)**: Conversations, messages, notebooks stored in `data/conversations.db`. This is the source of truth. `POST /v1/data/clear` deletes all conversations and notebooks.
+- **Browser (localStorage)**: Only sampler settings (temperature, top_p, etc.). No conversation data in the browser.
+- Users can clear all server data from the Models page ("Clear all conversations & notebooks" button).
+
 ## Gotchas
 
 - `marked.use()` not `marked.setOptions()` (removed in marked v5+)

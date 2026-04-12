@@ -184,17 +184,31 @@ function renderConversationList() {
     const item = createEl('div', {
       class: `conversation-item${c.id === state.activeId ? ' conversation-item--active' : ''}`,
       'data-id': c.id,
-    }, c.title)
-    list.append(item)
-  }
+    })
+    const title = createEl('span', { class: 'conversation-item-title' }, c.title)
+    const delBtn = createEl('button', { class: 'conversation-item-delete' }, 'x')
 
-  list.onclick = (e) => {
-    const item = e.target.closest('.conversation-item')
-    if (item) {
-      selectConversation(item.dataset.id)
+    // Click title to select
+    title.addEventListener('click', () => {
+      selectConversation(c.id)
       document.getElementById('sidebar')?.classList.remove('sidebar--open')
       toggleOverlay(false)
-    }
+    })
+
+    // Double-click title to rename
+    title.addEventListener('dblclick', (e) => {
+      e.stopPropagation()
+      startRename(c, title)
+    })
+
+    // Delete button
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      handleDeleteConversation(c.id)
+    })
+
+    item.append(title, delBtn)
+    list.append(item)
   }
 
   const newBtn = document.getElementById('new-chat-btn')
@@ -209,6 +223,45 @@ function renderConversationList() {
       renderConversationList()
     }
   }
+}
+
+async function handleDeleteConversation(id) {
+  if (!state) return
+  if (!confirm('Delete this conversation?')) return
+  await api.deleteConversation(id)
+  if (!state) return
+  state.conversations = state.conversations.filter(c => c.id !== id)
+  if (state.activeId === id) {
+    state.activeId = null
+    state.messages = []
+    renderMessages()
+    if (state.conversations.length > 0) {
+      await selectConversation(state.conversations[0].id)
+    }
+  }
+  renderConversationList()
+}
+
+function startRename(conv, titleEl) {
+  const input = createEl('input', {
+    class: 'conversation-rename-input', type: 'text', value: conv.title,
+  })
+  titleEl.replaceWith(input)
+  input.focus()
+  input.select()
+
+  const finish = async () => {
+    const newTitle = input.value.trim() || conv.title
+    conv.title = newTitle
+    api.updateConversation(conv.id, { title: newTitle }).catch(() => {})
+    renderConversationList()
+  }
+
+  input.addEventListener('blur', finish)
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+    if (e.key === 'Escape') { input.value = conv.title; input.blur() }
+  })
 }
 
 async function selectConversation(id) {

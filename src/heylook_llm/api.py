@@ -162,6 +162,18 @@ app.include_router(conversation_router)
 from heylook_llm.notebook_api import notebook_router
 app.include_router(notebook_router)
 
+# Data management
+@app.post("/v1/data/clear",
+    summary="Clear All Data",
+    description="Delete all conversations, messages, and notebooks from the database.",
+    tags=["Conversations"],
+)
+async def clear_all_data(request: Request):
+    from heylook_llm.db import get_db as _get_db, clear_all_data as _clear
+    conn = _get_db(request)
+    result = await _clear(conn)
+    return result
+
 # Serve v2 frontend static files at /v2
 import pathlib as _pathlib
 _v2_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v2"

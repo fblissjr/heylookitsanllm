@@ -75,14 +75,14 @@ html, body {
 }
 
 .conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 10px 12px;
   border-radius: 8px;
   cursor: pointer;
   color: var(--text);
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: background 80ms;
 }
 
@@ -91,6 +91,39 @@ html, body {
   background: var(--surface-hover);
   color: var(--text-bright);
   font-weight: 500;
+}
+
+.conversation-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conversation-item-delete {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.conversation-item:hover .conversation-item-delete { display: block; }
+.conversation-item-delete:hover { color: var(--danger); }
+
+.conversation-rename-input {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
 }
 
 /* Main content */

@@ -31,6 +31,7 @@ export function mount(el) {
 }
 
 function teardown() {
+  state = null
   container = null
 }
 
