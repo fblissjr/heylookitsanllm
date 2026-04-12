@@ -20,6 +20,7 @@ js/
   utils.js              -- shared: createEl, statCard, beforeUnloadGuard
   components/
     markdown.js          -- marked + DOMPurify (vendored), renderMarkdown()
+    settings_panel.js    -- collapsible sampler controls (Core + Advanced sections)
   pages/
     chat.js              -- conversations, streaming, edit+regenerate
     batch.js             -- multi-prompt batch completions
@@ -64,7 +65,8 @@ function teardown() {
 - **State**: reset via `freshState()` on every `mount()`. Null `state` in `teardown()`. Guard async callbacks with `if (!state) return`.
 - **Streaming**: RAF-throttle DOM writes. Never update DOM per-token -- accumulate in state, flush in `requestAnimationFrame`. Use `_rafPending` flag pattern.
 - **Sanitization**: all user-generated HTML goes through `renderMarkdown()` (DOMPurify). Never set `innerHTML` with raw user content.
-- **Settings**: `samplerParams()` from `settings.js` builds request params. Null values mean "use backend default" -- only sends explicitly set params.
+- **Settings**: `samplerParams()` from `settings.js` builds request params. Null values mean "use backend default" -- only sends explicitly set params. `save()` is debounced (300ms) -- cache updates immediately, localStorage persistence deferred.
+- **Settings cascade**: Backend applies global defaults -> thinking mode -> models.toml per-model -> request params. Send null to respect model defaults.
 - **Polling**: use recursive `setTimeout` (not `setInterval`) to prevent overlapping requests.
 - **Imports**: use `createEl`, `statCard`, `beforeUnloadGuard` from `utils.js`. Don't redefine locally.
 - **beforeunload**: add listener during streaming, remove on complete/error/stop/teardown.
@@ -91,3 +93,4 @@ Route handler DB access: `get_db()` from `db.py` (shared helper, not per-module)
 - `<base href="/v2/">` in HTML is required so relative paths resolve under `/v2`
 - Static file handler uses `resolve()` + `is_relative_to()` for path traversal prevention
 - `Intl.Segmenter` required (Safari 16.4+, Chrome 111+, Firefox 125+)
+- Elements created inside `buildShell()` are function-scoped. Query by ID in `mount()` if needed for event listeners.
