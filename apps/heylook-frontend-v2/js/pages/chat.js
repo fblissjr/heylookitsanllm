@@ -8,6 +8,7 @@ import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
 import { createEl, beforeUnloadGuard } from '../utils.js'
 import { samplerParams } from '../settings.js'
+import { buildSettingsPanel } from '../components/settings_panel.js'
 
 let container = null
 let state = null
@@ -62,6 +63,20 @@ export function mount(el) {
     toggleOverlay(sidebar.classList.contains('sidebar--open'))
   })
 
+  settingsBtn.addEventListener('click', () => {
+    const sc = container.querySelector('#settings-container')
+    if (!sc) return
+    if (sc.style.display === 'none') {
+      // Build panel lazily with current model capabilities
+      const model = state.models.find(m => m.id === state.selectedModel)
+      const capabilities = model?.capabilities || []
+      sc.replaceChildren(buildSettingsPanel({ capabilities }))
+      sc.style.display = ''
+    } else {
+      sc.style.display = 'none'
+    }
+  })
+
   init()
   return { teardown }
 }
@@ -73,11 +88,16 @@ function buildShell() {
 
   const header = document.createElement('div')
   header.className = 'chat-header'
+  const settingsBtn = createEl('button', { class: 'settings-toggle-btn', id: 'settings-btn', type: 'button', title: 'Sampler settings' }, '\u2699')
   header.append(
     createEl('button', { class: 'sidebar-toggle', id: 'sidebar-btn', type: 'button' }, '\u2630'),
     createEl('select', { id: 'model-select' }),
+    settingsBtn,
     createEl('span', { id: 'chat-status', style: 'font-size:12px;color:var(--text-dim)' }),
   )
+
+  // Settings panel (hidden by default)
+  const settingsPanelContainer = createEl('div', { id: 'settings-container', style: 'display:none' })
 
   const messages = createEl('div', { class: 'chat-messages', id: 'chat-messages' })
 
@@ -91,7 +111,7 @@ function buildShell() {
   )
   inputArea.append(inputRow)
 
-  page.append(header, messages, inputArea)
+  page.append(header, settingsPanelContainer, messages, inputArea)
   container.append(page)
 }
 
