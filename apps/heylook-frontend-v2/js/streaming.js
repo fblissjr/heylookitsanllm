@@ -80,7 +80,7 @@ export async function streamChat(request, callbacks, signal, timeoutMs) {
 }
 
 function processLines(lines, callbacks, markCompleted) {
-  const { onToken, onThinking, onComplete } = callbacks
+  const { onToken, onThinking, onLogprobs, onComplete } = callbacks
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -95,6 +95,10 @@ function processLines(lines, callbacks, markCompleted) {
 
       if (delta?.content) onToken(delta.content)
       if (delta?.thinking && onThinking) onThinking(delta.thinking)
+
+      // Extract per-token logprobs if present
+      const logprobsContent = chunk.choices?.[0]?.logprobs?.content
+      if (logprobsContent?.length > 0 && onLogprobs) onLogprobs(logprobsContent)
 
       if (chunk.usage) {
         markCompleted()

@@ -6,6 +6,7 @@ const routes = {
   '#/models': () => import('./pages/models.js'),
   '#/perf': () => import('./pages/perf.js'),
   '#/notebook': () => import('./pages/notebook.js'),
+  '#/explore': () => import('./pages/explore.js'),
 }
 
 let currentPage = null

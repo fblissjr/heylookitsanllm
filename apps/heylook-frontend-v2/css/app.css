@@ -901,6 +901,131 @@ html, body {
 }
 
 /* Notebook page */
+/* Token Explorer */
+.explore-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explore-input-row .form-textarea { flex: 1; min-height: 44px; }
+
+.explore-thinking {
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.explore-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.token-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  line-height: 1;
+}
+
+.token-chip {
+  display: inline-block;
+  padding: 4px 5px;
+  border-radius: 4px;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-bright);
+  cursor: pointer;
+  white-space: pre;
+  transition: outline 80ms;
+}
+
+.token-chip:hover { outline: 1px solid var(--accent); }
+.token-chip--selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.token-chip--thinking { background: var(--surface-hover); cursor: default; }
+
+/* Token detail panel */
+.token-detail {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.token-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.token-detail-token {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-bright);
+  white-space: pre;
+}
+
+.token-detail-info {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-detail-pos {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.token-alternatives { margin-top: 8px; }
+
+.token-alt-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.token-alt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  height: 22px;
+}
+
+.token-alt-bar {
+  height: 100%;
+  border-radius: 3px;
+  min-width: 3px;
+  transition: width 120ms;
+}
+
+.token-alt-text {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre;
+  min-width: 60px;
+}
+
+.token-alt-info {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* Notebook page */
 .notebook-page .page-header { flex-shrink: 0; }
 
 .notebook-body {
