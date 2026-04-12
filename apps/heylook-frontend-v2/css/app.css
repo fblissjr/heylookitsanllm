@@ -554,6 +554,8 @@ html, body {
   cursor: pointer;
 }
 
+.settings-slider--default { opacity: 0.35; }
+
 .settings-checkbox {
   accent-color: var(--accent);
   cursor: pointer;

@@ -35,6 +35,7 @@ export function mount(el) {
   const sendBtn = container.querySelector('#send-btn')
   const modelSelect = container.querySelector('#model-select')
   const sidebarBtn = container.querySelector('#sidebar-btn')
+  const settingsBtn = container.querySelector('#settings-btn')
 
   input.addEventListener('input', () => {
     input.style.height = 'auto'

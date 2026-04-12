@@ -115,12 +115,14 @@ function buildControl(key, meta, onChange) {
     min: String(meta.min), max: String(meta.max), step: String(meta.step),
   })
 
-  // Use midpoint as visual default when value is null
-  const displayVal = currentVal != null ? currentVal : defaultDisplayValue(meta)
+  // Start at min when unset -- visually distinct from an active value
+  const displayVal = currentVal != null ? currentVal : meta.min
   slider.value = displayVal
+  if (currentVal == null) slider.classList.add('settings-slider--default')
   valueDisplay.textContent = formatValue(currentVal, meta)
 
   slider.addEventListener('input', () => {
+    slider.classList.remove('settings-slider--default')
     const v = isInt ? parseInt(slider.value) : parseFloat(slider.value)
     updateSetting(key, v)
     valueDisplay.textContent = formatValue(v, meta)
@@ -135,11 +137,6 @@ function formatValue(val, meta) {
   if (val == null) return 'default'
   if (meta.type === 'int') return String(Math.round(val))
   return val % 1 === 0 ? val.toFixed(1) : String(val)
-}
-
-function defaultDisplayValue(meta) {
-  // Visual position for the slider when value is null (not sent to backend)
-  return (meta.min + meta.max) / 2
 }
 
 function refreshControls(panel, onChange, capabilities) {

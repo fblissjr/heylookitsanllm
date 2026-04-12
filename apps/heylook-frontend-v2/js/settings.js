@@ -46,10 +46,13 @@ function load() {
   return _cache
 }
 
+let _saveTimer = null
 function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(_cache))
-  } catch { /* localStorage full or unavailable */ }
+  // Debounce localStorage writes -- slider drags fire dozens of events/sec
+  clearTimeout(_saveTimer)
+  _saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_cache)) } catch {}
+  }, 300)
 }
 
 export function getSettings() {
