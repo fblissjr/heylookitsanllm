@@ -64,6 +64,7 @@ export function mount(el) {
 function teardown() {
   stopStream()
   _throttledRender?.reset()
+  _throttledRender = null
   document.removeEventListener('keydown', handleKeyNav)
   state = null
   container = null

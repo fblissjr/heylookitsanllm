@@ -119,6 +119,7 @@ function buildShell() {
 function teardown() {
   stopStream()
   _throttledStreamUpdate?.reset()
+  _throttledStreamUpdate = null
   const list = document.getElementById('conversation-list')
   if (list) list.onclick = null
   const newBtn = document.getElementById('new-chat-btn')

@@ -18,10 +18,12 @@ export function beforeUnloadGuard(e) {
  */
 export function throttleToFrame(fn) {
   let pending = false
+  let latestArgs = []
   const throttled = (...args) => {
+    latestArgs = args
     if (pending) return
     pending = true
-    requestAnimationFrame(() => { pending = false; fn(...args) })
+    requestAnimationFrame(() => { pending = false; fn(...latestArgs) })
   }
   throttled.reset = () => { pending = false }
   return throttled
