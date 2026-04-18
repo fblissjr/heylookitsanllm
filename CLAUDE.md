@@ -48,6 +48,7 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 - [internal/backend/router.md](./internal/backend/router.md) -- routing and LRU cache
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system
 - [docs/rlm_guide.md](./docs/rlm_guide.md) -- RLM endpoint usage, request fields, examples
+- [docs/observability_guide.md](./docs/observability_guide.md) -- three JSONL log streams, env vars, content invariant, monitoring + optimization recipes
 
 ### Frontend v2: `apps/heylook-frontend-v2/`
 
@@ -75,6 +76,15 @@ Config: `bench_config.toml` in each directory.
 - [docs/optloop_guide.md](./docs/optloop_guide.md) -- optloop user walkthrough, scoring, configuration
 - [docs/optloop_advanced.md](./docs/optloop_advanced.md) -- bench activation gap, monkey patching, failure modes, FAQ
 - [docs/optimization_log.md](./docs/optimization_log.md) -- cross-session knowledge base (baselines, findings)
+
+### Observability: `src/heylook_llm/memory.py`
+
+`MemoryManager` owns three disk-backed JSONL streams under `internal/log/` plus
+one startup record. Content invariant: numeric + metadata only, never prompts
+or responses. Env vars: `HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS` (default 3600,
+`0` disables), `HEYLOOK_REQUEST_LOG_ENABLED`, `HEYLOOK_MODEL_EVENT_LOG_ENABLED`.
+
+- [docs/observability_guide.md](./docs/observability_guide.md) -- full rundown, env vars, content invariant, monitoring + optimization recipes (jq one-liners)
 
 ## Change Tracking
 
@@ -119,6 +129,9 @@ Config: `bench_config.toml` in each directory.
 - Frontend v2: SPA sub-path serving needs `<base href="/v2/">` in HTML so relative paths resolve correctly. Static file handler must `resolve()` + `is_relative_to()` before serving.
 - Returning a Pydantic model with custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)`. `JSONResponse(content=model.model_dump())` double-serializes the whole tree.
 - SSE response headers ship before the generator runs; put post-generation telemetry (peak memory, cache bytes) in the usage chunk's `timing` object -- client must pass `stream_options.include_usage=true` to receive it.
+- Observability log streams (`internal/log/*.jsonl`) never record prompts, responses, or token IDs. Counts, sampler knobs, timings, and metadata only. `sampler_summary_from_request` in `memory.py` is the canonical extractor for sampler knobs -- anywhere you need a "what was this request configured with" dict, call it.
+- MemoryManager calls from request/router paths go through `memory.safe_mm_call(mm, "method_name", ...)`, which is a no-op when `mm is None` and swallows exceptions to `logging.debug` (observability failures must never break inference).
+- Never commit runtime data or logs. `*.db`, `*.jsonl`, `/data/*`, and `apps/*/data/*` are gitignored; `data/.gitkeep` and `internal/log/` structure stay. Package data at `src/heylook_llm/data/` (profiles, service templates) is excluded from the ignore on purpose.
 
 ## Rules: Agent Behavior
 
@@ -140,7 +153,7 @@ Config: `bench_config.toml` in each directory.
 - Frontend (legacy) build: `cd apps/heylook-frontend && bun run build` (verify production build)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests (removed mlx_batch_vision module) -- do not investigate
 - MLX embedding/sampler tests fail in full suite (Metal context conflicts) but pass individually -- pre-existing, not a regression
-- `tests/unit/test_conversation_api.py` + `test_notebook_api.py` require `pytest_asyncio` (not in base deps). Install via `uv add --dev pytest_asyncio` or skip with `--ignore=tests/unit/test_conversation_api.py --ignore=tests/unit/test_notebook_api.py`.
+- `tests/unit/test_conversation_api.py` + `test_notebook_api.py` use `pytest_asyncio` (dev dep; added in v1.21). `uv sync` on a fresh checkout installs it automatically.
 - Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
 - Optloop-lib: `cd apps/optloop-lib && uv sync && uv run pytest tests/ -v` (separate venv, 60 tests)
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed

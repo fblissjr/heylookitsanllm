@@ -154,11 +154,8 @@ class ModelRouter:
         lru_id = evict_id
         logging.info(f"Cache full. Evicting model: {lru_id}")
         diag_event("model_evict", model=lru_id)
-        if self.memory_manager is not None:
-            try:
-                self.memory_manager.register_model_unload(lru_id, reason="lru_evict")
-            except Exception:
-                logging.debug("memory_manager.register_model_unload failed", exc_info=True)
+        from heylook_llm.memory import safe_mm_call
+        safe_mm_call(self.memory_manager, "register_model_unload", lru_id, reason="lru_evict")
 
         # Check if it's an MLX model before unloading
         is_mlx_model = False
@@ -286,16 +283,18 @@ class ModelRouter:
                            load_time_s=round(load_time, 2))
 
                 if self.memory_manager is not None:
+                    from heylook_llm.memory import capture_model_metadata, safe_mm_call
                     try:
-                        from heylook_llm.memory import capture_model_metadata
                         metadata = capture_model_metadata(
                             model_id,
                             new_provider,
                             getattr(model_config.config, "model_path", ""),
                         )
-                        self.memory_manager.register_model_load(metadata, load_time * 1000.0)
                     except Exception:
-                        logging.debug("memory_manager.register_model_load failed", exc_info=True)
+                        logging.debug("capture_model_metadata failed", exc_info=True)
+                        metadata = None
+                    if metadata is not None:
+                        safe_mm_call(self.memory_manager, "register_model_load", metadata, load_time * 1000.0)
 
                 # Log cache state after loading
                 if self.log_level <= logging.DEBUG:

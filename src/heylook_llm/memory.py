@@ -28,7 +28,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import orjson
 import psutil
@@ -42,12 +42,33 @@ except ImportError:
     mx_utils = None  # type: ignore[assignment]
     HAS_MLX = False
 
+# Hoisted from inside MemoryManager._prompt_cache_stats -- no circular
+# dependency risk since prompt_cache.py does not import memory.
+from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
+
 
 DEFAULT_LOG_DIR = Path("internal/log")
 BASELINE_FILE = "memory_baseline.jsonl"
 REQUEST_FILE = "request_events.jsonl"
 MODEL_FILE = "model_events.jsonl"
 STARTUP_FILE = "baseline.jsonl"
+
+StopReason = Literal["stop", "length", "error", "abort"]
+
+
+def safe_mm_call(mm: Any, method_name: str, *args: Any, **kwargs: Any) -> None:
+    """Call ``mm.method_name(*args, **kwargs)`` if ``mm`` is not None, swallow errors.
+
+    Replaces the ``if mm is not None: try: ... except: logging.debug(...)`` pattern
+    at every MemoryManager call site. Observability failures must never break
+    request handling.
+    """
+    if mm is None:
+        return
+    try:
+        getattr(mm, method_name)(*args, **kwargs)
+    except Exception:
+        logging.debug(f"memory_manager.{method_name} failed", exc_info=True)
 
 
 @dataclass
@@ -327,7 +348,6 @@ class MemoryManager:
 
     def _prompt_cache_stats(self) -> dict:
         try:
-            from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
             cm = get_global_cache_manager()
             return {"total_bytes": int(cm.total_cache_bytes)}
         except Exception:

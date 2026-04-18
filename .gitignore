@@ -29,6 +29,23 @@ update-coderef.sh
 model.toml
 models.toml
 
+# Runtime data at repo root (SQLite DBs, cache files). Package data at
+# src/heylook_llm/data/ stays tracked; this only catches the /data runtime dir.
+# Pattern note: /data/* lets git re-enter the dir so the .gitkeep exception works;
+# /data/ without the star short-circuits recursion and the negation never fires.
+/data/*
+!/data/.gitkeep
+# Any data/ dir directly under apps/
+apps/*/data/*
+!apps/*/data/.gitkeep
+# Safety net: SQLite + observability log files should never land in git
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.jsonl
 # bench data (legacy paths)
 results.tsv
 data/bench/

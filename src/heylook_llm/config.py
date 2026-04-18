@@ -281,6 +281,14 @@ class GenerationTiming(BaseModel):
     thinking_duration_ms: Optional[int] = Field(None, description="Time spent in thinking phase")
     content_duration_ms: Optional[int] = Field(None, description="Time spent generating content")
     total_duration_ms: int = Field(..., description="Total generation time")
+    peak_memory_gb: Optional[float] = Field(
+        None,
+        description="Peak MLX memory used during this request in GB. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.",
+    )
+    kv_cache_bytes: Optional[int] = Field(
+        None,
+        description="Bytes held in the prompt KV cache at the start of this request. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.",
+    )
 
 
 class GenerationConfig(BaseModel):

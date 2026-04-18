@@ -1,0 +1,8 @@
+# Runtime data directory -- contents gitignored.
+#
+# The server writes:
+#   data/conversations.db         (SQLite; override via HEYLOOK_DB_PATH)
+#   data/cache/*.safetensors      (future: cross-restart prompt cache, S3.1)
+#
+# Observability logs live in internal/log/ (also gitignored). See
+# docs/observability_guide.md for the full rundown.

@@ -26,6 +26,7 @@ Built on Apple MLX for text and vision.
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
+- **Observability**: Three disk-backed JSONL streams (periodic memory baseline, per-request events with sampler + timings + peak memory, model load/unload events). Counts and metadata only -- never prompt or response text. Env-var configurable; see [docs/observability_guide.md](docs/observability_guide.md) for the full rundown plus monitoring/optimization recipes.
 
 ## Web UI
 
@@ -154,6 +155,20 @@ Two self-contained optimization loops for autonomous inference tuning on Apple S
 - **[`apps/optloop-lib/`](apps/optloop-lib/)** -- Library-level optimization. Same loop targeting local forks of mlx-lm and mlx-vlm in `repos/`.
 
 Both are configured via `bench_config.toml` (scoring weights, decision thresholds, constraint limits, optimizer scope). See the [user guide](docs/optloop_guide.md) for a walkthrough, or the [advanced guide](docs/optloop_advanced.md) for the bench activation gap, monkey patching, and failure modes.
+
+## Monitoring and Optimization
+
+Point `tail -f` at `internal/log/memory_baseline.jsonl` (hourly) or
+`internal/log/request_events.jsonl` (per-request) to watch the server's
+shape over time. Recipes for finding leaks, usage patterns, and preset tuning
+are in [docs/observability_guide.md](docs/observability_guide.md).
+
+Quick dev loop with 60-second baselines and no request-event spam:
+
+```bash
+HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS=60 HEYLOOK_REQUEST_LOG_ENABLED=0 \
+  heylookllm --log-level INFO
+```
 
 ## Troubleshooting
 

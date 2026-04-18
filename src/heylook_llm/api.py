@@ -75,12 +75,8 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
         except Exception:
             logging.debug("Resource snapshot collection failed", exc_info=True)
 
-        memory_manager = getattr(app.state, "memory_manager", None)
-        if memory_manager is not None:
-            try:
-                memory_manager.maybe_log_baseline()
-            except Exception:
-                logging.debug("Baseline logger failed", exc_info=True)
+        from heylook_llm.memory import safe_mm_call
+        safe_mm_call(getattr(app.state, "memory_manager", None), "maybe_log_baseline")
 
 
 @asynccontextmanager
@@ -404,6 +400,18 @@ Generate text completions from chat messages using the specified model.
                     "schema": {"$ref": "#/components/schemas/StreamChunk"},
                 },
             },
+            "headers": {
+                "x-heylook-peak-memory-gb": {
+                    "description": "Peak MLX memory used during this request in GB. Non-streaming only; streaming emits the same value inside the final usage chunk's timing.peak_memory_gb.",
+                    "schema": {"type": "string", "example": "4.213"},
+                    "required": False,
+                },
+                "x-heylook-kv-bytes": {
+                    "description": "Bytes held in the prompt KV cache at the start of this request. Non-streaming only; streaming emits the same value inside the final usage chunk's timing.kv_cache_bytes.",
+                    "schema": {"type": "string", "example": "131072"},
+                    "required": False,
+                },
+            },
         },
     },
     tags=["OpenAI API"]
@@ -491,11 +499,8 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     # perf_ctx is built, so construct a minimal one now so _record_error_event
     # can still emit to memory_manager.
     memory_manager = getattr(request.app.state, "memory_manager", None)
-    if memory_manager is not None:
-        try:
-            memory_manager.mark_request_start()
-        except Exception:
-            logging.debug("memory_manager.mark_request_start failed", exc_info=True)
+    from heylook_llm.memory import safe_mm_call
+    safe_mm_call(memory_manager, "mark_request_start")
     _error_ctx = {
         "memory_manager": memory_manager,
         "image_count": image_stats['count'],
@@ -646,13 +651,10 @@ def _maybe_log_request_event(
     mm = perf_ctx.get("memory_manager")
     if mm is None:
         return
-    try:
-        mm.mark_request_end()
-    except Exception:
-        logging.debug("memory_manager.mark_request_end failed", exc_info=True)
+    from heylook_llm.memory import safe_mm_call, sampler_summary_from_request
+    safe_mm_call(mm, "mark_request_end")
     try:
         from dataclasses import asdict
-        from heylook_llm.memory import sampler_summary_from_request
         record = asdict(event)
         if chat_request is not None:
             record["sampler_summary"] = sampler_summary_from_request(chat_request)
@@ -910,17 +912,11 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         if kv_cache_bytes > 0:
             timing_data["kv_cache_bytes"] = kv_cache_bytes
 
-        # Build generation config from request (only include set values)
-        generation_config = {
-            k: v for k, v in {
-                "temperature": chat_request.temperature,
-                "top_p": chat_request.top_p,
-                "top_k": chat_request.top_k,
-                "min_p": chat_request.min_p,
-                "max_tokens": chat_request.max_tokens,
-                "enable_thinking": chat_request.enable_thinking,
-            }.items() if v is not None
-        }
+        # Build generation config from request using the shared sampler-summary
+        # helper so the SSE usage chunk and the request_events.jsonl schema stay
+        # in lockstep.
+        from heylook_llm.memory import sampler_summary_from_request
+        generation_config = sampler_summary_from_request(chat_request)
 
         usage_chunk = {
             "id": response_id,
