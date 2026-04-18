@@ -55,14 +55,19 @@ class PresetNotFound(KeyError):
 
 
 class PresetRegistry:
-    """In-memory map of preset name -> defaults dict.
+    """In-memory map of preset name -> defaults dict + descriptions.
 
     Instances are cheap; the module-level ``get_preset_registry()`` returns
     a memoized singleton that loads the bundled presets directory once.
     """
 
-    def __init__(self, presets: dict[str, dict[str, Any]]):
+    def __init__(
+        self,
+        presets: dict[str, dict[str, Any]],
+        descriptions: dict[str, str] | None = None,
+    ):
         self._presets = dict(presets)
+        self._descriptions = dict(descriptions or {})
 
     # ---- constructors ----
 
@@ -72,14 +77,15 @@ class PresetRegistry:
         logged and skipped."""
         path = Path(directory)
         presets: dict[str, dict[str, Any]] = {}
+        descriptions: dict[str, str] = {}
         if not path.is_dir():
-            return cls(presets)
+            return cls(presets, descriptions)
 
         for toml_path in sorted(path.glob("*.toml")):
             parsed = cls._parse_one(toml_path)
             if parsed is None:
                 continue
-            name, defaults = parsed
+            name, defaults, description = parsed
             if name in presets:
                 logging.warning(
                     "preset name collision: %r from %s already registered; "
@@ -89,7 +95,9 @@ class PresetRegistry:
                 )
                 continue
             presets[name] = defaults
-        return cls(presets)
+            if description:
+                descriptions[name] = description
+        return cls(presets, descriptions)
 
     @classmethod
     def from_bundled(cls) -> "PresetRegistry":
@@ -103,6 +111,17 @@ class PresetRegistry:
 
     def list_names(self) -> list[str]:
         return sorted(self._presets.keys())
+
+    def describe(self, name: str) -> str:
+        """Return the preset's [meta].description, or '' if unset/unknown."""
+        return self._descriptions.get(name, "")
+
+    def list_info(self) -> list[dict[str, str]]:
+        """Return ``[{name, description}, ...]`` for API surfaces."""
+        return [
+            {"name": name, "description": self._descriptions.get(name, "")}
+            for name in self.list_names()
+        ]
 
     def get(self, name: str) -> dict[str, Any]:
         if name not in self._presets:
@@ -133,7 +152,7 @@ class PresetRegistry:
     # ---- internals ----
 
     @staticmethod
-    def _parse_one(toml_path: Path) -> tuple[str, dict[str, Any]] | None:
+    def _parse_one(toml_path: Path) -> tuple[str, dict[str, Any], str] | None:
         try:
             with toml_path.open("rb") as fh:
                 data = tomllib.load(fh)
@@ -146,6 +165,7 @@ class PresetRegistry:
 
         meta = data.get("meta") or {}
         name = meta.get("name") or toml_path.stem
+        description = meta.get("description") or ""
         defaults = data.get("defaults") or {}
         if not isinstance(defaults, dict):
             logging.warning(
@@ -153,7 +173,8 @@ class PresetRegistry:
                 toml_path,
             )
             defaults = {}
-        return name, {k: v for k, v in defaults.items() if v is not None}
+        cleaned = {k: v for k, v in defaults.items() if v is not None}
+        return name, cleaned, description
 
 
 _LOCK = threading.Lock()

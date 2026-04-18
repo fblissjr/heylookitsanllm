@@ -63,112 +63,77 @@ def get_hf_cache_paths() -> list[str]:
 
 @dataclass
 class ModelProfile:
-    """Profile with smart defaults for different model types.
+    """Thin adapter over a named preset from the runtime ``PresetRegistry``.
 
-    Automatically filters provider-specific parameters.
+    Historically this dataclass carried a sampler-field ``defaults`` dict that
+    ``apply()`` baked into ``models.toml`` at import time. After C4, sampler
+    fields live in ``src/heylook_llm/data/presets/*.toml`` and are resolved
+    at REQUEST time via the registry cascade. ``apply()`` now just records
+    the preset name on the model's config as ``default_preset`` -- callers
+    keep the same method signature during the transition; internal
+    semantics differ.
     """
 
     name: str
     description: str
     defaults: dict[str, Any] = field(default_factory=dict)
 
-    # Provider-specific parameter sets
-    MLX_ONLY_PARAMS = {
-        "cache_type",
-        "kv_bits",
-        "kv_group_size",
-        "quantized_kv_start",
-        "max_kv_size",
-        "draft_model_path",
-        "num_draft_tokens",
-    }
-
     def apply(
         self, config: dict[str, Any], model_info: dict[str, Any]
     ) -> dict[str, Any]:
-        """Apply profile defaults to config, overriding existing values.
+        """Record the preset name on the model's config.
 
-        Profile values take precedence over smart defaults. MLX-only parameters
-        are filtered out for non-MLX providers.
+        The request-time cascade (see ``MLXProvider._apply_model_defaults``)
+        picks up ``default_preset`` and applies the preset fields when no
+        per-request preset is specified. No baking.
         """
-        result = config.copy()
         provider = model_info.get("provider", "mlx")
-
-        for key, value in self.defaults.items():
-            if provider != "mlx" and key in self.MLX_ONLY_PARAMS:
-                continue
-
-            if callable(value):
-                result[key] = value(model_info)
-            else:
-                result[key] = value
-
+        result = dict(config)
+        if provider == "mlx":
+            result["default_preset"] = self.name
         return result
 
 
-def _load_profiles_from_toml(
-    profiles_dir: Path | None = None,
-) -> dict[str, ModelProfile]:
-    """Load profile definitions from TOML files in the src/heylook_llm/data/profiles directory.
-
-    Each .toml file must have [meta] (name, description) and [defaults] tables.
-    Loaded once and cached module-level.
-    """
-    if profiles_dir is None:
-        import importlib.resources as resources
-
-        profiles_dir = Path(str(resources.files("heylook_llm.data.profiles")))
-
-    profiles: dict[str, ModelProfile] = {}
-
-    if not profiles_dir.is_dir():
-        logger.warning(f"Profiles directory not found: {profiles_dir}")
-        return profiles
-
-    for toml_file in sorted(profiles_dir.glob("*.toml")):
-        try:
-            with open(toml_file, "rb") as f:
-                data = tomllib.load(f)
-            meta = data.get("meta", {})
-            defaults = data.get("defaults", {})
-
-            name = meta.get("name", toml_file.stem)
-            description = meta.get("description", "")
-
-            # Coerce numeric types: TOML reads all numbers as int or float,
-            # but booleans come through correctly
-            profiles[name] = ModelProfile(
-                name=name,
-                description=description,
-                defaults=defaults,
-            )
-        except Exception as e:
-            logger.error(f"Failed to load profile {toml_file.name}: {e}")
-
-    return profiles
-
-
-# Module-level cache: loaded once on first access
-_profiles_cache: dict[str, ModelProfile] | None = None
-
-
 def load_profiles(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
-    """Get all available profiles. Loads from TOML on first call, then cached."""
-    global _profiles_cache
-    if _profiles_cache is None or profiles_dir is not None:
-        loaded = _load_profiles_from_toml(profiles_dir)
-        if profiles_dir is None:
-            _profiles_cache = loaded
-        return loaded
-    return _profiles_cache
+    """Return a profile-dataclass view over the runtime preset registry.
+
+    The ``profiles_dir`` override exists for tests that want to load from a
+    custom directory; production paths use the bundled presets via the
+    process-wide ``PresetRegistry``.
+    """
+    from heylook_llm.presets import PresetRegistry, get_preset_registry
+
+    if profiles_dir is not None:
+        registry = PresetRegistry.from_directory(profiles_dir)
+    else:
+        registry = get_preset_registry()
+
+    return {
+        name: ModelProfile(
+            name=name,
+            description=registry.describe(name),
+            defaults=registry.get(name),
+        )
+        for name in registry.list_names()
+    }
 
 
 def get_available_profiles() -> list[str]:
-    """Return sorted list of available profile names (for argparse choices)."""
-    return sorted(load_profiles().keys())
+    """Return sorted list of available preset names (for argparse choices)."""
+    from heylook_llm.presets import get_preset_registry
+
+    return get_preset_registry().list_names()
 
 
-PROFILES = load_profiles()
+def _profiles_view() -> dict[str, ModelProfile]:
+    """Accessor used by functions that previously read the ``PROFILES`` dict.
+    Returns a fresh view each call -- cheap (registry is memoized)."""
+    return load_profiles()
+
+
+# Back-compat module attribute. Reads do ``dict(PROFILES)`` in a few places;
+# ``_profiles_view()`` gives them a fresh snapshot backed by the registry.
+PROFILES = _profiles_view()
 
 
 # =============================================================================
@@ -177,34 +142,24 @@ PROFILES = load_profiles()
 
 
 def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
-    """Generate smart defaults based on model characteristics.
+    """Generate LOAD-TIME smart defaults based on model characteristics.
 
-    NOTE: These defaults are optimized for text GENERATION use cases.
-    For text ENCODING (hidden states extraction for Z-Image, etc.):
-    - max_tokens does NOT limit hidden states (request-level max_length does)
-    - Temperature, top_k, etc. are ignored (no generation happens)
-    - Only quantization level affects hidden state precision
-    - Use --profile embedding for encoder-focused defaults
+    Post-C4, sampler fields (temperature, top_k, top_p, min_p, max_tokens,
+    repetition_penalty) are NOT returned here -- those are the request-time
+    concern of the preset cascade. This function emits only the fields that
+    determine how the model loads and what its cache looks like: cache_type,
+    KV quantization knobs, draft-token count.
+
+    Users pick a sampler preset via ``--preset NAME`` on import (records
+    ``default_preset``) or per-request via ``ChatRequest.preset``.
     """
     provider = model_info.get("provider", "mlx")
     if provider == "mlx_embedding":
         return {"max_length": 2048}
 
     defaults: dict[str, Any] = {}
-
     size_gb = model_info.get("size_gb", 0)
-    is_vision = model_info.get("is_vision", False)
-    provider = model_info.get("provider", "mlx")
 
-    # Temperature based on model type
-    if "instruct" in model_info.get("name", "").lower():
-        defaults["temperature"] = 0.7
-    elif "chat" in model_info.get("name", "").lower():
-        defaults["temperature"] = 0.8
-    else:
-        defaults["temperature"] = 0.9
-
-    # Cache strategy based on size
     if provider == "mlx":
         if size_gb > 30:
             defaults["cache_type"] = "quantized"
@@ -220,30 +175,6 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
         else:
             defaults["cache_type"] = "standard"
 
-    # Sampling strategy
-    if size_gb > 30:
-        defaults["top_k"] = 20
-        defaults["min_p"] = 0.05
-        defaults["max_tokens"] = 256
-    elif size_gb < 3:
-        defaults["top_k"] = 50
-        defaults["top_p"] = 0.95
-        defaults["max_tokens"] = 1024
-    else:
-        defaults["top_k"] = 40
-        defaults["min_p"] = 0.05
-        defaults["max_tokens"] = 512
-
-    # Vision model specifics
-    if is_vision:
-        defaults["max_tokens"] = min(defaults.get("max_tokens", 512), 512)
-
-    # Repetition penalty
-    defaults["repetition_penalty"] = 1.05
-    defaults["repetition_context_size"] = 20
-
-    # Speculative decoding default (used when draft_model_path is set)
-    if provider == "mlx":
         defaults["num_draft_tokens"] = 3
 
     return defaults
@@ -666,10 +597,18 @@ class ModelService:
     def bulk_apply_profile(
         self, model_ids: list[str], profile_name: str
     ) -> list[ModelConfig]:
-        """Apply a profile to multiple models at once."""
-        profile = PROFILES.get(profile_name)
-        if not profile:
-            raise ValueError(f"Unknown profile: {profile_name}")
+        """Set ``default_preset`` on multiple models at once.
+
+        Post-C4, 'profile' and 'preset' name the same concept -- this method
+        just records the name on each target model's config so the request-time
+        cascade picks it up. No sampler-field baking.
+        """
+        from heylook_llm.presets import get_preset_registry
+        registry = get_preset_registry()
+        if profile_name not in registry:
+            raise ValueError(
+                f"Unknown preset: {profile_name}. Available: {registry.list_names()}"
+            )
 
         with self._lock:
             data = self._read_toml()
@@ -678,13 +617,10 @@ class ModelService:
 
             for model in models:
                 if model.get("id") in model_ids:
-                    config = model.get("config", {})
-                    model_info = {
-                        "name": model.get("id", ""),
-                        "provider": model.get("provider", "mlx"),
-                        "size_gb": 0,
-                    }
-                    model["config"] = profile.apply(config, model_info)
+                    config = model.get("config", {}) or {}
+                    if model.get("provider") == "mlx":
+                        config["default_preset"] = profile_name
+                        model["config"] = config
                     updated.append(ModelConfig(**model))
 
             data["models"] = models

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from heylook_llm.model_service import (
-    PROFILES,
     ModelProfile,
     get_available_profiles,
     get_hf_cache_paths,
@@ -24,11 +23,9 @@ from heylook_llm.model_service import (
     load_profiles,
 )
 
-# Re-export for backwards compatibility (server.py imports import_models from here)
 __all__ = [
     "ModelImporter",
     "ModelProfile",
-    "PROFILES",
     "get_available_profiles",
     "get_hf_cache_paths",
     "get_smart_defaults",
@@ -45,12 +42,15 @@ class ModelImporter:
     def __init__(self, profile: Optional[str] = None, overrides: Optional[dict[str, Any]] = None):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
+        self.preset_name: Optional[str] = None
         if profile:
-            self.profile = PROFILES.get(profile)
-            if not self.profile:
-                raise ValueError(f"Unknown profile: {profile}. Available: {sorted(PROFILES.keys())}")
-        else:
-            self.profile = None
+            from heylook_llm.presets import get_preset_registry
+            registry = get_preset_registry()
+            if profile not in registry:
+                raise ValueError(
+                    f"Unknown preset: {profile}. Available: {registry.list_names()}"
+                )
+            self.preset_name = profile
         self.overrides = overrides or {}
 
     def scan_directory(self, path: str) -> list[dict]:
@@ -278,13 +278,12 @@ class ModelImporter:
         config: dict[str, Any] = {"model_path": str(path), "vision": is_vision}
         config.update(get_smart_defaults(model_info))
 
-        if self.profile:
-            config = self.profile.apply(config, model_info)
+        if self.preset_name:
+            config["default_preset"] = self.preset_name
         config.update(self.overrides)
 
         if size_gb and size_gb < 1 and not is_vision:
             tags.append("draft")
-            config["max_tokens"] = 128
 
         return {
             "id": model_id, "provider": "mlx",
@@ -469,11 +468,11 @@ def import_models(args: Any) -> None:
 
             model['config'] = config
 
-    # Print profile details before writing
+    # Print preset details before writing
     if hasattr(args, 'profile') and args.profile:
-        profile = PROFILES.get(args.profile)
+        profile = load_profiles().get(args.profile)
         if profile:
-            print(f"\nProfile: {profile.name}")
+            print(f"\nPreset: {profile.name}")
             for key, value in profile.defaults.items():
                 print(f"  {key:<25} = {value}")
 
@@ -497,9 +496,6 @@ def import_models(args: Any) -> None:
         print("\nTo use this configuration, rename to models.toml or copy desired entries.")
 
     if not hasattr(args, 'profile') or not args.profile:
-        print("\nAvailable profiles:")
-        for name, profile in sorted(PROFILES.items()):
-            summary_keys = [k for k in list(profile.defaults.keys())[:4]]
-            summary = ", ".join(f"{k}={profile.defaults[k]}" for k in summary_keys)
+        print("\nAvailable presets:")
+        for name, profile in sorted(load_profiles().items()):
             print(f"  --profile {name:<20} {profile.description}")
-            print(f"           {'':20} [{summary}]")
