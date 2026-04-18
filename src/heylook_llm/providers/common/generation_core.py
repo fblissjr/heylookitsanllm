@@ -26,6 +26,7 @@ import threading
 from collections import deque
 from typing import Generator
 
+import mlx.core as mx
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
@@ -316,6 +317,14 @@ def run_generation(
     # Compute how many tokens came from cache for reporting in API responses
     cached_count = len(prompt_tokens) - len(tokens_to_process)
 
+    # Scope peak memory to this request so API can report per-request peak
+    # (not carry-over from a prior request's high-water mark).
+    mx.reset_peak_memory()
+
+    # Snapshot server-wide KV cache byte total once at start; cheap enough to
+    # attach to the first token so the streaming API picks it up via getattr.
+    kv_cache_bytes_snapshot = cache_manager.total_cache_bytes if cache_manager is not None else 0
+
     try:
         with wired_limit(model, [generation_stream]):
             first_token = True
@@ -349,8 +358,12 @@ def run_generation(
                 if first_token:
                     if pre_filled_cache is None and response.text.startswith(' '):
                         response.text = response.text.lstrip()
-                    # Attach cache stats for API response reporting
-                    response.cached_tokens = cached_count
+                    # Attach cache stats for API response reporting.
+                    # GenerationResponse is a non-slotted dataclass; runtime
+                    # attribute addition is intentional and read via getattr
+                    # on the API side.
+                    response.cached_tokens = cached_count  # type: ignore[attr-defined]
+                    response.kv_cache_bytes = kv_cache_bytes_snapshot  # type: ignore[attr-defined]
                     first_token = False
 
                 yield response

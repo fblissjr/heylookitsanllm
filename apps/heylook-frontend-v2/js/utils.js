@@ -37,3 +37,10 @@ export function statCard(label, value) {
   )
   return card
 }
+
+export function formatBytes(bytes) {
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`
+  return `${bytes} B`
+}

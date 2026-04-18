@@ -6,7 +6,7 @@ import * as api from '../api.js'
 import bus from '../bus.js'
 import { streamChat } from '../streaming.js'
 import { renderMarkdown, ensureMarked } from '../components/markdown.js'
-import { createEl, beforeUnloadGuard, throttleToFrame } from '../utils.js'
+import { createEl, beforeUnloadGuard, formatBytes, throttleToFrame } from '../utils.js'
 import { samplerParams } from '../settings.js'
 import { buildSettingsPanel } from '../components/settings_panel.js'
 import {
@@ -629,7 +629,7 @@ async function startStream() {
 
       renderMessages()
       scrollToBottom()
-      setStatus(data?.usage ? `${data.usage.completion_tokens || 0} tokens` : '')
+      setStatus(formatCompletionStatus(data))
     },
     onError(error) {
       state.streaming = { active: false, content: '', thinking: '', controller: null }
@@ -786,6 +786,16 @@ function scrollToBottom(force = false) {
 function setStatus(text) {
   const el = container?.querySelector('#chat-status')
   if (el) el.textContent = text
+}
+
+function formatCompletionStatus(data) {
+  if (!data?.usage) return ''
+  const parts = [`${data.usage.completion_tokens || 0} tokens`]
+  const peak = data.timing?.peak_memory_gb
+  if (peak && peak > 0) parts.push(`${peak.toFixed(2)} GB peak`)
+  const kvBytes = data.timing?.kv_cache_bytes
+  if (kvBytes && kvBytes > 0) parts.push(`${formatBytes(kvBytes)} KV`)
+  return parts.join(' \u00b7 ')
 }
 
 function toggleOverlay(show) {

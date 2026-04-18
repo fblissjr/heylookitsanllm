@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Body
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi.openapi.utils import get_openapi
@@ -571,9 +571,23 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
         diag_event("generation_complete", request_id=request_id,
                    total_ms=round((time.time() - request_start_time) * 1000, 1))
+        response_headers = {"X-Request-ID": request_id}
+        peak_gb = perf_ctx.get("peak_memory_gb", 0.0)
+        kv_bytes = perf_ctx.get("kv_cache_bytes", 0)
+        if peak_gb > 0:
+            response_headers["x-heylook-peak-memory-gb"] = f"{peak_gb:.3f}"
+        if kv_bytes > 0:
+            response_headers["x-heylook-kv-bytes"] = str(kv_bytes)
         if isinstance(result, dict):
-            return JSONResponse(content=result, headers={"X-Request-ID": request_id})
-        return result
+            return JSONResponse(content=result, headers=response_headers)
+        # Pydantic's model_dump_json is a single-pass serializer; passing the
+        # result through JSONResponse(content=result.model_dump(), ...) would
+        # re-serialize the whole tree via json.dumps.
+        return Response(
+            content=result.model_dump_json(),
+            media_type="application/json",
+            headers=response_headers,
+        )
 
 def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool) -> None:
     """Record a failed request event to perf collector."""
@@ -622,6 +636,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     prompt_tokens = 0
     completion_tokens = 0
     cached_tokens = 0
+    peak_memory_gb = 0.0
+    kv_cache_bytes = 0
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -689,6 +705,10 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
         completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
         cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
+        # Memory telemetry -- peak is monotonic across chunks, kv_cache_bytes
+        # is only set on first chunk (a snapshot at generation start).
+        peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
+        kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
 
         if not chunk.text:
             continue
@@ -786,13 +806,17 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             usage_data["content_tokens"] = content_tokens
 
         # Build timing object
-        timing_data = {
+        timing_data: dict[str, int | float] = {
             "total_duration_ms": total_duration_ms
         }
         if thinking_duration_ms is not None:
             timing_data["thinking_duration_ms"] = thinking_duration_ms
         if content_duration_ms is not None:
             timing_data["content_duration_ms"] = content_duration_ms
+        if peak_memory_gb > 0:
+            timing_data["peak_memory_gb"] = round(peak_memory_gb, 3)
+        if kv_cache_bytes > 0:
+            timing_data["kv_cache_bytes"] = kv_cache_bytes
 
         # Build generation config from request (only include set values)
         generation_config = {
@@ -869,9 +893,12 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     # Process generation in thread pool to avoid blocking event loop
     cached_tokens = 0
+    peak_memory_gb = 0.0
+    kv_cache_bytes = 0
 
     def consume_generator():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
+        nonlocal peak_memory_gb, kv_cache_bytes
         first_logprob_logged = False
         for chunk in generator:
             full_text += chunk.text
@@ -898,8 +925,15 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
             completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
             cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
+            peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
+            kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
 
     await asyncio.to_thread(consume_generator)
+
+    # Surface memory telemetry to the route handler for response headers.
+    if perf_ctx is not None:
+        perf_ctx["peak_memory_gb"] = peak_memory_gb
+        perf_ctx["kv_cache_bytes"] = kv_cache_bytes
 
     usage_dict = {
         "prompt_tokens": prompt_tokens,
