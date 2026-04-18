@@ -91,11 +91,16 @@ def main():
     )
     from heylook_llm.model_service import get_available_profiles
 
-    profile_names = get_available_profiles()
+    preset_names = get_available_profiles()
     import_parser.add_argument(
+        "--preset",
         "--profile",
-        choices=profile_names,
-        help="Apply a predefined profile for model defaults (see src/heylook_llm/data/profiles directory for details)",
+        dest="profile",
+        choices=preset_names,
+        help="Record a preset name as the model's default_preset "
+             "(applied at request time). --profile is accepted as an alias "
+             "for --preset. See src/heylook_llm/data/presets/*.toml for the "
+             "canonical set.",
     )
     import_parser.add_argument(
         "--override",
