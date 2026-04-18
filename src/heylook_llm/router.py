@@ -143,9 +143,27 @@ class ModelRouter:
                 return self.providers[model_id]
             return None
 
+    def _teardown_provider(self, provider: BaseProvider) -> None:
+        """Run a provider's unload + GC + Metal-cache clear sequence.
+
+        Must be called without ``cache_lock`` held -- unloading MLX weights
+        can take hundreds of ms and other threads need to continue cache
+        reads. Shared between LRU eviction and idle unload so both paths
+        stay in lockstep if teardown gains new steps (e.g. cache persistence
+        in S3.1).
+        """
+        is_mlx_model = getattr(provider, "provider", "") == "mlx"
+        try:
+            provider.unload()
+        except Exception:
+            logging.error("Provider unload failed", exc_info=True)
+        del provider
+        gc.collect()
+        if HAS_MLX and is_mlx_model:
+            mx.clear_cache()
+
     def _evict_lru_model(self):
         """Evict least recently used non-pinned model. Must be called with cache_lock held."""
-        # Find first non-pinned model (LRU order)
         evict_id = None
         for model_id in self.providers:
             if model_id not in self._pinned:
@@ -159,31 +177,15 @@ class ModelRouter:
             )
 
         lru_provider = self.providers.pop(evict_id)
-        lru_id = evict_id
-        self._last_used_ts.pop(lru_id, None)
-        logging.info(f"Cache full. Evicting model: {lru_id}")
-        diag_event("model_evict", model=lru_id)
+        self._last_used_ts.pop(evict_id, None)
+        logging.info(f"Cache full. Evicting model: {evict_id}")
+        diag_event("model_evict", model=evict_id)
         from heylook_llm.memory import safe_mm_call
-        safe_mm_call(self.memory_manager, "register_model_unload", lru_id, reason="lru_evict")
+        safe_mm_call(self.memory_manager, "register_model_unload", evict_id, reason="lru_evict")
 
-        # Check if it's an MLX model before unloading
-        is_mlx_model = False
-        if hasattr(lru_provider, 'provider'):
-            is_mlx_model = lru_provider.provider == 'mlx'
-
-        # Release cache lock during unloading
         self.cache_lock.release()
         try:
-            lru_provider.unload()
-            del lru_provider
-
-            # Force garbage collection to free memory immediately
-            gc.collect()
-
-            # Clear MLX cache if available
-            if HAS_MLX and is_mlx_model:
-                mx.clear_cache()
-
+            self._teardown_provider(lru_provider)
         finally:
             self.cache_lock.acquire()
 
@@ -451,10 +453,9 @@ class ModelRouter:
         return unloaded
 
     def _unload_idle(self, model_id: str) -> bool:
-        """Unload a single idle model. Extracted so ``unload_idle_models``
-        can do the per-model work outside the cache lock (matching the
-        pattern in ``_evict_lru_model``). Returns True on success.
-        """
+        """Pop + tear down a single idle model. Unload runs outside the
+        cache lock; weight release can take hundreds of ms and would stall
+        concurrent cache reads otherwise."""
         with self.cache_lock:
             provider = self.providers.pop(model_id, None)
             self._last_used_ts.pop(model_id, None)
@@ -466,16 +467,7 @@ class ModelRouter:
         diag_event("model_idle_unload", model=model_id)
         from heylook_llm.memory import safe_mm_call
         safe_mm_call(self.memory_manager, "register_model_unload", model_id, reason="idle_timeout")
-
-        is_mlx_model = getattr(provider, "provider", "") == "mlx"
-        try:
-            provider.unload()
-            del provider
-            gc.collect()
-            if HAS_MLX and is_mlx_model:
-                mx.clear_cache()
-        except Exception as e:  # pragma: no cover -- defensive
-            logging.error(f"Error unloading idle model {model_id}: {e}")
+        self._teardown_provider(provider)
         return True
 
     def pin_model(self, model_id: str) -> None:

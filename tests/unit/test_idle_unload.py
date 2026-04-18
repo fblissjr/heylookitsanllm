@@ -18,24 +18,11 @@ import os
 import tempfile
 import textwrap
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from heylook_llm.providers.base import BaseProvider
 from heylook_llm.router import ModelRouter
 
-
-class _MockProvider(BaseProvider):
-    def __init__(self, model_id, model_config, is_debug):
-        self.model_id = model_id
-        self.model_config = model_config
-        self.is_debug = is_debug
-        self.unload = MagicMock()
-
-    def load_model(self):
-        pass
-
-    def create_chat_completion(self, request):
-        pass
+from _mock_provider import MockProvider as _MockProvider
 
 
 # Template has explicit unload_after_idle_seconds placeholders per model +

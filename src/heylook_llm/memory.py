@@ -22,6 +22,7 @@ All writes are best-effort: a failed append logs a warning but never raises.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
@@ -277,7 +278,11 @@ class MemoryManager:
         }
         self._append_jsonl(self.log_dir / MODEL_FILE, record)
 
-    def register_model_unload(self, model_id: str, reason: str) -> None:
+    def register_model_unload(
+        self,
+        model_id: str,
+        reason: Literal["lru_evict", "idle_timeout", "manual", "reload", "shutdown"] = "manual",
+    ) -> None:
         with self._lock:
             self.model_metadata.pop(model_id, None)
 
@@ -326,10 +331,15 @@ class MemoryManager:
     def _maybe_rescan_models(self, now_ts: float | None = None) -> None:
         """Rescan watch folders when the interval has elapsed.
 
-        No-op when ``app_config.scan`` is unset (no watch folders configured)
-        or when ``scan.scan_interval_seconds == 0`` (periodic rescans
-        disabled). Populates ``self._discovered`` with models not already
-        present in ``app_config.models``.
+        The scan is a blocking filesystem walk. When a running event loop is
+        available (production path via ``tick()`` on ``_resource_snapshot_loop``),
+        the walk runs in a thread-pool executor so a ~seconds-scale scan over
+        a large HF cache doesn't stall in-flight SSE streams. Tests call
+        ``_maybe_rescan_models`` synchronously without a loop, so the fallback
+        path completes inline.
+
+        No-op when ``app_config.scan`` is unset or
+        ``scan.scan_interval_seconds == 0``.
         """
         scan_cfg = getattr(self.app_config, "scan", None)
         if scan_cfg is None:
@@ -342,10 +352,36 @@ class MemoryManager:
         if now_ts - self._last_scan_ts < interval:
             return
 
+        # Update ts eagerly so the next 60s tick doesn't re-enqueue while the
+        # previous scan is still in flight.
+        self._last_scan_ts = now_ts
+
         folders = list(getattr(scan_cfg, "folders", []) or [])
         scan_hf = bool(getattr(scan_cfg, "watch_hf_cache", False))
-        results = self._scan_paths_sync(folders, scan_hf)
 
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Sync fallback: tests and any caller without an event loop.
+            self._apply_scan_results(self._scan_paths_sync(folders, scan_hf))
+            return
+
+        future = loop.run_in_executor(None, self._scan_paths_sync, folders, scan_hf)
+        future.add_done_callback(self._on_scan_done)
+
+    def _on_scan_done(self, future: asyncio.Future) -> None:
+        try:
+            results = future.result()
+        except Exception:
+            logging.debug("MemoryManager: scan executor failed", exc_info=True)
+            return
+        self._apply_scan_results(results)
+
+    def _apply_scan_results(self, results: list) -> None:
+        """Build the discovered-cache dict from scanner output and install it
+        under the lock so ``discovered_snapshot`` readers see a consistent
+        view.
+        """
         discovered: dict[str, dict[str, Any]] = {}
         for m in results:
             if getattr(m, "already_configured", False):
@@ -364,16 +400,13 @@ class MemoryManager:
                 "tags": list(getattr(m, "tags", []) or []),
                 "description": getattr(m, "description", "") or "",
             }
-        self._discovered = discovered
-        self._last_scan_ts = now_ts
+        with self._lock:
+            self._discovered = discovered
 
     def _scan_paths_sync(self, paths: list[str], scan_hf: bool) -> list:
-        """Sync entry-point to the model-discovery scanner.
-
-        Instantiates a fresh ``ModelService`` each call -- scans are already
-        infrequent (default 15min) and the service is cheap. Tests
-        monkeypatch this method to inject a fake scanner.
-        """
+        """Blocking scan. Runs on an executor thread in production; called
+        directly by tests. Fresh ``ModelService`` per call -- scans are
+        15-min-interval by default, the service is cheap."""
         try:
             from heylook_llm.model_service import ModelService
         except Exception:
@@ -388,17 +421,15 @@ class MemoryManager:
             return []
 
     def discovered_snapshot(self) -> dict[str, Any]:
-        """Return a JSON-serializable snapshot of the discovery cache.
-
-        Shape consumed by ``GET /v1/admin/models/discovered``. Safe to call
-        from any thread -- reads are not locked because dict replacement in
-        ``_maybe_rescan_models`` is atomic w.r.t. readers.
-        """
-        return {
-            "discovered": list(self._discovered.values()),
-            "last_scan_ts": self._last_scan_ts,
-            "count": len(self._discovered),
-        }
+        """Snapshot consumed by ``GET /v1/admin/models/discovered``. Reads
+        are lock-guarded against the executor-thread rebuild in
+        ``_apply_scan_results``."""
+        with self._lock:
+            return {
+                "discovered": list(self._discovered.values()),
+                "last_scan_ts": self._last_scan_ts,
+                "count": len(self._discovered),
+            }
 
     # -- periodic baseline -------------------------------------------------
 
