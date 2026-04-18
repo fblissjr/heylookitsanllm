@@ -34,7 +34,7 @@ Check before making changes:
 ### Backend: `src/heylook_llm/`
 
 Providers: MLXProvider (text+vision), MLXEmbeddingProvider (dynamic backbone via mlx-lm).
-LRU cache hot-swaps up to 2 models with model pinning support for long-running batch jobs. Config in `models.toml`.
+Router caches one model by default (`max_loaded_models = 1`) with LRU eviction when cap is raised + pinning for long-running batch jobs. Idle-unload (`idle_unload_seconds`, default 1800s; per-model `unload_after_idle_seconds` override) unloads non-pinned models past their window. Config in `models.toml`.
 Provider type: `Literal["mlx", "mlx_embedding"]`.
 `coderef/` contains reference forks of mlx-lm and mlx-vlm for comparing upstream patterns (gitignored).
 Conversation storage: SQLite via aiosqlite (`db.py`), CRUD endpoints in `conversation_api.py`. DB auto-creates at `data/conversations.db` (override via `HEYLOOK_DB_PATH` env var). Linear message model with `UNIQUE(conversation_id, position)`.

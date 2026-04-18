@@ -168,6 +168,10 @@ class MLXModelConfig(BaseModel):
     default_max_length: int = 512
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
+    # Idle-unload override (C2). ``None`` = use ``AppConfig.idle_unload_seconds``
+    # global default. ``0`` = never idle-unload this model. Positive = per-model
+    # threshold in seconds. Pinned models are exempt regardless of this value.
+    unload_after_idle_seconds: Optional[int] = Field(None, ge=0)
 
 
 # Derived at import time; callers of _apply_model_defaults read from this set
@@ -213,7 +217,20 @@ class ModelConfig(BaseModel):
 class AppConfig(BaseModel):
     models: List[ModelConfig]
     default_model: Optional[str] = None
-    max_loaded_models: int = Field(2, ge=1)
+    # Default is 1 (single-model) -- Apple Silicon is memory-bandwidth-bound,
+    # so a second loaded-but-idle model doesn't help throughput. Field stays
+    # configurable for setups that truly need hot-swap without reload.
+    max_loaded_models: int = Field(1, ge=1)
+
+    # Idle unload (C2). Global default applied when a model has no per-model
+    # ``unload_after_idle_seconds`` override. ``0`` disables idle unload
+    # entirely (for models without their own override). Pinned models are
+    # always exempt.
+    idle_unload_seconds: int = Field(
+        1800, ge=0,
+        description="Seconds of inactivity before a non-pinned model is unloaded. "
+                    "0 disables idle unload globally.",
+    )
 
     # Observability (S1.2). Env-var overrides live in memory.py:
     # HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS, HEYLOOK_REQUEST_LOG_ENABLED,

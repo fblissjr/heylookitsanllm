@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 import gc
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from collections import OrderedDict
 from pathlib import Path
 
@@ -64,6 +64,13 @@ class ModelRouter:
 
         # Model pinning: prevents eviction during long-running batch jobs
         self._pinned: set[str] = set()
+
+        # Idle-unload tracking (C2). time.time() of the last cache hit or load
+        # per model_id. Consulted by ``unload_idle_models`` against each model's
+        # effective threshold. Kept separate from self.providers' OrderedDict
+        # position so unload decisions read from an explicit signal, not LRU
+        # ordering.
+        self._last_used_ts: Dict[str, float] = {}
 
         # Observability (S1.2). Set by api.py lifespan after construction.
         self.memory_manager: Optional[Any] = None
@@ -132,6 +139,7 @@ class ModelRouter:
                 if self.log_level <= logging.DEBUG:
                     logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
                 self.providers.move_to_end(model_id)
+                self._last_used_ts[model_id] = time.time()
                 return self.providers[model_id]
             return None
 
@@ -152,6 +160,7 @@ class ModelRouter:
 
         lru_provider = self.providers.pop(evict_id)
         lru_id = evict_id
+        self._last_used_ts.pop(lru_id, None)
         logging.info(f"Cache full. Evicting model: {lru_id}")
         diag_event("model_evict", model=lru_id)
         from heylook_llm.memory import safe_mm_call
@@ -282,6 +291,7 @@ class ModelRouter:
                 # Add to cache
                 with self.cache_lock:
                     self.providers[model_id] = new_provider
+                    self._last_used_ts[model_id] = time.time()
 
                 load_time = time.time() - load_start_time
                 logging.info(f"Successfully loaded model: {model_id} in {load_time:.2f}s")
@@ -394,6 +404,79 @@ class ModelRouter:
                         pass
 
         return status
+
+    def _effective_idle_threshold(self, model_id: str) -> int:
+        """Per-model override beats global default. ``0`` at either level means
+        "disabled"; per-model non-zero override wins over a ``0`` global.
+        Returns ``0`` when no idle-unload should happen for this model.
+        """
+        model_config = self.app_config.get_model_config(model_id)
+        per_model = None
+        if model_config is not None:
+            per_model = getattr(model_config.config, "unload_after_idle_seconds", None)
+        if per_model is not None:
+            return int(per_model)
+        return int(getattr(self.app_config, "idle_unload_seconds", 0))
+
+    def unload_idle_models(self, now_ts: Optional[float] = None) -> List[str]:
+        """Unload non-pinned models whose idle window has elapsed.
+
+        Driven by ``MemoryManager.tick()`` on the 60s resource-snapshot loop.
+        Pinned models are exempt. Models with an effective threshold of ``0``
+        (explicit per-model disable, or global disable with no per-model
+        override) are never touched.
+
+        ``now_ts`` defaults to ``time.time()``; tests inject a fake clock.
+        Returns the list of ``model_id`` values that were unloaded.
+        """
+        if now_ts is None:
+            now_ts = time.time()
+
+        with self.cache_lock:
+            candidates = []
+            for model_id in list(self.providers.keys()):
+                if model_id in self._pinned:
+                    continue
+                threshold = self._effective_idle_threshold(model_id)
+                if threshold <= 0:
+                    continue
+                last_used = self._last_used_ts.get(model_id, now_ts)
+                if now_ts - last_used > threshold:
+                    candidates.append(model_id)
+
+        unloaded = []
+        for model_id in candidates:
+            if self._unload_idle(model_id):
+                unloaded.append(model_id)
+        return unloaded
+
+    def _unload_idle(self, model_id: str) -> bool:
+        """Unload a single idle model. Extracted so ``unload_idle_models``
+        can do the per-model work outside the cache lock (matching the
+        pattern in ``_evict_lru_model``). Returns True on success.
+        """
+        with self.cache_lock:
+            provider = self.providers.pop(model_id, None)
+            self._last_used_ts.pop(model_id, None)
+
+        if provider is None:
+            return False
+
+        logging.info(f"Idle timeout. Unloading model: {model_id}")
+        diag_event("model_idle_unload", model=model_id)
+        from heylook_llm.memory import safe_mm_call
+        safe_mm_call(self.memory_manager, "register_model_unload", model_id, reason="idle_timeout")
+
+        is_mlx_model = getattr(provider, "provider", "") == "mlx"
+        try:
+            provider.unload()
+            del provider
+            gc.collect()
+            if HAS_MLX and is_mlx_model:
+                mx.clear_cache()
+        except Exception as e:  # pragma: no cover -- defensive
+            logging.error(f"Error unloading idle model {model_id}: {e}")
+        return True
 
     def pin_model(self, model_id: str) -> None:
         """Pin a model to prevent LRU eviction during long-running batch jobs.

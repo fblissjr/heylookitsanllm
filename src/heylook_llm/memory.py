@@ -296,6 +296,23 @@ class MemoryManager:
             return
         self._append_jsonl(self.log_dir / REQUEST_FILE, event)
 
+    # -- periodic maintenance ----------------------------------------------
+
+    def tick(self) -> None:
+        """Periodic maintenance called from the 60s resource-snapshot loop.
+
+        Currently: trigger idle-unload on the router. S2.4 adds memory-pressure
+        reclaim here. Best-effort -- per-call exceptions log at debug and
+        never propagate (observability-path discipline).
+        """
+        router = getattr(self, "router", None)
+        if router is None:
+            return
+        try:
+            router.unload_idle_models()
+        except Exception:
+            logging.debug("MemoryManager.tick: unload_idle_models failed", exc_info=True)
+
     # -- periodic baseline -------------------------------------------------
 
     def maybe_log_baseline(self) -> bool:

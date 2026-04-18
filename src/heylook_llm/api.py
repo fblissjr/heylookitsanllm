@@ -78,6 +78,7 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
 
         from heylook_llm.memory import safe_mm_call
         safe_mm_call(getattr(app.state, "memory_manager", None), "maybe_log_baseline")
+        safe_mm_call(getattr(app.state, "memory_manager", None), "tick")
 
 
 @asynccontextmanager

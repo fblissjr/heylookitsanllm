@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.1]
+
+### Added
+
+- **Idle model unload (C2)**: non-pinned loaded models that go unused for longer than their idle window auto-unload. Global default `idle_unload_seconds = 1800` (30min) in `[defaults]` of `models.toml`; per-model `unload_after_idle_seconds` override on `MLXModelConfig`. `0` at either level disables (per-model override still wins for models that set their own non-zero value). `ModelRouter._last_used_ts` tracks last cache hit or fresh load per model; `unload_idle_models(now_ts)` scans and unloads; pinned models always exempt. Events flow through `model_events.jsonl` as `reason="idle_timeout"`. `MemoryManager.tick()` drives this from the existing 60s resource-snapshot loop -- no new thread.
+
+### Changed
+
+- **`max_loaded_models` schema default flipped from 2 to 1**. Apple Silicon is memory-bandwidth-bound so a second loaded-but-idle model doesn't help throughput; it just holds memory that could serve bigger KV caches or higher-resolution vision batches. Field stays configurable (`Field(1, ge=1)`); existing `models.toml` entries are unaffected (they set their own value). Matches the user's already-explicit `max_loaded_models = 1`.
+
 ## [1.30.0]
 
 ### Added
