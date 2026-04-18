@@ -29,6 +29,8 @@ import os
 
 from fastapi import HTTPException, Request
 
+from heylook_llm.memory import parse_bool_env
+
 
 _ADMIN_TOKEN_ENV = "HEYLOOK_ADMIN_TOKEN"
 _ADMIN_TOKEN_HEADER = "X-Heylook-Admin-Token"
@@ -36,8 +38,9 @@ _ADMIN_TOKEN_HEADER = "X-Heylook-Admin-Token"
 _API_KEY_ENV = "HEYLOOK_API_KEY"
 _API_KEY_ENFORCE_LOOPBACK_ENV = "HEYLOOK_API_KEY_ENFORCE_LOOPBACK"
 _AUTHORIZATION_HEADER = "Authorization"
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_TRUTHY = frozenset({"true", "1", "yes", "on"})
+# Uvicorn/Starlette populate request.client.host with the resolved peer IP,
+# never a hostname -- "localhost" never appears here.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
 def require_admin_token(request: Request) -> None:
@@ -95,12 +98,14 @@ def require_api_key(request: Request) -> None:
     if not expected:
         return None
 
-    enforce_loopback = (
-        os.environ.get(_API_KEY_ENFORCE_LOOPBACK_ENV, "").strip().lower()
-        in _TRUTHY
-    )
-    if _is_loopback(request) and not enforce_loopback:
-        return None
+    # Loopback carve-out -- only parse the enforce-loopback env var when the
+    # client is actually loopback (otherwise it's pure per-request overhead).
+    if _is_loopback(request):
+        enforce = parse_bool_env(
+            os.environ.get(_API_KEY_ENFORCE_LOOPBACK_ENV), default=False
+        )
+        if not enforce:
+            return None
 
     provided = request.headers.get(_AUTHORIZATION_HEADER) or ""
     scheme, _, token = provided.partition(" ")

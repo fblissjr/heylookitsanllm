@@ -10,26 +10,8 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
-from unittest.mock import MagicMock
 
-
-class _FakeRequest:
-    """Minimal stand-in for fastapi.Request -- only provides headers dict."""
-
-    def __init__(self, headers: dict[str, str] | None = None):
-        # Starlette Request.headers is case-insensitive; mimic .get()
-        self._headers = {k.lower(): v for k, v in (headers or {}).items()}
-
-    @property
-    def headers(self):
-        class _H:
-            def __init__(self, inner):
-                self._inner = inner
-
-            def get(self, name, default=None):
-                return self._inner.get(name.lower(), default)
-
-        return _H(self._headers)
+from _fake_request import FakeRequest as _FakeRequest
 
 
 class TestRequireAdminToken:

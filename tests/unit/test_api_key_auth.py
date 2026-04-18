@@ -19,29 +19,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-
-class _FakeClient:
-    def __init__(self, host: str):
-        self.host = host
-
-
-class _FakeRequest:
-    """Minimal stand-in for fastapi.Request: headers dict + client.host."""
-
-    def __init__(self, headers: dict[str, str] | None = None, host: str = "192.168.1.50"):
-        self._headers = {k.lower(): v for k, v in (headers or {}).items()}
-        self.client = _FakeClient(host)
-
-    @property
-    def headers(self):
-        class _H:
-            def __init__(self, inner):
-                self._inner = inner
-
-            def get(self, name, default=None):
-                return self._inner.get(name.lower(), default)
-
-        return _H(self._headers)
+from _fake_request import FakeRequest as _FakeRequest
 
 
 class TestRequireApiKey:

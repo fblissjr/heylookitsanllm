@@ -15,7 +15,7 @@ from heylook_llm.memory import (
     MemoryManager,
     ModelMetadata,
     _normalize_path_for_log,
-    _parse_bool_env,
+    parse_bool_env,
     sampler_summary_from_request,
 )
 
@@ -76,17 +76,17 @@ def mm(tmp_path: Path) -> MemoryManager:
     )
 
 
-def test_parse_bool_env_defaults_when_unset():
-    assert _parse_bool_env(None, True) is True
-    assert _parse_bool_env(None, False) is False
+def testparse_bool_env_defaults_when_unset():
+    assert parse_bool_env(None, True) is True
+    assert parse_bool_env(None, False) is False
 
 
 @pytest.mark.parametrize(
     "value,expected",
     [("1", True), ("true", True), ("YES", True), ("0", False), ("false", False), ("", False)],
 )
-def test_parse_bool_env_values(value: str, expected: bool):
-    assert _parse_bool_env(value, not expected) is expected
+def testparse_bool_env_values(value: str, expected: bool):
+    assert parse_bool_env(value, not expected) is expected
 
 
 def test_env_interval_overrides_app_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

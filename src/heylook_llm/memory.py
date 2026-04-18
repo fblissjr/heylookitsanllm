@@ -83,7 +83,7 @@ class ModelMetadata:
     context_length: int
 
 
-def _parse_bool_env(value: str | None, default: bool) -> bool:
+def parse_bool_env(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
@@ -210,11 +210,11 @@ class MemoryManager:
         else:
             self.baseline_interval = int(getattr(app_config, "baseline_log_interval_seconds", 3600))
 
-        self.request_log_enabled = _parse_bool_env(
+        self.request_log_enabled = parse_bool_env(
             os.environ.get("HEYLOOK_REQUEST_LOG_ENABLED"),
             bool(getattr(app_config, "request_log_enabled", True)),
         )
-        self.model_event_log_enabled = _parse_bool_env(
+        self.model_event_log_enabled = parse_bool_env(
             os.environ.get("HEYLOOK_MODEL_EVENT_LOG_ENABLED"),
             bool(getattr(app_config, "model_event_log_enabled", True)),
         )
