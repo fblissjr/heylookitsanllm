@@ -172,6 +172,13 @@ class MLXModelConfig(BaseModel):
     # global default. ``0`` = never idle-unload this model. Positive = per-model
     # threshold in seconds. Pinned models are exempt regardless of this value.
     unload_after_idle_seconds: Optional[int] = Field(None, ge=0)
+    # Default preset applied when a request doesn't specify ``preset`` (C4).
+    # Resolved against the PresetRegistry at request time; an unknown name
+    # falls back to "skip this layer" rather than raising -- the model config
+    # is validated at server startup, so an unknown name here indicates a
+    # post-startup registry rebuild drift and should log at the layer, not
+    # kill inference.
+    default_preset: Optional[str] = None
 
 
 # Derived at import time; callers of _apply_model_defaults read from this set

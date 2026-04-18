@@ -284,6 +284,106 @@ class TestApplyModelDefaultsPresetCascade:
 
 
 @pytest.mark.unit
+class TestApplyModelDefaultsDefaultPreset:
+    """Model's ``default_preset`` applies as layer 3b, only when the request
+    didn't pick one. Explicit request preset beats it. Request explicit fields
+    beat both."""
+
+    def test_default_preset_applies_without_request_preset(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({"snappy": {"temperature": 0.3, "top_p": 0.8}})
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                verbose=False,
+            )
+            req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 0.3
+            assert effective["top_p"] == 0.8
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_request_preset_wins_over_default_preset(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({
+            "snappy": {"temperature": 0.3},
+            "wild": {"temperature": 1.1},
+        })
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                preset="wild",
+            )
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 1.1
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_request_explicit_field_wins_over_default_preset(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({"snappy": {"temperature": 0.3}})
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                temperature=0.9,
+            )
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 0.9
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_unknown_default_preset_logs_and_skips(self, mock_mlx, caplog):  # noqa: ARG002
+        """Unknown ``default_preset`` name is non-fatal -- log a warning and
+        fall through to the rest of the cascade. Models are validated at
+        startup, so a miss here indicates registry drift, not a user typo."""
+        import logging
+
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        reset_preset_registry_for_test(PresetRegistry({}))
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={
+                    "model_path": "/fake",
+                    "vision": False,
+                    "default_preset": "ghost",
+                    "temperature": 0.44,
+                },
+                verbose=False,
+            )
+            req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+            with caplog.at_level(logging.WARNING):
+                effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 0.44  # model field layer still applied
+            assert any("default_preset" in r.message for r in caplog.records)
+        finally:
+            reset_preset_registry_for_test(None)
+
+
+@pytest.mark.unit
 class TestGetMetrics:
     def test_metrics_with_no_model(self, mock_mlx_provider):
         """get_metrics should still return something even without a loaded model."""
