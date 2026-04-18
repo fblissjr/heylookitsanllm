@@ -749,8 +749,8 @@ class MLXProvider(BaseProvider):
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
 
         # Include cache and speculative decoding config from model config.
-        # prefill_step_size added in S1.4: lets models with very long prompts
-        # trade higher peak memory for lower kernel-launch overhead during prefill.
+        # prefill_step_size trades higher peak prefill memory for lower
+        # kernel-launch overhead on very long prompts.
         cache_keys = ['cache_type', 'kv_bits', 'kv_group_size', 'max_kv_size',
                       'quantized_kv_start', 'num_draft_tokens', 'prefill_step_size']
         for key in cache_keys:
@@ -972,66 +972,46 @@ class MLXProvider(BaseProvider):
             return 0
 
     def warmup(self) -> None:
-        """Prime JIT caches with a short throwaway generation.
+        """Text-only JIT prime. See BaseProvider.warmup() for the contract.
 
-        Runs a ~30-token text prompt through ``run_generation`` for 4 decode
-        tokens. This pays the per-shape Metal shader compilation cost once so
-        the first real user request doesn't eat 1-3s of cold-start latency.
-
-        VLM vision-tower compilation is NOT exercised here -- the warmup is
-        text-only even on VLM providers. Adding a synthetic-image warmup is a
-        follow-up for when ``request_events.jsonl`` shows VLM cold-start pain.
-
-        Failures are logged and swallowed. Warmup is an optimization, not a
-        correctness requirement; a transient problem here must never prevent
-        the router from returning a usable provider.
+        VLM vision-tower compilation is intentionally NOT exercised -- add a
+        synthetic-image warmup once the request-events log shows VLM
+        cold-start pain.
         """
-        try:
-            from .common.generation_core import generate_text
-        except Exception:
-            logging.debug("warmup: could not import generate_text", exc_info=True)
-            return None
+        tok = self.get_tokenizer()
+        if tok is None:
+            logging.debug(f"warmup: {self.model_id} has no tokenizer; skipping")
+            return
 
-        tokenizer = getattr(self, "processor", None)
-        if tokenizer is None:
-            logging.debug(f"warmup: {self.model_id} has no processor; skipping")
-            return None
-
-        # Pick the inner tokenizer if the processor wraps one (VLM case).
-        tok = getattr(tokenizer, "_tokenizer", None) or getattr(tokenizer, "tokenizer", None) or tokenizer
-
-        # ~30 tokens for most tokenizers; enough to exercise the prefill path.
         dummy_text = "The quick brown fox jumps over the lazy dog. " * 3
         try:
-            prompt_tokens = tok.encode(dummy_text)
+            prompt_tokens = list(tok.encode(dummy_text))
         except Exception:
             logging.debug(f"warmup: {self.model_id} tokenizer.encode failed", exc_info=True)
-            return None
-
+            return
         if not prompt_tokens:
-            return None
+            return
 
-        effective = {"max_tokens": 4, "num_draft_tokens": 0}
+        from .common.generation_core import generate_text
         t0 = time.time()
         try:
             for _ in generate_text(
                 self.model,
                 tok,
-                list(prompt_tokens),
-                effective,
-                model_id=None,       # don't pollute the prompt cache with warmup tokens
-                draft_model=None,    # skip speculative decoding path
+                prompt_tokens,
+                {"max_tokens": 4, "num_draft_tokens": 0},
+                # model_id=None so warmup tokens don't land in the prompt cache;
+                # draft_model=None to skip the speculative-decoding path.
+                model_id=None,
+                draft_model=None,
                 abort_event=None,
             ):
                 pass
         except Exception:
             logging.info(f"warmup: {self.model_id} threw during warmup; continuing anyway",
                          exc_info=True)
-            return None
-
-        elapsed_ms = (time.time() - t0) * 1000
-        logging.info(f"warmup: {self.model_id} primed in {elapsed_ms:.0f}ms")
-        return None
+            return
+        logging.info(f"warmup: {self.model_id} primed in {(time.time() - t0) * 1000:.0f}ms")
 
     def get_metrics(self) -> ModelMetrics:
         """Get current metrics for this model (context usage, memory, etc.)."""

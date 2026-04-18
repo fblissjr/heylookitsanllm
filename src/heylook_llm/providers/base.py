@@ -57,14 +57,15 @@ class BaseProvider(ABC):
     def warmup(self) -> None:
         """Prime JIT caches so the first real request is fast.
 
-        Default implementation is a no-op. Providers that benefit from
-        warming up (e.g. MLX models that JIT-compile Metal shaders per
-        shape bucket) should override. Warmup is an optimization, not a
-        correctness requirement -- implementations MUST swallow exceptions
-        and log rather than propagate, so a warmup hiccup never prevents
-        the router from returning a usable provider.
+        Default is a no-op. Providers that benefit (e.g. MLX models that
+        JIT-compile Metal shaders per shape bucket) should override.
+
+        Contract: implementations MUST swallow exceptions and log rather
+        than propagate. Warmup is an optimization, not a correctness
+        requirement; a warmup hiccup must never prevent the router from
+        returning a usable provider. Callers may rely on this and omit
+        their own try/except wrapper.
         """
-        return None
 
     def __del__(self):
         self.unload()
