@@ -115,48 +115,10 @@ class TestPresencePenaltyCompilation:
         assert diff == 0.0, "Empty tokens should not modify logits"
 
 
-class TestVisionPreprocessingCompilation:
-    """Tests for vision preprocessing compilation correctness."""
-
-    def test_normalize_and_transpose_correctness(self, mlx_arrays):
-        """Verify compiled normalize+transpose matches manual implementation."""
-        import mlx.core as mx
-        import numpy as np
-
-        img_hwc = mlx_arrays["image_hwc"]
-
-        # Reference implementation (NumPy-style)
-        mean = mx.array([0.485, 0.456, 0.406])
-        std = mx.array([0.229, 0.224, 0.225])
-        reference = (img_hwc - mean) / std
-        reference = reference.transpose(2, 0, 1)
-
-        # Import compiled version
-        from heylook_llm.providers.mlx_batch_vision import _normalize_and_transpose
-
-        compiled_result = _normalize_and_transpose(img_hwc)
-
-        mx.synchronize()
-
-        # Verify shape is CHW
-        assert compiled_result.shape == (3, 336, 336), f"Expected CHW shape, got {compiled_result.shape}"
-
-        # Verify values match
-        diff = mx.max(mx.abs(reference - compiled_result)).item()
-        assert diff < 1e-5, f"Compiled normalize differs from reference by {diff}"
-
-    def test_output_dtype_preserved(self, mlx_arrays):
-        """Verify compiled function preserves input dtype."""
-        import mlx.core as mx
-        from heylook_llm.providers.mlx_batch_vision import _normalize_and_transpose
-
-        # Test with float32
-        img_f32 = mlx_arrays["image_hwc"].astype(mx.float32)
-        result_f32 = _normalize_and_transpose(img_f32)
-        mx.synchronize()
-
-        # float32 input should give float32 output (ImageNet constants are float32)
-        assert result_f32.dtype == mx.float32, f"Expected float32, got {result_f32.dtype}"
+# TestVisionPreprocessingCompilation was removed in Phase 2 when batch
+# vision labeling moved to the standalone apps/batch-labeler/ client
+# (see CHANGELOG v1.23.0). The tests targeted the deleted module
+# `heylook_llm.providers.mlx_batch_vision`.
 
 
 class TestShapelessCompilation:
@@ -184,15 +146,3 @@ class TestShapelessCompilation:
 
             # Basic sanity check
             assert result.shape == logits.shape
-
-    def test_varying_image_sizes(self):
-        """Verify compiled normalize works with different image sizes."""
-        import mlx.core as mx
-        from heylook_llm.providers.mlx_batch_vision import _normalize_and_transpose
-
-        for size in [224, 336, 448]:
-            img = mx.random.uniform(shape=(size, size, 3))
-            result = _normalize_and_transpose(img)
-            mx.synchronize()
-
-            assert result.shape == (3, size, size), f"Expected (3, {size}, {size}), got {result.shape}"

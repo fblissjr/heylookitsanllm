@@ -39,8 +39,11 @@ class TestAsyncArrayScheduling:
         mx.synchronize()
 
         # async scheduling should be much faster than sync
-        # (actual computation happens in background)
-        assert async_time < 0.1, f"async scheduling took {async_time}s, expected <0.1s"
+        # (actual computation happens in background). Threshold is generous
+        # because first-invocation Metal setup can take ~100ms on a cold
+        # process; we're catching the "did we accidentally sync?" regression,
+        # not hunting for microsecond regressions.
+        assert async_time < 1.0, f"async scheduling took {async_time}s, expected <1.0s"
 
     def test_synchronize_waits_for_completion(self):
         """Verify synchronize blocks until computation completes."""
@@ -65,42 +68,9 @@ class TestAsyncArrayScheduling:
         assert shape == (1000, 1000)
 
 
-class TestVisionEncodingSyncPoints:
-    """Tests for vision encoding sync behavior."""
-
-    def test_encode_batch_uses_async_scheduling(self):
-        """Verify encode_batch uses async scheduling for pipelining."""
-        try:
-            import mlx.core as mx
-            from heylook_llm.providers.mlx_batch_vision import BatchVisionEncoder
-        except ImportError:
-            pytest.skip("Required modules not available")
-
-        # Create mock model and processor
-        class MockVisionEncoder:
-            def __call__(self, x):
-                return mx.zeros((x.shape[0], 729, 768))
-
-        class MockModel:
-            vision_encoder = MockVisionEncoder()
-
-        class MockProcessor:
-            image_processor = type("IP", (), {"size": {"height": 336}})()
-
-        encoder = BatchVisionEncoder(MockModel(), MockProcessor())
-
-        # Create a mock preprocessed batch
-        batch = mx.random.uniform(shape=(2, 3, 336, 336))
-
-        # encode_batch should return without blocking
-        # (async scheduling is called internally)
-        result = encoder.encode_batch(batch)
-
-        # Result should be an array (may not be fully computed yet)
-        assert hasattr(result, "shape")
-
-        # Explicit sync to ensure computation completes
-        mx.synchronize()
+# TestVisionEncodingSyncPoints was removed in Phase 2 when batch vision
+# labeling moved to the standalone apps/batch-labeler/ client (the module
+# `heylook_llm.providers.mlx_batch_vision` no longer exists).
 
 
 class TestClearCachePatterns:
@@ -120,7 +90,7 @@ class TestClearCachePatterns:
         mx.synchronize()
 
         # Get memory before clear
-        memory_before = mx.metal.get_cache_memory()
+        memory_before = mx.get_cache_memory()
 
         # Clear references
         del arrays
@@ -128,7 +98,7 @@ class TestClearCachePatterns:
         mx.synchronize()
 
         # Get memory after clear
-        memory_after = mx.metal.get_cache_memory()
+        memory_after = mx.get_cache_memory()
 
         # Cache should be reduced or at least not larger
         assert memory_after <= memory_before, (
