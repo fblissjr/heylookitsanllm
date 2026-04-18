@@ -256,6 +256,23 @@ async def remove_model_config(model_id: str, request: Request):
 # resolves routes in registration order, so we use the router's add_api_route
 # to control order. The final registration order is handled at the bottom.
 
+async def _discovered_models(request: Request):
+    """Return the passively-discovered models cache (C3).
+
+    Populated by ``MemoryManager`` scanning the ``[scan]`` folders + HF cache
+    at ``scan_interval_seconds``. Distinct from the active ``POST /scan`` which
+    runs synchronously against user-specified paths. Endpoint is read-only;
+    the frontend hits ``POST /v1/admin/models/import`` on click-to-add.
+    """
+    memory_manager = getattr(request.app.state, "memory_manager", None)
+    if memory_manager is None:
+        return {"discovered": [], "last_scan_ts": 0.0, "count": 0}
+    try:
+        return memory_manager.discovered_snapshot()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Discovery snapshot failed: {e}")
+
+
 async def _scan_for_models(request: Request, scan_request: ModelScanRequest):
     """Scan filesystem for importable models."""
     service = _get_service(request)
@@ -352,6 +369,18 @@ scan_import_router.add_api_route(
     methods=["POST"],
     summary="Scan for Models",
     description="Scan filesystem paths and HF cache for importable models.",
+)
+
+scan_import_router.add_api_route(
+    "/discovered",
+    _discovered_models,
+    methods=["GET"],
+    summary="Discovered Models (Watch Folders)",
+    description=(
+        "Read-only snapshot of the passive watch-folders discovery cache. "
+        "Populated by MemoryManager periodically scanning the [scan].folders + "
+        "HF cache. Returns {discovered, last_scan_ts, count}."
+    ),
 )
 
 scan_import_router.add_api_route(

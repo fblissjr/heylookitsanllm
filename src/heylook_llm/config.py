@@ -214,9 +214,29 @@ class ModelConfig(BaseModel):
                     raise ValueError(f"Unknown provider '{provider}' for model config validation")
         return data
 
+class ScanConfig(BaseModel):
+    """Watch-folder config for periodic model discovery (C3).
+
+    Discovery is passive: ``MemoryManager.tick()`` rescans the configured
+    folders and optionally the HuggingFace cache every
+    ``scan_interval_seconds``. Discovered-but-not-imported models are
+    surfaced via ``GET /v1/admin/models/discovered``. There is NO
+    auto-import -- the frontend Models page (C5) presents an Add button
+    that hits the existing ``POST /v1/admin/models/import`` path.
+    """
+    folders: List[str] = Field(default_factory=list)
+    watch_hf_cache: bool = False
+    scan_interval_seconds: int = Field(
+        900, ge=0,
+        description="Seconds between rescans. 0 disables periodic rescans "
+                    "(no initial scan either).",
+    )
+
+
 class AppConfig(BaseModel):
     models: List[ModelConfig]
     default_model: Optional[str] = None
+    scan: Optional[ScanConfig] = None
     # Default is 1 (single-model) -- Apple Silicon is memory-bandwidth-bound,
     # so a second loaded-but-idle model doesn't help throughput. Field stays
     # configurable for setups that truly need hot-swap without reload.

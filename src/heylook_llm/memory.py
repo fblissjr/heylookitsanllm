@@ -229,6 +229,10 @@ class MemoryManager:
         self.model_metadata: dict[str, ModelMetadata] = {}
         self.mode = "background"
 
+        # Watch-folders discovery cache (C3). Keyed by model_id.
+        self._discovered: dict[str, dict[str, Any]] = {}
+        self._last_scan_ts: float = 0.0
+
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
         except Exception as exc:
@@ -301,17 +305,100 @@ class MemoryManager:
     def tick(self) -> None:
         """Periodic maintenance called from the 60s resource-snapshot loop.
 
-        Currently: trigger idle-unload on the router. S2.4 adds memory-pressure
-        reclaim here. Best-effort -- per-call exceptions log at debug and
-        never propagate (observability-path discipline).
+        Currently: idle-unload via the router, watch-folders rescan.
+        S2.4 adds memory-pressure reclaim. Best-effort -- per-call exceptions
+        log at debug and never propagate (observability-path discipline).
         """
         router = getattr(self, "router", None)
-        if router is None:
-            return
+        if router is not None:
+            try:
+                router.unload_idle_models()
+            except Exception:
+                logging.debug("MemoryManager.tick: unload_idle_models failed", exc_info=True)
+
         try:
-            router.unload_idle_models()
+            self._maybe_rescan_models()
         except Exception:
-            logging.debug("MemoryManager.tick: unload_idle_models failed", exc_info=True)
+            logging.debug("MemoryManager.tick: _maybe_rescan_models failed", exc_info=True)
+
+    # -- watch-folders discovery (C3) --------------------------------------
+
+    def _maybe_rescan_models(self, now_ts: float | None = None) -> None:
+        """Rescan watch folders when the interval has elapsed.
+
+        No-op when ``app_config.scan`` is unset (no watch folders configured)
+        or when ``scan.scan_interval_seconds == 0`` (periodic rescans
+        disabled). Populates ``self._discovered`` with models not already
+        present in ``app_config.models``.
+        """
+        scan_cfg = getattr(self.app_config, "scan", None)
+        if scan_cfg is None:
+            return
+        interval = int(getattr(scan_cfg, "scan_interval_seconds", 0) or 0)
+        if interval <= 0:
+            return
+        if now_ts is None:
+            now_ts = time.time()
+        if now_ts - self._last_scan_ts < interval:
+            return
+
+        folders = list(getattr(scan_cfg, "folders", []) or [])
+        scan_hf = bool(getattr(scan_cfg, "watch_hf_cache", False))
+        results = self._scan_paths_sync(folders, scan_hf)
+
+        discovered: dict[str, dict[str, Any]] = {}
+        for m in results:
+            if getattr(m, "already_configured", False):
+                continue
+            model_id = getattr(m, "id", "") or ""
+            if not model_id:
+                continue
+            raw_path = getattr(m, "path", "") or ""
+            discovered[model_id] = {
+                "id": model_id,
+                "path": _normalize_path_for_log(raw_path),
+                "provider": getattr(m, "provider", "mlx"),
+                "size_gb": float(getattr(m, "size_gb", 0.0) or 0.0),
+                "vision": bool(getattr(m, "vision", False)),
+                "quantization": getattr(m, "quantization", None),
+                "tags": list(getattr(m, "tags", []) or []),
+                "description": getattr(m, "description", "") or "",
+            }
+        self._discovered = discovered
+        self._last_scan_ts = now_ts
+
+    def _scan_paths_sync(self, paths: list[str], scan_hf: bool) -> list:
+        """Sync entry-point to the model-discovery scanner.
+
+        Instantiates a fresh ``ModelService`` each call -- scans are already
+        infrequent (default 15min) and the service is cheap. Tests
+        monkeypatch this method to inject a fake scanner.
+        """
+        try:
+            from heylook_llm.model_service import ModelService
+        except Exception:
+            logging.debug("MemoryManager: ModelService unavailable", exc_info=True)
+            return []
+        config_path = getattr(self.app_config, "_config_path", "models.toml")
+        try:
+            service = ModelService(config_path)
+            return service.scan_paths(paths=paths, scan_hf=scan_hf)
+        except Exception:
+            logging.debug("MemoryManager: scan_paths failed", exc_info=True)
+            return []
+
+    def discovered_snapshot(self) -> dict[str, Any]:
+        """Return a JSON-serializable snapshot of the discovery cache.
+
+        Shape consumed by ``GET /v1/admin/models/discovered``. Safe to call
+        from any thread -- reads are not locked because dict replacement in
+        ``_maybe_rescan_models`` is atomic w.r.t. readers.
+        """
+        return {
+            "discovered": list(self._discovered.values()),
+            "last_scan_ts": self._last_scan_ts,
+            "count": len(self._discovered),
+        }
 
     # -- periodic baseline -------------------------------------------------
 
