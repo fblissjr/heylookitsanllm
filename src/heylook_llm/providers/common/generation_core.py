@@ -24,7 +24,7 @@ Error handling:
 import logging
 import threading
 from collections import deque
-from typing import Generator
+from typing import Any, Generator
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
@@ -325,6 +325,15 @@ def run_generation(
     # attach to the first token so the streaming API picks it up via getattr.
     kv_cache_bytes_snapshot = cache_manager.total_cache_bytes if cache_manager is not None else 0
 
+    # Forward prefill_step_size through to mlx-lm when the caller set one.
+    # When absent, mlx-lm picks its own default (2048 at the time of writing)
+    # -- passing None would suppress the default, so we only pass the kwarg
+    # when we have an explicit value.
+    extra_generate_kwargs: dict[str, Any] = {}
+    prefill_step_size = effective_request.get('prefill_step_size')
+    if prefill_step_size is not None:
+        extra_generate_kwargs['prefill_step_size'] = prefill_step_size
+
     try:
         with wired_limit(model, [generation_stream]):
             first_token = True
@@ -339,6 +348,7 @@ def run_generation(
                 num_draft_tokens=num_draft_tokens,
                 prompt_progress_callback=prompt_progress_callback,
                 prompt_cache=generation_cache if generation_cache else None,
+                **extra_generate_kwargs,
             ):
                 # Abort check: Python bool, no GPU sync
                 if abort_event and abort_event.is_set():

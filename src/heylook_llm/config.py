@@ -138,6 +138,10 @@ class MLXModelConfig(BaseModel):
     kv_bits: Optional[int] = Field(None, ge=1, le=8)
     kv_group_size: int = 64
     quantized_kv_start: int = 2048
+    # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
+    # Larger values reduce kernel-launch overhead on very long prompts at the
+    # cost of higher peak memory during prefill. S1.4 passthrough.
+    prefill_step_size: Optional[int] = Field(None, gt=0)
     # Thinking mode (Qwen3 models with <think> blocks)
     enable_thinking: bool = False
     # Hidden states defaults (for /v1/hidden_states endpoint)

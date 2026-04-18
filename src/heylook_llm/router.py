@@ -273,6 +273,15 @@ class ModelRouter:
                 # Load model (this is the expensive operation)
                 new_provider.load_model()
 
+                # Prime JIT caches (Metal shader compilation per shape bucket).
+                # Happens after cache insertion so warmup's own reference counting
+                # and telemetry work normally. Warmup swallows exceptions internally;
+                # a failure here is observability-level, not correctness.
+                try:
+                    new_provider.warmup()
+                except Exception:
+                    logging.debug(f"warmup call for {model_id} raised unexpectedly", exc_info=True)
+
                 # Add to cache
                 with self.cache_lock:
                     self.providers[model_id] = new_provider

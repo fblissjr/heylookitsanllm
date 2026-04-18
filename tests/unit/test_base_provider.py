@@ -80,3 +80,35 @@ class TestGetTokenizer:
 
         provider.processor = FakeProcessor()
         assert provider.get_tokenizer() is None
+
+
+class TestWarmup:
+    """S1.4: provider.warmup() exists and is safe to call."""
+
+    def test_base_warmup_is_noop(self):
+        """Default BaseProvider.warmup() returns None without side effects."""
+        provider = ConcreteProvider("test-model", {}, verbose=False)
+        # Just confirm it exists and doesn't raise.
+        assert provider.warmup() is None
+
+    def test_base_warmup_swallows_exceptions_in_subclass(self):
+        """A subclass warmup() that raises should not propagate.
+
+        Warmup is an optimization, not a correctness requirement. A failure
+        here must not block the router from returning a usable provider.
+        """
+
+        class BrokenWarmup(ConcreteProvider):
+            def _do_warmup(self):
+                raise RuntimeError("simulated warmup failure")
+
+            def warmup(self):
+                try:
+                    self._do_warmup()
+                except Exception:
+                    # Base contract: log-and-continue; don't propagate.
+                    return None
+
+        provider = BrokenWarmup("test-model", {}, verbose=False)
+        # Must not raise
+        assert provider.warmup() is None

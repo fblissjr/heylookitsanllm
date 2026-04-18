@@ -112,6 +112,64 @@ class TestRunGeneration:
         assert results[0].text == "Hello"
         assert results[1].text == " world"
 
+    def test_prefill_step_size_forwarded(self, mock_mlx):
+        """S1.4: effective_request.prefill_step_size is forwarded to lm_stream_generate."""
+        from heylook_llm.providers.common.generation_core import run_generation
+
+        responses = [FakeResponse("ok", 1)]
+
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate') as mock_gen, \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream', return_value=MagicMock()):
+            mock_gen.return_value = iter(responses)
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+
+            effective = {'max_tokens': 10, 'prefill_step_size': 512}
+            list(run_generation(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                prompt_tokens=[1, 2, 3],
+                effective_request=effective,
+                sampler=MagicMock(),
+                processors=[],
+            ))
+
+        # Confirm lm_stream_generate was called with prefill_step_size=512
+        _, kwargs = mock_gen.call_args
+        assert kwargs.get("prefill_step_size") == 512
+
+    def test_prefill_step_size_absent_when_unset(self, mock_mlx):
+        """When effective_request has no prefill_step_size, don't pass the kwarg.
+
+        Letting mlx-lm use its own default (2048) is the right behavior when
+        the user hasn't configured an override.
+        """
+        from heylook_llm.providers.common.generation_core import run_generation
+
+        responses = [FakeResponse("ok", 1)]
+
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate') as mock_gen, \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream', return_value=MagicMock()):
+            mock_gen.return_value = iter(responses)
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+
+            effective = {'max_tokens': 10}  # no prefill_step_size
+            list(run_generation(
+                model=MagicMock(),
+                tokenizer=MagicMock(),
+                prompt_tokens=[1, 2, 3],
+                effective_request=effective,
+                sampler=MagicMock(),
+                processors=[],
+            ))
+
+        _, kwargs = mock_gen.call_args
+        # Either the key is absent or it's None; both let mlx-lm use its default.
+        assert kwargs.get("prefill_step_size") is None
+
     def test_leading_space_cleanup(self, mock_mlx):
         from heylook_llm.providers.common.generation_core import run_generation
 
