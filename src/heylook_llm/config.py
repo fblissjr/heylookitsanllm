@@ -122,9 +122,14 @@ class BatchChatResponse(BaseModel):
     batch_stats: BatchStats
 
 class MLXModelConfig(BaseModel):
+    # Runtime-default fields (marked with ``is_runtime_default=True``) flow
+    # from models.toml into each request's effective_request dict via
+    # MLXProvider._apply_model_defaults. Adding a new one updates the
+    # MLX_RUNTIME_DEFAULT_FIELDS set automatically -- no hardcoded list to
+    # keep in sync.
     model_path: str
     draft_model_path: Optional[str] = None
-    num_draft_tokens: Optional[int] = 3
+    num_draft_tokens: Optional[int] = Field(3, json_schema_extra={"is_runtime_default": True})
     vision: bool = False
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -133,15 +138,19 @@ class MLXModelConfig(BaseModel):
     max_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
-    cache_type: Literal["standard", "rotating", "quantized"] = "standard"
-    max_kv_size: Optional[int] = None
-    kv_bits: Optional[int] = Field(None, ge=1, le=8)
-    kv_group_size: int = 64
-    quantized_kv_start: int = 2048
+    cache_type: Literal["standard", "rotating", "quantized"] = Field(
+        "standard", json_schema_extra={"is_runtime_default": True}
+    )
+    max_kv_size: Optional[int] = Field(None, json_schema_extra={"is_runtime_default": True})
+    kv_bits: Optional[int] = Field(None, ge=1, le=8, json_schema_extra={"is_runtime_default": True})
+    kv_group_size: int = Field(64, json_schema_extra={"is_runtime_default": True})
+    quantized_kv_start: int = Field(2048, json_schema_extra={"is_runtime_default": True})
     # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
-    prefill_step_size: Optional[int] = Field(None, gt=0)
+    prefill_step_size: Optional[int] = Field(
+        None, gt=0, json_schema_extra={"is_runtime_default": True}
+    )
     # Thinking mode (Qwen3 models with <think> blocks)
     enable_thinking: bool = False
     # Hidden states defaults (for /v1/hidden_states endpoint)
@@ -149,6 +158,16 @@ class MLXModelConfig(BaseModel):
     default_max_length: int = 512
     # Thinking support metadata (for model capabilities discovery)
     supports_thinking: bool = False
+
+
+# Derived at import time; callers of _apply_model_defaults read from this set
+# rather than a hardcoded list. If you annotate a new field with
+# is_runtime_default=True on MLXModelConfig above, it automatically flows into
+# effective_request without touching mlx_provider.py.
+MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
+    name for name, field in MLXModelConfig.model_fields.items()
+    if (field.json_schema_extra or {}).get("is_runtime_default")  # type: ignore[union-attr]
+)
 
 class MLXEmbeddingModelConfig(BaseModel):
     """Configuration for MLX embedding models."""

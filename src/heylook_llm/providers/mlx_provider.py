@@ -748,12 +748,12 @@ class MLXProvider(BaseProvider):
                        'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
 
-        # Include cache and speculative decoding config from model config.
-        # prefill_step_size trades higher peak prefill memory for lower
-        # kernel-launch overhead on very long prompts.
-        cache_keys = ['cache_type', 'kv_bits', 'kv_group_size', 'max_kv_size',
-                      'quantized_kv_start', 'num_draft_tokens', 'prefill_step_size']
-        for key in cache_keys:
+        # Include cache and speculative-decoding config from model config.
+        # Derived from MLXModelConfig via json_schema_extra={"is_runtime_default": True}
+        # so adding a new field to the Pydantic model automatically flows it
+        # into effective_request.
+        from heylook_llm.config import MLX_RUNTIME_DEFAULT_FIELDS
+        for key in MLX_RUNTIME_DEFAULT_FIELDS:
             if key not in merged_config and key in self.config:
                 merged_config[key] = self.config[key]
 

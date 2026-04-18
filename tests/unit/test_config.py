@@ -8,6 +8,7 @@ from heylook_llm.config import (
     ChatRequest,
     ImageContentPart,
     ImageUrl,
+    MLX_RUNTIME_DEFAULT_FIELDS,
     MLXModelConfig,
     ModelConfig,
     TextContentPart,
@@ -190,3 +191,39 @@ class TestAppConfig:
     def test_max_loaded_models_default(self):
         cfg = AppConfig(models=[])
         assert cfg.max_loaded_models == 2
+
+
+@pytest.mark.unit
+class TestMLXRuntimeDefaultFields:
+    """Guardrail for the metadata-driven cache/speculative-decoding field set.
+
+    MLX_RUNTIME_DEFAULT_FIELDS is derived from MLXModelConfig via
+    ``json_schema_extra={"is_runtime_default": True}``. If someone adds a new
+    cache or speculative-decoding field and forgets to annotate it, the
+    hardcoded expectation below fails loudly -- which is the point. Update
+    this list in the same commit as the field addition.
+    """
+
+    EXPECTED_RUNTIME_DEFAULTS = frozenset({
+        "cache_type",
+        "kv_bits",
+        "kv_group_size",
+        "max_kv_size",
+        "quantized_kv_start",
+        "num_draft_tokens",
+        "prefill_step_size",
+    })
+
+    def test_derived_set_matches_expected(self):
+        assert MLX_RUNTIME_DEFAULT_FIELDS == self.EXPECTED_RUNTIME_DEFAULTS
+
+    def test_every_runtime_default_is_optional(self):
+        """Safety: runtime defaults must be omittable so models.toml entries
+        that don't set them fall through to mlx-lm's own defaults."""
+        for name in MLX_RUNTIME_DEFAULT_FIELDS:
+            field = MLXModelConfig.model_fields[name]
+            # Either the default is explicit OR the field allows None.
+            assert not field.is_required(), (
+                f"MLXModelConfig.{name} is marked is_runtime_default but is required; "
+                f"that forces every models.toml entry to set it. Add a default."
+            )
