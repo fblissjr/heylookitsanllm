@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -13,9 +14,35 @@ import pytest
 from heylook_llm.memory import (
     MemoryManager,
     ModelMetadata,
+    _normalize_path_for_log,
     _parse_bool_env,
     sampler_summary_from_request,
 )
+
+# Content-invariant forbidden-keys set. Any key we find with this name anywhere
+# in a logged record indicates a content leak. Keep this list broad by design --
+# tightening it below the audit is a regression risk.
+FORBIDDEN_KEYS = {
+    "prompt", "prompts", "messages", "message",
+    "completion", "completions", "response", "responses",
+    "text", "content", "contents",
+    "tools", "tool_calls", "tool_call",
+    "input", "inputs", "output", "outputs",
+    "body", "raw",
+}
+
+
+def _assert_no_forbidden_keys(node, path=""):
+    """Recursively walk a logged record; fail if a forbidden key appears."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            assert key not in FORBIDDEN_KEYS, (
+                f"content-bearing key {key!r} leaked at {path or '<root>'}"
+            )
+            _assert_no_forbidden_keys(value, path=f"{path}.{key}" if path else key)
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            _assert_no_forbidden_keys(item, path=f"{path}[{i}]")
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -175,20 +202,96 @@ def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     assert snapshot["loaded_models"][0]["model_id"] == "m1"
     assert snapshot["mode"] == "background"
 
-    # Content invariant: no field names that would carry message content.
+    # Content invariant: recursive walk, broad forbidden-key set.
     # prompt_cache / vision_cache are allowed -- they're counter dicts.
-    forbidden_keys = {"prompt", "messages", "message", "completion", "response", "text"}
+    _assert_no_forbidden_keys(snapshot)
 
-    def walk_keys(node):
-        if isinstance(node, dict):
-            for key, value in node.items():
-                assert key not in forbidden_keys, f"snapshot leaked content-bearing key: {key}"
-                walk_keys(value)
-        elif isinstance(node, list):
-            for item in node:
-                walk_keys(item)
 
-    walk_keys(snapshot)
+def test_request_event_content_invariant(mm: MemoryManager, tmp_path: Path):
+    """A typical request-event record must carry no content-bearing keys.
+
+    This covers the higher-risk path: per-request logs are the natural place
+    for a future engineer to sneak in `messages`, `prompt`, or `tool_calls`.
+    """
+    record = {
+        "timestamp": 100.0,
+        "model": "test-model",
+        "success": True,
+        "total_ms": 1500.0,
+        "queue_ms": 5.0,
+        "prompt_tokens": 500,
+        "completion_tokens": 100,
+        "tokens_per_second": 40.0,
+        "had_images": True,
+        "was_streaming": False,
+        "sampler_summary": {"temperature": 0.7, "max_tokens": 512},
+        "peak_memory_gb": 4.2,
+        "kv_cache_bytes": 131072,
+        "cached_tokens": 250,
+        "thinking_tokens": 30,
+        "content_tokens": 70,
+        "stop_reason": "stop",
+        "provider_type": "mlx",
+        "image_count": 2,
+        "cache_hit_rate": 0.5,
+    }
+    mm.log_request_event(record)
+    written = _read_jsonl(tmp_path / "request_events.jsonl")
+    assert len(written) == 1
+    _assert_no_forbidden_keys(written[0])
+
+
+def test_model_event_content_invariant(mm: MemoryManager, tmp_path: Path):
+    metadata = ModelMetadata(
+        model_id="qwen3-4b",
+        path="~/models/qwen3-4b-4bit",
+        weights_bytes=2_400_000_000,
+        architecture="qwen3",
+        quantization="4bit",
+        param_count=4_000_000_000,
+        context_length=32768,
+    )
+    mm.register_model_load(metadata, load_duration_ms=3500.0)
+    mm.register_model_unload("qwen3-4b", reason="lru_evict")
+
+    events = _read_jsonl(tmp_path / "model_events.jsonl")
+    assert len(events) == 2
+    for event in events:
+        _assert_no_forbidden_keys(event)
+
+
+def test_request_event_dataclass_has_only_primitive_fields():
+    """Guardrail: RequestEvent must only declare primitive field types.
+
+    A future change that adds a list/dict field to RequestEvent (e.g.
+    `messages_preview: list[str]`) would flow straight through asdict()
+    into request_events.jsonl. This test fails fast if someone tries.
+    """
+    from heylook_llm.perf_collector import RequestEvent
+
+    allowed_types = {int, float, bool, str}
+    for field_info in fields(RequestEvent):
+        ftype = field_info.type
+        if isinstance(ftype, str):
+            # Forward-ref; accept the common primitive names.
+            assert ftype in {"int", "float", "bool", "str"}, (
+                f"RequestEvent.{field_info.name} declares non-primitive "
+                f"type {ftype!r}; request_events.jsonl would leak complex data"
+            )
+        else:
+            assert ftype in allowed_types, (
+                f"RequestEvent.{field_info.name} declares non-primitive "
+                f"type {ftype!r}"
+            )
+
+
+def test_normalize_path_strips_home_prefix():
+    home = str(Path.home())
+    assert _normalize_path_for_log(f"{home}/models/foo") == "~/models/foo"
+    assert _normalize_path_for_log(home) == "~"
+    # Non-home paths are preserved
+    assert _normalize_path_for_log("/opt/models/bar") == "/opt/models/bar"
+    assert _normalize_path_for_log("") == ""
 
 
 def test_maybe_log_baseline_respects_interval(tmp_path: Path):

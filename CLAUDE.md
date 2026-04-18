@@ -142,7 +142,9 @@ or responses. Env vars: `HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS` (default 3600,
 
 ## Running Tests
 
-- Sandbox mode blocks uv cache access -- `additionalWritePaths` in `settings.local.json` covers `~/.cache/uv` and `.venv/`; if uv cache errors still occur, run with sandbox disabled
+- Prefer `/test-suite` (skill at `.claude/skills/test-suite/`) -- runs backend + frontend in parallel and filters pre-existing failures. Saves constructing `--ignore` flags by hand.
+- After schema changes (new response headers, Pydantic fields, endpoints), run `/openapi-regen` (skill at `.claude/skills/openapi-regen/`) to refresh `apps/heylook-frontend/src/types/generated-api.ts` from the live server's OpenAPI schema.
+- `sandbox.excludedCommands` in `settings.local.json` exempts `uv run pytest:*`, `uv sync*`, `uv lock*`, `bun install*`, `bun run build*` -- those run outside the sandbox to avoid uv cache friction. Other `uv run` calls still respect the sandbox and may fall back to `dangerouslyDisableSandbox: true` if they hit cache-access errors.
 - GPG signing (`commit.gpgsign`) requires 1Password agent running -- if `git commit` fails with socket errors, use `git -c commit.gpgsign=false commit` (the `-c` must come before `commit`)
 - `--timeout` flag is not installed; pytest runs without it
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`

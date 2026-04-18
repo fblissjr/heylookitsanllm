@@ -89,6 +89,24 @@ def _parse_bool_env(value: str | None, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _normalize_path_for_log(raw_path: str) -> str:
+    """Strip the user's home directory prefix from a model path.
+
+    Model paths in `models.toml` often contain the user's home dir. That's not
+    prompt content, but it's still user-identifying noise in the observability
+    streams. Replace it with ``~`` so log files stay portable and grep-friendly.
+    """
+    if not raw_path:
+        return ""
+    try:
+        home = str(Path.home())
+    except Exception:
+        return raw_path
+    if raw_path.startswith(home + os.sep) or raw_path == home:
+        return "~" + raw_path[len(home):]
+    return raw_path
+
+
 def capture_model_metadata(model_id: str, provider: Any, model_path: str) -> ModelMetadata:
     """Best-effort metadata extraction from a freshly-loaded provider.
 
@@ -154,7 +172,7 @@ def capture_model_metadata(model_id: str, provider: Any, model_path: str) -> Mod
 
     return ModelMetadata(
         model_id=model_id,
-        path=str(model_path),
+        path=_normalize_path_for_log(str(model_path)),
         weights_bytes=weights_bytes,
         architecture=architecture,
         quantization=quantization,
