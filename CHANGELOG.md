@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0]
+
+### Added
+
+- **Per-request peak memory + KV cache bytes telemetry**: `/v1/chat/completions` responses now expose `x-heylook-peak-memory-gb` and `x-heylook-kv-bytes` headers on non-streaming responses; streaming emits the same values in the usage chunk's `timing` object when `stream_options.include_usage=true` (SSE headers can't carry post-generation values). Frontend-v2 chat status bar renders "N tokens · P.PP GB peak · K KV" after each completion. `mx.reset_peak_memory()` is called at the top of `run_generation` to scope the counter per-request.
+- **Three-stream observability with content invariant**: new `src/heylook_llm/memory.py` owns three disk-backed JSONL streams under `internal/log/` (gitignored) plus a one-shot startup record. `memory_baseline.jsonl` is the periodic resource snapshot (default hourly); `request_events.jsonl` is one line per completed request with sampler settings, timings, peak memory, cache hit rate, thinking/content token counts, stop reason; `model_events.jsonl` records load/unload with weights bytes, quantization, param count, context length. Configurable via `HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS` / `HEYLOOK_REQUEST_LOG_ENABLED` / `HEYLOOK_MODEL_EVENT_LOG_ENABLED` env vars. Content invariant -- numeric + metadata only, never prompts or responses -- is test-enforced via a recursive forbidden-key walk and a `RequestEvent` primitive-fields-only introspection test. See `docs/observability_guide.md`.
+- **Vision feature cache byte cap**: `VisionFeatureCache` now evicts on both `max_entries` (20) and `max_bytes` (default 8 GB). Closes the documented leak vector where a few 8K-resolution images could consume multiple GB despite the entry-count cap. `stats()` exposes `bytes` + `max_bytes`; the hourly baseline aggregates across loaded providers.
+- **Provider warmup + prefill_step_size passthrough**: `BaseProvider.warmup()` (no-op default) runs after each `load_model()`. `MLXProvider` override runs a ~30-token throwaway generation to prime Metal shader compilation, killing the 1-3s cold-start latency on first user request. `MLXModelConfig.prefill_step_size` (new optional field) flows into per-request `effective_request` and to `lm_stream_generate` when set; `None` lets mlx-lm use its own 2048 default. `MLX_RUNTIME_DEFAULT_FIELDS` is derived from `MLXModelConfig.model_fields` metadata (fields tagged `json_schema_extra={"is_runtime_default": True}`) so adding a new cache/speculative-decoding field auto-propagates without touching `_apply_model_defaults`.
+
+### Changed
+
+- **Deprecated `mx.metal.*` memory APIs** swapped to the top-level non-deprecated `mx.*` equivalents (`get_active_memory`, `get_peak_memory`, `get_cache_memory`, `reset_peak_memory`) across the observability code and tests. `mx.metal.device_info()` stays -- not aliased, not deprecated.
+- **Router tests** migrated from YAML fixtures to TOML (matches `router.py:_load_config` which only dispatches on `.toml`).
+- **`docs/FRONTEND_HANDOFF.md` renamed to `docs/frontend_api_reference.md`** (git-detected 98% similarity preserved). Cross-links updated across CLAUDE.md, tests/README.md, apps/heylook-frontend/README.md, internal/backend/api.md.
+- **`setup.sh` installation menu** collapsed from 4 options to 2; removed every reference to `mlx_stt` / `parakeet-mlx` / the `stt` install extra (MLXSTTProvider was removed in Phase 2).
+
+### Fixed
+
+- **Double JSON serialization** on non-streaming `/v1/chat/completions`: switched from `JSONResponse(content=result.model_dump())` to `Response(content=result.model_dump_json(), media_type="application/json")` -- Pydantic's single-pass serializer saves ~1-2ms per response.
+- **`_normalize_path_for_log`** strips the user's home-directory prefix from `ModelMetadata.path` before emitting to JSONL streams; keeps logs portable.
+- **Deleted dead `mlx_batch_vision` test references** in `tests/unit/mlx_perf/` that prevented the suite from being green by default after the v1.23.0 batch-labeler extraction.
+
+### Infrastructure
+
+- **pytest-asyncio** added as a dev dependency so `tests/unit/test_conversation_api.py` and `test_notebook_api.py` run in the default suite (previously required manual install).
+- **`sandbox.excludedCommands`** in `.claude/settings.local.json` now exempts `uv run pytest*`, `uv run python*`, `uv sync*`, `uv lock*`, `bun install*`, `bun run build*` so they don't trip the uv cache-access error.
+- **`.gitignore` hardened** for runtime data: `*.db`, `*.db-*`, `*.sqlite`, `*.sqlite3`, `*.jsonl`, `/data/*` (with `!/data/.gitkeep`), `apps/*/data/*`.
+
 ## [1.27.0]
 
 ### Added
