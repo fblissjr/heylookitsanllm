@@ -17,7 +17,7 @@
 FastAPI backend (MLX) + two frontends: React (legacy, 7 applets) and vanilla JS v2 (in progress).
 
 - [README.md](./README.md) -- setup, install, commands
-- [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
+- [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/, reports/, session/, log/, scratch/)
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- legacy React frontend architecture
 - [apps/heylook-frontend-v2/](./apps/heylook-frontend-v2/) -- new vanilla JS frontend (no framework, Pretext for text layout)
 - [docs/frontend_api_reference.md](./docs/frontend_api_reference.md) -- API reference for frontend (formerly FRONTEND_HANDOFF.md)
