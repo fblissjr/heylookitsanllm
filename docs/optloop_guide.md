@@ -1,5 +1,7 @@
 # Optloop User Guide
 
+Last updated: 2026-03-16
+
 Optloop is an automated inference optimization system for the heylookitsanllm backend. A Claude Code agent modifies the MLX inference pipeline, benchmarks each change against a deterministic baseline, and keeps only verified improvements. It runs in a continuous loop until interrupted.
 
 Based on dual benchmarks (text + VLM), output fingerprinting for correctness, and per-cycle structured logging.
@@ -142,7 +144,7 @@ When you interrupt the agent (Ctrl+C), it should:
 If the agent doesn't complete teardown, do it manually:
 
 ```bash
-rm -f .venv/lib/python3.13/site-packages/heylook_llm_patches.pth
+rm -f .venv/lib/python*/site-packages/heylook_llm_patches.pth
 git checkout main
 # Review and update docs/optimization_log.md with session findings
 ```

@@ -1,6 +1,10 @@
-# Frontend Developer Handoff Guide
+# Frontend API Reference
 
-A comprehensive guide for building a React + Vite + Tailwind frontend that leverages all heylookitsanllm API features.
+Last updated: 2026-03-13
+
+Reference for the `heylookitsanllm` HTTP/SSE API, written for frontend developers integrating against it. Renamed from `FRONTEND_HANDOFF.md` for discoverability and to drop the implication of a one-time handoff event.
+
+> **Status note (2026-04-18):** this reference is known to be missing several API families added since v1.14.0 — `/v1/conversations`, `/v1/notebooks`, `/v1/rlm/completions`, `POST /v1/data/clear`, `/v1/performance*`, and the full `/v1/admin/models/*` family. Cross-check against a live `http://localhost:8080/openapi.json` until the reference is refreshed. See `docs/DOCS_AUDIT.md` item 4.
 
 **Target Audience:** Developers / Power Users
 **Tech Stack:** React + Vite + Tailwind CSS

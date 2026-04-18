@@ -132,4 +132,4 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 ## Related
 
 - `apps/heylook-frontend/` -- Frontend tests (874 tests, 38 files, Vitest)
-- `docs/FRONTEND_HANDOFF.md` -- API reference for integration tests
+- `docs/frontend_api_reference.md` -- API reference for integration tests

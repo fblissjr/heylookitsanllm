@@ -20,7 +20,7 @@ FastAPI backend (MLX) + two frontends: React (legacy, 7 applets) and vanilla JS 
 - [internal/](./internal/) -- architecture deep-dives (backend/, frontend/, bugs/, research/)
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- legacy React frontend architecture
 - [apps/heylook-frontend-v2/](./apps/heylook-frontend-v2/) -- new vanilla JS frontend (no framework, Pretext for text layout)
-- [docs/FRONTEND_HANDOFF.md](./docs/FRONTEND_HANDOFF.md) -- API reference for frontend
+- [docs/frontend_api_reference.md](./docs/frontend_api_reference.md) -- API reference for frontend (formerly FRONTEND_HANDOFF.md)
 - [tests/README.md](./tests/README.md) -- testing guide and coverage matrix
 
 ## Active Work
@@ -49,6 +49,7 @@ RLM endpoint (`rlm.py`): recursive inference scaffold with sandboxed Python REPL
 - [internal/backend/config.md](./internal/backend/config.md) -- configuration system
 - [docs/rlm_guide.md](./docs/rlm_guide.md) -- RLM endpoint usage, request fields, examples
 - [docs/observability_guide.md](./docs/observability_guide.md) -- three JSONL log streams, env vars, content invariant, monitoring + optimization recipes
+- [docs/mlx_optimization_plan.md](./docs/mlx_optimization_plan.md) -- historical six-phase optimization plan (v1.13.0 through v1.17.0); design rationale for radix caching, speculative decoding, strategy unification
 
 ### Frontend v2: `apps/heylook-frontend-v2/`
 

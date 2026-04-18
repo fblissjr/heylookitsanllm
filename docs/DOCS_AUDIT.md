@@ -4,7 +4,7 @@ Last updated: 2026-04-18
 
 ## Executive Summary
 
-9 files audited (excluding `archive/` and `frontend-mocks/`). No removals warranted outright, but three issues need action: `openapi.json` is severely stale (v1.0.1, missing ~15 endpoints added since v1.14.0, contains endpoints for removed providers including STT/audio), `FRONTEND_HANDOFF.md` has no "last updated" stamp and is missing the conversation, notebook, RLM, and data-clear API families added in v1.27.0 and prior, and `mlx_optimization_plan.md` has no inbound links from CLAUDE.md or README.md and its speculative-decoding Phase 4 still reads "planned improvements" despite being shipped in v1.15.0. The observability guide (new today) contains two forward-references to a local-only plan file (`plans/lets-look-at-our-prancy-gosling.md`) that does not exist on disk; those links will 404 for anyone reading the committed file.
+9 files audited (excluding `archive/` and `frontend-mocks/`). No removals warranted outright, but three issues need action: `openapi.json` is severely stale (v1.0.1, missing ~15 endpoints added since v1.14.0, contains endpoints for removed providers including STT/audio), `frontend_api_reference.md` has no "last updated" stamp and is missing the conversation, notebook, RLM, and data-clear API families added in v1.27.0 and prior, and `mlx_optimization_plan.md` has no inbound links from CLAUDE.md or README.md and its speculative-decoding Phase 4 still reads "planned improvements" despite being shipped in v1.15.0. The observability guide (new today) contains two forward-references to a local-only plan file (`plans/lets-look-at-our-prancy-gosling.md`) that does not exist on disk; those links will 404 for anyone reading the committed file.
 
 ---
 
@@ -19,8 +19,8 @@ Last updated: 2026-04-18
 | `optimization_log.md` | none (last modified 2026-03-16) | CLAUDE.md, optloop_guide.md (×6), optloop_advanced.md (×2) | 2.3 | current |
 | `observability_guide.md` | 2026-04-18 | README.md (×2), CLAUDE.md (×2) | 15.3 | stale cross-links |
 | `mlx_optimization_plan.md` | 2026-02-23 | CHANGELOG.md entry only (no nav links) | 18.4 | orphan + partially stale |
-| `FRONTEND_HANDOFF.md` | none (last modified 2026-03-13) | CLAUDE.md | 36.1 | stale (missing API families) |
-| `openapi.json` | none (last modified 2026-02-27) | FRONTEND_HANDOFF.md (runtime URL only) | 133.8 | stale (v1.0.1, wrong endpoint set) |
+| `frontend_api_reference.md` | none (last modified 2026-03-13) | CLAUDE.md | 36.1 | stale (missing API families) |
+| `openapi.json` | none (last modified 2026-02-27) | frontend_api_reference.md (runtime URL only) | 133.8 | stale (v1.0.1, wrong endpoint set) |
 
 ---
 
@@ -38,7 +38,7 @@ Last updated: 2026-04-18
 
   The Phase 4 section has two subsections titled "planned improvements -- speculative decoding" and "planned improvements -- kv quantization." Both DraftTuner acceptance tracking and the current KV quantization implementation are live (`generation_core.py` and `prompt_cache.py`). Retitle these to "implemented" and update the status marker in the phase overview table (line 21) from silent to `DONE (v1.15.0)` -- it currently shows no status. Also add a link to this file from CLAUDE.md or README.md so it is discoverable (currently referenced only in a CHANGELOG entry, not in any navigation surface).
 
-- [ ] **4. Update FRONTEND_HANDOFF.md: add missing API families** (`FRONTEND_HANDOFF.md`, section 2 endpoint table and "Endpoint Quick Reference" at lines 1456--1480)
+- [ ] **4. Update frontend_api_reference.md: add missing API families** (`frontend_api_reference.md`, section 2 endpoint table and "Endpoint Quick Reference" at lines 1456--1480)
 
   The following API families added since the doc was last updated are entirely absent:
   - `/v1/conversations` (CRUD + message append/edit/truncate) -- added v1.27.0
@@ -52,11 +52,11 @@ Last updated: 2026-04-18
 
 - [ ] **5. Regenerate openapi.json** (`openapi.json`)
 
-  The file was generated at v1.0.1 (Feb 2026) and is now at v1.27.0. It contains endpoints that no longer exist (`/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/stt/models` -- the MLXSTTProvider was removed in Phase 2, 2026-03-13). It is missing every endpoint added since v1.14.0. Regenerate from a running server: `curl http://localhost:8080/openapi.json > docs/openapi.json`. The file is used by FRONTEND_HANDOFF.md as a runtime URL reference, not imported directly, so it is safe to overwrite. Note: the `generated-api.ts` file in the frontend may also need regeneration -- check before committing the new schema.
+  The file was generated at v1.0.1 (Feb 2026) and is now at v1.27.0. It contains endpoints that no longer exist (`/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/stt/models` -- the MLXSTTProvider was removed in Phase 2, 2026-03-13). It is missing every endpoint added since v1.14.0. Regenerate from a running server: `curl http://localhost:8080/openapi.json > docs/openapi.json`. The file is used by frontend_api_reference.md as a runtime URL reference, not imported directly, so it is safe to overwrite. Note: the `generated-api.ts` file in the frontend may also need regeneration -- check before committing the new schema.
 
 - [ ] **6. Add "Last updated" date stamps to undated files** (all files except `observability_guide.md` and `mlx_optimization_plan.md`)
 
-  Six files have no date stamp at all: `rlm_guide.md`, `rlm_advanced.md`, `optloop_guide.md`, `optloop_advanced.md`, `optimization_log.md`, `FRONTEND_HANDOFF.md`. Add `Last updated: YYYY-MM-DD` as the second line (after the `#` title) using the last-modified date as a starting point. This is a low-effort signal for readers and agents about document freshness.
+  Six files have no date stamp at all: `rlm_guide.md`, `rlm_advanced.md`, `optloop_guide.md`, `optloop_advanced.md`, `optimization_log.md`, `frontend_api_reference.md`. Add `Last updated: YYYY-MM-DD` as the second line (after the `#` title) using the last-modified date as a starting point. This is a low-effort signal for readers and agents about document freshness.
 
 ---
 

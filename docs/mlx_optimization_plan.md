@@ -1,6 +1,8 @@
 # mlx engine optimization plan
 
-last updated: 2026-02-23
+Last updated: 2026-04-18
+
+> Historical document. The six-phase plan below is DONE through v1.17.0 (see Phase 4, 5, 6 status rows). Sections tagged "planned improvements" further down reflect the original design intent; actual shipped behavior is cross-linked per subsection. For the current forward-looking roadmap see the active plan file (local to the author) and CHANGELOG.md for release-by-release deltas.
 
 ## context
 
@@ -239,13 +241,17 @@ Meanwhile, unquantized float16 KV caches for 32K+ context windows consume 10GB+ 
 - Configured per-request through `effective_request` params (`cache_type`, `kv_bits`, `kv_group_size`)
 - No default-on behavior, no memory-pressure-triggered quantization, no quality impact monitoring
 
-### planned improvements -- speculative decoding
+### shipped improvements -- speculative decoding (v1.15.0 + v1.17.0)
 
-1. **Automatic draft model selection**: Given a target model (e.g., Qwen3-8B), automatically select a compatible draft model (e.g., Qwen3-0.6B) from the model registry. Compatibility means same vocabulary and architecture family.
+**Status:** DraftTuner acceptance tracking and dynamic `num_draft_tokens` adjustment are live in `src/heylook_llm/providers/common/generation_core.py`. The items below were the original design intent; what actually shipped is noted per item.
+
+1. **Automatic draft model selection**: Given a target model (e.g., Qwen3-8B), automatically select a compatible draft model (e.g., Qwen3-0.6B) from the model registry. Compatibility means same vocabulary and architecture family. *(Shipped: manual via `models.toml` `draft_model_path`; automatic selection deferred.)*
 
 2. **Speculation depth tuning**: Default k=4-5 tokens per speculation step. Monitor acceptance rate and adjust dynamically:
    - acceptance rate > 80%: increase k
    - acceptance rate < 50%: decrease k or disable speculation
+
+   *(Shipped: `DraftTuner` in `generation_core.py` implements exactly this rolling-window policy.)*
 
 3. **Acceptance rate monitoring**: Track per-model speculation stats:
    ```python
@@ -258,7 +264,9 @@ Meanwhile, unquantized float16 KV caches for 32K+ context windows consume 10GB+ 
 
 4. **Default-on for compatible pairs**: When a draft model is available and compatible, enable speculative decoding by default. User can opt out via config.
 
-### planned improvements -- kv quantization
+### shipped improvements -- kv quantization (partial)
+
+**Status:** `QuantizedKVCache` plumbing is live via `cache_type="quantized"` in `models.toml` per-model config. Items 5-8 below remain as future design notes; default-on behavior and memory-pressure auto-downgrade are NOT implemented.
 
 5. **Default-on KV quantization**: Enable 8-bit KV quantization by default for all models. Users can override to 4-bit (more aggressive, slight quality tradeoff) or 16-bit (no quantization) via config.
 

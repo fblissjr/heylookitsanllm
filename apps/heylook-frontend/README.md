@@ -198,7 +198,7 @@ The frontend communicates with the heylookitsanllm backend via:
 - `POST /v1/models/unload` - Unload current model
 - `POST /v1/chat/completions` - Chat with streaming
 
-See [docs/FRONTEND_HANDOFF.md](../../docs/FRONTEND_HANDOFF.md) for full API reference.
+See [docs/frontend_api_reference.md](../../docs/frontend_api_reference.md) for full API reference.
 
 ## Contributing
 

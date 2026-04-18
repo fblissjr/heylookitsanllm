@@ -1,5 +1,7 @@
 # Optloop Advanced Guide
 
+Last updated: 2026-03-16
+
 Deep dives into how optloop works under the hood, common failure modes, and FAQ. Read the [optloop user guide](./optloop_guide.md) first.
 
 ## The bench activation gap
@@ -17,7 +19,7 @@ The bench scripts (`bench_text.py`, `bench_vlm.py`) load models directly via `ml
 A `.pth` file in the site-packages directory causes Python to execute code at startup, before any script runs. This is how patches reach the bench scripts:
 
 ```
-.venv/lib/python3.13/site-packages/heylook_llm_patches.pth
+.venv/lib/python*/site-packages/heylook_llm_patches.pth
     -> imports heylook_llm.providers.common.patches
     -> patches.py monkey-patches mlx_lm.generate, etc.
     -> bench_text.py runs with patched mlx_lm
@@ -167,7 +169,7 @@ Baselines should be re-established:
 
 If you switch branches without removing the `.pth` file, Python tries to import `heylook_llm.providers.common.patches` at startup. If `patches.py` doesn't exist on the new branch, every `uv run` command fails with an ImportError.
 
-Fix: `rm -f .venv/lib/python3.13/site-packages/heylook_llm_patches.pth`
+Fix: `rm -f .venv/lib/python*/site-packages/heylook_llm_patches.pth`
 
 ### Sandbox permission issues with uv run
 

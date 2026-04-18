@@ -1,5 +1,7 @@
 # Optimization Log
 
+Last updated: 2026-03-16
+
 Accumulated findings from optloop inference optimization sessions.
 Updated at the end of each session (on main, after merge).
 

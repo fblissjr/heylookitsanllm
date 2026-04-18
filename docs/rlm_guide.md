@@ -1,5 +1,7 @@
 # RLM (Recursive Language Model) Guide
 
+Last updated: 2026-03-16
+
 The RLM endpoint lets a language model write and execute Python code to work through a problem iteratively. Instead of trying to answer in one shot, the model gets a persistent REPL where it can explore your data, call itself on sub-problems, and build up an answer step by step.
 
 Based on the paper by Zhang, Kraska, and Khattab (arxiv 2512.24601v2), which showed 2x+ improvement over vanilla LLMs on long-context tasks.

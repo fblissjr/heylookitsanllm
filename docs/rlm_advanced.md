@@ -1,5 +1,7 @@
 # RLM Advanced Patterns
 
+Last updated: 2026-03-16
+
 Composable patterns for building real workflows on top of the RLM endpoint. Each pattern can be combined with others.
 
 See [rlm_guide.md](./rlm_guide.md) for basics.
