@@ -124,8 +124,11 @@ class PresetRegistry:
         """
         if name is None:
             return
-        preset = self.get(name)
-        merged_config.update(preset)
+        if name not in self._presets:
+            raise PresetNotFound(
+                f"preset {name!r} not found; known: {self.list_names()}"
+            )
+        merged_config.update(self._presets[name])
 
     # ---- internals ----
 

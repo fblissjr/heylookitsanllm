@@ -15,7 +15,8 @@ from mlx_lm.models.cache import make_prompt_cache
 from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
-from ..config import ChatRequest, ModelMetrics
+from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
+from ..presets import get_preset_registry
 from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
@@ -740,18 +741,22 @@ class MLXProvider(BaseProvider):
             'presence_penalty': 0.0
         }
 
-        thinking_defaults = {
-            'temperature': 0.6,
-            'top_p': 0.95,
-            'top_k': 20,
-            'min_p': 0.0,
-            'presence_penalty': 1.5,
-        }
-
         merged_config = global_defaults.copy()
 
+        registry = get_preset_registry()
+
+        # Layer 2: when model declares itself thinking-capable, apply the
+        # 'thinking' preset automatically. Registry is canonical source;
+        # hardcoded fallback mirrors thinking.toml so inference keeps working
+        # if the file is removed.
         if self.config.get('enable_thinking', False):
-            merged_config.update(thinking_defaults)
+            if 'thinking' in registry:
+                registry.apply_preset(merged_config, 'thinking')
+            else:
+                merged_config.update({
+                    'temperature': 0.6, 'top_p': 0.95, 'top_k': 20,
+                    'min_p': 0.0, 'presence_penalty': 1.5,
+                })
 
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                        'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking']
@@ -760,21 +765,13 @@ class MLXProvider(BaseProvider):
         # Cache + speculative-decoding fields tagged with
         # json_schema_extra={"is_runtime_default": True} on MLXModelConfig.
         # Adding a new tagged field auto-propagates here.
-        from heylook_llm.config import MLX_RUNTIME_DEFAULT_FIELDS
         for key in MLX_RUNTIME_DEFAULT_FIELDS:
             if key not in merged_config and key in self.config:
                 merged_config[key] = self.config[key]
 
-        # Layer 4: request preset.
-        preset_name = getattr(request, 'preset', None)
-        if preset_name:
-            from heylook_llm.presets import PresetNotFound, get_preset_registry
-            try:
-                get_preset_registry().apply_preset(merged_config, preset_name)
-            except PresetNotFound as exc:
-                # Surface to the caller as a 400 rather than a silent fallback.
-                from fastapi import HTTPException
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Layer 4: request preset. PresetNotFound propagates; route handlers
+        # translate to HTTP 400. Keeping the provider transport-agnostic.
+        registry.apply_preset(merged_config, getattr(request, 'preset', None))
 
         # Layer 5: request explicit fields.
         request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',

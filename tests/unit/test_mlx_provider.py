@@ -242,9 +242,14 @@ class TestApplyModelDefaultsPresetCascade:
         finally:
             reset_preset_registry_for_test(None)
 
-    def test_unknown_preset_raises_http_400(self, mock_mlx):  # noqa: ARG002
-        from fastapi import HTTPException
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+    def test_unknown_preset_raises_preset_not_found(self, mock_mlx):  # noqa: ARG002
+        """Provider raises a domain exception, not an HTTP one. Route handlers
+        translate to 400 -- the provider stays transport-agnostic."""
+        from heylook_llm.presets import (
+            PresetNotFound,
+            PresetRegistry,
+            reset_preset_registry_for_test,
+        )
         from heylook_llm.providers.mlx_provider import MLXProvider
 
         reset_preset_registry_for_test(PresetRegistry({}))
@@ -258,9 +263,8 @@ class TestApplyModelDefaultsPresetCascade:
                 messages=[ChatMessage(role="user", content="hi")],
                 preset="does-not-exist",
             )
-            with pytest.raises(HTTPException) as exc:
+            with pytest.raises(PresetNotFound):
                 provider._apply_model_defaults(req)
-            assert exc.value.status_code == 400
         finally:
             reset_preset_registry_for_test(None)
 

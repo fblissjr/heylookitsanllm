@@ -21,6 +21,7 @@ from heylook_llm.system_metrics import SystemMetricsCollector
 from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event
+from heylook_llm.presets import PresetNotFound
 
 
 def _init_logprobs_collector(chat_request, provider, request_id, streaming=True):
@@ -582,6 +583,13 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             log_request_complete(request_id, success=False, error_msg=str(e))
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
             raise HTTPException(status_code=500, detail=str(e))
+
+    except PresetNotFound as e:
+        # Bad request: client named a preset the server doesn't have. 400, not 500.
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="warn", error="preset_not_found")
+        _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
+        raise HTTPException(status_code=400, detail=str(e))
 
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)

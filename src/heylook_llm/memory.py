@@ -456,7 +456,7 @@ def sampler_summary_from_request(request: Any) -> dict:
     """
     fields = (
         "temperature", "top_p", "top_k", "min_p",
-        "repetition_penalty", "presence_penalty",
+        "repetition_penalty", "repetition_context_size", "presence_penalty",
         "max_tokens", "enable_thinking", "seed",
         "preset",
     )
