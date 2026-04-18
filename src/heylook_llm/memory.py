@@ -372,7 +372,7 @@ class MemoryManager:
             return {"total_bytes": 0}
 
     def _vision_cache_stats(self) -> dict:
-        combined = {"entries": 0, "hits": 0, "misses": 0, "hit_rate": 0.0}
+        combined = {"entries": 0, "bytes": 0, "hits": 0, "misses": 0, "hit_rate": 0.0}
         if self.router is None:
             return combined
         try:
@@ -383,6 +383,7 @@ class MemoryManager:
         hits = 0
         misses = 0
         entries = 0
+        nbytes = 0
         for provider in providers.values():
             cache = None
             strategies = getattr(provider, "_strategies", None)
@@ -399,9 +400,11 @@ class MemoryManager:
             hits += int(s.get("hits", 0))
             misses += int(s.get("misses", 0))
             entries += int(s.get("entries", 0))
+            nbytes += int(s.get("bytes", 0))
 
         total = hits + misses
         combined["entries"] = entries
+        combined["bytes"] = nbytes
         combined["hits"] = hits
         combined["misses"] = misses
         combined["hit_rate"] = (hits / total) if total > 0 else 0.0

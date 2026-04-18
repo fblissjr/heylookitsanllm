@@ -97,7 +97,7 @@ over 72h means yes.
      "param_count": 4000000000, "context_length": 32768}
   ],
   "prompt_cache": {"total_bytes": 1048576},
-  "vision_cache": {"entries": 3, "hits": 12, "misses": 5, "hit_rate": 0.71},
+  "vision_cache": {"entries": 3, "bytes": 8388608, "hits": 12, "misses": 5, "hit_rate": 0.71},
   "idle_seconds": 42.5,
   "mode": "background",
   "inflight_requests": 0

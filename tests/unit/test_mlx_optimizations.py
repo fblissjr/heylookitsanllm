@@ -135,6 +135,80 @@ class TestVisionFeatureCache:
         assert result[0, 0].item() == 0.0
         assert len(cache) == 1
 
+    def test_stats_expose_bytes(self, cache):
+        import mlx.core as mx
+        features = mx.ones((1, 10))
+        cache.put("a.jpg", features)
+
+        stats = cache.stats()
+        assert stats["bytes"] == features.nbytes
+        assert stats["max_bytes"] > 0
+
+    def test_byte_cap_evicts_before_count_cap(self):
+        """If bytes overflow first, oldest entries are evicted even when the
+        entry count is still under max_entries."""
+        from heylook_llm.providers.common.vision_feature_cache import VisionFeatureCache
+        import mlx.core as mx
+
+        # Each entry is 10 float32 = 40 bytes. Cap at 100 bytes (2 entries fit).
+        cache = VisionFeatureCache(max_entries=100, max_bytes=100)
+        cache.put("a.jpg", mx.ones((10,)))
+        cache.put("b.jpg", mx.ones((10,)))
+
+        stats = cache.stats()
+        assert stats["entries"] == 2
+        assert stats["bytes"] == 80
+
+        # Third insert should evict "a" (not "b"): 80 + 40 > 100.
+        cache.put("c.jpg", mx.ones((10,)))
+
+        assert cache.get("a.jpg") is None
+        assert cache.get("b.jpg") is not None
+        assert cache.get("c.jpg") is not None
+
+        stats = cache.stats()
+        assert stats["entries"] == 2
+        assert stats["bytes"] == 80
+
+    def test_byte_cap_evicts_until_under_cap(self):
+        """A single large insert can evict multiple smaller entries."""
+        from heylook_llm.providers.common.vision_feature_cache import VisionFeatureCache
+        import mlx.core as mx
+
+        cache = VisionFeatureCache(max_entries=100, max_bytes=200)
+        cache.put("a.jpg", mx.ones((10,)))  # 40B
+        cache.put("b.jpg", mx.ones((10,)))  # 40B
+        cache.put("c.jpg", mx.ones((10,)))  # 40B -> total 120B
+
+        # Insert a 160B entry; cap is 200B, so we must evict at least "a" and "b".
+        cache.put("big.jpg", mx.ones((40,)))
+
+        assert cache.get("a.jpg") is None
+        assert cache.get("b.jpg") is None
+        assert cache.get("big.jpg") is not None
+        assert cache.stats()["bytes"] <= 200
+
+    def test_clear_resets_byte_counter(self, cache):
+        import mlx.core as mx
+        cache.put("a.jpg", mx.ones((1, 10)))
+        cache.put("b.jpg", mx.ones((1, 10)))
+        assert cache.stats()["bytes"] > 0
+        cache.clear()
+        assert cache.stats()["bytes"] == 0
+        assert cache.stats()["entries"] == 0
+
+    def test_replace_updates_byte_accounting(self, cache):
+        """Replacing a key must subtract old bytes before adding new."""
+        import mlx.core as mx
+        cache.put("a.jpg", mx.ones((1, 10)))  # 40B
+        bytes_after_first = cache.stats()["bytes"]
+
+        cache.put("a.jpg", mx.ones((1, 10)))  # same size
+        assert cache.stats()["bytes"] == bytes_after_first
+
+        cache.put("a.jpg", mx.ones((1, 5)))   # shrinks to 20B
+        assert cache.stats()["bytes"] < bytes_after_first
+
 
 # ---------------------------------------------------------------------------
 # snapshot_nbytes tests
