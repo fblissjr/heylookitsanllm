@@ -355,6 +355,23 @@ def main():
     print(f"Starting API server on {args.host}:{args.port}")
     print(f"Available endpoints: {', '.join(endpoints)}")
 
+    # LAN hardening hint (S1.6): when bound to a non-loopback address, the
+    # server is reachable by every host on the local network. Plain HTTP is
+    # fine on a trusted home LAN but gets upgraded to HTTPS via a reverse
+    # proxy (Caddy / nginx), not uvicorn-native TLS. See docs/lan_setup.md.
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        logging.info(
+            "Listening on http://%s:%s -- LAN-reachable. For HTTPS, put Caddy "
+            "or nginx in front (see docs/lan_setup.md).",
+            args.host,
+            args.port,
+        )
+    if os.environ.get("HEYLOOK_ADMIN_TOKEN", "").strip():
+        logging.info(
+            "HEYLOOK_ADMIN_TOKEN set -- admin endpoints require "
+            "X-Heylook-Admin-Token header."
+        )
+
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 
 

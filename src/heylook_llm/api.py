@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request, Body
+from fastapi import FastAPI, HTTPException, Request, Body, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -174,10 +174,13 @@ from heylook_llm.notebook_api import notebook_router
 app.include_router(notebook_router)
 
 # Data management
+from heylook_llm.auth import require_admin_token
+
 @app.post("/v1/data/clear",
     summary="Clear All Data",
     description="Delete all conversations, messages, and notebooks from the database.",
     tags=["Conversations"],
+    dependencies=[Depends(require_admin_token)],
 )
 async def clear_all_data(request: Request):
     from heylook_llm.db import get_db as _get_db, clear_all_data as _clear
@@ -1726,6 +1729,7 @@ async def list_caches(request: Request, model: str = None):
 
 @app.post("/v1/cache/clear",
     summary="Clear Prompt Caches",
+    dependencies=[Depends(require_admin_token)],
     description="""
 Clear prompt caches for a specific model or all models.
 

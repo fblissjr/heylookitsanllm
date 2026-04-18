@@ -8,8 +8,9 @@ All endpoints under /v1/admin/models/ -- separated from the OpenAI-compatible
 import logging
 from dataclasses import asdict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from heylook_llm.auth import require_admin_token
 from heylook_llm.config import (
     AdminModelListResponse,
     AdminModelResponse,
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 admin_router = APIRouter(
     prefix="/v1/admin/models",
     tags=["Admin"],
+    dependencies=[Depends(require_admin_token)],
 )
 
 
@@ -341,6 +343,7 @@ async def _bulk_apply_profile(request: Request, body: BulkProfileRequest):
 scan_import_router = APIRouter(
     prefix="/v1/admin/models",
     tags=["Admin"],
+    dependencies=[Depends(require_admin_token)],
 )
 
 scan_import_router.add_api_route(
@@ -391,6 +394,7 @@ scan_import_router.add_api_route(
 admin_ops_router = APIRouter(
     prefix="/v1/admin",
     tags=["Admin"],
+    dependencies=[Depends(require_admin_token)],
 )
 
 

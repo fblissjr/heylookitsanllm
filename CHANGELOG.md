@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0]
+
+### Added
+
+- **LAN hardening (S1.6)**: optional admin-token gate via `HEYLOOK_ADMIN_TOKEN` env var. When set, `/v1/admin/*`, `/v1/data/clear`, and `/v1/cache/clear` require a matching `X-Heylook-Admin-Token` header or return 401; unset/empty is a backward-compat no-op. Inference endpoints (`/v1/chat/completions`, `/v1/messages/*`, `/v1/embeddings`, `/v1/rlm/*`) are intentionally never gated so clients don't need to learn a shared secret. Startup log now advises on non-loopback binds and reports admin-token status. New `docs/lan_setup.md` walks through Caddy `tls internal` + `caddy trust` + hosts-file flow for HTTPS in front of a loopback-bound inference server; nginx alternative documented.
+
 ## [1.28.0]
 
 ### Added
