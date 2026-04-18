@@ -75,10 +75,25 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
         except Exception:
             logging.debug("Resource snapshot collection failed", exc_info=True)
 
+        memory_manager = getattr(app.state, "memory_manager", None)
+        if memory_manager is not None:
+            try:
+                memory_manager.maybe_log_baseline()
+            except Exception:
+                logging.debug("Baseline logger failed", exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # The router is now initialized in server.py and passed in app.state
+    # The router is now initialized in server.py and passed in app.state.
+    # Attach the MemoryManager here so it shares the router's lifetime.
+    router: ModelRouter = app.state.router_instance
+    from heylook_llm.memory import MemoryManager
+    memory_manager = MemoryManager(router=router, app_config=router.app_config)
+    memory_manager.log_startup_info()
+    app.state.memory_manager = memory_manager
+    router.memory_manager = memory_manager
+
     task = asyncio.create_task(_resource_snapshot_loop(app))
 
     # Initialize conversation database
@@ -472,6 +487,20 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     from heylook_llm.utils import _analyze_images_in_request
     image_stats = _analyze_images_in_request(request_dict)
 
+    # Observability scaffolding -- error paths below may fire before the full
+    # perf_ctx is built, so construct a minimal one now so _record_error_event
+    # can still emit to memory_manager.
+    memory_manager = getattr(request.app.state, "memory_manager", None)
+    if memory_manager is not None:
+        try:
+            memory_manager.mark_request_start()
+        except Exception:
+            logging.debug("memory_manager.mark_request_start failed", exc_info=True)
+    _error_ctx = {
+        "memory_manager": memory_manager,
+        "image_count": image_stats['count'],
+    }
+
     # Log enhanced request summary
     log_request_summary(
         request_id,
@@ -519,7 +548,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
             diag_event("request_error", request_id=request_id, level="warn", error="model_busy")
-            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
+            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
 
             # Return 503 Service Unavailable with retry headers
             # This tells OpenAI client to retry automatically
@@ -543,7 +572,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             # Other runtime errors
             logging.error(f"Runtime error: {e}", exc_info=True)
             log_request_complete(request_id, success=False, error_msg=str(e))
-            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
+            _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
             raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
@@ -553,12 +582,15 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Build perf context for handlers
+    # Build perf context for handlers. memory_manager already extracted above
+    # (near _error_ctx) and mark_request_start already called.
     perf_ctx = {
         "request_start_time": request_start_time,
         "provider_get_ms": provider_get_ms,
         "image_resize_ms": image_resize_ms,
         "had_images": image_stats['count'] > 0,
+        "image_count": image_stats['count'],
+        "memory_manager": memory_manager,
     }
 
     if chat_request.stream:
@@ -589,11 +621,65 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             headers=response_headers,
         )
 
-def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool) -> None:
+def _maybe_log_request_event(
+    perf_ctx,
+    event,
+    *,
+    chat_request=None,
+    peak_memory_gb: float = 0.0,
+    kv_cache_bytes: int = 0,
+    cached_tokens: int = 0,
+    thinking_tokens: int = 0,
+    content_tokens: int = 0,
+    thinking_duration_ms=None,
+    content_duration_ms=None,
+    stop_reason: str = "stop",
+    provider=None,
+) -> None:
+    """Append one per-request record to memory_manager's request_events.jsonl.
+
+    Content-invariant: record includes sampler knobs + counts + timings, never
+    prompt text, response text, or token ID sequences.
+    """
+    if not perf_ctx:
+        return
+    mm = perf_ctx.get("memory_manager")
+    if mm is None:
+        return
+    try:
+        mm.mark_request_end()
+    except Exception:
+        logging.debug("memory_manager.mark_request_end failed", exc_info=True)
+    try:
+        from dataclasses import asdict
+        from heylook_llm.memory import sampler_summary_from_request
+        record = asdict(event)
+        if chat_request is not None:
+            record["sampler_summary"] = sampler_summary_from_request(chat_request)
+        record["peak_memory_gb"] = peak_memory_gb
+        record["kv_cache_bytes"] = kv_cache_bytes
+        record["cached_tokens"] = cached_tokens
+        record["thinking_tokens"] = thinking_tokens
+        record["content_tokens"] = content_tokens
+        if thinking_duration_ms is not None:
+            record["thinking_duration_ms"] = thinking_duration_ms
+        if content_duration_ms is not None:
+            record["content_duration_ms"] = content_duration_ms
+        record["stop_reason"] = stop_reason
+        record["provider_type"] = getattr(provider, "provider", "unknown") if provider else "unknown"
+        record["image_count"] = perf_ctx.get("image_count", 0)
+        prompt_tok = int(record.get("prompt_tokens") or 0)
+        record["cache_hit_rate"] = round(cached_tokens / prompt_tok, 4) if prompt_tok > 0 else 0.0
+        mm.log_request_event(record)
+    except Exception:
+        logging.debug("memory_manager.log_request_event failed", exc_info=True)
+
+
+def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool, perf_ctx=None, chat_request=None) -> None:
     """Record a failed request event to perf collector."""
     now = time.time()
     total_ms = (now - request_start_time) * 1000
-    get_perf_collector().record_request(RequestEvent(
+    error_event = RequestEvent(
         timestamp=now,
         model=model,
         success=False,
@@ -608,7 +694,13 @@ def _record_error_event(model: str, request_start_time: float, provider_get_ms: 
         tokens_per_second=0.0,
         had_images=had_images,
         was_streaming=False,
-    ))
+    )
+    get_perf_collector().record_request(error_event)
+    _maybe_log_request_event(
+        perf_ctx, error_event,
+        chat_request=chat_request,
+        stop_reason="error",
+    )
 
 
 async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None):
@@ -862,7 +954,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         # Real TTFT: wall clock from generation start to first yielded token
         ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
 
-        get_perf_collector().record_request(RequestEvent(
+        stream_event = RequestEvent(
             timestamp=now,
             model=model_id or "unknown",
             success=True,
@@ -877,7 +969,21 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=True,
-        ))
+        )
+        get_perf_collector().record_request(stream_event)
+        _maybe_log_request_event(
+            perf_ctx, stream_event,
+            chat_request=chat_request,
+            peak_memory_gb=peak_memory_gb,
+            kv_cache_bytes=kv_cache_bytes,
+            cached_tokens=cached_tokens,
+            thinking_tokens=thinking_tokens,
+            content_tokens=content_tokens,
+            thinking_duration_ms=thinking_duration_ms,
+            content_duration_ms=content_duration_ms,
+            stop_reason=stop_reason,
+            provider=provider,
+        )
 
     yield "data: [DONE]\n\n"
 
@@ -994,7 +1100,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         gen_tokens = completion_tokens or token_count
         tps = gen_tokens / processing_time if processing_time > 0 and gen_tokens > 0 else 0.0
         p_get_ms = perf_ctx["provider_get_ms"]
-        get_perf_collector().record_request(RequestEvent(
+        non_stream_event = RequestEvent(
             timestamp=now,
             model=chat_request.model or "unknown",
             success=True,
@@ -1009,7 +1115,16 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=False,
-        ))
+        )
+        get_perf_collector().record_request(non_stream_event)
+        _maybe_log_request_event(
+            perf_ctx, non_stream_event,
+            chat_request=chat_request,
+            peak_memory_gb=peak_memory_gb,
+            kv_cache_bytes=kv_cache_bytes,
+            cached_tokens=cached_tokens,
+            provider=provider,
+        )
 
     return response
 

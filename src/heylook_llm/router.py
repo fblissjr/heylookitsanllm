@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 import gc
-from typing import Optional, Dict
+from typing import Any, Dict, Optional
 from collections import OrderedDict
 from pathlib import Path
 
@@ -64,6 +64,9 @@ class ModelRouter:
 
         # Model pinning: prevents eviction during long-running batch jobs
         self._pinned: set[str] = set()
+
+        # Observability (S1.2). Set by api.py lifespan after construction.
+        self.memory_manager: Optional[Any] = None
 
         initial_model_to_load = initial_model_id or self.app_config.default_model or None
         enabled_models = self.app_config.get_enabled_models()
@@ -151,6 +154,11 @@ class ModelRouter:
         lru_id = evict_id
         logging.info(f"Cache full. Evicting model: {lru_id}")
         diag_event("model_evict", model=lru_id)
+        if self.memory_manager is not None:
+            try:
+                self.memory_manager.register_model_unload(lru_id, reason="lru_evict")
+            except Exception:
+                logging.debug("memory_manager.register_model_unload failed", exc_info=True)
 
         # Check if it's an MLX model before unloading
         is_mlx_model = False
@@ -276,6 +284,18 @@ class ModelRouter:
                 logging.info(f"Successfully loaded model: {model_id} in {load_time:.2f}s")
                 diag_event("model_load", model=model_id, provider=model_config.provider,
                            load_time_s=round(load_time, 2))
+
+                if self.memory_manager is not None:
+                    try:
+                        from heylook_llm.memory import capture_model_metadata
+                        metadata = capture_model_metadata(
+                            model_id,
+                            new_provider,
+                            getattr(model_config.config, "model_path", ""),
+                        )
+                        self.memory_manager.register_model_load(metadata, load_time * 1000.0)
+                    except Exception:
+                        logging.debug("memory_manager.register_model_load failed", exc_info=True)
 
                 # Log cache state after loading
                 if self.log_level <= logging.DEBUG:

@@ -61,7 +61,7 @@ Pages: Chat, Batch, Models, Performance, Notebook, Token Explorer (all working).
 ### Frontend (legacy): `apps/heylook-frontend/`
 
 7 applets: Chat, Batch, Token Explorer, Model Comparison, Performance, Notebook, Models.
-React + Zustand + Vite. 874 tests across 38 files. Being replaced by v2.
+React + Zustand + Vite. ~39 test files. Being replaced by v2.
 
 - [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) -- component hierarchy, state, persistence
 - [internal/frontend/architecture.md](./internal/frontend/architecture.md) -- migration details and patterns
@@ -100,6 +100,8 @@ Config: `bench_config.toml` in each directory.
 - Radix cache tracks `snapshot_bytes` per node and `_total_bytes` per tree for byte-level budget enforcement (`--prompt-cache-bytes` CLI flag)
 - Radix nodes have `segment_type` ("system"/"assistant") for priority-based eviction; system prompt KV evicted last
 - Radix cache node replacement must subtract the replaced subtree's bytes and node count (`_subtree_bytes`, `_subtree_count`) -- otherwise byte budget drifts
+- `mlx_lm.generate.GenerationResponse` is a non-slotted `@dataclass` -- attach per-request metadata via `response.X = value` (+ `# type: ignore[attr-defined]`), read on the API side via `getattr(chunk, 'X', default)`. Pattern: `cached_tokens`, `kv_cache_bytes`.
+- `mx.get_peak_memory()` is monotonic process-wide; call `mx.reset_peak_memory()` at the start of `run_generation` to scope it per request.
 
 ## Rules: Code Style
 
@@ -115,6 +117,8 @@ Config: `bench_config.toml` in each directory.
 - Frontend v2: see [apps/heylook-frontend-v2/CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md) for page patterns, sanitization rules, and gotchas
 - Frontend v2: Pydantic update endpoints must use `model_fields_set` to distinguish "not sent" from "explicitly null" (see `conversation_api.py` pattern)
 - Frontend v2: SPA sub-path serving needs `<base href="/v2/">` in HTML so relative paths resolve correctly. Static file handler must `resolve()` + `is_relative_to()` before serving.
+- Returning a Pydantic model with custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)`. `JSONResponse(content=model.model_dump())` double-serializes the whole tree.
+- SSE response headers ship before the generator runs; put post-generation telemetry (peak memory, cache bytes) in the usage chunk's `timing` object -- client must pass `stream_options.include_usage=true` to receive it.
 
 ## Rules: Agent Behavior
 
@@ -136,6 +140,7 @@ Config: `bench_config.toml` in each directory.
 - Frontend (legacy) build: `cd apps/heylook-frontend && bun run build` (verify production build)
 - Pre-existing failures: 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests (removed mlx_batch_vision module) -- do not investigate
 - MLX embedding/sampler tests fail in full suite (Metal context conflicts) but pass individually -- pre-existing, not a regression
+- `tests/unit/test_conversation_api.py` + `test_notebook_api.py` require `pytest_asyncio` (not in base deps). Install via `uv add --dev pytest_asyncio` or skip with `--ignore=tests/unit/test_conversation_api.py --ignore=tests/unit/test_notebook_api.py`.
 - Batch labeler: `cd apps/batch-labeler && uv sync --dev && uv run pytest tests/ -v` (separate venv, must cd first)
 - Optloop-lib: `cd apps/optloop-lib && uv sync && uv run pytest tests/ -v` (separate venv, 60 tests)
 - `internal/` and `models.toml` are gitignored -- changes there are local-only, never committed

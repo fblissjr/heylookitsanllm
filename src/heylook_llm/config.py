@@ -182,6 +182,20 @@ class AppConfig(BaseModel):
     default_model: Optional[str] = None
     max_loaded_models: int = Field(2, ge=1)
 
+    # Observability (S1.2). Env-var overrides live in memory.py:
+    # HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS, HEYLOOK_REQUEST_LOG_ENABLED,
+    # HEYLOOK_MODEL_EVENT_LOG_ENABLED.
+    baseline_log_interval_seconds: int = Field(
+        3600, ge=0,
+        description="Seconds between memory_baseline.jsonl entries. 0 disables.",
+    )
+    request_log_enabled: bool = Field(
+        True, description="Append per-request event to request_events.jsonl."
+    )
+    model_event_log_enabled: bool = Field(
+        True, description="Append model load/unload events to model_events.jsonl."
+    )
+
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
         return next((m for m in self.models if m.id == model_id and m.enabled), None)
 
