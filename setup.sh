@@ -41,7 +41,7 @@ echo ""
 # Usage: uv_sync_install "extra1" "extra2" ...
 uv_sync_install() {
     echo "Updating lockfile to get latest versions..."
-    uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm --upgrade-package parakeet-mlx 2>/dev/null || uv lock
+    uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>/dev/null || uv lock
     if [[ $# -eq 0 ]] || [[ -z "$1" ]]; then
         uv sync
     else
@@ -55,12 +55,10 @@ uv_sync_install() {
 
 # Ask user what to install
 echo "What would you like to install?"
-echo "1) MLX backend only (macOS, for MLX models)"
-echo "2) STT backend only (Parakeet MLX Speech-to-Text)"
-echo "3) MLX + STT backends"
-echo "4) Everything (MLX + STT + performance + analytics + profiling)"
+echo "1) MLX backend (macOS, text + vision models)"
+echo "2) Everything (MLX + performance + analytics + profiling)"
 echo ""
-read -p "Enter your choice (1-4): " choice
+read -p "Enter your choice (1-2): " choice
 
 # Base installation
 echo ""
@@ -79,32 +77,12 @@ case $choice in
         ;;
     2)
         echo ""
-        echo "Installing STT backend (Parakeet MLX)..."
-        uv_sync_install "stt"
-
-        echo ""
-        echo "STT backend installed successfully!"
-        echo "Configure your Parakeet model in models.toml with provider: 'mlx_stt'"
-        ;;
-    3)
-        echo ""
-        echo "Installing MLX and STT backends..."
-        echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        uv_sync_install "mlx" "stt"
-
-        echo ""
-        echo "MLX and STT backends installed successfully!"
-        echo "Configure your STT models in models.toml with provider: 'mlx_stt'"
-        ;;
-    4)
-        echo ""
         echo "Installing everything..."
         echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
         uv_sync_install "all"
 
         echo ""
         echo "Everything installed successfully!"
-        echo "Configure your STT models in models.toml with provider: 'mlx_stt'"
         ;;
     *)
         echo "ERROR: Invalid choice"
