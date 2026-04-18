@@ -175,7 +175,7 @@ from heylook_llm.notebook_api import notebook_router
 app.include_router(notebook_router)
 
 # Data management
-from heylook_llm.auth import require_admin_token
+from heylook_llm.auth import require_admin_token, require_api_key
 
 @app.post("/v1/data/clear",
     summary="Clear All Data",
@@ -418,7 +418,8 @@ Generate text completions from chat messages using the specified model.
             },
         },
     },
-    tags=["OpenAI API"]
+    tags=["OpenAI API"],
+    dependencies=[Depends(require_api_key)],
 )
 async def create_chat_completion(request: Request, chat_request: ChatRequest):
     router = request.app.state.router_instance
@@ -1163,7 +1164,8 @@ Process multiple chat completion requests in a single batch for improved through
     """,
     response_model=BatchChatResponse,
     response_description="Batch completion results with statistics",
-    tags=["OpenAI API"]
+    tags=["OpenAI API"],
+    dependencies=[Depends(require_api_key)],
 )
 async def create_batch_chat_completion(request: Request, batch_request: BatchChatRequest):
     router = request.app.state.router_instance
@@ -1326,7 +1328,8 @@ Generate embeddings for text using the specified model.
                 }
             }
         }
-    }
+    },
+    dependencies=[Depends(require_api_key)],
 )
 async def create_embeddings_endpoint(
     request: Request,
@@ -1421,7 +1424,8 @@ Extract raw hidden states from a specific layer of an LLM model.
                 }
             }
         }
-    }
+    },
+    dependencies=[Depends(require_api_key)],
 )
 async def extract_hidden_states_endpoint(
     request: Request,
@@ -1522,7 +1526,8 @@ Extract hidden states with server-side chat template application and token bound
                 }
             }
         }
-    }
+    },
+    dependencies=[Depends(require_api_key)],
 )
 async def extract_structured_hidden_states(
     request: Request,

@@ -23,8 +23,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from typing import Callable, Generator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+from heylook_llm.auth import require_api_key
 from pydantic import BaseModel, Field
 
 from heylook_llm.config import ChatMessage, ChatRequest
@@ -994,7 +996,7 @@ class RLMEngine:
 # FastAPI Router
 # ---------------------------------------------------------------------------
 
-rlm_router = APIRouter(tags=["RLM"])
+rlm_router = APIRouter(tags=["RLM"], dependencies=[Depends(require_api_key)])
 
 
 @rlm_router.post(

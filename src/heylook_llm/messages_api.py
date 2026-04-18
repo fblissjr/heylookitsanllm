@@ -15,9 +15,10 @@ import time
 import uuid
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from heylook_llm.auth import require_api_key
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
@@ -26,7 +27,11 @@ from heylook_llm.perf_collector import RequestEvent, get_perf_collector
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.thinking_parser import HybridThinkingParser, parse_thinking_content
 
-messages_router = APIRouter(prefix="/v1", tags=["Messages API"])
+messages_router = APIRouter(
+    prefix="/v1",
+    tags=["Messages API"],
+    dependencies=[Depends(require_api_key)],
+)
 
 
 # ---------------------------------------------------------------------------

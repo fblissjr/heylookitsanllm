@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0]
+
+### Added
+
+- **Runtime preset registry (C1)**: new `heylook_llm.presets` module + `src/heylook_llm/data/presets/*.toml` bundle (8 canonical presets: `balanced`, `creative`, `deterministic`, `code`, `thinking`, `moderate`, `vlm-describe`, `vlm-extract`). `ChatRequest.preset` references them at request time. Five-layer cascade in `MLXProvider._apply_model_defaults`: global floor -> thinking-model defaults -> model sampler fields -> request preset -> request explicit fields. Per-model sampler fields still act as defaults; presets overlay at request time; explicit fields still win. Unknown preset name -> HTTP 400. VLM presets deliberately omit `top_k`/`min_p`/`repetition_penalty` since mlx-vlm's `stream_generate` ignores them (prevents silent no-ops). `request_events.jsonl` now records the resolved preset name.
+- **Inference API key (C1.5)**: optional bearer-token gate via `HEYLOOK_API_KEY` env var. When set, inference endpoints (`/v1/chat/completions`, `/v1/batch/chat/completions`, `/v1/messages/*`, `/v1/embeddings`, `/v1/hidden_states*`, `/v1/rlm/*`) require `Authorization: Bearer <value>`. Loopback (`127.0.0.1`, `::1`) is exempt by default -- same-machine dev tools don't need to carry the key; set `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true` to close the carve-out for paranoid setups. `hmac.compare_digest` comparison, case-insensitive `Bearer` scheme per RFC 6750. Admin token (`HEYLOOK_ADMIN_TOKEN`) remains a separate gate on admin endpoints. Both default unset = open, matching the default single-user localhost UX.
+
 ## [1.29.0]
 
 ### Added

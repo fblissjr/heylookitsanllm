@@ -133,51 +133,86 @@ server {
 
 Generate the certs with `mkcert -install && mkcert heylook.local`.
 
-## Admin-token opt-in
+## Two optional auth gates
 
-Admin endpoints (`/v1/admin/*`, `/v1/data/clear`, `/v1/cache/clear`)
-support an opt-in token check via the `HEYLOOK_ADMIN_TOKEN` env var.
+The server ships with two independent env-var-driven auth checks. Both
+are opt-in and default to off.
 
-### Enable
+| Env var | Header | Gates | Default |
+|---|---|---|---|
+| `HEYLOOK_ADMIN_TOKEN` | `X-Heylook-Admin-Token: <value>` | Admin endpoints (`/v1/admin/*`, `/v1/data/clear`, `/v1/cache/clear`) | unset = open |
+| `HEYLOOK_API_KEY` | `Authorization: Bearer <value>` | Inference endpoints (chat completions, batch chat completions, messages, embeddings, hidden states, RLM) | unset = open |
+
+Empty value (`HEYLOOK_API_KEY=''`) is treated as unset -- catches the
+common `export HEYLOOK_API_KEY` with no value attached. Both checks use
+`hmac.compare_digest` so a wrong-length guess and a close-match guess
+take the same time.
+
+### Admin token
 
 ```sh
 export HEYLOOK_ADMIN_TOKEN='choose-any-high-entropy-value'
 heylookllm --host 127.0.0.1 --port 8080
 ```
 
-### Use
-
-Every admin request must carry the matching header:
-
 ```sh
 curl -X POST https://heylook.local/v1/data/clear \
   -H "X-Heylook-Admin-Token: choose-any-high-entropy-value"
 ```
 
-Requests without the header (or with a mismatched value) return
-`401 Unauthorized`. The check is case-insensitive on the header name
-(per RFC 7230); the value itself is compared exactly.
+Requests without the header (or with a mismatched value) return `401`.
 
-### What's NOT gated
+### Inference API key
 
-Inference endpoints are deliberately not gated:
+Opt-in bearer auth for the inference routes. By default, **loopback
+traffic is exempt** -- dev tools on the same machine that hit
+`http://127.0.0.1:8080` don't need to carry the key. LAN and remote
+clients do.
 
-- `/v1/chat/completions`
-- `/v1/messages/*`
-- `/v1/embeddings`
-- `/v1/rlm/*`
+```sh
+export HEYLOOK_API_KEY='choose-any-high-entropy-value'
+heylookllm --host 127.0.0.1 --port 8080
+```
 
-These are the normal-traffic paths every client app depends on. Gating
-them would force every client to learn about a shared secret, which
-defeats the reason we're running a single-user server in the first
-place. The admin token adds a gate only on mutating / destructive
-admin endpoints.
+On LAN clients (Ubuntu box, ComfyUI node, phone) send:
 
-### Empty value = no-op
+```sh
+curl -X POST https://heylook.local/v1/chat/completions \
+  -H "Authorization: Bearer choose-any-high-entropy-value" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "...", "messages": [{"role": "user", "content": "hi"}]}'
+```
 
-Setting `HEYLOOK_ADMIN_TOKEN=''` is treated the same as not setting it.
-This catches the common footgun of `export HEYLOOK_ADMIN_TOKEN` with no
-value attached.
+OpenAI SDK clients (Python, JS, shrug-prompter, etc.) already send
+`Authorization: Bearer <api_key>` as the standard field -- set it on
+your client's `api_key` option.
+
+#### Close the loopback carve-out
+
+For paranoid setups (public-exposed server, shared machine) set:
+
+```sh
+export HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true
+```
+
+Now `127.0.0.1` and `::1` also require the bearer header. Truthy values:
+`true`, `1`, `yes`, `on` (case-insensitive). Anything else -- including
+`false`, `no`, `0`, and empty -- keeps the default exempt behavior.
+
+### What's explicitly NOT gated
+
+- **Static v2 frontend** (`/v2/*`) -- it runs in the browser and would
+  need its own credential-pass mechanism. Open either way on LAN.
+- **`/v1/models`**, **`/v1/capabilities`**, **`/v1/system/metrics`**,
+  **`/v1/performance/*`** -- read-only metadata that every frontend
+  polls. Not behind the API-key gate today; revisit if you ever expose
+  the server publicly.
+- **Conversations / notebooks CRUD** (`/v1/conversations/*`,
+  `/v1/notebooks/*`) -- user-data surfaces the web UI reads and writes.
+  Not gated; gate via the admin token + network perimeter if needed.
+
+The admin token + API key combine cleanly: a client hitting admin
+endpoints needs both headers if both are set.
 
 ## service templates
 
