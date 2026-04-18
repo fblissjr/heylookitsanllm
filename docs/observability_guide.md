@@ -300,7 +300,7 @@ jq -r '.timestamp | strftime("%H")' internal/log/request_events.jsonl | \
 ```
 
 Look for long idle windows — those are candidates for aggressive model
-unloading (see S1.2b in the plan and S2.4's foreground/background toggle).
+unloading via the forthcoming idle-daemon + foreground/background toggle.
 
 ### Sampler settings actually used per model
 
@@ -411,11 +411,11 @@ tail -n 168 internal/log/memory_baseline.jsonl | \
 
 ### Plan preset taxonomy from real workloads
 
-This is the body of Slice S1.2b. Run the "usage-pattern" queries above after a
-week of collection, then pick preset categories that match real clusters
-rather than assumed ones. See
-`plans/lets-look-at-our-prancy-gosling.md#s12b-preset--import-redesign-data-driven-gated-on-s12`
-for the full methodology.
+Run the "usage-pattern" queries above after a week of collection, then pick
+preset categories that match real clusters rather than assumed ones. The
+current presets in `src/heylook_llm/data/profiles/` are a starting point; use
+the sampler-distribution and cache-hit-rate queries to validate whether the
+defaults match how the server is actually used.
 
 ### Detect runaway requests
 
@@ -426,12 +426,12 @@ jq -r 'select(.peak_memory_gb > 30) | [.model, .timestamp, .peak_memory_gb] | @t
 ```
 
 If runaways cluster around specific sampler settings or prompt lengths,
-that's a tuning opportunity — or a case for the foreground-mode hard cap
-coming in S2.4.
+that's a tuning opportunity — or a case for a foreground-mode hard memory
+cap (planned).
 
 ### Schedule aggressive unloads during idle windows
 
-Find your longest idle window from the time-of-day query. Until S2.4's idle
+Find your longest idle window from the time-of-day query. Until the idle
 daemon lands, you can manually unload via the admin API at the boundary:
 
 ```bash
@@ -472,4 +472,3 @@ These are accepted trade-offs in this slice; candidates for future work.
 - `src/heylook_llm/memory.py` — implementation
 - `tests/unit/test_memory_manager.py` — test suite including the content-invariant walk
 - [CLAUDE.md](../CLAUDE.md) — project conventions and the content invariant rule
-- `plans/lets-look-at-our-prancy-gosling.md` (local only) — S1.2 design and S1.2b data-driven preset redesign
