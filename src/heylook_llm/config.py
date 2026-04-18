@@ -62,6 +62,16 @@ class ChatRequest(BaseModel):
     # Streaming options (OpenAI-compatible)
     stream_options: Optional[Dict] = Field(None, description="Options for streaming: {include_usage: true} to get usage stats")
 
+    # Runtime sampler preset (resolved against the PresetRegistry at generation
+    # time). Overlays preset fields on top of model-level defaults; explicit
+    # request fields still win. Unknown name -> 400.
+    preset: Optional[str] = Field(
+        None,
+        description="Named sampler preset (e.g. 'balanced', 'creative', 'thinking'). "
+                    "Fields from the preset overlay model defaults; explicit request "
+                    "fields override both."
+    )
+
     @field_validator('messages', mode='before')
     @classmethod
     def validate_messages(cls, v):

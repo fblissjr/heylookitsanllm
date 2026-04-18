@@ -713,9 +713,22 @@ class MLXProvider(BaseProvider):
         return False
 
     def _apply_model_defaults(self, request: ChatRequest) -> dict:
-        """Apply model defaults with minimal object creation.
+        """Five-layer cascade producing the effective request config.
 
-        Supports thinking mode defaults for Qwen3 models.
+        Each layer overrides the previous for fields it sets; unset fields
+        pass through. Order is intentional -- request explicit > preset >
+        model > thinking-mode model flag > global floor.
+
+        Layers:
+            1. Global hardcoded floor.
+            2. Thinking-mode defaults (applied only when the MODEL config sets
+               ``enable_thinking=true``; request-level ``enable_thinking`` does
+               NOT trigger this layer, for back-compat -- pick the 'thinking'
+               preset to get matching sampler values).
+            3. Model sampler fields from ``models.toml`` (per-model defaults).
+            4. Request preset fields (``ChatRequest.preset`` resolved via the
+               process-wide ``PresetRegistry``).
+            5. Request-level explicit field values.
         """
         global_defaults = {
             'temperature': 0.1,
@@ -727,38 +740,43 @@ class MLXProvider(BaseProvider):
             'presence_penalty': 0.0
         }
 
-        # Qwen3 thinking mode optimal settings (from Qwen3 best practices)
         thinking_defaults = {
-            'temperature': 0.6,  # Don't use 0 - causes repetition
+            'temperature': 0.6,
             'top_p': 0.95,
             'top_k': 20,
             'min_p': 0.0,
-            'presence_penalty': 1.5  # Reduces repetition in thinking
+            'presence_penalty': 1.5,
         }
 
-        # Start with global defaults
         merged_config = global_defaults.copy()
 
-        # If thinking mode is enabled for this model, apply thinking defaults
         if self.config.get('enable_thinking', False):
             merged_config.update(thinking_defaults)
 
-        # Apply model config overrides
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                        'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
 
-        # Include cache and speculative-decoding config from model config.
-        # Derived from MLXModelConfig via json_schema_extra={"is_runtime_default": True}
-        # so adding a new field to the Pydantic model automatically flows it
-        # into effective_request.
+        # Cache + speculative-decoding fields tagged with
+        # json_schema_extra={"is_runtime_default": True} on MLXModelConfig.
+        # Adding a new tagged field auto-propagates here.
         from heylook_llm.config import MLX_RUNTIME_DEFAULT_FIELDS
         for key in MLX_RUNTIME_DEFAULT_FIELDS:
             if key not in merged_config and key in self.config:
                 merged_config[key] = self.config[key]
 
-        # Get only the scalar parameter fields from the request (highest priority)
-        # Uses getattr instead of model_dump() to avoid serializing the entire message list
+        # Layer 4: request preset.
+        preset_name = getattr(request, 'preset', None)
+        if preset_name:
+            from heylook_llm.presets import PresetNotFound, get_preset_registry
+            try:
+                get_preset_registry().apply_preset(merged_config, preset_name)
+            except PresetNotFound as exc:
+                # Surface to the caller as a 400 rather than a silent fallback.
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        # Layer 5: request explicit fields.
         request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                           'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking', 'seed']
         for field in request_fields:

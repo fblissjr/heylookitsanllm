@@ -458,6 +458,7 @@ def sampler_summary_from_request(request: Any) -> dict:
         "temperature", "top_p", "top_k", "min_p",
         "repetition_penalty", "presence_penalty",
         "max_tokens", "enable_thinking", "seed",
+        "preset",
     )
     result: dict[str, Any] = {}
     for name in fields:

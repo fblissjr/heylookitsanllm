@@ -1,0 +1,11 @@
+[meta]
+name = "deterministic"
+description = "Low temperature, narrow nucleus. For summarization, extraction, or anywhere reproducibility matters."
+
+[defaults]
+temperature = 0.2
+top_p = 0.9
+top_k = 10
+min_p = 0.1
+max_tokens = 1024
+repetition_penalty = 1.0

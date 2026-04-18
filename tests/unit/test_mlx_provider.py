@@ -167,6 +167,119 @@ class TestApplyModelDefaults:
 
 
 @pytest.mark.unit
+class TestApplyModelDefaultsPresetCascade:
+    """Preset layer sits between model sampler fields and request explicit
+    fields. These tests pin the resolution order so a refactor doesn't
+    silently change precedence.
+    """
+
+    def test_preset_overrides_model_defaults(self, mock_mlx, monkeypatch):  # noqa: ARG002
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({"hot": {"temperature": 1.0, "top_p": 0.9}})
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False, "temperature": 0.3},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                preset="hot",
+            )
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 1.0  # preset beat model default
+            assert effective["top_p"] == 0.9
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_request_field_beats_preset(self, mock_mlx, monkeypatch):  # noqa: ARG002
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({"hot": {"temperature": 1.0}})
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                preset="hot",
+                temperature=0.4,
+            )
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 0.4  # request explicit beat preset
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_preset_unset_fields_pass_through(self, mock_mlx):  # noqa: ARG002
+        """A preset that only sets `temperature` must NOT clear other model
+        defaults. Unset keys fall through."""
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        registry = PresetRegistry({"temp_only": {"temperature": 0.8}})
+        reset_preset_registry_for_test(registry)
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False, "max_tokens": 777, "top_k": 15},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                preset="temp_only",
+            )
+            effective = provider._apply_model_defaults(req)
+            assert effective["temperature"] == 0.8
+            assert effective["max_tokens"] == 777
+            assert effective["top_k"] == 15
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_unknown_preset_raises_http_400(self, mock_mlx):  # noqa: ARG002
+        from fastapi import HTTPException
+        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        reset_preset_registry_for_test(PresetRegistry({}))
+        try:
+            provider = MLXProvider(
+                model_id="m",
+                config={"model_path": "/fake", "vision": False},
+                verbose=False,
+            )
+            req = ChatRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                preset="does-not-exist",
+            )
+            with pytest.raises(HTTPException) as exc:
+                provider._apply_model_defaults(req)
+            assert exc.value.status_code == 400
+        finally:
+            reset_preset_registry_for_test(None)
+
+    def test_no_preset_cascade_unchanged(self, mock_mlx):  # noqa: ARG002
+        """If ChatRequest.preset is None, cascade behaves exactly like before
+        (back-compat gate)."""
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        provider = MLXProvider(
+            model_id="m",
+            config={"model_path": "/fake", "vision": False, "temperature": 0.55},
+            verbose=False,
+        )
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        effective = provider._apply_model_defaults(req)
+        assert effective["temperature"] == 0.55
+
+
+@pytest.mark.unit
 class TestGetMetrics:
     def test_metrics_with_no_model(self, mock_mlx_provider):
         """get_metrics should still return something even without a loaded model."""

@@ -1,0 +1,8 @@
+[meta]
+name = "vlm-extract"
+description = "Low-temperature VLM sampling for structured extraction (labels, bounding-box coords, form fields). VLM-safe field subset only."
+
+[defaults]
+temperature = 0.2
+top_p = 0.95
+max_tokens = 2048

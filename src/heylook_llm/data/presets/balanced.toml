@@ -1,0 +1,11 @@
+[meta]
+name = "balanced"
+description = "Middle-ground sampling for everyday chat. Works for most non-specialized workloads."
+
+[defaults]
+temperature = 0.7
+top_p = 0.9
+top_k = 40
+min_p = 0.05
+max_tokens = 1024
+repetition_penalty = 1.05

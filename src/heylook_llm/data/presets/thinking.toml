@@ -1,0 +1,12 @@
+[meta]
+name = "thinking"
+description = "Qwen3-style thinking-mode defaults (temperature 0.6, presence penalty to avoid loop). Pair with a thinking-capable model AND enable_thinking=true."
+
+[defaults]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+max_tokens = 4096
+enable_thinking = true
