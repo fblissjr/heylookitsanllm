@@ -4,6 +4,7 @@ import logging
 import json
 import threading
 import time
+from pathlib import Path
 from typing import Generator, Dict, List, Tuple
 
 import mlx.core as mx
@@ -456,8 +457,10 @@ class VLMVisionStrategy:
             logging.info("Generation aborted during vision encoding")
             return
 
-        # Yield the first token
-        first_text = tokenizer.decode([first_token_id])
+        # Yield the first token. skip_special_tokens=True matches the C4.5
+        # decode-path hygiene applied at load; defensive here for paths that
+        # instantiate a tokenizer independently.
+        first_text = tokenizer.decode([first_token_id], skip_special_tokens=True)
         yield _VisionTokenResponse(
             text=first_text,
             token=first_token_id,
@@ -534,6 +537,50 @@ class MLXProvider(BaseProvider):
                 # Load text-only model with MLX LM
                 logging.info("Loading text-only model using MLX LM")
                 self.model, self.processor = lm_load(model_path)
+
+            # Decode-path special-token hygiene (C4.5): patch decode()
+            # default to skip_special_tokens=True for paths that go through
+            # the naive detokenizer or our own code's decode() calls.
+            from .common.tokenizer_hygiene import apply_special_token_hygiene
+            apply_special_token_hygiene(self.get_tokenizer())
+
+            # Read the model's chat template + tokenizer config (C4.5). The
+            # resulting ModelTemplateInfo is the single source of truth for
+            # output-parsing decisions: reasoning parser selection, strip-
+            # tokens set, observability label. No hardcoded format lookup.
+            from .common.template_info import read_template_info
+            self._template_info = read_template_info(
+                Path(model_path),
+                self.config.get("chat_template_source"),
+            )
+            logging.info(
+                "template: source=%s harmony=%s thinking=%s specials=%d (model=%s)",
+                self._template_info.template_source,
+                self._template_info.has_harmony_structure,
+                self._template_info.has_thinking_markers,
+                len(self._template_info.special_tokens),
+                self.model_id,
+            )
+            # Build the reasoning parser once at load (not per request). For
+            # models like Mistral with ~1000 reserved tokens the strip regex
+            # compile is non-trivial; callers reset() before each request.
+            from heylook_llm.reasoning_parser import select_reasoning_parser
+            self._reasoning_parser = select_reasoning_parser(self._template_info)
+            # If the user pointed at an explicit template file/kind, also
+            # install it on the tokenizer so apply_chat_template honors it.
+            if self.config.get("chat_template_source") and self._template_info.chat_template:
+                tok = self.get_tokenizer()
+                if tok is not None:
+                    try:
+                        tok.chat_template = self._template_info.chat_template
+                    except (AttributeError, TypeError) as exc:
+                        logging.debug("could not install chat_template on tokenizer: %s", exc)
+                    inner = getattr(tok, "_tokenizer", None)
+                    if inner is not None and inner is not tok:
+                        try:
+                            inner.chat_template = self._template_info.chat_template
+                        except (AttributeError, TypeError):
+                            pass
 
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 

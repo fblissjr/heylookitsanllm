@@ -179,6 +179,14 @@ class MLXModelConfig(BaseModel):
     # post-startup registry rebuild drift and should log at the layer, not
     # kill inference.
     default_preset: Optional[str] = None
+    # Chat-template source policy (C4.5):
+    # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present)
+    # - "jinja": force-load chat_template.jinja from the model dir
+    # - "tokenizer_config": force the template embedded in tokenizer_config.json
+    # - absolute path: load that specific .jinja file
+    # Useful when a model ships a broken jinja but a working embedded template,
+    # or when the user wants to test a custom template without re-exporting.
+    chat_template_source: Optional[str] = None
 
 
 # Derived at import time; callers of _apply_model_defaults read from this set

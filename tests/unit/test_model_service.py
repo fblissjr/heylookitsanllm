@@ -155,6 +155,55 @@ class TestModelSizeRegex:
         assert gb == pytest.approx(1.5)
 
 
+class TestImportWizardChatTemplateDetection:
+    """Import wizard records ``chat_template_source = "jinja"`` when the
+    model folder ships a ``chat_template.jinja``. CLI ``--chat-template``
+    overrides this detection. Both are wired so models.toml reflects the
+    policy explicitly instead of relying on HF's version-dependent auto-
+    detection."""
+
+    def _make_mlx_dir(self, tmp_path, *, with_jinja=False):
+        (tmp_path / "config.json").write_text(json.dumps({"model_type": "llama"}))
+        (tmp_path / "model.safetensors").write_bytes(b"\x00" * 64)
+        if with_jinja:
+            (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
+        return tmp_path
+
+    def test_auto_detects_jinja_from_folder(self, tmp_path):
+        model_dir = tmp_path / "some-model"
+        model_dir.mkdir()
+        self._make_mlx_dir(model_dir, with_jinja=True)
+        importer = ModelImporter()
+
+        models = importer.scan_directory(str(tmp_path))
+
+        assert len(models) == 1
+        assert models[0]["config"].get("chat_template_source") == "jinja"
+
+    def test_no_jinja_in_folder_leaves_source_unset(self, tmp_path):
+        model_dir = tmp_path / "some-model"
+        model_dir.mkdir()
+        self._make_mlx_dir(model_dir, with_jinja=False)
+        importer = ModelImporter()
+
+        models = importer.scan_directory(str(tmp_path))
+
+        assert len(models) == 1
+        assert "chat_template_source" not in models[0]["config"]
+
+    def test_cli_override_wins_over_folder_detection(self, tmp_path):
+        """CLI ``--chat-template /custom/path.jinja`` overrides the auto-
+        detected 'jinja' even when the folder has its own chat_template.jinja."""
+        model_dir = tmp_path / "some-model"
+        model_dir.mkdir()
+        self._make_mlx_dir(model_dir, with_jinja=True)
+        importer = ModelImporter(chat_template_override="tokenizer_config")
+
+        models = importer.scan_directory(str(tmp_path))
+
+        assert models[0]["config"]["chat_template_source"] == "tokenizer_config"
+
+
 class TestEmbeddingModelDetection:
     """Embedding model detection is unchanged by C4."""
 

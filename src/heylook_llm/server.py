@@ -108,6 +108,16 @@ def main():
         help="Override specific settings (e.g., --override temperature=0.5 --override max_tokens=256)",
     )
     import_parser.add_argument(
+        "--chat-template",
+        dest="chat_template",
+        help="Chat template source policy recorded on the imported model. "
+             "'auto' (default): HF picks the right one; 'jinja': force-load "
+             "chat_template.jinja from the model dir; 'tokenizer_config': "
+             "force the embedded template; or an absolute path to a .jinja "
+             "file. Import wizard auto-sets 'jinja' when chat_template.jinja "
+             "is present; pass this flag to override.",
+    )
+    import_parser.add_argument(
         "--merge",
         action="store_true",
         help="Show instructions for merging with existing models.toml",

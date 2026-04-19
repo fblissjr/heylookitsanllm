@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.3]
+
+### Added
+
+- **Format-aware reasoning parser + template-info driven selection**: new `heylook_llm.reasoning_parser` module replaces the previous hardcoded thinking parser call sites. Two classes + a factory: `HarmonyChannelParser` for multi-channel formats (control tokens `<|channel|>`/`<|message|>`/`<|start|>`/`<|end|>`/`<|return|>`/`<|call|>` stripped; analysis/commentary channels route to `message.thinking`; final channel routes to `message.content`), `PassThroughParser` for formats without reasoning structure. Templates with `<think>...</think>` markers route through the existing `HybridThinkingParser` directly (no wrapper). `select_reasoning_parser(template_info)` picks by template-file signals. Non-streaming + SSE streaming paths both route through the factory.
+- **Template-info loader** (`providers/common/template_info.py`): reads `chat_template.jinja` / embedded `tokenizer_config.json` template + unions specials from both `tokenizer.json` `added_tokens` and `tokenizer_config.json` `added_tokens_decoder`. Exposes `ModelTemplateInfo` with `chat_template`, `special_tokens`, `has_harmony_structure` (derived from `<|channel|>` + `<|message|>` literals), `has_thinking_markers` (from `<think>...</think>`), `template_source`. The model's on-disk files are the single source of truth; no tokenizer introspection, no format-name lookup table.
+- **Decode-path special-token hygiene**: `apply_special_token_hygiene(tokenizer)` patches `tokenizer.decode` to default `skip_special_tokens=True`, closing the leak where `NaiveStreamingDetokenizer` calls `decode(tokens)` bare and control tokens render as literal strings. Patches both the wrapper and the inner HF tokenizer so either detokenizer reference path is covered. Callers that want raw specials (Token Explorer UI) still pass `skip_special_tokens=False`. Vision first-token and batch text decode sites updated in-place.
+- **Chat-template source policy**: `MLXModelConfig.chat_template_source` field (`None`/`"auto"` / `"jinja"` / `"tokenizer_config"` / absolute path). Resolved at load time. Useful when a model ships multiple templates or the user wants to point at a custom `.jinja` for testing. Logged at load. Import wizard auto-detects `chat_template.jinja` in scanned folders and records `"jinja"` when present.
+- **CLI `--chat-template` flag** on `heylookllm import`: overrides the auto-detection, recorded in generated `models.toml` so the user can edit post-import.
+- **`HarmonyChannelParser` + `PassThroughParser` strip-tokens set**: consumed from the template-info's declared specials and compiled into a single alternation regex (sorted longest-first). Strips non-structural control tokens from output deltas as a defense against fast-detokenizer leaks. Optimized for tokenizers with hundreds-to-thousands of declared specials.
+
+### Changed
+
+- **Parser built once at model load** (`MLXProvider._reasoning_parser`), reset per request instead of rebuilt. Saves the regex compile cost for tokenizers with large reserved-token sets.
+- **Harmony control-token scan** collapsed from six `.find()` calls per iteration to one module-level compiled regex (`_HARMONY_CONTROL_PATTERN`). Single `re.search` returns position + matched token.
+- **`template_info` uses `orjson` + `read_bytes()`** for JSON parsing, matching project convention.
+- **Removed `Qwen3ThinkingParser` adapter class**: `HybridThinkingParser` already conforms to the `ReasoningParser` protocol. Factory imports it directly in the thinking branch.
+
 ## [1.30.1]
 
 ### Added

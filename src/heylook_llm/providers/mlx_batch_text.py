@@ -150,7 +150,7 @@ class TextBatchProcessor:
         batch_results = []
         for i, uid in enumerate(uids):
             tokens = results[uid]
-            text = self.tokenizer.decode(tokens)
+            text = self.tokenizer.decode(tokens, skip_special_tokens=True)
             finish_reason = finish_reasons.get(uid, "length")
 
             batch_results.append(BatchResult(

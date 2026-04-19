@@ -22,6 +22,11 @@ from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event
 from heylook_llm.presets import PresetNotFound
+from heylook_llm.reasoning_parser import (
+    PassThroughParser,
+    parse_reasoning,
+    select_reasoning_parser,
+)
 
 
 def _init_logprobs_collector(chat_request, provider, request_id, streaming=True):
@@ -721,12 +726,12 @@ def _record_error_event(model: str, request_start_time: float, provider_get_ms: 
 async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None):
     """Async streaming response generator that runs generation in thread pool.
 
-    Supports Qwen3 thinking tokens: streams delta.thinking during <think> blocks,
-    then delta.content for the response after </think>.
-
-    Supports logprobs: includes token log probabilities in each chunk when requested.
-
-    Uses HybridThinkingParser for token-level detection when token IDs are available.
+    Reasoning-aware: a factory-selected ``ReasoningParser`` routes the model
+    output stream into ``delta.content`` vs ``delta.thinking`` based on the
+    format signals in the model's chat template (harmony multi-channel
+    vs. ``<think>`` blocks vs. pass-through). Control tokens are stripped
+    regardless of whether the tokenizer's ``skip_special_tokens`` flag
+    caught them.
 
     Enhanced metadata (when stream_options.include_usage=true):
     - thinking_tokens/content_tokens: Separate token counts
@@ -734,7 +739,6 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     - generation_config: Sampler settings used
     - stop_reason: Why generation stopped
     """
-    from heylook_llm.thinking_parser import HybridThinkingParser
 
     model_id = chat_request.model
     response_id = f"chatcmpl-{uuid.uuid4()}"
@@ -762,8 +766,14 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         and chat_request.stream_options.get('include_usage', False)
     )
 
-    # Hybrid thinking parser: uses token IDs when available, falls back to text parsing
-    thinking_parser = HybridThinkingParser()
+    # Parser built once at model load (see MLXProvider.load_model). Reset
+    # between requests rather than rebuild -- matters for large strip-token
+    # sets (Mistral ~1000 reserved tokens) where regex compile isn't free.
+    thinking_parser = getattr(provider, "_reasoning_parser", None) if provider else None
+    if thinking_parser is None:
+        thinking_parser = PassThroughParser()
+    else:
+        thinking_parser.reset()
 
     # Initialize logprobs collector if requested
     logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=True)
@@ -1062,9 +1072,9 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             "cached_tokens": cached_tokens,
         }
 
-    # Parse thinking content from Qwen3 models
-    from heylook_llm.thinking_parser import parse_thinking_content
-    content, thinking = parse_thinking_content(full_text)
+    # Parse reasoning content with the provider's cached parser (C4.5).
+    _cached = getattr(provider, "_reasoning_parser", None) if provider else None
+    content, thinking = parse_reasoning(full_text, _cached or PassThroughParser())
 
     message = {"role": "assistant", "content": content}
     if thinking is not None:

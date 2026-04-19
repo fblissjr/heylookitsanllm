@@ -39,7 +39,12 @@ HF_CACHE_PATHS = get_hf_cache_paths()
 class ModelImporter:
     """Scan directories and generate models.toml entries."""
 
-    def __init__(self, profile: Optional[str] = None, overrides: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        profile: Optional[str] = None,
+        overrides: Optional[dict[str, Any]] = None,
+        chat_template_override: Optional[str] = None,
+    ):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
         self.preset_name: Optional[str] = None
@@ -52,6 +57,10 @@ class ModelImporter:
                 )
             self.preset_name = profile
         self.overrides = overrides or {}
+        # CLI `--chat-template` override. When set, recorded on every
+        # imported model regardless of what's in its folder. Users point at
+        # a custom .jinja path or force "tokenizer_config" to bypass jinja.
+        self.chat_template_override = chat_template_override
 
     def scan_directory(self, path: str) -> list[dict]:
         """Scan a directory recursively for models."""
@@ -278,6 +287,16 @@ class ModelImporter:
         config: dict[str, Any] = {"model_path": str(path), "vision": is_vision}
         config.update(get_smart_defaults(model_info))
 
+        # Chat-template source policy (C4.5):
+        # 1) CLI --chat-template override wins.
+        # 2) Else if chat_template.jinja exists, record "jinja" so HF's
+        #    auto-detection (which varies by transformers version) becomes
+        #    explicit + user-editable in models.toml.
+        if self.chat_template_override:
+            config["chat_template_source"] = self.chat_template_override
+        elif (path / "chat_template.jinja").exists():
+            config["chat_template_source"] = "jinja"
+
         if self.preset_name:
             config["default_preset"] = self.preset_name
         config.update(self.overrides)
@@ -392,6 +411,7 @@ def import_models(args: Any) -> None:
     importer = ModelImporter(
         profile=getattr(args, 'profile', None),
         overrides=overrides,
+        chat_template_override=getattr(args, 'chat_template', None),
     )
 
     models = []
