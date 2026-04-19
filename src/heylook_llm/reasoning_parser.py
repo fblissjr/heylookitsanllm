@@ -46,7 +46,6 @@ class PassThroughParser:
     as a defense against fast-detokenizer leaks."""
 
     def __init__(self, strip_tokens: frozenset[str] = frozenset()):
-        self._strip_tokens = strip_tokens
         self._strip_pattern = _compile_strip_pattern(strip_tokens)
 
     def process_chunk(
@@ -93,7 +92,6 @@ class HarmonyChannelParser:
     """
 
     def __init__(self, strip_tokens: frozenset[str] = frozenset()):
-        self._strip_tokens = strip_tokens
         self._strip_pattern = _compile_strip_pattern(strip_tokens)
         self._buffer = ""
         self._state = "preamble"

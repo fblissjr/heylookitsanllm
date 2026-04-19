@@ -250,10 +250,12 @@ class TestReasoningParserFactory:
         parser = select_reasoning_parser(template_info=None)
         assert isinstance(parser, PassThroughParser)
 
-    def test_harmony_parser_receives_special_tokens_set(self):
-        """Factory threads the tokenizer-config-declared special tokens into
-        the harmony parser so it can strip ANY control token the model
-        emits -- not just the six hardcoded harmony structural ones."""
+    def test_harmony_parser_strips_non_structural_specials(self):
+        """Factory threads the tokenizer-config-declared specials into the
+        harmony parser so it strips ANY declared control token -- not just
+        the six structural harmony tokens. Assert behaviorally: feed a
+        payload with a non-structural special mid-message; it must not
+        appear in the output."""
         from heylook_llm.reasoning_parser import (
             HarmonyChannelParser, select_reasoning_parser,
         )
@@ -263,7 +265,11 @@ class TestReasoningParserFactory:
         info = self._info(has_harmony=True, specials=specials)
         parser = select_reasoning_parser(info)
         assert isinstance(parser, HarmonyChannelParser)
-        assert "<|reserved_200000|>" in parser._strip_tokens
+
+        text = "<|channel|>final<|message|>hello <|reserved_200000|> world<|return|>"
+        content, _ = _collect(parser, [text])
+        assert content == "hello  world"
+        assert "<|reserved_200000|>" not in content
 
 
 
