@@ -4,6 +4,534 @@
  */
 
 export interface paths {
+    "/v1/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a Message
+         * @description Create a message using the Messages API format.
+         *
+         *     Accepts typed content blocks (text, image) and returns structured output
+         *     blocks (text, thinking, logprobs). System prompt is a top-level parameter,
+         *     not embedded in the messages array.
+         *
+         *     Supports streaming via `stream: true`, which returns Server-Sent Events
+         *     with distinct event types (message_start, content_block_start,
+         *     content_block_delta, content_block_stop, message_delta, message_stop).
+         */
+        post: operations["create_message_v1_messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rlm/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * RLM Completion
+         * @description Recursive Language Model inference. The model writes Python code to iteratively explore and transform the provided context, calling itself recursively via llm_query() as needed.
+         */
+        post: operations["rlm_completions_v1_rlm_completions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan for Models
+         * @description Scan filesystem paths and HF cache for importable models.
+         */
+        post: operations["_scan_for_models_v1_admin_models_scan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/discovered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discovered Models (Watch Folders)
+         * @description Read-only snapshot of the passive watch-folders discovery cache. Populated by MemoryManager periodically scanning the [scan].folders + HF cache. Returns {discovered, last_scan_ts, count}.
+         */
+        get: operations["_discovered_models_v1_admin_models_discovered_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Models
+         * @description Import scanned models into configuration.
+         */
+        post: operations["_import_models_v1_admin_models_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Config
+         * @description Validate a model config without saving.
+         */
+        post: operations["_validate_config_v1_admin_models_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profiles
+         * @description List available preset profiles.
+         */
+        get: operations["_list_profiles_v1_admin_models_profiles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/bulk-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bulk Apply Profile
+         * @description Apply a profile to multiple models at once.
+         */
+        post: operations["_bulk_apply_profile_v1_admin_models_bulk_profile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All Model Configs
+         * @description List all model configurations including disabled models, with full config details.
+         */
+        get: operations["list_model_configs_v1_admin_models_get"];
+        put?: never;
+        /**
+         * Add Model Config
+         * @description Add a new model configuration to models.toml.
+         */
+        post: operations["add_model_config_v1_admin_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/{model_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Status
+         * @description Get runtime status of a model (loaded state, memory, metrics).
+         */
+        get: operations["get_model_status_v1_admin_models__model_id__status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/{model_id}/toggle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Toggle Model Enabled
+         * @description Toggle a model's enabled/disabled state.
+         */
+        post: operations["toggle_model_v1_admin_models__model_id__toggle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/{model_id}/load": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Load Model
+         * @description Explicitly load a model into the LRU cache.
+         */
+        post: operations["load_model_v1_admin_models__model_id__load_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/{model_id}/unload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unload Model
+         * @description Explicitly unload a model from the LRU cache.
+         */
+        post: operations["unload_model_v1_admin_models__model_id__unload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/models/{model_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Config
+         * @description Get full configuration for a single model.
+         */
+        get: operations["get_model_config_v1_admin_models__model_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove Model Config
+         * @description Remove a model from configuration. Model files stay on disk.
+         */
+        delete: operations["remove_model_config_v1_admin_models__model_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Model Config
+         * @description Update specific fields of a model's configuration. Returns which fields require reload.
+         */
+        patch: operations["update_model_config_v1_admin_models__model_id__patch"];
+        trace?: never;
+    };
+    "/v1/admin/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reload Models
+         * @description Reload model configuration and clear model cache without restarting the server. Clears loaded models, re-reads models.toml, and returns the new model list.
+         */
+        post: operations["reload_models_v1_admin_reload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Conversations
+         * @description List all conversations, ordered by most recently updated.
+         */
+        get: operations["list_conversations_v1_conversations_get"];
+        put?: never;
+        /**
+         * Create Conversation
+         * @description Create a new conversation.
+         */
+        post: operations["create_conversation_v1_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conv_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Conversation
+         * @description Get a conversation with all its messages.
+         */
+        get: operations["get_conversation_v1_conversations__conv_id__get"];
+        /**
+         * Update Conversation
+         * @description Update conversation metadata (title, system prompt, model).
+         */
+        put: operations["update_conversation_v1_conversations__conv_id__put"];
+        post?: never;
+        /**
+         * Delete Conversation
+         * @description Delete a conversation and all its messages.
+         */
+        delete: operations["delete_conversation_v1_conversations__conv_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conv_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append Message
+         * @description Append a message to a conversation.
+         */
+        post: operations["append_message_v1_conversations__conv_id__messages_post"];
+        /**
+         * Truncate Messages
+         * @description Delete all messages after the given position.
+         */
+        delete: operations["truncate_messages_v1_conversations__conv_id__messages_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conv_id}/messages/{msg_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Message
+         * @description Update a message's content or thinking.
+         */
+        put: operations["update_message_v1_conversations__conv_id__messages__msg_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notebooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Notebooks
+         * @description List all notebooks, ordered by most recently updated.
+         */
+        get: operations["list_notebooks_v1_notebooks_get"];
+        put?: never;
+        /**
+         * Create Notebook
+         * @description Create a new notebook.
+         */
+        post: operations["create_notebook_v1_notebooks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/notebooks/{notebook_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Notebook
+         * @description Get a notebook by ID.
+         */
+        get: operations["get_notebook_v1_notebooks__notebook_id__get"];
+        /**
+         * Update Notebook
+         * @description Update notebook fields (title, content, system_prompt, model_id).
+         */
+        put: operations["update_notebook_v1_notebooks__notebook_id__put"];
+        post?: never;
+        /**
+         * Delete Notebook
+         * @description Delete a notebook.
+         */
+        delete: operations["delete_notebook_v1_notebooks__notebook_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear All Data
+         * @description Delete all conversations, messages, and notebooks from the database.
+         */
+        post: operations["clear_all_data_v1_data_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/{rest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve V2 Frontend
+         * @description Serve the v2 frontend SPA -- all routes return index.html.
+         */
+        get: operations["serve_v2_frontend_v2__rest__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve V2 Frontend
+         * @description Serve the v2 frontend SPA -- all routes return index.html.
+         */
+        get: operations["serve_v2_frontend_v2_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/models": {
         parameters: {
             query?: never;
@@ -61,6 +589,26 @@ export interface paths {
          *     - Backend caches metrics for 30 seconds
          */
         get: operations["get_system_metrics_v1_system_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/performance/profile/{time_range}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Performance Profile
+         * @description Aggregated performance profiling data for the Performance applet. Valid time_range values: 1h, 6h, 24h, 7d.
+         */
+        get: operations["get_performance_profile_v1_performance_profile__time_range__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -142,55 +690,6 @@ export interface paths {
          *     - Monitor batch_stats in response for throughput metrics
          */
         post: operations["create_batch_chat_completion_v1_batch_chat_completions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/admin/restart": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Restart Server
-         * @description Restart the server to reload configuration and code changes.
-         *
-         *     **WARNING**: This will interrupt all active connections!
-         *
-         *     **Security Note**: This endpoint should be disabled in production or protected with authentication.
-         */
-        post: operations["restart_server_v1_admin_restart_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/admin/reload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reload Models
-         * @description Reload model configuration and clear model cache without restarting the server.
-         *
-         *     This will:
-         *     - Clear the loaded model cache
-         *     - Reload models.toml configuration
-         *     - Keep the server running
-         */
-        post: operations["reload_models_v1_admin_reload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -320,392 +819,6 @@ export interface paths {
          *     **Note:** Only supported for MLX models with Qwen3-style chat templates.
          */
         post: operations["extract_structured_hidden_states_v1_hidden_states_structured_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/performance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Performance Metrics
-         * @description Retrieve detailed performance metrics from all model providers.
-         *
-         *     **Metrics Include:**
-         *     - 📊 Token generation rates (tokens/second)
-         *     - ⏱️ Time to first token (TTFT)
-         *     - 🚀 Model loading times
-         *     - 💾 Memory usage statistics
-         *     - 📈 Request processing times
-         *     - 🎯 Cache hit rates
-         *
-         *     **Per-Model Statistics:**
-         *     - Request count
-         *     - Average/peak token generation speed
-         *     - Total tokens generated
-         *     - Error rates
-         *
-         *     **Use Cases:**
-         *     - Performance monitoring dashboards
-         *     - Capacity planning
-         *     - Model comparison
-         *     - Troubleshooting slow inference
-         *     - Identifying bottlenecks
-         */
-        get: operations["performance_metrics_v1_performance_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/data/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Analytics Summary
-         * @description Get pre-computed analytics summary for dashboards.
-         *
-         *     **Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true
-         *
-         *     **Returns:**
-         *     - total_requests: Total number of requests
-         *     - avg_response_time: Average response time in ms
-         *     - tokens_per_second: Average tokens per second
-         *     - error_rate: Error rate as percentage
-         *     - model_usage: Request count by model
-         *     - recent_activity: Time-series data for charts
-         */
-        get: operations["data_summary_v1_data_summary_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/data/query": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Execute Analytics Query
-         * @description Execute SQL queries against the analytics database.
-         *
-         *     **Note:** Analytics must be enabled via HEYLOOK_ANALYTICS_ENABLED=true
-         *
-         *     **Request body:**
-         *     - query: SQL query to execute
-         *     - limit: Maximum rows to return (default: 1000)
-         *
-         *     **Returns:**
-         *     - columns: List of column names
-         *     - data: Query results as list of rows
-         *     - row_count: Number of rows returned
-         *
-         *     **Available tables:**
-         *     - request_logs: Detailed request/response metrics
-         *     - model_switches: Model loading/unloading events
-         *     - performance_summary: Aggregated performance data
-         *
-         *     **Example queries:**
-         *     - `SELECT * FROM request_logs WHERE total_time_ms > 1000`
-         *     - `SELECT model, AVG(tokens_per_second) FROM request_logs GROUP BY model`
-         */
-        post: operations["data_query_v1_data_query_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/data/request/{request_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Request Details
-         * @description Get detailed information about a specific request by ID.
-         *
-         *     **Note:** Analytics must be enabled with storage_level=full for complete data
-         *
-         *     **Returns:**
-         *     - Full request details including messages
-         *     - Response content
-         *     - Timing breakdown
-         *     - Token counts
-         *     - Error information (if any)
-         */
-        get: operations["get_request_details_v1_data_request__request_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/replay/{request_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Replay Request
-         * @description Replay a previous request with optional parameter modifications.
-         *
-         *     **Note:** Analytics must be enabled for request history
-         *
-         *     **Request body (optional):**
-         *     - model: Override the original model
-         *     - temperature: Override temperature
-         *     - max_tokens: Override max tokens
-         *     - system_message: Add/override system message
-         *
-         *     **Returns:**
-         *     - Original request details
-         *     - Modified parameters
-         *     - New response
-         *     - Comparison metrics
-         */
-        post: operations["replay_request_v1_replay__request_id__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/eval/create": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Evaluation Set
-         * @description Create a new evaluation set for model testing.
-         *
-         *     **Request body:**
-         *     - name: Evaluation set name
-         *     - description: Optional description
-         *     - prompts: Array of evaluation prompts
-         *       - prompt: The test prompt
-         *       - expected_contains: Optional array of strings that should appear in response
-         *       - expected_format: Optional format validation (json, code, markdown)
-         *       - tags: Optional tags for categorization
-         *
-         *     **Returns:**
-         *     - eval_id: Unique evaluation set ID
-         *     - created_at: Creation timestamp
-         *     - prompt_count: Number of test prompts
-         */
-        post: operations["create_eval_set_v1_eval_create_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/eval/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Run Evaluation
-         * @description Run an evaluation set against one or more models.
-         *
-         *     **Request body:**
-         *     - eval_id: Evaluation set ID
-         *     - models: Array of model IDs to test
-         *     - iterations: Number of iterations per prompt (default: 1)
-         *     - parameters: Optional generation parameters
-         *       - temperature: Override temperature
-         *       - max_tokens: Override max tokens
-         *
-         *     **Returns:**
-         *     - run_id: Unique run ID
-         *     - status: Run status
-         *     - progress: Progress information
-         */
-        post: operations["run_evaluation_v1_eval_run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/eval/run/{run_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Evaluation Run Status
-         * @description Get the status and results of an evaluation run.
-         *
-         *     **Returns:**
-         *     - run_id: Run ID
-         *     - status: Current status (running, completed, failed)
-         *     - progress: Progress information
-         *     - results: Results by model (when completed)
-         */
-        get: operations["get_evaluation_run_v1_eval_run__run_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/eval/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Evaluation Sets
-         * @description List all available evaluation sets.
-         *
-         *     **Returns:**
-         *     Array of evaluation sets with:
-         *     - eval_id: Unique ID
-         *     - name: Evaluation set name
-         *     - description: Description
-         *     - prompt_count: Number of prompts
-         *     - created_at: Creation timestamp
-         */
-        get: operations["list_evaluation_sets_v1_eval_list_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/performance/profile/{time_range}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Performance Profile
-         * @description Get detailed performance profiling data for the specified time range.
-         *
-         *     **Path parameters:**
-         *     - time_range: Time range (1h, 6h, 24h, 7d)
-         *
-         *     **Returns:**
-         *     - Timing breakdowns by operation type
-         *     - Resource utilization over time
-         *     - Bottleneck analysis
-         *     - Performance trends
-         */
-        get: operations["get_performance_profile_v1_performance_profile__time_range__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/batch/process": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Batch Process Prompts
-         * @description Process multiple prompts in batch with progress tracking.
-         *
-         *     **Request body:**
-         *     - prompts: Array of prompt objects containing:
-         *       - id: Unique identifier for the prompt
-         *       - content: The prompt text
-         *       - model: Model to use (optional, uses default if not specified)
-         *       - temperature: Temperature override (optional)
-         *       - max_tokens: Max tokens override (optional)
-         *       - metadata: Any additional metadata (optional)
-         *     - defaults: Default parameters for all prompts
-         *       - model: Default model to use
-         *       - temperature: Default temperature
-         *       - max_tokens: Default max tokens
-         *     - batch_config: Batch processing configuration
-         *       - parallelism: Number of concurrent requests (default: 3)
-         *       - retry_failed: Whether to retry failed requests (default: true)
-         *       - max_retries: Maximum retry attempts (default: 2)
-         *
-         *     **Returns:**
-         *     - batch_id: Unique batch processing ID
-         *     - status: Current batch status
-         *     - progress: Progress information
-         */
-        post: operations["batch_process_v1_batch_process_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/batch/{batch_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Batch Status
-         * @description Get the status and results of a batch processing job.
-         */
-        get: operations["get_batch_status_v1_batch__batch_id__get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -886,6 +999,49 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AdminModelListResponse
+         * @description Response for listing all model configs.
+         */
+        AdminModelListResponse: {
+            /** Models */
+            models?: components["schemas"]["AdminModelResponse"][];
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+        };
+        /**
+         * AdminModelResponse
+         * @description Full model config for admin API responses.
+         */
+        AdminModelResponse: {
+            /** Id */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Description */
+            description?: string | undefined;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Loaded
+             * @default false
+             */
+            loaded: boolean;
+        };
+        /**
          * BatchChatRequest
          * @description Request for batch chat completions.
          */
@@ -1014,6 +1170,22 @@ export interface components {
             images?: string[];
         };
         /**
+         * BulkProfileRequest
+         * @description Apply a profile to multiple models.
+         */
+        BulkProfileRequest: {
+            /**
+             * Model Ids
+             * @description Model IDs to apply profile to
+             */
+            model_ids: string[];
+            /**
+             * Profile
+             * @description Profile name to apply
+             */
+            profile: string;
+        };
+        /**
          * CacheClearRequest
          * @description Request to clear caches.
          */
@@ -1110,6 +1282,8 @@ export interface components {
             role: "system" | "user" | "assistant" | "tool";
             /** Content */
             content: string | (components["schemas"]["TextContentPart"] | components["schemas"]["ImageContentPart"])[];
+            /** Thinking */
+            thinking?: string | undefined;
             /** Name */
             name?: string | undefined;
             /** Tool Call Id */
@@ -1218,11 +1392,118 @@ export interface components {
             stream_options?: {
                 [key: string]: unknown;
             } | undefined;
+            /**
+             * Preset
+             * @description Named sampler preset (e.g. 'balanced', 'creative', 'thinking'). Fields from the preset overlay model defaults; explicit request fields override both.
+             */
+            preset?: string | undefined;
+        };
+        /** ConversationCreate */
+        ConversationCreate: {
+            /**
+             * Title
+             * @default New Conversation
+             */
+            title: string;
+            /** Model Id */
+            model_id?: string | undefined;
+            /** System Prompt */
+            system_prompt?: string | undefined;
+        };
+        /** ConversationUpdate */
+        ConversationUpdate: {
+            /** Title */
+            title?: string | undefined;
+            /** Model Id */
+            model_id?: string | undefined;
+            /** System Prompt */
+            system_prompt?: string | undefined;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HiddenStatesBlock
+         * @description Hidden states extraction results.
+         *
+         *     Returned by /v1/hidden_states endpoints. Contains the raw activation
+         *     vectors from a specified model layer, with token boundary information
+         *     for mapping back to input tokens.
+         */
+        HiddenStatesBlock: {
+            /**
+             * Type
+             * @default hidden_states
+             * @constant
+             */
+            type: "hidden_states";
+            /**
+             * Layer
+             * @description Layer index the states were extracted from
+             */
+            layer: number;
+            /**
+             * Shape
+             * @description Tensor shape [seq_len, hidden_dim]
+             */
+            shape: number[];
+            /**
+             * Token Boundaries
+             * @description Token-to-position mapping for the hidden states
+             */
+            token_boundaries?: {
+                [key: string]: unknown;
+            }[] | undefined;
+            /**
+             * Data Encoding
+             * @description How the hidden state data is provided
+             * @default external
+             * @enum {string}
+             */
+            data_encoding: "base64" | "external";
+            /**
+             * Data
+             * @description Base64-encoded hidden states (when data_encoding='base64')
+             */
+            data?: string | undefined;
+        };
+        /**
+         * ImageBlock
+         * @description Image content block for vision models.
+         *
+         *     Supports base64-encoded data or a URL reference. Mirrors the existing
+         *     multipart image handling but in a structured block format.
+         */
+        ImageBlock: {
+            /**
+             * Type
+             * @default image
+             * @constant
+             */
+            type: "image";
+            /**
+             * Source Type
+             * @description How the image data is provided
+             * @enum {string}
+             */
+            source_type: "base64" | "url";
+            /**
+             * Media Type
+             * @description MIME type, e.g. 'image/jpeg'. Required for base64.
+             */
+            media_type?: string | undefined;
+            /**
+             * Data
+             * @description Base64-encoded image data (when source_type='base64')
+             */
+            data?: string | undefined;
+            /**
+             * Url
+             * @description Image URL (when source_type='url')
+             */
+            url?: string | undefined;
         };
         /** ImageContentPart */
         ImageContentPart: {
@@ -1237,6 +1518,204 @@ export interface components {
         ImageUrl: {
             /** Url */
             url: string;
+        };
+        /**
+         * LogprobsBlock
+         * @description Token-level log probability data for a generation.
+         *
+         *     Returned when `logprobs: true` is set in the request. Contains per-token
+         *     probability information for the generated sequence.
+         */
+        LogprobsBlock: {
+            /**
+             * Type
+             * @default logprobs
+             * @constant
+             */
+            type: "logprobs";
+            /** Tokens */
+            tokens?: components["schemas"]["TokenLogprobEntry"][];
+        };
+        /**
+         * Message
+         * @description A single message in a conversation.
+         *
+         *     Content can be a plain string (convenience) or a list of typed content
+         *     blocks (for multimodal messages with images).
+         */
+        Message: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Content */
+            content: string | (components["schemas"]["TextBlock"] | components["schemas"]["ImageBlock"])[];
+        };
+        /** MessageCreate */
+        MessageCreate: {
+            /** Role */
+            role: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /** Thinking */
+            thinking?: string | undefined;
+        };
+        /**
+         * MessageCreateRequest
+         * @description Request body for POST /v1/messages.
+         *
+         *     Differences from the current ChatRequest (OpenAI format):
+         *     - system is a top-level parameter, not in the messages array
+         *     - content uses typed blocks instead of OpenAI's content_parts
+         *     - thinking is a top-level bool instead of enable_thinking
+         *     - no processing_mode/return_individual (those move to BatchRequest)
+         *     - no image resize params (handled by /v1/messages/multipart)
+         */
+        MessageCreateRequest: {
+            /**
+             * Model
+             * @description Model ID. If omitted, uses loaded model or default_model from config.
+             */
+            model?: string | undefined;
+            /** Messages */
+            messages: components["schemas"]["Message"][];
+            /**
+             * System
+             * @description System prompt. Kept out of messages array for clarity.
+             */
+            system?: string | undefined;
+            /**
+             * Max Tokens
+             * @default 1024
+             */
+            max_tokens: number;
+            /** Temperature */
+            temperature?: number | undefined;
+            /** Top P */
+            top_p?: number | undefined;
+            /** Top K */
+            top_k?: number | undefined;
+            /** Min P */
+            min_p?: number | undefined;
+            /** Repetition Penalty */
+            repetition_penalty?: number | undefined;
+            /** Repetition Context Size */
+            repetition_context_size?: number | undefined;
+            /** Presence Penalty */
+            presence_penalty?: number | undefined;
+            /** Seed */
+            seed?: number | undefined;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            stream_options?: components["schemas"]["StreamOptions"] | undefined;
+            /**
+             * Thinking
+             * @description Enable thinking mode for models that support it (e.g. Qwen3)
+             */
+            thinking?: boolean | undefined;
+            /**
+             * Logprobs
+             * @description Return log probabilities for output tokens
+             */
+            logprobs?: boolean | undefined;
+            /**
+             * Top Logprobs
+             * @description Number of top token alternatives with log probabilities (0-20)
+             */
+            top_logprobs?: number | undefined;
+            /**
+             * Include Performance
+             * @description Include performance metrics (tps, memory) in response
+             * @default false
+             */
+            include_performance: boolean;
+            /**
+             * Metadata
+             * @description Arbitrary metadata passed through to the response
+             */
+            metadata?: {
+                [key: string]: string;
+            } | undefined;
+        };
+        /**
+         * MessageResponse
+         * @description Response from POST /v1/messages (non-streaming).
+         *
+         *     Content is a list of typed blocks. A simple text response is
+         *     [TextBlock(text="...")]. A thinking model might return
+         *     [ThinkingBlock(text="..."), TextBlock(text="...")].
+         *     Logprobs, if requested, appear as a LogprobsBlock at the end.
+         */
+        MessageResponse: {
+            /**
+             * Id
+             * @description Unique message ID, prefixed 'msg_'
+             */
+            id: string;
+            /**
+             * Type
+             * @default message
+             * @constant
+             */
+            type: "message";
+            /**
+             * Role
+             * @default assistant
+             * @constant
+             */
+            role: "assistant";
+            /** Model */
+            model: string;
+            /** Content */
+            content: (components["schemas"]["TextBlock"] | components["schemas"]["ThinkingBlock"] | components["schemas"]["LogprobsBlock"] | components["schemas"]["HiddenStatesBlock"])[];
+            /**
+             * Stop Reason
+             * @default stop
+             * @enum {string}
+             */
+            stop_reason: "stop" | "length" | "error";
+            usage: components["schemas"]["Usage"];
+            performance?: components["schemas"]["PerformanceInfo"] | undefined;
+            /**
+             * Metadata
+             * @description Echoed from request metadata
+             */
+            metadata?: {
+                [key: string]: string;
+            } | undefined;
+        };
+        /** MessageUpdate */
+        MessageUpdate: {
+            /** Content */
+            content?: string | undefined;
+            /** Thinking */
+            thinking?: string | undefined;
+        };
+        /**
+         * ModelImportRequest
+         * @description Import one or more scanned models.
+         */
+        ModelImportRequest: {
+            /**
+             * Models
+             * @description Models to import (id, path, provider, overrides)
+             */
+            models: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Profile
+             * @description Profile to apply to all imported models
+             * @default moderate
+             */
+            profile: string | undefined;
         };
         /**
          * ModelMetrics
@@ -1269,6 +1748,170 @@ export interface components {
              * @default 0
              */
             requests_active: number;
+            /**
+             * Requests Queued
+             * @description Requests waiting in the FIFO generation queue behind the active one
+             * @default 0
+             */
+            requests_queued: number;
+        };
+        /**
+         * ModelScanRequest
+         * @description Request to scan for importable models.
+         */
+        ModelScanRequest: {
+            /**
+             * Paths
+             * @description Custom paths to scan
+             */
+            paths?: string[];
+            /**
+             * Scan Hf Cache
+             * @description Also scan HuggingFace cache directories
+             * @default true
+             */
+            scan_hf_cache: boolean;
+        };
+        /**
+         * ModelStatusResponse
+         * @description Runtime status of a model.
+         */
+        ModelStatusResponse: {
+            /**
+             * Loaded
+             * @description Whether model is currently in LRU cache
+             */
+            loaded: boolean;
+            /**
+             * Memory Mb
+             * @description Memory usage in MB (if loaded)
+             */
+            memory_mb?: number | undefined;
+            /**
+             * Context Used
+             * @description Tokens currently in context
+             */
+            context_used?: number | undefined;
+            /**
+             * Context Capacity
+             * @description Maximum context window
+             */
+            context_capacity?: number | undefined;
+            /**
+             * Requests Active
+             * @description Active requests for this model
+             */
+            requests_active?: number | undefined;
+        };
+        /**
+         * ModelUpdateRequest
+         * @description Partial update to model config.
+         */
+        ModelUpdateRequest: {
+            /** Description */
+            description?: string | undefined;
+            /** Tags */
+            tags?: string[] | undefined;
+            /** Enabled */
+            enabled?: boolean | undefined;
+            /** Capabilities */
+            capabilities?: string[] | undefined;
+            /**
+             * Config
+             * @description Provider-specific config updates
+             */
+            config?: {
+                [key: string]: unknown;
+            } | undefined;
+        };
+        /**
+         * ModelValidateRequest
+         * @description Validate a model config without saving.
+         */
+        ModelValidateRequest: {
+            /** Id */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Description */
+            description?: string | undefined;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+        };
+        /** NotebookCreate */
+        NotebookCreate: {
+            /**
+             * Title
+             * @default Untitled
+             */
+            title: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /** System Prompt */
+            system_prompt?: string | undefined;
+            /** Model Id */
+            model_id?: string | undefined;
+        };
+        /** NotebookUpdate */
+        NotebookUpdate: {
+            /** Title */
+            title?: string | undefined;
+            /** Content */
+            content?: string | undefined;
+            /** System Prompt */
+            system_prompt?: string | undefined;
+            /** Model Id */
+            model_id?: string | undefined;
+        };
+        /**
+         * PerformanceInfo
+         * @description Generation performance metrics.
+         *
+         *     Returned when include_performance=true in the request.
+         */
+        PerformanceInfo: {
+            /**
+             * Prompt Tps
+             * @description Prompt processing tokens per second
+             */
+            prompt_tps: number;
+            /**
+             * Generation Tps
+             * @description Generation tokens per second
+             */
+            generation_tps: number;
+            /**
+             * Peak Memory Gb
+             * @description Peak memory usage in GB
+             */
+            peak_memory_gb?: number | undefined;
+            /**
+             * Thinking Duration Ms
+             * @description Time spent in thinking phase
+             */
+            thinking_duration_ms?: number | undefined;
+            /**
+             * Content Duration Ms
+             * @description Time spent generating content
+             */
+            content_duration_ms?: number | undefined;
+            /**
+             * Total Duration Ms
+             * @description Total generation time
+             */
+            total_duration_ms?: number | undefined;
         };
         /** PerformanceMetrics */
         PerformanceMetrics: {
@@ -1278,6 +1921,171 @@ export interface components {
             generation_tps: number;
             /** Peak Memory Gb */
             peak_memory_gb: number;
+        };
+        /** RLMMetadata */
+        RLMMetadata: {
+            /** Iterations */
+            iterations: number;
+            /** Sub Queries */
+            sub_queries: number;
+            /** Trace */
+            trace: components["schemas"]["RLMTraceEntry"][];
+            /**
+             * Compactions
+             * @default 0
+             */
+            compactions: number;
+            /** Child Traces */
+            child_traces?: components["schemas"]["RLMMetadata"][] | undefined;
+        };
+        /** RLMRequest */
+        RLMRequest: {
+            /** Model */
+            model: string;
+            /** Context */
+            context: string;
+            /** Query */
+            query: string;
+            /** System */
+            system?: string | undefined;
+            /**
+             * Max Iterations
+             * @default 10
+             */
+            max_iterations: number;
+            /**
+             * Max Tokens
+             * @default 2048
+             */
+            max_tokens: number;
+            /** Temperature */
+            temperature?: number | undefined;
+            /** Top P */
+            top_p?: number | undefined;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
+            /**
+             * Sandbox
+             * @default true
+             */
+            sandbox: boolean;
+            /**
+             * Timeout
+             * @default 30
+             */
+            timeout: number;
+            /**
+             * Max Output Chars
+             * @default 10000
+             */
+            max_output_chars: number;
+            /** Sub Model */
+            sub_model?: string | undefined;
+            /** Sub Max Tokens */
+            sub_max_tokens?: number | undefined;
+            /** Sub Temperature */
+            sub_temperature?: number | undefined;
+            /** Sub Top P */
+            sub_top_p?: number | undefined;
+            /** Enable Thinking */
+            enable_thinking?: boolean | undefined;
+            /**
+             * Include Trace Detail
+             * @default false
+             */
+            include_trace_detail: boolean;
+            /**
+             * Compaction
+             * @default false
+             */
+            compaction: boolean;
+            /**
+             * Compaction Threshold
+             * @default 0.8
+             */
+            compaction_threshold: number;
+            /**
+             * Max Context Tokens
+             * @default 8192
+             */
+            max_context_tokens: number;
+            /**
+             * Max Depth
+             * @default 1
+             */
+            max_depth: number;
+            /** Max Errors */
+            max_errors?: number | undefined;
+            /** Max Timeout */
+            max_timeout?: number | undefined;
+        };
+        /** RLMResponse */
+        RLMResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Object
+             * @default rlm.completion
+             */
+            object: string;
+            /** Created */
+            created: number;
+            /** Model */
+            model: string;
+            /** Answer */
+            answer: string;
+            /** Finish Reason */
+            finish_reason: string;
+            /** Usage */
+            usage: {
+                [key: string]: unknown;
+            };
+            rlm: components["schemas"]["RLMMetadata"];
+        };
+        /** RLMTraceEntry */
+        RLMTraceEntry: {
+            /** Iteration */
+            iteration: number;
+            /**
+             * Code Len
+             * @default 0
+             */
+            code_len: number;
+            /**
+             * Stdout Len
+             * @default 0
+             */
+            stdout_len: number;
+            /**
+             * Stderr Len
+             * @default 0
+             */
+            stderr_len: number;
+            /** Action */
+            action?: string | undefined;
+            /** Response */
+            response?: string | undefined;
+            /** Code */
+            code?: string | undefined;
+            /** Stdout */
+            stdout?: string | undefined;
+            /** Stderr */
+            stderr?: string | undefined;
+        };
+        /**
+         * StreamOptions
+         * @description Options that control streaming behavior.
+         */
+        StreamOptions: {
+            /**
+             * Include Usage
+             * @description Include token usage statistics in the final stream event
+             * @default false
+             */
+            include_usage: boolean;
         };
         /**
          * SystemMetricsResponse
@@ -1324,6 +2132,20 @@ export interface components {
              */
             cpu_percent: number;
         };
+        /**
+         * TextBlock
+         * @description Plain text content block. Used in both input and output.
+         */
+        TextBlock: {
+            /**
+             * Type
+             * @default text
+             * @constant
+             */
+            type: "text";
+            /** Text */
+            text: string;
+        };
         /** TextContentPart */
         TextContentPart: {
             /**
@@ -1334,6 +2156,81 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * ThinkingBlock
+         * @description Model reasoning/thinking content (Qwen3 <think> blocks).
+         *
+         *     Separated from the main text so frontends can display thinking in a
+         *     collapsible section or hide it entirely.
+         */
+        ThinkingBlock: {
+            /**
+             * Type
+             * @default thinking
+             * @constant
+             */
+            type: "thinking";
+            /** Text */
+            text: string;
+        };
+        /**
+         * TokenLogprobEntry
+         * @description Full logprob entry for one generated token position.
+         */
+        TokenLogprobEntry: {
+            /** Token */
+            token: string;
+            /** Token Id */
+            token_id?: number | undefined;
+            /** Logprob */
+            logprob: number;
+            /** Bytes */
+            bytes?: number[] | undefined;
+            /** Top Logprobs */
+            top_logprobs?: components["schemas"]["TopLogprob"][];
+        };
+        /**
+         * TopLogprob
+         * @description A candidate token with its log probability.
+         */
+        TopLogprob: {
+            /** Token */
+            token: string;
+            /** Token Id */
+            token_id?: number | undefined;
+            /** Logprob */
+            logprob: number;
+            /** Bytes */
+            bytes?: number[] | undefined;
+        };
+        /**
+         * Usage
+         * @description Token usage statistics.
+         *
+         *     Extends OpenAI's usage with thinking-specific token counts.
+         */
+        Usage: {
+            /**
+             * Input Tokens
+             * @default 0
+             */
+            input_tokens: number;
+            /**
+             * Output Tokens
+             * @default 0
+             */
+            output_tokens: number;
+            /**
+             * Thinking Tokens
+             * @description Tokens used in thinking blocks (Qwen3)
+             */
+            thinking_tokens?: number | undefined;
+            /**
+             * Content Tokens
+             * @description Tokens in non-thinking content
+             */
+            content_tokens?: number | undefined;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1342,6 +2239,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
         /**
          * EnhancedUsage
@@ -1434,6 +2335,18 @@ export interface components {
              * @description Total generation time
              */
             total_duration_ms: number;
+            /**
+             * Peak Memory Gb
+             * @description Peak MLX memory used during this request in GB. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.
+             * @default null
+             */
+            peak_memory_gb: number | undefined;
+            /**
+             * Kv Cache Bytes
+             * @description Bytes held in the prompt KV cache at the start of this request. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.
+             * @default null
+             */
+            kv_cache_bytes: number | undefined;
         };
         /**
          * StreamChoice
@@ -1611,6 +2524,1026 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    create_message_v1_messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rlm_completions_v1_rlm_completions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RLMRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RLMResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _scan_for_models_v1_admin_models_scan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _discovered_models_v1_admin_models_discovered_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    _import_models_v1_admin_models_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _validate_config_v1_admin_models_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelValidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _list_profiles_v1_admin_models_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    _bulk_apply_profile_v1_admin_models_bulk_profile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_model_configs_v1_admin_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminModelListResponse"];
+                };
+            };
+        };
+    };
+    add_model_config_v1_admin_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminModelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_status_v1_admin_models__model_id__status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_model_v1_admin_models__model_id__toggle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminModelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    load_model_v1_admin_models__model_id__load_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unload_model_v1_admin_models__model_id__unload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_config_v1_admin_models__model_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminModelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_model_config_v1_admin_models__model_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_model_config_v1_admin_models__model_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reload_models_v1_admin_reload_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_conversations_v1_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_conversation_v1_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_conversation_v1_conversations__conv_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_conversation_v1_conversations__conv_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_conversation_v1_conversations__conv_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_message_v1_conversations__conv_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    truncate_messages_v1_conversations__conv_id__messages_delete: {
+        parameters: {
+            query: {
+                after: number;
+            };
+            header?: never;
+            path: {
+                conv_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_message_v1_conversations__conv_id__messages__msg_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conv_id: string;
+                msg_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_notebooks_v1_notebooks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_notebook_v1_notebooks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotebookCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_notebook_v1_notebooks__notebook_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_notebook_v1_notebooks__notebook_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotebookUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_notebook_v1_notebooks__notebook_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_data_v1_data_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    serve_v2_frontend_v2__rest__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    serve_v2_frontend_v2_get: {
+        parameters: {
+            query?: {
+                rest?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_models_v1_models_get: {
         parameters: {
             query?: never;
@@ -1662,6 +3595,37 @@ export interface operations {
             };
         };
     };
+    get_performance_profile_v1_performance_profile__time_range__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                time_range: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_chat_completion_v1_chat_completions_post: {
         parameters: {
             query?: never;
@@ -1678,225 +3642,15 @@ export interface operations {
             /** @description Non-streaming: JSON response. Streaming (stream=true): Server-Sent Events where each `data:` line contains a StreamChunk JSON object, ending with `data: [DONE]`. */
             200: {
                 headers: {
+                    /** @description Peak MLX memory used during this request in GB. Non-streaming only; streaming emits the same value inside the final usage chunk's timing.peak_memory_gb. */
+                    "x-heylook-peak-memory-gb"?: string;
+                    /** @description Bytes held in the prompt KV cache at the start of this request. Non-streaming only; streaming emits the same value inside the final usage chunk's timing.kv_cache_bytes. */
+                    "x-heylook-kv-bytes"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ChatCompletionResponse"];
-                    "text/event-stream": {
-                        /**
-                         * Id
-                         * @description Response identifier (chatcmpl-...)
-                         */
-                        id: string;
-                        /**
-                         * Object
-                         * @default chat.completion.chunk
-                         * @constant
-                         */
-                        object: "chat.completion.chunk";
-                        /**
-                         * Created
-                         * @description Unix timestamp
-                         */
-                        created: number;
-                        /**
-                         * Model
-                         * @description Model ID used for generation
-                         */
-                        model: string;
-                        /** Choices */
-                        choices: components["schemas"]["StreamChoice"][];
-                        /** @description Token usage (final chunk only, requires stream_options.include_usage) */
-                        usage?: components["schemas"]["EnhancedUsage"] | undefined;
-                        /** @description Generation timing breakdown (final chunk only) */
-                        timing?: components["schemas"]["GenerationTiming"] | undefined;
-                        /** @description Sampler settings used (final chunk only) */
-                        generation_config?: components["schemas"]["GenerationConfig"] | undefined;
-                        /**
-                         * Stop Reason
-                         * @description Why generation stopped (final chunk only)
-                         */
-                        stop_reason?: string | undefined;
-                        $defs: {
-                            /**
-                             * EnhancedUsage
-                             * @description Extended usage statistics including thinking tokens.
-                             */
-                            EnhancedUsage: {
-                                /**
-                                 * Prompt Tokens
-                                 * @default 0
-                                 */
-                                prompt_tokens: number;
-                                /**
-                                 * Completion Tokens
-                                 * @default 0
-                                 */
-                                completion_tokens: number;
-                                /**
-                                 * Thinking Tokens
-                                 * @description Tokens used in thinking blocks
-                                 */
-                                thinking_tokens?: number | undefined;
-                                /**
-                                 * Content Tokens
-                                 * @description Tokens in actual content
-                                 */
-                                content_tokens?: number | undefined;
-                                /**
-                                 * Total Tokens
-                                 * @default 0
-                                 */
-                                total_tokens: number;
-                            };
-                            /**
-                             * GenerationConfig
-                             * @description Sampler configuration used for generation.
-                             */
-                            GenerationConfig: {
-                                /** Temperature */
-                                temperature?: number | undefined;
-                                /** Top P */
-                                top_p?: number | undefined;
-                                /** Top K */
-                                top_k?: number | undefined;
-                                /** Min P */
-                                min_p?: number | undefined;
-                                /** Enable Thinking */
-                                enable_thinking?: boolean | undefined;
-                                /** Max Tokens */
-                                max_tokens?: number | undefined;
-                            };
-                            /**
-                             * GenerationTiming
-                             * @description Timing breakdown for generation phases.
-                             */
-                            GenerationTiming: {
-                                /**
-                                 * Thinking Duration Ms
-                                 * @description Time spent in thinking phase
-                                 */
-                                thinking_duration_ms?: number | undefined;
-                                /**
-                                 * Content Duration Ms
-                                 * @description Time spent generating content
-                                 */
-                                content_duration_ms?: number | undefined;
-                                /**
-                                 * Total Duration Ms
-                                 * @description Total generation time
-                                 */
-                                total_duration_ms: number;
-                            };
-                            /**
-                             * StreamChoice
-                             * @description Single choice in a streaming chunk.
-                             */
-                            StreamChoice: {
-                                /**
-                                 * Index
-                                 * @default 0
-                                 */
-                                index: number;
-                                delta?: components["schemas"]["StreamDelta"];
-                                logprobs?: components["schemas"]["StreamLogprobs"] | undefined;
-                                /**
-                                 * Finish Reason
-                                 * @description 'stop', 'length', or null while streaming
-                                 */
-                                finish_reason?: string | undefined;
-                            };
-                            /**
-                             * StreamDelta
-                             * @description Delta content in a streaming chunk.
-                             */
-                            StreamDelta: {
-                                /**
-                                 * Role
-                                 * @description Role (only in first chunk)
-                                 */
-                                role?: string | undefined;
-                                /**
-                                 * Content
-                                 * @description Text content delta
-                                 */
-                                content?: string | undefined;
-                                /**
-                                 * Thinking
-                                 * @description Thinking content delta
-                                 */
-                                thinking?: string | undefined;
-                            };
-                            /**
-                             * StreamLogprobs
-                             * @description Logprobs attached to a streaming chunk.
-                             */
-                            StreamLogprobs: {
-                                /**
-                                 * Content
-                                 * @description Token-level logprob data for this chunk
-                                 */
-                                content?: components["schemas"]["TokenLogprobInfo"][];
-                            };
-                            /**
-                             * TokenLogprobInfo
-                             * @description Token with its log probability and alternative candidates.
-                             */
-                            TokenLogprobInfo: {
-                                /**
-                                 * Token
-                                 * @description Token text
-                                 */
-                                token: string;
-                                /**
-                                 * Token Id
-                                 * @description Token vocabulary ID
-                                 */
-                                token_id: number;
-                                /**
-                                 * Logprob
-                                 * @description Log probability of this token
-                                 */
-                                logprob: number;
-                                /**
-                                 * Bytes
-                                 * @description UTF-8 byte values
-                                 */
-                                bytes?: number[];
-                                /**
-                                 * Top Logprobs
-                                 * @description Alternative tokens with their logprobs
-                                 */
-                                top_logprobs?: components["schemas"]["TopLogprobEntry"][] | undefined;
-                            };
-                            /**
-                             * TopLogprobEntry
-                             * @description A candidate token with its log probability (used in top_logprobs arrays).
-                             */
-                            TopLogprobEntry: {
-                                /**
-                                 * Token
-                                 * @description Token text
-                                 */
-                                token: string;
-                                /**
-                                 * Token Id
-                                 * @description Token vocabulary ID
-                                 */
-                                token_id: number;
-                                /**
-                                 * Logprob
-                                 * @description Log probability of this token
-                                 */
-                                logprob: number;
-                                /**
-                                 * Bytes
-                                 * @description UTF-8 byte values
-                                 */
-                                bytes?: number[];
-                            };
-                        };
-                    };
+                    "text/event-stream": components["schemas"]["StreamChunk"];
                 };
             };
             /** @description Validation Error */
@@ -1939,46 +3693,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restart_server_v1_admin_restart_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    reload_models_v1_admin_reload_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -2122,301 +3836,6 @@ export interface operations {
                      *     }
                      */
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    performance_metrics_v1_performance_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Detailed performance metrics and summaries */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    data_summary_v1_data_summary_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Analytics summary data */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    data_query_v1_data_query_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Query results with columns and data */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_request_details_v1_data_request__request_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Complete request details */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    replay_request_v1_replay__request_id__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                request_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Replay results with comparison */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_eval_set_v1_eval_create_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Created evaluation set details */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    run_evaluation_v1_eval_run_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Evaluation run details */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_evaluation_run_v1_eval_run__run_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Evaluation run status and results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_evaluation_sets_v1_eval_list_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description List of evaluation sets */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_performance_profile_v1_performance_profile__time_range__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                time_range: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Performance profiling data */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    batch_process_v1_batch_process_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Batch processing status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_batch_status_v1_batch__batch_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Batch processing status and results */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
