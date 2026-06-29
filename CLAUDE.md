@@ -48,7 +48,7 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 
 ## Repo conventions (beyond the global ones)
 
-- New endpoint: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`, then run `/openapi-regen` to refresh `generated-api.ts`.
+- New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`, then run `/openapi-regen` to refresh `generated-api.ts`. A pre-commit hook runs `scripts/check_openapi_sync.sh` (offline schema via `app.openapi()`) when a top-level `src/heylook_llm/*.py`, `schema/`, or the generated file is staged, and blocks on drift. Run manually: `cd apps/heylook-frontend && bun run check:api`. The check skips gracefully when uv/bun/MLX are unavailable, so it only blocks on detected drift; the hook lives in `.git/hooks/` (not committed) -- fresh clones rely on `check:api`/CI.
 - Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, `generated-api.ts`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
 - The security hook false-positives on `mx.eval` (MLX graph materializer, not Python's eval) -- prefer `mx.async_eval` or acknowledge it.
 - Observability invariant: log streams record numbers + metadata only, never prompts/responses/token IDs. Use `sampler_summary_from_request` (memory.py) for "what was this configured with"; route MemoryManager calls through `memory.safe_mm_call(...)` (no-op when None, swallows errors -- observability must never break inference).

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`requests_queued` in `/v1/system/metrics`**: per-model count of requests waiting in the FIFO generation queue behind the active one (alongside the existing `requests_active`), for observing backpressure and tuning `max_queue_depth`.
 - **Per-request queue-wait timing.** Each request's time blocked in the FIFO queue is measured (around `gen_gate.acquire()`), tagged on the generation chunks, and surfaced three ways: `queue_wait_ms` in the streaming usage chunk's `timing` (when `stream_options.include_usage=true`), a `queue_wait_ms` field on the per-request observability record (`request_events.jsonl`), and an average `queue_wait` in the per-model `bottlenecks` breakdown of the performance profile. Distinct from the existing `queue` metric, which is provider-acquisition / model-load time. Covers both `/v1/chat/completions` and the Messages API, streaming and non-streaming.
+- **OpenAPI types drift guard.** `scripts/check_openapi_sync.sh` regenerates `generated-api.ts` from the FastAPI app's schema offline (`app.openapi()`, no running server) using the frontend's pinned `openapi-typescript`, and diffs against the committed file. Wired into the pre-commit hook (gated on staged top-level `src/heylook_llm/*.py`, `schema/`, or the generated file) so the types can't silently drift again; also runnable via `bun run check:api`. Degrades gracefully (skips, never false-blocks) when uv/bun/MLX are unavailable.
 
 ### Changed
 
