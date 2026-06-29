@@ -997,7 +997,9 @@ class MLXProvider(BaseProvider):
             # than cannibalizing each other. A client that no longer wants its
             # result aborts via _abort_event (set by the streaming layer on
             # disconnect), which frees the slot for the next waiter.
+            _queue_wait_start = time.perf_counter()
             self._gen_gate.acquire()
+            queue_wait_ms = (time.perf_counter() - _queue_wait_start) * 1000.0
             # Clean slate for this generation
             self._abort_event.clear()
 
@@ -1026,7 +1028,21 @@ class MLXProvider(BaseProvider):
                         strategy = self._strategies['text']
                         logging.info(f"[MLX STRATEGY] Text path (vlm={self.is_vlm}) | Model: {self.model_id}")
 
-                    yield from strategy.generate(request, effective_request, self.model, self.processor, abort_event=self._abort_event)
+                    # Tag each chunk with the FIFO queue-wait time so the route
+                    # can surface it (telemetry + usage timing). Use an explicit
+                    # loop (not `yield from`) but close the inner generator in a
+                    # finally so GeneratorExit still propagates -- the gate must
+                    # release promptly on client disconnect.
+                    inner = strategy.generate(request, effective_request, self.model, self.processor, abort_event=self._abort_event)
+                    try:
+                        for chunk in inner:
+                            try:
+                                chunk.queue_wait_ms = queue_wait_ms  # type: ignore[attr-defined]
+                            except (AttributeError, TypeError):
+                                pass
+                            yield chunk
+                    finally:
+                        inner.close()
 
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)

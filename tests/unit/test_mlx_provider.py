@@ -549,6 +549,59 @@ class TestCreateChatCompletion:
 
 
 @pytest.mark.unit
+class TestQueueWaitTagging:
+    """create_chat_completion tags each chunk with the FIFO queue-wait time and
+    still propagates close() to the inner strategy generator (so the gate
+    releases promptly on client disconnect)."""
+
+    class _Chunk:
+        def __init__(self, text):
+            self.text = text
+
+    def _inject_strategy(self, provider, gen_factory):
+        provider.processor = create_mock_processor()
+        provider.is_vlm = False
+
+        class _FakeStrategy:
+            def generate(self, *a, **k):
+                yield from gen_factory()
+
+        provider._strategies = {"text": _FakeStrategy()}
+
+    def test_chunks_tagged_with_queue_wait_ms(self, mock_mlx_provider):
+        self._inject_strategy(
+            mock_mlx_provider,
+            lambda: iter([self._Chunk("hello"), self._Chunk("world")]),
+        )
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        chunks = list(mock_mlx_provider.create_chat_completion(req))
+
+        assert [c.text for c in chunks] == ["hello", "world"]
+        assert all(hasattr(c, "queue_wait_ms") for c in chunks)
+        assert all(c.queue_wait_ms >= 0.0 for c in chunks)
+
+    def test_inner_generator_closed_and_gate_released_on_outer_close(self, mock_mlx_provider):
+        closed = {"v": False}
+
+        def gen_factory():
+            try:
+                yield self._Chunk("a")
+                yield self._Chunk("b")
+            finally:
+                closed["v"] = True
+
+        self._inject_strategy(mock_mlx_provider, gen_factory)
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+
+        gen = mock_mlx_provider.create_chat_completion(req)
+        assert next(gen).text == "a"          # start generation (acquires gate)
+        gen.close()                            # client disconnect / early close
+
+        assert closed["v"] is True             # inner strategy generator closed
+        assert mock_mlx_provider._gen_gate.busy is False  # gate released
+
+
+@pytest.mark.unit
 class TestCheckCapacity:
     """check_capacity() applies backpressure (503) via the generation gate."""
 

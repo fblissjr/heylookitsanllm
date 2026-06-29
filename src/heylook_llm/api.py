@@ -759,6 +759,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     cached_tokens = 0
     peak_memory_gb = 0.0
     kv_cache_bytes = 0
+    queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -836,6 +837,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         # is only set on first chunk (a snapshot at generation start).
         peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
         kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
+        queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
 
         if not chunk.text:
             continue
@@ -944,6 +946,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             timing_data["peak_memory_gb"] = round(peak_memory_gb, 3)
         if kv_cache_bytes > 0:
             timing_data["kv_cache_bytes"] = kv_cache_bytes
+        if queue_wait_ms > 0:
+            timing_data["queue_wait_ms"] = round(queue_wait_ms, 1)
 
         # Build generation config from request using the shared sampler-summary
         # helper so the SSE usage chunk and the request_events.jsonl schema stay
@@ -998,6 +1002,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=True,
+            queue_wait_ms=round(queue_wait_ms, 1),
         )
         get_perf_collector().record_request(stream_event)
         _maybe_log_request_event(
@@ -1030,10 +1035,11 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     cached_tokens = 0
     peak_memory_gb = 0.0
     kv_cache_bytes = 0
+    queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
 
     def consume_generator():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
-        nonlocal peak_memory_gb, kv_cache_bytes
+        nonlocal peak_memory_gb, kv_cache_bytes, queue_wait_ms
         first_logprob_logged = False
         try:
             for chunk in generator:
@@ -1063,6 +1069,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
                 peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
                 kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
+                queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
         finally:
             # Release the generation gate now (provider generator's finally)
             # even if consumption raised -- don't wait for GC.
@@ -1149,6 +1156,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=False,
+            queue_wait_ms=round(queue_wait_ms, 1),
         )
         get_perf_collector().record_request(non_stream_event)
         _maybe_log_request_event(

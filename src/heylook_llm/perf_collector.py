@@ -32,6 +32,10 @@ class RequestEvent:
     tokens_per_second: float
     had_images: bool
     was_streaming: bool
+    # Time blocked in the FIFO generation queue waiting for an in-flight
+    # generation to finish (distinct from queue_ms, which is get_provider /
+    # model-load time). Defaulted for back-compat with older event records.
+    queue_wait_ms: float = 0.0
 
 
 @dataclass(slots=True)
@@ -181,6 +185,7 @@ class PerfCollector:
                 "avg_total_ms": round(sum(e.total_ms for e in model_events) / n, 1),
                 "breakdown": {
                     "queue": round(sum(e.queue_ms for e in model_events) / n, 1),
+                    "queue_wait": round(sum(e.queue_wait_ms for e in model_events) / n, 1),
                     "model_load": round(sum(e.model_load_ms for e in model_events) / n, 1),
                     "image_processing": round(sum(e.image_processing_ms for e in model_events) / n, 1),
                     "token_generation": round(sum(e.token_generation_ms for e in model_events) / n, 1),

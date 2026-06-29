@@ -308,15 +308,17 @@ async def _non_stream_messages(
     prompt_tokens = 0
     completion_tokens = 0
     token_count = 0
+    queue_wait_ms = 0.0
 
     def consume():
-        nonlocal full_text, prompt_tokens, completion_tokens, token_count
+        nonlocal full_text, prompt_tokens, completion_tokens, token_count, queue_wait_ms
         try:
             for chunk in generator:
                 full_text += chunk.text
                 token_count += 1
                 prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
                 completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
+                queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
         finally:
             # Ensure the provider generator's finally runs now (releases the
             # generation gate) even if consumption raised -- not at GC.
@@ -383,6 +385,7 @@ async def _non_stream_messages(
             tokens_per_second=tps,
             had_images=had_imgs,
             was_streaming=False,
+            queue_wait_ms=round(queue_wait_ms, 1),
         ))
 
     return response
@@ -413,6 +416,7 @@ async def _stream_messages(
     # message_start
     yield translator.message_start_event()
 
+    queue_wait_ms = 0.0
     async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
         # Capture provider metadata
         chunk_finish = getattr(chunk, "finish_reason", None)
@@ -420,6 +424,7 @@ async def _stream_messages(
             translator.stop_reason = chunk_finish
         translator.prompt_tokens = getattr(chunk, "prompt_tokens", translator.prompt_tokens)
         translator.completion_tokens = getattr(chunk, "generation_tokens", translator.completion_tokens)
+        queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
 
         if not chunk.text:
             continue
@@ -468,4 +473,5 @@ async def _stream_messages(
             tokens_per_second=tps,
             had_images=had_imgs,
             was_streaming=True,
+            queue_wait_ms=round(queue_wait_ms, 1),
         ))
