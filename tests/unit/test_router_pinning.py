@@ -8,7 +8,6 @@ mixing real MLX Metal state with MagicMock providers. We test selection logic
 directly and use careful fixture scoping to avoid the crash.
 """
 
-import atexit
 import sys
 import threading
 from collections import OrderedDict
@@ -18,15 +17,20 @@ import pytest
 
 from helpers.mlx_mock import create_mlx_module_mocks
 
-# Keep patch alive for entire module to avoid segfault from MLX C cleanup.
-# atexit safety net: if the process tears down before pytest cleanup,
-# stopping the patch prevents MLX C cleanup from colliding with MagicMock.
-_mlx_mocks = create_mlx_module_mocks()
-_patch = patch.dict(sys.modules, _mlx_mocks)
-_patch.start()
-atexit.register(_patch.stop)
-
-from heylook_llm.router import ModelRouter  # noqa: E402 -- must import after patch
+# ModelRouter pulls in MLX at module load. Import it under a temporary
+# sys.modules mock so this module also collects on non-Apple hardware, then let
+# the context manager restore real MLX immediately on exit.
+#
+# Scoping the patch to JUST the import is load-bearing: an earlier version
+# started the patch at module-import time and only stopped it via atexit. Since
+# pytest imports every test module during collection, that replaced real MLX
+# with MagicMocks for the entire session, so any later test that imported MLX
+# (directly or through provider code) silently got mocks and failed. The
+# eviction/unload tests below use providers whose `.provider` is "test" (not
+# "mlx"), so the router never reaches `mx.clear_cache()` -- the mock only has to
+# satisfy the import, not the test bodies.
+with patch.dict(sys.modules, create_mlx_module_mocks()):
+    from heylook_llm.router import ModelRouter  # noqa: E402 -- import under mock
 
 
 def _make_fresh_router():

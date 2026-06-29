@@ -33,35 +33,10 @@ def memory_baseline():
 class TestMemoryUsage:
     """Tests for memory usage patterns."""
 
-    def test_vision_buffer_cache_cleanup(self):
-        """Verify vision buffer cache cleanup works correctly."""
-        try:
-            import mlx.core as mx
-            from heylook_llm.providers.mlx_batch_vision import BatchVisionEncoder
-        except ImportError:
-            pytest.skip("Required modules not available")
-
-        # Create a mock model and processor
-        class MockModel:
-            vision_encoder = lambda self, x: mx.zeros((x.shape[0], 729, 768))
-
-        class MockProcessor:
-            image_processor = type("IP", (), {"size": {"height": 336}})()
-
-        encoder = BatchVisionEncoder(MockModel(), MockProcessor())
-
-        # Create multiple buffers
-        for batch_size in [1, 2, 4, 8]:
-            _ = encoder._get_buffer(batch_size)
-
-        initial_cache_size = len(encoder._buffer_cache)
-        assert initial_cache_size == 4, f"Expected 4 cached buffers, got {initial_cache_size}"
-
-        # Clear keeping only 2
-        encoder.clear_buffers(keep_last_n=2)
-
-        final_cache_size = len(encoder._buffer_cache)
-        assert final_cache_size == 2, f"Expected 2 cached buffers after cleanup, got {final_cache_size}"
+    # test_vision_buffer_cache_cleanup removed: it imported BatchVisionEncoder
+    # from the deleted `heylook_llm.providers.mlx_batch_vision` module (batch
+    # vision moved to apps/batch-labeler/ in v1.23.0). It skipped silently while
+    # testing nothing.
 
     def test_generation_memory_stable(self, loaded_model, benchmark_prompt, memory_baseline):
         """Verify memory doesn't grow unbounded during generation."""

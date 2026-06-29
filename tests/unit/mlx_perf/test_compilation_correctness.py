@@ -34,43 +34,26 @@ def mlx_arrays():
 class TestPresencePenaltyCompilation:
     """Tests for presence penalty processor compilation correctness."""
 
-    def test_compiled_matches_uncompiled(self, mlx_arrays):
-        """Verify compiled presence penalty matches uncompiled version."""
+    def test_penalty_lowers_seen_token_logits(self, mlx_arrays):
+        """Presence penalty subtracts from the logits of tokens already seen."""
         import mlx.core as mx
 
-        try:
-            from heylook_llm.providers.common.samplers import _apply_presence_penalty_compiled, _mlx_unique
-        except ImportError as e:
-            pytest.skip(f"heylook_llm samplers not importable: {e}")
+        from heylook_llm.providers.common.samplers import make_presence_penalty_processor
 
-        tokens = mlx_arrays["tokens"]
+        logits = mlx_arrays["logits"]
+        tokens = mlx_arrays["tokens"]  # contains tokens 1, 5, 10, 20
         penalty = 1.5
 
-        # Get unique tokens using pure MLX implementation
-        unique_tokens = _mlx_unique(tokens)
-
-        # Create two independent logits arrays for fair comparison
-        # Note: mlx-lm passes 1D logits (vocab_size,) to processors
-        logits1 = mx.random.normal((32000,))
-        mx.synchronize()  # Force evaluation before copying
-        logits2 = logits1 * 1.0  # Copy via multiplication
-
-        # Uncompiled reference implementation
-        def reference_presence_penalty(logits, unique_tokens, penalty):
-            return logits.at[unique_tokens].add(-penalty)
-
-        # Run both versions on separate arrays
-        reference_result = reference_presence_penalty(logits1, unique_tokens, penalty)
-        compiled_result = _apply_presence_penalty_compiled(logits2, unique_tokens, penalty)
-
-        # Force evaluation
+        processor = make_presence_penalty_processor(penalty)
+        result = processor(tokens, mx.array(logits))
         mx.synchronize()
 
-        # Verify results match
-        diff = mx.abs(reference_result - compiled_result)
-        max_diff = mx.max(diff).item()
-
-        assert max_diff < 1e-5, f"Compiled result differs from reference by {max_diff}"
+        # Seen tokens drop by exactly `penalty`; unseen tokens are unchanged.
+        seen = mx.array([1, 5, 10, 20], dtype=mx.int32)
+        seen_delta = (result[seen] - logits[seen])
+        assert mx.max(mx.abs(seen_delta + penalty)).item() < 1e-5
+        # A token never in the sequence (e.g. 2) is untouched.
+        assert abs((result[2] - logits[2]).item()) < 1e-6
 
     def test_zero_penalty_noop(self, mlx_arrays):
         """Verify zero penalty returns unchanged logits."""
@@ -124,25 +107,20 @@ class TestPresencePenaltyCompilation:
 class TestShapelessCompilation:
     """Tests for shapeless compilation with variable inputs."""
 
-    def test_varying_batch_sizes(self, mlx_arrays):
-        """Verify compiled functions work with different batch sizes."""
+    def test_varying_batch_sizes(self, mlx_arrays):  # noqa: ARG002
+        """The presence-penalty processor handles varying token-sequence lengths."""
         import mlx.core as mx
 
-        try:
-            from heylook_llm.providers.common.samplers import _apply_presence_penalty_compiled, _mlx_unique
-        except ImportError as e:
-            pytest.skip(f"heylook_llm samplers not importable: {e}")
+        from heylook_llm.providers.common.samplers import make_presence_penalty_processor
 
         penalty = 1.0
+        processor = make_presence_penalty_processor(penalty)
 
         for batch_tokens in [5, 10, 50, 100]:
             tokens = mx.arange(batch_tokens, dtype=mx.int32)
             logits = mx.random.normal((32000,))  # 1D as in mlx-lm
-            unique = _mlx_unique(tokens)  # Pure MLX unique
 
-            # Should not raise
-            result = _apply_presence_penalty_compiled(logits, unique, penalty)
+            # Should not raise and must preserve shape across input sizes.
+            result = processor(tokens, logits)
             mx.synchronize()
-
-            # Basic sanity check
             assert result.shape == logits.shape

@@ -92,21 +92,11 @@ class TestArrayOperationDtypes:
         mx.synchronize()
         assert result.dtype == mx.float16, f"Presence penalty changed dtype to {result.dtype}"
 
-    def test_vision_normalization_output_dtype(self):
-        """Verify vision normalization produces expected dtype."""
-        try:
-            import mlx.core as mx
-            from heylook_llm.providers.mlx_batch_vision import _normalize_and_transpose
-        except ImportError:
-            pytest.skip("MLX or heylook_llm not installed")
-
-        # Input as float32 (typical for images)
-        img = mx.random.uniform(shape=(336, 336, 3)).astype(mx.float32)
-        result = _normalize_and_transpose(img)
-
-        mx.synchronize()
-        # ImageNet constants are float32, so output should be float32
-        assert result.dtype == mx.float32, f"Expected float32, got {result.dtype}"
+    # test_vision_normalization_output_dtype removed: it imported
+    # `heylook_llm.providers.mlx_batch_vision._normalize_and_transpose`, a module
+    # deleted when batch vision moved to apps/batch-labeler/ (v1.23.0). The test
+    # skipped with a misleading "MLX not installed" message while testing nothing;
+    # vision normalization is now covered by apps/batch-labeler's own suite.
 
 
 class TestBroadcastDtypeRules:

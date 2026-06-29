@@ -190,7 +190,7 @@ class TestAppConfig:
 
     def test_max_loaded_models_default(self):
         cfg = AppConfig(models=[])
-        assert cfg.max_loaded_models == 2
+        assert cfg.max_loaded_models == 1
 
 
 @pytest.mark.unit
