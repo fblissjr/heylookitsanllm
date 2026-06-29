@@ -11,7 +11,7 @@ import time
 import pytest
 
 from heylook_llm.config import ChatMessage, ChatRequest
-from helpers.mlx_mock import create_mock_model, create_mock_processor
+from helpers.mlx_mock import create_mock_model, create_mock_processor, create_mock_vlm_model
 
 
 @pytest.mark.unit
@@ -617,3 +617,64 @@ class TestUnifiedTextStrategy:
         from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
         strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=True)
         assert strategy.is_vlm is True
+
+
+@pytest.mark.unit
+class TestWarmupModelWrapping:
+    """Regression: warmup must wrap VLM models the same way real requests do.
+
+    Bug: warmup() passed the full VLM model directly to generate_text. A VLM's
+    forward pass returns a LanguageModelOutput, but mlx-lm's generate_step does
+    `logits = logits[:, -1, :]`, raising 'LanguageModelOutput' object is not
+    subscriptable. Real requests avoid this by wrapping model.language_model in
+    LanguageModelLogitsWrapper (via wrap_language_model); warmup must do the same
+    so VLMs are actually JIT-primed instead of silently failing warmup.
+    """
+
+    def _capture_warmup_model(self, provider):
+        """Run warmup with generate_text patched; return the model it received."""
+        from unittest.mock import patch
+
+        provider._compile_strategies()
+        captured = {}
+
+        def fake_generate_text(model, *args, **kwargs):  # noqa: ARG001
+            captured['model'] = model
+            return iter(())
+
+        with patch(
+            'heylook_llm.providers.common.generation_core.generate_text',
+            side_effect=fake_generate_text,
+        ):
+            provider.warmup()
+        return captured
+
+    def test_vlm_warmup_wraps_language_model(self, mock_vlm_provider):
+        """VLM warmup passes a wrapped model, not the raw VLM.
+
+        The raw VLM is what triggers the LanguageModelOutput subscript crash, so
+        the regression guard is simply: warmup must not hand generate_text the
+        raw model. (Under mocked MLX, nn.Module is a MagicMock, so isinstance
+        against the real wrapper class can't be used here.)
+        """
+        provider = mock_vlm_provider
+        provider.model = create_mock_vlm_model()
+        provider.processor = create_mock_processor()
+
+        captured = self._capture_warmup_model(provider)
+
+        assert 'model' in captured, "warmup never reached generate_text"
+        gen_model = captured['model']
+        assert gen_model is not provider.model  # wrapped, not the raw VLM
+        assert gen_model is not provider.model.language_model  # wrapped, not the bare LM
+
+    def test_text_only_warmup_uses_raw_model(self, mock_mlx_provider):
+        """Text-only warmup passes the raw model unchanged (no wrapper)."""
+        provider = mock_mlx_provider
+        provider.model = create_mock_model()
+        provider.processor = create_mock_processor()
+
+        captured = self._capture_warmup_model(provider)
+
+        assert 'model' in captured, "warmup never reached generate_text"
+        assert captured['model'] is provider.model

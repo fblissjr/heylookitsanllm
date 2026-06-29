@@ -94,3 +94,18 @@ class LanguageModelLogitsWrapper(nn.Module):
             return getattr(self.language_model, name)
         else:
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+
+def wrap_language_model(model: nn.Module) -> "LanguageModelLogitsWrapper":
+    """Return the model object mlx-lm should drive for a VLM's text generation.
+
+    A VLM's forward pass returns a LanguageModelOutput; mlx-lm's generate_step
+    expects a raw logits array (it does `logits[:, -1, :]`). Wrap the VLM's
+    `language_model` component in LanguageModelLogitsWrapper, which unwraps
+    `.logits` and exposes the layers/config/head_dim mlx-lm reads.
+
+    Single source of truth for "how do I get a generation-ready model from a
+    VLM" -- used by the text strategy, the vision strategy, and warmup so the
+    knowledge of where VLM logits come from lives in exactly one place.
+    """
+    return LanguageModelLogitsWrapper(model.language_model)

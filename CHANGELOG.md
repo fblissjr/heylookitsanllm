@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.4]
+
+### Fixed
+
+- **VLM warmup never primed the model**: `MLXProvider.warmup()` passed the full VLM model straight to `generate_text`. A VLM's forward pass returns a `LanguageModelOutput`, but mlx-lm's `generate_step` subscripts logits directly (`logits[:, -1, :]`), so every VLM warmup raised `'LanguageModelOutput' object is not subscriptable`. Warmup now routes the model through the text strategy's `_get_generation_model()` -- the same `LanguageModelLogitsWrapper` real requests use -- so VLMs are actually JIT-primed at load instead of paying compilation cost on the first request. Text-only models are unaffected (wrapper returns the raw model).
+
+### Changed
+
+- **Warmup failures now log at WARNING** (was INFO). A consistently-failing warmup means the model is never primed and the first request pays full JIT cost; logging it at WARNING surfaces the regression instead of burying it. Behavior is otherwise unchanged -- warmup stays best-effort and never blocks model loading.
+- **Consolidated VLM language-model wrapping** into `wrap_language_model()` in `providers/common/model_wrappers.py`. The text and vision strategies share one definition of "wrap a VLM's language model for mlx-lm" instead of constructing `LanguageModelLogitsWrapper(model.language_model)` inline in two places. Warmup resolves its generation model through `UnifiedTextStrategy._get_generation_model()` -- the same path real requests use -- so it can't drift back into passing the raw VLM model.
+- **Removed a redundant VLM mRoPE position reset** in `UnifiedTextStrategy.generate()`. The `_position_ids`/`_rope_deltas` reset already happens in `run_generation` via `_reset_vlm_positions()` (the wrapper forwards to the same language-model instance), so the inline copy was dead. No behavior change.
+
 ## [1.30.3]
 
 ### Added

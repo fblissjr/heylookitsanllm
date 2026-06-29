@@ -22,7 +22,7 @@ from .abort import AbortEvent
 from .base import BaseProvider
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
-from .common.model_wrappers import LanguageModelLogitsWrapper
+from .common.model_wrappers import wrap_language_model
 from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
@@ -193,16 +193,7 @@ class UnifiedTextStrategy:
             messages_for_template, prompt_tokens, tokenizer, processor, model, effective_request
         )
 
-        # VLM models (e.g. Qwen3.5) cache _position_ids and _rope_deltas on
-        # the LanguageModel instance across requests. With radix cache, a new
-        # request may restore KV state at a non-zero offset, but stale
-        # _position_ids from the previous request causes shape mismatches in
-        # rotary embedding computation. Reset before each request.
-        if self.is_vlm:
-            lm = model.language_model
-            if hasattr(lm, '_position_ids'):
-                lm._position_ids = None
-                lm._rope_deltas = None
+        # VLM mRoPE position state is reset in run_generation via _reset_vlm_positions().
 
         yield from generate_text(
             model=gen_model,
@@ -313,7 +304,7 @@ class UnifiedTextStrategy:
             return model
 
         if self._cached_wrapper is None:
-            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
+            self._cached_wrapper = wrap_language_model(model)
         return self._cached_wrapper
 
 
@@ -427,7 +418,7 @@ class VLMVisionStrategy:
 
         # Ensure wrapper is cached for language model generation
         if self._cached_wrapper is None:
-            self._cached_wrapper = LanguageModelLogitsWrapper(model.language_model)
+            self._cached_wrapper = wrap_language_model(model)
 
         # Create KV cache sized for the language model
         request_cache = make_prompt_cache(self._cached_wrapper)
@@ -1073,10 +1064,20 @@ class MLXProvider(BaseProvider):
             return
 
         from .common.generation_core import generate_text
+        # Resolve the generation model through the SAME method real requests use
+        # (UnifiedTextStrategy._get_generation_model) rather than re-deriving it
+        # here. This keeps warmup structurally on the request path -- warmup
+        # drifting from that path is exactly how the VLM LanguageModelOutput bug
+        # (raw model -> non-subscriptable logits) went unnoticed. Strategies are
+        # compiled in load() before the router calls warmup(); fall back to the
+        # raw model defensively if that ever changes.
+        text_strategy = self._strategies.get('text')
+        gen_model = text_strategy._get_generation_model(self.model) if text_strategy else self.model
+
         t0 = time.time()
         try:
             for _ in generate_text(
-                self.model,
+                gen_model,
                 tok,
                 prompt_tokens,
                 {"max_tokens": 4, "num_draft_tokens": 0},
@@ -1088,8 +1089,16 @@ class MLXProvider(BaseProvider):
             ):
                 pass
         except Exception:
-            logging.info(f"warmup: {self.model_id} threw during warmup; continuing anyway",
-                         exc_info=True)
+            # Warmup is best-effort (see BaseProvider.warmup contract), but a
+            # failure means this model is never JIT-primed and the first real
+            # request pays the full compilation cost. Log at WARNING so a
+            # consistently-failing warmup is visible rather than buried -- this
+            # is how the VLM LanguageModelOutput bug stayed hidden.
+            logging.warning(
+                f"warmup: {self.model_id} failed to prime; first request will pay "
+                f"JIT compilation cost. Continuing without warmup.",
+                exc_info=True,
+            )
             return
         logging.info(f"warmup: {self.model_id} primed in {(time.time() - t0) * 1000:.0f}ms")
 

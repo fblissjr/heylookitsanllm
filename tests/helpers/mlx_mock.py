@@ -3,6 +3,13 @@
 # Reusable MLX mocking utilities for tests that need to import provider code
 # without having MLX installed.  Uses sys.modules patching for the full
 # MLX module tree and all transitive dependencies.
+#
+# WARNING: ALWAYS apply these mocks with a scoped `with patch.dict(sys.modules, ...)`
+# context (or the `mock_mlx` fixture in conftest.py). NEVER call
+# `patch.dict(...).start()` at module level -- pytest imports every test module
+# during collection, so a module-level start() replaces real `mlx`/`mlx_lm` with
+# MagicMocks for the ENTIRE session, silently breaking every later real-MLX test.
+# That leak caused ~50 spurious "Metal context" failures until it was scoped.
 
 from unittest.mock import MagicMock
 
@@ -89,6 +96,19 @@ def create_mock_model():
     return model
 
 
+def create_mock_vlm_model():
+    """Mock VLM model with a `.language_model` sub-model.
+
+    VLM code paths (wrapper construction, position reset, vision strategy) reach
+    through `model.language_model`, which a bare create_mock_model() doesn't set.
+    Use this for any test exercising VLM provider behavior so the sub-model isn't
+    forgotten.
+    """
+    model = create_mock_model()
+    model.language_model = create_mock_model()
+    return model
+
+
 def create_mock_tokenizer():
     """Create a mock tokenizer with apply_chat_template, encode, decode."""
     tokenizer = MagicMock()
@@ -100,10 +120,28 @@ def create_mock_tokenizer():
 
 
 def create_mock_processor(with_tokenizer: bool = True):
-    """Create a mock VLM processor."""
+    """Create a mock VLM processor mirroring mlx-vlm's processor shape.
+
+    Real mlx-vlm processors expose `.tokenizer` and do NOT have a `_tokenizer`
+    attribute -- that lives on the inner TokenizerWrapper. A bare MagicMock
+    fabricates every attribute on access, so `processor._tokenizer` would be a
+    phantom auto-mock. BaseProvider.get_tokenizer() checks `_tokenizer` first,
+    so it would return that phantom (whose encode() isn't iterable) instead of
+    the real `.tokenizer`, silently breaking any code that tokenizes -- e.g.
+    provider.warmup(). Delete `_tokenizer` so get_tokenizer falls through to
+    `.tokenizer`, matching real processor behavior.
+    """
     processor = MagicMock()
+    del processor._tokenizer  # match real processors: no private _tokenizer attr
     if with_tokenizer:
         processor.tokenizer = create_mock_tokenizer()
+    else:
+        # Model a processor with NO usable tokenizer. get_tokenizer() falls back
+        # through _tokenizer -> tokenizer -> decode(); a bare MagicMock fabricates
+        # all three, so delete every fallback or get_tokenizer returns the
+        # processor itself instead of None.
+        del processor.tokenizer
+        del processor.decode
     return processor
 
 

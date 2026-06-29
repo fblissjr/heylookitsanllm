@@ -82,6 +82,31 @@ class TestGetTokenizer:
         assert provider.get_tokenizer() is None
 
 
+class TestMockProcessorHelperContract:
+    """Pin create_mock_processor against the real get_tokenizer() contract.
+
+    The helper uses MagicMock attribute deletion to mirror real mlx-vlm
+    processors; these tests guard that the mock state actually drives
+    get_tokenizer() to the intended branch (and not, e.g., the .decode fallback).
+    """
+
+    def test_with_tokenizer_resolves_to_tokenizer(self):
+        from helpers.mlx_mock import create_mock_processor
+        provider = ConcreteProvider("test-model", {}, verbose=False)
+        provider.processor = create_mock_processor(with_tokenizer=True)
+        tok = provider.get_tokenizer()
+        assert tok is provider.processor.tokenizer
+        assert tok.encode("hi") == [1, 2, 3, 4]  # real list, not a phantom mock
+
+    def test_without_tokenizer_resolves_to_none(self):
+        from helpers.mlx_mock import create_mock_processor
+        provider = ConcreteProvider("test-model", {}, verbose=False)
+        provider.processor = create_mock_processor(with_tokenizer=False)
+        # No _tokenizer, no tokenizer, no decode() -> get_tokenizer must be None,
+        # not the processor mock itself.
+        assert provider.get_tokenizer() is None
+
+
 class TestWarmup:
     """S1.4: provider.warmup() exists and is safe to call."""
 
