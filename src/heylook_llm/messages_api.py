@@ -238,6 +238,9 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         provider_get_start = time.time()
         provider = await asyncio.to_thread(router.get_provider, chat_request.model)
         provider_get_ms = (time.time() - provider_get_start) * 1000
+        # Backpressure: reject early (503) if the generation queue is full,
+        # before committing to a streaming response.
+        provider.check_capacity()
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
 
     except RuntimeError as e:
@@ -302,11 +305,16 @@ async def _non_stream_messages(
 
     def consume():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count
-        for chunk in generator:
-            full_text += chunk.text
-            token_count += 1
-            prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
-            completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
+        try:
+            for chunk in generator:
+                full_text += chunk.text
+                token_count += 1
+                prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
+                completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
+        finally:
+            # Ensure the provider generator's finally runs now (releases the
+            # generation gate) even if consumption raised -- not at GC.
+            generator.close()
 
     await asyncio.to_thread(consume)
 

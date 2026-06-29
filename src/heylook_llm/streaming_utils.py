@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator
 
 from fastapi import Request
@@ -47,13 +48,21 @@ async def async_generator_with_abort(
         except StopIteration:
             return None
 
+    # Drive the whole generation on ONE dedicated thread. The default executor
+    # is a multi-thread pool, so successive next() calls could otherwise run on
+    # different threads -- fragile for MLX, whose per-generation stream and
+    # wired_limit context are entered on the first next() and synchronized on
+    # the last. Pinning to a single worker keeps a generation on one thread for
+    # its entire life.
+    gen_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx-stream")
+
     keepalive_interval = 5.0  # seconds between keepalive comments
     last_keepalive = loop.time()
     first_chunk_received = False
 
     try:
         while True:
-            chunk_future = loop.run_in_executor(None, get_next)
+            chunk_future = loop.run_in_executor(gen_executor, get_next)
 
             if http_request and abort_event:
                 while not chunk_future.done():
@@ -80,10 +89,15 @@ async def async_generator_with_abort(
             yield chunk
     finally:
         # Close the provider generator so its finally blocks run immediately
-        # (releases _generation_lock, decrements _active_generations, clears MLX cache).
-        # Without this, close() only runs when GC collects the abandoned generator.
+        # (releases the generation gate, decrements _active_generations, clears
+        # the MLX cache). Without this, close() only runs when GC collects the
+        # abandoned generator -- which would hold the gate and stall the queue.
+        # close() runs on the same pinned worker that drove generation.
         try:
             logging.debug(f"{log_prefix}Closing provider generator")
-            sync_gen.close()
+            close_future = loop.run_in_executor(gen_executor, sync_gen.close)
+            await asyncio.wait_for(close_future, timeout=30)
         except Exception:
             pass
+        finally:
+            gen_executor.shutdown(wait=False)

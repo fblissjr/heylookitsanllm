@@ -27,6 +27,7 @@ from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
+from .common.generation_gate import GenerationGate
 
 # -- transformers 5.x compatibility patches (no torchvision) --
 # On MLX-only setups, torchvision is absent. transformers 5.x has several bugs
@@ -511,8 +512,13 @@ class MLXProvider(BaseProvider):
         # Batch text processor (lazy-initialized)
         self._batch_processor = None
 
-        # Add generation lock to prevent Metal command buffer conflicts
-        self._generation_lock = threading.Lock()
+        # Serialize generation FIFO across concurrent requests. Single GPU +
+        # one loaded model + shared KV cache => one generation at a time. The
+        # gate queues requests in arrival order (no preemption); check_capacity()
+        # rejects with ModelBusyError (-> 503) once max_queue_depth are waiting.
+        self._gen_gate = GenerationGate(
+            max_waiting=int(self.config.get("max_queue_depth", 8))
+        )
 
         # Cooperative abort signal for cancelling in-flight generation
         self._abort_event = AbortEvent()
@@ -934,10 +940,14 @@ class MLXProvider(BaseProvider):
 
         with self._active_lock:
             self._active_generations += 1
+        # Share the generation gate with chat completions so batch and chat
+        # never run on the GPU concurrently. Batch is internal -- it queues
+        # (no capacity check / 503).
+        self._gen_gate.acquire()
         try:
-            with self._generation_lock:
-                results = processor.process_batch(prompts, max_tokens_list)
+            results = processor.process_batch(prompts, max_tokens_list)
         finally:
+            self._gen_gate.release()
             with self._active_lock:
                 self._active_generations -= 1
 
@@ -955,6 +965,15 @@ class MLXProvider(BaseProvider):
 
         return completions
 
+    def check_capacity(self) -> None:
+        """Reject (ModelBusyError -> 503) when the FIFO queue is already full.
+
+        Lets HTTP entry points apply backpressure before committing to a
+        response. Generation itself still queues via the gate; this only bounds
+        how deep the queue is allowed to grow for externally-submitted requests.
+        """
+        self._gen_gate.check_capacity()
+
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
@@ -969,13 +988,12 @@ class MLXProvider(BaseProvider):
             with self._active_lock:
                 self._active_generations += 1
 
-            # Preemption: if the lock is held by another generation, abort it
-            # so we can start this request sooner instead of blocking.
-            lock_acquired = self._generation_lock.acquire(blocking=False)
-            if not lock_acquired:
-                logging.info(f"[MLX GENERATION] Preempting current generation on {self.model_id}")
-                self._abort_event.set()
-                self._generation_lock.acquire(blocking=True)
+            # FIFO queue: wait our turn instead of preempting the in-flight
+            # generation. Concurrent requests complete in arrival order rather
+            # than cannibalizing each other. A client that no longer wants its
+            # result aborts via _abort_event (set by the streaming layer on
+            # disconnect), which frees the slot for the next waiter.
+            self._gen_gate.acquire()
             # Clean slate for this generation
             self._abort_event.clear()
 
@@ -1018,8 +1036,8 @@ class MLXProvider(BaseProvider):
 
                     yield MLXErrorChunk(text=f"Error: MLX generation failed: {str(e)}")
             finally:
-                # Always release the generation lock
-                self._generation_lock.release()
+                # Always release the generation slot so the next waiter runs
+                self._gen_gate.release()
                 # Decrement active generation counter
                 with self._active_lock:
                     self._active_generations -= 1

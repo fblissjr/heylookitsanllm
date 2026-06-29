@@ -86,3 +86,53 @@ class TestSyncGenClose:
         asyncio.run(consume_one_then_aclose())
 
         assert tracker["closed"], "Generator finally block did not run after aclose()"
+
+
+class TestThreadPinning:
+    """The whole generation must run on ONE thread.
+
+    MLX's per-generation stream and wired_limit context are entered on the first
+    next() and synchronized on the last; if next() calls hop pool threads the
+    sync happens on the wrong thread. The streaming bridge pins each generation
+    to a dedicated single-thread executor.
+    """
+
+    def test_all_chunks_produced_on_single_thread(self):
+        thread_ids = []
+
+        def thread_recording_gen():
+            for i in range(6):
+                thread_ids.append(threading.get_ident())
+                yield i
+
+        gen = thread_recording_gen()
+        chunks = asyncio.run(_collect(async_generator_with_abort(gen, None, None)))
+
+        assert chunks == [0, 1, 2, 3, 4, 5]
+        assert len(set(thread_ids)) == 1, (
+            f"generation hopped threads: {set(thread_ids)}"
+        )
+
+    def test_close_runs_on_same_thread_as_generation(self):
+        """close() must run on the pinned worker, not the event-loop thread --
+        a generator can't be closed from a different thread while suspended."""
+        gen_thread = {}
+        close_thread = {}
+
+        def recording_gen():
+            try:
+                for i in range(3):
+                    gen_thread["id"] = threading.get_ident()
+                    yield i
+            finally:
+                close_thread["id"] = threading.get_ident()
+
+        async def consume_one_then_aclose():
+            agen = async_generator_with_abort(recording_gen(), None, None)
+            await agen.__anext__()
+            await agen.aclose()
+
+        asyncio.run(consume_one_then_aclose())
+
+        assert close_thread["id"] == gen_thread["id"]
+        assert close_thread["id"] != threading.get_ident()  # not the main/loop thread

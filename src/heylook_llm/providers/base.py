@@ -18,6 +18,17 @@ class BaseProvider(ABC):
     def create_chat_completion(self, request: ChatRequest) -> Generator:
         raise NotImplementedError
 
+    def check_capacity(self) -> None:
+        """Raise if the provider is too busy to accept another request.
+
+        Called by HTTP entry points *before* starting generation so an
+        overloaded provider can reject early with backpressure (HTTP 503)
+        instead of letting the queue grow without bound. Default is a no-op
+        (no admission limit). Providers that serialize generation (e.g. MLX)
+        override this to raise ``ModelBusyError`` when their queue is full.
+        Internal orchestration (batch, RLM) intentionally skips this and queues.
+        """
+
     def get_metrics(self) -> Optional[ModelMetrics]:
         """
         Get current metrics for this model (context usage, memory, etc.).

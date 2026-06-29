@@ -548,6 +548,10 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         provider = await asyncio.to_thread(router.get_provider, chat_request.model)
         provider_get_ms = (time.time() - provider_get_start) * 1000
 
+        # Backpressure: reject early (503, handled below) if the generation
+        # queue is already full, before committing to a response.
+        provider.check_capacity()
+
         if router.log_level <= logging.DEBUG:
             logging.debug(f"Dispatching request to provider: {provider.__class__.__name__} for model '{chat_request.model}'")
 
@@ -1025,33 +1029,38 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
         nonlocal peak_memory_gb, kv_cache_bytes
         first_logprob_logged = False
-        for chunk in generator:
-            full_text += chunk.text
-            token_count += 1
+        try:
+            for chunk in generator:
+                full_text += chunk.text
+                token_count += 1
 
-            # Collect logprobs if requested and available
-            if logprobs_collector:
-                token_id = getattr(chunk, 'token', None)
-                chunk_logprobs = getattr(chunk, 'logprobs', None)
-                if token_id is not None and chunk_logprobs is not None:
-                    logprobs_collector.add_token(token_id, chunk_logprobs)
-                elif not first_logprob_logged:
-                    first_logprob_logged = True
-                    diag_event("logprobs_missing_data", request_id=request_id, level="debug",
-                               has_token_id=token_id is not None,
-                               has_chunk_logprobs=chunk_logprobs is not None,
-                               streaming=False)
+                # Collect logprobs if requested and available
+                if logprobs_collector:
+                    token_id = getattr(chunk, 'token', None)
+                    chunk_logprobs = getattr(chunk, 'logprobs', None)
+                    if token_id is not None and chunk_logprobs is not None:
+                        logprobs_collector.add_token(token_id, chunk_logprobs)
+                    elif not first_logprob_logged:
+                        first_logprob_logged = True
+                        diag_event("logprobs_missing_data", request_id=request_id, level="debug",
+                                   has_token_id=token_id is not None,
+                                   has_chunk_logprobs=chunk_logprobs is not None,
+                                   streaming=False)
 
-            # Update token count periodically for long responses
-            if token_count % 25 == 0:
-                from heylook_llm.utils import log_token_update
-                log_token_update(request_id, token_count)
+                # Update token count periodically for long responses
+                if token_count % 25 == 0:
+                    from heylook_llm.utils import log_token_update
+                    log_token_update(request_id, token_count)
 
-            prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-            completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-            cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
-            peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
-            kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
+                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+                cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
+                peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
+                kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
+        finally:
+            # Release the generation gate now (provider generator's finally)
+            # even if consumption raised -- don't wait for GC.
+            generator.close()
 
     await asyncio.to_thread(consume_generator)
 

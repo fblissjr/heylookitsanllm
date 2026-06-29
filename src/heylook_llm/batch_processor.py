@@ -175,12 +175,15 @@ class BatchProcessor:
         full_text = ""
         prompt_tokens = 0
         completion_tokens = 0
-        
-        for chunk in generator:
-            full_text += chunk.text
-            prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-            completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        
+
+        try:
+            for chunk in generator:
+                full_text += chunk.text
+                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+        finally:
+            generator.close()  # release the generation gate now, not at GC
+
         # Build response
         response = BatchResponse(
             id=f"chatcmpl-batch-{uuid.uuid4()}",
@@ -256,11 +259,14 @@ class BatchProcessor:
                 full_text = ""
                 prompt_tokens = 0
                 completion_tokens = 0
-                
-                for chunk in generator:
-                    full_text += chunk.text
-                    prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-                    completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+
+                try:
+                    for chunk in generator:
+                        full_text += chunk.text
+                        prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+                        completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+                finally:
+                    generator.close()  # release the generation gate now, not at GC
                 
                 # Track tokens
                 total_prompt_tokens += prompt_tokens
@@ -500,12 +506,15 @@ class BatchProcessor:
         full_text = ""
         prompt_tokens = 0
         completion_tokens = 0
-        
-        for chunk in generator:
-            full_text += chunk.text
-            prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-            completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        
+
+        try:
+            for chunk in generator:
+                full_text += chunk.text
+                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+        finally:
+            generator.close()  # release the generation gate now, not at GC
+
         # Create response
         return ChatCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4()}",

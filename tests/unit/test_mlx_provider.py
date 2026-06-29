@@ -517,8 +517,9 @@ class TestCreateChatCompletion:
         chunks = list(mock_mlx_provider.create_chat_completion(req))
         assert any("text-only" in c.text for c in chunks)
 
-    def test_generation_lock_released_after_error(self, mock_mlx_provider):
-        """Generation lock should be released even after errors."""
+    def test_generation_gate_released_after_error(self, mock_mlx_provider):
+        """The generation gate must release even after errors, so the next
+        queued request can run instead of deadlocking."""
         mock_mlx_provider.model = create_mock_model()
         mock_mlx_provider.processor = create_mock_processor()
         mock_mlx_provider._compile_strategies()
@@ -530,10 +531,9 @@ class TestCreateChatCompletion:
         # First call (triggers error from mock strategy)
         list(mock_mlx_provider.create_chat_completion(req))
 
-        # Lock should be released so we can acquire it again
-        acquired = mock_mlx_provider._generation_lock.acquire(blocking=False)
-        assert acquired is True
-        mock_mlx_provider._generation_lock.release()
+        # Slot should be free, and capacity available again.
+        assert mock_mlx_provider._gen_gate.busy is False
+        mock_mlx_provider.check_capacity()  # no raise
 
     def test_active_generation_counter_decremented(self, mock_mlx_provider):
         """_active_generations should return to 0 after generation."""
@@ -546,6 +546,42 @@ class TestCreateChatCompletion:
         )
         list(mock_mlx_provider.create_chat_completion(req))
         assert mock_mlx_provider._active_generations == 0
+
+
+@pytest.mark.unit
+class TestCheckCapacity:
+    """check_capacity() applies backpressure (503) via the generation gate."""
+
+    def test_idle_provider_has_capacity(self, mock_mlx_provider):
+        mock_mlx_provider.check_capacity()  # no raise
+
+    def test_raises_model_busy_when_queue_full(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import MLXProvider
+        from heylook_llm.providers.common.generation_gate import ModelBusyError
+
+        # max_queue_depth=0 -> single-flight: any overlap is rejected.
+        provider = MLXProvider(
+            model_id="busy",
+            config={"model_path": "/fake", "vision": False, "max_queue_depth": 0},
+            verbose=False,
+        )
+        provider._gen_gate.acquire()  # simulate an in-flight generation
+        try:
+            with pytest.raises(ModelBusyError) as exc:
+                provider.check_capacity()
+            assert "MODEL_BUSY" in str(exc.value)
+        finally:
+            provider._gen_gate.release()
+
+    def test_config_sets_queue_depth(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        provider = MLXProvider(
+            model_id="d",
+            config={"model_path": "/fake", "vision": False, "max_queue_depth": 3},
+            verbose=False,
+        )
+        assert provider._gen_gate.max_waiting == 3
 
 
 @pytest.mark.unit

@@ -479,13 +479,18 @@ class RLMEngine:
         prompt_tokens = 0
         generation_tokens = 0
 
-        for chunk in gen:
-            if hasattr(chunk, "text"):
-                text_parts.append(chunk.text)
-            if hasattr(chunk, "prompt_tokens") and chunk.prompt_tokens:
-                prompt_tokens = chunk.prompt_tokens
-            if hasattr(chunk, "generation_tokens") and chunk.generation_tokens:
-                generation_tokens = chunk.generation_tokens
+        try:
+            for chunk in gen:
+                if hasattr(chunk, "text"):
+                    text_parts.append(chunk.text)
+                if hasattr(chunk, "prompt_tokens") and chunk.prompt_tokens:
+                    prompt_tokens = chunk.prompt_tokens
+                if hasattr(chunk, "generation_tokens") and chunk.generation_tokens:
+                    generation_tokens = chunk.generation_tokens
+        finally:
+            # Release the generation gate promptly so the next RLM iteration
+            # (or another request) can run, even if consumption raised.
+            gen.close()
 
         return "".join(text_parts), prompt_tokens, generation_tokens
 

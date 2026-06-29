@@ -46,13 +46,16 @@ class FakeProvider:
         self.model_id = model_id
         self.processor = None
 
+    def check_capacity(self):
+        """No-op admission check (BaseProvider contract); never busy in tests."""
+
     def create_chat_completion(self, request):
-        """Return a generator of FakeChunks."""
-        return iter([
-            FakeChunk("Hello", token_id=1),
-            FakeChunk(", ", token_id=2),
-            FakeChunk("world!", token_id=3),
-        ])
+        """Yield FakeChunks. A real generator (not a list_iterator) so the
+        route's generator.close() -- which releases the generation gate -- works.
+        """
+        yield FakeChunk("Hello", token_id=1)
+        yield FakeChunk(", ", token_id=2)
+        yield FakeChunk("world!", token_id=3)
 
 
 # ---------------------------------------------------------------------------
