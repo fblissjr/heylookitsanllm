@@ -66,6 +66,22 @@ class GenerationGate:
         with self._cv:
             return self._busy
 
+    def snapshot(self) -> dict:
+        """Return a consistent point-in-time view of the queue.
+
+        Keys: ``active`` (0/1, one generation runs at a time), ``waiting``
+        (queued behind it), ``max_waiting`` (depth cap), ``capacity``
+        (``1 + max_waiting``, total requests the gate admits before 503).
+        Used for backpressure headers and observability.
+        """
+        with self._cv:
+            return {
+                "active": 1 if self._busy else 0,
+                "waiting": self._waiting,
+                "max_waiting": self.max_waiting,
+                "capacity": 1 + self.max_waiting,
+            }
+
     def check_capacity(self) -> None:
         """Raise :class:`ModelBusyError` if the queue is already full.
 

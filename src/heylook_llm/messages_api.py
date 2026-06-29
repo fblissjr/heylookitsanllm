@@ -233,6 +233,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     chat_request = to_chat_request(msg_request)
 
     provider_get_ms = 0.0
+    provider = None
     try:
         # Get provider and create generator (CPU-bound, run in thread)
         provider_get_start = time.time()
@@ -245,16 +246,21 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     except RuntimeError as e:
         if "MODEL_BUSY" in str(e):
+            capacity = (provider.generation_queue_stats() or {}).get("capacity") if provider else None
             return JSONResponse(
                 status_code=503,
                 content={
                     "error": {
-                        "message": "Server is processing another request. Retry shortly.",
+                        "message": "The generation queue is full. Retry shortly.",
                         "type": "server_error",
                         "code": "model_overloaded",
                     }
                 },
-                headers={"Retry-After": "1"},
+                headers={
+                    "Retry-After": "1",
+                    "X-RateLimit-Limit": str(capacity) if capacity else "1",
+                    "X-RateLimit-Remaining": "0",
+                },
             )
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:

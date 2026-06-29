@@ -4,6 +4,42 @@
 
 import pytest
 
+from heylook_llm.providers.common.generation_gate import ModelBusyError
+
+
+class TestChatCompletionsBackpressure:
+    """The 503 backpressure path: a full generation queue is rejected, not queued
+    forever. Previously this 503 code existed but was never triggered."""
+
+    def test_full_queue_returns_503_with_headers(self, client, mock_router):
+        # Force provider creation, then make it report a full queue.
+        provider = mock_router.get_provider("test-mlx-model")
+        orig_check = provider.check_capacity
+        orig_stats = getattr(provider, "generation_queue_stats", None)
+        provider.check_capacity = lambda: (_ for _ in ()).throw(
+            ModelBusyError("MODEL_BUSY: 8 request(s) already queued (max_waiting=8)")
+        )
+        provider.generation_queue_stats = lambda: {
+            "active": 1, "waiting": 8, "max_waiting": 8, "capacity": 9
+        }
+        try:
+            resp = client.post("/v1/chat/completions", json={
+                "model": "test-mlx-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+            })
+        finally:
+            provider.check_capacity = orig_check
+            if orig_stats is not None:
+                provider.generation_queue_stats = orig_stats
+            else:
+                del provider.generation_queue_stats
+
+        assert resp.status_code == 503
+        assert resp.json()["error"]["code"] == "model_overloaded"
+        assert resp.headers.get("Retry-After") == "1"
+        # Capacity header reflects the queue (1 active + 8 waiting), not "1".
+        assert resp.headers.get("X-RateLimit-Limit") == "9"
+
 
 class TestChatCompletionsNonStreaming:
     """Tests for POST /v1/chat/completions (non-streaming)."""

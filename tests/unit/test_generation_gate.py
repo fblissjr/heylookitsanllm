@@ -85,6 +85,39 @@ class TestGenerationGateCapacity:
 
 
 @pytest.mark.unit
+class TestGenerationGateSnapshot:
+    def test_idle_snapshot(self):
+        gate = GenerationGate(max_waiting=8)
+        snap = gate.snapshot()
+        assert snap == {"active": 0, "waiting": 0, "max_waiting": 8, "capacity": 9}
+
+    def test_active_snapshot(self):
+        gate = GenerationGate(max_waiting=8)
+        gate.acquire()
+        try:
+            snap = gate.snapshot()
+            assert snap["active"] == 1
+            assert snap["waiting"] == 0
+            assert snap["capacity"] == 9
+        finally:
+            gate.release()
+
+    def test_snapshot_counts_waiters(self):
+        gate = GenerationGate(max_waiting=8)
+        gate.acquire()
+        blocked = threading.Thread(target=gate.acquire)
+        blocked.start()
+        try:
+            _wait_for(lambda: gate.snapshot()["waiting"] == 1)
+            snap = gate.snapshot()
+            assert snap["active"] == 1 and snap["waiting"] == 1
+        finally:
+            gate.release()
+            blocked.join(timeout=2)
+            gate.release()
+
+
+@pytest.mark.unit
 class TestGenerationGateFifo:
     def test_fifo_order(self):
         """Waiters are served strictly in arrival order, never preempted."""

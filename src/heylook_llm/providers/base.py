@@ -29,6 +29,15 @@ class BaseProvider(ABC):
         Internal orchestration (batch, RLM) intentionally skips this and queues.
         """
 
+    def generation_queue_stats(self) -> Optional[Dict]:
+        """Return a snapshot of the generation queue, or None if not serialized.
+
+        Providers that gate generation (e.g. MLX) return a dict with
+        ``active`` / ``waiting`` / ``max_waiting`` / ``capacity``. Used for 503
+        backpressure headers and observability. Default None (no queue).
+        """
+        return None
+
     def get_metrics(self) -> Optional[ModelMetrics]:
         """
         Get current metrics for this model (context usage, memory, etc.).

@@ -307,6 +307,7 @@ class ModelMetrics(BaseModel):
     context_percent: float = Field(..., description="Context usage percentage")
     memory_mb: float = Field(..., description="Model memory usage in MB")
     requests_active: int = Field(0, description="Active requests for this model")
+    requests_queued: int = Field(0, description="Requests waiting in the FIFO generation queue behind the active one")
 
 
 class SystemMetricsResponse(BaseModel):

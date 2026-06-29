@@ -31,13 +31,24 @@ class TestAdminProfiles:
     """Tests for GET /v1/admin/models/profiles (list profiles)."""
 
     def test_returns_profile_list(self, client):
-        """GET /v1/admin/models/profiles returns all available profiles."""
+        """GET /v1/admin/models/profiles returns exactly the bundled presets.
+
+        Derive the expectation from the preset registry (the source of truth)
+        rather than a hardcoded count, so adding/removing a preset doesn't
+        silently rot this contract test.
+        """
+        from heylook_llm.presets import get_preset_registry
+
+        expected = set(get_preset_registry().list_names())
+        assert expected, "preset registry is empty -- bundled presets missing?"
+
         resp = client.get("/v1/admin/models/profiles")
         assert resp.status_code == 200
 
         data = resp.json()
         assert "profiles" in data
-        assert len(data["profiles"]) == 9
+        returned = {p["name"] for p in data["profiles"]}
+        assert returned == expected
 
     def test_profiles_have_name_and_description(self, client):
         """Each profile entry has name and description."""

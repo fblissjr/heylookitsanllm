@@ -974,6 +974,10 @@ class MLXProvider(BaseProvider):
         """
         self._gen_gate.check_capacity()
 
+    def generation_queue_stats(self) -> dict:
+        """Snapshot of the FIFO generation queue (active/waiting/capacity)."""
+        return self._gen_gate.snapshot()
+
     def create_chat_completion(self, request: ChatRequest) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
@@ -1140,7 +1144,8 @@ class MLXProvider(BaseProvider):
                 context_capacity=context_capacity,
                 context_percent=round(context_percent, 1),
                 memory_mb=round(metal_memory_mb, 1),
-                requests_active=self._active_generations
+                requests_active=self._active_generations,
+                requests_queued=self._gen_gate.snapshot()["waiting"],
             )
         except Exception as e:
             logging.warning(f"Failed to get MLX metrics: {e}")

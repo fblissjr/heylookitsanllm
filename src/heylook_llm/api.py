@@ -539,6 +539,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         log_full_request_details(request_id, chat_request)
 
     provider_get_ms = 0.0
+    provider = None
     try:
         log_request_stage(request_id, "routing")
         diag_event("request_routed", request_id=request_id, model=chat_request.model)
@@ -570,21 +571,26 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             diag_event("request_error", request_id=request_id, level="warn", error="model_busy")
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
 
-            # Return 503 Service Unavailable with retry headers
-            # This tells OpenAI client to retry automatically
+            # Return 503 Service Unavailable with retry headers so OpenAI-style
+            # clients auto-retry. The generation queue (1 active + max_queue_depth
+            # waiting) is full; capacity frees as requests drain in FIFO order.
+            # provider is bound here -- MODEL_BUSY only originates from
+            # check_capacity()/create_chat_completion(), both after assignment.
+            capacity = (provider.generation_queue_stats() or {}).get("capacity") if provider else None
             return JSONResponse(
                 status_code=503,
                 content={
                     "error": {
-                        "message": "The server is currently processing another request. Please retry in a moment.",
+                        "message": "The generation queue is full. Please retry in a moment.",
                         "type": "server_error",
                         "code": "model_overloaded"
                     }
                 },
                 headers={
                     "Retry-After": "1",  # Suggest retry after 1 second
-                    "X-RateLimit-Limit": "1",  # We can handle 1 concurrent request
-                    "X-RateLimit-Remaining": "0",  # No capacity right now
+                    # Total in-flight + queued requests the server admits.
+                    "X-RateLimit-Limit": str(capacity) if capacity else "1",
+                    "X-RateLimit-Remaining": "0",  # Queue is full right now
                     "X-RateLimit-Reset": str(int(time.time() + 1))  # Reset in 1 second
                 }
             )
