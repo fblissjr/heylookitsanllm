@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.5]
+
+### Fixed
+
+- **All MLX generation failed with "There is no Stream(gpu, 0) in current thread."**: the dedicated generation stream in `mlx_provider.py` was created at import time with `mx.new_stream(mx.default_device())`. MLX streams are thread-local -- bound to the thread that creates them -- but generation runs on FastAPI's thread pool (`asyncio.to_thread` / `run_in_executor`), not the import thread. When `wired_limit` called `mx.synchronize(generation_stream)` on a pool worker, MLX raised `RuntimeError: There is no Stream(gpu, 0) in current thread.`, so every text and VLM request aborted before producing output (clients saw a fixed-length error string instead of a completion). Switched to `mx.new_thread_local_stream(...)`, which materializes the stream per-thread -- the same API `mlx_lm.generate` uses for its own `generation_stream`. Verified on real Metal across multiple concurrent pool workers.
+
 ## [1.30.4]
 
 ### Fixed

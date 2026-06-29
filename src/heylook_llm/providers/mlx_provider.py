@@ -96,8 +96,15 @@ _apply_transformers_patches()
 del _apply_transformers_patches
 
 # Create dedicated generation stream for better Metal utilization
-# This allows async evaluation and improves pipeline performance
-generation_stream = mx.new_stream(mx.default_device())
+# This allows async evaluation and improves pipeline performance.
+#
+# Must be thread-local: generation runs on FastAPI's thread pool
+# (asyncio.to_thread / run_in_executor), not this import thread. MLX streams
+# are bound to the thread that creates them -- a plain mx.new_stream() here
+# would raise "There is no Stream(gpu, 0) in current thread." when wired_limit
+# synchronizes it from a pool worker. new_thread_local_stream materializes the
+# stream per-thread (matching mlx_lm.generate's own generation_stream).
+generation_stream = mx.new_thread_local_stream(mx.default_device())
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None):

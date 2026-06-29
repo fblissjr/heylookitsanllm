@@ -5,6 +5,8 @@ Unit tests for MLXProvider -- the core Apple Silicon provider.
 All tests use the mock_mlx / mock_mlx_provider fixtures from conftest.py
 so they run on any platform without MLX installed.
 """
+import importlib
+import sys
 import threading
 import time
 
@@ -12,6 +14,29 @@ import pytest
 
 from heylook_llm.config import ChatMessage, ChatRequest
 from helpers.mlx_mock import create_mock_model, create_mock_processor, create_mock_vlm_model
+
+
+@pytest.mark.unit
+class TestGenerationStreamThreadLocal:
+    """The module-level generation stream must be thread-local.
+
+    Generation runs on FastAPI's thread pool (asyncio.to_thread /
+    run_in_executor), not the import thread. MLX streams are thread-local:
+    a stream from mx.new_stream() is bound to the thread that created it, so
+    synchronizing it from a pool worker raises
+    'There is no Stream(gpu, 0) in current thread.' -- every VLM/text request
+    fails. mx.new_thread_local_stream() materializes the stream per-thread
+    (this is what mlx_lm.generate uses), so it is valid on any worker.
+    """
+
+    def test_module_uses_thread_local_stream(self, mock_mlx):  # noqa: ARG002
+        # Force a fresh import so module-level stream creation runs under the mock.
+        sys.modules.pop("heylook_llm.providers.mlx_provider", None)
+        importlib.import_module("heylook_llm.providers.mlx_provider")
+
+        mx = sys.modules["mlx.core"]
+        mx.new_thread_local_stream.assert_called_once_with(mx.default_device.return_value)
+        mx.new_stream.assert_not_called()
 
 
 @pytest.mark.unit

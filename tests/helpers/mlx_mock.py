@@ -29,9 +29,10 @@ def create_mlx_module_mocks() -> dict:
     mock_mx = MagicMock()
     mock_mx.core = MagicMock()
     mock_mx.nn = MagicMock()
-    # mx.new_stream and mx.default_device are called at module level
-    mock_mx.new_stream.return_value = MagicMock()
-    mock_mx.default_device.return_value = MagicMock()
+    # mx.new_thread_local_stream and mx.default_device are called at module
+    # level (the provider imports `mlx.core as mx`, i.e. mock_mx.core).
+    mock_mx.core.new_thread_local_stream.return_value = MagicMock()
+    mock_mx.core.default_device.return_value = MagicMock()
 
     # mlx_lm tree
     mock_mlx_lm = MagicMock()
