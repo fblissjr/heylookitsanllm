@@ -15,7 +15,10 @@ class BaseProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def create_chat_completion(self, request: ChatRequest) -> Generator:
+    def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
+        """Generate a completion. ``abort_event`` is an optional per-request
+        cooperative cancel signal (set by the streaming layer on disconnect);
+        implementations that don't support cancellation may ignore it."""
         raise NotImplementedError
 
     def check_capacity(self) -> None:

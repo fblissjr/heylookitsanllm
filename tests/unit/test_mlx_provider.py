@@ -31,10 +31,12 @@ class TestGenerationStreamThreadLocal:
 
     def test_module_uses_thread_local_stream(self, mock_mlx):  # noqa: ARG002
         # Force a fresh import so module-level stream creation runs under the mock.
+        mx = sys.modules["mlx.core"]
+        mx.new_thread_local_stream.reset_mock()  # ignore any earlier import
+        mx.new_stream.reset_mock()
         sys.modules.pop("heylook_llm.providers.mlx_provider", None)
         importlib.import_module("heylook_llm.providers.mlx_provider")
 
-        mx = sys.modules["mlx.core"]
         mx.new_thread_local_stream.assert_called_once_with(mx.default_device.return_value)
         mx.new_stream.assert_not_called()
 
@@ -577,8 +579,10 @@ class TestQueueWaitTagging:
         chunks = list(mock_mlx_provider.create_chat_completion(req))
 
         assert [c.text for c in chunks] == ["hello", "world"]
-        assert all(hasattr(c, "queue_wait_ms") for c in chunks)
-        assert all(c.queue_wait_ms >= 0.0 for c in chunks)
+        # Tagged once on the first chunk (the route carries it forward).
+        assert hasattr(chunks[0], "queue_wait_ms")
+        assert chunks[0].queue_wait_ms >= 0.0
+        assert not hasattr(chunks[1], "queue_wait_ms")
 
     def test_inner_generator_closed_and_gate_released_on_outer_close(self, mock_mlx_provider):
         closed = {"v": False}
@@ -602,6 +606,64 @@ class TestQueueWaitTagging:
 
 
 @pytest.mark.unit
+class TestPerRequestAbortEvent:
+    """Each request must use its OWN abort event, not a shared provider-level
+    one -- otherwise one client's disconnect aborts a different client's
+    in-flight generation (the FIFO concurrency cross-contamination bug)."""
+
+    class _Chunk:
+        def __init__(self, text):
+            self.text = text
+
+    def _inject_capturing_strategy(self, provider, sink):
+        provider.processor = create_mock_processor()
+        provider.is_vlm = False
+
+        class _FakeStrategy:
+            def generate(self, *a, abort_event=None, **k):
+                sink.append(abort_event)
+                yield TestPerRequestAbortEvent._Chunk("hi")
+
+        provider._strategies = {"text": _FakeStrategy()}
+
+    def test_strategy_receives_the_passed_abort_event(self, mock_mlx_provider):
+        from heylook_llm.providers.abort import AbortEvent
+
+        seen = []
+        self._inject_capturing_strategy(mock_mlx_provider, seen)
+        ev = AbortEvent()
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev))
+        assert seen == [ev]
+
+    def test_each_call_gets_a_distinct_default_event_no_shared_state(self, mock_mlx_provider):
+        seen = []
+        self._inject_capturing_strategy(mock_mlx_provider, seen)
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        list(mock_mlx_provider.create_chat_completion(req))
+        list(mock_mlx_provider.create_chat_completion(req))
+
+        assert seen[0] is not None and seen[1] is not None
+        assert seen[0] is not seen[1]  # per-request, not one shared event
+        # The shared provider-level abort event must be gone.
+        assert not hasattr(mock_mlx_provider, "_abort_event")
+
+    def test_disconnect_of_one_request_does_not_abort_another(self, mock_mlx_provider):
+        """A's event being set must not be visible through B's event."""
+        from heylook_llm.providers.abort import AbortEvent
+
+        seen = []
+        self._inject_capturing_strategy(mock_mlx_provider, seen)
+        ev_a, ev_b = AbortEvent(), AbortEvent()
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev_a))
+        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev_b))
+
+        seen[1].set()  # B aborts
+        assert seen[0].is_set() is False  # A unaffected
+
+
+@pytest.mark.unit
 class TestCheckCapacity:
     """check_capacity() applies backpressure (503) via the generation gate."""
 
@@ -610,14 +672,18 @@ class TestCheckCapacity:
 
     def test_raises_model_busy_when_queue_full(self, mock_mlx):  # noqa: ARG002
         from heylook_llm.providers.mlx_provider import MLXProvider
-        from heylook_llm.providers.common.generation_gate import ModelBusyError
+        from heylook_llm.providers.common.generation_gate import (
+            GenerationGate, ModelBusyError,
+        )
 
-        # max_queue_depth=0 -> single-flight: any overlap is rejected.
         provider = MLXProvider(
             model_id="busy",
-            config={"model_path": "/fake", "vision": False, "max_queue_depth": 0},
+            config={"model_path": "/fake", "vision": False},
             verbose=False,
         )
+        # Inject an isolated single-flight gate (the real gate is a process
+        # singleton shared across providers; isolate it for a deterministic test).
+        provider._gen_gate = GenerationGate(max_waiting=0)
         provider._gen_gate.acquire()  # simulate an in-flight generation
         try:
             with pytest.raises(ModelBusyError) as exc:
@@ -627,9 +693,12 @@ class TestCheckCapacity:
             provider._gen_gate.release()
 
     def test_config_sets_queue_depth(self, mock_mlx):  # noqa: ARG002
-        from heylook_llm.providers.mlx_provider import MLXProvider
+        import heylook_llm.providers.mlx_provider as mp
 
-        provider = MLXProvider(
+        # The gate is a process-global singleton: max_queue_depth is read from
+        # the FIRST provider created. Reset it so this provider is that first one.
+        mp._GENERATION_GATE = None
+        provider = mp.MLXProvider(
             model_id="d",
             config={"model_path": "/fake", "vision": False, "max_queue_depth": 3},
             verbose=False,

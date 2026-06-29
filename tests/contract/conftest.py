@@ -49,9 +49,10 @@ class FakeProvider:
     def check_capacity(self):
         """No-op admission check (BaseProvider contract); never busy in tests."""
 
-    def create_chat_completion(self, request):
+    def create_chat_completion(self, request, abort_event=None):
         """Yield FakeChunks. A real generator (not a list_iterator) so the
         route's generator.close() -- which releases the generation gate -- works.
+        ``abort_event`` matches the provider contract (per-request cancel signal).
         """
         yield FakeChunk("Hello", token_id=1)
         yield FakeChunk(", ", token_id=2)

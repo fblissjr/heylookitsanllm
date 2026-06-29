@@ -20,7 +20,13 @@ thread. The implementation therefore does not rely on lock ownership.
 import collections
 import threading
 
-__all__ = ["GenerationGate", "ModelBusyError"]
+__all__ = ["GenerationGate", "ModelBusyError", "GenerationCancelled"]
+
+
+class GenerationCancelled(Exception):
+    """Raised inside ``acquire(cancel_check=...)`` when the caller's request was
+    cancelled (e.g. client disconnected) before its FIFO turn arrived. The
+    caller should abandon the generation; nothing was acquired."""
 
 
 class ModelBusyError(RuntimeError):
@@ -83,21 +89,36 @@ class GenerationGate:
             }
 
     def check_capacity(self) -> None:
-        """Raise :class:`ModelBusyError` if the queue is already full.
+        """Raise :class:`ModelBusyError` if the system is already full.
 
-        Non-blocking and advisory: it reflects the queue depth at call time. A
-        small overshoot is possible if several callers check simultaneously near
-        the cap -- acceptable for a soft backpressure limit.
+        Full means ``active + waiting >= 1 + max_waiting`` (one running plus
+        ``max_waiting`` queued behind it). Accounting for the active holder is
+        what makes ``max_waiting=0`` behave as single-flight: an *idle* gate
+        (nothing active) still admits the first request, but a second request
+        while one is running is rejected.
+
+        Non-blocking and advisory: it reflects state at call time. A small
+        overshoot is possible if several callers check simultaneously near the
+        cap -- acceptable for a soft backpressure limit.
         """
         with self._cv:
-            if self._waiting >= self.max_waiting:
+            in_system = (1 if self._busy else 0) + self._waiting
+            if in_system >= 1 + self.max_waiting:
                 raise ModelBusyError(
-                    f"MODEL_BUSY: {self._waiting} request(s) already queued "
-                    f"(max_waiting={self.max_waiting})"
+                    f"MODEL_BUSY: {self._waiting} request(s) queued behind an "
+                    f"active generation (max_waiting={self.max_waiting})"
                 )
 
-    def acquire(self) -> None:
-        """Block until it is this caller's turn to generate (strict FIFO)."""
+    def acquire(self, cancel_check=None) -> None:
+        """Block until it is this caller's turn to generate (strict FIFO).
+
+        If *cancel_check* is provided, it is polled while waiting; when it
+        returns True the caller gives up its place in the queue and
+        :class:`GenerationCancelled` is raised. This lets a request whose client
+        has already disconnected leave the queue instead of waiting its turn to
+        do (now-pointless) work. Without *cancel_check* the wait is unbounded
+        (internal callers: batch, RLM).
+        """
         with self._cv:
             ticket = self._ticket_seq
             self._ticket_seq += 1
@@ -105,9 +126,13 @@ class GenerationGate:
             self._waiting += 1
             try:
                 while self._busy or self._queue[0] != ticket:
-                    self._cv.wait()
+                    if cancel_check is not None and cancel_check():
+                        raise GenerationCancelled()
+                    # Poll when cancellable so the cancel_check is re-evaluated
+                    # even without a release/notify; block otherwise.
+                    self._cv.wait(timeout=0.25 if cancel_check is not None else None)
             except BaseException:
-                # Don't poison the queue if waiting is interrupted.
+                # Don't poison the queue if waiting is interrupted/cancelled.
                 self._waiting -= 1
                 try:
                     self._queue.remove(ticket)

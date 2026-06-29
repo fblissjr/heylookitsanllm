@@ -8,7 +8,11 @@ import time
 
 import pytest
 
-from heylook_llm.providers.common.generation_gate import GenerationGate, ModelBusyError
+from heylook_llm.providers.common.generation_gate import (
+    GenerationGate,
+    ModelBusyError,
+    GenerationCancelled,
+)
 
 
 @pytest.mark.unit
@@ -74,14 +78,63 @@ class TestGenerationGateCapacity:
             blocked.join(timeout=2)
             gate.release()       # release the waiter's slot
 
+    def test_max_waiting_zero_admits_first_request_when_idle(self):
+        # Regression: an idle gate with max_waiting=0 must still admit the first
+        # request (it becomes active, it doesn't wait).
+        gate = GenerationGate(max_waiting=0)
+        gate.check_capacity()  # no raise
+
     def test_max_waiting_zero_is_single_flight(self):
         gate = GenerationGate(max_waiting=0)
         gate.acquire()
         try:
             with pytest.raises(ModelBusyError):
-                gate.check_capacity()
+                gate.check_capacity()  # one active, no room behind it
         finally:
             gate.release()
+
+
+@pytest.mark.unit
+class TestGenerationGateCancel:
+    def test_cancel_check_raises_before_turn(self):
+        gate = GenerationGate(max_waiting=8)
+        gate.acquire()  # hold the slot so the next acquire must wait
+        try:
+            with pytest.raises(GenerationCancelled):
+                # cancel_check already true -> never gets the turn
+                gate.acquire(cancel_check=lambda: True)
+            # The cancelled waiter must not poison the queue.
+            assert gate.waiting == 0
+        finally:
+            gate.release()
+
+    def test_cancel_while_waiting_frees_the_queue(self):
+        gate = GenerationGate(max_waiting=8)
+        gate.acquire()  # active holder
+        cancel = {"v": False}
+        result = {}
+
+        def waiter():
+            try:
+                gate.acquire(cancel_check=lambda: cancel["v"])
+                result["ok"] = True
+                gate.release()
+            except GenerationCancelled:
+                result["cancelled"] = True
+
+        t = threading.Thread(target=waiter)
+        t.start()
+        _wait_for(lambda: gate.waiting == 1)
+        cancel["v"] = True  # request's client "disconnected" while queued
+        t.join(timeout=2)
+
+        assert result.get("cancelled") is True
+        assert gate.waiting == 0
+        # A subsequent waiter still gets through cleanly (queue not poisoned).
+        gate.release()
+        gate.acquire()
+        assert gate.busy is True
+        gate.release()
 
 
 @pytest.mark.unit

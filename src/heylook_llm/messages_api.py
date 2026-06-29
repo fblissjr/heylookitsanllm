@@ -13,12 +13,14 @@ import asyncio
 import logging
 import time
 import uuid
+from contextlib import closing
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from heylook_llm.auth import require_api_key
+from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
@@ -234,6 +236,9 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     provider_get_ms = 0.0
     provider = None
+    # Per-request cooperative abort signal: shared with the streaming layer so a
+    # disconnect cancels only THIS request, not a concurrent one.
+    abort_event = AbortEvent()
     try:
         # Get provider and create generator (CPU-bound, run in thread)
         provider_get_start = time.time()
@@ -242,7 +247,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         # Backpressure: reject early (503) if the generation queue is full,
         # before committing to a streaming response.
         provider.check_capacity()
-        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
+        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request, abort_event)
 
     except RuntimeError as e:
         if "MODEL_BUSY" in str(e):
@@ -283,7 +288,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event),
             media_type="text/event-stream",
         )
     else:
@@ -312,17 +317,15 @@ async def _non_stream_messages(
 
     def consume():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, queue_wait_ms
-        try:
+        # closing() runs the provider generator's finally now (releases the
+        # generation gate) even if consumption raised -- not at GC.
+        with closing(generator):
             for chunk in generator:
                 full_text += chunk.text
                 token_count += 1
                 prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
                 completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
                 queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
-        finally:
-            # Ensure the provider generator's finally runs now (releases the
-            # generation gate) even if consumption raised -- not at GC.
-            generator.close()
 
     await asyncio.to_thread(consume)
 
@@ -402,6 +405,7 @@ async def _stream_messages(
     http_request=None,
     provider=None,
     perf_ctx: dict | None = None,
+    abort_event=None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -409,7 +413,7 @@ async def _stream_messages(
     translator = StreamingEventTranslator(message_id, model)
 
     # Resolve abort event from provider (if MLX provider with abort support)
-    abort_event = getattr(provider, '_abort_event', None) if provider else None
+    # abort_event is the per-request signal passed in by the route.
 
     from heylook_llm.streaming_utils import async_generator_with_abort
 

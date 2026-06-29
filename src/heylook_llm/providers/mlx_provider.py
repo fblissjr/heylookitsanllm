@@ -27,7 +27,7 @@ from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
-from .common.generation_gate import GenerationGate
+from .common.generation_gate import GenerationGate, GenerationCancelled
 
 # -- transformers 5.x compatibility patches (no torchvision) --
 # On MLX-only setups, torchvision is absent. transformers 5.x has several bugs
@@ -106,6 +106,23 @@ del _apply_transformers_patches
 # synchronizes it from a pool worker. new_thread_local_stream materializes the
 # stream per-thread (matching mlx_lm.generate's own generation_stream).
 generation_stream = mx.new_thread_local_stream(mx.default_device())
+
+
+# Process-global generation gate. There is ONE GPU, so generation must serialize
+# across ALL loaded MLX models, not just within a single provider -- otherwise
+# with max_loaded_models>1 two providers would run concurrent generations on the
+# shared Metal command queue. Shared across every MLXProvider instance; the first
+# provider created sets max_queue_depth (process-wide, documented in config).
+_GENERATION_GATE = None
+_GENERATION_GATE_LOCK = threading.Lock()
+
+
+def _get_generation_gate(max_waiting: int) -> "GenerationGate":
+    global _GENERATION_GATE
+    with _GENERATION_GATE_LOCK:
+        if _GENERATION_GATE is None:
+            _GENERATION_GATE = GenerationGate(max_waiting=max_waiting)
+        return _GENERATION_GATE
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None):
@@ -320,9 +337,11 @@ class _VisionTokenResponse:
     """Lightweight response for the first token from VLM vision encoding.
 
     Compatible with the GenerationResponse interface that api.py expects
-    (needs .text, optionally .token and .logprobs).
+    (needs .text, optionally .token and .logprobs). ``queue_wait_ms`` is a slot
+    so create_chat_completion can tag this first vision token with the FIFO
+    queue-wait time (a plain GenerationResponse is non-slotted; this isn't).
     """
-    __slots__ = ('text', 'token', 'logprobs')
+    __slots__ = ('text', 'token', 'logprobs', 'queue_wait_ms')
 
     def __init__(self, text: str, token: int, logprobs=None):
         self.text = text
@@ -512,16 +531,15 @@ class MLXProvider(BaseProvider):
         # Batch text processor (lazy-initialized)
         self._batch_processor = None
 
-        # Serialize generation FIFO across concurrent requests. Single GPU +
-        # one loaded model + shared KV cache => one generation at a time. The
-        # gate queues requests in arrival order (no preemption); check_capacity()
-        # rejects with ModelBusyError (-> 503) once max_queue_depth are waiting.
-        self._gen_gate = GenerationGate(
-            max_waiting=int(self.config.get("max_queue_depth", 8))
+        # Serialize generation FIFO across concurrent requests. Process-global
+        # (shared across all providers -- one GPU); queues in arrival order (no
+        # preemption); check_capacity() rejects with ModelBusyError (-> 503)
+        # once max_queue_depth are waiting. The abort signal is NOT stored here:
+        # it is per-request (created/passed by create_chat_completion) so one
+        # client's disconnect can't abort another client's generation.
+        self._gen_gate = _get_generation_gate(
+            int(self.config.get("max_queue_depth", 8))
         )
-
-        # Cooperative abort signal for cancelling in-flight generation
-        self._abort_event = AbortEvent()
 
         # Reference counting for safe unload -- prevents eviction during active generation
         self._active_generations = 0
@@ -978,9 +996,16 @@ class MLXProvider(BaseProvider):
         """Snapshot of the FIFO generation queue (active/waiting/capacity)."""
         return self._gen_gate.snapshot()
 
-    def create_chat_completion(self, request: ChatRequest) -> Generator:
+    def create_chat_completion(self, request: ChatRequest, abort_event: "AbortEvent | None" = None) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
+
+            ``abort_event`` is the per-request cooperative cancel signal. The HTTP
+            routes create one per request and share it with the streaming layer
+            (which sets it on client disconnect); internal callers (batch, RLM)
+            omit it and a fresh one is created. It is NOT a provider-level shared
+            object -- that would let one client's disconnect abort another's
+            in-flight generation.
 
             Path decision logic is pre-compiled and cached to minimize runtime overhead.
             """
@@ -988,20 +1013,26 @@ class MLXProvider(BaseProvider):
                 def __init__(self, text):
                     self.text = text
 
-            # Increment active generation counter (prevents safe unload during generation)
-            with self._active_lock:
-                self._active_generations += 1
+            if abort_event is None:
+                abort_event = AbortEvent()
 
             # FIFO queue: wait our turn instead of preempting the in-flight
             # generation. Concurrent requests complete in arrival order rather
-            # than cannibalizing each other. A client that no longer wants its
-            # result aborts via _abort_event (set by the streaming layer on
-            # disconnect), which frees the slot for the next waiter.
+            # than cannibalizing each other. If the client already disconnected
+            # (abort_event set by the streaming layer while we were queued), bail
+            # out of the queue instead of waiting our turn to do pointless work.
             _queue_wait_start = time.perf_counter()
-            self._gen_gate.acquire()
+            try:
+                self._gen_gate.acquire(cancel_check=abort_event.is_set)
+            except GenerationCancelled:
+                return
             queue_wait_ms = (time.perf_counter() - _queue_wait_start) * 1000.0
-            # Clean slate for this generation
-            self._abort_event.clear()
+
+            # Count as active only AFTER acquiring -- a queued request is
+            # 'waiting' (tracked by the gate), not 'active'. (Prevents safe
+            # unload during generation; avoids double-counting with requests_queued.)
+            with self._active_lock:
+                self._active_generations += 1
 
             try:
                 effective_request = self._apply_model_defaults(request)
@@ -1028,18 +1059,22 @@ class MLXProvider(BaseProvider):
                         strategy = self._strategies['text']
                         logging.info(f"[MLX STRATEGY] Text path (vlm={self.is_vlm}) | Model: {self.model_id}")
 
-                    # Tag each chunk with the FIFO queue-wait time so the route
-                    # can surface it (telemetry + usage timing). Use an explicit
-                    # loop (not `yield from`) but close the inner generator in a
-                    # finally so GeneratorExit still propagates -- the gate must
-                    # release promptly on client disconnect.
-                    inner = strategy.generate(request, effective_request, self.model, self.processor, abort_event=self._abort_event)
+                    # Tag the FIRST taggable chunk with the FIFO queue-wait time
+                    # (constant per request -- the route carries it forward, so
+                    # one tag suffices and avoids a per-token write in the hot
+                    # loop). Use an explicit loop (not `yield from`) but close the
+                    # inner generator in a finally so GeneratorExit still
+                    # propagates -- the gate must release promptly on disconnect.
+                    inner = strategy.generate(request, effective_request, self.model, self.processor, abort_event=abort_event)
+                    tagged = False
                     try:
                         for chunk in inner:
-                            try:
-                                chunk.queue_wait_ms = queue_wait_ms  # type: ignore[attr-defined]
-                            except (AttributeError, TypeError):
-                                pass
+                            if not tagged:
+                                try:
+                                    chunk.queue_wait_ms = queue_wait_ms  # type: ignore[attr-defined]
+                                    tagged = True
+                                except (AttributeError, TypeError):
+                                    pass
                             yield chunk
                     finally:
                         inner.close()
@@ -1056,13 +1091,13 @@ class MLXProvider(BaseProvider):
 
                     yield MLXErrorChunk(text=f"Error: MLX generation failed: {str(e)}")
             finally:
-                # Always release the generation slot so the next waiter runs
-                self._gen_gate.release()
-                # Decrement active generation counter
+                # Decrement active counter and clear the MLX cache BEFORE
+                # releasing the slot, so GPU cleanup completes before the next
+                # waiter is admitted (preserves one-generation-at-a-time).
                 with self._active_lock:
                     self._active_generations -= 1
-                # Release MLX internal memory cache between requests
                 mx.clear_cache()
+                self._gen_gate.release()
 
     def _get_context_capacity(self) -> int:
         """Get max context window size from model config."""

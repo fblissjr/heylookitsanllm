@@ -19,7 +19,7 @@ import re
 import threading
 import time
 import uuid
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from typing import Callable, Generator
 
@@ -479,7 +479,9 @@ class RLMEngine:
         prompt_tokens = 0
         generation_tokens = 0
 
-        try:
+        # closing() releases the generation gate promptly so the next RLM
+        # iteration (or another request) can run, even if consumption raised.
+        with closing(gen):
             for chunk in gen:
                 if hasattr(chunk, "text"):
                     text_parts.append(chunk.text)
@@ -487,10 +489,6 @@ class RLMEngine:
                     prompt_tokens = chunk.prompt_tokens
                 if hasattr(chunk, "generation_tokens") and chunk.generation_tokens:
                     generation_tokens = chunk.generation_tokens
-        finally:
-            # Release the generation gate promptly so the next RLM iteration
-            # (or another request) can run, even if consumption raised.
-            gen.close()
 
         return "".join(text_parts), prompt_tokens, generation_tokens
 

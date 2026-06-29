@@ -7,11 +7,12 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request, Body, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from fastapi.openapi.utils import get_openapi
 
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelRouter
+from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.config import (
     ChatRequest, ChatCompletionResponse,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
@@ -540,6 +541,9 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     provider_get_ms = 0.0
     provider = None
+    # Per-request cooperative abort signal (see below); created before the try
+    # so it's always bound for the streaming branch.
+    abort_event = AbortEvent()
     try:
         log_request_stage(request_id, "routing")
         diag_event("request_routed", request_id=request_id, model=chat_request.model)
@@ -560,8 +564,8 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         diag_event("generation_start", request_id=request_id,
                    provider=provider.__class__.__name__,
                    provider_get_ms=round(provider_get_ms, 1))
-        # Run model generation in thread pool
-        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request)
+        # Run model generation in thread pool, with the per-request abort signal.
+        generator = await asyncio.to_thread(provider.create_chat_completion, chat_request, abort_event)
 
     except RuntimeError as e:
         # Check if this is a MODEL_BUSY error
@@ -628,7 +632,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx),
+            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
         )
@@ -733,7 +737,7 @@ def _record_error_event(model: str, request_start_time: float, provider_get_ms: 
     )
 
 
-async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None):
+async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None, abort_event=None):
     """Async streaming response generator that runs generation in thread pool.
 
     Reasoning-aware: a factory-selected ``ReasoningParser`` routes the model
@@ -805,8 +809,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         }
         return f"data: {json.dumps(response)}\n\n"
 
-    # Resolve abort event from provider (if MLX provider with abort support)
-    abort_event = getattr(provider, '_abort_event', None) if provider else None
+    # Per-request abort event passed in by the route (set on client disconnect
+    # to cancel THIS request's generation only).
 
     from heylook_llm.streaming_utils import async_generator_with_abort, KeepaliveMarker
 
@@ -1041,7 +1045,9 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
         nonlocal peak_memory_gb, kv_cache_bytes, queue_wait_ms
         first_logprob_logged = False
-        try:
+        # closing() releases the generation gate now (the provider generator's
+        # finally) even if consumption raises -- don't wait for GC.
+        with closing(generator):
             for chunk in generator:
                 full_text += chunk.text
                 token_count += 1
@@ -1070,10 +1076,6 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
                 kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
                 queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
-        finally:
-            # Release the generation gate now (provider generator's finally)
-            # even if consumption raised -- don't wait for GC.
-            generator.close()
 
     await asyncio.to_thread(consume_generator)
 

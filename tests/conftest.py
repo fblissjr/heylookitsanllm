@@ -37,6 +37,14 @@ def mock_mlx():
     """Patch sys.modules so MLX provider code can be imported on any platform."""
     modules = create_mlx_module_mocks()
     with patch.dict(sys.modules, modules):
+        # The generation gate is a process-global singleton (shared across all
+        # providers -- one GPU). Reset it per test so each test's provider
+        # creates a fresh gate with its own max_queue_depth config.
+        try:
+            import heylook_llm.providers.mlx_provider as _mp
+            _mp._GENERATION_GATE = None
+        except Exception:
+            pass
         yield modules
 
 

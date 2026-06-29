@@ -11,6 +11,7 @@ import asyncio
 import uuid
 import time
 import logging
+from contextlib import closing
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
@@ -176,13 +177,11 @@ class BatchProcessor:
         prompt_tokens = 0
         completion_tokens = 0
 
-        try:
+        with closing(generator):  # release the generation gate now, not at GC
             for chunk in generator:
                 full_text += chunk.text
                 prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
                 completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        finally:
-            generator.close()  # release the generation gate now, not at GC
 
         # Build response
         response = BatchResponse(
@@ -260,13 +259,11 @@ class BatchProcessor:
                 prompt_tokens = 0
                 completion_tokens = 0
 
-                try:
+                with closing(generator):  # release the generation gate now, not at GC
                     for chunk in generator:
                         full_text += chunk.text
                         prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
                         completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-                finally:
-                    generator.close()  # release the generation gate now, not at GC
                 
                 # Track tokens
                 total_prompt_tokens += prompt_tokens
@@ -507,13 +504,11 @@ class BatchProcessor:
         prompt_tokens = 0
         completion_tokens = 0
 
-        try:
+        with closing(generator):  # release the generation gate now, not at GC
             for chunk in generator:
                 full_text += chunk.text
                 prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
                 completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        finally:
-            generator.close()  # release the generation gate now, not at GC
 
         # Create response
         return ChatCompletionResponse(

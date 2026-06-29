@@ -69,8 +69,12 @@ async def async_generator_with_abort(
                     if await http_request.is_disconnected():
                         logging.info(f"{log_prefix}Client disconnected during streaming")
                         abort_event.set()
+                        # Wait (bounded) for the in-flight next() to observe the
+                        # abort and unwind, so cleanup runs on a settled
+                        # generator. Bounded so a non-cooperative generation can't
+                        # pin this coroutine; the finally still closes it.
                         try:
-                            await chunk_future
+                            await asyncio.wait_for(chunk_future, timeout=30)
                         except Exception:
                             pass
                         return
