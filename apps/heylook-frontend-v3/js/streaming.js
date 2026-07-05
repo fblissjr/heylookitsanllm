@@ -76,6 +76,15 @@ export async function streamChat(body, {
           let chunk;
           try { chunk = JSON.parse(data); } catch { continue; }
 
+          // Mid-stream generation failure: the backend emits an error payload
+          // instead of content. Throwing lands in the outer catch, which
+          // cancels the reader and routes to onError.
+          if (chunk.error) {
+            const streamErr = new Error(chunk.error.message || 'Generation failed');
+            streamErr.code = chunk.error.code ?? null;
+            throw streamErr;
+          }
+
           const choice = chunk.choices?.[0];
           const delta = choice?.delta;
           if (delta?.content) {

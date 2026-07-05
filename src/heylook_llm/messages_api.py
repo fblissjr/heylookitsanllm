@@ -321,6 +321,9 @@ async def _non_stream_messages(
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
             for chunk in generator:
+                # Generation failure: surface as HTTP 500, never as content.
+                if getattr(chunk, "is_error", False):
+                    raise HTTPException(status_code=500, detail=chunk.text)
                 full_text += chunk.text
                 token_count += 1
                 prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
@@ -422,6 +425,13 @@ async def _stream_messages(
 
     queue_wait_ms = 0.0
     async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
+        # Generation failure mid-stream: emit the Anthropic-style error event
+        # and terminate -- never deliver the error text as content.
+        if getattr(chunk, "is_error", False):
+            error_event = {"type": "error", "error": {"type": "api_error", "message": chunk.text}}
+            yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            return
+
         # Capture provider metadata
         chunk_finish = getattr(chunk, "finish_reason", None)
         if chunk_finish:

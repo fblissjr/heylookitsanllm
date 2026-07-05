@@ -507,6 +507,16 @@ class VLMVisionStrategy:
         )
 
 
+# Yielded in place of normal chunks when generation fails. `is_error` is the
+# marker the API layers check to surface a real error (SSE error payload /
+# HTTP 500) instead of delivering `.text` as assistant content.
+class MLXErrorChunk:
+    is_error = True
+
+    def __init__(self, text):
+        self.text = text
+
+
 class MLXProvider(BaseProvider):
     """
     MLX Provider with dual-path architecture for VLM and text-only generation.
@@ -1009,10 +1019,6 @@ class MLXProvider(BaseProvider):
 
             Path decision logic is pre-compiled and cached to minimize runtime overhead.
             """
-            class MLXErrorChunk:
-                def __init__(self, text):
-                    self.text = text
-
             if abort_event is None:
                 abort_event = AbortEvent()
 

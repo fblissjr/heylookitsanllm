@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.1]
+
+### Fixed
+
+- **Radix cache reuse crashed with "There is no Stream(gpu, N) in current thread"** (recurrence of the 1.30.5 bug class in a different spot): `snapshot_kv` published *lazy* KV slice nodes into the shared radix tree. Generation runs on a fresh single-worker thread per request (`streaming_utils`), and both our `generation_stream` and mlx_lm's are `mx.new_thread_local_stream` -- GPU thread-local streams are destroyed with their thread (verified by direct probe; CPU streams and per-thread *default* streams survive, which is why only this path crashed). When a later request on a different thread hit the cached prefix, mlx_lm's `mx.eval([c.state for c in prompt_cache])` couldn't resolve the dead thread's stream. Snapshots are now materialized (`mx.eval`) at store time on the generating thread, making cached entries thread-agnostic. Reproduced deterministically (4/4 identical-resend radix hits crashed without the fix, 4/4 clean with it) via seed-with-`max_tokens=1` + identical resend, which parks the snapshot on a block the resend fully covers. Regression test: `tests/unit/test_snapshot_thread_affinity.py` (skips off-Metal). Audited `vision_feature_cache` for the same hazard: safe -- its features are scheduled on a (globally registered) default stream, not a thread-local one.
+- **Generation failures were streamed to clients as assistant content**: the provider yielded error text as a normal chunk, so frontends rendered and even persisted "Error: MLX generation failed: ..." as a model response -- the crash above shipped as a fake completion. `MLXErrorChunk` (now module-level, `is_error=True`) is surfaced properly: OpenAI streaming emits `data: {"error":{message, type:"server_error", code:"generation_failed"}}` then `[DONE]`; Messages API streaming emits an Anthropic-style `event: error`; non-streaming paths return HTTP 500 with the message in `detail`. Frontend v3's `streaming.js` routes error payloads to `onError`. Contract tests: `tests/contract/test_generation_errors.py`. (Legacy/v2 clients that only read `delta.content` now see an empty response instead of fake content.)
+
 ## [1.31.0]
 
 ### Added

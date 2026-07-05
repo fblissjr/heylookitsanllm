@@ -11,6 +11,7 @@ crash due to incorrect cache.offset in position computations.
 See internal/bugs/radix_cache_vlm_crash.md for the full postmortem.
 """
 from typing import Any, List
+import mlx.core as mx
 import mlx.nn as nn
 import logging
 
@@ -83,10 +84,19 @@ def snapshot_kv(cache: List[Any]) -> List[tuple]:
     """Capture KV cache state for radix tree storage.
 
     Each cache layer exposes a .state property returning (keys, values)
-    trimmed to the current offset. MLX arrays are lazy graph nodes with
-    copy-on-write semantics, so capturing these references is cheap --
-    the actual memory is shared until the generation loop mutates the
-    cache (which creates new graph nodes, leaving our snapshot intact).
+    trimmed to the current offset.
+
+    The snapshot is MATERIALIZED (mx.eval) before returning. This is a
+    thread-affinity requirement, not an optimization choice: generation runs
+    on a fresh single-worker thread per request (streaming_utils), and both
+    our generation_stream and mlx_lm's are thread-local. GPU thread-local
+    streams die with their thread, so any *pending* lazy node published into
+    the shared radix tree would make the next request's
+    `mx.eval([c.state for c in prompt_cache])` (mlx_lm generate_step) raise
+    "There is no Stream(gpu, N) in current thread" when it runs on a
+    different thread. Eval here happens on the generating thread, where the
+    referenced streams are still alive. See
+    tests/unit/test_snapshot_thread_affinity.py.
     """
     snapshots = []
     for layer in cache:
@@ -94,6 +104,9 @@ def snapshot_kv(cache: List[Any]) -> List[tuple]:
             snapshots.append(layer.state)
         else:
             snapshots.append(None)
+    # One batched eval; the security hook flags mx.eval, but this is MLX's
+    # graph materializer, not Python's eval().
+    mx.eval([s for s in snapshots if s is not None])
     return snapshots
 
 

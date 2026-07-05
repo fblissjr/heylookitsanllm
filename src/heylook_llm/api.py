@@ -834,6 +834,19 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             yield ": keepalive\n\n"
             continue
 
+        # Generation failure mid-stream: HTTP status is already sent, so emit
+        # an OpenAI-style error payload and terminate -- never deliver the
+        # error text as an assistant content delta.
+        if getattr(chunk, 'is_error', False):
+            error_payload = {"error": {
+                "message": chunk.text,
+                "type": "server_error",
+                "code": "generation_failed",
+            }}
+            yield f"data: {json.dumps(error_payload)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
         # The final chunk may have empty text but still carry the finish_reason
         chunk_finish_reason = getattr(chunk, 'finish_reason', None)
@@ -1064,6 +1077,9 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         # finally) even if consumption raises -- don't wait for GC.
         with closing(generator):
             for chunk in generator:
+                # Generation failure: surface as HTTP 500, never as content.
+                if getattr(chunk, 'is_error', False):
+                    raise HTTPException(status_code=500, detail=chunk.text)
                 full_text += chunk.text
                 token_count += 1
 
