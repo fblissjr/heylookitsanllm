@@ -38,7 +38,8 @@ The user's goals, in priority order:
 4. **Trim features** — decided (§6): 5 pages (chat, models, notebook, perf-simplified, token explorer);
    batch dropped.
 5. **Framework only if it adds significant value** — verdict: **no framework** (see §2).
-6. **Impeccable design** — treat visual quality as a first-class requirement, not an afterthought (§7).
+6. **Impeccable design** — all UI goes through the impeccable plugin's workflow and quality gates (§7);
+   project design context lives in root `PRODUCT.md`.
 
 v2 is ~9,630 total lines; ~4,900 is vendored (pretext engine, marked, DOMPurify, bidi tables). Hand-written
 app code is ~3,700 lines. Dropping pretext deletes **5,429 lines** outright.
@@ -295,27 +296,53 @@ v3 ships **5 pages**: chat, models, notebook, perf (simplified), token explorer.
 
 ---
 
-## 7. Design quality ("impeccable")
+## 7. Design quality — impeccable workflow (REQUIRED)
 
-Treat as a requirement. Before writing UI, consult the `frontend-design` skill for intentional typography,
-spacing, and a non-templated aesthetic; and `dataviz` for the perf dashboard + explore logprob visualization
-(color scales, stat tiles). Keep the single `css/app.css`, light/dark-consistent, mobile responsive
-(@768px). Replace blocking native `confirm()`/`alert()` (v2 uses them in models/chat/notebook) with in-app
-confirm affordances where it doesn't cost much — but keep a confirm step for destructive actions per repo rule.
+Design goes through the **impeccable plugin** (`/impeccable`), not ad-hoc taste. Its project context
+already exists: **`PRODUCT.md` at the repo root** (register: product; personality: warm minimal; users:
+single owner, desktop + iPhone Safari co-primary; pragmatic a11y floor; anti-references incl. desktop-only
+layouts and SaaS-dashboard grammar). Every impeccable command reads it before working — keep it current.
+
+How the build uses it:
+- **Session setup**: invoking `/impeccable` runs its context script and loads the *product* register
+  reference plus its general rules (contrast floors, typography caps, motion rules, absolute bans like
+  side-stripe borders / gradient text / identical card grids / eyebrow-kickers). Those bans are hard
+  constraints on all v3 UI.
+- **Palette**: v3 is a fresh visual start — run the bundled `palette.mjs` for a brand seed color and
+  compose bg/surface/ink/accent/muted around it in **OKLCH**. Do not inherit v2's palette by default,
+  and mind impeccable's warning against the cream/sand near-white default.
+- **Per-surface builds**: use `/impeccable craft <page>` (shape interview → build end-to-end) for each
+  page's UI, starting with chat. `craft` owns the design flow; the functional contract stays this spec.
+- **DESIGN.md**: seed via `/impeccable document` once the scaffold + first page exist, so later pages and
+  variants stay on-system.
+- **Gates before calling a page done**: `/impeccable audit <page>` (a11y/perf/responsive — must pass on an
+  iPhone-Safari-sized viewport, not just desktop) and `/impeccable polish <page>` pre-ship. The bundled
+  `detect.mjs` slop-detector can run over changed files as a cheap check between gates.
+- **Iteration**: `/impeccable live` is available for in-browser variant picking once the dev server
+  (the FastAPI backend serving `/v3`) is running.
+
+Still applies regardless of impeccable: single `css/app.css`, no build step; replace blocking native
+`confirm()`/`alert()` (v2 uses them in models/chat/notebook) with in-app confirm affordances where cheap —
+but keep a confirm step for destructive actions per repo rule. Use the `dataviz` skill for the perf stat
+tiles and the explore logprob color scale specifically (chart/viz color method), inside impeccable's system.
 
 ---
 
 ## 8. Build sequence (for the build session)
 
-1. Scaffold: `index.html` shell (base href, `#sidebar`/`#main`/`#bottom-nav`), `css/app.css` (port v2 minus
-   `.pretext-*`), vendored `marked` + `purify`.
-2. Shared layer: `createPage` + `pollWhileMounted`, router, `api.js` (table-generated), `streaming.js`
-   (with keepalive-comment + reader.cancel + abort-as-complete), `settings.js` + data-driven panel,
-   `utils.js`, `markdown.js`.
-3. chat page (legacy render path only) — highest risk, do first; verify streaming, edit/regenerate,
-   position truncation, stop/abort, thinking blocks.
-4. models, notebook, perf (simplified, no polling), token explorer. (No batch page — §6.)
-5. Verify against a running backend (`/run` or the `verify` skill): drive each flow, watch the network tab
+1. Design system first: invoke `/impeccable` (loads `PRODUCT.md` + product register), run `palette.mjs`
+   for the OKLCH brand seed, and write a fresh `css/app.css` token layer + app shell around it. Do NOT
+   port v2's CSS wholesale — v2's stylesheet is a reference for what exists, not the starting point.
+2. Scaffold: `index.html` shell (base href `/v3/`, `#sidebar`/`#main`/`#bottom-nav`), vendored `marked` +
+   `purify`, the `/v3` mount in `api.py` (duplicate the `/v2` block).
+3. Shared layer: `createPage`, router, `api.js` (table-generated), `streaming.js` (with keepalive-comment +
+   reader.cancel + abort-as-complete), `settings.js` + data-driven panel, `utils.js`, `markdown.js`.
+4. chat page via `/impeccable craft chat` (legacy render path only) — highest risk, do first; verify
+   streaming, edit/regenerate, position truncation, stop/abort, thinking blocks. Then seed `DESIGN.md`
+   (`/impeccable document`) so remaining pages stay on-system.
+5. models, notebook, perf (simplified, no polling), token explorer — each through `craft`, gated by
+   `audit` (incl. iPhone-Safari viewport) + `polish` per §7. (No batch page — §6.)
+6. Verify against a running backend (`/run` or the `verify` skill): drive each flow, watch the network tab
    for the exact payloads in §4, confirm 503 backpressure + abort behave.
 
 ## 9. Delegation note (how this spec was built cheaply)
