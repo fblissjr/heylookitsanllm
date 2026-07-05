@@ -212,6 +212,21 @@ if _v2_frontend_dir.is_dir():
                 return FileResponse(resolved)
         return FileResponse(_v2_frontend_dir / "index.html")
 
+# Serve v3 frontend static files at /v3
+_v3_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v3"
+if _v3_frontend_dir.is_dir():
+    from starlette.responses import FileResponse
+
+    @app.get("/v3")
+    @app.get("/v3/{rest:path}")
+    async def serve_v3_frontend(rest: str = ""):
+        """Serve the v3 frontend SPA -- all routes return index.html."""
+        if rest:
+            resolved = (_v3_frontend_dir / rest).resolve()
+            if resolved.is_relative_to(_v3_frontend_dir) and resolved.is_file():
+                return FileResponse(resolved)
+        return FileResponse(_v3_frontend_dir / "index.html")
+
 @app.get("/v1/models",
     summary="List Available Models",
     description="""
