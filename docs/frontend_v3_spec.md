@@ -14,6 +14,20 @@ mount or take a new one). Vanilla JS, **no framework, no bundler, no node_module
 a single `<script type="module">` bootstraps everything. Source of truth for conversations/notebooks is
 server-side SQLite; the browser persists only sampler settings in localStorage.
 
+### Where v3 lives (recommended default)
+
+Build in a **new sibling directory**, `apps/heylook-frontend-v3/`, served at a **new mount, `/v3`**,
+leaving `/v2` and `apps/heylook-frontend-v2/` untouched until cutover. This is reversible and lets both
+run side by side during the rewrite. The `/v2` mount in `src/heylook_llm/api.py` (~line 199-213) is a
+~15-line block: `GET /v2` + `GET /v2/{rest:path}` resolve against a static dir and `FileResponse` it,
+falling back to `index.html` for SPA routing, with path-traversal protection via
+`resolved.is_relative_to(_v2_frontend_dir)`. Duplicate this verbatim for `/v3` pointing at the new dir —
+do not generalize/parameterize the existing `/v2` block to also serve v3; two small explicit blocks are
+simpler than one parameterized one for a two-mount case. Update `openapi_tags`/description only if v3
+introduces new endpoint groups (it doesn't — it reuses the existing backend contract in §4 as-is).
+Cut over (retire v2, promote v3 to `/v2` or rename the mount) as a separate, later decision once v3 is
+verified end-to-end.
+
 ## What "much simpler" means here (decided)
 
 The user's goals, in priority order:
