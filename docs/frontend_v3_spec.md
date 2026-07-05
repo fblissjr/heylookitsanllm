@@ -345,12 +345,45 @@ tiles and the explore logprob color scale specifically (chart/viz color method),
 6. Verify against a running backend (`/run` or the `verify` skill): drive each flow, watch the network tab
    for the exact payloads in §4, confirm 503 backpressure + abort behave.
 
-## 9. Delegation note (how this spec was built cheaply)
+## 9. Backend co-evolution (v3 is a native frontend, not a generic client)
+
+v3 is TIGHTLY coupled to the heylookitsanllm core engine, on purpose. It is the server's own frontend,
+not an OpenAI-compatible client that happens to point here: it should freely use heylook-specific
+surfaces (usage-chunk `timing` telemetry, admin routers, `/v1/capabilities`, conversation/notebook
+stores) and — the important part — **when a backend change would make the frontend meaningfully simpler
+or better, change the backend** rather than absorbing complexity client-side. The §4 contract is the
+current state, not a frozen boundary.
+
+When the build hits a "backend should support X" moment, use the delegation ladder (rule:
+`.claude/rules/model-delegation.md`; pre-shaped agents in `.claude/agents/`):
+
+1. **Explore (cheap, read-only)** — before deciding anything, fan out an `Explore` agent to map the
+   blast radius: which routers/schema/config the change touches, existing patterns to follow, affected
+   tests. Mirror the repo's removing-a-feature checklist in reverse: `api.py` (tags + include_router),
+   `config.py`, `schema/`, `generated-api.ts` (legacy frontend sync), tests, docs.
+2. **Decide (main loop, strongest model)** — API shape, response-model, and compatibility calls stay
+   up-tier. The backend serves two frontends during the transition (legacy React + v3), so changes must
+   be additive/back-compatible until v2 retires.
+3. **Implement (task-coder)** — hand the change as a complete spec: exact endpoint, request/response
+   models, files to touch, tests to write (TDD per repo convention). Mechanical sweeps (renames,
+   regenerations) go to `fast-executor`.
+4. **Verify (main loop)** — `uv run pytest tests/unit/ tests/contract/` (693 unit tests green is the
+   invariant; any failure is a regression), then `/openapi-regen` to refresh `generated-api.ts` — the
+   pre-commit drift guard blocks on staleness. Update §4 of THIS spec when the contract changes, so the
+   spec stays the single source of truth for the frontend contract.
+
+Known v2-era gaps already worth this treatment if the build wants them: custom scan `paths` UI
+(backend supports it, v2 never exposed it); a slimmer conversation-list payload is NOT needed (already
+slim); anything where §5 says "fix" about error surfacing is frontend-only — don't touch the backend
+for those.
+
+## 10. Delegation note (how this spec was built cheaply)
 
 Extraction was fanned out to parallel sonnet-tier subagents (one per page + core + backend + pretext), each
 returning a fixed-schema distillation so the Opus main loop ingested ~1.5k lines of specs instead of ~10k
 lines of source. Synthesis + the architecture decisions (drop pretext, no framework, trim) stayed in the
 main loop; every load-bearing claim was spot-verified against source before landing here. The base
-model-delegation rule now lives at `.claude/rules/model-delegation.md` so future sessions auto-route
-mechanical work down-tier. The build itself (step 8) is well-specified enough to hand to a sonnet task-coder
-per page, with main-loop verification of each returned page.
+model-delegation rule lives at `.claude/rules/model-delegation.md`, with pre-shaped `fast-executor` and
+`task-coder` agents in `.claude/agents/`, so future sessions auto-route mechanical work down-tier. The
+build itself (§8) is well-specified enough to hand to a `task-coder` per page — and backend changes follow
+the §9 ladder — with main-loop verification of everything that comes back.
