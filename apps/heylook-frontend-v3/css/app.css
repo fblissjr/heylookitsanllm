@@ -483,8 +483,636 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 /* ==== page: models ==== */
 
+.models {
+  height: 100%;
+  overflow-y: auto;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  width: 100%;
+}
+
+.models__status:empty { margin: 0; }
+
+.models__section { margin-top: 1.75rem; }
+.models__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.models__section-head h2 {
+  color: var(--ink-muted);
+  font-weight: 550;
+  font-size: var(--text-ui);
+}
+
+.models__list .empty-state,
+.scan-panel .empty-state {
+  text-align: left;
+  padding: 1rem 0;
+}
+
+/* ---- model rows ---- */
+
+.model-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.model-row:last-child { border-bottom: none; }
+
+.model-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.model-row__title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.model-row__title strong { font-size: var(--text-ui); overflow-wrap: break-word; }
+.model-row__meta, .model-row__desc { overflow-wrap: break-word; }
+.model-row__actions { flex-shrink: 0; }
+
+.model-badge {
+  display: inline-block;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+.model-badge--loaded { background: var(--brand-tint); color: var(--ink); }
+
+/* ---- scan panel ---- */
+
+.scan-panel { display: flex; flex-direction: column; }
+
+.scan-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.scan-row:last-child { border-bottom: none; }
+
+.scan-row__main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.scan-row__main strong { overflow-wrap: break-word; }
+.scan-row__meta { overflow-wrap: break-word; }
+.scan-row__actions { flex-shrink: 0; }
+
+/* ---- danger zone ---- */
+
+.models__danger {
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.models__danger h2 {
+  color: var(--ink-muted);
+  font-weight: 550;
+  font-size: var(--text-ui);
+  margin-bottom: 0.5rem;
+}
+.models__danger-result { margin-top: 0.5rem; min-height: 1.2rem; }
+
+@media (max-width: 767px) {
+  .models { padding: 1rem 1rem 2.5rem; }
+  .model-row, .scan-row { padding: 0.85rem 0; }
+  .model-row__actions .btn,
+  .scan-row__actions .btn,
+  .models__danger .btn {
+    min-height: 44px;
+    padding: 0.55rem 0.9rem;
+  }
+}
+
+
 /* ==== page: notebook ==== */
+
+.notebook {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---- sidebar (mirrors chat's conversations pane) ---- */
+
+.notebook__list-pane {
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notebook__list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+}
+.notebook__list-head h2 { font-size: var(--text-ui); color: var(--ink-muted); font-weight: 550; }
+.notebook__list { overflow-y: auto; flex: 1; padding: 0 0.5rem 0.75rem; }
+
+.notebook-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: var(--r-ctl);
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  font-size: var(--text-ui);
+  color: var(--ink-muted);
+}
+.notebook-item:hover { background: var(--surface-2); }
+.notebook-item--active { background: var(--brand-tint); color: var(--ink); }
+.notebook-item__title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.notebook-item__delete { visibility: hidden; }
+.notebook-item:hover .notebook-item__delete,
+.notebook-item .btn--armed { visibility: visible; }
+
+/* ---- editor pane -- warm-minimal writing surface ---- */
+
+.notebook__editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* toolbar only carries the mobile drawer toggle; empty (and invisible) on
+   desktop so it never reads as chrome around the writing surface. */
+.notebook__toolbar { display: none; }
+.notebook__list-toggle { display: none; }
+
+.notebook__body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.notebook__form {
+  max-width: 70ch;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.notebook__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.notebook__row .notebook__title { flex: 1; }
+.notebook__model { max-width: 16rem; }
+
+.notebook__title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  border: none;
+  background: none;
+  padding: 0.25rem 0;
+}
+
+.notebook__sysprompt {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+}
+.notebook__sysprompt summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  user-select: none;
+}
+.notebook__sysprompt-input {
+  width: 100%;
+  border: none;
+  background: none;
+  resize: vertical;
+  min-height: 3.5rem;
+  margin-top: 0.5rem;
+  padding: 0;
+  font-size: var(--text-ui);
+  line-height: 1.5;
+}
+
+.notebook__content-wrap { flex: 1; display: flex; }
+.notebook__content {
+  flex: 1;
+  border: none;
+  background: none;
+  resize: none;
+  padding: 0;
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  color: var(--ink);
+  min-height: 50vh;
+}
+/* the writing surface dominates the pane -- omit the focus ring here the
+   way a distraction-free editor would, while keeping it on every discrete
+   control (title, model select, buttons) via the shared global rule. */
+.notebook__content:focus-visible,
+.notebook__sysprompt-input:focus-visible {
+  outline: none;
+}
+.notebook__content::placeholder { color: var(--ink-faint); }
+
+.notebook__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.notebook__empty { padding: 3rem 1rem; }
+
+.notebook__status {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+  padding: 0.15rem 1rem 0.35rem;
+  text-align: center;
+  min-height: 1.4rem;
+}
+
+@media (max-width: 767px) {
+  .notebook { grid-template-columns: 1fr; }
+  .notebook__list-pane {
+    display: none;
+    position: fixed;
+    inset: 0 20% calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)) 0;
+    z-index: var(--z-drawer);
+    border-right: 1px solid var(--line-strong);
+  }
+  .notebook--list-open .notebook__list-pane { display: flex; }
+  .notebook__toolbar {
+    display: flex;
+    padding: 0.6rem 1rem 0;
+  }
+  .notebook__list-toggle { display: inline-block; }
+  .notebook__form { padding: 1rem 1rem 1.5rem; }
+}
+
 
 /* ==== page: perf ==== */
 
+/* Admin surface: quiet, typographic, no cards/gradients/chart-lib look.
+   Rows read like a definition list; the only "chart" is a hairline
+   inline usage bar at low emphasis. */
+
+.perf {
+  height: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1.25rem 2.5rem;
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+.perf__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.perf__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.perf__updated { white-space: nowrap; }
+
+.perf__section { margin-bottom: 2rem; }
+.perf__section-title {
+  color: var(--ink-muted);
+  font-weight: 550;
+  margin-bottom: 0.5rem;
+}
+.perf__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.perf__range-buttons { display: flex; gap: 0.3rem; }
+.perf__range-btn--active {
+  background: var(--brand-tint);
+  border-color: var(--brand-tint);
+  color: var(--ink);
+  font-weight: 550;
+}
+.perf__range-btn--active:hover { background: var(--brand-tint); }
+
+/* ---- system rows ---- */
+
+.perf__rows { margin-bottom: 0.75rem; }
+.perf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-ui);
+}
+.perf-row:last-child { border-bottom: none; }
+.perf-row__value { font-family: var(--mono); }
+
+/* ---- per-model rows ---- */
+
+.perf__models { margin-top: 0.25rem; }
+
+.perf-model {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.perf-model:last-child { border-bottom: none; }
+.perf-model__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.perf-model__id {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.perf-model__mem { font-family: var(--mono); white-space: nowrap; }
+.perf-model__bar-row { margin: 0.35rem 0; }
+.perf-model__meta {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+}
+
+/* ---- thin inline usage bar (not a chart lib) ---- */
+
+.perf-bar {
+  position: relative;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.perf-bar__fill {
+  height: 100%;
+  width: 0;
+  background: var(--brand);
+  opacity: 0.55;
+  border-radius: 3px;
+}
+.perf-bar--sm {
+  height: 4px;
+  width: 4rem;
+  flex: none;
+}
+
+/* ---- profile tables ---- */
+
+.perf__profile-body h3 { color: var(--ink-muted); margin: 0 0 0.35rem; }
+.perf__profile-body h3:not(:first-child) { margin-top: 1.25rem; }
+
+.perf-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.perf-table th, .perf-table td {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.perf-table tbody tr:last-child th,
+.perf-table tbody tr:last-child td { border-bottom: none; }
+.perf-table th {
+  color: var(--ink-muted);
+  font-weight: 550;
+}
+.perf-table__num { font-family: var(--mono); text-align: right; }
+.perf-table__mono { font-family: var(--mono); }
+.perf-table__pct-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.perf-table__pct-text { font-family: var(--mono); white-space: nowrap; }
+
+@media (max-width: 480px) {
+  .perf { padding: 1rem 0.85rem 2rem; }
+  .perf__header { flex-wrap: wrap; }
+  .perf-model__meta { gap: 0.6rem; }
+  .perf-table { font-size: 0.7rem; }
+  .perf-table th, .perf-table td { padding: 0.3rem 0.4rem; }
+  .perf-bar--sm { width: 3rem; }
+}
+
+
 /* ==== page: explore ==== */
+
+.explore {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Keyboard nav is driven off this container's focus, not a visible focus
+   ring on the whole page -- the chip selection ring is the real indicator. */
+.explore:focus,
+.explore:focus-visible {
+  outline: none;
+}
+
+.explore__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem 0.5rem;
+}
+.explore__bar select { max-width: 16rem; }
+
+.explore__composer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  padding: 0 1.25rem 0.5rem;
+}
+.explore__composer textarea {
+  flex: 1;
+  resize: none;
+  font-size: var(--text-body);
+  line-height: 1.5;
+  max-height: 200px;
+}
+
+.explore__status {
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  padding: 0 1.25rem 0.35rem;
+  min-height: 1.4rem;
+}
+
+.explore__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 1.25rem;
+  padding: 0 1.25rem 1.25rem;
+  overflow: hidden;
+}
+
+.explore__main {
+  flex: 1 1 70ch;
+  max-width: 70ch;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+
+.explore__thinking { margin-bottom: 0.25rem; }
+
+.explore__strip {
+  line-height: 2;
+  word-break: break-word;
+}
+
+/* ---- token chips ---- */
+
+.tok {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 0.25rem 0.35rem;
+  margin: 0.15rem;
+  cursor: pointer;
+}
+.tok:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.tok--selected { box-shadow: 0 0 0 2px var(--accent); }
+
+.ws-glyph { color: var(--ink-muted); }
+
+@media (max-width: 767px) {
+  .tok { margin: 0.2rem; padding: 0.3rem 0.4rem; }
+}
+
+/* ---- detail panel ---- */
+
+.explore__detail {
+  flex: 0 0 300px;
+  max-width: 320px;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 0.85rem 1rem;
+}
+
+.explore-detail__content { display: flex; flex-direction: column; gap: 0.15rem; }
+
+.explore-detail__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.explore-detail__row:last-of-type { border-bottom: none; }
+
+.explore-detail__token,
+.explore-detail__mono { font-family: var(--mono); font-size: var(--text-ui); }
+
+.explore-detail__heading {
+  color: var(--ink-muted);
+  font-weight: 550;
+  margin: 0.85rem 0 0.4rem;
+}
+
+.explore-bars { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.explore-bar {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 5rem) 1fr 3rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--text-sm);
+  font-family: var(--mono);
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--r-ctl);
+}
+.explore-bar--chosen { background: var(--brand-tint); font-weight: 600; }
+
+.explore-bar__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explore-bar__track {
+  background: var(--surface-2);
+  border-radius: 4px;
+  height: 0.5rem;
+  overflow: hidden;
+}
+.explore-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--brand) 60%, transparent);
+}
+.explore-bar--chosen .explore-bar__fill {
+  background: color-mix(in oklch, var(--brand) 85%, transparent);
+}
+
+.explore-bar__pct { text-align: right; }
+
+@media (max-width: 767px) {
+  .explore__body { flex-direction: column; overflow-y: auto; }
+  .explore__main { max-width: none; flex: none; overflow: visible; }
+  .explore__detail { flex: none; max-width: none; }
+}
+

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0]
+
+### Added
+
+- **Frontend v3 at `/v3`** (`apps/heylook-frontend-v3/`): from-scratch rewrite per `docs/frontend_v3_spec.md`, served alongside `/v2` until cutover. Vanilla JS ES modules, no framework, no build step. Five pages: chat, notebook, token explorer, models (admin), performance (on-demand only, no polling); batch page dropped per spec. Pretext virtualization is gone -- markdown rendering via the vendored marked + DOMPurify path only. Shared layer replaces v2's per-page boilerplate: `createPage` lifecycle (per-mount state, teardown AbortSignal, auto-cancelled rAF throttles, post-await guards), hash router with nav generated from route registration, route-table-generated `api.js`, `streaming.js` (SSE keepalive-comment handling, `reader.cancel()` on abort, abort-as-normal-completion), data-driven sampler settings panel (null = backend cascade, localStorage key `heylook-v3-settings`). Fresh OKLCH warm-minimal design system (pure-white surface, honey-bronze accent) with desktop + iPhone-Safari layouts. Verified end-to-end against a live backend: 25 chat checks + 27 page checks (streaming, position-truncation edit/regenerate, stop/abort partial save, 503-busy retry path, autosave, generate-at-cursor, logprob chips, admin load/unload/scan, clear-all).
+- **`/v3` static mount in `api.py`**: duplicate of the `/v2` block (SPA fallback + path-traversal guard), plus contract tests for both mounts (`tests/contract/test_frontend_mounts.py`).
+
 ## [1.30.5]
 
 ### Fixed
