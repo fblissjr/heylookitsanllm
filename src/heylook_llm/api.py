@@ -25,7 +25,6 @@ from heylook_llm.utils import log_request_start, log_request_stage, log_request_
 from heylook_llm.diagnostic_logger import diag_event
 from heylook_llm.presets import PresetNotFound
 from heylook_llm.reasoning_parser import (
-    PassThroughParser,
     parse_reasoning,
     select_reasoning_parser,
 )
@@ -805,14 +804,14 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         and chat_request.stream_options.get('include_usage', False)
     )
 
-    # Parser built once at model load (see MLXProvider.load_model). Reset
-    # between requests rather than rebuild -- matters for large strip-token
-    # sets (Mistral ~1000 reserved tokens) where regex compile isn't free.
-    thinking_parser = getattr(provider, "_reasoning_parser", None) if provider else None
-    if thinking_parser is None:
-        thinking_parser = PassThroughParser()
-    else:
-        thinking_parser.reset()
+    # Per-request parser: buffer state must never be shared across requests
+    # (interleaved streams on one model corrupt each other; an aborted stream
+    # leaves stale buffer for the next). Instantiation is cheap even for
+    # Mistral-sized special-token sets -- the compiled strip pattern is cached
+    # and shared; only the buffers are per-instance.
+    thinking_parser = select_reasoning_parser(
+        getattr(provider, "_template_info", None) if provider else None
+    )
 
     # Initialize logprobs collector if requested
     logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=True)
@@ -1152,9 +1151,12 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             "cached_tokens": cached_tokens,
         }
 
-    # Parse reasoning content with the provider's cached parser (C4.5).
-    _cached = getattr(provider, "_reasoning_parser", None) if provider else None
-    content, thinking = parse_reasoning(full_text, _cached or PassThroughParser())
+    # Parse reasoning content with a per-request parser (shared instances
+    # race with concurrent streams; see stream_response_generator_async).
+    content, thinking = parse_reasoning(
+        full_text,
+        select_reasoning_parser(getattr(provider, "_template_info", None) if provider else None),
+    )
 
     message = {"role": "assistant", "content": content}
     if thinking is not None:

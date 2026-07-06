@@ -161,6 +161,23 @@ class MLXEmbeddingProvider(BaseProvider):
         self.tokenizer = AutoTokenizer.from_pretrained(str(local_path))
         self.processor = self.tokenizer
 
+        # Decoder-only LMs used as embedding backbones often have no pad_token,
+        # which breaks the padding=True call in get_embeddings(). Fall back to
+        # eos_token; if that's also missing, leave it as-is (padding will fail
+        # downstream, but loading shouldn't crash).
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                logger.info(
+                    "tokenizer has no pad_token; falling back to eos_token (%r)",
+                    self.tokenizer.eos_token,
+                )
+            else:
+                logger.warning(
+                    "tokenizer has neither pad_token nor eos_token; "
+                    "batched embedding requests with padding may fail"
+                )
+
         logger.info(
             "loaded embedding model: %d layers, hidden_size=%d, output_dim=%d, pooling=%s",
             args.num_hidden_layers,

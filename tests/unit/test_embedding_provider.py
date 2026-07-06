@@ -185,6 +185,69 @@ class TestProviderLoadModel:
         norm = math.sqrt(sum(x * x for x in embeddings[0]))
         assert abs(norm - 1.0) < 1e-4
 
+    def test_pad_token_falls_back_to_eos_when_missing(self, tmp_path):
+        """When the tokenizer has no pad_token, load_model() should fall back to eos_token."""
+        from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
+
+        _build_tiny_model_dir(tmp_path)
+
+        provider = MLXEmbeddingProvider(
+            model_id="test-embedding-pad-guard",
+            config={"model_path": str(tmp_path), "pooling": "mean"},
+            verbose=False,
+        )
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.pad_token = None
+        mock_tokenizer.eos_token = "<eos>"
+
+        with patch("transformers.AutoTokenizer.from_pretrained", return_value=mock_tokenizer):
+            provider.load_model()
+
+        assert provider.tokenizer.pad_token == "<eos>"
+
+    def test_pad_token_left_none_when_no_eos(self, tmp_path):
+        """When both pad_token and eos_token are missing, load_model() must not crash."""
+        from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
+
+        _build_tiny_model_dir(tmp_path)
+
+        provider = MLXEmbeddingProvider(
+            model_id="test-embedding-pad-guard-none",
+            config={"model_path": str(tmp_path), "pooling": "mean"},
+            verbose=False,
+        )
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.pad_token = None
+        mock_tokenizer.eos_token = None
+
+        with patch("transformers.AutoTokenizer.from_pretrained", return_value=mock_tokenizer):
+            provider.load_model()  # should not raise
+
+        assert provider.tokenizer.pad_token is None
+
+    def test_pad_token_untouched_when_present(self, tmp_path):
+        """When the tokenizer already has a pad_token, load_model() must not overwrite it."""
+        from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
+
+        _build_tiny_model_dir(tmp_path)
+
+        provider = MLXEmbeddingProvider(
+            model_id="test-embedding-pad-guard-present",
+            config={"model_path": str(tmp_path), "pooling": "mean"},
+            verbose=False,
+        )
+
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.pad_token = "<pad>"
+        mock_tokenizer.eos_token = "<eos>"
+
+        with patch("transformers.AutoTokenizer.from_pretrained", return_value=mock_tokenizer):
+            provider.load_model()
+
+        assert provider.tokenizer.pad_token == "<pad>"
+
     def test_sanitize_handles_rotary_and_vision_keys(self, tmp_path):
         """Weights with rotary freqs and vision keys are cleaned during load."""
         _build_tiny_model_dir(tmp_path)

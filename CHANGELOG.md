@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.2]
+
+### Fixed
+
+- **Reasoning parser is now instantiated per request, not shared on the provider.** The parser (with its streaming buffer state) was built once at model load; every request called `reset()` and streamed through the shared instance, so two interleaved streams on the same model corrupted each other's buffers and request B's `reset()` clobbered request A mid-flight. Each request now gets its own parser via `select_reasoning_parser(provider._template_info)`. The load-time rationale (Mistral's ~1000-token strip-regex compile) is preserved by an `lru_cache` on `_compile_strip_pattern` -- the compiled pattern is stateless and shared; only buffers are per-request.
+- **Embedding tokenizer pad-token guard**: decoder-only backbones without a `pad_token` broke the `padding=True` batch-encode call; the embedding provider now falls back to `eos_token` at load (warns if both are missing).
+
 ## [1.34.1]
 
 ### Fixed

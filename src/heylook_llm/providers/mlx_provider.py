@@ -586,11 +586,11 @@ class MLXProvider(BaseProvider):
                 len(self._template_info.special_tokens),
                 self.model_id,
             )
-            # Build the reasoning parser once at load (not per request). For
-            # models like Mistral with ~1000 reserved tokens the strip regex
-            # compile is non-trivial; callers reset() before each request.
-            from heylook_llm.reasoning_parser import select_reasoning_parser
-            self._reasoning_parser = select_reasoning_parser(self._template_info)
+            # NOTE: the reasoning parser is instantiated PER REQUEST from
+            # _template_info (api.py) -- parser buffers must never be shared
+            # across requests. The strip-regex compile cost that once
+            # justified a load-time instance is covered by the pattern cache
+            # in reasoning_parser._compile_strip_pattern.
             # If the user pointed at an explicit template file/kind, also
             # install it on the tokenizer so apply_chat_template honors it.
             if self.config.get("chat_template_source") and self._template_info.chat_template:

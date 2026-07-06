@@ -11,6 +11,7 @@ files on disk are the reliable source of truth.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any, List, Optional, Protocol, Tuple
 
 
@@ -25,10 +26,16 @@ class ReasoningParser(Protocol):
     def reset(self) -> None: ...
 
 
+@lru_cache(maxsize=16)
 def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]:
     """Alternation regex over the declared specials, sorted longest-first so
     ``<|endoftext|>`` wins over a substring match inside it. Returns None for
-    the empty set -- callers check and skip the sub()."""
+    the empty set -- callers check and skip the sub().
+
+    Cached: parsers are instantiated per request, and for models like Mistral
+    (~1000 reserved tokens) building this alternation isn't free. The compiled
+    pattern is stateless, so sharing it across parser instances is safe --
+    only parser BUFFERS must be per-request."""
     if not strip_tokens:
         return None
     ordered = sorted(strip_tokens, key=len, reverse=True)
