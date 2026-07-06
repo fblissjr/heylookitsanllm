@@ -1,6 +1,11 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-05
+Last updated: 2026-07-06
+
+> **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
+> graded done/not-done status lives in `internal/session/CURRENT.md`. This doc
+> remains the contract of record: §4 is kept current as the backend moves
+> (last contract updates 2026-07-06, marked "v1.31.1+" / "v1.32.0" below).
 
 A from-scratch, MUCH-simpler rewrite of `apps/heylook-frontend-v2/`, preserving its functionality
 and vision. This doc is the **complete build contract**: a fresh session should be able to build v3
@@ -178,7 +183,17 @@ are unauthenticated.
   timing:{total_duration_ms, peak_memory_gb?, kv_cache_bytes?, queue_wait_ms?, ...},
   generation_config?, stop_reason }`. Terminator `data: [DONE]`.
 - **503 backpressure**: `{error:{code:"model_overloaded"}}` + `Retry-After`, `X-RateLimit-*` headers — v3
-  should surface this as a friendly "server busy, retrying" state, not a raw error.
+  should surface this as a friendly "server busy, retrying" state, not a raw error. (As built: the bounded
+  retry lives in `streaming.js` itself with an `onRetryWait(seconds, attempt)` callback; pages only render
+  the status line.)
+- **Mid-stream generation failure (v1.31.1+)**: the backend emits `data: {"error":{"message":..., "type":
+  "server_error", "code":"generation_failed"}}` followed by `data: [DONE]` — never as a content delta.
+  Non-streaming requests get HTTP 500 with the message in `detail`; the Messages API emits `event: error`.
+  `streaming.js` converts the payload to a thrown error routed to `onError`. Clients must never render
+  `error.message` as assistant content.
+- **Server-side defaults (v1.32.0)**: when the request, its preset, and the model config are all silent,
+  the effective sampler floor is `temperature 0.7, max_tokens 4096` (was 0.1/512), and imported models
+  carry `default_preset = "balanced"`. The UI's null-means-cascade settings contract is unchanged.
 - **Trap**: setting `processing_mode` (≠ "conversation") switches the response to a *different* schema
   (`chat.completion.batch`). v3 chat should NOT send `processing_mode` — ignore this path.
 
