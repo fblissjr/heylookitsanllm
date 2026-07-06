@@ -2,7 +2,7 @@
 
 <!-- Nav hub. Repo-specific only -- global conventions (uv, orjson, no-emoji,
 conventional commits, TDD, path-privacy, docs) live in the user-level CLAUDE.md
-and still apply. Don't duplicate them here. Last verified: 2026-06-29 -->
+and still apply. Don't duplicate them here. Last verified: 2026-07-06 -->
 
 Personal MLX inference server on Apple Silicon: FastAPI backend + two frontends
 (legacy React, vanilla-JS v2).
@@ -32,7 +32,7 @@ See its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 **Frontend legacy `apps/heylook-frontend/`** -- React+Zustand+Vite, 7 applets,
 being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md).
 
-**Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md).
+**Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md). NB: root pyproject pins UPSTREAM mlx-lm/mlx-vlm, not its forks -- fork-side bench wins don't reach the server until upstreamed/repointed.
 
 ## MLX / library gotchas (the things you'll get wrong without knowing)
 
@@ -45,6 +45,7 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 - `mlx_lm.generate.GenerationResponse` is a non-slotted dataclass -- attach per-request metadata via `response.X = value` (`# type: ignore[attr-defined]`), read via `getattr`.
 - `mx.set_wired_limit(...)` is set at startup, but the per-generation `wired_limit()` CM is still needed for stream sync. Call `mx.reset_peak_memory()` at `run_generation` start to scope `mx.get_peak_memory()` per request.
 - Verify a library is actually broken before working around it.
+- Recorded perf numbers are untrustworthy until plan Phase 1 items 1-2 land: streaming tok/s is quantized to ~10/s by the 100ms poll loop (`streaming_utils.py`), headline tok/s+TTFT include queue-wait, and mlx-lm's native per-chunk `prompt_tps`/`generation_tps` are never read. Don't cite or optimize against them; see `internal/backend/plan_2026-07.md` Phase 5 "measurement reality check".
 
 ## Repo conventions (beyond the global ones)
 
@@ -56,6 +57,7 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 - Frontend v2 specifics (Pydantic `model_fields_set`, `<base href="/v2/">` SPA serving, sanitization): see its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 - Never commit runtime data: `*.db`, `*.jsonl`, `/data/*`, `apps/*/data/*` are gitignored; package data at `src/heylook_llm/data/` is intentionally NOT ignored.
 - Commits fine without asking; never push unless told. Update `internal/log/log_YYYY-MM-DD.md` before ending a session.
+- `internal/` is unversioned (gitignored): before destructively rewriting a long-lived internal doc (plans, specs), copy the old version to an `archive/` subdir first -- that copy IS the history.
 
 ## Tests
 
