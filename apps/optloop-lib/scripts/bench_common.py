@@ -33,6 +33,7 @@ VLM_DIR = DATA_DIR / "vlm"
 CYCLES_DIR = DATA_DIR / "cycles"
 RESULTS_TSV = OPTLOOP_ROOT / "results.tsv"
 CONFIG_PATH = OPTLOOP_ROOT / "bench_config.toml"
+MODELS_TOML = REPO_ROOT / "models.toml"
 
 
 def ensure_dirs():
@@ -40,6 +41,35 @@ def ensure_dirs():
     TEXT_DIR.mkdir(parents=True, exist_ok=True)
     VLM_DIR.mkdir(parents=True, exist_ok=True)
     CYCLES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_models_toml(path: Path | None = None) -> list[dict]:
+    """Load models from the project root models.toml. Returns list of model entries."""
+    toml_path = path or MODELS_TOML
+    if not toml_path.exists():
+        return []
+    with open(toml_path, "rb") as f:
+        data = tomllib.load(f)
+    return data.get("models", [])
+
+
+def resolve_model_from_toml(model_id: str, path: Path | None = None) -> str | None:
+    """Look up a model ID in models.toml and return its local model_path.
+
+    Matches on the 'id' field. Also tries stripping an org/ prefix
+    (e.g. 'mlx-community/foo' -> 'foo') as a fallback, so bench defaults
+    with HF org prefixes still resolve to local server-managed paths.
+    """
+    models = load_models_toml(path=path)
+    for m in models:
+        if m.get("id") == model_id:
+            return m.get("config", {}).get("model_path")
+    if "/" in model_id:
+        short_id = model_id.split("/", 1)[1]
+        for m in models:
+            if m.get("id") == short_id:
+                return m.get("config", {}).get("model_path")
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,10 @@
-# Library-Level Inference Optimization Loop
+# Library-Level Inference Benchmark Protocol
 
-Human-readable reference for library-level optimization of mlx-lm and mlx-vlm internals. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM), continuous loop with verification, output fingerprinting, and per-cycle structured logging. Benchmarks include single-turn and multi-turn prompts to test both raw generation speed and context-carry performance with growing KV caches.
+Last updated: 2026-07-06
+
+Benchmark protocol for mlx-lm and mlx-vlm fork experiments. Fork repos are cloned locally at `apps/optloop-lib/repos/`. Two benchmarks (text + VLM) with verification, output fingerprinting, and per-cycle structured logging. Benchmarks include single-turn and multi-turn prompts to test both raw generation speed and context-carry performance with growing KV caches.
+
+This is first a MANUAL benchmark tool (run a bench, make a change, run it again, keep or revert); the agent-driven loop below is an optional way to drive it. Orientation and honesty constraints: `CLAUDE.md` in this directory.
 
 Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
 
@@ -22,8 +26,7 @@ Target hardware: Mac Studio M2 Ultra, 192GB unified memory.
    - `repos/mlx-lm/mlx_lm/sample_utils.py`
 4. Load `/mlx-skills:mlx` and `/mlx-skills:mlx-lm` skills for MLX optimization knowledge
 5. Read `apps/optloop-lib/bench_config.toml` -- this is your config. Do NOT modify it.
-5b. Read `docs/optimization_log.md` -- cross-session knowledge base (shared with optloop). Check baselines and prior findings before repeating work.
-5c. Read `apps/optloop-lib/AGENTS.md` -- library internals knowledge base (populated during optimization cycles).
+5b. Read `docs/optimization_log.md` -- the cross-session knowledge base. Check baselines and prior findings before repeating work.
 6. Establish baselines:
    ```
    cd apps/optloop-lib && uv run scripts/bench_text.py --reset-baseline 2>&1
@@ -56,7 +59,7 @@ Read scope from `[optimizer]` section of `bench_config.toml`.
 - `apps/optloop-lib/scripts/` (bench harness)
 - `apps/optloop-lib/bench_config.toml` (eval config)
 - `apps/optloop-lib/data/` (bench data)
-- `src/heylook_llm/` (that's optloop's job, not yours)
+- `src/heylook_llm/` (server code is benchmarked over HTTP, not here -- see the plan's measurement section)
 
 ### Tier-guided optimization
 
@@ -66,15 +69,15 @@ Read `[optimizer.scope]` from bench_config.toml:
 - **Tier 2** (model architectures): `models/*.py`, `quant/*.py`
 - **Tier 3** (VLM pipeline): `mlx_vlm/generate.py`, `prompt_utils.py`, `utils.py`
 
-## The Loop
+## The Loop (optional, agent-driven)
 
 ```
-LOOP FOREVER:
+PER CYCLE:
 1. Snapshot fork HEADs:
    Use bench_common.snapshot_coderef() conceptually -- record current branch + commit
    for both repos before making changes.
 1b. Read results.tsv -- check what's been tried this session, identify patterns
-1c. On first iteration: also read docs/optimization_log.md and AGENTS.md for cross-session context
+1c. On first iteration: also read docs/optimization_log.md for cross-session context
 
 2. Choose optimization target (tier-guided, prefer tier 1 early)
 
@@ -119,7 +122,7 @@ LOOP FOREVER:
 
 14. Write cycle JSON via bench_common helpers (see Cycle Logging below)
 
-15. NEVER STOP
+15. Continue until the session goal is met or the human interrupts
 ```
 
 ## Verification Phase
@@ -136,6 +139,10 @@ Read the diff in the modified fork repo and check:
 
 Already checked by bench scripts. If `fingerprint_match: false` in grep output: auto-reject.
 With greedy decode (temp=0, seed=42), token sequences must be byte-identical to baseline.
+
+Limitation (do not oversell): the fingerprint freezes behavior relative to the
+harness's own baseline -- it does NOT certify the baseline output was good.
+There is no ground-truth quality metric in this harness.
 
 ### 3. Fork Test Suite
 
@@ -229,11 +236,6 @@ When the session ends (interrupted, wrapping up):
    - New baselines achieved (if improved over prior best)
    - Approaches that worked (with magnitude)
    - Approaches that failed (with reasoning)
-   - Technical discoveries and gotchas
-3. Update `apps/optloop-lib/AGENTS.md` with any new library internals knowledge
-4. Commit updates on main
-5. Write session log to `internal/log/log_YYYY-MM-DD.md`
-
-## Never stop
-
-Run indefinitely until manually interrupted.
+   - Technical discoveries and gotchas (library internals knowledge goes here too)
+3. Commit updates on main
+4. Write session log to `internal/log/log_YYYY-MM-DD.md`

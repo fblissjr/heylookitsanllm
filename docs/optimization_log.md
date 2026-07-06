@@ -1,9 +1,16 @@
 # Optimization Log
 
-Last updated: 2026-03-16
+Last updated: 2026-07-06
 
-Accumulated findings from optloop inference optimization sessions.
+Accumulated findings from inference optimization sessions.
 Updated at the end of each session (on main, after merge).
+
+Note (2026-07-06): the app-level `apps/optloop` harness was retired -- its
+benchmarks never exercised the server path (a fact first recorded in the
+Technical Findings below on 2026-03-16). Sessions now target
+`apps/optloop-lib` (fork-level) only; this file remains the single
+cross-session knowledge base. The 2026-03-16 baselines below were measured
+via direct library calls and remain valid for optloop-lib comparisons.
 
 ## Performance Baselines
 

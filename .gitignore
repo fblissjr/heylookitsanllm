@@ -49,9 +49,6 @@ apps/*/data/*
 # bench data (legacy paths)
 results.tsv
 data/bench/
-# optloop bench data
-apps/optloop/results.tsv
-apps/optloop/data/
 # optloop-lib bench data + fork clones
 apps/optloop-lib/results.tsv
 apps/optloop-lib/data/

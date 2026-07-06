@@ -149,12 +149,17 @@ Standalone CLI tool for labeling image directories with VLMs. See [`apps/batch-l
 
 ## Inference Optimization
 
-Two self-contained optimization loops for autonomous inference tuning on Apple Silicon:
+**[`apps/optloop-lib/`](apps/optloop-lib/)** -- library-level benchmark harness
+for experiments on local forks of mlx-lm and mlx-vlm (in its `repos/`): dual
+text+VLM benchmarks, composite scoring, output fingerprinting, and structured
+cycle logging. Configured via `bench_config.toml` (scoring weights, decision
+thresholds, constraint limits, optimizer scope). See the
+[user guide](docs/optloop_guide.md).
 
-- **[`apps/optloop/`](apps/optloop/)** -- Application-level optimization. Tunes `src/heylook_llm/` code with dual text+VLM benchmarks, composite scoring, output fingerprinting, and structured cycle logging.
-- **[`apps/optloop-lib/`](apps/optloop-lib/)** -- Library-level optimization. Same loop targeting local forks of mlx-lm and mlx-vlm in `repos/`.
-
-Both are configured via `bench_config.toml` (scoring weights, decision thresholds, constraint limits, optimizer scope). See the [user guide](docs/optloop_guide.md) for a walkthrough, or the [advanced guide](docs/optloop_advanced.md) for the bench activation gap, monkey patching, and failure modes.
+The former app-level loop (`apps/optloop/`) was retired 2026-07-06: its
+benchmarks called mlx-lm directly and never exercised the `src/heylook_llm/`
+serving path it was chartered to optimize. Serving-path benchmarking will be
+done over HTTP against a running server instead.
 
 ## Monitoring and Optimization
 

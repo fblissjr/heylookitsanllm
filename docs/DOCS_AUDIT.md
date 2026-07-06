@@ -14,8 +14,8 @@ Last updated: 2026-04-18
 |------|-------------|--------------|-----------|--------|
 | `rlm_guide.md` | none (last modified 2026-03-16) | README.md, CLAUDE.md, rlm_advanced.md | 16.2 | current |
 | `rlm_advanced.md` | none (last modified 2026-03-16) | README.md, rlm_guide.md | 15.2 | current |
-| `optloop_guide.md` | none (last modified 2026-03-16) | README.md, CLAUDE.md, optloop_advanced.md | 13.7 | minor stale (Python version path) |
-| `optloop_advanced.md` | none (last modified 2026-03-16) | README.md, CLAUDE.md, optloop_guide.md | 15.5 | minor stale (Python version path) |
+| `optloop_guide.md` | 2026-07-06 | README.md, CLAUDE.md | 13.7 | rewritten lib-only (app-level optloop retired 2026-07-06) |
+| `optloop_advanced.md` | -- | -- | -- | DELETED 2026-07-06 (content merged into optloop_guide.md; .pth/activation-gap sections obsolete with app-level retirement) |
 | `optimization_log.md` | none (last modified 2026-03-16) | CLAUDE.md, optloop_guide.md (×6), optloop_advanced.md (×2) | 2.3 | current |
 | `observability_guide.md` | 2026-04-18 | README.md (×2), CLAUDE.md (×2) | 15.3 | stale cross-links |
 | `mlx_optimization_plan.md` | 2026-02-23 | CHANGELOG.md entry only (no nav links) | 18.4 | orphan + partially stale |
@@ -30,9 +30,7 @@ Last updated: 2026-04-18
 
   Two inline references and one Related-section entry point to `plans/lets-look-at-our-prancy-gosling.md`. That file is gitignored and does not exist on disk. Any reader of the committed file hits a dead link. The references are for S1.2b (preset taxonomy methodology) and S2.4 (idle unload daemon). Replace with descriptive prose: "the S1.2b methodology is documented locally; if the plan file isn't present, the jq recipes above are self-sufficient." Remove the Related-section entry or replace with the actual internal doc if one exists.
 
-- [ ] **2. Fix optloop_guide.md and optloop_advanced.md: harden the .pth path** (`optloop_guide.md` line 145, `optloop_advanced.md` lines 20 and 170)
-
-  All three hardcode `.venv/lib/python3.13/`. The project requires Python `>=3.12`; the current venv uses 3.13, but the path would silently fail on a 3.12 install. Replace the hardcoded paths with the shell-portable equivalent: `` `.venv/lib/$(python3 -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')/site-packages/heylook_llm_patches.pth` ``, or document that users should `find .venv/lib/ -name heylook_llm_patches.pth` to locate the file. Either way, add a note that the exact subdirectory depends on the active Python minor version.
+- [x] ~~**2. Fix optloop_guide.md and optloop_advanced.md: harden the .pth path**~~ MOOT 2026-07-06: the .pth activation mechanism belonged to the retired app-level optloop; the sections were removed in the lib-only guide rewrite.
 
 - [ ] **3. Update mlx_optimization_plan.md Phase 4 "planned improvements" to reflect shipped state** (`mlx_optimization_plan.md`, lines 242--283)
 
@@ -63,6 +61,6 @@ Last updated: 2026-04-18
 ## Not Recommended
 
 - **Merging rlm_guide.md + rlm_advanced.md**: Separation is clean. Guide covers reference (request fields, response, streaming, sandbox) and advanced covers patterns (pipeline, fan-out, retry). Cross-links are present and correct. Both are well-maintained and at similar lengths. No merge needed.
-- **Merging optloop_guide.md + optloop_advanced.md**: Same rationale. Guide is a walkthrough; advanced is internals + failure modes + FAQ. Combined they would be 700+ lines and harder to navigate. Keep split.
+- **Merging optloop_guide.md + optloop_advanced.md**: ~~Keep split.~~ SUPERSEDED 2026-07-06: the app-level retirement removed most of the advanced guide's content (activation gap, monkey patching), so the remainder was merged into a single lib-only guide after all.
 - **Removing mlx_optimization_plan.md**: It is a useful development history document showing why the current architecture is shaped the way it is, with the design rationale for radix caching, the speculative decoding pattern, and the pre-filled cache VLM approach. It should be preserved but fixed (action 3) and linked (action 3).
 - **Removing optimization_log.md**: It is thin now (49 lines) but is the designated cross-session accumulator for the optloop workflow. Its thinness reflects that only one session has run, not document neglect.

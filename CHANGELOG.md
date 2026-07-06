@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0]
+
+### Removed
+
+- **App-level optloop (`apps/optloop/`) retired.** A measurement audit found its benchmarks import mlx-lm/mlx-vlm directly and never exercise the `src/heylook_llm/` serving path they were chartered to optimize -- a change to the router, radix cache, or generation core scored exactly 1.0 either way -- and no optimization cycle had ever run end-to-end (results.tsv was header-only, `data/cycles/` empty; the only artifacts were `--reset-baseline` writes). The scoring/fingerprint harness itself was sound and lives on in optloop-lib. Serving-path benchmarking will instead be a thin HTTP bench against a running server, planned after the streaming-delivery and headline-metrics fixes (see `internal/backend/plan_2026-07.md`, Phase 5 measurement section). Also removed: `docs/optloop_advanced.md` (its headline topics -- the bench activation gap and `.pth` monkey patching -- documented the retired app-level mechanism).
+
+### Changed
+
+- **optloop-lib is now the only optimization bench**, reframed as a manual benchmark tool first (agent-driven loop optional): new `apps/optloop-lib/CLAUDE.md` orientation doc, placeholder `AGENTS.md` deleted (cross-session knowledge consolidates in `docs/optimization_log.md`), `program.md` slimmed ("LOOP FOREVER"/"NEVER STOP" ceremony removed, stale references fixed), and `docs/optloop_guide.md` rewritten lib-only with the still-relevant advanced-guide content merged in. Fingerprinting docs now state the limitation plainly: greedy decode + token-ID fingerprint freezes behavior against the harness's own baseline but certifies nothing about output quality (no ground-truth metric exists).
+
+### Added
+
+- **optloop-lib: models.toml path resolution** (ported from the retired app-level harness before deletion): bench model IDs now resolve CLI `--model-path` > `bench_config.toml` id > the server's root `models.toml` local path (no re-download) > HF download fallback, with an org-prefix fallback match and 5 new unit tests (65 total).
+
 ## [1.33.0]
 
 ### Changed

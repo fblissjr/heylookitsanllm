@@ -26,6 +26,8 @@ from bench_common import (
     get_constraints,
     get_scoring_weights,
     load_baseline,
+    load_models_toml,
+    resolve_model_from_toml,
     snapshot_coderef,
 )
 
@@ -533,6 +535,46 @@ class TestLoadBaseline:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
         assert "corrupt" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# models.toml resolution (ported from the retired app-level optloop)
+# ---------------------------------------------------------------------------
+
+class TestModelsTomlResolution:
+    def _write_models_toml(self, tmp_path):
+        content = (
+            '[[models]]\n'
+            'id = "gemma-3-27b"\n'
+            '[models.config]\n'
+            'model_path = "/local/models/gemma-3-27b"\n'
+            '\n'
+            '[[models]]\n'
+            'id = "qwen-vl"\n'
+            '[models.config]\n'
+            'model_path = "/local/models/qwen-vl"\n'
+        )
+        path = tmp_path / "models.toml"
+        path.write_text(content)
+        return path
+
+    def test_direct_id_match_returns_model_path(self, tmp_path):
+        path = self._write_models_toml(tmp_path)
+        assert resolve_model_from_toml("gemma-3-27b", path=path) == "/local/models/gemma-3-27b"
+
+    def test_org_prefix_fallback(self, tmp_path):
+        path = self._write_models_toml(tmp_path)
+        assert resolve_model_from_toml("mlx-community/qwen-vl", path=path) == "/local/models/qwen-vl"
+
+    def test_no_match_returns_none(self, tmp_path):
+        path = self._write_models_toml(tmp_path)
+        assert resolve_model_from_toml("unknown-model", path=path) is None
+
+    def test_missing_file_returns_none(self, tmp_path):
+        assert resolve_model_from_toml("gemma-3-27b", path=tmp_path / "absent.toml") is None
+
+    def test_load_models_toml_missing_file_returns_empty(self, tmp_path):
+        assert load_models_toml(path=tmp_path / "absent.toml") == []
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ See its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 **Frontend legacy `apps/heylook-frontend/`** -- React+Zustand+Vite, 7 applets,
 being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md).
 
-**Optloop `apps/optloop/`, `apps/optloop-lib/`** -- autonomous inference tuning. [docs/optloop_guide.md](./docs/optloop_guide.md).
+**Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md).
 
 ## MLX / library gotchas (the things you'll get wrong without knowing)
 
