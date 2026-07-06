@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.4]
+
+### Fixed
+
+- **Scan/import correctness**: `already_configured` now matches on the resolved weights path as well as the id (a rescan that derives a different id for already-configured weights no longer presents them as unconfigured; symlinked spellings compare equal). Re-import has PUT semantics: importing an id that already exists replaces that entry with the freshly built one (smart defaults + profile + overrides) instead of silently skipping -- refreshing an entry from a rescan no longer requires hand-editing models.toml.
+
 ## [1.34.3]
 
 ### Fixed

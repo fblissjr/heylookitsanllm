@@ -348,8 +348,8 @@ class ModelService:
 
         importer = ModelImporter()
         raw_models = importer.scan_directory(path)
-        configured_ids = {m.id for m in self.list_configs()}
-        return [self._raw_to_scanned(m, configured_ids) for m in raw_models]
+        configured_ids, configured_paths = self._configured_identity()
+        return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
 
     def scan_hf_cache(self) -> list[ScannedModel]:
         """Scan HuggingFace cache directories for models."""
@@ -357,8 +357,25 @@ class ModelService:
 
         importer = ModelImporter()
         raw_models = importer.scan_hf_cache()
-        configured_ids = {m.id for m in self.list_configs()}
-        return [self._raw_to_scanned(m, configured_ids) for m in raw_models]
+        configured_ids, configured_paths = self._configured_identity()
+        return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
+
+    def _configured_identity(self) -> tuple[set[str], set[str]]:
+        """Configured ids AND resolved weight paths.
+
+        ``already_configured`` must match on either: a rescan can derive a
+        different id for weights that are already configured (id matching
+        alone invited duplicate entries pointing at the same weights).
+        Paths are resolved so symlinked spellings compare equal.
+        """
+        ids: set[str] = set()
+        paths: set[str] = set()
+        for m in self.list_configs():
+            ids.add(m.id)
+            model_path = getattr(m.config, "model_path", "")
+            if model_path:
+                paths.add(str(Path(model_path).expanduser().resolve()))
+        return ids, paths
 
     def scan_paths(
         self, paths: list[str] | None = None, scan_hf: bool = True
@@ -382,7 +399,12 @@ class ModelService:
 
         return results
 
-    def _raw_to_scanned(self, raw: dict, configured_ids: set[str]) -> ScannedModel:
+    def _raw_to_scanned(
+        self,
+        raw: dict,
+        configured_ids: set[str],
+        configured_paths: set[str] | None = None,
+    ) -> ScannedModel:
         """Convert raw importer dict to ScannedModel."""
         config = raw.get("config", {})
         model_path = config.get("model_path", "")
@@ -406,6 +428,12 @@ class ModelService:
         elif p.is_file():
             size_gb = p.stat().st_size / (1024**3)
 
+        # Configured if the id matches OR the resolved weights path is
+        # already configured under any id (see _configured_identity).
+        already = raw.get("id", "") in configured_ids
+        if not already and configured_paths and model_path:
+            already = str(Path(model_path).expanduser().resolve()) in configured_paths
+
         return ScannedModel(
             id=raw.get("id", ""),
             path=model_path,
@@ -413,7 +441,7 @@ class ModelService:
             size_gb=round(size_gb, 2),
             vision=config.get("vision", False),
             quantization=quantization,
-            already_configured=raw.get("id", "") in configured_ids,
+            already_configured=already,
             tags=raw.get("tags", []),
             description=raw.get("description", ""),
         )
@@ -650,9 +678,6 @@ class ModelService:
 
             for model_data in models_to_import:
                 model_id = model_data.get("id", "")
-                if model_id in existing_ids:
-                    logger.warning(f"Skipping duplicate model: {model_id}")
-                    continue
 
                 # Build model entry
                 provider = model_data.get("provider", "mlx")
@@ -709,11 +734,25 @@ class ModelService:
 
                 try:
                     validated = ModelConfig(**entry)
-                    existing_models.append(entry)
-                    existing_ids.add(model_id)
-                    imported.append(validated)
                 except Exception as e:
                     logger.error(f"Failed to import model '{model_id}': {e}")
+                    continue
+
+                if model_id in existing_ids:
+                    # Re-import = PUT semantics: replace the existing entry
+                    # with the freshly built one (was skip-not-update, which
+                    # made refreshing an entry from a rescan impossible
+                    # without hand-editing the TOML).
+                    idx = next(
+                        i for i, m in enumerate(existing_models)
+                        if m.get("id") == model_id
+                    )
+                    existing_models[idx] = entry
+                    logger.info(f"Re-import: updated existing model '{model_id}'")
+                else:
+                    existing_models.append(entry)
+                    existing_ids.add(model_id)
+                imported.append(validated)
 
             if imported:
                 data["models"] = existing_models
