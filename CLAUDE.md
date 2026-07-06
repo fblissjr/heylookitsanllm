@@ -25,12 +25,15 @@ admin, admin_ops, scan_import. SQLite conversation store via aiosqlite (`db.py`,
 `_UPDATABLE_MESSAGE_FIELDS`). RLM (`rlm.py`): recursive inference with sandboxed REPL.
 - [internal/backend/](./internal/backend/) (architecture, api, router, config, providers/mlx) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
-**Frontend v2 `apps/heylook-frontend-v2/`** -- vanilla JS, no framework/bundler,
-served at `/v2`. Pages: Chat, Batch, Models, Performance, Notebook, Token Explorer.
-See its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
+**Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
+JS, no build, served at `/v3`. Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md)
+(§4 = the authoritative backend API contract -- update it in the same commit
+as any contract change). Read `js/page.js` (createPage lifecycle) before
+touching any page.
 
-**Frontend legacy `apps/heylook-frontend/`** -- React+Zustand+Vite, 7 applets,
-being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md).
+**Frontend v2 `apps/heylook-frontend-v2/`** and **legacy `apps/heylook-frontend/`**
+(React+Zustand+Vite) -- both RETIRING after v3 cutover (plan Q2/Phase 3);
+don't invest here. Their CLAUDE.md/[ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) remain for reference.
 
 **Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md). NB: root pyproject pins UPSTREAM mlx-lm/mlx-vlm, not its forks -- fork-side bench wins don't reach the server until upstreamed/repointed.
 
@@ -61,10 +64,11 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 - Never commit runtime data: `*.db`, `*.jsonl`, `/data/*`, `apps/*/data/*` are gitignored; package data at `src/heylook_llm/data/` is intentionally NOT ignored.
 - Commits fine without asking; never push unless told. Update `internal/log/log_YYYY-MM-DD.md` before ending a session.
 - `internal/` is unversioned (gitignored): before destructively rewriting a long-lived internal doc (plans, specs), copy the old version to an `archive/` subdir first -- that copy IS the history.
+- CLAUDE.md carries MECHANISMS (how things work, what bites); STATUS (what's done, counts, "until X lands") lives in `internal/session/CURRENT.md` + the plan. Status lines here rot into being actively wrong -- the perf-distrust note did exactly that within a day.
 
 ## Tests
 
-- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` is fully green (767 passed as of 2026-07-06 evening, 839 with contract; Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist.
+- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` + `tests/contract/` are fully green (Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist. (No counts here on purpose: they rot; green-is-the-invariant doesn't.)
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`). Frontend legacy: `cd apps/heylook-frontend && bunx vitest run`.
