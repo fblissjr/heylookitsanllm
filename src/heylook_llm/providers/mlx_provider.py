@@ -166,6 +166,14 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
         )
 
 
+def resolve_add_generation_prompt(messages) -> bool:
+    """Prefill convention: a trailing assistant message means the client
+    wants the model to CONTINUE that message (no new generation prompt);
+    otherwise open a fresh assistant turn."""
+    last_is_assistant = messages[-1].get('role') == 'assistant' if messages else False
+    return not last_is_assistant
+
+
 class UnifiedTextStrategy:
     """Unified strategy for all text-based generation (text-only and VLM text).
 
@@ -235,8 +243,7 @@ class UnifiedTextStrategy:
                 processor, model.config, messages, num_images=0
             )
         else:
-            last_is_assistant = messages[-1].get('role') == 'assistant' if messages else False
-            add_gen_prompt = not last_is_assistant
+            add_gen_prompt = resolve_add_generation_prompt(messages)
 
             enable_thinking = effective_request.get("enable_thinking")
             if enable_thinking is None:
@@ -905,8 +912,7 @@ class MLXProvider(BaseProvider):
                 messages_for_template.append(msg_dict)
 
             # Prefill: if last message is assistant, don't add generation prompt
-            last_is_assistant = messages_for_template[-1].get('role') == 'assistant' if messages_for_template else False
-            add_gen_prompt = not last_is_assistant
+            add_gen_prompt = resolve_add_generation_prompt(messages_for_template)
 
             prompt = tokenizer.apply_chat_template(
                 messages_for_template,

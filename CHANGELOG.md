@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.2]
+
+### Fixed
+
+- **1-in-60 flaky test identified and fixed**: `test_perf_collector.py::test_single_hour_bucket` used live `time.time()` with a +60s second event, so its two events straddled an hour bucket whenever the suite ran in the last minute of any hour (the previously-unexplained single-run failure on 2026-07-06). Now anchored to mid-hour.
+
+### Added
+
+- **Real coverage for two previously-untested production paths** (the deleted tautological tests only asserted their own inline math): `resolve_add_generation_prompt()` extracted from `_apply_template` (prefill convention: trailing assistant message = continue, no new generation prompt) with 4 tests, and `normalize_layer_index()` extracted from `_extract_from_layer` (negative layer indexing + bounds) with 7 tests -- both verified non-tautological by mutation (break helper -> tests fail). The batch path's duplicate inline prefill logic now reuses the helper. Sibling suites confirmed unaffected by the backend changes: legacy frontend 880/880, optloop-lib 60/60, batch-labeler 25/25.
+
 ## [1.32.1]
 
 ### Fixed

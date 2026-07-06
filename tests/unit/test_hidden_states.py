@@ -13,6 +13,7 @@ from heylook_llm.hidden_states import (
     TokenBoundary,
     ChatTemplateTokenizer,
     encode_hidden_states_base64,
+    normalize_layer_index,
 )
 
 
@@ -162,6 +163,34 @@ class TestBase64Encoding:
 
 
 # TestLayerIndexNormalization removed 2026-07-06: tautological (asserted its own inline math, never called _extract_from_layer, the production path in hidden_states.py).
+# Replaced 2026-07-06 with real coverage below, which calls the extracted
+# normalize_layer_index() helper directly (the actual production path).
+class TestNormalizeLayerIndex:
+    """Pins the exact semantics of _extract_from_layer's index math."""
+
+    def test_negative_one_maps_to_last_layer(self):
+        assert normalize_layer_index(-1, 10) == 9
+
+    def test_negative_two_maps_to_second_to_last(self):
+        assert normalize_layer_index(-2, 10) == 8
+
+    def test_zero_passes_through(self):
+        assert normalize_layer_index(0, 10) == 0
+
+    def test_positive_passes_through(self):
+        assert normalize_layer_index(5, 10) == 5
+
+    def test_positive_out_of_range_raises(self):
+        with pytest.raises(ValueError, match="out of range"):
+            normalize_layer_index(10, 10)
+
+    def test_negative_out_of_range_raises(self):
+        with pytest.raises(ValueError, match="out of range"):
+            normalize_layer_index(-11, 10)
+
+    def test_error_message_includes_original_index_and_n_layers(self):
+        with pytest.raises(ValueError, match=r"Layer index 99 out of range for model with 10 layers"):
+            normalize_layer_index(99, 10)
 
 
 class TestStructuredHiddenStatesRequest:

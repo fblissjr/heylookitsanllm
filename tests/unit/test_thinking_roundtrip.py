@@ -89,4 +89,4 @@ class TestReconstructThinking:
         assert "Step 3: conclude" in result["content"]
 
 
-# TestPrefillConvention removed 2026-07-06: tautological (asserted its own inline math, never called the production path in mlx_provider). Real coverage requires extracting the prefill-convention helper first.
+# TestPrefillConvention removed 2026-07-06: tautological (asserted its own inline math, never called the production path in mlx_provider). Real coverage now lives in tests/unit/test_mlx_provider.py::TestResolveAddGenerationPrompt, which calls the extracted resolve_add_generation_prompt() helper directly.

@@ -327,6 +327,37 @@ def encode_hidden_states_base64(hidden_states: np.ndarray) -> str:
     return base64.b64encode(data.tobytes()).decode("ascii")
 
 
+def normalize_layer_index(layer_idx: int, n_layers: int) -> int:
+    """
+    Normalize a possibly-negative layer index against a model's layer count.
+
+    Negative indices count from the end (e.g. -1 is the last layer, -2 the
+    second-to-last), matching Python sequence indexing. Positive indices and
+    zero pass through unchanged.
+
+    Args:
+        layer_idx: Layer index (can be negative)
+        n_layers: Total number of layers in the model
+
+    Returns:
+        The normalized, non-negative layer index
+
+    Raises:
+        ValueError: If the normalized index falls outside [0, n_layers)
+    """
+    if layer_idx < 0:
+        target_idx = n_layers + layer_idx
+    else:
+        target_idx = layer_idx
+
+    if target_idx < 0 or target_idx >= n_layers:
+        raise ValueError(
+            f"Layer index {layer_idx} out of range for model with {n_layers} layers"
+        )
+
+    return target_idx
+
+
 class HiddenStatesExtractor:
     """Base class for extracting hidden states from models."""
 
@@ -517,15 +548,7 @@ class MLXHiddenStatesExtractor(HiddenStatesExtractor):
 
         # Normalize layer index
         n_layers = len(self._layers)
-        if layer_idx < 0:
-            target_idx = n_layers + layer_idx
-        else:
-            target_idx = layer_idx
-
-        if target_idx < 0 or target_idx >= n_layers:
-            raise ValueError(
-                f"Layer index {layer_idx} out of range for model with {n_layers} layers"
-            )
+        target_idx = normalize_layer_index(layer_idx, n_layers)
 
         # Create attention mask - this is CRITICAL for correct hidden state values!
         # Without a proper causal mask, attention computes incorrectly and values

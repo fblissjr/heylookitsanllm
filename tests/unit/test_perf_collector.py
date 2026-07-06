@@ -200,7 +200,11 @@ class TestBottlenecks:
 class TestTrends:
     def test_single_hour_bucket(self):
         c = PerfCollector()
-        now = time.time()
+        # Anchor to the middle of the current hour: with live time.time() and
+        # a +60s offset, the two events straddled an hour boundary whenever
+        # the suite ran in the last minute of an hour -- a real observed
+        # 1-in-60 flake (2026-07-06).
+        now = (time.time() // 3600) * 3600 + 1800
         c.record_request(_make_event(timestamp=now, total_ms=500, tokens_per_second=80))
         c.record_request(_make_event(timestamp=now + 60, total_ms=600, tokens_per_second=120))
 

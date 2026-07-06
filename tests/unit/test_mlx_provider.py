@@ -194,6 +194,41 @@ class TestApplyModelDefaults:
 
 
 @pytest.mark.unit
+class TestResolveAddGenerationPrompt:
+    """Prefill convention: trailing assistant message -> continue it (no new
+    generation prompt); anything else -> open a fresh assistant turn."""
+
+    def test_empty_messages_true(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import resolve_add_generation_prompt
+
+        assert resolve_add_generation_prompt([]) is True
+
+    def test_last_message_user_true(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import resolve_add_generation_prompt
+
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "hi"},
+        ]
+        assert resolve_add_generation_prompt(messages) is True
+
+    def test_last_message_assistant_false(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import resolve_add_generation_prompt
+
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "partial answer..."},
+        ]
+        assert resolve_add_generation_prompt(messages) is False
+
+    def test_single_assistant_message_false(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import resolve_add_generation_prompt
+
+        messages = [{"role": "assistant", "content": "prefill"}]
+        assert resolve_add_generation_prompt(messages) is False
+
+
+@pytest.mark.unit
 class TestApplyModelDefaultsPresetCascade:
     """Preset layer sits between model sampler fields and request explicit
     fields. These tests pin the resolution order so a refactor doesn't
