@@ -32,6 +32,19 @@ except ImportError as e:
     HAS_MLX_EMBEDDING = False
 
 
+class _LoadingPlaceholder:
+    """Reserves a cache slot while a model loads outside cache_lock.
+
+    The capacity check and the multi-hundred-ms load can't share one lock
+    hold, so without a reservation two concurrent different-model loads both
+    pass the check and hold two full models in memory (check-then-act,
+    OOM-class on boxes sized for max_loaded_models). A placeholder counts
+    toward capacity but is invisible to every reader API and is never
+    evicted or unloaded -- it either becomes the real provider on publish or
+    is removed on load failure.
+    """
+
+
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
@@ -136,11 +149,16 @@ class ModelRouter:
         """Check if model is in cache. Uses fine-grained locking."""
         with self.cache_lock:
             if model_id in self.providers:
+                provider = self.providers[model_id]
+                if isinstance(provider, _LoadingPlaceholder):
+                    # A load is in flight; treat as a miss so the caller
+                    # blocks on the per-model loading lock and re-checks.
+                    return None
                 if self.log_level <= logging.DEBUG:
                     logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
                 self.providers.move_to_end(model_id)
                 self._last_used_ts[model_id] = time.time()
-                return self.providers[model_id]
+                return provider
             return None
 
     def _teardown_provider(self, provider: BaseProvider) -> None:
@@ -163,12 +181,19 @@ class ModelRouter:
             mx.clear_cache()
 
     def _evict_lru_model(self):
-        """Evict least recently used non-pinned model. Must be called with cache_lock held."""
+        """Evict least recently used non-pinned model. Must be called with cache_lock held.
+
+        Placeholders (in-flight loads) are never eviction candidates -- their
+        slot is owned by the loading thread.
+        """
         evict_id = None
-        for model_id in self.providers:
-            if model_id not in self._pinned:
-                evict_id = model_id
-                break
+        for model_id, provider in self.providers.items():
+            if model_id in self._pinned:
+                continue
+            if isinstance(provider, _LoadingPlaceholder):
+                continue
+            evict_id = model_id
+            break
 
         if evict_id is None:
             raise RuntimeError(
@@ -191,9 +216,11 @@ class ModelRouter:
 
     def get_current_model_id(self) -> Optional[str]:
         """Get the most recently used model ID from cache, or None if no models loaded."""
-        if self.providers:
-            # OrderedDict keeps insertion order; last item is most recently used
-            return next(reversed(self.providers))
+        # OrderedDict keeps insertion order; last item is most recently used.
+        # Skip placeholders: an in-flight load isn't a usable model yet.
+        for model_id in reversed(self.providers):
+            if not isinstance(self.providers.get(model_id), _LoadingPlaceholder):
+                return model_id
         return None
 
     def get_loaded_models(self) -> Dict[str, BaseProvider]:
@@ -205,7 +232,10 @@ class ModelRouter:
         """
         with self.cache_lock:
             # Return a copy to prevent external modification
-            return dict(self.providers)
+            return {
+                mid: p for mid, p in self.providers.items()
+                if not isinstance(p, _LoadingPlaceholder)
+            }
 
     def get_provider(self, model_id: str) -> BaseProvider:
         # Fallback logic when no model specified:
@@ -267,10 +297,32 @@ class ModelRouter:
             logging.info(f"Model path: {model_path}")
 
             try:
-                # Evict BEFORE loading so we don't hold two models in memory
-                with self.cache_lock:
-                    if len(self.providers) >= self.max_loaded_models:
-                        self._evict_lru_model()
+                # Reserve a cache slot BEFORE loading (evicting if needed) so
+                # the capacity check and the load are one atomic commitment.
+                # Without the reservation, two concurrent different-model
+                # loads both pass the check and hold two full models in
+                # memory (check-then-act TOCTOU). If the cache is full of
+                # other threads' in-flight loads, wait for one to publish.
+                while True:
+                    with self.cache_lock:
+                        if len(self.providers) < self.max_loaded_models:
+                            self.providers[model_id] = _LoadingPlaceholder()
+                            break
+                        evictable = any(
+                            mid not in self._pinned
+                            and not isinstance(p, _LoadingPlaceholder)
+                            for mid, p in self.providers.items()
+                        )
+                        if evictable:
+                            self._evict_lru_model()
+                            continue
+                        if not any(isinstance(p, _LoadingPlaceholder) for p in self.providers.values()):
+                            raise RuntimeError(
+                                f"All {len(self.providers)} loaded models are pinned. "
+                                f"Cannot evict to make room. Pinned: {self._pinned}"
+                            )
+                    # Slot(s) held by in-flight loads; retry once they publish.
+                    time.sleep(0.05)
 
                 # Create provider instance
                 new_provider = provider_class(
@@ -290,9 +342,10 @@ class ModelRouter:
                 # wrapper needed here.
                 new_provider.warmup()
 
-                # Add to cache
+                # Publish: the placeholder's slot becomes the real provider.
                 with self.cache_lock:
                     self.providers[model_id] = new_provider
+                    self.providers.move_to_end(model_id)
                     self._last_used_ts[model_id] = time.time()
 
                 load_time = time.time() - load_start_time
@@ -322,6 +375,11 @@ class ModelRouter:
                 return new_provider
 
             except Exception as e:
+                # Release the reserved slot so the failed load doesn't hold
+                # capacity forever.
+                with self.cache_lock:
+                    if isinstance(self.providers.get(model_id), _LoadingPlaceholder):
+                        del self.providers[model_id]
                 load_time = time.time() - load_start_time
                 logging.error(f"Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
                 raise e
@@ -332,17 +390,19 @@ class ModelRouter:
     def clear_cache(self):
         """Clear all loaded models from cache."""
         with self.cache_lock:
-            # Unload all models
+            # Unload all models (placeholders belong to in-flight loads --
+            # leave them; their loader owns the slot).
             for model_id in list(self.providers.keys()):
                 provider = self.providers[model_id]
+                if isinstance(provider, _LoadingPlaceholder):
+                    continue
                 try:
                     provider.unload()
                     logging.info(f"Unloaded model: {model_id}")
                 except Exception as e:
                     logging.error(f"Error unloading model {model_id}: {e}")
-
-            # Clear the cache (OrderedDict maintains order automatically)
-            self.providers.clear()
+                del self.providers[model_id]
+                self._last_used_ts.pop(model_id, None)
             logging.info("Model cache cleared")
     
     def reload_config(self):
@@ -371,6 +431,9 @@ class ModelRouter:
                 )
             if model_id not in self.providers:
                 return False
+            if isinstance(self.providers[model_id], _LoadingPlaceholder):
+                # In-flight load: the slot belongs to the loading thread.
+                return False
 
             provider = self.providers.pop(model_id)
 
@@ -391,7 +454,9 @@ class ModelRouter:
     def get_model_status(self, model_id: str) -> dict:
         """Get load status and basic metrics for a model."""
         with self.cache_lock:
-            loaded = model_id in self.providers
+            loaded = model_id in self.providers and not isinstance(
+                self.providers[model_id], _LoadingPlaceholder
+            )
 
         status = {"loaded": loaded}
 
@@ -436,8 +501,10 @@ class ModelRouter:
 
         with self.cache_lock:
             candidates = []
-            for model_id in list(self.providers.keys()):
+            for model_id, provider in list(self.providers.items()):
                 if model_id in self._pinned:
+                    continue
+                if isinstance(provider, _LoadingPlaceholder):
                     continue
                 threshold = self._effective_idle_threshold(model_id)
                 if threshold <= 0:
@@ -455,13 +522,28 @@ class ModelRouter:
     def _unload_idle(self, model_id: str) -> bool:
         """Pop + tear down a single idle model. Unload runs outside the
         cache lock; weight release can take hundreds of ms and would stall
-        concurrent cache reads otherwise."""
-        with self.cache_lock:
-            provider = self.providers.pop(model_id, None)
-            self._last_used_ts.pop(model_id, None)
+        concurrent cache reads otherwise.
 
-        if provider is None:
-            return False
+        The busy check and the pop happen under ONE cache_lock hold: a
+        request WAITING at the FIFO generation gate is neither 'active' nor
+        recently-used (last_used was stamped at its cache hit, and gate
+        waits can outlast the idle threshold) -- unloading then would tear
+        the weights down under a request that's about to run. Any cache hit
+        after this pop simply reloads.
+        """
+        with self.cache_lock:
+            provider = self.providers.get(model_id)
+            if provider is None or isinstance(provider, _LoadingPlaceholder):
+                return False
+            stats = provider.generation_queue_stats()
+            if stats and (stats.get("active", 0) > 0 or stats.get("waiting", 0) > 0):
+                logging.info(
+                    f"Skipping idle unload of {model_id}: generation queue busy "
+                    f"(active={stats.get('active', 0)}, waiting={stats.get('waiting', 0)})"
+                )
+                return False
+            self.providers.pop(model_id, None)
+            self._last_used_ts.pop(model_id, None)
 
         logging.info(f"Idle timeout. Unloading model: {model_id}")
         diag_event("model_idle_unload", model=model_id)

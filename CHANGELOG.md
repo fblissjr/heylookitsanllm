@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.3]
+
+### Fixed
+
+- **Router load-capacity TOCTOU closed.** The capacity check + LRU evict ran under `cache_lock` but the load and publish ran outside it, so two concurrent requests for two DIFFERENT models both passed the check and held two full models in memory at once (OOM-class on a box sized for `max_loaded_models`). `get_provider` now reserves a placeholder slot under `cache_lock` before loading; placeholders count toward capacity, are invisible to every reader API (`get_loaded_models`, `get_current_model_id`, `get_model_status`), are never evicted/unloaded, and are released on load failure. A loader that finds the cache full of other in-flight loads waits for one to publish instead of over-committing.
+- **Idle unload no longer tears down a provider with queued requests.** A request waiting at the FIFO generation gate is neither "active" (that starts after gate acquire) nor recently-used (its `last_used` was stamped at cache hit, and gate waits can outlast the idle threshold), so the 60s idle tick could delete model weights out from under a request about to run. `_unload_idle` now checks the provider's `generation_queue_stats()` (active + waiting) under the SAME `cache_lock` hold as the pop, and skips busy providers until a later tick.
+
 ## [1.34.2]
 
 ### Fixed
