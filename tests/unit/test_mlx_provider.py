@@ -519,15 +519,17 @@ class TestUnload:
 
 @pytest.mark.unit
 class TestCreateChatCompletion:
-    def test_no_model_loaded_yields_error(self, mock_mlx_provider):
-        """If model is not loaded, should yield error chunk."""
+    def test_no_model_loaded_raises(self, mock_mlx_provider):
+        """If model is not loaded, the generator raises GenerationFailed
+        (typed exceptions, not error-text chunks -- every consumer fails
+        loudly by default)."""
+        from heylook_llm.providers.base import GenerationFailed
         mock_mlx_provider._compile_strategies()
         req = ChatRequest(
             messages=[ChatMessage(role="user", content="hi")],
         )
-        chunks = list(mock_mlx_provider.create_chat_completion(req))
-        assert len(chunks) == 1
-        assert "Error" in chunks[0].text
+        with pytest.raises(GenerationFailed, match="processor not loaded"):
+            list(mock_mlx_provider.create_chat_completion(req))
 
     def test_text_model_rejects_images(self, mock_mlx_provider):
         """Text-only model should reject image inputs."""
@@ -551,8 +553,11 @@ class TestCreateChatCompletion:
                 )
             ],
         )
-        chunks = list(mock_mlx_provider.create_chat_completion(req))
-        assert any("text-only" in c.text for c in chunks)
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        # Client error (their request can never succeed here) -> the 400-class
+        # exception, distinct from server-side GenerationFailed.
+        with pytest.raises(InvalidGenerationRequest, match="text-only"):
+            list(mock_mlx_provider.create_chat_completion(req))
 
     def test_generation_gate_released_after_error(self, mock_mlx_provider):
         """The generation gate must release even after errors, so the next
@@ -565,8 +570,13 @@ class TestCreateChatCompletion:
             messages=[ChatMessage(role="user", content="hi")],
         )
 
-        # First call (triggers error from mock strategy)
-        list(mock_mlx_provider.create_chat_completion(req))
+        # Whether the mocked generation completes or raises, the generator's
+        # finally must run: gate released, no deadlock for the next request.
+        from heylook_llm.providers.base import GenerationFailed
+        try:
+            list(mock_mlx_provider.create_chat_completion(req))
+        except GenerationFailed:
+            pass
 
         # Slot should be free, and capacity available again.
         assert mock_mlx_provider._gen_gate.busy is False
@@ -581,7 +591,11 @@ class TestCreateChatCompletion:
         req = ChatRequest(
             messages=[ChatMessage(role="user", content="hi")],
         )
-        list(mock_mlx_provider.create_chat_completion(req))
+        from heylook_llm.providers.base import GenerationFailed
+        try:
+            list(mock_mlx_provider.create_chat_completion(req))
+        except GenerationFailed:
+            pass  # mock strategy may error; the counter must reset either way
         assert mock_mlx_provider._active_generations == 0
 
 

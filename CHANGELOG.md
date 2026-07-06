@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0]
+
+### Changed
+
+- **Generation failures are now typed exceptions, not sentinel chunks.** The provider raises `GenerationFailed` (server-side) or `InvalidGenerationRequest` (client-side, e.g. images sent to a text-only model) instead of yielding an `is_error` chunk that each consumer had to remember to check -- the sentinel approach had already missed two consumers (`batch_processor.py` and `rlm.py` concatenated error text into results; RLM fed "Error: MLX generation failed..." back into its REPL loop as a sub-answer). Raising makes every consumer, present and future, fail loudly by default: batch requests now record `group.error` per-request instead of shipping fake content; RLM surfaces the failure through its own error handling. API translation: HTTP 500 / **400 for client errors (new)** on non-streaming; the same SSE error payload as before when streaming (headers already sent, so client errors also arrive as stream errors there). The wire contract for streaming clients is unchanged; non-streaming clients now get a proper 400 for never-going-to-work requests that previously returned a 200 with error text (pre-1.31.1) or a 500 (1.31.1+).
+
 ## [1.32.2]
 
 ### Fixed

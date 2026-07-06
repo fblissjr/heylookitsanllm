@@ -19,7 +19,7 @@ from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_templ
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from ..presets import get_preset_registry
 from .abort import AbortEvent
-from .base import BaseProvider
+from .base import BaseProvider, GenerationFailed, InvalidGenerationRequest
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import wrap_language_model
@@ -508,16 +508,6 @@ GLOBAL_SAMPLER_FLOOR = {
     'repetition_penalty': 1.0,
     'presence_penalty': 0.0,
 }
-
-
-# Yielded in place of normal chunks when generation fails. `is_error` is the
-# marker the API layers check to surface a real error (SSE error payload /
-# HTTP 500) instead of delivering `.text` as assistant content.
-class MLXErrorChunk:
-    is_error = True
-
-    def __init__(self, text):
-        self.text = text
 
 
 class MLXProvider(BaseProvider):
@@ -1009,15 +999,16 @@ class MLXProvider(BaseProvider):
 
                 # Add null check for processor before accessing tokenizer
                 if self.processor is None:
-                    yield MLXErrorChunk(text=f"Error: Model processor not loaded for '{self.model_id}'")
-                    return
+                    raise GenerationFailed(f"Model processor not loaded for '{self.model_id}'")
 
                 try:
                     has_images = self._detect_images_optimized(request.messages)
 
                     if not self.is_vlm and has_images:
-                        yield MLXErrorChunk(text=f"Error: Model '{self.model_id}' is text-only and cannot process images. Please use a vision model for image inputs.")
-                        return
+                        raise InvalidGenerationRequest(
+                            f"Model '{self.model_id}' is text-only and cannot process images. "
+                            f"Please use a vision model for image inputs."
+                        )
 
                     if self.is_vlm and has_images:
                         strategy = self._strategies['vision']
@@ -1046,6 +1037,8 @@ class MLXProvider(BaseProvider):
                     finally:
                         inner.close()
 
+                except GenerationFailed:
+                    raise
                 except Exception as e:
                     logging.error(f"MLX model call failed: {e}", exc_info=True)
 
@@ -1056,7 +1049,7 @@ class MLXProvider(BaseProvider):
                     except Exception as cleanup_error:
                         logging.debug(f"Cleanup error (non-critical): {cleanup_error}")
 
-                    yield MLXErrorChunk(text=f"Error: MLX generation failed: {str(e)}")
+                    raise GenerationFailed(f"MLX generation failed: {e}") from e
             finally:
                 # Decrement active counter and clear the MLX cache BEFORE
                 # releasing the slot, so GPU cleanup completes before the next

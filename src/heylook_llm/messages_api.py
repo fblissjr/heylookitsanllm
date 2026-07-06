@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
+from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
@@ -321,16 +322,18 @@ async def _non_stream_messages(
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
             for chunk in generator:
-                # Generation failure: surface as HTTP 500, never as content.
-                if getattr(chunk, "is_error", False):
-                    raise HTTPException(status_code=500, detail=chunk.text)
                 full_text += chunk.text
                 token_count += 1
                 prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
                 completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
                 queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
 
-    await asyncio.to_thread(consume)
+    try:
+        await asyncio.to_thread(consume)
+    except InvalidGenerationRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except GenerationFailed as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     # Parse thinking
     content_text, thinking = parse_thinking_content(full_text)
@@ -424,31 +427,32 @@ async def _stream_messages(
     yield translator.message_start_event()
 
     queue_wait_ms = 0.0
-    async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
-        # Generation failure mid-stream: emit the Anthropic-style error event
-        # and terminate -- never deliver the error text as content.
-        if getattr(chunk, "is_error", False):
-            yield translator._sse("error", {
-                "type": "error",
-                "error": {"type": "api_error", "message": chunk.text},
-            })
-            return
+    try:
+        async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
+            # Capture provider metadata
+            chunk_finish = getattr(chunk, "finish_reason", None)
+            if chunk_finish:
+                translator.stop_reason = chunk_finish
+            translator.prompt_tokens = getattr(chunk, "prompt_tokens", translator.prompt_tokens)
+            translator.completion_tokens = getattr(chunk, "generation_tokens", translator.completion_tokens)
+            queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
 
-        # Capture provider metadata
-        chunk_finish = getattr(chunk, "finish_reason", None)
-        if chunk_finish:
-            translator.stop_reason = chunk_finish
-        translator.prompt_tokens = getattr(chunk, "prompt_tokens", translator.prompt_tokens)
-        translator.completion_tokens = getattr(chunk, "generation_tokens", translator.completion_tokens)
-        queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
+            if not chunk.text:
+                continue
 
-        if not chunk.text:
-            continue
+            token_id = getattr(chunk, "token", None)
 
-        token_id = getattr(chunk, "token", None)
+            for event_str in translator.process_chunk(chunk.text, token_id=token_id):
+                yield event_str
 
-        for event_str in translator.process_chunk(chunk.text, token_id=token_id):
-            yield event_str
+    except GenerationFailed as e:
+        # Mid-stream failure: headers already sent -- Anthropic-style error
+        # event, never content.
+        yield translator._sse("error", {
+            "type": "error",
+            "error": {"type": "api_error", "message": str(e)},
+        })
+        return
 
     # Flush parser
     for event_str in translator.flush():

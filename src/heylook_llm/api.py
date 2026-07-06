@@ -13,6 +13,7 @@ from fastapi.openapi.utils import get_openapi
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelRouter
 from heylook_llm.providers.abort import AbortEvent
+from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.config import (
     ChatRequest, ChatCompletionResponse,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
@@ -829,93 +830,94 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     from heylook_llm.streaming_utils import async_generator_with_abort, KeepaliveMarker
 
-    async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
-        if isinstance(chunk, KeepaliveMarker):
-            yield ": keepalive\n\n"
-            continue
+    # Generation failure mid-stream: HTTP status is already sent, so the
+    # provider's typed exception is translated into an OpenAI-style error
+    # payload -- never delivered as an assistant content delta.
+    try:
+        async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
+            if isinstance(chunk, KeepaliveMarker):
+                yield ": keepalive\n\n"
+                continue
 
-        # Generation failure mid-stream: HTTP status is already sent, so emit
-        # an OpenAI-style error payload and terminate -- never deliver the
-        # error text as an assistant content delta.
-        if getattr(chunk, 'is_error', False):
-            error_payload = {"error": {
-                "message": chunk.text,
-                "type": "server_error",
-                "code": "generation_failed",
-            }}
-            yield f"data: {json.dumps(error_payload)}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+            # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
+            # The final chunk may have empty text but still carry the finish_reason
+            chunk_finish_reason = getattr(chunk, 'finish_reason', None)
+            if chunk_finish_reason:
+                # Map MLX finish reasons to OpenAI-compatible values
+                # OpenAI uses: "stop" (natural end), "length" (hit max_tokens), "content_filter"
+                # MLX uses: "stop" (EOS token), "length" (hit max_tokens)
+                if chunk_finish_reason == "length":
+                    stop_reason = "length"  # OpenAI standard for max_tokens
+                elif chunk_finish_reason == "stop":
+                    stop_reason = "stop"  # OpenAI standard for natural completion
+                else:
+                    stop_reason = chunk_finish_reason  # Pass through any other values
 
-        # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)
-        # The final chunk may have empty text but still carry the finish_reason
-        chunk_finish_reason = getattr(chunk, 'finish_reason', None)
-        if chunk_finish_reason:
-            # Map MLX finish reasons to OpenAI-compatible values
-            # OpenAI uses: "stop" (natural end), "length" (hit max_tokens), "content_filter"
-            # MLX uses: "stop" (EOS token), "length" (hit max_tokens)
-            if chunk_finish_reason == "length":
-                stop_reason = "length"  # OpenAI standard for max_tokens
-            elif chunk_finish_reason == "stop":
-                stop_reason = "stop"  # OpenAI standard for natural completion
-            else:
-                stop_reason = chunk_finish_reason  # Pass through any other values
+            # Also capture token counts from chunks (including final empty chunk)
+            prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
+            completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
+            cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
+            # Memory telemetry -- peak is monotonic across chunks, kv_cache_bytes
+            # is only set on first chunk (a snapshot at generation start).
+            peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
+            kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
+            queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
 
-        # Also capture token counts from chunks (including final empty chunk)
-        prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-        completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-        cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
-        # Memory telemetry -- peak is monotonic across chunks, kv_cache_bytes
-        # is only set on first chunk (a snapshot at generation start).
-        peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
-        kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
-        queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
+            if not chunk.text:
+                continue
 
-        if not chunk.text:
-            continue
+            token_count += 1
 
-        token_count += 1
+            # Get token ID for token-level parsing and logprobs
+            token_id = getattr(chunk, 'token', None)
 
-        # Get token ID for token-level parsing and logprobs
-        token_id = getattr(chunk, 'token', None)
+            # Collect logprobs if requested and available
+            logprobs_delta = None
+            if logprobs_collector:
+                chunk_logprobs = getattr(chunk, 'logprobs', None)
+                if token_id is not None and chunk_logprobs is not None:
+                    logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)
+                elif token_count == 1:
+                    # Log once on first token if logprobs data is missing
+                    diag_event("logprobs_missing_data", request_id=request_id, level="debug",
+                               has_token_id=token_id is not None,
+                               has_chunk_logprobs=chunk_logprobs is not None)
 
-        # Collect logprobs if requested and available
-        logprobs_delta = None
-        if logprobs_collector:
-            chunk_logprobs = getattr(chunk, 'logprobs', None)
-            if token_id is not None and chunk_logprobs is not None:
-                logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)
-            elif token_count == 1:
-                # Log once on first token if logprobs data is missing
-                diag_event("logprobs_missing_data", request_id=request_id, level="debug",
-                           has_token_id=token_id is not None,
-                           has_chunk_logprobs=chunk_logprobs is not None)
+            # Update token count periodically
+            if token_count % 10 == 0:  # Update every 10 tokens for streaming
+                from heylook_llm.utils import log_token_update
+                log_token_update(request_id, token_count)
 
-        # Update token count periodically
-        if token_count % 10 == 0:  # Update every 10 tokens for streaming
-            from heylook_llm.utils import log_token_update
-            log_token_update(request_id, token_count)
+            # Process through thinking parser (uses token ID for Qwen3 thinking blocks)
+            deltas = thinking_parser.process_chunk(chunk.text, token_id=token_id)
+            for delta_type, text in deltas:
+                if text:
+                    # Track timing and token counts by type
+                    if delta_type == "thinking":
+                        if thinking_start_time is None:
+                            thinking_start_time = time.time()
+                        thinking_tokens += 1
+                    else:  # content
+                        if thinking_start_time is not None and thinking_end_time is None:
+                            thinking_end_time = time.time()
+                        if content_start_time is None:
+                            content_start_time = time.time()
+                        content_tokens += 1
 
-        # Process through thinking parser (uses token ID for Qwen3 thinking blocks)
-        deltas = thinking_parser.process_chunk(chunk.text, token_id=token_id)
-        for delta_type, text in deltas:
-            if text:
-                # Track timing and token counts by type
-                if delta_type == "thinking":
-                    if thinking_start_time is None:
-                        thinking_start_time = time.time()
-                    thinking_tokens += 1
-                else:  # content
-                    if thinking_start_time is not None and thinking_end_time is None:
-                        thinking_end_time = time.time()
-                    if content_start_time is None:
-                        content_start_time = time.time()
-                    content_tokens += 1
+                    if first_output_time is None:
+                        first_output_time = time.time()
+                    yield make_delta(delta_type, text, logprobs_delta)
+                    logprobs_delta = None  # Only include logprobs in first delta for this token
 
-                if first_output_time is None:
-                    first_output_time = time.time()
-                yield make_delta(delta_type, text, logprobs_delta)
-                logprobs_delta = None  # Only include logprobs in first delta for this token
+    except GenerationFailed as e:
+        error_payload = {"error": {
+            "message": str(e),
+            "type": "server_error",
+            "code": "generation_failed",
+        }}
+        yield f"data: {json.dumps(error_payload)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
     # Flush any remaining buffer
     for delta_type, text in thinking_parser.flush():
@@ -1077,9 +1079,6 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         # finally) even if consumption raises -- don't wait for GC.
         with closing(generator):
             for chunk in generator:
-                # Generation failure: surface as HTTP 500, never as content.
-                if getattr(chunk, 'is_error', False):
-                    raise HTTPException(status_code=500, detail=chunk.text)
                 full_text += chunk.text
                 token_count += 1
 
@@ -1108,7 +1107,14 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
                 queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
 
-    await asyncio.to_thread(consume_generator)
+    # Typed generation failures propagate out of the consume thread; translate
+    # to HTTP here (client errors 400, server failures 500) -- never content.
+    try:
+        await asyncio.to_thread(consume_generator)
+    except InvalidGenerationRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except GenerationFailed as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     # Surface memory telemetry to the route handler for response headers.
     if perf_ctx is not None:

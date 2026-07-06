@@ -3,6 +3,25 @@ from abc import ABC, abstractmethod
 from typing import Generator, Dict, Optional
 from ..config import ChatRequest, ModelMetrics
 
+
+class GenerationFailed(RuntimeError):
+    """Generation could not complete; the message is safe to show the client.
+
+    RAISED by provider generators (mid-iteration) instead of yielding error
+    text as chunks -- so every consumer, including ones written later, fails
+    loudly by default rather than silently concatenating error text into
+    results (the bug that had RLM reasoning over "Error: MLX generation
+    failed..." as if the model said it). API routes translate: HTTP 500
+    non-streaming, an SSE error payload when headers are already out.
+    """
+
+
+class InvalidGenerationRequest(GenerationFailed):
+    """The CLIENT's request can never succeed on this model (e.g. images sent
+    to a text-only model). Routes translate to HTTP 400, not 500. Subclasses
+    GenerationFailed so consumers may catch the base class alone."""
+
+
 class BaseProvider(ABC):
     """Abstract base class for all model backends."""
     def __init__(self, model_id: str, config: Dict, verbose: bool):
