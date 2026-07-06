@@ -31,6 +31,7 @@ class _PinnedExecutorPool:
 
     def __init__(self):
         self._free: list[ThreadPoolExecutor] = []
+        self._quarantined: list[ThreadPoolExecutor] = []
         self._lock = threading.Lock()
 
     def acquire(self) -> ThreadPoolExecutor:
@@ -42,6 +43,17 @@ class _PinnedExecutorPool:
     def release(self, executor: ThreadPoolExecutor) -> None:
         with self._lock:
             self._free.append(executor)
+
+    def quarantine(self, executor: ThreadPoolExecutor) -> None:
+        """Hold a strong reference to a wedged executor forever; never reuse.
+
+        Simply dropping it is not safe: GC fires ThreadPoolExecutor's weakref
+        callback, which enqueues the shutdown sentinel, and the wedged worker
+        eventually EXITS its thread -- the TLS-teardown abort this pool exists
+        to prevent. The leak (one idle thread) is the intended cost.
+        """
+        with self._lock:
+            self._quarantined.append(executor)
 
 
 _executor_pool = _PinnedExecutorPool()
@@ -122,7 +134,11 @@ async def async_generator_with_abort(
                     if not first_chunk_received and (now - last_keepalive) >= keepalive_interval:
                         yield KEEPALIVE_MARKER
                         last_keepalive = now
-                    await asyncio.sleep(0.1)
+                    # Block on the chunk itself, with a timeout that keeps the
+                    # disconnect/keepalive cadence. A plain sleep here would
+                    # quantize every chunk to the poll boundary (~10 chunks/s
+                    # delivered and recorded, however fast the model decodes).
+                    await asyncio.wait({chunk_future}, timeout=0.1)
 
             chunk = await chunk_future
             if chunk is None:
@@ -151,4 +167,5 @@ async def async_generator_with_abort(
             if closed:
                 _executor_pool.release(gen_executor)
             else:
-                logging.warning(f"{log_prefix}Generator close timed out; retiring its worker from the pool")
+                logging.warning(f"{log_prefix}Generator close timed out; quarantining its worker (kept alive, never reused)")
+                _executor_pool.quarantine(gen_executor)

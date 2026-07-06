@@ -26,7 +26,7 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
-from heylook_llm.perf_collector import RequestEvent, get_perf_collector
+from heylook_llm.perf_collector import RequestEvent, get_perf_collector, headline_tps
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.thinking_parser import HybridThinkingParser, parse_thinking_content
 
@@ -315,9 +315,12 @@ async def _non_stream_messages(
     completion_tokens = 0
     token_count = 0
     queue_wait_ms = 0.0
+    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
+    native_generation_tps = 0.0
 
     def consume():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, queue_wait_ms
+        nonlocal native_prompt_tps, native_generation_tps
         # closing() runs the provider generator's finally now (releases the
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
@@ -327,6 +330,8 @@ async def _non_stream_messages(
                 prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
                 completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
                 queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
+                native_prompt_tps = getattr(chunk, "prompt_tps", native_prompt_tps)
+                native_generation_tps = getattr(chunk, "generation_tps", native_generation_tps)
 
     try:
         await asyncio.to_thread(consume)
@@ -353,13 +358,15 @@ async def _non_stream_messages(
         },
     }
 
-    # Performance metrics
+    # Performance metrics. Rates are mlx-lm's own measurements (taken tightly
+    # around prefill/decode); the old prompt_tps here divided prompt tokens by
+    # WHOLE-request elapsed, which is not a rate of anything.
     elapsed = time.time() - request_start_time
     total_tokens = (completion_tokens or token_count)
     if elapsed > 0 and total_tokens > 0:
         openai_dict["performance"] = {
-            "prompt_tps": (prompt_tokens / elapsed) if prompt_tokens else 0,
-            "generation_tps": total_tokens / elapsed,
+            "prompt_tps": native_prompt_tps,
+            "generation_tps": headline_tps(native_generation_tps, total_tokens, elapsed, queue_wait_ms),
             "total_duration_ms": int(elapsed * 1000),
         }
 
@@ -376,7 +383,7 @@ async def _non_stream_messages(
     # Record perf event
     if perf_ctx:
         now = time.time()
-        tps = total_tokens / elapsed if elapsed > 0 and total_tokens > 0 else 0.0
+        tps = headline_tps(native_generation_tps, total_tokens, elapsed, queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         had_imgs = perf_ctx.get("had_images", False)
         get_perf_collector().record_request(RequestEvent(
@@ -395,6 +402,7 @@ async def _non_stream_messages(
             had_images=had_imgs,
             was_streaming=False,
             queue_wait_ms=round(queue_wait_ms, 1),
+            prompt_tps=native_prompt_tps,
         ))
 
     return response
@@ -427,6 +435,8 @@ async def _stream_messages(
     yield translator.message_start_event()
 
     queue_wait_ms = 0.0
+    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
+    native_generation_tps = 0.0
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
             # Capture provider metadata
@@ -436,6 +446,8 @@ async def _stream_messages(
             translator.prompt_tokens = getattr(chunk, "prompt_tokens", translator.prompt_tokens)
             translator.completion_tokens = getattr(chunk, "generation_tokens", translator.completion_tokens)
             queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
+            native_prompt_tps = getattr(chunk, "prompt_tps", native_prompt_tps)
+            native_generation_tps = getattr(chunk, "generation_tps", native_generation_tps)
 
             if not chunk.text:
                 continue
@@ -470,13 +482,16 @@ async def _stream_messages(
         total_ms = (now - perf_ctx["request_start_time"]) * 1000
         gen_tokens = translator.completion_tokens or (translator.thinking_tokens + translator.content_tokens)
         gen_time_s = now - translator.start_time
-        tps = gen_tokens / gen_time_s if gen_time_s > 0 and gen_tokens > 0 else 0.0
+        tps = headline_tps(native_generation_tps, gen_tokens, gen_time_s, queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         had_imgs = perf_ctx.get("had_images", False)
 
-        # Real TTFT: use the translator's tracked timing of first output token
+        # Real TTFT: translator-tracked first output token, minus FIFO queue
+        # wait -- admission pressure is not model latency (it stays visible
+        # in queue_wait_ms).
         first_output = translator.thinking_start or translator.content_start
-        ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
+        raw_ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
+        ttft_ms = max(0.0, raw_ttft_ms - queue_wait_ms)
 
         get_perf_collector().record_request(RequestEvent(
             timestamp=now,
@@ -494,4 +509,5 @@ async def _stream_messages(
             had_images=had_imgs,
             was_streaming=True,
             queue_wait_ms=round(queue_wait_ms, 1),
+            prompt_tps=native_prompt_tps,
         ))

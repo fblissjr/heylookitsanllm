@@ -3,9 +3,20 @@
 
 import asyncio
 import threading
+import time
 from unittest.mock import MagicMock
 
 from heylook_llm.streaming_utils import async_generator_with_abort
+
+
+def _connected_request():
+    """Request mock whose is_disconnected() is always False (client stays)."""
+    async def never_disconnected():
+        return False
+
+    request = MagicMock()
+    request.is_disconnected = never_disconnected
+    return request
 
 
 def _tracked_gen(chunks, tracker: dict):
@@ -86,6 +97,43 @@ class TestSyncGenClose:
         asyncio.run(consume_one_then_aclose())
 
         assert tracker["closed"], "Generator finally block did not run after aclose()"
+
+
+class TestDeliveryLatency:
+    """Chunk delivery must wake on chunk completion, not on a poll interval.
+
+    The disconnect-watch loop used to sleep 100ms between chunk_future.done()
+    checks, so every chunk waited for the next poll boundary: SSE delivery
+    (and every recorded tok/s downstream) was capped at ~10 chunks/s no
+    matter how fast the model ran. The loop must instead block on the future
+    with a timeout, waking immediately when the chunk is ready.
+    """
+
+    def test_fast_chunks_not_quantized_to_poll_interval(self):
+        n_chunks = 30
+
+        def fast_gen():
+            for i in range(n_chunks):
+                time.sleep(0.002)  # ~500 chunks/s producer
+                yield i
+
+        request = _connected_request()
+        abort_event = threading.Event()
+
+        start = time.monotonic()
+        chunks = asyncio.run(
+            _collect(async_generator_with_abort(fast_gen(), request, abort_event))
+        )
+        elapsed = time.monotonic() - start
+
+        assert chunks == list(range(n_chunks))
+        # Old behavior: >= n_chunks * 0.1s = 3.0s. Fixed behavior: producer
+        # speed plus small overhead. 1.0s is a generous CI-safe bound that
+        # still fails hard under 100ms-per-chunk quantization.
+        assert elapsed < 1.0, (
+            f"{n_chunks} fast chunks took {elapsed:.2f}s -- delivery is "
+            f"quantized to the disconnect-poll interval"
+        )
 
 
 class TestThreadPinning:

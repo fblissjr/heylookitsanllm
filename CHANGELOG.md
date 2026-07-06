@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.1]
+
+### Fixed
+
+- **Streaming delivery is no longer quantized to ~10 chunks/s.** The disconnect-watch loop in `streaming_utils.async_generator_with_abort` slept a fixed 100ms between `chunk_future.done()` checks, so every SSE chunk waited for the next poll boundary -- capping delivered (and recorded) throughput at ~10 tok/s regardless of model speed, and making e.g. a 60->48 tok/s regression invisible. The loop now blocks on the chunk future with a 100ms timeout (`asyncio.wait`), waking the moment a chunk is ready while keeping the disconnect-detection and keepalive cadence. This was also the measurement prerequisite for all Phase 5 perf work.
+- **Headline perf metrics are honest now** (from the 2026-07-06 measurement audit): recorded tok/s comes from mlx-lm's native per-chunk `generation_tps` (measured tightly around the decode loop; previously never read anywhere in src/), with a wall-clock fallback that excludes FIFO queue wait; recorded TTFT excludes queue wait (admission pressure stays visible in its own `queue_wait_ms` field); `/v1/messages` non-streaming `prompt_tps` no longer divides prompt tokens by whole-request elapsed time (it reports native prefill tps); hourly trends and the 60s resource-snapshot rolling average aggregate successful requests only (failed/503 events recorded 0.0 tok/s and dragged averages toward zero). `RequestEvent` gains a `prompt_tps` field (defaulted, back-compat), which flows into `request_events.jsonl`.
+- **Close-timed-out streaming executors are quarantined, not dropped.** Dropping the last reference let GC fire `ThreadPoolExecutor`'s weakref callback, which enqueues the shutdown sentinel -- so a wedged worker that eventually finished would EXIT its thread and hit the MLX TLS-teardown process abort the executor pool exists to prevent. The pool now holds quarantined executors for the process lifetime (cost: one leaked idle thread per wedge).
+
 ## [1.34.0]
 
 ### Removed

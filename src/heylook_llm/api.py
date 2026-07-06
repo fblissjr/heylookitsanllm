@@ -20,7 +20,7 @@ from heylook_llm.config import (
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse,
 )
 from heylook_llm.system_metrics import SystemMetricsCollector
-from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector
+from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector, headline_tps
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event
 from heylook_llm.presets import PresetNotFound
@@ -68,10 +68,13 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
             metrics_collector = _get_metrics_collector(router)
             metrics = metrics_collector.collect(force_refresh=True)
 
-            # Compute rolling TPS from events in the last 60s
+            # Compute rolling TPS from events in the last 60s. Success-only:
+            # failed/503 events carry 0.0 tok/s and would drag the average
+            # toward zero (same defect class as the trends aggregation).
             now = time.time()
             recent = [e for e in collector._events if e.timestamp >= now - 60]
-            avg_tps = (sum(e.tokens_per_second for e in recent) / len(recent)) if recent else 0.0
+            recent_ok = [e for e in recent if e.success]
+            avg_tps = (sum(e.tokens_per_second for e in recent_ok) / len(recent_ok)) if recent_ok else 0.0
 
             collector.record_resource_snapshot(ResourceSnapshot(
                 timestamp=now,
@@ -780,6 +783,11 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     peak_memory_gb = 0.0
     kv_cache_bytes = 0
     queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
+    # mlx-lm's own rates, measured tightly around prefill/decode -- the honest
+    # generation numbers (wall-clock division here bakes in queue wait + SSE
+    # delivery overhead).
+    native_prompt_tps = 0.0
+    native_generation_tps = 0.0
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -862,6 +870,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
             kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
             queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
+            native_prompt_tps = getattr(chunk, 'prompt_tps', native_prompt_tps)
+            native_generation_tps = getattr(chunk, 'generation_tps', native_generation_tps)
 
             if not chunk.text:
                 continue
@@ -1015,11 +1025,14 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         req_total_ms = (now - perf_ctx["request_start_time"]) * 1000
         gen_tokens = completion_tokens or token_count
         gen_time_s = (now - generation_start_time)
-        tps = gen_tokens / gen_time_s if gen_time_s > 0 and gen_tokens > 0 else 0.0
+        tps = headline_tps(native_generation_tps, gen_tokens, gen_time_s, queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
 
-        # Real TTFT: wall clock from generation start to first yielded token
-        ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
+        # Real TTFT: wall clock from generation start to first yielded token,
+        # minus FIFO queue wait -- admission pressure is not model latency
+        # (it stays visible in queue_wait_ms).
+        raw_ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
+        ttft_ms = max(0.0, raw_ttft_ms - queue_wait_ms)
 
         stream_event = RequestEvent(
             timestamp=now,
@@ -1037,6 +1050,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             had_images=perf_ctx["had_images"],
             was_streaming=True,
             queue_wait_ms=round(queue_wait_ms, 1),
+            prompt_tps=native_prompt_tps,
         )
         get_perf_collector().record_request(stream_event)
         _maybe_log_request_event(
@@ -1070,10 +1084,13 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     peak_memory_gb = 0.0
     kv_cache_bytes = 0
     queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
+    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
+    native_generation_tps = 0.0
 
     def consume_generator():
         nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
         nonlocal peak_memory_gb, kv_cache_bytes, queue_wait_ms
+        nonlocal native_prompt_tps, native_generation_tps
         first_logprob_logged = False
         # closing() releases the generation gate now (the provider generator's
         # finally) even if consumption raises -- don't wait for GC.
@@ -1106,6 +1123,8 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                 peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
                 kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
                 queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
+                native_prompt_tps = getattr(chunk, 'prompt_tps', native_prompt_tps)
+                native_generation_tps = getattr(chunk, 'generation_tps', native_generation_tps)
 
     # Typed generation failures propagate out of the consume thread; translate
     # to HTTP here (client errors 400, server failures 500) -- never content.
@@ -1178,7 +1197,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     if perf_ctx:
         now = time.time()
         gen_tokens = completion_tokens or token_count
-        tps = gen_tokens / processing_time if processing_time > 0 and gen_tokens > 0 else 0.0
+        tps = headline_tps(native_generation_tps, gen_tokens, processing_time, queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         non_stream_event = RequestEvent(
             timestamp=now,
@@ -1196,6 +1215,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             had_images=perf_ctx["had_images"],
             was_streaming=False,
             queue_wait_ms=round(queue_wait_ms, 1),
+            prompt_tps=native_prompt_tps,
         )
         get_perf_collector().record_request(non_stream_event)
         _maybe_log_request_event(

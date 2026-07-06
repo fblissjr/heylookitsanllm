@@ -36,6 +36,29 @@ class RequestEvent:
     # generation to finish (distinct from queue_ms, which is get_provider /
     # model-load time). Defaulted for back-compat with older event records.
     queue_wait_ms: float = 0.0
+    # mlx-lm's own prefill rate, measured tightly around the prefill loop
+    # (chunk.prompt_tps). Defaulted for back-compat with older event records.
+    prompt_tps: float = 0.0
+
+
+def headline_tps(
+    native_tps: float,
+    tokens: int,
+    elapsed_s: float,
+    queue_wait_ms: float = 0.0,
+) -> float:
+    """Headline generation tok/s: prefer the engine's own measurement.
+
+    mlx-lm computes generation_tps tightly around the decode loop -- wall-clock
+    division at the API layer bakes in prefill, FIFO queue wait, and SSE
+    delivery overhead (the 2026-07-06 measurement audit). When no native
+    number is available, the fallback at least excludes queue wait so
+    admission pressure can't masquerade as model slowness.
+    """
+    if native_tps > 0:
+        return native_tps
+    gen_s = elapsed_s - queue_wait_ms / 1000.0
+    return tokens / gen_s if gen_s > 0 and tokens > 0 else 0.0
 
 
 @dataclass(slots=True)
@@ -199,7 +222,12 @@ class PerfCollector:
 
     @staticmethod
     def _trends(events: list[RequestEvent]) -> list[dict]:
-        """Per-hour buckets with response time, TPS, request/error counts, and deltas."""
+        """Per-hour buckets with response time, TPS, request/error counts, and deltas.
+
+        Averages are success-only: failed/503 events carry 0.0 tok/s and
+        near-zero total_ms, so mixing them in silently drags the trend lines
+        toward zero. They still count in requests/errors.
+        """
         if not events:
             return []
 
@@ -219,9 +247,11 @@ class PerfCollector:
         for hour in sorted_hours:
             hour_events = buckets[hour]
             n = len(hour_events)
-            avg_rt = sum(e.total_ms for e in hour_events) / n
-            avg_tps = sum(e.tokens_per_second for e in hour_events) / n if n else 0
-            errors = sum(1 for e in hour_events if not e.success)
+            successes = [e for e in hour_events if e.success]
+            n_ok = len(successes)
+            avg_rt = sum(e.total_ms for e in successes) / n_ok if n_ok else 0.0
+            avg_tps = sum(e.tokens_per_second for e in successes) / n_ok if n_ok else 0.0
+            errors = n - n_ok
 
             rt_change = 0.0
             if prev_rt is not None and prev_rt > 0:
