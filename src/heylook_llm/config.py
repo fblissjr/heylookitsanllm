@@ -1,5 +1,5 @@
 # src/heylook_llm/config.py
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):
@@ -137,6 +137,11 @@ class MLXModelConfig(BaseModel):
     # MLXProvider._apply_model_defaults. Adding a new one updates the
     # MLX_RUNTIME_DEFAULT_FIELDS set automatically -- no hardcoded list to
     # keep in sync.
+    #
+    # extra="forbid": a typo in models.toml (e.g. `temperatue`) must fail
+    # loudly at load time, not silently revert to defaults.
+    model_config = ConfigDict(extra="forbid")
+
     model_path: str
     draft_model_path: Optional[str] = None
     num_draft_tokens: Optional[int] = Field(3, json_schema_extra={"is_runtime_default": True})
@@ -152,9 +157,14 @@ class MLXModelConfig(BaseModel):
         "standard", json_schema_extra={"is_runtime_default": True}
     )
     max_kv_size: Optional[int] = Field(None, json_schema_extra={"is_runtime_default": True})
-    kv_bits: Optional[int] = Field(None, ge=1, le=8, json_schema_extra={"is_runtime_default": True})
-    kv_group_size: int = Field(64, json_schema_extra={"is_runtime_default": True})
-    quantized_kv_start: int = Field(2048, json_schema_extra={"is_runtime_default": True})
+    # MLX QuantizedKVCache supports exactly 2/4/8 bits and group sizes that
+    # divide the head dim; anything else fails at first generation, so reject
+    # it at config-load time instead.
+    kv_bits: Optional[Literal[2, 4, 8]] = Field(None, json_schema_extra={"is_runtime_default": True})
+    kv_group_size: Literal[32, 64, 128] = Field(64, json_schema_extra={"is_runtime_default": True})
+    # In-flight + queued requests admitted before 503 backpressure. Consumed
+    # by the generation gate (process-wide; the first provider created wins).
+    max_queue_depth: int = Field(8, ge=1)
     # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
@@ -187,6 +197,15 @@ class MLXModelConfig(BaseModel):
     # Useful when a model ships a broken jinja but a working embedded template,
     # or when the user wants to test a custom template without re-exporting.
     chat_template_source: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _rotating_requires_max_kv_size(self):
+        # Enforced here because cache_helpers.make_cache raises for this at
+        # FIRST GENERATION -- a config that is guaranteed to fail must not
+        # validate cleanly at load/import time.
+        if self.cache_type == "rotating" and self.max_kv_size is None:
+            raise ValueError("cache_type='rotating' requires max_kv_size")
+        return self
 
 
 # Derived at import time; callers of _apply_model_defaults read from this set
@@ -482,7 +501,7 @@ class ModelScanRequest(BaseModel):
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models."""
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    profile: Optional[str] = Field("moderate", description="Profile to apply to all imported models")
+    profile: Optional[str] = Field("balanced", description="Profile to apply to all imported models")
 
 
 class ModelUpdateRequest(BaseModel):

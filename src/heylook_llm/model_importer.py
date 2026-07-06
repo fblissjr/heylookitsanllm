@@ -237,33 +237,37 @@ class ModelImporter:
         return False
 
     def _get_model_size(self, path: Path) -> tuple[Optional[str], Optional[float]]:
-        """Estimate model size from name or files."""
-        path_str = str(path).lower()
+        """Return (param-count label from the name, ACTUAL weight bytes in GB).
 
-        size_patterns = [
-            (r'(\d+\.\d+)b', lambda x: (f"{x}B", float(x))),
-            (r'(\d+)b', lambda x: (f"{x}B", float(x))),
-            (r'(\d+)m', lambda x: (f"{int(x)/1000:.1f}B" if int(x) >= 1000 else f"{x}M", int(x)/1000)),
-        ]
+        These are different units and must not be conflated: the old code
+        returned "7" from a `-7B` name as size_gb=7.0 (billions of params,
+        not gigabytes) and fed it to get_smart_defaults, whose KV-quant
+        threshold is real GB relative to RAM. size_gb now always comes from
+        the safetensors byte-sum (matching the admin scan path); the name
+        regex only supplies the human-facing label.
+        """
+        # Only the model DIRECTORY name -- matching the full path lets size-
+        # looking fragments in parent dirs (e.g. a tmp dir "…680b…") win.
+        path_str = path.name.lower()
 
-        for pattern, formatter in size_patterns:
+        label = None
+        for pattern, fmt in [
+            (r'(\d+\.\d+)b', lambda x: f"{x}B"),
+            (r'(\d+)b', lambda x: f"{x}B"),
+            (r'(\d+)m', lambda x: f"{int(x)/1000:.1f}B" if int(x) >= 1000 else f"{x}M"),
+        ]:
             match = re.search(pattern, path_str)
             if match:
-                return formatter(match.group(1))
+                label = fmt(match.group(1))
+                break
 
+        size_gb = None
         if path.is_dir():
-            total_size = 0
-            for file in path.rglob("*.safetensors"):
-                total_size += file.stat().st_size
-
+            total_size = sum(f.stat().st_size for f in path.rglob("*.safetensors"))
             if total_size > 0:
-                size_gb = total_size / (1024**3)
-                if size_gb >= 1:
-                    return f"{size_gb:.1f}B", size_gb
-                else:
-                    return f"{int(size_gb * 1000)}M", size_gb
+                size_gb = total_size / (1024 ** 3)
 
-        return None, None
+        return label, size_gb
 
     def _create_mlx_entry(self, path: Path, config_data: Optional[dict] = None) -> Optional[dict]:
         """Create a models.toml entry for an MLX model."""

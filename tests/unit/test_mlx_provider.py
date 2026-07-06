@@ -139,8 +139,8 @@ class TestApplyModelDefaults:
             messages=[ChatMessage(role="user", content="hi")],
         )
         effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.1  # global default
-        assert effective["max_tokens"] == 512
+        assert effective["temperature"] == 0.7  # global floor (chat-sane)
+        assert effective["max_tokens"] == 4096
 
     def test_request_overrides_defaults(self, mock_mlx_provider):
         req = ChatRequest(
@@ -726,7 +726,7 @@ class TestApplyModelDefaultsGetattr:
         )
         effective = mock_mlx_provider._apply_model_defaults(req)
         # temperature is not set on request, so default should apply
-        assert effective["temperature"] == 0.1
+        assert effective["temperature"] == 0.7
 
     def test_all_scalar_fields_extracted(self, mock_mlx_provider):
         """All 9 scalar fields should be extractable from request."""

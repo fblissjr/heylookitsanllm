@@ -169,15 +169,10 @@ class ConfigEditor:
         ).ask()
 
         if not customize:
-            # Return smart defaults
+            # Same policy as get_smart_defaults: quantize only under real
+            # memory pressure, never cap context (max_kv_size) by default.
             if is_large:
-                return {
-                    'cache_type': 'quantized',
-                    'kv_bits': 4,
-                    'kv_group_size': 32,
-                    'quantized_kv_start': 512,
-                    'max_kv_size': 2048
-                }
+                return {'cache_type': 'quantized', 'kv_bits': 8, 'kv_group_size': 64}
             else:
                 return {'cache_type': 'standard'}
 
@@ -204,7 +199,7 @@ class ConfigEditor:
                     questionary.Choice("4", "4-bit (75% memory savings, slight quality loss)"),
                     questionary.Choice("8", "8-bit (50% memory savings, minimal quality loss)")
                 ],
-                default="4" if is_large else "8",
+                default="8",
                 style=self.style
             ).ask()
             result['kv_bits'] = int(kv_bits)
@@ -222,19 +217,11 @@ class ConfigEditor:
             ).ask()
             result['kv_group_size'] = int(kv_group)
 
-            # Quantized start
-            quant_start = questionary.text(
-                "Start quantizing after N tokens:",
-                default="512" if is_large else "1024",
-                validate=lambda x: self._validate_int_range(x, 0, 10000),
-                style=self.style
-            ).ask()
-            result['quantized_kv_start'] = int(quant_start)
-
-            # Max KV size
+            # Max KV size (WARNING: rotating cache silently drops context
+            # beyond the cap -- default no, regardless of model size)
             set_max = questionary.confirm(
-                "Set maximum KV cache size?",
-                default=is_large,
+                "Set maximum KV cache size? (truncates context beyond it)",
+                default=False,
                 style=self.style
             ).ask()
 

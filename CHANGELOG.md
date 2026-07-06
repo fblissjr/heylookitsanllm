@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.0]
+
+### Changed
+
+- **Chat-sane request defaults.** The global sampler floor (what a request gets when neither the request, a preset, nor the model config says anything -- i.e. every freshly imported model) was `temperature 0.1, max_tokens 512`: near-greedy sampling and mid-sentence truncation of long answers. Now `temperature 0.7, max_tokens 4096` (`GLOBAL_SAMPLER_FLOOR`), and the batch fallbacks reference the same constant instead of a third hardcoded 512. Admin/CLI import now stamps `default_preset = "balanced"` (temp 0.7 / top_p 0.9) instead of the deprecated `moderate` alias.
+- **Radix prefix cache is bypassed for non-standard KV caches.** Snapshot restore prefix-trims `keys[..., :N, :]`, which is wrong for `QuantizedKVCache` (packed tuple state) and impossible for rotating caches -- the risk was documented in `radix_cache.py` but unenforced (silent wrong output on partial prefix hits). Both lookup and store now gate on `cache_type == "standard"` with no `max_kv_size`.
+- **Import size is real bytes, not a name regex.** The CLI import path parsed `size_gb` out of the model NAME (`Qwen-7B` -> "7 GB" -- billions of params masquerading as gigabytes; `-4bit` -> 4 GB) and fed it to the RAM-relative smart defaults. `size_gb` now always comes from the safetensors byte-sum (matching the admin scan path); the name regex only supplies the human label, and only from the directory name (the full-path match let parent-dir fragments win).
+- **Config TUI cache defaults aligned** with the new policy (8-bit/group-64 when quantizing, no `max_kv_size` by default, truncation warning on the max-size prompt).
+
+### Added
+
+- **Strict model-config validation** (`MLXModelConfig`): `extra="forbid"` so models.toml typos fail at load instead of silently reverting to defaults; `kv_bits` constrained to 2/4/8 and `kv_group_size` to 32/64/128 (what MLX actually supports); `cache_type="rotating"` without `max_kv_size` now fails validation instead of the first generation; `max_queue_depth` is a real config field (it was read by the generation gate but silently dropped by pydantic, making it permanently 8).
+
+### Removed
+
+- **`quantized_kv_start`** config field: written by smart defaults and stored in every import, but never consumed by `_build_cache_config`/`make_cache` -- pure dead config. Existing models.toml entries carrying it must drop the key (this machine's file was migrated). Also removed: `num_draft_tokens` stamping on import (inert without a `draft_model_path`; the field itself remains) and five `RELOAD_REQUIRED_FIELDS` entries from a long-removed audio provider.
+
 ## [1.31.3]
 
 ### Changed

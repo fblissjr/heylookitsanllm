@@ -507,6 +507,22 @@ class VLMVisionStrategy:
         )
 
 
+# Layer-1 sampler floor: what a request gets when neither the request, a
+# preset, nor the model config says anything. Chat-sane values -- this is the
+# de-facto default for freshly imported models with no default_preset (the
+# old 0.1/512 floor made every such model near-greedy and truncated long
+# answers mid-sentence).
+GLOBAL_SAMPLER_FLOOR = {
+    'temperature': 0.7,
+    'top_p': 1.0,
+    'top_k': 0,
+    'min_p': 0.0,
+    'max_tokens': 4096,
+    'repetition_penalty': 1.0,
+    'presence_penalty': 0.0,
+}
+
+
 # Yielded in place of normal chunks when generation fails. `is_error` is the
 # marker the API layers check to surface a real error (SSE error payload /
 # HTTP 500) instead of delivering `.text` as assistant content.
@@ -813,15 +829,7 @@ class MLXProvider(BaseProvider):
                translated to HTTP 400 by the route handler.
             5. Request-level explicit field values.
         """
-        global_defaults = {
-            'temperature': 0.1,
-            'top_p': 1.0,
-            'top_k': 0,
-            'min_p': 0.0,
-            'max_tokens': 512,
-            'repetition_penalty': 1.0,
-            'presence_penalty': 0.0
-        }
+        global_defaults = dict(GLOBAL_SAMPLER_FLOOR)
 
         merged_config = global_defaults.copy()
 
@@ -896,7 +904,7 @@ class MLXProvider(BaseProvider):
             self._batch_processor = TextBatchProcessor(
                 model=self.model,
                 tokenizer=tokenizer,
-                max_tokens=self.config.get('max_tokens', 512),
+                max_tokens=self.config.get('max_tokens', GLOBAL_SAMPLER_FLOOR['max_tokens']),
                 completion_batch_size=completion_batch_size,
                 prefill_batch_size=prefill_batch_size,
                 prefill_step_size=prefill_step_size
@@ -961,7 +969,7 @@ class MLXProvider(BaseProvider):
 
             tokens = tokenizer.encode(prompt)
             prompts.append(tokens)
-            max_tokens_list.append(req.max_tokens or self.config.get('max_tokens', 512))
+            max_tokens_list.append(req.max_tokens or self.config.get('max_tokens', GLOBAL_SAMPLER_FLOOR['max_tokens']))
 
         # Process batch
         processor = self._get_batch_processor()

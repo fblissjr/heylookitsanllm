@@ -1753,7 +1753,7 @@ export interface components {
             /**
              * Profile
              * @description Profile to apply to all imported models
-             * @default moderate
+             * @default balanced
              */
             profile: string | undefined;
         };

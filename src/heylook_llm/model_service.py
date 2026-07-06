@@ -183,11 +183,12 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
             defaults["cache_type"] = "quantized"
             defaults["kv_bits"] = 8
             defaults["kv_group_size"] = 64
-            defaults["quantized_kv_start"] = 1024
         else:
             defaults["cache_type"] = "standard"
 
-        defaults["num_draft_tokens"] = 3
+        # num_draft_tokens is deliberately NOT emitted: it only matters when
+        # a draft_model_path is configured (speculative decoding), and import
+        # never configures one -- stamping it on every model is dead config.
 
     return defaults
 
@@ -200,18 +201,12 @@ RELOAD_REQUIRED_FIELDS = frozenset(
         "cache_type",
         "kv_bits",
         "kv_group_size",
-        "quantized_kv_start",
         "max_kv_size",
         "draft_model_path",
         "num_draft_tokens",
         "default_hidden_layer",
         "default_max_length",
         "supports_thinking",
-        "fp32",
-        "use_local_attention",
-        "local_attention_context",
-        "chunk_duration",
-        "overlap_duration",
     }
 )
 
@@ -644,7 +639,7 @@ class ModelService:
     def import_models(
         self,
         models_to_import: list[dict],
-        profile_name: str | None = "moderate",
+        profile_name: str | None = "balanced",
     ) -> list[ModelConfig]:
         """Import scanned models into config with optional profile."""
         with self._lock:

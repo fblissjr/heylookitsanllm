@@ -141,41 +141,47 @@ class TestSmartDefaultsLoadTimeOnly:
 
 
 class TestModelSizeRegex:
-    """ModelImporter._get_model_size regex is unchanged by C4."""
+    """_get_model_size returns (param-count LABEL from the name, real weight
+    GB from safetensors bytes). The old code returned "7B" name matches as
+    size_gb=7.0 -- billions of params masquerading as gigabytes -- and fed
+    that to get_smart_defaults' RAM-relative threshold (audit 2026-07-06)."""
 
     def _get_size(self, path_str: str):
         importer = ModelImporter()
         return importer._get_model_size(Path(path_str))
 
-    def test_decimal_before_integer(self):
-        label, gb = self._get_size("/models/Qwen3-0.6B")
-        assert label == "0.6B"
-        assert gb == 0.6
-
-    def test_integer_b_suffix(self):
+    def test_label_parsed_but_gb_none_without_files(self):
+        # Name gives the label; GB must come from real bytes, which a
+        # non-existent path doesn't have.
         label, gb = self._get_size("/models/Llama-3.1-8B")
         assert label == "8B"
-        assert gb == 8.0
+        assert gb is None
 
-    def test_million_parameter_model(self):
+    def test_decimal_label(self):
+        label, gb = self._get_size("/models/Qwen3-0.6B")
+        assert label == "0.6B"
+        assert gb is None
+
+    def test_million_label(self):
         label, gb = self._get_size("/models/SmolLM-135M")
         assert label == "135M"
-        assert gb == pytest.approx(0.135)
+        assert gb is None
 
     def test_no_size_marker(self):
         label, gb = self._get_size("/models/Phi-3-mini-128k")
         assert label is None
         assert gb is None
 
-    def test_large_decimal_model(self):
-        label, gb = self._get_size("/models/Qwen2.5-14.5B-instruct")
-        assert label == "14.5B"
-        assert gb == 14.5
-
-    def test_large_million_model(self):
-        label, gb = self._get_size("/models/some-model-1500m")
-        assert label == "1.5B"
-        assert gb == pytest.approx(1.5)
+    def test_gb_comes_from_safetensors_bytes_not_name(self, tmp_path):
+        # A "7B" name over 2 GiB of actual weights: label says 7B,
+        # size_gb says 2.0 -- never 7.0.
+        model_dir = tmp_path / "Fake-7B-instruct"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"\0" * (2 * 1024 ** 2))
+        importer = ModelImporter()
+        label, gb = importer._get_model_size(model_dir)
+        assert label == "7B"
+        assert gb == pytest.approx(2 * 1024 ** 2 / 1024 ** 3)
 
 
 class TestImportWizardChatTemplateDetection:

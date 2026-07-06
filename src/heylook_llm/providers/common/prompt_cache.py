@@ -246,9 +246,20 @@ def process_prompt_with_cache(
     cache_config = cache_config or {}
     model_id = prompt_cache.model_key[0]
 
+    # Radix reuse is only CORRECT for plain full-precision KVCache layers:
+    # restore prefix-trims via keys[..., :N, :], which is wrong for
+    # QuantizedKVCache (packed tuple state) and impossible for
+    # RotatingKVCache -- the radix_cache.py header documents the
+    # silent-wrong-output risk. Gate the whole lookup/store path off for
+    # non-standard cache configs; the flag also gates store_generation_cache.
+    prompt_cache._radix_eligible = (
+        cache_config.get("cache_type", "standard") == "standard"
+        and not cache_config.get("max_kv_size")
+    )
+
     # Get radix cache for this model
     manager = get_global_cache_manager()
-    radix = manager.get_radix_cache(model_id)
+    radix = manager.get_radix_cache(model_id) if prompt_cache._radix_eligible else None
 
     if radix is not None and new_tokens:
         matched_len, kv_snapshot = radix.longest_prefix_match(new_tokens)
@@ -298,6 +309,11 @@ def store_generation_cache(
         full_tokens: Complete token sequence (prompt + generated).
         generation_cache: The live KV cache objects (mutated by lm_stream_generate).
     """
+    # Mirror the lookup-side gate: never publish snapshots from non-standard
+    # caches (quantized/rotating state cannot be prefix-trimmed correctly).
+    if not getattr(prompt_cache, "_radix_eligible", True):
+        return
+
     model_id = prompt_cache.model_key[0]
     manager = get_global_cache_manager()
     radix = manager.get_radix_cache(model_id)

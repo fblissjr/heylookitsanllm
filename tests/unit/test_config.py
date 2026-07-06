@@ -1,6 +1,7 @@
 # tests/unit/test_config.py
 """Unit tests for Pydantic config models."""
 import pytest
+from pydantic import ValidationError
 
 from heylook_llm.config import (
     AppConfig,
@@ -204,12 +205,13 @@ class TestMLXRuntimeDefaultFields:
     this list in the same commit as the field addition.
     """
 
+    # quantized_kv_start was removed 2026-07-06: stored and forwarded but
+    # never consumed by _build_cache_config/make_cache (dead config).
     EXPECTED_RUNTIME_DEFAULTS = frozenset({
         "cache_type",
         "kv_bits",
         "kv_group_size",
         "max_kv_size",
-        "quantized_kv_start",
         "num_draft_tokens",
         "prefill_step_size",
     })
@@ -227,3 +229,49 @@ class TestMLXRuntimeDefaultFields:
                 f"MLXModelConfig.{name} is marked is_runtime_default but is required; "
                 f"that forces every models.toml entry to set it. Add a default."
             )
+
+
+class TestMLXModelConfigValidation:
+    """Config typos and impossible values must fail at load time, not at
+    first generation (audit 2026-07-06)."""
+
+    BASE = {"model_path": "/fake/model"}
+
+    def test_unknown_key_rejected(self):
+        # extra="forbid": a typo like `temperatue` must not silently vanish.
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, temperatue=0.9)
+
+    def test_kv_bits_must_be_2_4_or_8(self):
+        # MLX QuantizedKVCache supports only 2/4/8-bit.
+        for bad in (1, 3, 5, 6, 7):
+            with pytest.raises(ValidationError):
+                MLXModelConfig(**self.BASE, kv_bits=bad)
+        for good in (2, 4, 8):
+            assert MLXModelConfig(**self.BASE, kv_bits=good).kv_bits == good
+
+    def test_kv_group_size_constrained(self):
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, kv_group_size=48)
+        for good in (32, 64, 128):
+            assert MLXModelConfig(**self.BASE, kv_group_size=good).kv_group_size == good
+
+    def test_rotating_cache_requires_max_kv_size(self):
+        # Previously validated fine and raised at first generation
+        # (cache_helpers.make_cache).
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, cache_type="rotating")
+        cfg = MLXModelConfig(**self.BASE, cache_type="rotating", max_kv_size=4096)
+        assert cfg.max_kv_size == 4096
+
+    def test_max_queue_depth_is_a_real_field(self):
+        # The provider reads config["max_queue_depth"]; without a field the
+        # value was silently dropped by pydantic and unreachable.
+        assert MLXModelConfig(**self.BASE).max_queue_depth == 8
+        assert MLXModelConfig(**self.BASE, max_queue_depth=2).max_queue_depth == 2
+
+    def test_quantized_kv_start_removed(self):
+        # Dead config: stored and forwarded but never consumed by
+        # _build_cache_config/make_cache. Removed outright.
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, quantized_kv_start=1024)
