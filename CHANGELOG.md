@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.3]
+
+### Changed
+
+- **Import-time KV-cache defaults are now RAM-relative, and `max_kv_size` is never defaulted.** `get_smart_defaults` quantized the KV cache for any model over an absolute weight threshold (>13GB: 8-bit KV; >30GB: 8-bit KV *plus* `max_kv_size = 2048`) -- sized for a small-RAM machine and wrong on a 192GB Studio, where 11 of 14 configured models had auto-quantized KV and 6 carried the 2048 cap. The cap is the worst offender: it creates a RotatingKVCache that **silently drops context** beyond 2048 tokens (and rotating caches have known correctness limits with the radix prefix cache). Now: quantize only when weights exceed ~35% of total unified memory (`psutil`), and never emit `max_kv_size` -- context truncation is an explicit user choice. Existing `models.toml` entries are local data and were migrated by hand on this machine (standard cache below the threshold, quantized-but-uncapped above it).
+
 ## [1.31.2]
 
 ### Fixed

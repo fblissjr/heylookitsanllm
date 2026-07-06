@@ -141,6 +141,15 @@ PROFILES = _profiles_view()
 # =============================================================================
 
 
+def _system_ram_gb() -> float:
+    """Total unified memory in GB. Conservative fallback if psutil is absent."""
+    try:
+        import psutil
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except Exception:
+        return 64.0
+
+
 def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     """Generate LOAD-TIME smart defaults based on model characteristics.
 
@@ -161,13 +170,16 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     size_gb = model_info.get("size_gb", 0)
 
     if provider == "mlx":
-        if size_gb > 30:
-            defaults["cache_type"] = "quantized"
-            defaults["kv_bits"] = 8
-            defaults["kv_group_size"] = 32
-            defaults["quantized_kv_start"] = 512
-            defaults["max_kv_size"] = 2048
-        elif size_gb > 13:
+        # KV quantization is a memory/quality trade-off, so it must be
+        # RAM-relative, not an absolute weight threshold: a 40GB model is
+        # "large" on a 64GB MacBook and trivial on a 192GB Studio. Quantize
+        # only when the weights alone claim over ~35% of unified memory
+        # (leaving the rest for KV, vision towers, and the OS).
+        #
+        # max_kv_size is deliberately NEVER defaulted: it creates a
+        # RotatingKVCache that silently drops context beyond the cap --
+        # truncation is an explicit user choice, not an import default.
+        if size_gb > _system_ram_gb() * 0.35:
             defaults["cache_type"] = "quantized"
             defaults["kv_bits"] = 8
             defaults["kv_group_size"] = 64
