@@ -3,10 +3,48 @@
 
 import asyncio
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator
 
 from fastapi import Request
+
+
+class _PinnedExecutorPool:
+    """Lease persistent single-thread executors for generation pinning.
+
+    Threads that ran MLX work must NEVER be torn down while the process
+    lives: MLX keeps thread-local state (streams, its compiler cache) whose
+    destructors can hold Python objects, and a pthread's TLS cleanup runs
+    after its Python thread state is gone -- deallocating those objects
+    without the GIL is a Py_FatalError -> SIGTRAP process abort (hit in
+    production 2026-07-06 with compiled sampler fns on the quantized-KV
+    path; see tests/unit/test_streaming_executor_pool.py).
+
+    So instead of one executor per request (shut down at stream end), this
+    pool leases single-worker executors and reuses them. The pinning
+    invariant is unchanged: a leased executor serves exactly one generation
+    at a time, so each generation still runs start-to-finish on one thread.
+    The pool grows to the max number of concurrently admitted requests
+    (bounded by the generation gate's capacity) and never shrinks.
+    """
+
+    def __init__(self):
+        self._free: list[ThreadPoolExecutor] = []
+        self._lock = threading.Lock()
+
+    def acquire(self) -> ThreadPoolExecutor:
+        with self._lock:
+            if self._free:
+                return self._free.pop()
+        return ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx-stream")
+
+    def release(self, executor: ThreadPoolExecutor) -> None:
+        with self._lock:
+            self._free.append(executor)
+
+
+_executor_pool = _PinnedExecutorPool()
 
 
 class KeepaliveMarker:
@@ -52,9 +90,9 @@ async def async_generator_with_abort(
     # is a multi-thread pool, so successive next() calls could otherwise run on
     # different threads -- fragile for MLX, whose per-generation stream and
     # wired_limit context are entered on the first next() and synchronized on
-    # the last. Pinning to a single worker keeps a generation on one thread for
-    # its entire life.
-    gen_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx-stream")
+    # the last. Leased from the pool (not created fresh) so the thread is
+    # REUSED across requests, never destroyed -- see _PinnedExecutorPool.
+    gen_executor = _executor_pool.acquire()
 
     keepalive_interval = 5.0  # seconds between keepalive comments
     last_keepalive = loop.time()
@@ -97,11 +135,20 @@ async def async_generator_with_abort(
         # the MLX cache). Without this, close() only runs when GC collects the
         # abandoned generator -- which would hold the gate and stall the queue.
         # close() runs on the same pinned worker that drove generation.
+        closed = False
         try:
             logging.debug(f"{log_prefix}Closing provider generator")
             close_future = loop.run_in_executor(gen_executor, sync_gen.close)
             await asyncio.wait_for(close_future, timeout=30)
+            closed = True
         except Exception:
             pass
         finally:
-            gen_executor.shutdown(wait=False)
+            # Return the executor for reuse -- NEVER shut it down (a dying
+            # MLX thread aborts the process; see _PinnedExecutorPool). If
+            # close timed out the worker may be wedged mid-generation: leak
+            # that executor rather than queueing a future request behind it.
+            if closed:
+                _executor_pool.release(gen_executor)
+            else:
+                logging.warning(f"{log_prefix}Generator close timed out; retiring its worker from the pool")

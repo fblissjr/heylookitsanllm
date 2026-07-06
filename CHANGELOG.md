@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.2]
+
+### Fixed
+
+- **Server aborted (SIGTRAP, `Fatal Python error: PyThreadState_Get`) after a streaming request on models with compiled sampler / quantized-KV paths** (e.g. Qwen3-VL-32B with `cache_type = "quantized"`): `async_generator_with_abort` created a fresh single-worker executor per request and shut it down at stream end, so one MLX-tainted thread died per request. MLX keeps a thread-local `CompilerCache` whose entries hold Python objects when `mx.compile`d *Python* functions ran on that thread; pthread TLS cleanup runs after the Python thread state is destroyed, so the cache destructor deallocated those objects without the GIL -- `Py_FatalError` -> abort (confirmed by two macOS crash reports with identical stacks: `~CompilerCache()` -> `tupledealloc` -> `fatal_error` inside `_pthread_exit`). Fix: `_PinnedExecutorPool` in `streaming_utils.py` leases persistent single-thread executors instead of creating/destroying one per request -- generation stays pinned to one thread (unchanged invariant), but threads are reused, never torn down. A worker whose generator close times out is retired (leaked), not shut down. Repro was deterministic: one streaming request to Qwen3-VL-32B-8bit killed the server; 6/6 clean after the fix. Also removes the per-request thread churn noted as a follow-up in the 1.31.1 review (MLX stream-registry growth). Tests: `tests/unit/test_streaming_executor_pool.py`.
+
 ## [1.31.1]
 
 ### Fixed
