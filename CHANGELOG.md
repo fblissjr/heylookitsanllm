@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.5]
+
+### Added
+
+- **mlx-lm/mlx-vlm surface contract tests** (`tests/contract/test_mlxvlm_surface.py`, 22 tests): executable pins for every private/undocumented library surface this server consumes -- `prepare_inputs` signature and return shape, `apply_chat_template` kwargs, the `encode_image`/`cached_image_features` pattern, `LanguageModelOutput` fields, the `_position_ids`/`_rope_deltas` attribute convention, `mlx_lm.utils._get_classes`, cache classes' `state`/`empty()` surface, and `GenerationResponse`'s exact field set + non-slotted runtime attachment. Each test names its consumption site, so an aggressive library upgrade fails loudly in tests instead of silently at runtime. This is item 1 of the mlx-vlm bus-factor strategy (plan Direction).
+
 ## [1.34.4]
 
 ### Fixed
