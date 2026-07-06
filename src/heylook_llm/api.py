@@ -20,7 +20,14 @@ from heylook_llm.config import (
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse,
 )
 from heylook_llm.system_metrics import SystemMetricsCollector
-from heylook_llm.perf_collector import RequestEvent, ResourceSnapshot, get_perf_collector, headline_tps
+from heylook_llm.perf_collector import (
+    ChunkTelemetry,
+    RequestEvent,
+    ResourceSnapshot,
+    get_perf_collector,
+    headline_tps,
+    net_ttft_ms,
+)
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event
 from heylook_llm.presets import PresetNotFound
@@ -776,17 +783,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
-    prompt_tokens = 0
-    completion_tokens = 0
-    cached_tokens = 0
-    peak_memory_gb = 0.0
-    kv_cache_bytes = 0
-    queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
-    # mlx-lm's own rates, measured tightly around prefill/decode -- the honest
-    # generation numbers (wall-clock division here bakes in queue wait + SSE
-    # delivery overhead).
-    native_prompt_tps = 0.0
-    native_generation_tps = 0.0
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -860,17 +857,9 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                 else:
                     stop_reason = chunk_finish_reason  # Pass through any other values
 
-            # Also capture token counts from chunks (including final empty chunk)
-            prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-            completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-            cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
-            # Memory telemetry -- peak is monotonic across chunks, kv_cache_bytes
-            # is only set on first chunk (a snapshot at generation start).
-            peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
-            kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
-            queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
-            native_prompt_tps = getattr(chunk, 'prompt_tps', native_prompt_tps)
-            native_generation_tps = getattr(chunk, 'generation_tps', native_generation_tps)
+            # Token counts + memory/queue/rate telemetry (final empty chunk
+            # still carries counts and the tightest native rates).
+            telemetry.absorb(chunk)
 
             if not chunk.text:
                 continue
@@ -956,8 +945,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Emit usage stats in final chunk if requested (OpenAI stream_options.include_usage)
     if include_usage:
         # Use tracked counts, fallback to token_count for completion_tokens
-        final_prompt_tokens = prompt_tokens or 0
-        final_completion_tokens = completion_tokens or token_count
+        final_prompt_tokens = telemetry.prompt_tokens or 0
+        final_completion_tokens = telemetry.completion_tokens or token_count
 
         # Build enhanced usage object
         usage_data = {
@@ -967,9 +956,9 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         }
 
         # Report cached token count (from radix tree prompt cache)
-        if cached_tokens > 0:
+        if telemetry.cached_tokens > 0:
             usage_data["prompt_tokens_details"] = {
-                "cached_tokens": cached_tokens,
+                "cached_tokens": telemetry.cached_tokens,
             }
 
         # Add thinking-specific fields if there were thinking tokens
@@ -985,12 +974,12 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             timing_data["thinking_duration_ms"] = thinking_duration_ms
         if content_duration_ms is not None:
             timing_data["content_duration_ms"] = content_duration_ms
-        if peak_memory_gb > 0:
-            timing_data["peak_memory_gb"] = round(peak_memory_gb, 3)
-        if kv_cache_bytes > 0:
-            timing_data["kv_cache_bytes"] = kv_cache_bytes
-        if queue_wait_ms > 0:
-            timing_data["queue_wait_ms"] = round(queue_wait_ms, 1)
+        if telemetry.peak_memory_gb > 0:
+            timing_data["peak_memory_gb"] = round(telemetry.peak_memory_gb, 3)
+        if telemetry.kv_cache_bytes > 0:
+            timing_data["kv_cache_bytes"] = telemetry.kv_cache_bytes
+        if telemetry.queue_wait_ms > 0:
+            timing_data["queue_wait_ms"] = round(telemetry.queue_wait_ms, 1)
 
         # Build generation config from request using the shared sampler-summary
         # helper so the SSE usage chunk and the request_events.jsonl schema stay
@@ -1022,16 +1011,15 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     if perf_ctx:
         now = time.time()
         req_total_ms = (now - perf_ctx["request_start_time"]) * 1000
-        gen_tokens = completion_tokens or token_count
+        gen_tokens = telemetry.completion_tokens or token_count
         gen_time_s = (now - generation_start_time)
-        tps = headline_tps(native_generation_tps, gen_tokens, gen_time_s, queue_wait_ms)
+        tps = headline_tps(telemetry.generation_tps, gen_tokens, gen_time_s, telemetry.queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
 
         # Real TTFT: wall clock from generation start to first yielded token,
-        # minus FIFO queue wait -- admission pressure is not model latency
-        # (it stays visible in queue_wait_ms).
+        # net of FIFO queue wait.
         raw_ttft_ms = (first_output_time - generation_start_time) * 1000 if first_output_time else 0.0
-        ttft_ms = max(0.0, raw_ttft_ms - queue_wait_ms)
+        ttft_ms = net_ttft_ms(raw_ttft_ms, telemetry.queue_wait_ms)
 
         stream_event = RequestEvent(
             timestamp=now,
@@ -1043,21 +1031,21 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             image_processing_ms=perf_ctx["image_resize_ms"] if perf_ctx["had_images"] else 0.0,
             token_generation_ms=total_duration_ms,
             first_token_ms=ttft_ms,
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=telemetry.prompt_tokens,
             completion_tokens=gen_tokens,
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=True,
-            queue_wait_ms=round(queue_wait_ms, 1),
-            prompt_tps=native_prompt_tps,
+            queue_wait_ms=round(telemetry.queue_wait_ms, 1),
+            prompt_tps=telemetry.prompt_tps,
         )
         get_perf_collector().record_request(stream_event)
         _maybe_log_request_event(
             perf_ctx, stream_event,
             chat_request=chat_request,
-            peak_memory_gb=peak_memory_gb,
-            kv_cache_bytes=kv_cache_bytes,
-            cached_tokens=cached_tokens,
+            peak_memory_gb=telemetry.peak_memory_gb,
+            kv_cache_bytes=telemetry.kv_cache_bytes,
+            cached_tokens=telemetry.cached_tokens,
             thinking_tokens=thinking_tokens,
             content_tokens=content_tokens,
             thinking_duration_ms=thinking_duration_ms,
@@ -1070,26 +1058,16 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
 async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None):
     full_text = ""
-    prompt_tokens = 0
-    completion_tokens = 0
     token_count = 0
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
     log_request_stage(request_id, "processing_response")
 
     # Initialize logprobs collector if requested
     logprobs_collector = _init_logprobs_collector(chat_request, provider, request_id, streaming=False)
 
     # Process generation in thread pool to avoid blocking event loop
-    cached_tokens = 0
-    peak_memory_gb = 0.0
-    kv_cache_bytes = 0
-    queue_wait_ms = 0.0  # FIFO generation-queue wait (tagged on chunks)
-    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
-    native_generation_tps = 0.0
-
     def consume_generator():
-        nonlocal full_text, prompt_tokens, completion_tokens, token_count, cached_tokens
-        nonlocal peak_memory_gb, kv_cache_bytes, queue_wait_ms
-        nonlocal native_prompt_tps, native_generation_tps
+        nonlocal full_text, token_count
         first_logprob_logged = False
         # closing() releases the generation gate now (the provider generator's
         # finally) even if consumption raises -- don't wait for GC.
@@ -1116,14 +1094,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
                     from heylook_llm.utils import log_token_update
                     log_token_update(request_id, token_count)
 
-                prompt_tokens = getattr(chunk, 'prompt_tokens', prompt_tokens)
-                completion_tokens = getattr(chunk, 'generation_tokens', completion_tokens)
-                cached_tokens = getattr(chunk, 'cached_tokens', cached_tokens)
-                peak_memory_gb = max(peak_memory_gb, getattr(chunk, 'peak_memory', 0.0))
-                kv_cache_bytes = getattr(chunk, 'kv_cache_bytes', kv_cache_bytes)
-                queue_wait_ms = getattr(chunk, 'queue_wait_ms', queue_wait_ms)
-                native_prompt_tps = getattr(chunk, 'prompt_tps', native_prompt_tps)
-                native_generation_tps = getattr(chunk, 'generation_tps', native_generation_tps)
+                telemetry.absorb(chunk)
 
     # Typed generation failures propagate out of the consume thread; translate
     # to HTTP here (client errors 400, server failures 500) -- never content.
@@ -1136,19 +1107,19 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
 
     # Surface memory telemetry to the route handler for response headers.
     if perf_ctx is not None:
-        perf_ctx["peak_memory_gb"] = peak_memory_gb
-        perf_ctx["kv_cache_bytes"] = kv_cache_bytes
+        perf_ctx["peak_memory_gb"] = telemetry.peak_memory_gb
+        perf_ctx["kv_cache_bytes"] = telemetry.kv_cache_bytes
 
     usage_dict = {
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens or token_count,  # Fallback to our count
-        "total_tokens": (prompt_tokens or 0) + (completion_tokens or token_count)
+        "prompt_tokens": telemetry.prompt_tokens,
+        "completion_tokens": telemetry.completion_tokens or token_count,  # Fallback to our count
+        "total_tokens": (telemetry.prompt_tokens or 0) + (telemetry.completion_tokens or token_count)
     }
 
     # Report cached token count (from radix tree prompt cache)
-    if cached_tokens > 0:
+    if telemetry.cached_tokens > 0:
         usage_dict["prompt_tokens_details"] = {
-            "cached_tokens": cached_tokens,
+            "cached_tokens": telemetry.cached_tokens,
         }
 
     # Parse reasoning content with a per-request parser (shared instances
@@ -1183,7 +1154,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     log_response_summary(
         request_id,
         len(full_text),
-        token_count=completion_tokens or token_count,
+        token_count=telemetry.completion_tokens or token_count,
         processing_time=processing_time
     )
 
@@ -1198,8 +1169,8 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     # Record perf event
     if perf_ctx:
         now = time.time()
-        gen_tokens = completion_tokens or token_count
-        tps = headline_tps(native_generation_tps, gen_tokens, processing_time, queue_wait_ms)
+        gen_tokens = telemetry.completion_tokens or token_count
+        tps = headline_tps(telemetry.generation_tps, gen_tokens, processing_time, telemetry.queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         non_stream_event = RequestEvent(
             timestamp=now,
@@ -1211,21 +1182,21 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             image_processing_ms=perf_ctx["image_resize_ms"] if perf_ctx["had_images"] else 0.0,
             token_generation_ms=processing_time * 1000 - p_get_ms,
             first_token_ms=0.0,
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=telemetry.prompt_tokens,
             completion_tokens=gen_tokens,
             tokens_per_second=tps,
             had_images=perf_ctx["had_images"],
             was_streaming=False,
-            queue_wait_ms=round(queue_wait_ms, 1),
-            prompt_tps=native_prompt_tps,
+            queue_wait_ms=round(telemetry.queue_wait_ms, 1),
+            prompt_tps=telemetry.prompt_tps,
         )
         get_perf_collector().record_request(non_stream_event)
         _maybe_log_request_event(
             perf_ctx, non_stream_event,
             chat_request=chat_request,
-            peak_memory_gb=peak_memory_gb,
-            kv_cache_bytes=kv_cache_bytes,
-            cached_tokens=cached_tokens,
+            peak_memory_gb=telemetry.peak_memory_gb,
+            kv_cache_bytes=telemetry.kv_cache_bytes,
+            cached_tokens=telemetry.cached_tokens,
             provider=provider,
         )
 

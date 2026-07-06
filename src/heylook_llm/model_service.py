@@ -342,22 +342,36 @@ class ModelService:
 
     # --- Discovery ---
 
-    def scan_directory(self, path: str) -> list[ScannedModel]:
-        """Scan a directory for importable models."""
+    def scan_directory(
+        self, path: str, identity: tuple[set[str], set[str]] | None = None
+    ) -> list[ScannedModel]:
+        """Scan a directory for importable models.
+
+        ``identity`` lets a caller that's scanning multiple sources (see
+        ``scan_paths``) pass in a precomputed ``_configured_identity()``
+        result so models.toml isn't re-read and re-validated per source.
+        """
         from heylook_llm.model_importer import ModelImporter
 
         importer = ModelImporter()
         raw_models = importer.scan_directory(path)
-        configured_ids, configured_paths = self._configured_identity()
+        configured_ids, configured_paths = identity or self._configured_identity()
         return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
 
-    def scan_hf_cache(self) -> list[ScannedModel]:
-        """Scan HuggingFace cache directories for models."""
+    def scan_hf_cache(
+        self, identity: tuple[set[str], set[str]] | None = None
+    ) -> list[ScannedModel]:
+        """Scan HuggingFace cache directories for models.
+
+        ``identity`` lets a caller that's scanning multiple sources (see
+        ``scan_paths``) pass in a precomputed ``_configured_identity()``
+        result so models.toml isn't re-read and re-validated per source.
+        """
         from heylook_llm.model_importer import ModelImporter
 
         importer = ModelImporter()
         raw_models = importer.scan_hf_cache()
-        configured_ids, configured_paths = self._configured_identity()
+        configured_ids, configured_paths = identity or self._configured_identity()
         return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
 
     def _configured_identity(self) -> tuple[set[str], set[str]]:
@@ -384,15 +398,21 @@ class ModelService:
         results: list[ScannedModel] = []
         seen_ids: set[str] = set()
 
+        # Computed once and threaded through every scan_directory/scan_hf_cache
+        # call below -- each call independently recomputes this from a full
+        # models.toml read + per-model Pydantic validation, so without sharing
+        # it a K-source scan re-reads and re-resolves the config K times.
+        identity = self._configured_identity()
+
         if paths:
             for p in paths:
-                for model in self.scan_directory(p):
+                for model in self.scan_directory(p, identity=identity):
                     if model.id not in seen_ids:
                         results.append(model)
                         seen_ids.add(model.id)
 
         if scan_hf:
-            for model in self.scan_hf_cache():
+            for model in self.scan_hf_cache(identity=identity):
                 if model.id not in seen_ids:
                     results.append(model)
                     seen_ids.add(model.id)

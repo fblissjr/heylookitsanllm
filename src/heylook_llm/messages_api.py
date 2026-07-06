@@ -26,7 +26,13 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
-from heylook_llm.perf_collector import RequestEvent, get_perf_collector, headline_tps
+from heylook_llm.perf_collector import (
+    ChunkTelemetry,
+    RequestEvent,
+    get_perf_collector,
+    headline_tps,
+    net_ttft_ms,
+)
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.thinking_parser import HybridThinkingParser, parse_thinking_content
 
@@ -311,27 +317,18 @@ async def _non_stream_messages(
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
-    prompt_tokens = 0
-    completion_tokens = 0
     token_count = 0
-    queue_wait_ms = 0.0
-    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
-    native_generation_tps = 0.0
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
 
     def consume():
-        nonlocal full_text, prompt_tokens, completion_tokens, token_count, queue_wait_ms
-        nonlocal native_prompt_tps, native_generation_tps
+        nonlocal full_text, token_count
         # closing() runs the provider generator's finally now (releases the
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
             for chunk in generator:
                 full_text += chunk.text
                 token_count += 1
-                prompt_tokens = getattr(chunk, "prompt_tokens", prompt_tokens)
-                completion_tokens = getattr(chunk, "generation_tokens", completion_tokens)
-                queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
-                native_prompt_tps = getattr(chunk, "prompt_tps", native_prompt_tps)
-                native_generation_tps = getattr(chunk, "generation_tps", native_generation_tps)
+                telemetry.absorb(chunk)
 
     try:
         await asyncio.to_thread(consume)
@@ -353,8 +350,8 @@ async def _non_stream_messages(
         "model": msg_request.model or "unknown",
         "choices": [{"message": message, "index": 0, "finish_reason": finish_reason}],
         "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens or token_count,
+            "prompt_tokens": telemetry.prompt_tokens,
+            "completion_tokens": telemetry.completion_tokens or token_count,
         },
     }
 
@@ -362,11 +359,11 @@ async def _non_stream_messages(
     # around prefill/decode); the old prompt_tps here divided prompt tokens by
     # WHOLE-request elapsed, which is not a rate of anything.
     elapsed = time.time() - request_start_time
-    total_tokens = (completion_tokens or token_count)
+    total_tokens = (telemetry.completion_tokens or token_count)
     if elapsed > 0 and total_tokens > 0:
         openai_dict["performance"] = {
-            "prompt_tps": native_prompt_tps,
-            "generation_tps": headline_tps(native_generation_tps, total_tokens, elapsed, queue_wait_ms),
+            "prompt_tps": telemetry.prompt_tps,
+            "generation_tps": headline_tps(telemetry.generation_tps, total_tokens, elapsed, telemetry.queue_wait_ms),
             "total_duration_ms": int(elapsed * 1000),
         }
 
@@ -383,7 +380,7 @@ async def _non_stream_messages(
     # Record perf event
     if perf_ctx:
         now = time.time()
-        tps = headline_tps(native_generation_tps, total_tokens, elapsed, queue_wait_ms)
+        tps = headline_tps(telemetry.generation_tps, total_tokens, elapsed, telemetry.queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         had_imgs = perf_ctx.get("had_images", False)
         get_perf_collector().record_request(RequestEvent(
@@ -396,13 +393,13 @@ async def _non_stream_messages(
             image_processing_ms=0.0,
             token_generation_ms=elapsed * 1000 - p_get_ms,
             first_token_ms=0.0,
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=telemetry.prompt_tokens,
             completion_tokens=total_tokens,
             tokens_per_second=tps,
             had_images=had_imgs,
             was_streaming=False,
-            queue_wait_ms=round(queue_wait_ms, 1),
-            prompt_tps=native_prompt_tps,
+            queue_wait_ms=round(telemetry.queue_wait_ms, 1),
+            prompt_tps=telemetry.prompt_tps,
         ))
 
     return response
@@ -434,20 +431,18 @@ async def _stream_messages(
     # message_start
     yield translator.message_start_event()
 
-    queue_wait_ms = 0.0
-    native_prompt_tps = 0.0  # mlx-lm's own prefill/decode rates (per chunk)
-    native_generation_tps = 0.0
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
             # Capture provider metadata
             chunk_finish = getattr(chunk, "finish_reason", None)
             if chunk_finish:
                 translator.stop_reason = chunk_finish
-            translator.prompt_tokens = getattr(chunk, "prompt_tokens", translator.prompt_tokens)
-            translator.completion_tokens = getattr(chunk, "generation_tokens", translator.completion_tokens)
-            queue_wait_ms = getattr(chunk, "queue_wait_ms", queue_wait_ms)
-            native_prompt_tps = getattr(chunk, "prompt_tps", native_prompt_tps)
-            native_generation_tps = getattr(chunk, "generation_tps", native_generation_tps)
+            telemetry.absorb(chunk)
+            # The translator owns the token counts it reports in its own
+            # message_delta/usage events.
+            translator.prompt_tokens = telemetry.prompt_tokens
+            translator.completion_tokens = telemetry.completion_tokens
 
             if not chunk.text:
                 continue
@@ -482,16 +477,15 @@ async def _stream_messages(
         total_ms = (now - perf_ctx["request_start_time"]) * 1000
         gen_tokens = translator.completion_tokens or (translator.thinking_tokens + translator.content_tokens)
         gen_time_s = now - translator.start_time
-        tps = headline_tps(native_generation_tps, gen_tokens, gen_time_s, queue_wait_ms)
+        tps = headline_tps(telemetry.generation_tps, gen_tokens, gen_time_s, telemetry.queue_wait_ms)
         p_get_ms = perf_ctx["provider_get_ms"]
         had_imgs = perf_ctx.get("had_images", False)
 
-        # Real TTFT: translator-tracked first output token, minus FIFO queue
-        # wait -- admission pressure is not model latency (it stays visible
-        # in queue_wait_ms).
+        # Real TTFT: translator-tracked first output token, net of FIFO
+        # queue wait.
         first_output = translator.thinking_start or translator.content_start
         raw_ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
-        ttft_ms = max(0.0, raw_ttft_ms - queue_wait_ms)
+        ttft_ms = net_ttft_ms(raw_ttft_ms, telemetry.queue_wait_ms)
 
         get_perf_collector().record_request(RequestEvent(
             timestamp=now,
@@ -508,6 +502,6 @@ async def _stream_messages(
             tokens_per_second=tps,
             had_images=had_imgs,
             was_streaming=True,
-            queue_wait_ms=round(queue_wait_ms, 1),
-            prompt_tps=native_prompt_tps,
+            queue_wait_ms=round(telemetry.queue_wait_ms, 1),
+            prompt_tps=telemetry.prompt_tps,
         ))

@@ -110,6 +110,44 @@ class TestAlreadyConfiguredMatchesPath:
         assert not scanned.already_configured
 
 
+class TestScanPathsIdentityComputedOnce:
+    def test_scan_paths_computes_identity_once(self, service, monkeypatch):
+        # scan_directory/scan_hf_cache each call _configured_identity(), which
+        # re-reads and re-validates the whole models.toml. scan_paths fans
+        # out to multiple sources (here: 2 dirs + hf cache), so without
+        # sharing one precomputed identity this would run 3 times instead
+        # of 1.
+        from heylook_llm import model_importer
+
+        class FakeImporter:
+            def scan_directory(self, path):
+                return [_raw(f"model-from-{path}", f"/nonexistent/{path}")]
+
+            def scan_hf_cache(self):
+                return [_raw("model-from-hf", "/nonexistent/hf")]
+
+        monkeypatch.setattr(model_importer, "ModelImporter", FakeImporter)
+
+        original_identity = service._configured_identity
+        calls = 0
+
+        def counting_identity():
+            nonlocal calls
+            calls += 1
+            return original_identity()
+
+        monkeypatch.setattr(service, "_configured_identity", counting_identity)
+
+        results = service.scan_paths(paths=["/path-a", "/path-b"], scan_hf=True)
+
+        assert calls == 1, "scan_paths must compute _configured_identity once, not per source"
+        assert {r.id for r in results} == {
+            "model-from-/path-a",
+            "model-from-/path-b",
+            "model-from-hf",
+        }
+
+
 class TestReimportUpdates:
     def test_reimport_existing_id_updates_entry(self, service, tmp_path):
         new_path = tmp_path / "weights" / "model-a-v2"

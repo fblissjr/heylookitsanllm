@@ -32,19 +32,6 @@ except ImportError as e:
     HAS_MLX_EMBEDDING = False
 
 
-class _LoadingPlaceholder:
-    """Reserves a cache slot while a model loads outside cache_lock.
-
-    The capacity check and the multi-hundred-ms load can't share one lock
-    hold, so without a reservation two concurrent different-model loads both
-    pass the check and hold two full models in memory (check-then-act,
-    OOM-class on boxes sized for max_loaded_models). A placeholder counts
-    toward capacity but is invisible to every reader API and is never
-    evicted or unloaded -- it either becomes the real provider on publish or
-    is removed on load failure.
-    """
-
-
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
@@ -77,6 +64,16 @@ class ModelRouter:
 
         # Model pinning: prevents eviction during long-running batch jobs
         self._pinned: set[str] = set()
+
+        # Capacity reservations for in-flight loads. The capacity check and
+        # the multi-hundred-ms load can't share one lock hold, so without a
+        # reservation two concurrent different-model loads both pass the
+        # check and hold two full models in memory (check-then-act TOCTOU,
+        # OOM-class on boxes sized for max_loaded_models). A side-set (like
+        # _pinned) rather than a sentinel inside self.providers, so
+        # self.providers always means "real, loaded providers" and reader
+        # APIs need no filtering discipline.
+        self._loading: set[str] = set()
 
         # Idle-unload tracking (C2). time.time() of the last cache hit or load
         # per model_id. Consulted by ``unload_idle_models`` against each model's
@@ -149,16 +146,11 @@ class ModelRouter:
         """Check if model is in cache. Uses fine-grained locking."""
         with self.cache_lock:
             if model_id in self.providers:
-                provider = self.providers[model_id]
-                if isinstance(provider, _LoadingPlaceholder):
-                    # A load is in flight; treat as a miss so the caller
-                    # blocks on the per-model loading lock and re-checks.
-                    return None
                 if self.log_level <= logging.DEBUG:
                     logging.debug(f"Cache hit for model: {model_id}. Reusing existing provider.")
                 self.providers.move_to_end(model_id)
                 self._last_used_ts[model_id] = time.time()
-                return provider
+                return self.providers[model_id]
             return None
 
     def _teardown_provider(self, provider: BaseProvider) -> None:
@@ -181,19 +173,12 @@ class ModelRouter:
             mx.clear_cache()
 
     def _evict_lru_model(self):
-        """Evict least recently used non-pinned model. Must be called with cache_lock held.
-
-        Placeholders (in-flight loads) are never eviction candidates -- their
-        slot is owned by the loading thread.
-        """
+        """Evict least recently used non-pinned model. Must be called with cache_lock held."""
         evict_id = None
-        for model_id, provider in self.providers.items():
-            if model_id in self._pinned:
-                continue
-            if isinstance(provider, _LoadingPlaceholder):
-                continue
-            evict_id = model_id
-            break
+        for model_id in self.providers:
+            if model_id not in self._pinned:
+                evict_id = model_id
+                break
 
         if evict_id is None:
             raise RuntimeError(
@@ -216,11 +201,9 @@ class ModelRouter:
 
     def get_current_model_id(self) -> Optional[str]:
         """Get the most recently used model ID from cache, or None if no models loaded."""
-        # OrderedDict keeps insertion order; last item is most recently used.
-        # Skip placeholders: an in-flight load isn't a usable model yet.
-        for model_id in reversed(self.providers):
-            if not isinstance(self.providers.get(model_id), _LoadingPlaceholder):
-                return model_id
+        if self.providers:
+            # OrderedDict keeps insertion order; last item is most recently used
+            return next(reversed(self.providers))
         return None
 
     def get_loaded_models(self) -> Dict[str, BaseProvider]:
@@ -232,10 +215,7 @@ class ModelRouter:
         """
         with self.cache_lock:
             # Return a copy to prevent external modification
-            return {
-                mid: p for mid, p in self.providers.items()
-                if not isinstance(p, _LoadingPlaceholder)
-            }
+            return dict(self.providers)
 
     def get_provider(self, model_id: str) -> BaseProvider:
         # Fallback logic when no model specified:
@@ -297,31 +277,25 @@ class ModelRouter:
             logging.info(f"Model path: {model_path}")
 
             try:
-                # Reserve a cache slot BEFORE loading (evicting if needed) so
-                # the capacity check and the load are one atomic commitment.
-                # Without the reservation, two concurrent different-model
-                # loads both pass the check and hold two full models in
-                # memory (check-then-act TOCTOU). If the cache is full of
-                # other threads' in-flight loads, wait for one to publish.
+                # Reserve capacity BEFORE loading (evicting if needed) so the
+                # capacity check and the load are one atomic commitment.
+                # Without a reservation, two concurrent different-model loads
+                # both pass the check and hold two full models in memory
+                # (check-then-act TOCTOU). If capacity is held by other
+                # threads' in-flight loads, wait for one to publish.
                 while True:
                     with self.cache_lock:
-                        if len(self.providers) < self.max_loaded_models:
-                            self.providers[model_id] = _LoadingPlaceholder()
+                        if len(self.providers) + len(self._loading) < self.max_loaded_models:
+                            self._loading.add(model_id)
                             break
-                        evictable = any(
-                            mid not in self._pinned
-                            and not isinstance(p, _LoadingPlaceholder)
-                            for mid, p in self.providers.items()
-                        )
-                        if evictable:
+                        if any(mid not in self._pinned for mid in self.providers):
                             self._evict_lru_model()
                             continue
-                        if not any(isinstance(p, _LoadingPlaceholder) for p in self.providers.values()):
+                        if not self._loading:
                             raise RuntimeError(
                                 f"All {len(self.providers)} loaded models are pinned. "
                                 f"Cannot evict to make room. Pinned: {self._pinned}"
                             )
-                    # Slot(s) held by in-flight loads; retry once they publish.
                     time.sleep(0.05)
 
                 # Create provider instance
@@ -342,10 +316,10 @@ class ModelRouter:
                 # wrapper needed here.
                 new_provider.warmup()
 
-                # Publish: the placeholder's slot becomes the real provider.
+                # Publish: the reservation becomes the real provider.
                 with self.cache_lock:
+                    self._loading.discard(model_id)
                     self.providers[model_id] = new_provider
-                    self.providers.move_to_end(model_id)
                     self._last_used_ts[model_id] = time.time()
 
                 load_time = time.time() - load_start_time
@@ -375,11 +349,10 @@ class ModelRouter:
                 return new_provider
 
             except Exception as e:
-                # Release the reserved slot so the failed load doesn't hold
+                # Release the reservation so the failed load doesn't hold
                 # capacity forever.
                 with self.cache_lock:
-                    if isinstance(self.providers.get(model_id), _LoadingPlaceholder):
-                        del self.providers[model_id]
+                    self._loading.discard(model_id)
                 load_time = time.time() - load_start_time
                 logging.error(f"Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
                 raise e
@@ -390,19 +363,18 @@ class ModelRouter:
     def clear_cache(self):
         """Clear all loaded models from cache."""
         with self.cache_lock:
-            # Unload all models (placeholders belong to in-flight loads --
-            # leave them; their loader owns the slot).
+            # Unload all models
             for model_id in list(self.providers.keys()):
                 provider = self.providers[model_id]
-                if isinstance(provider, _LoadingPlaceholder):
-                    continue
                 try:
                     provider.unload()
                     logging.info(f"Unloaded model: {model_id}")
                 except Exception as e:
                     logging.error(f"Error unloading model {model_id}: {e}")
-                del self.providers[model_id]
-                self._last_used_ts.pop(model_id, None)
+
+            # Clear the cache (OrderedDict maintains order automatically)
+            self.providers.clear()
+            self._last_used_ts.clear()
             logging.info("Model cache cleared")
     
     def reload_config(self):
@@ -431,9 +403,6 @@ class ModelRouter:
                 )
             if model_id not in self.providers:
                 return False
-            if isinstance(self.providers[model_id], _LoadingPlaceholder):
-                # In-flight load: the slot belongs to the loading thread.
-                return False
 
             provider = self.providers.pop(model_id)
 
@@ -454,9 +423,7 @@ class ModelRouter:
     def get_model_status(self, model_id: str) -> dict:
         """Get load status and basic metrics for a model."""
         with self.cache_lock:
-            loaded = model_id in self.providers and not isinstance(
-                self.providers[model_id], _LoadingPlaceholder
-            )
+            loaded = model_id in self.providers
 
         status = {"loaded": loaded}
 
@@ -501,10 +468,8 @@ class ModelRouter:
 
         with self.cache_lock:
             candidates = []
-            for model_id, provider in list(self.providers.items()):
+            for model_id in list(self.providers.keys()):
                 if model_id in self._pinned:
-                    continue
-                if isinstance(provider, _LoadingPlaceholder):
                     continue
                 threshold = self._effective_idle_threshold(model_id)
                 if threshold <= 0:
@@ -533,7 +498,7 @@ class ModelRouter:
         """
         with self.cache_lock:
             provider = self.providers.get(model_id)
-            if provider is None or isinstance(provider, _LoadingPlaceholder):
+            if provider is None:
                 return False
             stats = provider.generation_queue_stats()
             if stats and (stats.get("active", 0) > 0 or stats.get("waiting", 0) > 0):

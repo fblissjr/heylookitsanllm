@@ -41,6 +41,46 @@ class RequestEvent:
     prompt_tps: float = 0.0
 
 
+@dataclass(slots=True)
+class ChunkTelemetry:
+    """Accumulates mlx-lm per-chunk telemetry in one place.
+
+    Chunks are non-slotted GenerationResponse attr-bags; every API consume
+    loop (api.py / messages_api.py, streaming and non-streaming) needs the
+    same scrape. One ``absorb(chunk)`` per chunk replaces four hand-copied
+    getattr blocks -- a new telemetry field is added HERE once, not at four
+    call sites that would otherwise drift apart.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    peak_memory_gb: float = 0.0  # monotonic max across chunks
+    kv_cache_bytes: int = 0  # snapshot tagged on the first chunk
+    queue_wait_ms: float = 0.0  # FIFO generation-queue wait
+    prompt_tps: float = 0.0  # mlx-lm's own prefill rate
+    generation_tps: float = 0.0  # mlx-lm's own decode rate
+
+    def absorb(self, chunk) -> None:
+        self.prompt_tokens = getattr(chunk, "prompt_tokens", self.prompt_tokens)
+        self.completion_tokens = getattr(chunk, "generation_tokens", self.completion_tokens)
+        self.cached_tokens = getattr(chunk, "cached_tokens", self.cached_tokens)
+        self.peak_memory_gb = max(self.peak_memory_gb, getattr(chunk, "peak_memory", 0.0))
+        self.kv_cache_bytes = getattr(chunk, "kv_cache_bytes", self.kv_cache_bytes)
+        self.queue_wait_ms = getattr(chunk, "queue_wait_ms", self.queue_wait_ms)
+        self.prompt_tps = getattr(chunk, "prompt_tps", self.prompt_tps)
+        self.generation_tps = getattr(chunk, "generation_tps", self.generation_tps)
+
+
+def net_ttft_ms(raw_ttft_ms: float, queue_wait_ms: float) -> float:
+    """TTFT with FIFO queue wait excluded (clamped at 0).
+
+    Admission pressure is not model latency; it stays visible in the
+    separate queue_wait_ms field.
+    """
+    return max(0.0, raw_ttft_ms - queue_wait_ms)
+
+
 def headline_tps(
     native_tps: float,
     tokens: int,

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.6]
+
+### Changed
+
+- **Simplify pass over the v1.34.1-.5 diff** (4-angle review: reuse, simplification, efficiency, altitude). Router: the `_LoadingPlaceholder` sentinel inside `self.providers` (13 isinstance checks across 9 methods) is replaced by a `self._loading` side-set mirroring the existing `_pinned` precedent -- `self.providers` again always means "real, loaded providers", every reader keeps its filter-free form, and forgetting to skip a reservation becomes structurally impossible; behavior unchanged (same race tests pass untouched). Telemetry: the per-chunk getattr scrape hand-copied at 4 consume loops collapses into `perf_collector.ChunkTelemetry.absorb()`, and the twice-duplicated TTFT-minus-queue-wait formula into `net_ttft_ms()`. Scans: `scan_paths` computes the configured id/path identity once instead of once per source (was K TOML re-reads + K x N path resolves per scan). Tests: `QueueStatsProvider` subclasses the shared `MockProvider`; the two hand-rolled fake-chunk builders merge into `tests/unit/_fake_chunk.py`.
+
 ## [1.34.5]
 
 ### Added

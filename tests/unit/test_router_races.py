@@ -7,8 +7,9 @@ Two defects, both rare solo but with OOM/crash-class consequences:
    cache_lock, but the load and the publish ran OUTSIDE it. Two concurrent
    requests for two DIFFERENT models both passed the check and loaded
    simultaneously -- two full model weights in memory on a box budgeted for
-   max_loaded_models. Fix: reserve a placeholder slot under cache_lock
-   before loading; concurrent loaders wait until a real slot frees.
+   max_loaded_models. Fix: reserve capacity in the router's _loading
+   side-set under cache_lock before loading (self.providers keeps meaning
+   "real, loaded providers"); concurrent loaders wait until a slot frees.
 
 2. Idle unload vs queued requests: a request that hit the cache and is
    WAITING at the FIFO generation gate counts as neither "active" (that
@@ -28,10 +29,12 @@ import textwrap
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from heylook_llm.providers.base import BaseProvider
 from heylook_llm.router import ModelRouter
+
+from _mock_provider import MockProvider
 
 
 _RACE_TOML = textwrap.dedent("""
@@ -91,24 +94,15 @@ class SlowTrackingProvider(BaseProvider):
             cls.peak = 0
 
 
-class QueueStatsProvider(BaseProvider):
+class QueueStatsProvider(MockProvider):
     """MockProvider variant with a controllable generation queue snapshot."""
 
     def __init__(self, model_id, model_config, is_debug):
-        self.model_id = model_id
-        self.model_config = model_config
-        self.is_debug = is_debug
-        self.unload = MagicMock()
+        super().__init__(model_id, model_config, is_debug)
         self.queue_stats = {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
-
-    def load_model(self):
-        pass
 
     def generation_queue_stats(self):
         return self.queue_stats
-
-    def create_chat_completion(self, request, abort_event=None):  # pragma: no cover
-        pass
 
 
 class _RouterTestBase(unittest.TestCase):

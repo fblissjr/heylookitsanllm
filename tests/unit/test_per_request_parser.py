@@ -23,16 +23,7 @@ from heylook_llm.config import ChatRequest
 from heylook_llm.perf_collector import PerfCollector
 from heylook_llm.reasoning_parser import _compile_strip_pattern, select_reasoning_parser
 
-
-def _chunk(text):
-    return SimpleNamespace(
-        text=text,
-        token=None,
-        logprobs=None,
-        finish_reason=None,
-        prompt_tokens=1,
-        generation_tokens=1,
-    )
+from _fake_chunk import fake_chunk as _chunk
 
 
 def _poisoned_shared_parser():
