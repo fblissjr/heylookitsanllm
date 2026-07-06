@@ -14,13 +14,13 @@ import json
 
 import pytest
 
+from helpers.mlx_mock import FakeChunk
 
-class _ErrorChunk:
-    """Mirrors the provider's MLXErrorChunk marker contract."""
 
-    def __init__(self, text):
-        self.text = text
-        self.is_error = True
+class _ErrorChunk(FakeChunk):
+    """FakeChunk plus the provider's MLXErrorChunk `is_error` marker."""
+
+    is_error = True
 
 
 class _ErroringProvider:

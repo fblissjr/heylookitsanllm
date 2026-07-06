@@ -8,6 +8,7 @@
 //   alive      false once torn down; check after any await
 //   guard(fn)  wraps a callback so it no-ops after teardown
 //   throttle(fn)  throttleToFrame that auto-cancels on teardown
+//   linkedController()  AbortController chained to signal; abort() it on release
 //   onTeardown(fn)  register extra cleanup (runs before teardown())
 
 import { throttleToFrame } from './utils.js';
@@ -32,6 +33,17 @@ export function createPage(spec) {
           const throttled = throttleToFrame(fn);
           cleanups.push(() => throttled.cancel());
           return throttled;
+        },
+        // Per-operation AbortController chained to the page signal. The chain
+        // listener is registered WITH the controller's own signal, so it
+        // self-removes when the controller aborts -- callers must abort() the
+        // controller when the operation ends (a no-op after normal
+        // completion) or listeners accumulate on ctx.signal over a session.
+        linkedController() {
+          const controller = new AbortController();
+          ctx.signal.addEventListener('abort', () => controller.abort(),
+            { once: true, signal: controller.signal });
+          return controller;
         },
       };
       current = { ctx, controller, cleanups };

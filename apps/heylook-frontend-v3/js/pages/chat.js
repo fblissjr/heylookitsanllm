@@ -10,13 +10,11 @@
 // - Abort (Stop button) is normal completion: partial content is saved.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { buildSettingsPanel, samplerParams } from '../settings.js';
-
-const MAX_BUSY_RETRIES = 3;
 
 export default createPage({
   async setup(ctx) {
@@ -30,6 +28,10 @@ export default createPage({
     s.editingId = null;
 
     buildSkeleton(ctx);
+    // One throttle for the whole mount (it reads s.stream), not one per
+    // stream -- per-stream throttles would pin each stream's closure in the
+    // page's cleanup list for the mount lifetime.
+    s.paint = ctx.throttle(() => paintStream(ctx));
     ctx.onTeardown(() => {
       if (s.stream) beforeUnloadGuard.disable();
     });
@@ -127,9 +129,7 @@ function buildSkeleton(ctx) {
 
 function fillModelSelect(ctx) {
   const s = ctx.state;
-  s.modelSelect.replaceChildren(
-    ...s.models.map((m) => createEl('option', { value: m.id }, [m.id])),
-  );
+  fillOptions(s.modelSelect, s.models.map((m) => m.id));
 }
 
 function currentCaps(ctx) {
@@ -148,8 +148,7 @@ function toggleSettings(ctx) {
 }
 
 function showStatus(ctx, text, isError = false) {
-  ctx.state.statusEl.textContent = text;
-  ctx.state.statusEl.style.color = isError ? 'var(--danger)' : '';
+  setStatus(ctx.state.statusEl, text, isError);
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +167,7 @@ function renderConvList(ctx) {
     const title = createEl('span', { class: 'conv-item__title', title: conv.title }, [conv.title]);
     title.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      startRename(ctx, conv, item, title);
+      startRename(ctx, conv, title);
     });
     const del = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost conv-item__delete' }, ['Del']),
@@ -185,7 +184,7 @@ function renderConvList(ctx) {
   }));
 }
 
-function startRename(ctx, conv, item, titleEl) {
+function startRename(ctx, conv, titleEl) {
   const input = createEl('input', { class: 'input conv-item__rename', value: conv.title });
   const commit = ctx.guard(async () => {
     const next = input.value.trim();
@@ -484,12 +483,11 @@ function buildRequestBody(ctx) {
   return { model: s.modelSelect.value, messages, ...samplerParams() };
 }
 
-function startStream(ctx, retries = 0) {
+function startStream(ctx) {
   const s = ctx.state;
   if (s.stream || !s.activeId) return;
 
-  const controller = new AbortController();
-  ctx.signal.addEventListener('abort', () => controller.abort());
+  const controller = ctx.linkedController();
 
   // streaming placeholder message
   const contentEl = createEl('div', { class: 'message-content' });
@@ -507,7 +505,8 @@ function startStream(ctx, retries = 0) {
     targetConvId: s.activeId,
     content: '',
     thinking: '',
-    body: buildRequestBody(ctx),
+    contentDirty: false,
+    thinkingDirty: false,
     els: { msgEl, contentEl, thinkingBody: thinkingEl.querySelector('.thinking__body'), thinkingEl },
   };
   s.stream = stream;
@@ -517,23 +516,34 @@ function startStream(ctx, retries = 0) {
 
   const isCurrent = () => s.stream === stream && s.activeId === stream.targetConvId;
 
-  const paint = ctx.throttle(() => {
-    if (!isCurrent()) return;
-    stream.els.contentEl.innerHTML = renderMarkdown(stream.content);
-    if (stream.thinking) {
-      stream.els.thinkingEl.hidden = false;
-      stream.els.thinkingBody.textContent = stream.thinking;
-    }
-    scrollMessages(ctx);
-  });
-
-  streamChat(stream.body, {
+  streamChat(buildRequestBody(ctx), {
     signal: controller.signal,
-    onToken: (_, full) => { stream.content = full; if (ctx.alive) paint(); },
-    onThinking: (_, full) => { stream.thinking = full; if (ctx.alive) paint(); },
+    onToken: (_, full) => { stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
+    onThinking: (_, full) => { stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
+    onRetryWait: (wait) => {
+      if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
+    },
     onComplete: (result) => finishStream(ctx, stream, result),
-    onError: (err) => handleStreamError(ctx, stream, err, retries),
+    onError: (err) => handleStreamError(ctx, stream, err),
   });
+}
+
+// Throttled painter (one per mount, created in setup): renders only the
+// halves that changed since the last frame.
+function paintStream(ctx) {
+  const s = ctx.state;
+  const stream = s.stream;
+  if (!stream || s.activeId !== stream.targetConvId) return;
+  if (stream.contentDirty) {
+    stream.contentDirty = false;
+    stream.els.contentEl.innerHTML = renderMarkdown(stream.content);
+  }
+  if (stream.thinkingDirty) {
+    stream.thinkingDirty = false;
+    stream.els.thinkingEl.hidden = false;
+    stream.els.thinkingBody.textContent = stream.thinking;
+  }
+  scrollMessages(ctx);
 }
 
 function stopStream(ctx) {
@@ -542,6 +552,8 @@ function stopStream(ctx) {
 
 function releaseStream(ctx, stream) {
   const s = ctx.state;
+  // No-op after normal completion; drops the linkedController chain listener.
+  stream.controller.abort();
   if (s.stream !== stream) return;
   s.stream = null;
   beforeUnloadGuard.disable();
@@ -590,24 +602,10 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
   }
 }
 
-function handleStreamError(ctx, stream, err, retries) {
+function handleStreamError(ctx, stream, err) {
   const s = ctx.state;
   releaseStream(ctx, stream);
-
-  const stillHere = ctx.alive && s.activeId === stream.targetConvId;
-  if (!stillHere) return;
-
-  if (err.status === 503 && err.code === 'model_overloaded' && retries < MAX_BUSY_RETRIES) {
-    const wait = err.retryAfter ?? 2;
-    stream.els.msgEl.remove();
-    showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
-    const timer = setTimeout(ctx.guard(() => {
-      if (s.activeId === stream.targetConvId && !s.stream) startStream(ctx, retries + 1);
-    }), wait * 1000);
-    ctx.onTeardown(() => clearTimeout(timer));
-    return;
-  }
-
+  if (!ctx.alive || s.activeId !== stream.targetConvId) return;
   stream.els.msgEl.remove();
   renderMessages(ctx);
   showStatus(ctx, `Generation failed: ${err.message}`, true);

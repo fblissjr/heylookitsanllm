@@ -11,7 +11,7 @@
 // - Stop is normal completion: partial text is kept, not discarded.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, debounce } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { samplerParams } from '../settings.js';
@@ -32,6 +32,9 @@ export default createPage({
     buildSkeleton(ctx);
     s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
     ctx.onTeardown(() => s.scheduleSave.flush());
+    // One throttle for the whole mount (reads s.gen) -- a per-generation
+    // throttle would pin each generation's head/tail copies until unmount.
+    s.paint = ctx.throttle(() => paintGen(ctx));
 
     const [models, list] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -147,14 +150,11 @@ function buildSkeleton(ctx) {
 
 function fillModelSelect(ctx) {
   const s = ctx.state;
-  s.modelSelect.replaceChildren(
-    ...s.models.map((m) => createEl('option', { value: m.id }, [m.id])),
-  );
+  fillOptions(s.modelSelect, s.models.map((m) => m.id));
 }
 
 function showStatus(ctx, text, isError = false) {
-  ctx.state.statusEl.textContent = text;
-  ctx.state.statusEl.style.color = isError ? 'var(--danger)' : '';
+  setStatus(ctx.state.statusEl, text, isError);
 }
 
 function renderEditor(ctx) {
@@ -211,10 +211,7 @@ async function newNotebook(ctx) {
   try {
     const nb = await api.createNotebook({ title: 'Untitled', content: '' });
     if (!ctx.alive) return;
-    s.notebooks.unshift({
-      id: nb.id, title: nb.title, system_prompt: nb.system_prompt,
-      model_id: nb.model_id, created_at: nb.created_at, updated_at: nb.updated_at,
-    });
+    s.notebooks.unshift(nb);
     renderList(ctx);
     await selectNotebook(ctx, nb.id);
     s.rootEl.classList.remove('notebook--list-open');
@@ -318,42 +315,51 @@ function startGenerate(ctx) {
   if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
   messages.push({ role: 'user', content: head.trim() ? head : 'Continue writing.' });
 
-  const controller = new AbortController();
-  ctx.signal.addEventListener('abort', () => controller.abort());
+  const controller = ctx.linkedController();
 
   const gen = { controller, targetId: s.activeId, head, tail, content: '' };
   s.gen = gen;
   s.generateBtn.textContent = 'Stop';
   showStatus(ctx, '');
 
-  const isCurrent = () => s.gen === gen && s.activeId === gen.targetId;
-
-  const paint = ctx.throttle(() => {
-    if (!isCurrent()) return;
-    s.contentTextarea.value = gen.head + gen.content + gen.tail;
-    const caret = gen.head.length + gen.content.length;
-    s.contentTextarea.setSelectionRange(caret, caret);
-    autoGrow(s.contentTextarea, Infinity);
-  });
-
   streamChat({ model: s.modelSelect.value, messages, ...samplerParams() }, {
     signal: controller.signal,
-    onToken: (_, full) => { gen.content = full; if (ctx.alive) paint(); },
+    onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },
+    onRetryWait: (wait) => {
+      if (ctx.alive && s.gen === gen) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
+    },
     onComplete: (result) => finishGenerate(ctx, gen, result),
     onError: (err) => handleGenerateError(ctx, gen, err),
   });
+}
+
+// Throttled painter (one per mount, created in setup).
+function paintGen(ctx) {
+  const s = ctx.state;
+  const gen = s.gen;
+  if (!gen || s.activeId !== gen.targetId) return;
+  s.contentTextarea.value = gen.head + gen.content + gen.tail;
+  const caret = gen.head.length + gen.content.length;
+  s.contentTextarea.setSelectionRange(caret, caret);
+  autoGrow(s.contentTextarea, Infinity);
 }
 
 function stopGenerate(ctx) {
   ctx.state.gen?.controller.abort();
 }
 
+function releaseGen(ctx, gen) {
+  const s = ctx.state;
+  // No-op after normal completion; drops the linkedController chain listener.
+  gen.controller.abort();
+  if (s.gen !== gen) return;
+  s.gen = null;
+  if (ctx.alive) s.generateBtn.textContent = 'Generate';
+}
+
 async function finishGenerate(ctx, gen, { content, aborted }) {
   const s = ctx.state;
-  if (s.gen === gen) {
-    s.gen = null;
-    if (ctx.alive) s.generateBtn.textContent = 'Generate';
-  }
+  releaseGen(ctx, gen);
 
   const full = gen.head + content + gen.tail;
   const isTarget = s.activeId === gen.targetId;
@@ -363,8 +369,7 @@ async function finishGenerate(ctx, gen, { content, aborted }) {
     s.dirty = true;
     s.contentTextarea.value = full;
     autoGrow(s.contentTextarea, Infinity);
-    s.scheduleSave();
-    s.scheduleSave.flush();
+    doSave(ctx); // save now -- no need to arm the debounce just to flush it
     if (aborted) showStatus(ctx, content ? 'Stopped -- partial text kept.' : 'Stopped.');
   } else if (content) {
     // partial still persists to the notebook it belonged to, even if the
@@ -379,10 +384,7 @@ async function finishGenerate(ctx, gen, { content, aborted }) {
 
 function handleGenerateError(ctx, gen, err) {
   const s = ctx.state;
-  if (s.gen === gen) {
-    s.gen = null;
-    if (ctx.alive) s.generateBtn.textContent = 'Generate';
-  }
+  releaseGen(ctx, gen);
   if (ctx.alive && s.activeId === gen.targetId) {
     showStatus(ctx, `Generation failed: ${err.message}`, true);
   }

@@ -428,8 +428,10 @@ async def _stream_messages(
         # Generation failure mid-stream: emit the Anthropic-style error event
         # and terminate -- never deliver the error text as content.
         if getattr(chunk, "is_error", False):
-            error_event = {"type": "error", "error": {"type": "api_error", "message": chunk.text}}
-            yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
+            yield translator._sse("error", {
+                "type": "error",
+                "error": {"type": "api_error", "message": chunk.text},
+            })
             return
 
         # Capture provider metadata

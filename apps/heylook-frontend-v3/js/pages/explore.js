@@ -10,7 +10,7 @@
 //   container, not document -- it dies with the DOM, no leaked listener.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow } from '../utils.js';
+import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { samplerParams } from '../settings.js';
@@ -21,7 +21,6 @@ export default createPage({
     s.models = [];
     s.tokens = [];
     s.selectedIndex = null;
-    s.thinking = '';
     s.stream = null; // { controller }
 
     buildSkeleton(ctx);
@@ -85,14 +84,11 @@ function buildSkeleton(ctx) {
 
 function fillModelSelect(ctx) {
   const s = ctx.state;
-  s.modelSelect.replaceChildren(
-    ...s.models.map((m) => createEl('option', { value: m.id }, [m.id])),
-  );
+  fillOptions(s.modelSelect, s.models.map((m) => m.id));
 }
 
 function showStatus(ctx, text, isError = false) {
-  ctx.state.statusEl.textContent = text;
-  ctx.state.statusEl.style.color = isError ? 'var(--danger)' : '';
+  setStatus(ctx.state.statusEl, text, isError);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,15 +242,13 @@ function generate(ctx) {
 
   s.tokens = [];
   s.selectedIndex = null;
-  s.thinking = '';
   s.thinkingEl.hidden = true;
   s.thinkingBody.textContent = '';
   renderStrip(ctx);
   renderDetail(ctx);
   showStatus(ctx, '');
 
-  const controller = new AbortController();
-  ctx.signal.addEventListener('abort', () => controller.abort());
+  const controller = ctx.linkedController();
   const stream = { controller };
   s.stream = stream;
   s.genBtn.textContent = 'Stop';
@@ -266,9 +260,8 @@ function generate(ctx) {
     signal: controller.signal,
     onThinking: (_, full) => {
       if (!ctx.alive || !isCurrent()) return;
-      s.thinking = full;
       s.thinkingEl.hidden = false;
-      s.thinkingBody.textContent = s.thinking;
+      s.thinkingBody.textContent = full;
     },
     onLogprobs: (items) => {
       if (!ctx.alive || !isCurrent()) return;
@@ -282,6 +275,9 @@ function generate(ctx) {
       }
       s.paintStrip();
     },
+    onRetryWait: (wait) => {
+      if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
+    },
     onComplete: (result) => finishStream(ctx, stream, result),
     onError: (err) => handleStreamError(ctx, stream, err),
   });
@@ -293,6 +289,8 @@ function stopStream(ctx) {
 
 function releaseStream(ctx, stream) {
   const s = ctx.state;
+  // No-op after normal completion; drops the linkedController chain listener.
+  stream.controller.abort();
   if (s.stream !== stream) return;
   s.stream = null;
   if (ctx.alive) s.genBtn.textContent = 'Generate';

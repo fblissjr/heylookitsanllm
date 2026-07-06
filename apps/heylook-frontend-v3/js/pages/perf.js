@@ -38,7 +38,6 @@ export default createPage({
       loadMetrics(ctx, false),
       loadProfile(ctx, DEFAULT_RANGE),
     ]);
-    if (!ctx.alive) return;
   },
 });
 

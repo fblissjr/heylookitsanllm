@@ -150,7 +150,13 @@ class RadixCache:
 
         Args:
             tokens: Full token sequence (including the already-matched prefix).
-            kv_snapshot: KV cache state to store (deep copy is caller's responsibility).
+            kv_snapshot: KV cache state to store (deep copy is caller's
+                responsibility). MUST be materialized (see snapshot_kv in
+                cache_helpers) -- lazy MLX arrays are pinned to the producing
+                thread's GPU stream, and a consumer on another thread crashes
+                with "There is no Stream(gpu, N) in current thread". Not
+                asserted here: MLX has no cheap is-materialized predicate,
+                and evaluating under self._lock would stall the tree.
             matched_length: Number of tokens already matched in the tree.
         """
         if not tokens:

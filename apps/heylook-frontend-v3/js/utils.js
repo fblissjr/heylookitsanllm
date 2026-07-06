@@ -55,6 +55,17 @@ export const beforeUnloadGuard = {
   },
 };
 
+// Page status line: plain text, danger color when it's an error.
+export function setStatus(el, text, isError = false) {
+  el.textContent = text;
+  el.style.color = isError ? 'var(--danger)' : '';
+}
+
+// Replace a <select>'s options with one per value.
+export function fillOptions(select, values) {
+  select.replaceChildren(...values.map((v) => createEl('option', { value: v }, [v])));
+}
+
 export function formatBytes(bytes) {
   if (bytes == null || !Number.isFinite(bytes)) return '--';
   if (bytes < 1024) return `${bytes} B`;

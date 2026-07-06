@@ -6,6 +6,23 @@ export function requestId() {
   catch { return `req-${Math.random().toString(36).slice(2)}-${Date.now()}`; }
 }
 
+// Normalized HTTP error with .status/.code/.retryAfter -- the one contract
+// that retry and error-surfacing logic keys on. Shared with streaming.js.
+export async function httpError(res) {
+  let detail = res.statusText;
+  let code = null;
+  try {
+    const data = await res.json();
+    detail = data.error?.message || data.detail || data.error?.code || detail;
+    code = data.error?.code ?? null;
+  } catch { /* non-JSON error body */ }
+  const err = new Error(detail);
+  err.status = res.status;
+  err.code = code;
+  err.retryAfter = Number(res.headers.get('Retry-After')) || null;
+  return err;
+}
+
 export async function request(method, path, body, { signal } = {}) {
   const headers = { 'X-Request-ID': requestId() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -15,20 +32,7 @@ export async function request(method, path, body, { signal } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    let code = null;
-    try {
-      const data = await res.json();
-      detail = data.detail || data.error?.message || data.error?.code || detail;
-      code = data.error?.code ?? null;
-    } catch { /* non-JSON error body */ }
-    const err = new Error(detail);
-    err.status = res.status;
-    err.code = code;
-    err.retryAfter = Number(res.headers.get('Retry-After')) || null;
-    throw err;
-  }
+  if (!res.ok) throw await httpError(res);
   return res.status === 204 ? null : res.json();
 }
 
