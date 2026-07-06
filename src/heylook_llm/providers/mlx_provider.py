@@ -1182,31 +1182,43 @@ class MLXProvider(BaseProvider):
     def unload(self):
         """Cleanup with cache clearing and performance logging.
 
-        Waits for active generations to complete before releasing model resources
-        to prevent Metal command buffer crashes during LRU cache eviction.
+        Waits for generation traffic to drain before releasing model
+        resources -- ACTIVE generations (Metal command buffer crashes on
+        teardown mid-decode) AND gate WAITERS: the active counter is
+        decremented BEFORE gate.release() admits the next waiter, so an
+        active-only wait can free weights exactly as a woken waiter starts
+        generating. Living here (not in router call sites) means every
+        teardown path -- LRU eviction, clear_cache, explicit unload, idle
+        unload -- inherits the guarantee.
+
+        The gate is process-global, so with multiple loaded models this
+        also waits out OTHER models' traffic: accepted conservatism,
+        bounded by the same 30s force-unload cap as before.
         """
         logging.info(f"Unloading MLX model: {self.model_id}")
 
-        # Wait for active generations to finish before destroying model resources
+        # Wait for active generations AND queued waiters to drain.
         max_wait = 30  # seconds
         start = time.time()
         while True:
             with self._active_lock:
-                if self._active_generations == 0:
-                    break
                 active = self._active_generations
+            stats = self.generation_queue_stats() or {}
+            waiting = stats.get("waiting", 0)
+            if active == 0 and waiting == 0:
+                break
             elapsed = time.time() - start
             if elapsed > max_wait:
                 logging.warning(
                     f"Force unloading {self.model_id} after {max_wait}s "
-                    f"with {active} active generation(s)"
+                    f"with {active} active / {waiting} waiting generation(s)"
                 )
                 break
             # Log every 2 seconds to avoid spam
             if int(elapsed * 10) % 20 == 0:
                 logging.info(
-                    f"Waiting for {active} active generation(s) on {self.model_id} "
-                    f"before unload ({elapsed:.1f}s elapsed)"
+                    f"Waiting for {active} active / {waiting} waiting generation(s) "
+                    f"on {self.model_id} before unload ({elapsed:.1f}s elapsed)"
                 )
             time.sleep(0.1)
 

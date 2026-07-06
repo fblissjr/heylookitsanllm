@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.7]
+
+### Fixed
+
+- **Teardown waiter-safety moved to the right depth**: `MLXProvider.unload()` now waits for gate WAITERS as well as active generations (the active counter decrements BEFORE `gate.release()` admits the next waiter, so an active-only wait could free weights exactly as a woken queued request started generating). Living in `unload()` means every teardown path -- LRU eviction, `clear_cache`, explicit unload, idle unload -- inherits the guarantee; the router-level check `_unload_idle` gained in v1.34.3 remains as an early skip. The gate is process-global, so with multiple loaded models this conservatively waits out other models' traffic too, bounded by the same 30s force-unload cap as before.
+- **Capacity-reservation wait is bounded** (10 min default, `router._reservation_wait_timeout`): a wedged model load no longer blocks admission of every other model indefinitely (each blocked `get_provider` also pinned an asyncio default-executor thread), and the all-pinned `RuntimeError` can no longer be starved by an in-flight reservation -- the loop now raises a clear timeout error naming the in-flight loads.
+
 ## [1.34.6]
 
 ### Changed

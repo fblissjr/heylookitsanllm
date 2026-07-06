@@ -74,6 +74,13 @@ class ModelRouter:
         # self.providers always means "real, loaded providers" and reader
         # APIs need no filtering discipline.
         self._loading: set[str] = set()
+        # Ceiling on how long a loader waits for another thread's in-flight
+        # load to free capacity. Must exceed the slowest legitimate load
+        # (100GB+ giants take minutes); its job is to turn a WEDGED load
+        # into a loud error instead of silently blocking admission of every
+        # other model forever (each blocked get_provider also pins an
+        # asyncio default-executor thread).
+        self._reservation_wait_timeout: float = 600.0
 
         # Idle-unload tracking (C2). time.time() of the last cache hit or load
         # per model_id. Consulted by ``unload_idle_models`` against each model's
@@ -282,7 +289,8 @@ class ModelRouter:
                 # Without a reservation, two concurrent different-model loads
                 # both pass the check and hold two full models in memory
                 # (check-then-act TOCTOU). If capacity is held by other
-                # threads' in-flight loads, wait for one to publish.
+                # threads' in-flight loads, wait (bounded) for one to publish.
+                reservation_wait_start = time.time()
                 while True:
                     with self.cache_lock:
                         if len(self.providers) + len(self._loading) < self.max_loaded_models:
@@ -296,6 +304,13 @@ class ModelRouter:
                                 f"All {len(self.providers)} loaded models are pinned. "
                                 f"Cannot evict to make room. Pinned: {self._pinned}"
                             )
+                        inflight = sorted(self._loading)
+                    if time.time() - reservation_wait_start > self._reservation_wait_timeout:
+                        raise RuntimeError(
+                            f"Timed out after {self._reservation_wait_timeout:.0f}s waiting "
+                            f"for model-load capacity to free (in-flight loads: {inflight}). "
+                            f"A load may be wedged."
+                        )
                     time.sleep(0.05)
 
                 # Create provider instance
