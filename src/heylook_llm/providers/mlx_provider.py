@@ -30,40 +30,20 @@ from .common.vision_feature_cache import VisionFeatureCache
 from .common.generation_gate import GenerationGate, GenerationCancelled
 
 # -- transformers 5.x compatibility patches (no torchvision) --
-# On MLX-only setups, torchvision is absent. transformers 5.x has several bugs
-# in this scenario that prevent VLM processor loading:
-#   1. VIDEO_PROCESSOR_MAPPING_NAMES values set to None -> TypeError
-#   2. auto_docstring IndexError on empty tuples when importing processor classes
-#   3. AutoVideoProcessor.from_pretrained hard-fails with ImportError
-#   4. ProcessorMixin.__init__ rejects None for video_processor sub-processor
-# All four trace back to the same root: torchvision is assumed present.
-# These patches make video processor loading gracefully degrade to None.
+# On MLX-only setups, torchvision is absent and transformers assumes it is
+# present when loading VLM processors. Two patches remain (verified still
+# needed against transformers 5.5.4):
+#   1. AutoVideoProcessor.from_pretrained hard-fails with ImportError
+#   2. ProcessorMixin.__init__ rejects None for video_processor sub-processor
+# Both make video-processor loading gracefully degrade to None.
+# (Two earlier patches were removed 2026-07-06 as verified dead: the
+# VIDEO_PROCESSOR_MAPPING_NAMES access is now backend-gated and raises before
+# the patch can apply, and `from transformers.utils import auto_docstring`
+# now binds the decorator function, not the submodule -- both no-oped.)
 _log = logging.getLogger(__name__)
 
 
 def _apply_transformers_patches():
-    try:
-        from transformers.models.auto import video_processing_auto as vpa
-        for k, v in list(vpa.VIDEO_PROCESSOR_MAPPING_NAMES.items()):
-            if v is None:
-                vpa.VIDEO_PROCESSOR_MAPPING_NAMES[k] = ""
-    except Exception as e:
-        _log.debug("transformers patch 1 (video mapping) skipped: %s", e)
-
-    try:
-        from transformers.utils import auto_docstring as ads
-        _orig_placeholders = ads.get_placeholders_dict
-
-        def _safe_get_placeholders(placeholders, model_name):
-            try:
-                return _orig_placeholders(placeholders, model_name)
-            except (IndexError, KeyError):
-                return {}
-
-        ads.get_placeholders_dict = _safe_get_placeholders
-    except Exception as e:
-        _log.debug("transformers patch 2 (auto_docstring) skipped: %s", e)
-
     try:
         from transformers.models.auto.video_processing_auto import AutoVideoProcessor
         _orig_vp_from_pretrained = AutoVideoProcessor.from_pretrained.__func__
@@ -77,7 +57,7 @@ def _apply_transformers_patches():
 
         AutoVideoProcessor.from_pretrained = _soft_vp_from_pretrained
     except Exception as e:
-        _log.debug("transformers patch 3 (AutoVideoProcessor) skipped: %s", e)
+        _log.debug("transformers patch 1 (AutoVideoProcessor) skipped: %s", e)
 
     try:
         from transformers import processing_utils as pu
@@ -90,7 +70,7 @@ def _apply_transformers_patches():
 
         pu.ProcessorMixin.check_argument_for_proper_class = _lenient_check
     except Exception as e:
-        _log.debug("transformers patch 4 (ProcessorMixin) skipped: %s", e)
+        _log.debug("transformers patch 2 (ProcessorMixin) skipped: %s", e)
 
 
 _apply_transformers_patches()
@@ -421,7 +401,7 @@ class VLMVisionStrategy:
         vlm_kwargs["mask"] = mask
 
         # Vision feature caching: reuse cached vision encoder outputs across turns.
-        # Follows mlx-vlm's pattern (generate.py:656-664):
+        # Follows mlx-vlm's generate pattern (now mlx_vlm/generate/ package):
         # - If model has encode_image(), we can compute and cache vision features
         # - cached_image_features kwarg bypasses the vision tower in the model's
         #   get_input_embeddings() method
@@ -706,48 +686,15 @@ class MLXProvider(BaseProvider):
                 raise e
 
     def _load_vlm_with_weight_fix(self, model_path):
-        """Handle specific weight mismatch issues."""
-        import mlx_vlm.utils
-        import importlib
+        """Handle specific weight mismatch issues.
 
+        mlx-vlm's load() has accepted ``strict`` directly since well before
+        the pinned version (verified 0.6.3: ``load(..., strict=True, **kw)``),
+        so the old TypeError fallback + load_model monkeypatch are gone.
+        """
         try:
-            # Strategy 3a: Try loading with strict=False directly in vlm_load
             logging.debug("Attempting VLM load with strict=False")
-
-            # Try to call vlm_load with strict=False if it supports it
-            try:
-                return vlm_load(model_path, strict=False)
-            except TypeError:
-                # vlm_load doesn't support strict parameter
-                pass
-
-            # Strategy 3b: Try patching the load_model function
-            logging.debug("Attempting VLM load with patched load_model")
-
-            original_load_model = mlx_vlm.utils.load_model
-
-            def patched_load_model(model_path, **kwargs):
-                try:
-                    return original_load_model(model_path, **kwargs)
-                except Exception as e:
-                    if "language_model.lm_head.weight" in str(e):
-                        logging.debug("Applying weight mismatch fix by setting strict=False")
-                        # Try loading without strict weight matching
-                        kwargs['strict'] = False
-                        return original_load_model(model_path, **kwargs)
-                    else:
-                        raise e
-
-            # Apply the patch
-            mlx_vlm.utils.load_model = patched_load_model
-
-            try:
-                result = vlm_load(model_path)
-                return result
-            finally:
-                # Restore original function
-                mlx_vlm.utils.load_model = original_load_model
-
+            return vlm_load(model_path, strict=False)
         except Exception as e:
             logging.debug(f"Weight fix strategy failed: {e}")
 

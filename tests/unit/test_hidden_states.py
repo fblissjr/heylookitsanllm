@@ -161,35 +161,7 @@ class TestBase64Encoding:
         np.testing.assert_array_almost_equal(decoded_arr, arr.astype(np.float32))
 
 
-class TestLayerIndexNormalization:
-    """Tests for layer index handling logic."""
-
-    def test_negative_index_calculation(self):
-        """Test that negative indices are calculated correctly."""
-        # This tests the logic, not the actual extraction
-        n_layers = 36  # Qwen3-4B has 36 layers
-
-        # -1 should be layer 35 (last)
-        layer_idx = -1
-        target = n_layers + layer_idx
-        assert target == 35
-
-        # -2 should be layer 34 (second-to-last)
-        layer_idx = -2
-        target = n_layers + layer_idx
-        assert target == 34
-
-        # -36 should be layer 0 (first)
-        layer_idx = -36
-        target = n_layers + layer_idx
-        assert target == 0
-
-    def test_positive_index_passthrough(self):
-        """Test that positive indices pass through unchanged."""
-        n_layers = 36
-        layer_idx = 5
-        target = layer_idx if layer_idx >= 0 else n_layers + layer_idx
-        assert target == 5
+# TestLayerIndexNormalization removed 2026-07-06: tautological (asserted its own inline math, never called _extract_from_layer, the production path in hidden_states.py).
 
 
 class TestStructuredHiddenStatesRequest:

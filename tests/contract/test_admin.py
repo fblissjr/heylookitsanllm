@@ -80,15 +80,6 @@ class TestAdminScan:
 class TestAdminModelStatus:
     """Tests for GET /v1/admin/models/{model_id}/status."""
 
-    def test_status_for_known_model(self, client):
-        """Status endpoint returns load state for a known model."""
-        resp = client.get("/v1/admin/models/test-mlx-model/status")
-        assert resp.status_code == 200
-
-        data = resp.json()
-        assert "loaded" in data
-        assert isinstance(data["loaded"], bool)
-
     def test_status_not_shadowed_by_catchall(self, client):
         """The /status sub-resource route is not swallowed by the catch-all GET.
 
@@ -100,4 +91,6 @@ class TestAdminModelStatus:
         # look up model_id="test-mlx-model/status"
         resp = client.get("/v1/admin/models/test-mlx-model/status")
         assert resp.status_code == 200
-        assert "loaded" in resp.json()
+        data = resp.json()
+        assert "loaded" in data
+        assert isinstance(data["loaded"], bool)

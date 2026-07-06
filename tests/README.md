@@ -1,6 +1,6 @@
 # Test Suite
 
-last updated: 2026-02-27
+last updated: 2026-07-06
 
 ## Overview
 
@@ -41,7 +41,7 @@ uv run pytest tests/integration/ -v
 uv run pytest tests/ -v
 ```
 
-**Pre-existing failures:** 5 router tests (YAML config vs TOML parser), 3 mlx_perf tests. Do not investigate.
+**Invariant:** the suite is fully green. Any failure is a regression -- investigate it. There is no pre-existing-failure allowlist.
 
 ## Unit Tests (`tests/unit/`)
 
@@ -50,7 +50,7 @@ uv run pytest tests/ -v
 - **test_mlx_provider.py** -- MLX provider: loading, generation, vision, streaming
 - **test_mlx_provider_safety.py** -- MLX provider safety guards
 - **test_config.py** -- Config loading, validation, provider types
-- **test_router.py** -- ModelRouter LRU cache and provider loading (5 tests, all fail -- pre-existing)
+- **test_router.py** -- ModelRouter LRU cache and provider loading
 - **test_model_service.py** -- Model profiles, smart defaults, size regex
 - **test_generation_core.py** -- Core generation logic
 - **test_messages_api.py** -- Anthropic Messages-style API
@@ -68,7 +68,7 @@ uv run pytest tests/ -v
 **mlx_perf/** (3 files):
 - **test_type_consistency.py** -- MLX type consistency checks
 - **test_sync_boundaries.py** -- Synchronization boundary tests
-- **test_compilation_correctness.py** -- Compilation correctness (3 tests fail -- pre-existing)
+- **test_compilation_correctness.py** -- Compilation correctness
 
 ## Contract Tests (`tests/contract/`)
 
@@ -102,7 +102,7 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 | MLX Provider | Good | unit/test_mlx_provider*.py | 45 tests |
 | Config/Validation | Good | unit/test_config.py | 23 tests |
 | Model Service | Good | unit/test_model_service.py | Profiles, defaults, size regex |
-| Model Routing | Broken | unit/test_router.py | 5 tests, all fail (YAML vs TOML) |
+| Model Routing | Good | unit/test_router.py | 5 tests, all pass |
 | Generation Core | Good | unit/test_generation_core.py | |
 | Messages API | Good | unit/test_messages_api.py, contract/test_messages.py | Unit + contract |
 | Chat Completions | Good | contract/test_chat_completions.py | Streaming + non-streaming |
@@ -118,7 +118,7 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 | Admin API | Good | contract/test_admin.py | Config, profiles, scan |
 | Batch Processing | Basic | integration/test_batch_integration.py | Requires server |
 | Embeddings | Basic | integration/test_embeddings_integration.py | Requires server |
-| **Error Handling** | **Poor** | Scattered | **No dedicated error tests** |
+| Error Handling | Good | contract/test_generation_errors.py | |
 
 ## Testing Guidelines
 

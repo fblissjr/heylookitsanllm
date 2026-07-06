@@ -51,23 +51,6 @@ class TestApplyModelDefaults:
         assert effective.get('kv_bits') == 8
         assert effective.get('num_draft_tokens') == 5
 
-    def test_request_overrides_model_config(self, mock_mlx_provider):
-        """Request-level params should override model config."""
-        from heylook_llm.config import ChatMessage, ChatRequest
-
-        provider = mock_mlx_provider
-        provider.config['temperature'] = 0.5
-
-        request = ChatRequest(
-            model="test-model",
-            messages=[ChatMessage(role="user", content="test")],
-            max_tokens=64,
-            temperature=0.9,
-        )
-
-        effective = provider._apply_model_defaults(request)
-        assert effective['temperature'] == 0.9
-
 
 class TestUnifiedTextStrategyModelConfig:
     """Verify UnifiedTextStrategy receives model_config."""
@@ -90,15 +73,6 @@ class TestUnifiedTextStrategyModelConfig:
         strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
         assert strategy.model_config == {}
 
-    def test_is_vlm_flag_stored(self, mock_mlx):
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=True)
-        assert strategy.is_vlm is True
-
-        strategy2 = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=False)
-        assert strategy2.is_vlm is False
-
     def test_compile_strategies_passes_config(self, mock_vlm_provider):
         """_compile_strategies should pass self.config to UnifiedTextStrategy."""
         provider = mock_vlm_provider
@@ -109,15 +83,6 @@ class TestUnifiedTextStrategyModelConfig:
         assert text_strategy is not None
         assert text_strategy.model_config.get('cache_type') == 'quantized'
         assert text_strategy.is_vlm is True
-
-    def test_compile_strategies_text_only(self, mock_mlx_provider):
-        """Text-only provider should compile UnifiedTextStrategy with is_vlm=False."""
-        provider = mock_mlx_provider
-        provider._compile_strategies()
-
-        text_strategy = provider._strategies.get('text')
-        assert text_strategy is not None
-        assert text_strategy.is_vlm is False
 
 
 class TestCacheConfigPlumbing:

@@ -9,7 +9,7 @@ Three disk-backed JSONL streams plus a one-shot startup record:
 - internal/log/model_events.jsonl    : model load/unload events with
   weights_bytes, quantization, param_count, context_length
 - internal/log/baseline.jsonl        : one-shot startup record with
-  mx.metal.device_info() + AppConfig subset
+  mx.device_info() + AppConfig subset
 
 Content invariant (load-bearing, applies to every stream): numeric and metadata
 only. Never prompt text, response text, token ID sequences, message content, or
@@ -559,7 +559,7 @@ class MemoryManager:
         }
         if mx is not None:
             try:
-                info["device_info"] = {k: _json_safe(v) for k, v in mx.metal.device_info().items()}
+                info["device_info"] = {k: _json_safe(v) for k, v in mx.device_info().items()}
             except Exception:
                 info["device_info"] = None
         self._append_jsonl(self.log_dir / STARTUP_FILE, info)

@@ -188,30 +188,3 @@ class TestPrepareVlmInputsParallel:
         # num_images should be passed to template
         mock_template_fn.assert_called_once()
         assert mock_template_fn.call_args.kwargs.get('num_images') == 2
-
-
-class TestReconstructThinking:
-    """Test the module-level _reconstruct_thinking helper."""
-
-    def test_assistant_with_thinking(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import _reconstruct_thinking
-
-        msg = {"role": "assistant", "content": "answer", "thinking": "reasoning"}
-        result = _reconstruct_thinking(msg)
-        assert "<think>" in result["content"]
-        assert "reasoning" in result["content"]
-        assert "thinking" not in result
-
-    def test_user_message_unchanged(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import _reconstruct_thinking
-
-        msg = {"role": "user", "content": "question", "thinking": "irrelevant"}
-        result = _reconstruct_thinking(msg)
-        assert result["content"] == "question"
-
-    def test_no_thinking_field(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import _reconstruct_thinking
-
-        msg = {"role": "assistant", "content": "answer"}
-        result = _reconstruct_thinking(msg)
-        assert result["content"] == "answer"

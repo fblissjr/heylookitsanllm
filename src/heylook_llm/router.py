@@ -38,7 +38,7 @@ class ModelRouter:
         # Store config path for reload
         self.config_path = config_path
 
-        # Load config (supports both YAML and TOML)
+        # Load config (TOML only)
         config_data = self._load_config(config_path)
         self.app_config = AppConfig(**config_data)
 

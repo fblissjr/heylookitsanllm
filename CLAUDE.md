@@ -59,7 +59,7 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 
 ## Tests
 
-- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` is fully green: **693 passed, 0 skipped, 0 failed** -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist.
+- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` is fully green (713 passed as of 2026-07-06; Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist.
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`). Frontend legacy: `cd apps/heylook-frontend && bunx vitest run`.

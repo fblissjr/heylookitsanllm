@@ -35,7 +35,7 @@ def _mlx_memory_pressure() -> bool:
     try:
         import mlx.core as mx
         active = mx.get_active_memory()
-        info = mx.metal.device_info()
+        info = mx.device_info()
         limit = info.get('max_recommended_working_set_size', float('inf'))
         return active > limit * 0.85
     except Exception:

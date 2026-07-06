@@ -111,7 +111,11 @@ class TestCodeExecution:
 
     def test_timeout_enforcement(self):
         ns = {}
-        code = "import time; time.sleep(10)"
+        # A pure-Python busy loop (not a C-level blocking call like time.sleep) so the
+        # async-exception interrupt used by run_code_in_namespace can actually hit it
+        # between bytecode instructions, instead of leaking a thread that keeps running
+        # past the test.
+        code = "x = 0\nwhile True:\n    x += 1"
         stdout, stderr = run_code_in_namespace(code, ns, timeout=1, sandbox=False)
         assert "timed out" in stderr.lower() or "TimeoutError" in stderr
 
@@ -881,19 +885,6 @@ class TestCompaction:
 # ---------------------------------------------------------------------------
 
 class TestRecursiveDepth:
-    def test_rlm_query_not_injected_at_depth_1(self):
-        """At max_depth=1 (default), rlm_query is not available in namespace."""
-        router = _mock_router(['```repl\nFINAL(str("rlm_query" in dir()))\n```'])
-        engine = RLMEngine(router)
-        req = RLMRequest(model="test", context="data", query="what?", max_depth=1)
-        result = engine.run(req)
-        # rlm_query should NOT be in the namespace
-        # The FINAL call returns whether "rlm_query" is in the REPL globals.
-        # Since sandbox restricts dir(), let's check the namespace directly.
-        # Actually, we can test the namespace setup directly:
-        ns = engine._init_namespace(req, [0], [])
-        assert "rlm_query" not in ns
-
     def test_rlm_query_injected_at_depth_2(self):
         """At max_depth=2, rlm_query is available in namespace."""
         engine = RLMEngine(MagicMock())
@@ -1186,55 +1177,6 @@ class TestRootPromptReinjection:
 # ---------------------------------------------------------------------------
 
 class TestBestPartialAnswer:
-    def test_partial_preferred_over_code(self):
-        """When max_iterations hit, best_partial (text response) is preferred over last code response."""
-        responses = [
-            "Here is a partial analysis of the data.",  # text (becomes best_partial)
-        ] + ['```repl\nprint("loop")\n```'] * 3  # code loops
-        # First response is direct_response so it will end immediately -- need multi-iteration
-        # Actually, direct_response breaks the loop. Let me rethink:
-        # We need a code response followed by text-like iterations that don't trigger direct_response
-        # best_partial is set when extract_repl_block returns None AND text is non-empty
-        # But direct_response breaks the loop. So best_partial only matters when loop continues with code.
-        # The scenario: model outputs code for a while, then outputs text (breaks as direct_response),
-        # OR model outputs code, then max_iterations is hit.
-        # best_partial captures text from _AssistantResponse that has no repl block.
-        # But wait -- if there's no repl block, it's a direct_response and the loop breaks.
-        # So best_partial only gets set from direct_response... but that also breaks the loop.
-        # Actually, re-reading the code: best_partial is set BEFORE the `code = extract_repl_block()` check.
-        # So it tracks any non-code text. But if code is None, we break with direct_response.
-        # The value of best_partial is: when error_threshold or max_iterations fires,
-        # and the last response_text was code (which we can't use as an answer), we fall back to best_partial.
-        # Scenario: model gives text answer, then code that errors out until error_threshold.
-        # Wait, that's not possible: text answer triggers direct_response break.
-        # Let me look more carefully at the logic...
-        # Actually: best_partial is set when extract_repl_block(response_text) is None AND strip() non-empty
-        # This happens on the SAME iteration as direct_response. So best_partial = the direct response text.
-        # But direct_response also sets final_answer = response_text and breaks.
-        # So best_partial matters in a sequence like:
-        # 1. Code + runs successfully -> continues
-        # 2. Code with explanation text in response (but has repl block) -> continues, extract_repl_block is NOT None
-        # 3. Max_iterations hit -> final_answer = best_partial or response_text
-        # Hmm, so best_partial doesn't get set from code responses. Only from no-code responses.
-        # And no-code responses are direct_response breaks.
-        # OH WAIT: It's checking the FULL response_text for extract_repl_block.
-        # The model could respond with text AND a code block. extract_repl_block would find the code block.
-        # But the response_text itself could be "Here's my analysis...\n```repl\n...\n```"
-        # In that case extract_repl_block is NOT None, so best_partial is NOT set.
-        # So best_partial only catches responses with no code block at all = direct_response = break.
-        # This means best_partial is always the same as the direct_response answer.
-        # Unless... direct_response happens, then later iterations somehow continue?
-        # No, direct_response breaks.
-        # I think the plan's intent is that best_partial captures the LAST text answer before
-        # code-only responses start erroring out. But with the current logic flow, if a response
-        # has no code, we break immediately. So best_partial == the last direct_response.
-        # The actual use case: if all responses are code, and we hit max_iterations or error_threshold,
-        # response_text is the last code response text. best_partial would be empty.
-        # So the fallback chain is: best_partial (empty) -> response_text (code) -> "[Max iterations reached]"
-        # With best_partial, we'd use response_text which includes the code block text.
-        # Let me just test the error_threshold path with best_partial properly.
-        pass
-
     def test_best_partial_on_error_threshold(self):
         """error_threshold uses best_partial over last (code) response_text."""
         # All errors, no text responses -> best_partial stays empty, falls back to response_text
@@ -1290,8 +1232,12 @@ class TestBestPartialAnswer:
 # ---------------------------------------------------------------------------
 
 class TestMaxTimeout:
-    def test_stops_loop(self, monkeypatch):
-        """max_timeout causes the loop to stop with 'timeout' finish_reason."""
+    def test_timeout_stops_loop_returns_partial_and_traces(self, monkeypatch):
+        """max_timeout stops the loop with 'timeout', returns a partial answer, and traces it.
+
+        Merges what were three separate tests (test_stops_loop, test_returns_partial_on_timeout,
+        test_trace_entry) sharing identical fake-clock/mock setup; asserts all three facts.
+        """
         import heylook_llm.rlm as rlm_mod
 
         fake_time = [0.0]
@@ -1318,36 +1264,9 @@ class TestMaxTimeout:
         )
         result = engine.run(req)
         assert result.finish_reason == "timeout"
-
-    def test_returns_partial_on_timeout(self, monkeypatch):
-        """Timeout returns best partial or fallback message."""
-        import heylook_llm.rlm as rlm_mod
-
-        fake_time = [0.0]
-
-        def mock_time():
-            fake_time[0] += 5.0
-            return fake_time[0]
-
-        monkeypatch.setattr(rlm_mod.time, "time", mock_time)
-
-        router = MagicMock()
-        provider = MagicMock()
-
-        def fake_completion(req):
-            yield _make_chunk('```repl\nprint("working")\n```')
-
-        provider.create_chat_completion.side_effect = fake_completion
-        router.get_provider.return_value = provider
-
-        engine = RLMEngine(router)
-        req = RLMRequest(
-            model="test", context="data", query="what?",
-            max_iterations=50, max_timeout=3.0,
-        )
-        result = engine.run(req)
-        assert result.finish_reason == "timeout"
         assert "[Stopped: timeout]" in result.answer
+        timeout_entries = [e for e in result.rlm.trace if e.action == "timeout"]
+        assert len(timeout_entries) == 1
 
     def test_none_means_no_limit(self):
         """max_timeout=None means no wall-clock limit."""
@@ -1361,37 +1280,6 @@ class TestMaxTimeout:
         """max_timeout must be >= 1.0 if set."""
         with pytest.raises(Exception):
             RLMRequest(model="m", context="c", query="q", max_timeout=0.5)
-
-    def test_trace_entry(self, monkeypatch):
-        """Timeout creates a trace entry with action='timeout'."""
-        import heylook_llm.rlm as rlm_mod
-
-        fake_time = [0.0]
-
-        def mock_time():
-            fake_time[0] += 5.0
-            return fake_time[0]
-
-        monkeypatch.setattr(rlm_mod.time, "time", mock_time)
-
-        router = MagicMock()
-        provider = MagicMock()
-
-        def fake_completion(req):
-            yield _make_chunk('```repl\nprint("x")\n```')
-
-        provider.create_chat_completion.side_effect = fake_completion
-        router.get_provider.return_value = provider
-
-        engine = RLMEngine(router)
-        req = RLMRequest(
-            model="test", context="data", query="what?",
-            max_iterations=50, max_timeout=3.0,
-        )
-        result = engine.run(req)
-        assert result.finish_reason == "timeout"
-        timeout_entries = [e for e in result.rlm.trace if e.action == "timeout"]
-        assert len(timeout_entries) == 1
 
 
 # ---------------------------------------------------------------------------

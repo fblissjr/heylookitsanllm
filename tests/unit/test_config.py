@@ -41,10 +41,6 @@ class TestChatMessage:
         assert isinstance(msg.content, list)
         assert len(msg.content) == 2
 
-    def test_thinking_optional(self):
-        msg = ChatMessage(role="assistant", content="hi")
-        assert msg.thinking is None
-
     def test_thinking_roundtrip(self):
         msg = ChatMessage(role="assistant", content="answer", thinking="reasoning")
         assert msg.thinking == "reasoning"

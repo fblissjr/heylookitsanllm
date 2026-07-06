@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.32.1]
+
+### Fixed
+
+- **`mx.metal.device_info()` deprecation** (warned at every startup): migrated to `mx.device_info()` at all three call sites (`memory.py` startup record, `prompt_cache.py` memory-pressure check -- which would have broken outright when the alias is removed -- and `/v1/capabilities`). Verified warning-free with `-W error::DeprecationWarning`.
+
+### Changed
+
+- **Library-drift audit against installed mlx 0.31.2 / mlx-lm 0.31.3 / mlx-vlm 0.6.3 / transformers 5.5.4**: every load-bearing assumption verified against installed source -- `KVCache.state` laziness, `stream_generate` kwargs, `GenerationResponse` fields, mlx-vlm `apply_chat_template`/`prepare_inputs`/`LanguageModelOutput`, `_get_classes`, ArraysCache trim limitation: all still correct, no broken sites. Removed verified-dead code: two of four transformers compat patches (one now unreachable behind a backend gate, one silently no-oping since `transformers.utils.auto_docstring` became a function) and the `_load_vlm_with_weight_fix` TypeError-fallback + `load_model` monkeypatch (mlx-vlm `load()` has accepted `strict` for a long time).
+- **Test-suite consolidation** (-26 tests, 760 passing): deleted `test_mlx_provider_safety.py` (its fake provider invented `unload(max_wait=...)` and `_content_cache`, neither exists on the real provider; real coverage in `test_mlx_provider.py::TestUnload`); removed two tautological classes that asserted their own inline math without touching production code (`TestPrefillConvention`, `TestLayerIndexNormalization` -- both note the real coverage gap for a follow-up); deduplicated tests across `test_speculative`/`test_vlm_inputs`/`test_admin`/`test_config`/`test_rlm`; merged `test_rlm.py`'s three identical-setup timeout tests into one; replaced a `time.sleep(10)` payload the interrupt mechanism couldn't break (leaked a live thread ~7s past the test) with an interruptible busy loop (~1s now). `tests/README.md` scrubbed of the false "pre-existing failures" claims; `CLAUDE.md` test-count reference updated.
+
 ## [1.32.0]
 
 ### Changed

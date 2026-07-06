@@ -1660,7 +1660,7 @@ async def get_capabilities(request: Request):
         import mlx.core as mx
         has_metal = mx.metal.is_available()
         if has_metal:
-            device_info = mx.metal.device_info()
+            device_info = mx.device_info()
             metal_info = {
                 "available": True,
                 "device_name": device_info.get("name", "Unknown"),
