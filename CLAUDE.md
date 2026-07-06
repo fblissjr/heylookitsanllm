@@ -45,7 +45,10 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 - `mlx_lm.generate.GenerationResponse` is a non-slotted dataclass -- attach per-request metadata via `response.X = value` (`# type: ignore[attr-defined]`), read via `getattr`.
 - `mx.set_wired_limit(...)` is set at startup, but the per-generation `wired_limit()` CM is still needed for stream sync. Call `mx.reset_peak_memory()` at `run_generation` start to scope `mx.get_peak_memory()` per request.
 - Verify a library is actually broken before working around it.
-- Recorded perf numbers are untrustworthy until plan Phase 1 items 1-2 land: streaming tok/s is quantized to ~10/s by the 100ms poll loop (`streaming_utils.py`), headline tok/s+TTFT include queue-wait, and mlx-lm's native per-chunk `prompt_tps`/`generation_tps` are never read. Don't cite or optimize against them; see `internal/backend/plan_2026-07.md` Phase 5 "measurement reality check".
+- Perf numbers are honest as of v1.34.1: recorded tok/s = native mlx-lm `generation_tps`, TTFT/tok-s exclude queue-wait (own `queue_wait_ms` field), trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()` -- add new chunk fields THERE, not at call sites (batch_processor.py still has 3 unconverted scrape sites, moot when Phase 2 collapses it).
+- The FIFO generation gate is a PROCESS-GLOBAL singleton shared by all providers (`_get_generation_gate`); `generation_queue_stats()` reports gate-wide traffic, not per-model. Any "is this model busy" logic built on it is conservative across models. `unload()` waits for actives AND gate waiters (30s cap) -- the active counter decrements before `gate.release()`, so never gate teardown on actives alone.
+- Live-verifying streaming/latency changes: the 31B dense gemma natively decodes ~10 tok/s (looks identical to the old delivery cap); use the MoE `gemma-4-26B-A4B` (~90 tok/s) as the discriminating model.
+- Upstream posture (details: `internal/research/mlx_ecosystem_strategy_2026-07.md`): mlx-lm is release-starved -- SHA-pin rather than wait for PyPI, check its open-PR backlog BEFORE writing any workaround, expect new capabilities via sidecar packages.
 
 ## Repo conventions (beyond the global ones)
 
@@ -61,8 +64,9 @@ being replaced by v2. [ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md)
 
 ## Tests
 
-- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` is fully green (713 passed as of 2026-07-06; Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist.
+- Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` is fully green (767 passed as of 2026-07-06 evening, 839 with contract; Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist.
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`). Frontend legacy: `cd apps/heylook-frontend && bunx vitest run`.
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).
+- Sandbox traps: `ENV=x uv run ...` does NOT match the uv exemption (env-var prefix changes the command match -> sandboxed, no Metal); sandboxed `curl` can't reach localhost (probe via `uv run python` + urllib); never launch the server piped to `head` (SIGPIPE wedges it -- redirect to a file). The OpenAPI pre-commit check silently skips under sandbox; to truly verify schema-neutrality, export `app.openapi()` from a HEAD~1 worktree and byte-compare.
