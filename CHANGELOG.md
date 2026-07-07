@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.10]
+
+### Added
+
+- **optloop-lib: spec-decode baseline prep** (committing the prior session's tested work-in-progress). `bench_text.py` gains a genuinely long-context workload (~2.5-3k prompt tokens, fixed coherent document) so prefill scaling and a large KV cache are exercised, not just decode; `bench_vlm.py` gains folder-based real-photograph prompts (`data/vlm/photos/`, sorted, empty-safe -- adding/removing photos changes fingerprints, re-baseline after any change); `bench_config.toml` fixes the text-model HF id (the prior `google_gemma-3-27b-it-mlx-bf16` does not exist on HF; now `mlx-community/gemma-3-27b-it-bf16`) and adds `draft_model = gemma-3-1b-it-bf16` for the speculative-decoding comparison run (unset it for the plain baseline). Both additions land BEFORE the first baseline on purpose. optloop-lib suite: 65 green.
+
 ## [1.34.9]
 
 ### Added

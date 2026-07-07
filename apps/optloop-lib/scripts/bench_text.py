@@ -53,6 +53,81 @@ from bench_common import (
 # Prompts
 # ---------------------------------------------------------------------------
 
+# A genuinely long-context document (~2.5-3k prompt tokens) so at least one
+# workload exercises real prefill scaling + a large KV cache, not just decode.
+# Fixed + coherent so the greedy fingerprint is stable. Added BEFORE the first
+# baseline (plan Phase 5 item 1) -- adding it later would invalidate baselines.
+LONG_CONTEXT_DOC = """\
+Design note: a columnar analytics engine for append-mostly event data.
+
+Section 1 -- Storage layout. Events arrive as flat records with a fixed set of
+typed columns plus a sparse map of user-defined attributes. The engine stores
+each column in its own segment file, compressed independently, so a scan that
+touches three of forty columns reads only those three segments. Segments are
+immutable once sealed; a background writer accumulates rows in an in-memory row
+group until it reaches a target of one million rows or five minutes elapse,
+whichever comes first, then encodes and seals the group. Sealing is the only
+point at which encoding decisions are made, which keeps the hot write path free
+of per-row branching.
+
+Section 2 -- Encodings. Integer columns use frame-of-reference plus bit-packing:
+the minimum value in a row group is subtracted from every value, and the residuals
+are packed into the smallest number of bits that covers the observed range. Low
+cardinality string columns use dictionary encoding, where each distinct value is
+assigned a small integer code and the codes are themselves bit-packed. Timestamps,
+which are usually monotonic within a group, use delta-of-delta encoding so that a
+steady arrival rate compresses to nearly nothing. The encoder picks per-segment
+between these schemes by sampling the first few thousand values and estimating the
+compressed size of each candidate, choosing the smallest.
+
+Section 3 -- The zone map. Every sealed segment carries a small header recording
+the minimum and maximum value, the null count, and the distinct-count estimate for
+its column. A query planner consults these zone maps before reading any segment
+data: a predicate of the form price greater than one thousand can skip every
+segment whose recorded maximum is at or below one thousand. Zone maps are cheap to
+build during sealing and cheap to keep resident in memory, and they are the primary
+mechanism by which the engine avoids I/O on selective queries. For high cardinality
+columns the engine also builds a per-segment bloom filter to accelerate equality
+predicates that zone maps cannot prune.
+
+Section 4 -- Late materialization. The execution engine defers reading a column's
+values until a row has survived every predicate that can be evaluated on cheaper
+columns. A filter on an indexed timestamp runs first and produces a selection
+vector of surviving row positions; only then does the engine gather the wide,
+expensive columns at exactly those positions. This ordering matters because gather
+cost is proportional to surviving rows, not scanned rows, so a query that keeps one
+row in ten thousand pays almost nothing for its wide projections. The planner
+orders predicates by estimated selectivity divided by estimated evaluation cost.
+
+Section 5 -- Vectorized execution. Operators process batches of a few thousand
+values at a time rather than one row at a time. Each operator consumes a batch,
+produces a batch, and passes it to the next operator, which keeps intermediate
+results in cache and amortizes per-call overhead across the whole batch. Selection
+is represented as a dense vector of surviving positions that flows between
+operators, so a filter never has to physically compact the columns it filters. The
+batch size is tuned so that a working set of all active operator buffers fits in
+the last-level cache of a single core.
+
+Section 6 -- Concurrency and durability. Writes append to a durable log before the
+in-memory row group acknowledges them, so a crash loses at most the unsealed group,
+which recovery rebuilds by replaying the log tail. Readers see a consistent
+snapshot defined by the set of sealed segments visible at query start; a segment
+sealed during a long-running scan is simply invisible to that scan. Compaction
+merges many small sealed segments into fewer large ones to bound the number of
+files a scan must open, and it runs opportunistically when write pressure is low.
+Compaction never blocks readers because it produces new segments and atomically
+swaps them in, leaving the old segments for in-flight scans to finish with.
+
+Section 7 -- Trade-offs. Column-at-a-time storage penalizes point lookups that
+want a whole row, since it must gather from every segment, but the engine is not
+built for point lookups; it is built for aggregations over large row counts. The
+one-million-row group target trades recovery granularity against encoding
+efficiency: larger groups compress better and prune better but lose more work on a
+crash and delay the visibility of freshly written data. The sampling-based encoder
+can occasionally mispredict the best scheme when a group's tail differs sharply
+from its head, which the engine accepts in exchange for keeping sealing fast.
+"""
+
 PROMPTS = [
     {
         "name": "short",
@@ -144,6 +219,21 @@ PROMPTS = [
             )},
         ],
     },
+    # -- Long-context prompt (large prefill + KV cache; the only workload that
+    #    stresses prompt processing at scale) -----------------------------------
+    {
+        "name": "long_context",
+        "messages": [
+            {"role": "user", "content": (
+                LONG_CONTEXT_DOC
+                + "\n\nUsing only the design note above, answer concisely: (1) which two "
+                "mechanisms let a selective query avoid reading segment data, and how do they "
+                "differ; (2) why does late materialization make the cost of wide projections "
+                "depend on surviving rows rather than scanned rows; (3) name one concrete "
+                "trade-off the one-million-row group target imposes."
+            )},
+        ],
+    },
 ]
 
 
@@ -167,6 +257,29 @@ def resolve_model_path(model_path: str | None, config: dict) -> str:
         return model_id
 
 
+def resolve_draft_path(draft_path: str | None, config: dict, use_config_draft: bool) -> str | None:
+    """Resolve the speculative-decoding draft model, or None.
+
+    Priority: CLI --draft-model-path > (if --spec-decode) [bench.text].draft_model
+    looked up in models.toml, else HF download > None (no speculative decoding).
+    """
+    if draft_path:
+        return draft_path
+    if not use_config_draft:
+        return None
+    draft_id = config.get("bench", {}).get("text", {}).get("draft_model")
+    if not draft_id:
+        return None
+    local_path = resolve_model_from_toml(draft_id)
+    if local_path:
+        return local_path
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download(draft_id)
+    except Exception:
+        return draft_id
+
+
 # ---------------------------------------------------------------------------
 # Single prompt benchmark
 # ---------------------------------------------------------------------------
@@ -177,11 +290,17 @@ def bench_prompt(
     prompt: dict,
     max_tokens: int = 256,
     seed: int = 42,
+    draft_model=None,
 ) -> dict:
     """Run a single prompt and measure performance metrics.
 
     Returns dict with: gen_tps, ttft_ms, prefill_tps, completion_tokens,
     prompt_tokens, token_ids, fingerprint
+
+    When draft_model is provided, stream_generate uses speculative decoding.
+    It is LOSSLESS (the target verifies every draft token), so the greedy
+    fingerprint must match the non-speculative baseline -- that identity is the
+    correctness guard for the speedup.
     """
     messages = prompt["messages"]
 
@@ -212,6 +331,7 @@ def bench_prompt(
         prompt=prompt_tokens,
         sampler=sampler,
         max_tokens=max_tokens,
+        draft_model=draft_model,
     ):
         if completion_tokens == 0:
             # First token received -- measure TTFT and prefill
@@ -271,8 +391,14 @@ def run_benchmark(
     reset_baseline: bool = False,
     scoring_weights: dict | None = None,
     constraints: dict | None = None,
+    draft_model_path: str | None = None,
 ) -> dict:
-    """Run the full text benchmark suite."""
+    """Run the full text benchmark suite.
+
+    draft_model_path enables speculative decoding (compared against the
+    non-speculative baseline). Establish the baseline WITHOUT a draft, then run
+    WITH one -- gen_tps should rise and the fingerprint must still match.
+    """
     ensure_dirs()
 
     # Load model
@@ -281,6 +407,15 @@ def run_benchmark(
     model, tokenizer = loaded[0], loaded[1]
     model_name = Path(model_path).name if "/" not in model_path or Path(model_path).exists() else model_path.split("/")[-1]
     print(f"Model loaded: {model_name}", file=sys.stderr)
+
+    # Optional draft model for speculative decoding (must share the tokenizer).
+    draft_model = None
+    draft_name = None
+    if draft_model_path:
+        print(f"Loading draft model: {draft_model_path}", file=sys.stderr)
+        draft_model = lm_load(draft_model_path)[0]
+        draft_name = Path(draft_model_path).name if "/" not in draft_model_path or Path(draft_model_path).exists() else draft_model_path.split("/")[-1]
+        print(f"Draft loaded: {draft_name} (speculative decoding ON)", file=sys.stderr)
 
     # Reset peak memory tracking
     mx.reset_peak_memory()
@@ -293,14 +428,14 @@ def run_benchmark(
         # Warmup
         for w in range(warmup):
             print(f"  warmup {w + 1}/{warmup}: {prompt['name']}...", end="\r", file=sys.stderr)
-            bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed)
+            bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model)
             mx.clear_cache()
 
         # Measured runs
         prompt_runs = []
         for r in range(runs):
             print(f"  run {r + 1}/{runs}: {prompt['name']}...   ", end="\r", file=sys.stderr)
-            result = bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed)
+            result = bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model)
             prompt_runs.append(result)
             mx.clear_cache()
 
@@ -353,6 +488,7 @@ def run_benchmark(
             composite_score=1.0, metrics=metrics,
             per_prompt=all_prompt_results, hardware=hardware,
         )
+        result_data["draft_model"] = draft_name
         save_baseline(TEXT_DIR, result_data)
         save_run(TEXT_DIR, result_data, timestamp.replace(":", ""))
         composite_score = 1.0
@@ -415,6 +551,7 @@ def run_benchmark(
             per_prompt=all_prompt_results, hardware=hardware,
         )
         # Add verification metadata to result
+        result_data["draft_model"] = draft_name
         result_data["fingerprint_match"] = fingerprint_match
         result_data["hard_constraint_violations"] = all_violations
         result_data["suspicion_warnings"] = suspicion_warnings
@@ -449,8 +586,16 @@ def main():
     parser.add_argument("--warmup", type=int, default=None, help="Warmup runs per prompt (overrides config)")
     parser.add_argument("--max-tokens", type=int, default=None, help="Max generation tokens (overrides config)")
     parser.add_argument("--reset-baseline", action="store_true", help="Re-establish baseline")
+    parser.add_argument("--draft-model-path", default=None, help="Draft model path/id for speculative decoding")
+    parser.add_argument("--spec-decode", action="store_true", help="Enable speculative decoding using [bench.text].draft_model from config")
     parser.add_argument("--config", default=None, help="Path to bench_config.toml")
     args = parser.parse_args()
+
+    if args.reset_baseline and (args.draft_model_path or args.spec_decode):
+        print("Refusing to reset the baseline WITH speculative decoding on -- the "
+              "baseline must be non-speculative so the spec-decode run has something "
+              "lossless to compare against.", file=sys.stderr)
+        sys.exit(1)
 
     # Load config
     config = load_config(Path(args.config) if args.config else None)
@@ -465,6 +610,7 @@ def main():
     seed = bench_params["seed"]
 
     model_path = resolve_model_path(args.model_path, config)
+    draft_model_path = resolve_draft_path(args.draft_model_path, config, args.spec_decode)
     run_benchmark(
         model_path=model_path,
         runs=runs,
@@ -474,6 +620,7 @@ def main():
         reset_baseline=args.reset_baseline,
         scoring_weights=scoring_weights,
         constraints=constraints,
+        draft_model_path=draft_model_path,
     )
 
 

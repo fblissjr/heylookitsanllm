@@ -147,6 +147,48 @@ VISION_PROMPTS = [
 ]
 
 
+# -- Real photographs (drop files into data/vlm/photos/) ----------------------
+# Synthetic PIL renders test the pipeline but not real-world detail
+# identification. Photos placed here become detail-ID prompts (aligned with the
+# Q8 patch-alignment spike). NOTE: the prompt SET depends on the folder
+# contents, so adding/removing photos changes VLM fingerprints -- re-baseline
+# after any change to the folder.
+PHOTOS_DIR = VLM_DIR / "photos"
+PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def load_photo_prompts() -> list[dict]:
+    """Load real photographs as detail-identification vision prompts (sorted by
+    filename for determinism). Returns [] when the folder is absent or empty --
+    the synthetic renders still run."""
+    if not PHOTOS_DIR.is_dir():
+        return []
+    prompts = []
+    for path in sorted(PHOTOS_DIR.iterdir()):
+        if path.suffix.lower() not in PHOTO_EXTS:
+            continue
+        try:
+            img = Image.open(path).convert("RGB")
+            img.load()
+        except Exception as exc:
+            print(f"WARNING: skipping unreadable photo {path.name}: {exc}", file=sys.stderr)
+            continue
+        prompts.append({
+            "name": f"photo_{path.stem}",
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": (
+                        "Identify every distinct object in this photograph, transcribe any "
+                        "visible text exactly, and state how many people appear."
+                    )},
+                ]},
+            ],
+            "image": img,
+        })
+    return prompts
+
+
 def resolve_model_path(model_path: str | None, config: dict) -> str:
     """Resolve model path from CLI arg, bench_config.toml, or models.toml.
 
@@ -441,6 +483,12 @@ def run_benchmark(
         for p in VISION_PROMPTS:
             img = test_images[p["name"]]
             prompts_to_run.append(("vision", p, img))
+        # Real photographs (data/vlm/photos/), if any -- carry their image inline.
+        photo_prompts = load_photo_prompts()
+        for p in photo_prompts:
+            prompts_to_run.append(("vision", p, p["image"]))
+        if photo_prompts:
+            print(f"  (+{len(photo_prompts)} real-photo prompt(s) from {PHOTOS_DIR})", file=sys.stderr)
 
     for prompt_type, prompt, img in prompts_to_run:
         for w in range(warmup):
