@@ -20,7 +20,13 @@ model = "mlx-community/gemma-3-27b-it-bf16"
 draft_model = "mlx-community/gemma-3-1b-it-bf16"
 
 [bench.vlm]
-model = "mlx-community/Qwen3.5-27B-mxfp8-mlx"
+# The prior id (mlx-community/Qwen3.5-27B-mxfp8-mlx) is a TEXT model and not
+# local -- it cannot process the photo workloads. Fixed 2026-07-07 to a local
+# vision model (models.toml id -> resolves to the Storage path, no download).
+# Instruct (not Thinking) so the detail-ID prompts get direct answers, not
+# reasoning traces. This starts a NEW real-vision baseline (the Mar-16
+# "VLM baseline" was actually a text model through the VLM loader's text path).
+model = "Qwen3-VL-32B-Instruct-8bit"
 
 [scoring]
 # Weights must sum to 1.0. Adjust these to shift optimization pressure.

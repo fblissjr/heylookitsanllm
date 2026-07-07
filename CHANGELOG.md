@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.13]
+
+### Fixed
+
+- **optloop-lib VLM bench: advanced the vision baseline past two blockers** (still one open). The `[bench.vlm]` model id was dead (`mlx-community/Qwen3.5-27B-mxfp8-mlx` -- a text model, not local); pointed it at the local vision model `Qwen3-VL-32B-Instruct-8bit`. This also revealed the bench's VISION path had never run against a real VLM -- the Mar-16 "VLM baseline" was a text model through the loader's text path. Ported the server's two transformers-5.x soft-patches (AutoVideoProcessor -> None, lenient ProcessorMixin video check) verbatim into `bench_vlm.py` so Qwen3-VL loads on a torch-free MLX venv. STILL BLOCKED (documented in `docs/optimization_log.md`, not fixed here): Qwen3-VL's 3D multimodal RoPE -- the bench's simplified pre-filled-cache vision path doesn't supply mrope position_ids, so cos/sin broadcast fails against image-expanded queries. Needs either routing vision through `mlx_vlm.generate` or porting the server's wrap_language_model/position-reset. No false baseline was written.
+
 ## [1.34.12]
 
 ### Added

@@ -78,6 +78,35 @@ Findings:
   draft (gemma-3-4b) to raise acceptance; a num_draft sweep isolated to
   short-context; measure acceptance rate directly (needs the fork to surface it).
 
+## VLM vision baseline -- BLOCKED on mrope (2026-07-07)
+
+Attempted the real-photo VLM baseline (9 owner photos + synthetic renders).
+Two blockers hit; two fixes, one open:
+- **Config id was dead** (like the text one): `mlx-community/Qwen3.5-27B-mxfp8-mlx`
+  is a TEXT model and not local. Fixed to `Qwen3-VL-32B-Instruct-8bit` (local,
+  vision, instruct). NOTE: this means the Mar-16 "VLM baseline" (Qwen3.5-27B,
+  21.0 gen_tps) was a text model through the VLM loader's TEXT path -- the
+  bench's VISION path had never actually run against a real vision model.
+- **transformers needs torchvision** for Qwen3-VL's video processor (both venvs
+  are torch-free by design). FIXED by porting the server's two soft-patches
+  (AutoVideoProcessor.from_pretrained -> None, lenient ProcessorMixin video
+  check) verbatim into bench_vlm.py (copied, not imported -- library-level
+  bench). Model then loads clean.
+- **OPEN -- multimodal RoPE.** Qwen3-VL uses 3D mrope position_ids; the bench's
+  simplified pre-filled-cache vision path (manual `model(input_ids, cache=...)`
+  then continue on the cache) never supplies them, so cos/sin are sized for the
+  pre-image sequence while queries include the expanded image tokens ->
+  `[broadcast_shapes] (1,64,20,128) vs (1,1,14,128)` in
+  apply_multimodal_rotary_pos_emb. This is the known VLM position-handling bug
+  class (CLAUDE.md: wrap_language_model + _position_ids/_rope_deltas reset).
+  Fix options for a future session: (a) route the vision path through
+  `mlx_vlm.generate` (loses the vision-encode-vs-decode timing split the manual
+  path measures); (b) port the server's wrap_language_model / position-reset so
+  the manual path feeds correct mrope position_ids (keeps the split). Until then
+  the vision baseline can't be established; text-through-VLM would run but is not
+  the point. Config + torch fix committed (v1.34.13) so only the mrope work
+  remains.
+
 ## What Works
 
 (Nothing confirmed bench-measurable yet. Mar16 patches established the activation

@@ -25,6 +25,48 @@ from PIL import Image, ImageDraw
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import make_sampler
+
+
+# -- transformers 5.x compat (no torchvision) --------------------------------
+# Ported verbatim from the server (src/heylook_llm/providers/mlx_provider.py).
+# MLX-only venvs have no torch/torchvision, but transformers assumes torchvision
+# when loading a VLM processor (e.g. Qwen3-VL pulls Qwen3VLVideoProcessor, which
+# hard-fails without torch backends). These two soft-patches degrade
+# video-processor loading to None so the vision model loads without torch. Must
+# run BEFORE mlx_vlm imports transformers. optloop-lib can't import heylook_llm
+# (library-level bench), so this is copied, not imported -- keep it in sync with
+# the server patch if that one changes.
+def _apply_transformers_patches():
+    try:
+        from transformers.models.auto.video_processing_auto import AutoVideoProcessor
+        _orig_vp = AutoVideoProcessor.from_pretrained.__func__
+
+        @classmethod
+        def _soft_vp(cls, *args, **kwargs):
+            try:
+                return _orig_vp(cls, *args, **kwargs)
+            except (ImportError, TypeError, ValueError):
+                return None
+
+        AutoVideoProcessor.from_pretrained = _soft_vp
+    except Exception:
+        pass
+    try:
+        from transformers import processing_utils as pu
+        _orig_check = pu.ProcessorMixin.check_argument_for_proper_class
+
+        def _lenient_check(self, attribute_name, arg):
+            if arg is None and "video" in attribute_name:
+                return None
+            return _orig_check(self, attribute_name, arg)
+
+        pu.ProcessorMixin.check_argument_for_proper_class = _lenient_check
+    except Exception:
+        pass
+
+
+_apply_transformers_patches()
+
 from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 
