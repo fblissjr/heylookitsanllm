@@ -45,6 +45,8 @@ apps/*/data/*
 *.db-wal
 *.sqlite
 *.sqlite3
+*.duckdb
+*.duckdb.wal
 *.jsonl
 # bench data (legacy paths)
 results.tsv

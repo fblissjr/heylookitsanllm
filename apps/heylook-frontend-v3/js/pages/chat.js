@@ -238,6 +238,7 @@ function startRename(ctx, conv, titleEl) {
 
 async function newConversation(ctx) {
   const s = ctx.state;
+  clearPendingImages(ctx); // staged images belong to the conv they were picked in
   try {
     const conv = await api.createConversation({
       title: 'New conversation',
@@ -280,6 +281,7 @@ async function selectConversation(ctx, convId) {
   if (s.stream) stopStream(ctx); // partial still persists to its own conv
   s.activeId = convId;
   s.editingId = null;
+  clearPendingImages(ctx); // staged images belong to the conv they were picked in
   showStatus(ctx, '');
   renderConvList(ctx);
   try {
@@ -336,7 +338,7 @@ function buildMessageEl(ctx, msg) {
         .filter((b) => b.type === 'image')
         .map((b) => createEl('img', {
           class: 'message-image',
-          src: `data:${b.source.media_type};base64,${b.source.data}`,
+          src: imageBlockUrl(b),
           alt: 'attached image',
         }))));
   }
@@ -356,9 +358,11 @@ function buildActions(ctx, msg) {
     b.addEventListener('click', fn);
     return b;
   };
-  const actions = [
-    btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})),
-  ];
+  const actions = [];
+  // Copy copies the flattened text; an image-only message has none to copy.
+  if (msg.content) {
+    actions.push(btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})));
+  }
   // Editing is text-only: the editor would replace content and silently drop
   // the image blocks. Image messages get delete/regenerate, not edit.
   if (!hasImageBlocks(msg)) {
@@ -387,9 +391,11 @@ function buildEditEl(ctx, msg) {
     const next = textarea.value;
     try {
       if (next !== msg.content) {
-        await api.updateMessage(s.activeId, msg.id, { content: next });
+        const updated = await api.updateMessage(s.activeId, msg.id, { content: next });
         if (!ctx.alive) return;
-        msg.content = next;
+        // keep content AND content_blocks in sync with the server's view
+        msg.content = updated.content;
+        msg.content_blocks = updated.content_blocks;
       }
       s.editingId = null;
       if (regenerateAfter) {
@@ -483,14 +489,18 @@ function fileToDataUrl(file) {
 
 async function addImages(ctx, files) {
   const s = ctx.state;
-  for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
-    try {
-      const dataUrl = await fileToDataUrl(file);
-      if (!ctx.alive) return;
-      s.pendingImages.push({ dataUrl, mediaType: file.type });
-    } catch { /* unreadable file -- skip */ }
-  }
+  const reads = await Promise.all([...files]
+    .filter((f) => f.type.startsWith('image/'))
+    .map((f) => fileToDataUrl(f)
+      .then((dataUrl) => ({ dataUrl, mediaType: f.type }))
+      .catch(() => null)));  /* unreadable file -- skip */
+  if (!ctx.alive) return;
+  s.pendingImages.push(...reads.filter(Boolean));
+  renderAttachStrip(ctx);
+}
+
+function clearPendingImages(ctx) {
+  ctx.state.pendingImages = [];
   renderAttachStrip(ctx);
 }
 
@@ -514,6 +524,14 @@ function renderAttachStrip(ctx) {
 // hasImageBlocks gates the flows that only make sense for text.
 function hasImageBlocks(msg) {
   return Boolean(msg.content_blocks?.some((b) => b.type === 'image'));
+}
+
+// One place that knows how an image block becomes a URL (render AND wire use
+// it -- they must never disagree). Handles both stored source types.
+function imageBlockUrl(b) {
+  return b.source.type === 'url'
+    ? b.source.url
+    : `data:${b.source.media_type};base64,${b.source.data}`;
 }
 
 function buildContentBlocks(text, images) {
@@ -591,7 +609,7 @@ function toWireContent(msg) {
   if (!hasImageBlocks(msg)) return msg.content;
   return msg.content_blocks.map((b) => (
     b.type === 'image'
-      ? { type: 'image_url', image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+      ? { type: 'image_url', image_url: { url: imageBlockUrl(b) } }
       : { type: 'text', text: b.text ?? '' }
   ));
 }

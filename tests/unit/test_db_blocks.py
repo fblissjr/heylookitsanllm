@@ -119,3 +119,52 @@ class TestStructuralInvariants:
         got = await db.get_conversation(conn, conv["id"])
         assert len(got["messages"]) == 8
         assert sorted(m["position"] for m in got["messages"]) == list(range(8))
+
+
+class TestValidationAndEdgeCases:
+    @pytest.mark.asyncio
+    async def test_null_text_block_normalizes_to_empty(self, conn, conv):
+        # {"type":"text","text":null} must not poison the row: flatten would
+        # TypeError on None and make the conversation permanently unreadable.
+        msg = await db.append_message(
+            conn, conv["id"], role="user", content=[{"type": "text", "text": None}]
+        )
+        assert msg["content"] == ""
+        got = await db.get_conversation(conn, conv["id"])
+        assert got["messages"][0]["content"] == ""
+
+    @pytest.mark.asyncio
+    async def test_malformed_image_block_rejected_before_persist(self, conn, conv):
+        with pytest.raises(ValueError):
+            await db.append_message(
+                conn, conv["id"], role="user", content=[{"type": "image"}]
+            )
+        got = await db.get_conversation(conn, conv["id"])
+        assert got["messages"] == []  # nothing persisted
+
+    @pytest.mark.asyncio
+    async def test_non_dict_block_rejected(self, conn, conv):
+        with pytest.raises(ValueError):
+            await db.append_message(conn, conv["id"], role="user", content=["hi"])
+
+    @pytest.mark.asyncio
+    async def test_url_image_source_round_trips(self, conn, conv):
+        block = {"type": "image", "source": {"type": "url", "url": "https://x/y.png"}}
+        msg = await db.append_message(conn, conv["id"], role="user", content=[block])
+        assert msg["content_blocks"] == [block]
+
+    @pytest.mark.asyncio
+    async def test_unknown_block_type_passes_through(self, conn, conv):
+        block = {"type": "thinking", "thinking": "hmm"}
+        msg = await db.append_message(conn, conv["id"], role="user", content=[block])
+        assert msg["content_blocks"] == [block]
+        assert msg["content"] == ""  # not a text block
+
+    @pytest.mark.asyncio
+    async def test_exception_does_not_wedge_connection(self, conn, conv):
+        # An op raising mid-transaction must ROLLBACK, not abort the shared
+        # connection for every subsequent operation.
+        with pytest.raises(ValueError):
+            await db.update_message(conn, conv["id"], "ghost")
+        msg = await db.append_message(conn, conv["id"], role="user", content="still works")
+        assert msg is not None

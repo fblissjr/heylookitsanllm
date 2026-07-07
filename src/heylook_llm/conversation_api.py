@@ -1,7 +1,9 @@
 # src/heylook_llm/conversation_api.py
 """Conversation storage API endpoints.
 
-CRUD for conversations and their messages, backed by SQLite.
+CRUD for conversations and their messages, backed by the DuckDB store
+(db.py). Message content persists as content-block lists; see
+docs/frontend_v3_spec.md §4 for the wire contract.
 """
 
 import logging
@@ -134,9 +136,12 @@ async def delete_conversation(conv_id: str, request: Request):
 )
 async def append_message(conv_id: str, request: Request, body: MessageCreate):
     conn = _get_db(request)
-    msg = await db.append_message(
-        conn, conv_id, role=body.role, content=body.content, thinking=body.thinking
-    )
+    try:
+        msg = await db.append_message(
+            conn, conv_id, role=body.role, content=body.content, thinking=body.thinking
+        )
+    except ValueError as e:  # malformed content blocks
+        raise HTTPException(status_code=400, detail=str(e))
     if msg is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return msg

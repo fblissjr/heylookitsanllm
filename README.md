@@ -32,7 +32,7 @@ Built on Apple MLX for text and vision.
 
 ### v2 Frontend (in progress)
 
-Vanilla JS frontend at `/v2` -- no React, no bundler, no node_modules. Conversations stored server-side in SQLite.
+Vanilla JS frontend at `/v2` -- no React, no bundler, no node_modules. Conversations stored server-side in DuckDB (messages as content blocks; images round-trip).
 
 - **Chat** -- Streaming conversation with thinking blocks, message editing, regenerate
 - Batch, Models, Performance, Notebook -- coming soon

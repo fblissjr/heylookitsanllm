@@ -20,8 +20,9 @@ No migration from the retired SQLite store: this is a fresh start by design.
 import asyncio
 import logging
 import os
-import threading
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +31,11 @@ import orjson
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2  # v2 = DuckDB + content blocks
+# v2 = DuckDB + content blocks; v3 = FK removed (DuckDB's FK check rejects
+# deleting a parent even when its children are deleted in the same
+# transaction -- a documented DuckDB limitation. Referential integrity is
+# enforced in code: single writer, explicit cascade in delete_conversation).
+_SCHEMA_VERSION = 3
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
 _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id"})
@@ -47,7 +52,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 CREATE TABLE IF NOT EXISTS messages (
     id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id),
+    conversation_id TEXT NOT NULL,
     role            TEXT NOT NULL,
     content_blocks  TEXT NOT NULL DEFAULT '[]',
     thinking        TEXT,
@@ -86,20 +91,48 @@ def normalize_blocks(content) -> list[dict]:
 
     Strings become a single text block; block lists pass through
     (shallow-copied). ``None`` behaves like the empty string.
+
+    Raises ``ValueError`` for malformed blocks -- validation lives at this
+    boundary so garbage can never persist and then crash every later read
+    or render of the conversation.
     """
     if content is None:
         content = ""
     if isinstance(content, str):
         return [{"type": "text", "text": content}]
-    return [dict(b) for b in content]
+    blocks = []
+    for b in content:
+        if not isinstance(b, dict) or not isinstance(b.get("type"), str):
+            raise ValueError("Each content block must be an object with a string 'type'")
+        b = dict(b)
+        if b["type"] == "text":
+            if b.get("text") is not None and not isinstance(b["text"], str):
+                raise ValueError("Text block 'text' must be a string")
+            b["text"] = b.get("text") or ""
+        elif b["type"] == "image":
+            src = b.get("source")
+            if not isinstance(src, dict):
+                raise ValueError("Image block requires a 'source' object")
+            if src.get("type") == "base64":
+                if not (isinstance(src.get("media_type"), str) and isinstance(src.get("data"), str) and src["data"]):
+                    raise ValueError("base64 image source requires 'media_type' and non-empty 'data'")
+            elif src.get("type") == "url":
+                if not (isinstance(src.get("url"), str) and src["url"]):
+                    raise ValueError("url image source requires a non-empty 'url'")
+            else:
+                raise ValueError("Image source 'type' must be 'base64' or 'url'")
+        # unknown block types pass through untouched -- forward-compatible with
+        # future Messages block types; flatten treats them as non-text.
+        blocks.append(b)
+    return blocks
 
 
 def flatten_blocks(blocks: list[dict]) -> str:
     """Back-compatible text view: the text blocks joined by newlines."""
-    return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    return "\n".join((b.get("text") or "") for b in blocks if b.get("type") == "text")
 
 
-def _message_row_to_dict(names: list[str], row: tuple) -> dict:
+def _message_row_to_dict(names: list[str], row) -> dict:
     d = dict(zip(names, row))
     blocks = orjson.loads(d.pop("content_blocks"))
     d["content"] = flatten_blocks(blocks)
@@ -119,14 +152,34 @@ def _default_db_path() -> Path:
 
 
 class Store:
-    """Single-connection DuckDB store; all ops thread-offloaded + serialized."""
+    """Single-connection DuckDB store on its own dedicated worker thread.
+
+    A max_workers=1 executor gives strict serialization (stronger than a
+    lock: queued ops don't pile up blocking pooled threads) and keeps DB ops
+    off asyncio's shared default executor, where long-running model loads and
+    generation consumption would otherwise contend with trivial reads.
+
+    Every operation runs inside an explicit transaction with rollback on
+    exception -- DuckDB autocommits per statement, so without this a crash
+    between the statements of one logical op leaves partial state, and an
+    error mid-transaction would wedge the long-lived connection until
+    ROLLBACK.
+    """
+
+    _CONNECT_RETRY_S = 10.0  # old aiosqlite had timeout=10; retry the file lock
 
     def __init__(self, resolved: str):
-        self._conn = duckdb.connect(resolved)
-        self._lock = threading.Lock()
-        for stmt in _SCHEMA_SQL.split(";\n\n"):
-            if stmt.strip():
-                self._conn.execute(stmt)
+        deadline = time.monotonic() + self._CONNECT_RETRY_S
+        while True:
+            try:
+                self._conn = duckdb.connect(resolved)
+                break
+            except duckdb.IOException:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.25)
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="duckdb-store")
+        self._create_schema()
         row = self._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'"
         ).fetchone()
@@ -135,19 +188,42 @@ class Store:
                 "INSERT INTO schema_meta (key, value) VALUES ('version', ?)",
                 (str(_SCHEMA_VERSION),),
             )
+        elif row[0] != str(_SCHEMA_VERSION):
+            # Pre-release DuckDB schema (same-day churn only; the store is a
+            # fresh start by design). Recreate rather than migrate.
+            logger.warning(
+                "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
+                row[0], _SCHEMA_VERSION,
+            )
+            for table in ("messages", "conversations", "notebooks", "schema_meta"):
+                self._conn.execute(f"DROP TABLE IF EXISTS {table}")
+            self._create_schema()
+            self._conn.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
+
+    def _create_schema(self):
+        for stmt in _SCHEMA_SQL.split(";\n\n"):
+            if stmt.strip():
+                self._conn.execute(stmt)
 
     async def run(self, fn, *args):
-        """Run a sync store operation in a worker thread under the store lock."""
-        def locked():
-            with self._lock:
-                return fn(self._conn, *args)
-        return await asyncio.to_thread(locked)
+        """Run a sync store operation, transactionally, on the store thread."""
+        def op():
+            self._conn.execute("BEGIN TRANSACTION")
+            try:
+                result = fn(self._conn, *args)
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            self._conn.execute("COMMIT")
+            return result
+        return await asyncio.get_running_loop().run_in_executor(self._executor, op)
 
     async def close(self):
-        def locked():
-            with self._lock:
-                self._conn.close()
-        await asyncio.to_thread(locked)
+        await asyncio.get_running_loop().run_in_executor(self._executor, self._conn.close)
+        self._executor.shutdown(wait=True)
 
 
 async def get_connection(path: Path | str | None = None) -> Store:
@@ -200,10 +276,16 @@ async def clear_all_data(db: Store) -> dict:
 # Conversation CRUD
 # ---------------------------------------------------------------------------
 
-_CONV_COLS = "id, title, model_id, system_prompt, created_at, updated_at"
-_MSG_COLS = "id, role, content_blocks, thinking, position, created_at, updated_at"
-_MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
+# Single source of truth per table: the SELECT string derives from the names
+# list, so the two can never drift (zip would silently mispair otherwise).
 _CONV_NAMES = ["id", "title", "model_id", "system_prompt", "created_at", "updated_at"]
+_MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
+_CONV_COLS = ", ".join(_CONV_NAMES)
+_MSG_COLS = ", ".join(_MSG_NAMES)
+
+
+def _touch_conversation(conn, conv_id: str, now: str) -> None:
+    conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
 
 
 async def list_conversations(db: Store) -> list[dict]:
@@ -345,7 +427,7 @@ async def append_message(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (msg_id, conv_id, role, orjson.dumps(blocks).decode(), thinking, position, now, now),
         )
-        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+        _touch_conversation(conn, conv_id, now)
         return position
 
     position = await db.run(op)
@@ -393,11 +475,12 @@ async def update_message(
         set_clause = ", ".join(f"{k}=?" for k in col_updates)
         values = list(col_updates.values()) + [now, msg_id]
         conn.execute(f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?", values)
-        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
-        fresh = conn.execute(
-            f"SELECT {_MSG_COLS} FROM messages WHERE id = ?", (msg_id,)
-        ).fetchone()
-        return _message_row_to_dict(_MSG_NAMES, fresh)
+        _touch_conversation(conn, conv_id, now)
+        # Merge locally instead of re-SELECTing -- content_blocks can carry
+        # multi-MB base64 images; one fetch is enough.
+        raw = dict(zip(_MSG_NAMES, row))
+        raw.update(col_updates, updated_at=now)
+        return _message_row_to_dict(_MSG_NAMES, [raw[k] for k in _MSG_NAMES])
     return await db.run(op)
 
 
@@ -417,7 +500,7 @@ async def truncate_messages_after(
             "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
             (conv_id, after_position),
         )
-        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+        _touch_conversation(conn, conv_id, now)
         return count
     return await db.run(op)
 
@@ -426,10 +509,10 @@ async def truncate_messages_after(
 # Notebook CRUD
 # ---------------------------------------------------------------------------
 
-_NB_COLS = "id, title, content, system_prompt, model_id, created_at, updated_at"
 _NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "created_at", "updated_at"]
-_NB_LIST_COLS = "id, title, system_prompt, model_id, created_at, updated_at"
 _NB_LIST_NAMES = ["id", "title", "system_prompt", "model_id", "created_at", "updated_at"]
+_NB_COLS = ", ".join(_NB_NAMES)
+_NB_LIST_COLS = ", ".join(_NB_LIST_NAMES)
 
 
 async def list_notebooks(db: Store) -> list[dict]:

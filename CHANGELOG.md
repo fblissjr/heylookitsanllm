@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/simplify` cleanup of the session's E2E + optloop code** (4-angle review): shared `resolve_or_download()` in `bench_common.py` collapses the models.toml→HF-download fallback that was copy-pasted across three resolvers; spec-decode result metadata deduped via one `spec_meta` dict; stale text-model default id fixed. E2E harness: new `lib/dom.mjs` helpers (`waitForLabel` for the toggle-button idiom used ~7×, `findModelRow`/`modelRowState` for the models-row lookup duplicated 4× — the value-returning `modelRowState` avoids a handle-per-poll leak, `settingsInputValue`/`setSettingsInput` for the settings panel); `run.mjs` collapses the two identical suite-run blocks into a loop; magic literals (`STOP_TEST_MAX_TOKENS`, cadence thresholds) named. Behavior-identical; Python 70 tests green (re-run the Metal-gated E2E suite to confirm the JS refactors).
 
+## [1.34.21]
+
+### Fixed
+
+- **Code-review pass over v1.34.20** (8 finder angles, 3 independently verified system claims; all fixes regression-tested, +6 tests, suites 855 green + E2E):
+  - Store ops are now transactional (BEGIN/COMMIT with rollback-on-exception): DuckDB autocommits per statement, so a crash mid-operation could previously orphan rows or leave stale `updated_at`; an unhandled error could also have wedged the long-lived connection until ROLLBACK (verified live).
+  - Store runs on its own dedicated single worker thread instead of asyncio's shared default executor, where multi-second model loads and full generation-consumption loops could starve trivial conversation reads (verified: `to_thread` = the shared pool; aiosqlite previously had its own thread). The threading.Lock became redundant and was removed.
+  - `duckdb.connect` retries the file lock for up to 10s (parity with the old aiosqlite `timeout=10`); previously a restart racing the old process's lock hard-failed startup instantly (verified live).
+  - Content blocks are validated at the storage boundary: `{"type":"text","text":null}` no longer poisons a row (flatten would TypeError on every subsequent read, making the conversation permanently unreadable -- repro'd), and a malformed image block (missing/invalid `source`) is a 400 instead of persisting and crashing the whole conversation render client-side. Unknown block types still pass through (forward-compatible). FK dropped from the schema (DuckDB's FK check rejects parent deletes even with children deleted in the same transaction -- documented limitation; integrity enforced in code) with a schema v3 recreate for any same-day v2 file.
+  - v3 chat: staged images are cleared on conversation switch/new (previously a photo picked in conversation A silently attached to the next send in B); one `imageBlockUrl()` helper feeds both rendering and wire conversion and handles `url`-type sources (previously `data:undefined;base64,undefined`); Edit-save syncs `content_blocks` from the server response; Copy hidden on image-only messages (copied empty string); multi-file reads parallelized.
+  - db.py: `_COLS` derived from `_NAMES` (zip could silently mispair on drift), `_touch_conversation` helper, `update_message` merges locally instead of re-SELECTing multi-MB rows; README + conversation_api docstring no longer say SQLite; `*.duckdb` added to the gitignore safety net.
+- Noted, deliberately not fixed here (recorded in the plan): the schema module's flat `ImageBlock` vs the stored nested Anthropic shape (the STORED shape is the spec-correct one; Phase 3b conformance reconciles the schema module), per-turn base64 re-upload of full history (Phase 3b design input: server-side history resolution), keyed message rendering.
+
 ## [1.34.20]
 
 ### Changed
