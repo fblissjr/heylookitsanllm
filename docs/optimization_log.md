@@ -1,9 +1,17 @@
 # Optimization Log
 
-Last updated: 2026-07-06
+Last updated: 2026-07-07
 
 Accumulated findings from inference optimization sessions.
 Updated at the end of each session (on main, after merge).
+
+Note (2026-07-07): FIRST real optloop-lib run -- text baseline re-established on
+mlx 0.32.0 with the target repo id fixed (`mlx-community/gemma-3-27b-it-bf16`;
+the old config id did not exist) and a new `long_context` workload (~1k prompt
+tokens) added. Numbers match the Mar-16 baseline (11.7 gen_tps) -- continuity
+holds. First experiment: classic speculative decoding (see its section below).
+Harness validated: it correctly flagged the spec-decode regressions and
+fingerprint divergences. VLM baseline still pending real photos.
 
 Note (2026-07-06): the app-level `apps/optloop` harness was retired -- its
 benchmarks never exercised the server path (a fact first recorded in the
@@ -18,12 +26,57 @@ via direct library calls and remain valid for optloop-lib comparisons.
 |------|-------|---------|---------|-------------|-----------|-------|
 | 2026-03-16 | Gemma-3-27B bf16 | 11.7 | 679.8 | 74.9 | 53.2 | First text baseline with patches |
 | 2026-03-16 | Qwen3.5-27B mxfp8 | 21.0 | 652.3 | 104.0 | 27.5 | First VLM baseline |
+| 2026-07-07 | gemma-3-27b-it-bf16 | 11.7 | 1322.0 | 151.9 | 53.9 | mlx 0.32.0; 6 text prompts incl. long_context; canonical text baseline (avg over prompts; ttft/prefill higher because the prompt mix now includes long-prefill workloads) |
 
 ## Performance Ceilings (M2 Ultra 192GB, ~800 GB/s bandwidth)
 
 - Gemma-3-27B bf16 (~54GB): theoretical max = 14.8 gen_tps. Current 11.7 = 79%
 - Qwen3.5-27B mxfp8 (~27.5GB): theoretical max = 29.1 gen_tps. Current 21.0 = 72%
 - Python overhead is <0.1% of per-token time. GPU forward pass dominates.
+
+## Speculative decoding (classic draft-model) -- 2026-07-07
+
+First real experiment. Target `gemma-3-27b-it-bf16` (the multimodal repo; mlx-lm
+loads only its text tower via gemma3.py), draft `gemma-3-1b-it-bf16` (same
+gemma-3 tokenizer). Greedy, mlx 0.32.0, 6 prompts, vs the non-speculative
+baseline. Per-prompt gen_tps:
+
+| prompt | baseline | num_draft=2 | num_draft=4 |
+|--------|---------:|------------:|------------:|
+| short             | 11.7 | 10.3 | **12.9** |
+| medium            | 11.8 |  9.4 | **12.0** |
+| long              | 11.7 |  9.6 | 11.2 |
+| multi_turn_short  | 11.7 |  9.6 | 11.3 |
+| multi_turn_long   | 11.7 |  —   |  8.9 |
+| long_context      | 11.6 |  7.3 |  7.0 |
+| **avg / composite** | **11.7 / 1.00** | **9.1 / 0.91** | **10.5 / 0.96** |
+
+Findings:
+- **num_draft_tokens dominates the outcome.** The fork default (2) is uniformly
+  bad (0.91). At 4, SHORT-context prompts turn POSITIVE (short +10%, medium
+  +2%) -- concluding from the default alone would have been wrong. Added a
+  `--num-draft-tokens` flag so the knob is sweepable.
+- **The win is strongly context-length-dependent and NET-NEGATIVE overall.**
+  Benefit shrinks monotonically with context and craters on long context
+  (long_context -40% at both settings; multi_turn_long -24% at nd=4). As the KV
+  cache grows, draft acceptance drops (a 1B model diverges from the 27B's greedy
+  path on longer/harder content) and the batched multi-token verify over a large
+  cache gets expensive. Overall composite stays <1.0 (0.96 best).
+- **Greedy spec-decode is NOT bit-identical here.** Fingerprints diverge from
+  baseline on every multi-token prompt (short is the only match) -- the target's
+  BATCHED verify forward has a different float-accumulation order than sequential
+  single-token decode, flipping borderline argmaxes. This is numerics, not a
+  correctness bug, but it means the harness's `require_fingerprint_match` guard
+  CANNOT certify a speculative run; spec-decode needs a distributional/quality
+  gate instead.
+- **Verdict:** classic 1B->27B draft speculative decoding does not beat plain
+  decode on this bandwidth-bound bf16 target on M2 Ultra (11.7 gen_tps = 79% of
+  the ~14.8 bandwidth ceiling -- little headroom for a draft to exploit). It can
+  help short-generation/short-context calls at num_draft>=4. This matches the
+  Direction thesis: the real decode win is verification-based decoding
+  (DFlash/DSpark), not classic draft. Next experiments if pursued: a stronger
+  draft (gemma-3-4b) to raise acceptance; a num_draft sweep isolated to
+  short-context; measure acceptance rate directly (needs the fork to surface it).
 
 ## What Works
 

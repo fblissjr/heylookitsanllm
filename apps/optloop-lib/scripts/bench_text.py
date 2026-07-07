@@ -291,16 +291,21 @@ def bench_prompt(
     max_tokens: int = 256,
     seed: int = 42,
     draft_model=None,
+    num_draft_tokens: int = 2,
 ) -> dict:
     """Run a single prompt and measure performance metrics.
 
     Returns dict with: gen_tps, ttft_ms, prefill_tps, completion_tokens,
     prompt_tokens, token_ids, fingerprint
 
-    When draft_model is provided, stream_generate uses speculative decoding.
-    It is LOSSLESS (the target verifies every draft token), so the greedy
-    fingerprint must match the non-speculative baseline -- that identity is the
-    correctness guard for the speedup.
+    When draft_model is provided, stream_generate uses speculative decoding with
+    num_draft_tokens proposals per step. It is near-lossless in distribution, but
+    NOT bit-identical: the target verifies draft tokens with a BATCHED forward
+    whose float-accumulation order differs from sequential single-token decode, so
+    a borderline greedy argmax can flip. Expect occasional fingerprint divergence
+    from the non-speculative baseline -- that is numerics, not a correctness bug,
+    and it means the harness's bit-identical fingerprint guard cannot certify a
+    speculative run (a distributional/quality check would be needed instead).
     """
     messages = prompt["messages"]
 
@@ -325,13 +330,16 @@ def bench_prompt(
     sync_barrier()
     start = time.perf_counter()
 
+    gen_kwargs = {"draft_model": draft_model}
+    if draft_model is not None:
+        gen_kwargs["num_draft_tokens"] = num_draft_tokens
     for response in lm_stream_generate(
         model=model,
         tokenizer=tokenizer,
         prompt=prompt_tokens,
         sampler=sampler,
         max_tokens=max_tokens,
-        draft_model=draft_model,
+        **gen_kwargs,
     ):
         if completion_tokens == 0:
             # First token received -- measure TTFT and prefill
@@ -392,6 +400,7 @@ def run_benchmark(
     scoring_weights: dict | None = None,
     constraints: dict | None = None,
     draft_model_path: str | None = None,
+    num_draft_tokens: int = 2,
 ) -> dict:
     """Run the full text benchmark suite.
 
@@ -428,14 +437,14 @@ def run_benchmark(
         # Warmup
         for w in range(warmup):
             print(f"  warmup {w + 1}/{warmup}: {prompt['name']}...", end="\r", file=sys.stderr)
-            bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model)
+            bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model, num_draft_tokens=num_draft_tokens)
             mx.clear_cache()
 
         # Measured runs
         prompt_runs = []
         for r in range(runs):
             print(f"  run {r + 1}/{runs}: {prompt['name']}...   ", end="\r", file=sys.stderr)
-            result = bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model)
+            result = bench_prompt(model, tokenizer, prompt, max_tokens=max_tokens, seed=seed, draft_model=draft_model, num_draft_tokens=num_draft_tokens)
             prompt_runs.append(result)
             mx.clear_cache()
 
@@ -489,6 +498,7 @@ def run_benchmark(
             per_prompt=all_prompt_results, hardware=hardware,
         )
         result_data["draft_model"] = draft_name
+        result_data["num_draft_tokens"] = num_draft_tokens if draft_name else None
         save_baseline(TEXT_DIR, result_data)
         save_run(TEXT_DIR, result_data, timestamp.replace(":", ""))
         composite_score = 1.0
@@ -552,6 +562,7 @@ def run_benchmark(
         )
         # Add verification metadata to result
         result_data["draft_model"] = draft_name
+        result_data["num_draft_tokens"] = num_draft_tokens if draft_name else None
         result_data["fingerprint_match"] = fingerprint_match
         result_data["hard_constraint_violations"] = all_violations
         result_data["suspicion_warnings"] = suspicion_warnings
@@ -588,6 +599,7 @@ def main():
     parser.add_argument("--reset-baseline", action="store_true", help="Re-establish baseline")
     parser.add_argument("--draft-model-path", default=None, help="Draft model path/id for speculative decoding")
     parser.add_argument("--spec-decode", action="store_true", help="Enable speculative decoding using [bench.text].draft_model from config")
+    parser.add_argument("--num-draft-tokens", type=int, default=2, help="Draft tokens proposed per step (speculative decoding only; default 2)")
     parser.add_argument("--config", default=None, help="Path to bench_config.toml")
     args = parser.parse_args()
 
@@ -621,6 +633,7 @@ def main():
         scoring_weights=scoring_weights,
         constraints=constraints,
         draft_model_path=draft_model_path,
+        num_draft_tokens=args.num_draft_tokens,
     )
 
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.12]
+
+### Added
+
+- **Speculative-decoding baseline -- optloop-lib's first real run** (`docs/optimization_log.md`). Re-established the text baseline on mlx 0.32.0 (`gemma-3-27b-it-bf16`, 6 prompts incl. the new long_context workload; 11.7 gen_tps, matching the Mar-16 continuity point) and ran the first classic-draft speculative-decoding experiment (draft `gemma-3-1b-it-bf16`). Result: NET-NEGATIVE on this bandwidth-bound bf16 target (composite 0.91 at num_draft=2, 0.96 at num_draft=4). Nuance: `num_draft_tokens` dominates -- at 4, short-context prompts turn positive (short +10%), but the benefit collapses as context grows (long_context -40%), and greedy spec-decode is NOT bit-identical (batched-verify float order flips borderline argmaxes, so fingerprints diverge -- a distributional gate, not the fingerprint guard, is needed to certify a speculative run). Confirms the Direction thesis that the decode win is verification-based decoding (DFlash), not classic draft. Added a `--num-draft-tokens` flag to `bench_text.py` for the sweep; corrected the (wrong) "lossless/bit-identical" docstring. The harness validated itself: it flagged every regression and divergence.
+
 ## [1.34.11]
 
 ### Changed
