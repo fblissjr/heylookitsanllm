@@ -4,7 +4,7 @@
 // the orchestrator before this runs; the danger-zone clear check runs LAST.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, noHorizontalOverflow } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow } from '../lib/dom.mjs';
 
 // Record requests whose URL matches `regex` from the moment this is called until
 // stop(). Used to prove the perf page does NOT poll.
@@ -65,10 +65,8 @@ export async function runPagesSuite({ suite, ctx, config }) {
       el.focus();
     });
     await clickByText(page, '.notebook__actions button', 'Generate');
-    await waitFor(async () => (await textOf(page, '.notebook__actions button')) === 'Stop',
-      { message: 'generation did not start' });
-    await waitFor(async () => (await textOf(page, '.notebook__actions button')) === 'Generate',
-      { timeout: 30000, message: 'generation did not finish' });
+    await waitForLabel(page, '.notebook__actions button', 'Stop', { message: 'generation did not start' });
+    await waitForLabel(page, '.notebook__actions button', 'Generate', { timeout: 30000, message: 'generation did not finish' });
     const value = await page.$eval('.notebook__content', (e) => e.value);
     assert(value.startsWith('HEAD_MARKER'), `head lost: "${value.slice(0, 20)}"`);
     assert(value.endsWith('TAIL_MARKER'), `tail lost: "${value.slice(-20)}"`);
@@ -102,12 +100,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
       el.focus();
     });
     await clickByText(page, '.notebook__actions button', 'Generate');
-    await waitFor(async () => (await textOf(page, '.notebook__actions button')) === 'Stop', { message: 'gen did not start' });
+    await waitForLabel(page, '.notebook__actions button', 'Stop', { message: 'gen did not start' });
     // wait until content grew beyond the seed
     await waitFor(async () => (await page.$eval('.notebook__content', (e) => e.value)).length > 'Begin: '.length + 3,
       { message: 'no partial text appeared' });
     await clickByText(page, '.notebook__actions button', 'Stop');
-    await waitFor(async () => (await textOf(page, '.notebook__actions button')) === 'Generate', { message: 'did not stop' });
+    await waitForLabel(page, '.notebook__actions button', 'Generate', { message: 'did not stop' });
     const status = await textOf(page, '.notebook__status');
     assert(/stopped/i.test(status), `status="${status}"`);
     const value = await page.$eval('.notebook__content', (e) => e.value);
@@ -142,8 +140,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await page.click('.explore__composer textarea');
     await page.type('.explore__composer textarea', 'Count: one two three');
     await clickByText(page, '.explore__composer button', 'Generate');
-    await waitFor(async () => (await textOf(page, '.explore__composer button')) === 'Generate',
-      { timeout: 30000, message: 'explore generation did not finish' });
+    await waitForLabel(page, '.explore__composer button', 'Generate', { timeout: 30000, message: 'explore generation did not finish' });
     await waitFor(async () => (await count(page, '.explore__strip .tok')) > 0, { message: 'no token chips' });
   });
 
@@ -234,38 +231,27 @@ export async function runPagesSuite({ suite, ctx, config }) {
   });
 
   await suite.check('preloaded model shows a Loaded badge', async () => {
-    const loaded = await page.evaluate((id) => {
-      const row = [...document.querySelectorAll('.model-row')].find((r) =>
-        r.querySelector('.model-row__title strong')?.textContent.trim() === id);
-      return row?.querySelector('.model-badge')?.classList.contains('model-badge--loaded') ?? false;
-    }, config.model);
-    assert(loaded, 'E2E model is not marked Loaded');
+    const st = await modelRowState(page, config.model);
+    assert(st?.loaded, 'E2E model is not marked Loaded');
   });
 
   await suite.check('unload then reload toggles the model state', async () => {
-    const rowActionBtn = async () => page.evaluateHandle((id) => {
-      const row = [...document.querySelectorAll('.model-row')].find((r) =>
-        r.querySelector('.model-row__title strong')?.textContent.trim() === id);
-      return row?.querySelector('.model-row__actions button') || null;
-    }, config.model);
+    const rowActionBtn = async () => {
+      const row = await findModelRow(page, config.model);
+      return row && row.$('.model-row__actions button');
+    };
 
-    let btn = (await rowActionBtn()).asElement();
+    let btn = await rowActionBtn();
     assert((await btn.evaluate((e) => e.textContent.trim())) === 'Unload', 'expected Unload button');
     await btn.click();
-    await waitFor(async () => page.evaluate((id) => {
-      const row = [...document.querySelectorAll('.model-row')].find((r) =>
-        r.querySelector('.model-row__title strong')?.textContent.trim() === id);
-      return row?.querySelector('.model-badge')?.textContent.trim() === 'Idle';
-    }, config.model), { timeout: 30000, message: 'model never became Idle' });
+    await waitFor(async () => (await modelRowState(page, config.model))?.badge === 'Idle',
+      { timeout: 30000, message: 'model never became Idle' });
 
     // reload it so the box returns to its prior state
-    btn = (await rowActionBtn()).asElement();
+    btn = await rowActionBtn();
     await btn.click();
-    await waitFor(async () => page.evaluate((id) => {
-      const row = [...document.querySelectorAll('.model-row')].find((r) =>
-        r.querySelector('.model-row__title strong')?.textContent.trim() === id);
-      return row?.querySelector('.model-badge')?.classList.contains('model-badge--loaded');
-    }, config.model), { timeout: 90000, message: 'model never reloaded' });
+    await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
+      { timeout: 90000, message: 'model never reloaded' });
   });
 
   await suite.check('HF cache scan renders results panel', async () => {

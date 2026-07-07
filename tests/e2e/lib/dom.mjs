@@ -40,3 +40,53 @@ export async function textOf(page, selector) {
 export async function noHorizontalOverflow(page) {
   return page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 }
+
+// Wait until the element at `selector` shows exactly `label` (trimmed). The
+// toggle-button-label idiom (Send<->Stop, Generate<->Stop) used across suites.
+export async function waitForLabel(page, selector, label, opts = {}) {
+  await waitFor(async () => (await textOf(page, selector)) === label,
+    { message: `"${selector}" never showed label "${label}"`, ...opts });
+}
+
+// ElementHandle of the models-page row whose title === `id`, or null. Centralizes
+// the "find .model-row by its title text" lookup. Use ONLY where an ElementHandle
+// is needed (e.g. clicking the row's button) -- for state polled in a loop use
+// modelRowState (a plain-value read that doesn't leak a handle per poll).
+export async function findModelRow(page, id) {
+  const handle = await page.evaluateHandle((modelId) =>
+    [...document.querySelectorAll('.model-row')].find(
+      (r) => r.querySelector('.model-row__title strong')?.textContent.trim() === modelId) || null,
+    id);
+  return handle.asElement();
+}
+
+// { badge, loaded } for the model row titled `id`, or null if absent. A pure
+// value read (no ElementHandle) -- safe to call inside a waitFor poll.
+export async function modelRowState(page, id) {
+  return page.evaluate((modelId) => {
+    const row = [...document.querySelectorAll('.model-row')].find(
+      (r) => r.querySelector('.model-row__title strong')?.textContent.trim() === modelId);
+    if (!row) return null;
+    const badge = row.querySelector('.model-badge');
+    return { badge: badge?.textContent.trim() ?? null, loaded: badge?.classList.contains('model-badge--loaded') ?? false };
+  }, id);
+}
+
+// Read / write a sampler-settings row's <input> by its label (chat settings panel).
+export async function settingsInputValue(page, label) {
+  return page.evaluate((lbl) => {
+    const row = [...document.querySelectorAll('.settings-panel .settings-row')]
+      .find((r) => r.querySelector('label')?.textContent.trim() === lbl);
+    return row?.querySelector('input')?.value ?? null;
+  }, label);
+}
+
+export async function setSettingsInput(page, label, value) {
+  await page.evaluate((lbl, val) => {
+    const row = [...document.querySelectorAll('.settings-panel .settings-row')]
+      .find((r) => r.querySelector('label')?.textContent.trim() === lbl);
+    const input = row.querySelector('input');
+    input.value = val;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, label, value);
+}

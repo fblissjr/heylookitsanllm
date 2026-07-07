@@ -4,11 +4,22 @@
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, noHorizontalOverflow } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
 const SEND_BTN = '.chat__composer .btn--primary';
 const MODEL_SELECT = '.chat__bar select';
+
+// Stop-check generations reopen with a large cap so there's time to click Stop
+// before generation finishes.
+const STOP_TEST_MAX_TOKENS = 400;
+
+// Streaming-cadence regression thresholds. Old poll ceiling was ~10/s / ~100ms
+// gaps; the fix delivers ~90/s / ~11ms on the MoE. These sit ~2-3x inside the
+// regression signature so a fast model passes comfortably (see README).
+const CADENCE_MIN_CHUNKS = 8;
+const CADENCE_MAX_MEDIAN_MS = 50;
+const CADENCE_MIN_RATE = 30;
 
 async function sendText(page, text) {
   await page.click(COMPOSER);
@@ -22,8 +33,7 @@ async function sendBtnLabel(page) {
 
 // Wait until the composer send button reads "Send" again (stream released).
 async function waitIdle(page, timeout = 30000) {
-  await waitFor(async () => (await sendBtnLabel(page)) === 'Send',
-    { timeout, message: 'stream never returned to idle' });
+  await waitForLabel(page, SEND_BTN, 'Send', { timeout, message: 'stream never returned to idle' });
 }
 
 async function assistantCount(page) {
@@ -156,11 +166,11 @@ export async function runChatSuite({ suite, ctx, config }) {
     // MoE); a natively-slow model would false-fail -- see README.
     const c = await measureStreamCadence(page, config.model, 64);
     assert(c.ok, `probe request failed (status=${c.status})`);
-    assert(c.chunks >= 8, `too few content chunks to measure (${c.chunks})`);
-    assert(c.median != null && c.median < 50,
-      `median inter-chunk gap ${c.median?.toFixed(1)}ms >= 50ms (poll-quantization signature is ~100ms)`);
-    assert(c.rate > 30,
-      `client decode rate ${c.rate?.toFixed(1)}/s <= 30/s (old poll ceiling was ~10/s)`);
+    assert(c.chunks >= CADENCE_MIN_CHUNKS, `too few content chunks to measure (${c.chunks})`);
+    assert(c.median != null && c.median < CADENCE_MAX_MEDIAN_MS,
+      `median inter-chunk gap ${c.median?.toFixed(1)}ms >= ${CADENCE_MAX_MEDIAN_MS}ms (poll-quantization signature is ~100ms)`);
+    assert(c.rate > CADENCE_MIN_RATE,
+      `client decode rate ${c.rate?.toFixed(1)}/s <= ${CADENCE_MIN_RATE}/s (old poll ceiling was ~10/s)`);
     console.log(`      cadence: ${c.chunks} chunks, median gap ${c.median.toFixed(1)}ms, ${c.rate.toFixed(1)}/s`);
   });
 
@@ -207,8 +217,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     await clickByText(page, '.message-edit__buttons button', 'Save & Regenerate');
     await waitFor(async () => (await sendBtnLabel(page)) === 'Stop', { message: 'regenerate did not start' });
     await waitIdle(page);
-    assert((await userCount(page)) === 1, `expected 1 user msg after truncation, got ${await userCount(page)}`);
-    assert((await assistantCount(page)) === 1, `expected 1 assistant msg, got ${await assistantCount(page)}`);
+    const u = await userCount(page);
+    const a = await assistantCount(page);
+    assert(u === 1, `expected 1 user msg after truncation, got ${u}`);
+    assert(a === 1, `expected 1 assistant msg, got ${a}`);
   });
 
   await suite.check('regenerate on an assistant message replaces it', async () => {
@@ -236,7 +248,7 @@ export async function runChatSuite({ suite, ctx, config }) {
 
   // ---- stop = partial saved (needs a long generation) --------------------
   await suite.check('stop mid-stream saves the partial reply', async () => {
-    await ctx.open('#/chat', { max_tokens: 400 });
+    await ctx.open('#/chat', { max_tokens: STOP_TEST_MAX_TOKENS });
     await page.select(MODEL_SELECT, config.model);
     // open the existing conversation (first in the list)
     await waitFor(async () => (await count(page, '.conv-item')) >= 1, { message: 'conv list' });
@@ -290,34 +302,18 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('seeded max_tokens is reflected in the settings panel', async () => {
-    const val = await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('.settings-panel .settings-row')];
-      const row = rows.find((r) => r.querySelector('label')?.textContent.trim() === 'Max tokens');
-      return row?.querySelector('input')?.value ?? null;
-    });
+    const val = await settingsInputValue(page, 'Max tokens');
     assert(val === String(config.maxTokens), `max_tokens input="${val}", expected ${config.maxTokens}`);
   });
 
   await suite.check('settings edit writes through to localStorage', async () => {
-    await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('.settings-panel .settings-row')];
-      const row = rows.find((r) => r.querySelector('label')?.textContent.trim() === 'Temperature');
-      const input = row.querySelector('input');
-      input.value = '0.42';
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    await setSettingsInput(page, 'Temperature', '0.42');
     await waitFor(async () => {
       const s = await ctx.readSettings();
       return s.temperature === 0.42;
     }, { message: 'temperature not saved to localStorage' });
     // restore so it doesn't leak into later generations
-    await page.evaluate(() => {
-      const rows = [...document.querySelectorAll('.settings-panel .settings-row')];
-      const row = rows.find((r) => r.querySelector('label')?.textContent.trim() === 'Temperature');
-      const input = row.querySelector('input');
-      input.value = '';
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    await setSettingsInput(page, 'Temperature', '');
   });
 
   // ---- conversation management -------------------------------------------

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.19]
+
+### Fixed
+
+- **optloop-lib spec-decode baseline guard was incomplete** (found by a `/code-review` pass): the CLI-level `--reset-baseline`+`--spec-decode` refusal only caught the explicit flag, but per-model baselines (v1.34.14) mean a spec-decode run against a *not-yet-benched* model hits the implicit `baseline_data is None` branch and would silently write a **speculative** baseline (inflated gen_tps + mismatched fingerprints for all later comparisons). Moved the guard into `run_benchmark` where baseline presence is known, so it fires for both the explicit and implicit cases (before the prompt loop); removed the now-redundant CLI guard.
+
+### Changed
+
+- **`/simplify` cleanup of the session's E2E + optloop code** (4-angle review): shared `resolve_or_download()` in `bench_common.py` collapses the models.toml→HF-download fallback that was copy-pasted across three resolvers; spec-decode result metadata deduped via one `spec_meta` dict; stale text-model default id fixed. E2E harness: new `lib/dom.mjs` helpers (`waitForLabel` for the toggle-button idiom used ~7×, `findModelRow`/`modelRowState` for the models-row lookup duplicated 4× — the value-returning `modelRowState` avoids a handle-per-poll leak, `settingsInputValue`/`setSettingsInput` for the settings panel); `run.mjs` collapses the two identical suite-run blocks into a loop; magic literals (`STOP_TEST_MAX_TOKENS`, cadence thresholds) named. Behavior-identical; Python 70 tests green (re-run the Metal-gated E2E suite to confirm the JS refactors).
+
 ## [1.34.18]
 
 ### Changed

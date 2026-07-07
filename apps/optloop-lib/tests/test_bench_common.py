@@ -5,6 +5,7 @@ suspicion detection, fingerprinting, config extraction, and coderef helpers.
 """
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +34,6 @@ from bench_common import (
     slugify_model,
     snapshot_coderef,
 )
-from pathlib import Path
 
 
 # ---------------------------------------------------------------------------

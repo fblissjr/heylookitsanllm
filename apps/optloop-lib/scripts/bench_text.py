@@ -44,7 +44,7 @@ from bench_common import (
     load_baseline,
     load_config,
     print_results,
-    resolve_model_from_toml,
+    resolve_or_download,
     save_baseline,
     save_run,
     sync_barrier,
@@ -247,16 +247,8 @@ def resolve_model_path(model_path: str | None, config: dict) -> str:
     """
     if model_path:
         return model_path
-    text_config = config.get("bench", {}).get("text", {})
-    model_id = text_config.get("model", "mlx-community/google_gemma-3-27b-it-mlx-bf16")
-    local_path = resolve_model_from_toml(model_id)
-    if local_path:
-        return local_path
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download(model_id)
-    except Exception:
-        return model_id
+    model_id = config.get("bench", {}).get("text", {}).get("model", "mlx-community/gemma-3-27b-it-bf16")
+    return resolve_or_download(model_id)
 
 
 def resolve_draft_path(draft_path: str | None, config: dict, use_config_draft: bool) -> str | None:
@@ -269,17 +261,7 @@ def resolve_draft_path(draft_path: str | None, config: dict, use_config_draft: b
         return draft_path
     if not use_config_draft:
         return None
-    draft_id = config.get("bench", {}).get("text", {}).get("draft_model")
-    if not draft_id:
-        return None
-    local_path = resolve_model_from_toml(draft_id)
-    if local_path:
-        return local_path
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download(draft_id)
-    except Exception:
-        return draft_id
+    return resolve_or_download(config.get("bench", {}).get("text", {}).get("draft_model"))
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +411,17 @@ def run_benchmark(
         draft_name = resolve_model_name(draft_model_path)
         print(f"Draft loaded: {draft_name} (speculative decoding ON)", file=sys.stderr)
 
+    # A baseline must be NON-speculative. Refuse to write one with a draft
+    # attached -- covers both --reset-baseline and the implicit "this model has no
+    # baseline yet" case that per-model baselines opened up (the CLI flag alone
+    # can't see the latter). Fires before the prompt loop, not after.
+    baseline_data = load_baseline(bench_dir)
+    if draft_model is not None and (reset_baseline or baseline_data is None):
+        raise SystemExit(
+            "Refusing to establish a baseline WITH speculative decoding -- the baseline "
+            "must be non-speculative. Bench this model without a draft first (or "
+            "--reset-baseline without one), then compare with --spec-decode.")
+
     # Reset peak memory tracking
     mx.reset_peak_memory()
 
@@ -486,12 +479,12 @@ def run_benchmark(
         "peak_memory_gb": round(peak_memory_gb, 1),
     }
 
-    # Load or create baseline
-    baseline_data = load_baseline(bench_dir)
+    # baseline_data was loaded early (for the non-speculative-baseline guard).
     fingerprint_match = True
     all_violations = []
     suspicion_warnings = []
     variance_warnings = []
+    spec_meta = {"draft_model": draft_name, "num_draft_tokens": num_draft_tokens if draft_name else None}
 
     if baseline_data is None or reset_baseline:
         # This IS the baseline
@@ -500,8 +493,7 @@ def run_benchmark(
             composite_score=1.0, metrics=metrics,
             per_prompt=all_prompt_results, hardware=hardware,
         )
-        result_data["draft_model"] = draft_name
-        result_data["num_draft_tokens"] = num_draft_tokens if draft_name else None
+        result_data.update(spec_meta)
         save_baseline(bench_dir, result_data)
         save_run(bench_dir, result_data, timestamp.replace(":", ""))
         composite_score = 1.0
@@ -564,8 +556,7 @@ def run_benchmark(
             per_prompt=all_prompt_results, hardware=hardware,
         )
         # Add verification metadata to result
-        result_data["draft_model"] = draft_name
-        result_data["num_draft_tokens"] = num_draft_tokens if draft_name else None
+        result_data.update(spec_meta)
         result_data["fingerprint_match"] = fingerprint_match
         result_data["hard_constraint_violations"] = all_violations
         result_data["suspicion_warnings"] = suspicion_warnings
@@ -606,11 +597,9 @@ def main():
     parser.add_argument("--config", default=None, help="Path to bench_config.toml")
     args = parser.parse_args()
 
-    if args.reset_baseline and (args.draft_model_path or args.spec_decode):
-        print("Refusing to reset the baseline WITH speculative decoding on -- the "
-              "baseline must be non-speculative so the spec-decode run has something "
-              "lossless to compare against.", file=sys.stderr)
-        sys.exit(1)
+    # (The non-speculative-baseline invariant is enforced in run_benchmark, where
+    # per-model baseline presence is known -- it catches both --reset-baseline and
+    # the implicit "this model has no baseline yet" case.)
 
     # Load config
     config = load_config(Path(args.config) if args.config else None)

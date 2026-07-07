@@ -91,7 +91,7 @@ from bench_common import (
     load_baseline,
     load_config,
     print_results,
-    resolve_model_from_toml,
+    resolve_or_download,
     save_baseline,
     save_run,
     sync_barrier,
@@ -241,16 +241,8 @@ def resolve_model_path(model_path: str | None, config: dict) -> str:
     """
     if model_path:
         return model_path
-    vlm_config = config.get("bench", {}).get("vlm", {})
-    model_id = vlm_config.get("model", "mlx-community/Qwen3.5-27B-mxfp8-mlx")
-    local_path = resolve_model_from_toml(model_id)
-    if local_path:
-        return local_path
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download(model_id)
-    except Exception:
-        return model_id
+    model_id = config.get("bench", {}).get("vlm", {}).get("model", "mlx-community/Qwen3.5-27B-mxfp8-mlx")
+    return resolve_or_download(model_id)
 
 
 # ---------------------------------------------------------------------------

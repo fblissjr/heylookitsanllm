@@ -73,6 +73,23 @@ def resolve_model_from_toml(model_id: str, path: Path | None = None) -> str | No
     return None
 
 
+def resolve_or_download(model_id: str | None) -> str | None:
+    """Resolve a model id to a usable path: models.toml local path first (no
+    download), then HF snapshot_download, falling back to the id itself if the
+    download errors. Returns None for a falsy id. This is the shared tail of
+    every resolve_*_path() in the bench scripts."""
+    if not model_id:
+        return None
+    local_path = resolve_model_from_toml(model_id)
+    if local_path:
+        return local_path
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download(model_id)
+    except Exception:
+        return model_id
+
+
 # ---------------------------------------------------------------------------
 # Model naming + per-model baseline dirs
 # ---------------------------------------------------------------------------

@@ -84,28 +84,19 @@ async function main() {
 
     browser = await launchBrowser();
 
-    if (runChat) {
-      const suite = new Suite('chat');
+    const plan = [
+      { name: 'chat', enabled: runChat, run: runChatSuite },
+      { name: 'pages', enabled: runPages, run: runPagesSuite },
+    ];
+    for (const { name, enabled, run } of plan) {
+      if (!enabled) continue;
+      const suite = new Suite(name);
       console.log(`\n${suite.name} suite`);
       await server.clearData();
       const page = await browser.newPage();
       const ctx = createPageContext(page, { base, maxTokens: CONFIG.maxTokens });
       try {
-        await runChatSuite({ suite, ctx, config: CONFIG });
-      } finally {
-        await page.close();
-      }
-      suites.push(suite);
-    }
-
-    if (runPages) {
-      const suite = new Suite('pages');
-      console.log(`\n${suite.name} suite`);
-      await server.clearData();
-      const page = await browser.newPage();
-      const ctx = createPageContext(page, { base, maxTokens: CONFIG.maxTokens });
-      try {
-        await runPagesSuite({ suite, ctx, config: CONFIG });
+        await run({ suite, ctx, config: CONFIG });
       } finally {
         await page.close();
       }
