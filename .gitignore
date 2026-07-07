@@ -108,6 +108,7 @@ coverage.xml
 .pytest_cache/
 cover/
 apps/heylook-frontend/test-results/
+apps/*/coverage/
 
 # Translations
 *.mo

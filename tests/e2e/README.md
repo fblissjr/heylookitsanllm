@@ -35,6 +35,12 @@ bun run e2e:pages    # pages suite only
 
 Exit code is non-zero if any check fails.
 
+Known false positive: after an mlx version bump, the FIRST run pays Metal
+shader JIT compilation and the streaming-cadence guard can read low (seen:
+25.3/s vs the 30/s floor on the 0.32.0 upgrade day; warm re-run passed at
+full speed). If ONLY the cadence guard fails right after an mlx/model
+change, re-run before diagnosing a delivery regression.
+
 ## Config (env vars)
 
 | var                   | default                              | meaning |

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.11]
+
+### Changed
+
+- **mlx upgraded 0.31.2 -> 0.32.0 in the root venv (and 0.31.1 -> 0.32.0 in optloop-lib's)** -- v0.32.0 (released 2026-07-07) ships upstream PR #3628 "Fix threaded compile cache cleanup", the real fix for the CompilerCache TLS teardown abort we worked around in v1.31.2. Proven with a discriminating A/B repro (a compiled function returning a TUPLE, executed on a worker thread that then exits): SIGTRAP with the exact production `PyThreadState_Get`/GIL fatal error on 0.31.2, clean on 0.32.0 -- the tuple return was the ingredient the original minimal-repro attempt was missing. `_PinnedExecutorPool` stays regardless (it also bounds stream-registry growth, which the upstream fix does not address). Full suites green on 0.32.0: backend 839, optloop-lib 65, E2E 51/51 live.
+
+### Fixed
+
+- **Root venv extras**: plain `uv sync` had silently stripped the `performance`/`test` extras (pyturbojpeg -- the multipart JPEG decoder -- uvloop, xxhash, cachetools, pytest plugins). Restored with `uv sync --all-extras`; gotcha recorded in CLAUDE.md.
+
 ## [1.34.10]
 
 ### Added
