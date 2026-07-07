@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.15]
+
+### Changed
+
+- **E2E harness default model → `gemma-4-26b-a4b-it-8bit-mlx`** (`tests/e2e/run.mjs`, README). Any fast A4B MoE in `models.toml` works; override with `E2E_MODEL`. Unverified against this default (needs a run once it's in `models.toml`) — the streaming-cadence guard needs >30 tok/s, which an 8-bit A4B MoE should clear comfortably.
+
 ## [1.34.14]
 
 ### Added
@@ -53,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **v3 frontend E2E harness (`tests/e2e/`)**: puppeteer-core + system Chrome driving the real `/v3` frontend against a spawned `heylookllm` with an isolated `HEYLOOK_DB_PATH`, so real conversations/notebooks are never touched (the suites clear all data). Two suites, 51 checks, green against the MoE `gemma-4-26B-A4B-it-heretic-4bit`: **chat** (24 -- streaming, edit/regenerate/delete position-truncation, stop=partial-saved, post-abort health, settings + the `localStorage` `max_tokens` seed, conversation CRUD, 390px mobile) and **pages** (27 -- notebook autosave + generate-at-cursor tail preservation, explore logprob chips + keyboard nav, perf no-polling proof + range switching, models list/load/unload + HF scan + danger-zone clear). Own `package.json`/`bun.lock` (not repo root); run with `node run.mjs [chat|pages]`. Rebuilds the 52 browser checks lost with the v3 build scratchpad (plan Phase 4 item 1). Two gotchas encoded in the harness: settings are seeded via `localStorage` before boot then a forced reload (settings.js caches localStorage once at import, and a hash-only navigation is same-document, so a plain re-goto never re-reads the seed); `finishStream` flips the Send button to idle before it awaits the partial-save and sets the status, so stop-checks wait on the "Stopped" status, not the button.
+- **v3 frontend E2E harness (`tests/e2e/`)**: puppeteer-core + system Chrome driving the real `/v3` frontend against a spawned `heylookllm` with an isolated `HEYLOOK_DB_PATH`, so real conversations/notebooks are never touched (the suites clear all data). Two suites, 51 checks, green against a fast A4B MoE (~90 tok/s): **chat** (24 -- streaming, edit/regenerate/delete position-truncation, stop=partial-saved, post-abort health, settings + the `localStorage` `max_tokens` seed, conversation CRUD, 390px mobile) and **pages** (27 -- notebook autosave + generate-at-cursor tail preservation, explore logprob chips + keyboard nav, perf no-polling proof + range switching, models list/load/unload + HF scan + danger-zone clear). Own `package.json`/`bun.lock` (not repo root); run with `node run.mjs [chat|pages]`. Rebuilds the 52 browser checks lost with the v3 build scratchpad (plan Phase 4 item 1). Two gotchas encoded in the harness: settings are seeded via `localStorage` before boot then a forced reload (settings.js caches localStorage once at import, and a hash-only navigation is same-document, so a plain re-goto never re-reads the seed); `finishStream` flips the Send button to idle before it awaits the partial-save and sets the status, so stop-checks wait on the "Stopped" status, not the button.
 
 ## [1.34.7]
 

@@ -7,7 +7,7 @@
 //   node run.mjs pages      # pages suite only
 //
 // Config via env:
-//   E2E_MODEL      model id to preload + drive        (default: gemma-4-26B-A4B-it-heretic-4bit)
+//   E2E_MODEL      model id to preload + drive        (default: gemma-4-26b-a4b-it-8bit-mlx)
 //   E2E_PORT       server port                        (default: 8080)
 //   E2E_MAX_TOKENS default per-generation token cap   (default: 24)
 //   E2E_CHROME     path to Chrome binary              (default: /Applications/Google Chrome.app/...)
@@ -31,7 +31,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..');
 
 const CONFIG = {
-  model: process.env.E2E_MODEL || 'gemma-4-26B-A4B-it-heretic-4bit',
+  model: process.env.E2E_MODEL || 'gemma-4-26b-a4b-it-8bit-mlx',
   port: Number(process.env.E2E_PORT || 8080),
   maxTokens: Number(process.env.E2E_MAX_TOKENS || 24),
   baseUrl: process.env.E2E_BASE_URL || null,

@@ -702,7 +702,7 @@ class TestModelNaming:
 
     def test_dense_and_moe_get_distinct_dirs(self):
         base = Path("data/vlm")
-        dense = model_bench_dir(base, "google_gemma-4-31B-it-mlx-mxfp8")
-        moe = model_bench_dir(base, "gemma-4-26B-A4B-it-heretic-4bit")
+        dense = model_bench_dir(base, "gemma-4-31b-it-8bit")
+        moe = model_bench_dir(base, "gemma-4-26b-a4b-it-8bit")
         assert dense != moe
         assert dense.parent == base and moe.parent == base
