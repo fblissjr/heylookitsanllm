@@ -85,6 +85,11 @@ function buildSkeleton(ctx) {
       const conv = s.conversations.find((c) => c.id === ctx.state.activeId);
       if (conv) conv.model_id = s.modelSelect.value;
     }
+    // Capability-gated controls (enable_thinking) must track the model: an
+    // open panel rebuilt here, not only on next open.
+    if (!s.settingsHost.hidden) {
+      s.settingsHost.replaceChildren(buildSettingsPanel({ caps: currentCaps(ctx) }));
+    }
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);

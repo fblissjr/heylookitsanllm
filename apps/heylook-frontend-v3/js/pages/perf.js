@@ -115,7 +115,7 @@ function setError(ctx, text) {
 
 async function loadMetrics(ctx, force) {
   try {
-    const data = await api.systemMetrics(force);
+    const data = await api.systemMetrics(force, { signal: ctx.signal });
     if (!ctx.alive) return;
     setError(ctx, '');
     applyMetrics(ctx, data);
@@ -206,7 +206,7 @@ async function loadProfile(ctx, range) {
   s.profileBody.replaceChildren(createEl('div', { class: 'empty-state' }, ['Loading…']));
 
   try {
-    const data = await api.perfProfile(range);
+    const data = await api.perfProfile(range, { signal: ctx.signal });
     if (!ctx.alive || s.activeRange !== range) return;
     renderProfile(ctx, data);
   } catch (err) {

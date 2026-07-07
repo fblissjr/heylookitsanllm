@@ -10,7 +10,7 @@
   --surface-2: oklch(0.948 0.010 91);    /* hover / pressed / code bg */
   --ink: oklch(0.28 0.02 78);
   --ink-muted: oklch(0.49 0.02 82);
-  --ink-faint: oklch(0.60 0.018 85);
+  --ink-faint: oklch(0.60 0.018 85); /* placeholders ONLY -- ~3.5:1 on --bg, below the 4.5:1 floor for real text (status lines use --ink-muted) */
   --line: oklch(0.905 0.012 88);
   --line-strong: oklch(0.83 0.015 88);
 
@@ -440,7 +440,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .chat__status {
   font-family: var(--mono);
   font-size: var(--text-sm);
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   padding: 0.15rem 1rem 0.35rem;
   text-align: center;
   min-height: 1.4rem;
@@ -760,7 +760,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .notebook__status {
   font-family: var(--mono);
   font-size: var(--text-sm);
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   padding: 0.15rem 1rem 0.35rem;
   text-align: center;
   min-height: 1.4rem;
@@ -987,7 +987,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 .explore__status {
   font-family: var(--mono);
-  color: var(--ink-faint);
+  color: var(--ink-muted);
   padding: 0 1.25rem 0.35rem;
   min-height: 1.4rem;
 }

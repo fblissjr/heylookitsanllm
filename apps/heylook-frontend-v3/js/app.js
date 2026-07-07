@@ -50,10 +50,22 @@ async function navigate() {
     link.classList.toggle('nav-item--active', link.dataset.route === routeName);
   }
 
-  const mod = await route.load();
-  if (token !== navToken) return;
-  currentPage = mod.default;
-  await currentPage.mount(main);
+  try {
+    const mod = await route.load();
+    if (token !== navToken) return;
+    currentPage = mod.default;
+    await currentPage.mount(main);
+  } catch (err) {
+    // A page that fails to load or mount must not brick the router: show the
+    // failure in place and leave nav/hashchange fully working.
+    if (token !== navToken) return;
+    console.error(`page "${routeName}" failed to mount`, err);
+    currentPage = null;
+    main.replaceChildren(createEl('div', { class: 'error-note' }, [
+      `This page failed to load (${err.message}). `,
+      'Navigation still works -- pick another page or reload.',
+    ]));
+  }
 }
 
 window.addEventListener('hashchange', navigate);

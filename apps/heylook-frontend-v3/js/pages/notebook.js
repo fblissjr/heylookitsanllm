@@ -320,6 +320,10 @@ function startGenerate(ctx) {
   const gen = { controller, targetId: s.activeId, head, tail, content: '' };
   s.gen = gen;
   s.generateBtn.textContent = 'Stop';
+  // Honest affordance: the painter overwrites textarea.value every frame, so
+  // mid-generation keystrokes would be silently destroyed. Lock the surface
+  // instead of eating input.
+  s.contentTextarea.readOnly = true;
   showStatus(ctx, '');
 
   streamChat({ model: s.modelSelect.value, messages, ...samplerParams() }, {
@@ -354,7 +358,10 @@ function releaseGen(ctx, gen) {
   gen.controller.abort();
   if (s.gen !== gen) return;
   s.gen = null;
-  if (ctx.alive) s.generateBtn.textContent = 'Generate';
+  if (ctx.alive) {
+    s.generateBtn.textContent = 'Generate';
+    s.contentTextarea.readOnly = false;
+  }
 }
 
 async function finishGenerate(ctx, gen, { content, aborted }) {
