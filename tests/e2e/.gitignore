@@ -1,0 +1,6 @@
+node_modules/
+
+# The repo-root .gitignore has a broad `lib/` rule (build output elsewhere);
+# re-include this harness's own source lib/ dir, scoped to tests/e2e only.
+!lib/
+!lib/**

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.8]
+
+### Added
+
+- **v3 frontend E2E harness (`tests/e2e/`)**: puppeteer-core + system Chrome driving the real `/v3` frontend against a spawned `heylookllm` with an isolated `HEYLOOK_DB_PATH`, so real conversations/notebooks are never touched (the suites clear all data). Two suites, 51 checks, green against the MoE `gemma-4-26B-A4B-it-heretic-4bit`: **chat** (24 -- streaming, edit/regenerate/delete position-truncation, stop=partial-saved, post-abort health, settings + the `localStorage` `max_tokens` seed, conversation CRUD, 390px mobile) and **pages** (27 -- notebook autosave + generate-at-cursor tail preservation, explore logprob chips + keyboard nav, perf no-polling proof + range switching, models list/load/unload + HF scan + danger-zone clear). Own `package.json`/`bun.lock` (not repo root); run with `node run.mjs [chat|pages]`. Rebuilds the 52 browser checks lost with the v3 build scratchpad (plan Phase 4 item 1). Two gotchas encoded in the harness: settings are seeded via `localStorage` before boot then a forced reload (settings.js caches localStorage once at import, and a hash-only navigation is same-document, so a plain re-goto never re-reads the seed); `finishStream` flips the Send button to idle before it awaits the partial-save and sets the status, so stop-checks wait on the "Stopped" status, not the button.
+
 ## [1.34.7]
 
 ### Fixed
