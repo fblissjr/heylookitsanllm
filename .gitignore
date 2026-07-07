@@ -64,9 +64,12 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-!apps/heylook-frontend/src/lib/
-lib64/
+# Anchored to the repo root: these are setuptools build output at the project
+# top level. A bare `lib/`/`lib64/` matches ANY nested source dir of that name
+# (it silently swallowed apps/heylook-frontend/src/lib and tests/e2e/lib) --
+# anchoring keeps the build-artifact intent without eating source trees.
+/lib/
+/lib64/
 parts/
 sdist/
 var/

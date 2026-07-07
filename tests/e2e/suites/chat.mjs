@@ -40,6 +40,59 @@ async function lastAssistantText(page) {
   return t;
 }
 
+// Client-observed streaming cadence, measured INSIDE the page against the same
+// /v1/chat/completions path the app uses. The Phase 1 fix (asyncio.wait instead
+// of a 0.1s poll in async_generator_with_abort) is invisible to server-side
+// telemetry -- only a client timing this stream can catch a regression back to
+// the ~100ms poll ceiling. Returns per-content-delta inter-arrival gaps.
+async function measureStreamCadence(page, model, maxTokens) {
+  return page.evaluate(async (model, maxTokens) => {
+    const marks = [];
+    let usage = null;
+    const res = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'Write several full sentences about the sea and the sky.' }],
+        max_tokens: maxTokens,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const evt = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        for (const line of evt.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const d = line.slice(5).trim();
+          if (!d || d === '[DONE]') continue;
+          let c;
+          try { c = JSON.parse(d); } catch { continue; }
+          if (c.choices?.[0]?.delta?.content) marks.push(performance.now());
+          if (c.usage) usage = c.usage;
+        }
+      }
+    }
+    const gaps = [];
+    for (let i = 1; i < marks.length; i++) gaps.push(marks[i] - marks[i - 1]);
+    gaps.sort((a, b) => a - b);
+    const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : null;
+    const spanMs = marks.length > 1 ? marks[marks.length - 1] - marks[0] : null;
+    const rate = spanMs ? (marks.length - 1) / (spanMs / 1000) : null;
+    return { ok: true, chunks: marks.length, median, rate, usage };
+  }, model, maxTokens);
+}
+
 export async function runChatSuite({ suite, ctx, config }) {
   const { page } = ctx;
   await ctx.open('#/chat');
@@ -93,6 +146,22 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('status line reports token usage after completion', async () => {
     const status = await textOf(page, '.chat__status');
     assert(status && /token/i.test(status), `status="${status}"`);
+  });
+
+  await suite.check('streaming delivery is not poll-quantized (client cadence)', async () => {
+    // Guards the Phase 1 delivery fix. The old poll capped delivery at ~10/s
+    // (~100ms gaps); the fix delivers as fast as the model decodes (~90 tok/s /
+    // ~11ms on the MoE). Thresholds sit ~2-3x inside the regression signature so
+    // a fast model passes comfortably. Requires a fast E2E_MODEL (the default
+    // MoE); a natively-slow model would false-fail -- see README.
+    const c = await measureStreamCadence(page, config.model, 64);
+    assert(c.ok, `probe request failed (status=${c.status})`);
+    assert(c.chunks >= 8, `too few content chunks to measure (${c.chunks})`);
+    assert(c.median != null && c.median < 50,
+      `median inter-chunk gap ${c.median?.toFixed(1)}ms >= 50ms (poll-quantization signature is ~100ms)`);
+    assert(c.rate > 30,
+      `client decode rate ${c.rate?.toFixed(1)}/s <= 30/s (old poll ceiling was ~10/s)`);
+    console.log(`      cadence: ${c.chunks} chunks, median gap ${c.median.toFixed(1)}ms, ${c.rate.toFixed(1)}/s`);
   });
 
   await suite.check('conversation appears in sidebar with derived title', async () => {

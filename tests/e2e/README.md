@@ -57,7 +57,8 @@ Exit code is non-zero if any check fails.
 - `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, summary printer.
 - `lib/dom.mjs` — shared DOM helpers (`clickByText`, `armedClick` two-tap
   confirm, overflow check).
-- `suites/chat.mjs` — ~26 checks: streaming, edit/regenerate/delete truncation,
+- `suites/chat.mjs` — ~25 checks: streaming, a client-side streaming-cadence
+  regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, conversation CRUD,
   390px mobile.
 - `suites/pages.mjs` — ~27 checks: notebook autosave + generate-at-cursor tail
@@ -73,3 +74,11 @@ Exit code is non-zero if any check fails.
   click Stop before the generation finishes.
 - The danger-zone clear check runs LAST in the pages suite; it wipes the
   (isolated) DB.
+- The **streaming-cadence guard** (`streaming delivery is not poll-quantized`)
+  measures client-observed inter-chunk gaps via an in-page fetch — the Phase 1
+  delivery fix is invisible to server-side telemetry, so only a client timing
+  the stream can catch a regression back to the ~100ms poll ceiling. It asserts
+  median gap < 50ms and > 30 tok/s, which needs a FAST model. The default MoE
+  passes with margin (~11ms, ~88/s); a natively-slow dense model (e.g. the 31B
+  gemma at ~10 tok/s) would false-fail — override `E2E_MODEL` only with a fast
+  model, or expect this one check to flag.

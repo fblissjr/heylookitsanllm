@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.9]
+
+### Added
+
+- **Streaming-cadence regression guard in the E2E chat suite** (`tests/e2e/suites/chat.mjs`, now 25 checks): an in-page fetch to `/v1/chat/completions` measures client-observed inter-chunk arrival gaps and asserts median gap < 50ms and > 30 tok/s. The Phase 1 delivery fix (`asyncio.wait` instead of a 0.1s poll) is INVISIBLE to server-side telemetry -- only a client timing the stream can catch a revert to the ~100ms poll ceiling, so this is the sole automated guard for it. Live: 64 chunks, 10.8ms median, 92.2/s on the MoE. Requires a fast `E2E_MODEL` (the default MoE); a natively-slow dense model would false-fail by design.
+
+### Changed
+
+- **Root `.gitignore`: anchored `lib/`/`lib64/` to `/lib/`/`/lib64/`.** The bare setuptools-boilerplate `lib/` matched ANY nested source dir of that name (it had already forced a `!apps/heylook-frontend/src/lib/` negation and silently swallowed `tests/e2e/lib/`). Anchoring to the repo root keeps the build-artifact intent without eating source trees; the frontend negation is now unnecessary and removed.
+
 ## [1.34.8]
 
 ### Added
