@@ -39,7 +39,7 @@ dependencies = [
     "Pillow>=10.0.1",
     "psutil>=5.9.0",  # System metrics (RAM, CPU)
     "orjson>=3.9.15",  # Fast JSON serialization
-    "aiosqlite>=0.20.0",  # Async SQLite for conversation storage
+    "duckdb>=1.5.2",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────

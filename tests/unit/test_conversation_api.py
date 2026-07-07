@@ -217,10 +217,12 @@ class TestMessageCRUD:
 
         await db.delete_conversation(conn, conv["id"])
 
-        # Verify messages are gone (check directly)
-        async with conn.execute("SELECT COUNT(*) FROM messages") as cur:
-            row = await cur.fetchone()
-            assert row[0] == 0
+        # Verify messages are gone (check directly -- DuckDB store cascades
+        # explicitly, no FK ON DELETE CASCADE)
+        count = await conn.run(
+            lambda c: c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        )
+        assert count == 0
 
     @pytest.mark.asyncio
     async def test_position_auto_increment(self, conn):

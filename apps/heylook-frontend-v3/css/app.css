@@ -446,6 +446,54 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   min-height: 1.4rem;
 }
 
+/* -- image attachments -------------------------------------------------- */
+
+.chat__attach {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem 1rem;
+  overflow-x: auto;
+}
+.attach-thumb {
+  position: relative;
+  flex: 0 0 auto;
+}
+.attach-thumb img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--line-strong);
+  display: block;
+}
+.attach-thumb__remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.message-image {
+  max-width: min(260px, 100%);
+  max-height: 260px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--line);
+  display: block;
+}
+
 .chat__composer {
   display: flex;
   gap: 0.5rem;

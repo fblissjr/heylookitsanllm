@@ -1,22 +1,36 @@
 # src/heylook_llm/db.py
-"""SQLite database for conversation storage.
+"""DuckDB store for conversations and notebooks (Q5 migration).
 
-Provides async access via aiosqlite. Schema auto-creates on first connection.
-DB path defaults to ``data/conversations.db`` relative to the working directory,
-overridable with the ``HEYLOOK_DB_PATH`` environment variable.
+Messages persist as CONTENT BLOCK lists (Messages-style JSON) so image
+conversations round-trip; reads expose both ``content`` (flattened text of
+the text blocks -- the back-compatible wire shape) and ``content_blocks``
+(the full list). String input normalizes to a single text block.
+
+Concurrency by construction: DuckDB's Python API is synchronous, so every
+operation runs in a worker thread (``asyncio.to_thread``) holding a store-wide
+lock, on the store's single connection. Each logical operation is atomic --
+there is no shared implicit-transaction state to bleed across interleaved
+handlers (the aiosqlite defect class this migration retires).
+
+DB path defaults to ``data/conversations.duckdb`` relative to the working
+directory, overridable with the ``HEYLOOK_DB_PATH`` environment variable.
+No migration from the retired SQLite store: this is a fresh start by design.
 """
 
+import asyncio
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-import aiosqlite
+import duckdb
+import orjson
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2  # v2 = DuckDB + content blocks
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
 _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id"})
@@ -33,9 +47,9 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 CREATE TABLE IF NOT EXISTS messages (
     id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id),
     role            TEXT NOT NULL,
-    content         TEXT NOT NULL DEFAULT '',
+    content_blocks  TEXT NOT NULL DEFAULT '[]',
     thinking        TEXT,
     position        INTEGER NOT NULL,
     created_at      TEXT NOT NULL,
@@ -63,17 +77,83 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 """
 
 
+# ---------------------------------------------------------------------------
+# Content blocks
+# ---------------------------------------------------------------------------
+
+def normalize_blocks(content) -> list[dict]:
+    """Normalize message content to a block list.
+
+    Strings become a single text block; block lists pass through
+    (shallow-copied). ``None`` behaves like the empty string.
+    """
+    if content is None:
+        content = ""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    return [dict(b) for b in content]
+
+
+def flatten_blocks(blocks: list[dict]) -> str:
+    """Back-compatible text view: the text blocks joined by newlines."""
+    return "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+
+
+def _message_row_to_dict(names: list[str], row: tuple) -> dict:
+    d = dict(zip(names, row))
+    blocks = orjson.loads(d.pop("content_blocks"))
+    d["content"] = flatten_blocks(blocks)
+    d["content_blocks"] = blocks
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Store
+# ---------------------------------------------------------------------------
+
 def _default_db_path() -> Path:
     env = os.environ.get("HEYLOOK_DB_PATH")
     if env:
         return Path(env)
-    return Path("data") / "conversations.db"
+    return Path("data") / "conversations.duckdb"
 
 
-async def get_connection(path: Path | str | None = None) -> aiosqlite.Connection:
-    """Open (or create) the database and return a connection.
+class Store:
+    """Single-connection DuckDB store; all ops thread-offloaded + serialized."""
 
-    Caller is responsible for closing the connection.
+    def __init__(self, resolved: str):
+        self._conn = duckdb.connect(resolved)
+        self._lock = threading.Lock()
+        for stmt in _SCHEMA_SQL.split(";\n\n"):
+            if stmt.strip():
+                self._conn.execute(stmt)
+        row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'version'"
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
+
+    async def run(self, fn, *args):
+        """Run a sync store operation in a worker thread under the store lock."""
+        def locked():
+            with self._lock:
+                return fn(self._conn, *args)
+        return await asyncio.to_thread(locked)
+
+    async def close(self):
+        def locked():
+            with self._lock:
+                self._conn.close()
+        await asyncio.to_thread(locked)
+
+
+async def get_connection(path: Path | str | None = None) -> Store:
+    """Open (or create) the database and return the store.
+
+    Caller is responsible for closing the store. ``:memory:`` is supported.
     """
     if isinstance(path, str) and path == ":memory:":
         resolved = ":memory:"
@@ -82,30 +162,13 @@ async def get_connection(path: Path | str | None = None) -> aiosqlite.Connection
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
         resolved = str(resolved_path)
 
-    db = await aiosqlite.connect(resolved, timeout=10)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    await db.execute("PRAGMA foreign_keys=ON")
-    await db.executescript(_SCHEMA_SQL)
-
-    # Stamp version if missing
-    async with db.execute(
-        "SELECT value FROM schema_meta WHERE key = 'version'"
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        await db.execute(
-            "INSERT INTO schema_meta (key, value) VALUES ('version', ?)",
-            (str(_SCHEMA_VERSION),),
-        )
-        await db.commit()
-
-    logger.info("Database ready at %s (schema v%d)", resolved, _SCHEMA_VERSION)
-    return db
+    store = await asyncio.to_thread(Store, resolved)
+    logger.info("Database ready at %s (schema v%d, DuckDB)", resolved, _SCHEMA_VERSION)
+    return store
 
 
 def get_db(request):
-    """Get the shared database connection from app state. For use in FastAPI route handlers."""
+    """Get the shared store from app state. For use in FastAPI route handlers."""
     from fastapi import HTTPException
     conn = getattr(request.app.state, "db", None)
     if conn is None:
@@ -117,65 +180,62 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def clear_all_data(db: aiosqlite.Connection) -> dict:
-    """Delete all conversations, messages, and notebooks. Returns counts."""
-    async with db.execute("SELECT COUNT(*) FROM conversations") as cur:
-        row = await cur.fetchone()
-        conv_count = row[0] if row else 0
-    async with db.execute("SELECT COUNT(*) FROM notebooks") as cur:
-        row = await cur.fetchone()
-        nb_count = row[0] if row else 0
-
-    await db.execute("DELETE FROM messages")
-    await db.execute("DELETE FROM conversations")
-    await db.execute("DELETE FROM notebooks")
-    await db.commit()
-    return {"conversations_deleted": conv_count, "notebooks_deleted": nb_count}
-
-
 def new_id() -> str:
     return uuid.uuid4().hex
+
+
+async def clear_all_data(db: Store) -> dict:
+    """Delete all conversations, messages, and notebooks. Returns counts."""
+    def op(conn):
+        conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        nb_count = conn.execute("SELECT COUNT(*) FROM notebooks").fetchone()[0]
+        conn.execute("DELETE FROM messages")
+        conn.execute("DELETE FROM conversations")
+        conn.execute("DELETE FROM notebooks")
+        return {"conversations_deleted": conv_count, "notebooks_deleted": nb_count}
+    return await db.run(op)
 
 
 # ---------------------------------------------------------------------------
 # Conversation CRUD
 # ---------------------------------------------------------------------------
 
-async def list_conversations(db: aiosqlite.Connection) -> list[dict]:
+_CONV_COLS = "id, title, model_id, system_prompt, created_at, updated_at"
+_MSG_COLS = "id, role, content_blocks, thinking, position, created_at, updated_at"
+_MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
+_CONV_NAMES = ["id", "title", "model_id", "system_prompt", "created_at", "updated_at"]
+
+
+async def list_conversations(db: Store) -> list[dict]:
     """Return all conversations ordered by updated_at desc."""
-    async with db.execute(
-        "SELECT id, title, model_id, system_prompt, created_at, updated_at "
-        "FROM conversations ORDER BY updated_at DESC"
-    ) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    def op(conn):
+        rows = conn.execute(
+            f"SELECT {_CONV_COLS} FROM conversations ORDER BY updated_at DESC"
+        ).fetchall()
+        return [dict(zip(_CONV_NAMES, r)) for r in rows]
+    return await db.run(op)
 
 
-async def get_conversation(db: aiosqlite.Connection, conv_id: str) -> dict | None:
+async def get_conversation(db: Store, conv_id: str) -> dict | None:
     """Return a conversation with its messages, or None."""
-    async with db.execute(
-        "SELECT id, title, model_id, system_prompt, created_at, updated_at "
-        "FROM conversations WHERE id = ?",
-        (conv_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        return None
-
-    conv = dict(row)
-
-    async with db.execute(
-        "SELECT id, role, content, thinking, position, created_at, updated_at "
-        "FROM messages WHERE conversation_id = ? ORDER BY position",
-        (conv_id,),
-    ) as cur:
-        msgs = await cur.fetchall()
-    conv["messages"] = [dict(m) for m in msgs]
-    return conv
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_CONV_COLS} FROM conversations WHERE id = ?", (conv_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        conv = dict(zip(_CONV_NAMES, row))
+        msgs = conn.execute(
+            f"SELECT {_MSG_COLS} FROM messages WHERE conversation_id = ? ORDER BY position",
+            (conv_id,),
+        ).fetchall()
+        conv["messages"] = [_message_row_to_dict(_MSG_NAMES, m) for m in msgs]
+        return conv
+    return await db.run(op)
 
 
 async def create_conversation(
-    db: aiosqlite.Connection,
+    db: Store,
     *,
     title: str = "New Conversation",
     model_id: str | None = None,
@@ -184,12 +244,13 @@ async def create_conversation(
     """Create a new conversation and return it."""
     conv_id = new_id()
     now = _now_iso()
-    await db.execute(
-        "INSERT INTO conversations (id, title, model_id, system_prompt, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (conv_id, title, model_id, system_prompt, now, now),
-    )
-    await db.commit()
+    def op(conn):
+        conn.execute(
+            "INSERT INTO conversations (id, title, model_id, system_prompt, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (conv_id, title, model_id, system_prompt, now, now),
+        )
+    await db.run(op)
     return {
         "id": conv_id,
         "title": title,
@@ -202,7 +263,7 @@ async def create_conversation(
 
 
 async def update_conversation(
-    db: aiosqlite.Connection,
+    db: Store,
     conv_id: str,
     **fields: str | None,
 ) -> dict | None:
@@ -216,82 +277,85 @@ async def update_conversation(
     if not updates:
         return None
 
-    async with db.execute(
-        "SELECT id, title, model_id, system_prompt, created_at, updated_at "
-        "FROM conversations WHERE id = ?",
-        (conv_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        return None
-
-    existing = dict(row)
     now = _now_iso()
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_CONV_COLS} FROM conversations WHERE id = ?", (conv_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        existing = dict(zip(_CONV_NAMES, row))
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [now, conv_id]
+        conn.execute(
+            f"UPDATE conversations SET {set_clause}, updated_at=? WHERE id=?", values
+        )
+        existing.update(**updates, updated_at=now)
+        return existing
+    return await db.run(op)
 
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [now, conv_id]
-    await db.execute(
-        f"UPDATE conversations SET {set_clause}, updated_at=? WHERE id=?",
-        values,
-    )
-    await db.commit()
-    existing.update(**updates, updated_at=now)
-    return existing
 
+async def delete_conversation(db: Store, conv_id: str) -> bool:
+    """Delete a conversation and its messages. Returns True if it existed.
 
-async def delete_conversation(db: aiosqlite.Connection, conv_id: str) -> bool:
-    """Delete a conversation and its messages. Returns True if it existed."""
-    cursor = await db.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
-    await db.commit()
-    return cursor.rowcount > 0
+    DuckDB has no ON DELETE CASCADE -- messages are deleted explicitly first.
+    """
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM conversations WHERE id = ?", (conv_id,)
+        ).fetchone() is not None
+        if not exists:
+            return False
+        conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+        conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
+        return True
+    return await db.run(op)
 
 
 # ---------------------------------------------------------------------------
 # Message CRUD
 # ---------------------------------------------------------------------------
 
-async def _next_position(db: aiosqlite.Connection, conv_id: str) -> int:
-    async with db.execute(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
-        (conv_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    assert row is not None  # COALESCE always returns a row
-    return row[0]
-
-
 async def append_message(
-    db: aiosqlite.Connection,
+    db: Store,
     conv_id: str,
     *,
     role: str,
-    content: str = "",
+    content: str | list[dict] = "",
     thinking: str | None = None,
 ) -> dict | None:
-    """Append a message to a conversation. Returns the message or None if conv not found."""
-    # Verify conversation exists
-    async with db.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)) as cur:
-        if await cur.fetchone() is None:
-            return None
+    """Append a message to a conversation. Returns the message or None if conv not found.
 
+    ``content`` may be a plain string (stored as one text block) or a
+    content-block list (stored verbatim).
+    """
+    blocks = normalize_blocks(content)
     msg_id = new_id()
     now = _now_iso()
-    position = await _next_position(db, conv_id)
 
-    await db.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, thinking, position, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (msg_id, conv_id, role, content, thinking, position, now, now),
-    )
-    # Touch conversation updated_at
-    await db.execute(
-        "UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id)
-    )
-    await db.commit()
+    def op(conn):
+        if conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone() is None:
+            return None
+        position = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
+            (conv_id,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conv_id, role, orjson.dumps(blocks).decode(), thinking, position, now, now),
+        )
+        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+        return position
+
+    position = await db.run(op)
+    if position is None:
+        return None
     return {
         "id": msg_id,
         "role": role,
-        "content": content,
+        "content": flatten_blocks(blocks),
+        "content_blocks": blocks,
         "thinking": thinking,
         "position": position,
         "created_at": now,
@@ -300,91 +364,96 @@ async def append_message(
 
 
 async def update_message(
-    db: aiosqlite.Connection,
+    db: Store,
     conv_id: str,
     msg_id: str,
-    **fields: str | None,
+    **fields,
 ) -> dict | None:
     """Update a message's content and/or thinking. Returns updated message or None.
 
-    Pass only the fields you want to change, e.g. ``update_message(db, c, m, content="new")``.
-    Raises ``ValueError`` if no recognized fields are provided.
+    ``content`` accepts a string or a content-block list. Raises ``ValueError``
+    if no recognized fields are provided.
     """
     updates = {k: v for k, v in fields.items() if k in _UPDATABLE_MESSAGE_FIELDS}
     if not updates:
         raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_MESSAGE_FIELDS)})")
 
-    async with db.execute(
-        "SELECT id, role, content, thinking, position, created_at, updated_at "
-        "FROM messages WHERE id = ? AND conversation_id = ?",
-        (msg_id, conv_id),
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        return None
-
-    msg = dict(row)
     now = _now_iso()
+    col_updates = dict(updates)
+    if "content" in col_updates:
+        col_updates["content_blocks"] = orjson.dumps(normalize_blocks(col_updates.pop("content"))).decode()
 
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [now, msg_id]
-    await db.execute(
-        f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?",
-        values,
-    )
-    await db.execute(
-        "UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id)
-    )
-    await db.commit()
-    msg.update(**updates, updated_at=now)
-    return msg
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_MSG_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
+            (msg_id, conv_id),
+        ).fetchone()
+        if row is None:
+            return None
+        set_clause = ", ".join(f"{k}=?" for k in col_updates)
+        values = list(col_updates.values()) + [now, msg_id]
+        conn.execute(f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?", values)
+        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+        fresh = conn.execute(
+            f"SELECT {_MSG_COLS} FROM messages WHERE id = ?", (msg_id,)
+        ).fetchone()
+        return _message_row_to_dict(_MSG_NAMES, fresh)
+    return await db.run(op)
 
 
 async def truncate_messages_after(
-    db: aiosqlite.Connection,
+    db: Store,
     conv_id: str,
     after_position: int,
 ) -> int:
     """Delete all messages with position > after_position. Returns count deleted."""
-    cursor = await db.execute(
-        "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
-        (conv_id, after_position),
-    )
     now = _now_iso()
-    await db.execute(
-        "UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id)
-    )
-    await db.commit()
-    return cursor.rowcount
+    def op(conn):
+        count = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND position > ?",
+            (conv_id, after_position),
+        ).fetchone()[0]
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
+            (conv_id, after_position),
+        )
+        conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
+        return count
+    return await db.run(op)
 
 
 # ---------------------------------------------------------------------------
 # Notebook CRUD
 # ---------------------------------------------------------------------------
 
-async def list_notebooks(db: aiosqlite.Connection) -> list[dict]:
+_NB_COLS = "id, title, content, system_prompt, model_id, created_at, updated_at"
+_NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "created_at", "updated_at"]
+_NB_LIST_COLS = "id, title, system_prompt, model_id, created_at, updated_at"
+_NB_LIST_NAMES = ["id", "title", "system_prompt", "model_id", "created_at", "updated_at"]
+
+
+async def list_notebooks(db: Store) -> list[dict]:
     """Return all notebooks ordered by updated_at desc. Excludes content for efficiency."""
-    async with db.execute(
-        "SELECT id, title, system_prompt, model_id, created_at, updated_at "
-        "FROM notebooks ORDER BY updated_at DESC"
-    ) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    def op(conn):
+        rows = conn.execute(
+            f"SELECT {_NB_LIST_COLS} FROM notebooks ORDER BY updated_at DESC"
+        ).fetchall()
+        return [dict(zip(_NB_LIST_NAMES, r)) for r in rows]
+    return await db.run(op)
 
 
-async def get_notebook(db: aiosqlite.Connection, notebook_id: str) -> dict | None:
+async def get_notebook(db: Store, notebook_id: str) -> dict | None:
     """Return a notebook or None."""
-    async with db.execute(
-        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
-        "FROM notebooks WHERE id = ?",
-        (notebook_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    return dict(row) if row else None
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_NB_COLS} FROM notebooks WHERE id = ?", (notebook_id,)
+        ).fetchone()
+        return dict(zip(_NB_NAMES, row)) if row else None
+    return await db.run(op)
 
 
 async def create_notebook(
-    db: aiosqlite.Connection,
+    db: Store,
     *,
     title: str = "Untitled",
     content: str = "",
@@ -394,12 +463,13 @@ async def create_notebook(
     """Create a new notebook and return it."""
     nb_id = new_id()
     now = _now_iso()
-    await db.execute(
-        "INSERT INTO notebooks (id, title, content, system_prompt, model_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (nb_id, title, content, system_prompt, model_id, now, now),
-    )
-    await db.commit()
+    def op(conn):
+        conn.execute(
+            "INSERT INTO notebooks (id, title, content, system_prompt, model_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (nb_id, title, content, system_prompt, model_id, now, now),
+        )
+    await db.run(op)
     return {
         "id": nb_id, "title": title, "content": content,
         "system_prompt": system_prompt, "model_id": model_id,
@@ -408,7 +478,7 @@ async def create_notebook(
 
 
 async def update_notebook(
-    db: aiosqlite.Connection,
+    db: Store,
     notebook_id: str,
     **fields: str | None,
 ) -> dict | None:
@@ -417,31 +487,29 @@ async def update_notebook(
     if not updates:
         raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_NOTEBOOK_FIELDS)})")
 
-    async with db.execute(
-        "SELECT id, title, content, system_prompt, model_id, created_at, updated_at "
-        "FROM notebooks WHERE id = ?",
-        (notebook_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        return None
-
-    existing = dict(row)
     now = _now_iso()
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_NB_COLS} FROM notebooks WHERE id = ?", (notebook_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        existing = dict(zip(_NB_NAMES, row))
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [now, notebook_id]
+        conn.execute(f"UPDATE notebooks SET {set_clause}, updated_at=? WHERE id=?", values)
+        existing.update(**updates, updated_at=now)
+        return existing
+    return await db.run(op)
 
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [now, notebook_id]
-    await db.execute(
-        f"UPDATE notebooks SET {set_clause}, updated_at=? WHERE id=?",
-        values,
-    )
-    await db.commit()
-    existing.update(**updates, updated_at=now)
-    return existing
 
-
-async def delete_notebook(db: aiosqlite.Connection, notebook_id: str) -> bool:
+async def delete_notebook(db: Store, notebook_id: str) -> bool:
     """Delete a notebook. Returns True if it existed."""
-    cursor = await db.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
-    await db.commit()
-    return cursor.rowcount > 0
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM notebooks WHERE id = ?", (notebook_id,)
+        ).fetchone() is not None
+        if exists:
+            conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
+        return exists
+    return await db.run(op)

@@ -1600,7 +1600,9 @@ export interface components {
              * Content
              * @default
              */
-            content: string;
+            content: string | {
+                [key: string]: unknown;
+            }[];
             /** Thinking */
             thinking?: string | undefined;
         };
@@ -1734,7 +1736,9 @@ export interface components {
         /** MessageUpdate */
         MessageUpdate: {
             /** Content */
-            content?: string | undefined;
+            content?: string | {
+                [key: string]: unknown;
+            }[] | undefined;
             /** Thinking */
             thinking?: string | undefined;
         };

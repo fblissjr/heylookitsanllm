@@ -210,6 +210,15 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
 - `DELETE /{id}` → `{status:"deleted",id}`.
 - `POST /{id}/messages` (201) `{role,content,thinking?}` → message.
 - `PUT /{id}/messages/{msgId}` `{content?,thinking?}` → message.
+- **Content blocks (added v1.34.20, DuckDB store):** `content` accepts a plain
+  string OR a Messages-style block list, e.g.
+  `[{type:"image",source:{type:"base64",media_type,data}},{type:"text",text}]`.
+  Every message response carries BOTH `content` (flattened text of the text
+  blocks — back-compatible; render targets that only know strings keep
+  working) and `content_blocks` (the full stored list — the image-rendering
+  source of truth). Strings normalize to one text block. For generation, v3
+  converts stored image blocks to OpenAI `image_url` parts (data URLs) until
+  the Messages-first migration makes the stored blocks the wire shape.
 - `DELETE /{id}/messages?after={pos}` → deletes `position > pos` (position-based truncation drives
   regenerate/edit-regenerate/delete-cascade).
 

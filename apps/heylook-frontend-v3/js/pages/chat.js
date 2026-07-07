@@ -112,6 +112,26 @@ function buildSkeleton(ctx) {
       send(ctx);
     }
   });
+  // Images: attach via picker (mobile camera roll comes free) or paste.
+  s.pendingImages = [];
+  s.fileInput = createEl('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+  s.fileInput.addEventListener('change', () => {
+    addImages(ctx, s.fileInput.files);
+    s.fileInput.value = '';
+  });
+  s.attachBtn = createEl('button', { class: 'btn', title: 'Attach images' }, ['+ Img']);
+  s.attachBtn.addEventListener('click', () => s.fileInput.click());
+  s.textarea.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.items ?? [])]
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter(Boolean);
+    if (files.length) {
+      e.preventDefault();
+      addImages(ctx, files);
+    }
+  });
+  s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
   s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
   s.sendBtn.addEventListener('click', () => (s.stream ? stopStream(ctx) : send(ctx)));
 
@@ -125,7 +145,8 @@ function buildSkeleton(ctx) {
     s.settingsHost,
     s.messagesEl,
     s.statusEl,
-    createEl('div', { class: 'chat__composer' }, [s.textarea, s.sendBtn]),
+    s.attachStrip,
+    createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.fileInput, s.textarea, s.sendBtn]),
   ]);
 
   s.rootEl = createEl('div', { class: 'chat' }, [convPane, thread]);
@@ -308,7 +329,19 @@ function buildMessageEl(ctx, msg) {
   if (msg.role === 'assistant') content.innerHTML = renderMarkdown(msg.content);
   else content.textContent = msg.content;
 
-  const bubble = createEl('div', { class: 'message-bubble' }, [content]);
+  const bubbleChildren = [];
+  if (hasImageBlocks(msg)) {
+    bubbleChildren.push(createEl('div', { class: 'message-images' },
+      msg.content_blocks
+        .filter((b) => b.type === 'image')
+        .map((b) => createEl('img', {
+          class: 'message-image',
+          src: `data:${b.source.media_type};base64,${b.source.data}`,
+          alt: 'attached image',
+        }))));
+  }
+  bubbleChildren.push(content);
+  const bubble = createEl('div', { class: 'message-bubble' }, bubbleChildren);
   const children = [];
   if (msg.role === 'assistant' && msg.thinking) children.push(buildThinkingEl(msg.thinking));
   children.push(bubble);
@@ -325,12 +358,16 @@ function buildActions(ctx, msg) {
   };
   const actions = [
     btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})),
-    btn('Edit', () => {
+  ];
+  // Editing is text-only: the editor would replace content and silently drop
+  // the image blocks. Image messages get delete/regenerate, not edit.
+  if (!hasImageBlocks(msg)) {
+    actions.push(btn('Edit', () => {
       if (ctx.state.stream) return; // renderMessages would orphan the stream placeholder
       ctx.state.editingId = msg.id;
       renderMessages(ctx);
-    }),
-  ];
+    }));
+  }
   if (msg.role === 'assistant') {
     actions.push(btn('Regenerate', () => regenerate(ctx, msg)));
   }
@@ -432,26 +469,92 @@ async function deleteMessage(ctx, msg) {
 }
 
 // ---------------------------------------------------------------------------
+// image attachments
+// ---------------------------------------------------------------------------
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addImages(ctx, files) {
+  const s = ctx.state;
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      if (!ctx.alive) return;
+      s.pendingImages.push({ dataUrl, mediaType: file.type });
+    } catch { /* unreadable file -- skip */ }
+  }
+  renderAttachStrip(ctx);
+}
+
+function renderAttachStrip(ctx) {
+  const s = ctx.state;
+  s.attachStrip.hidden = !s.pendingImages.length;
+  s.attachStrip.replaceChildren(...s.pendingImages.map((img, i) => {
+    const remove = createEl('button', { class: 'attach-thumb__remove', title: 'Remove' }, ['×']);
+    remove.addEventListener('click', () => {
+      s.pendingImages.splice(i, 1);
+      renderAttachStrip(ctx);
+    });
+    return createEl('div', { class: 'attach-thumb' }, [
+      createEl('img', { src: img.dataUrl, alt: '' }),
+      remove,
+    ]);
+  }));
+}
+
+// Stored shape is Messages-style content blocks (what the server persists);
+// hasImageBlocks gates the flows that only make sense for text.
+function hasImageBlocks(msg) {
+  return Boolean(msg.content_blocks?.some((b) => b.type === 'image'));
+}
+
+function buildContentBlocks(text, images) {
+  const blocks = images.map((img) => ({
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: img.mediaType,
+      data: img.dataUrl.slice(img.dataUrl.indexOf(',') + 1),
+    },
+  }));
+  if (text) blocks.push({ type: 'text', text });
+  return blocks;
+}
+
+// ---------------------------------------------------------------------------
 // send + stream
 // ---------------------------------------------------------------------------
 
 async function send(ctx) {
   const s = ctx.state;
   const text = s.textarea.value.trim();
-  if (!text || s.stream) return;
+  const images = s.pendingImages;
+  if ((!text && !images.length) || s.stream) return;
   if (!s.modelSelect.value) {
     showStatus(ctx, 'No models available.', true);
     return;
   }
 
+  const content = images.length ? buildContentBlocks(text, images) : text;
+  const title = (text || 'Image message').slice(0, 50);
   s.textarea.value = '';
   autoGrow(s.textarea);
+  s.pendingImages = [];
+  renderAttachStrip(ctx);
   showStatus(ctx, '');
 
   try {
     if (!s.activeId) {
       const conv = await api.createConversation({
-        title: text.slice(0, 50),
+        title,
         model_id: s.modelSelect.value,
       });
       if (!ctx.alive) return;
@@ -463,13 +566,13 @@ async function send(ctx) {
     } else {
       const conv = s.conversations.find((c) => c.id === s.activeId);
       if (conv && conv.title === 'New conversation' && !s.messages.length) {
-        conv.title = text.slice(0, 50);
+        conv.title = title;
         api.updateConversation(s.activeId, { title: conv.title }).catch(() => {});
         renderConvList(ctx);
       }
     }
 
-    const msg = await api.addMessage(s.activeId, { role: 'user', content: text });
+    const msg = await api.addMessage(s.activeId, { role: 'user', content });
     if (!ctx.alive) return;
     s.messages.push(msg);
     renderMessages(ctx);
@@ -480,11 +583,24 @@ async function send(ctx) {
   }
 }
 
+// Wire shape for generation: v3 currently speaks the OpenAI chat-completions
+// format, so stored image blocks convert to image_url parts (data URLs).
+// When v3 migrates to /v1/messages (Phase 3b) the stored blocks ARE the wire
+// shape and this conversion disappears.
+function toWireContent(msg) {
+  if (!hasImageBlocks(msg)) return msg.content;
+  return msg.content_blocks.map((b) => (
+    b.type === 'image'
+      ? { type: 'image_url', image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+      : { type: 'text', text: b.text ?? '' }
+  ));
+}
+
 function buildRequestBody(ctx) {
   const s = ctx.state;
   const messages = [];
   if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
-  for (const m of s.messages) messages.push({ role: m.role, content: m.content });
+  for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m) });
   return { model: s.modelSelect.value, messages, ...samplerParams() };
 }
 

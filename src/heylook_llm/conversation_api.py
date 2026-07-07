@@ -36,14 +36,18 @@ class ConversationUpdate(BaseModel):
     system_prompt: str | None = None
 
 
+# content accepts a plain string OR a content-block list (Messages-style,
+# e.g. [{"type":"image","source":{...}}, {"type":"text","text":"..."}]).
+# Responses always carry both: `content` (flattened text, back-compatible)
+# and `content_blocks` (the full list). Spec: docs/frontend_v3_spec.md §4.
 class MessageCreate(BaseModel):
     role: str
-    content: str = ""
+    content: str | list[dict] = ""
     thinking: str | None = None
 
 
 class MessageUpdate(BaseModel):
-    content: str | None = None
+    content: str | list[dict] | None = None
     thinking: str | None = None
 
 
