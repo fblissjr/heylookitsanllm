@@ -27,6 +27,8 @@ via direct library calls and remain valid for optloop-lib comparisons.
 | 2026-03-16 | Gemma-3-27B bf16 | 11.7 | 679.8 | 74.9 | 53.2 | First text baseline with patches |
 | 2026-03-16 | Qwen3.5-27B mxfp8 | 21.0 | 652.3 | 104.0 | 27.5 | First VLM baseline |
 | 2026-07-07 | gemma-3-27b-it-bf16 | 11.7 | 1322.0 | 151.9 | 53.9 | mlx 0.32.0; 6 text prompts incl. long_context; canonical text baseline (avg over prompts; ttft/prefill higher because the prompt mix now includes long-prefill workloads) |
+| 2026-07-07 | gemma-4-31b-it-8bit-mlx (VLM) | 15.3 | 1428.4 | 167.5 | 33.3 | FIRST real-vision baseline. mlx-vlm 0.6.5/mlx-lm 0.31.3; 14 prompts (2 text + 3 synthetic + 9 real photos), avg vision-encode 1592ms. Dense = bandwidth-bound. |
+| 2026-07-07 | gemma-4-26b-a4b-it-8bit-mlx (VLM) | 48.1 | 483.4 | 494.7 | 27.3 | Same suite/date. MoE (~4B active): 3.1x faster decode + 3x faster vision-encode (524ms) than the dense 31B despite similar total params -- dispatch-bound, not bandwidth-bound. |
 
 ## Performance Ceilings (M2 Ultra 192GB, ~800 GB/s bandwidth)
 
@@ -78,34 +80,45 @@ Findings:
   draft (gemma-3-4b) to raise acceptance; a num_draft sweep isolated to
   short-context; measure acceptance rate directly (needs the fork to surface it).
 
-## VLM vision baseline -- BLOCKED on mrope (2026-07-07)
+## VLM vision baselines -- gemma-4 dense + MoE, mrope RESOLVED (2026-07-07)
 
-Attempted the real-photo VLM baseline (9 owner photos + synthetic renders).
-Two blockers hit; two fixes, one open:
-- **Config id was dead** (like the text one): `mlx-community/Qwen3.5-27B-mxfp8-mlx`
-  is a TEXT model and not local. Fixed to `Qwen3-VL-32B-Instruct-8bit` (local,
-  vision, instruct). NOTE: this means the Mar-16 "VLM baseline" (Qwen3.5-27B,
-  21.0 gen_tps) was a text model through the VLM loader's TEXT path -- the
-  bench's VISION path had never actually run against a real vision model.
-- **transformers needs torchvision** for Qwen3-VL's video processor (both venvs
-  are torch-free by design). FIXED by porting the server's two soft-patches
-  (AutoVideoProcessor.from_pretrained -> None, lenient ProcessorMixin video
-  check) verbatim into bench_vlm.py (copied, not imported -- library-level
-  bench). Model then loads clean.
-- **OPEN -- multimodal RoPE.** Qwen3-VL uses 3D mrope position_ids; the bench's
-  simplified pre-filled-cache vision path (manual `model(input_ids, cache=...)`
-  then continue on the cache) never supplies them, so cos/sin are sized for the
-  pre-image sequence while queries include the expanded image tokens ->
-  `[broadcast_shapes] (1,64,20,128) vs (1,1,14,128)` in
-  apply_multimodal_rotary_pos_emb. This is the known VLM position-handling bug
-  class (CLAUDE.md: wrap_language_model + _position_ids/_rope_deltas reset).
-  Fix options for a future session: (a) route the vision path through
-  `mlx_vlm.generate` (loses the vision-encode-vs-decode timing split the manual
-  path measures); (b) port the server's wrap_language_model / position-reset so
-  the manual path feeds correct mrope position_ids (keeps the split). Until then
-  the vision baseline can't be established; text-through-VLM would run but is not
-  the point. Config + torch fix committed (v1.34.13) so only the mrope work
-  remains.
+First real-vision baselines (9 owner photos + synthetic renders). The path to
+here surfaced three things, all now resolved:
+
+- **The bench's VISION path had never run against a real VLM.** The Mar-16 "VLM
+  baseline" (Qwen3.5-27B, 21.0 gen_tps) was a TEXT model through the loader's
+  text path. Two dead config ids (Qwen3.5-27B-mxfp8, then a mrope wall on
+  Qwen3-VL) were dead ends.
+- **transformers-needs-torchvision** (torch-free venvs): fixed by porting the
+  server's two soft-patches into bench_vlm.py (v1.34.13) -- still in place.
+- **mrope RESOLVED by updating the forks.** The stale Mar-15 mlx-vlm fork
+  (`#820`, 0.4.0) had the multimodal-RoPE bug (cos/sin broadcast mismatch on
+  image-token expansion). Pulling the owner's synced forks -> **mlx-vlm 0.6.5
+  (`#1529`), mlx-lm 0.31.3 (`#1431`)** fixed it: gemma-4 dense/MoE AND Qwen3-VL
+  all run the manual pre-filled-cache vision path clean, no wrap_language_model
+  port needed. `uv sync` was clean (only dropped soundfile; mlx stayed 0.32.0).
+  gemma-3/gemma-4 use standard RoPE, so the fork bump alone unblocked them.
+
+Baselines (8-bit, 14 prompts = 2 text + 3 synthetic + 9 real photos, runs=3):
+
+| metric | dense 31B | MoE 26B-A4B |
+|--------|----------:|------------:|
+| gen_tps        | 15.3  | **48.1** |
+| vision_ms      | 1592  | **524**  |
+| prefill_tps    | 167.5 | **494.7**|
+| ttft_ms        | 1428  | 483      |
+| peak_mem_gb    | 33.3  | 27.3     |
+
+**Profile contrast (the reason to bench both):** the MoE is ~3.1x faster decode
+AND ~3x faster vision-encode/prefill than the dense 31B despite similar TOTAL
+params -- because only ~4B are active per token. Dense is bandwidth-bound (reads
+all weights every token, like gemma-3-27b); MoE shifts the bottleneck to expert
+dispatch/gather + the (small, fast) active set. An mlx-lm/mlx-vlm optimization
+will score very differently on the two -- bandwidth tricks help the dense, expert
+dispatch/gather help the MoE. Per-model baselines (v1.34.14) keep both +
+fingerprints without clobbering. Next: the MTP experiment (MoE +
+`gemma-4-26B-A4B-it-assistant-bf16-mlx` drafter via mlx-vlm's `draft_kind="mtp"`)
+-- the shot at the verification-based-decoding win.
 
 ## What Works
 

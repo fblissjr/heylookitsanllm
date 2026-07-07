@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.16]
+
+### Added
+
+- **First real-vision VLM baselines: gemma-4 dense + MoE** (`docs/optimization_log.md`). The bench's vision path had never run against a real VLM before (the Mar-16 "VLM baseline" was a text model through the loader's text path). Updating the editable forks to the owner's synced versions — **mlx-vlm 0.6.5 (#1529), mlx-lm 0.31.3 (#1431)** (`uv sync` clean, mlx stayed 0.32.0) — resolved the multimodal-RoPE blocker that the stale Mar-15 fork had; gemma-4 dense/MoE and Qwen3-VL all run the manual pre-filled-cache vision path clean. Baselines (8-bit, 14 prompts incl. 9 real photos, runs=3): **dense gemma-4-31b 15.3 gen_tps / 1592ms vision / 33.3 GB**; **MoE gemma-4-26b-a4b 48.1 gen_tps / 524ms vision / 27.3 GB**. The MoE is ~3× faster decode + vision-encode despite similar total params (only ~4B active) — dense is bandwidth-bound, MoE is dispatch-bound, so library optimizations will score very differently on each (the reason to bench both). Per-model baselines keep them separate. Next: the MTP experiment (MoE + the `-assistant-bf16` drafter via mlx-vlm's `draft_kind="mtp"`).
+
 ## [1.34.15]
 
 ### Changed
