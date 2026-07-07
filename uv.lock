@@ -1029,8 +1029,8 @@ wheels = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.6.3"
-source = { git = "https://github.com/Blaizzy/mlx-vlm.git#78b96eb5462141447b9a6b4943ef553891da56dd" }
+version = "0.6.5"
+source = { git = "https://github.com/Blaizzy/mlx-vlm.git#e9c5bd75e7d641f9ebc36c4ed18849513b25c5fd" }
 dependencies = [
     { name = "datasets" },
     { name = "fastapi" },

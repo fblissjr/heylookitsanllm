@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.18]
+
+### Changed
+
+- **mlx-vlm bumped 0.6.3 -> 0.6.5 in the root venv** (git pin refreshed to upstream e9c5bd7): brings the gemma-4 video/audio-weight loading fixes and the Qwen3-VL mrope fix to the SERVER (they were previously only in optloop-lib's fork clones). Safety net held: the tests/contract/test_mlxvlm_surface.py pins (added v1.34.5 for exactly this moment) plus the full unit suite are green on 0.6.5, and the v3 E2E suite passed 52/52 against a server running it.
+
+## [1.34.17]
+
+### Fixed
+
+- **Five confirmed v3 frontend defects** (from the triaged external review, plan Phase 4 item 3; E2E 52/52 after):
+  - Router crash-guard (`js/app.js`): a page that fails to load/mount renders an in-place error panel instead of bricking navigation.
+  - Perf page fetches now abort on page teardown (`{signal: ctx.signal}` passed to systemMetrics/perfProfile).
+  - Chat settings panel rebuilds on model switch while open, so capability-gated controls (enable_thinking) track the selected model.
+  - Notebook content is readOnly during generation -- the streaming painter overwrites textarea.value every frame, so mid-generation keystrokes were silently destroyed; the surface now locks honestly and unlocks on completion/stop/error.
+  - Status lines (chat/notebook/explore) moved --ink-faint -> --ink-muted (~3.5:1 -> ~6:1 on white); --ink-faint documented as placeholders-only at the token definition.
+  - NOT included on purpose: the enable_thinking tri-state (contract change, coupled to the Messages extension design -- Phase 3b).
+
 ## [1.34.16]
 
 ### Added
