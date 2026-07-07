@@ -8,6 +8,7 @@ for multi-repo optimization of mlx-lm and mlx-vlm internals.
 """
 
 import hashlib
+import re
 import subprocess
 import sys
 import time
@@ -70,6 +71,39 @@ def resolve_model_from_toml(model_id: str, path: Path | None = None) -> str | No
             if m.get("id") == short_id:
                 return m.get("config", {}).get("model_path")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Model naming + per-model baseline dirs
+# ---------------------------------------------------------------------------
+
+def resolve_model_name(model_path: str) -> str:
+    """Human-readable model name from a local path or HF id.
+
+    HF snapshot paths (.../hub/models--org--name/snapshots/<hash>) resolve to the
+    repo's short name instead of the opaque snapshot hash -- otherwise per-model
+    baselines would be keyed by hash. Local Storage paths use the leaf dir name.
+    """
+    p = str(model_path)
+    if "/snapshots/" in p:
+        for seg in p.split("/"):
+            if seg.startswith("models--"):
+                return seg[len("models--"):].split("--")[-1]
+    if "/" in p and not Path(p).exists():
+        return p.split("/")[-1]
+    return Path(p).name
+
+
+def slugify_model(name: str) -> str:
+    """Filesystem-safe slug for a model name (per-model baseline dir)."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name)).strip("_")
+    return slug or "model"
+
+
+def model_bench_dir(base_dir: Path, model_name: str) -> Path:
+    """Per-model baseline dir under a bench dir -- keeps e.g. dense vs MoE (and
+    each of their fingerprints) from clobbering one another's baseline."""
+    return base_dir / slugify_model(model_name)
 
 
 # ---------------------------------------------------------------------------

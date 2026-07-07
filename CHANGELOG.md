@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.14]
+
+### Added
+
+- **optloop-lib: per-model baselines** so dense vs MoE (and their distinct fingerprints) don't clobber one another. Baselines now live in `data/<bench>/<model-slug>/baseline.json` via a shared `model_bench_dir()` helper. Also `resolve_model_name()` maps an HF cache snapshot path (`.../models--org--name/snapshots/<hash>`) back to the repo short name instead of the opaque hash (the cosmetic model-name bug), and `slugify_model()` keeps the dir filesystem-safe. Applied to both `bench_text.py` and `bench_vlm.py`; +5 unit tests (70 total). Groundwork for benching gemma-4 dense and MoE side by side.
+
 ## [1.34.13]
 
 ### Fixed

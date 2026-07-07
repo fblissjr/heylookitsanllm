@@ -28,8 +28,12 @@ from bench_common import (
     load_baseline,
     load_models_toml,
     resolve_model_from_toml,
+    resolve_model_name,
+    model_bench_dir,
+    slugify_model,
     snapshot_coderef,
 )
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -671,3 +675,34 @@ class TestSmokeImports:
         mod = importlib.import_module("bench_analysis")
         assert hasattr(mod, "load_results_tsv")
         assert hasattr(mod, "print_summary")
+
+
+# ---------------------------------------------------------------------------
+# Model naming + per-model baseline dirs
+# ---------------------------------------------------------------------------
+
+class TestModelNaming:
+    def test_hf_snapshot_path_resolves_to_repo_name(self):
+        # HF cache path -> repo short name, NOT the opaque snapshot hash
+        p = "hub/models--mlx-community--gemma-3-27b-it-bf16/snapshots/b6317e"
+        assert resolve_model_name(p) == "gemma-3-27b-it-bf16"
+
+    def test_local_storage_path_uses_leaf_dir(self, tmp_path):
+        d = tmp_path / "google_gemma-4-31B-it-mlx-mxfp8"
+        d.mkdir()
+        assert resolve_model_name(str(d)) == "google_gemma-4-31B-it-mlx-mxfp8"
+
+    def test_hf_id_uses_last_segment(self):
+        assert resolve_model_name("mlx-community/gemma-3-1b-it-bf16") == "gemma-3-1b-it-bf16"
+
+    def test_slugify_is_filesystem_safe(self):
+        assert slugify_model("Qwen3-VL-32B-Instruct-8bit") == "Qwen3-VL-32B-Instruct-8bit"
+        assert "/" not in slugify_model("mlx-community/foo bar")
+        assert slugify_model("") == "model"
+
+    def test_dense_and_moe_get_distinct_dirs(self):
+        base = Path("data/vlm")
+        dense = model_bench_dir(base, "google_gemma-4-31B-it-mlx-mxfp8")
+        moe = model_bench_dir(base, "gemma-4-26B-A4B-it-heretic-4bit")
+        assert dense != moe
+        assert dense.parent == base and moe.parent == base

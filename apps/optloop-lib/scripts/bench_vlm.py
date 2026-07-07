@@ -72,6 +72,8 @@ from mlx_vlm.prompt_utils import apply_chat_template as vlm_apply_chat_template
 
 from bench_common import (
     VLM_DIR,
+    model_bench_dir,
+    resolve_model_name,
     baseline_metrics_from_result,
     build_result_data,
     check_fingerprints,
@@ -504,7 +506,8 @@ def run_benchmark(
 
     print(f"Loading model: {model_path}", file=sys.stderr)
     model, processor = vlm_load(model_path)
-    model_name = Path(model_path).name if "/" not in model_path or Path(model_path).exists() else model_path.split("/")[-1]
+    model_name = resolve_model_name(model_path)
+    bench_dir = model_bench_dir(VLM_DIR, model_name)  # per-model baseline (dense vs MoE etc.)
     print(f"Model loaded: {model_name}", file=sys.stderr)
 
     mx.reset_peak_memory()
@@ -593,7 +596,7 @@ def run_benchmark(
     if avg_vision_ms > 0:
         metrics["avg_vision_ms"] = round(avg_vision_ms, 1)
 
-    baseline_data = load_baseline(VLM_DIR)
+    baseline_data = load_baseline(bench_dir)
     fingerprint_match = True
     all_violations = []
     suspicion_warnings = []
@@ -605,8 +608,8 @@ def run_benchmark(
             composite_score=1.0, metrics=metrics,
             per_prompt=all_prompt_results, hardware=hardware,
         )
-        save_baseline(VLM_DIR, result_data)
-        save_run(VLM_DIR, result_data, timestamp.replace(":", ""))
+        save_baseline(bench_dir, result_data)
+        save_run(bench_dir, result_data, timestamp.replace(":", ""))
         composite_score = 1.0
         print("\nBaseline established.", file=sys.stderr)
     else:
@@ -665,7 +668,7 @@ def run_benchmark(
         result_data["hard_constraint_violations"] = all_violations
         result_data["suspicion_warnings"] = suspicion_warnings
         result_data["variance_warnings"] = variance_warnings
-        save_run(VLM_DIR, result_data, timestamp.replace(":", ""))
+        save_run(bench_dir, result_data, timestamp.replace(":", ""))
 
     extra_lines = {}
     if avg_vision_ms > 0:

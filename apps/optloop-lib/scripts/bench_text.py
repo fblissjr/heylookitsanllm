@@ -25,6 +25,8 @@ from mlx_lm.sample_utils import make_sampler
 
 from bench_common import (
     TEXT_DIR,
+    model_bench_dir,
+    resolve_model_name,
     baseline_metrics_from_result,
     build_result_data,
     check_fingerprints,
@@ -414,7 +416,8 @@ def run_benchmark(
     print(f"Loading model: {model_path}", file=sys.stderr)
     loaded = lm_load(model_path)
     model, tokenizer = loaded[0], loaded[1]
-    model_name = Path(model_path).name if "/" not in model_path or Path(model_path).exists() else model_path.split("/")[-1]
+    model_name = resolve_model_name(model_path)
+    bench_dir = model_bench_dir(TEXT_DIR, model_name)  # per-model baseline
     print(f"Model loaded: {model_name}", file=sys.stderr)
 
     # Optional draft model for speculative decoding (must share the tokenizer).
@@ -423,7 +426,7 @@ def run_benchmark(
     if draft_model_path:
         print(f"Loading draft model: {draft_model_path}", file=sys.stderr)
         draft_model = lm_load(draft_model_path)[0]
-        draft_name = Path(draft_model_path).name if "/" not in draft_model_path or Path(draft_model_path).exists() else draft_model_path.split("/")[-1]
+        draft_name = resolve_model_name(draft_model_path)
         print(f"Draft loaded: {draft_name} (speculative decoding ON)", file=sys.stderr)
 
     # Reset peak memory tracking
@@ -484,7 +487,7 @@ def run_benchmark(
     }
 
     # Load or create baseline
-    baseline_data = load_baseline(TEXT_DIR)
+    baseline_data = load_baseline(bench_dir)
     fingerprint_match = True
     all_violations = []
     suspicion_warnings = []
@@ -499,8 +502,8 @@ def run_benchmark(
         )
         result_data["draft_model"] = draft_name
         result_data["num_draft_tokens"] = num_draft_tokens if draft_name else None
-        save_baseline(TEXT_DIR, result_data)
-        save_run(TEXT_DIR, result_data, timestamp.replace(":", ""))
+        save_baseline(bench_dir, result_data)
+        save_run(bench_dir, result_data, timestamp.replace(":", ""))
         composite_score = 1.0
         print("\nBaseline established.", file=sys.stderr)
     else:
@@ -567,7 +570,7 @@ def run_benchmark(
         result_data["hard_constraint_violations"] = all_violations
         result_data["suspicion_warnings"] = suspicion_warnings
         result_data["variance_warnings"] = variance_warnings
-        save_run(TEXT_DIR, result_data, timestamp.replace(":", ""))
+        save_run(bench_dir, result_data, timestamp.replace(":", ""))
 
     # Print grep-friendly output
     print("", file=sys.stderr)
