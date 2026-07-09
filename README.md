@@ -7,7 +7,7 @@
   <br>
 </p>
 
-Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a React web UI, and on-the-fly model swapping.
+Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a vanilla-JS web UI, and on-the-fly model swapping.
 
 Built on Apple MLX for text and vision.
 
@@ -97,7 +97,7 @@ heylookllm service status|start|stop|restart|uninstall
 
 There are three ways to add models:
 
-**Web UI** -- Open the Models applet (`/models`) in the browser. Click Import, scan a directory or your HuggingFace cache, select the models you want, pick a profile, and import. Models are added to `models.toml` and available immediately.
+**Web UI** -- Open the Models page in the `/v3` UI. Click Import, scan a directory or your HuggingFace cache, select the models you want, pick a profile, and import. Models are added to `models.toml` and available immediately.
 
 **CLI** -- Scan a directory or HF cache and generate config:
 ```bash
