@@ -234,10 +234,10 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 - `PUT /{id}` `{name?,system_prompt?,params?}` (only set fields patched; `system_prompt:null` clears;
   empty→400; rename collision→409) → updated preset.
 - `DELETE /{id}` → `{status:"deleted",id}`.
-- `params` is an open sampler-knob object (same keys the settings panel manages: temperature, top_p,
-  top_k, min_p, max_tokens, repetition_penalty, repetition_context_size, presence_penalty, seed,
-  enable_thinking); a preset stores only the knobs it pins — absent keys stay on the null-means-cascade
-  contract when applied. Presets survive `POST /v1/data/clear` (they're config, not data).
+- `params` is an open sampler-knob object; the authoritative key vocabulary is `PARAM_META` in the v3
+  settings panel (`apps/heylook-frontend-v3/js/settings.js`) — do not re-enumerate it here. A preset
+  stores only the knobs it pins — absent keys stay on the null-means-cascade contract when applied.
+  Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`;

@@ -128,6 +128,13 @@ class TestPresetValidation:
         with pytest.raises(ValueError):
             await db.create_preset(conn, name="   ")
 
+    @pytest.mark.asyncio
+    async def test_unserializable_params_raise_value_error(self, conn):
+        # orjson refuses ints beyond 64 bits with TypeError; the boundary must
+        # turn that into ValueError so the router 400s instead of 500ing.
+        with pytest.raises(ValueError):
+            await db.create_preset(conn, name="big", params={"seed": 2**64})
+
 
 class TestPresetIsolation:
     @pytest.mark.asyncio
@@ -138,3 +145,22 @@ class TestPresetIsolation:
         await db.create_conversation(conn, title="doomed")
         await db.clear_all_data(conn)
         assert [p["name"] for p in await db.list_presets(conn)] == ["survivor"]
+
+    @pytest.mark.asyncio
+    async def test_presets_survive_schema_recreate(self, tmp_path, monkeypatch):
+        # The fresh-start recreate on a _SCHEMA_VERSION mismatch drops the
+        # data tables; presets are versionless config and must NOT be in the
+        # drop list.
+        path = tmp_path / "recreate.duckdb"
+        conn = await db.get_connection(path=path)
+        await db.create_preset(conn, name="keeper")
+        await db.create_conversation(conn, title="doomed")
+        await conn.close()
+
+        monkeypatch.setattr(db, "_SCHEMA_VERSION", db._SCHEMA_VERSION + 1)
+        conn = await db.get_connection(path=path)
+        try:
+            assert await db.list_conversations(conn) == []  # recreate happened
+            assert [p["name"] for p in await db.list_presets(conn)] == ["keeper"]
+        finally:
+            await conn.close()

@@ -60,8 +60,7 @@ export function setSetting(key, value) {
 }
 
 export function resetSettings() {
-  cache = emptySettings();
-  scheduleSave();
+  applySettings({});
 }
 
 // Preset capture: every non-null key, raw. Unlike samplerParams() it keeps

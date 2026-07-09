@@ -319,6 +319,11 @@ export async function runChatSuite({ suite, ctx, config }) {
   // ---- system prompt + presets --------------------------------------------
   const SYS_PROMPT = 'Answer in exactly one word.';
 
+  // One owner for the "find a preset <option> by its label" lookup.
+  const presetOptionValue = (name) => page.evaluate((n) =>
+    [...document.querySelectorAll('.preset-row select option')]
+      .find((o) => o.textContent === n)?.value ?? null, name);
+
   await suite.check('system prompt edit persists to the conversation', async () => {
     // settings panel is open from the checks above
     await page.evaluate(() => { document.querySelector('.chat__sysprompt').open = true; });
@@ -337,16 +342,11 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.click('.preset-section .input');
     await page.type('.preset-section .input', 'e2e-preset');
     await clickByText(page, '.preset-row button', 'Save');
-    await waitFor(async () => page.evaluate(() =>
-      [...document.querySelectorAll('.preset-row select option')]
-        .some((o) => o.textContent === 'e2e-preset')),
+    await waitFor(async () => (await presetOptionValue('e2e-preset')) !== null,
       { message: 'saved preset not listed in the select' });
     // drift the panel, then re-apply the preset and expect the pin back
     await setSettingsInput(page, 'Temperature', '1.9');
-    const optValue = await page.evaluate(() =>
-      [...document.querySelectorAll('.preset-row select option')]
-        .find((o) => o.textContent === 'e2e-preset')?.value);
-    await page.select('.preset-row select', optValue);
+    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 'applying the preset did not restore temperature' });
     // back to cascade so nothing leaks into later generations
@@ -357,9 +357,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     const delBtn = await page.$('.preset-section .btn--ghost');
     await armedClick(delBtn);
     await delBtn.dispose();
-    await waitFor(async () => page.evaluate(() =>
-      ![...document.querySelectorAll('.preset-row select option')]
-        .some((o) => o.textContent === 'e2e-preset')),
+    await waitFor(async () => (await presetOptionValue('e2e-preset')) === null,
       { message: 'deleted preset still listed' });
   });
 

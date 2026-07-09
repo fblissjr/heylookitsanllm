@@ -1,5 +1,5 @@
 # src/heylook_llm/db.py
-"""DuckDB store for conversations and notebooks (Q5 migration).
+"""DuckDB store for conversations, notebooks, and presets (Q5 migration).
 
 Messages persist as CONTENT BLOCK lists (Messages-style JSON) so image
 conversations round-trip; reads expose both ``content`` (flattened text of
@@ -199,12 +199,16 @@ class Store:
             )
         elif row[0] != str(_SCHEMA_VERSION):
             # Pre-release DuckDB schema (same-day churn only; the store is a
-            # fresh start by design). Recreate rather than migrate.
+            # fresh start by design). Recreate rather than migrate. `presets`
+            # is deliberately NOT in the drop list: it's versionless config
+            # (additive CREATE TABLE, no FK to versioned tables) promised to
+            # survive destructive operations -- a presets schema change needs
+            # its own explicit migration, not this hammer.
             logger.warning(
                 "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
                 row[0], _SCHEMA_VERSION,
             )
-            for table in ("messages", "conversations", "notebooks", "presets", "schema_meta"):
+            for table in ("messages", "conversations", "notebooks", "schema_meta"):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             self._create_schema()
             self._conn.execute(
@@ -270,7 +274,10 @@ def new_id() -> str:
 
 
 async def clear_all_data(db: Store) -> dict:
-    """Delete all conversations, messages, and notebooks. Returns counts."""
+    """Delete all conversations, messages, and notebooks. Returns counts.
+
+    Presets deliberately survive -- they're configuration, not data.
+    """
     def op(conn):
         conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
         nb_count = conn.execute("SELECT COUNT(*) FROM notebooks").fetchone()[0]
@@ -638,6 +645,10 @@ def _validate_preset_fields(fields: dict) -> dict:
     if "params" in out:
         if not isinstance(out["params"], dict):
             raise ValueError("Preset 'params' must be an object")
+        try:
+            orjson.dumps(out["params"])
+        except TypeError as e:  # e.g. int beyond orjson's 64-bit range
+            raise ValueError(f"Preset 'params' is not JSON-serializable: {e}")
     return out
 
 

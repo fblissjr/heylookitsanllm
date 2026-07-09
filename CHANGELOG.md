@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.24]
+
+### Fixed
+
+- **`/code-review` pass over v1.34.22-.23** (8 finder angles; 10 findings reported, 5 finders
+  independently converged on the top two): the background preset-refresh repaint no longer fires when
+  the list is unchanged or while the cursor is inside the panel (it destroyed uncommitted text on
+  every open); `presets` removed from the schema-recreate drop list (a `_SCHEMA_VERSION` bump would
+  have wiped saved presets despite the config-not-data promise — regression-tested); preset `params`
+  that orjson can't serialize (>64-bit ints) now 400 instead of 500; `savePreset` decides
+  create-vs-overwrite against a freshly fetched list (fixes the stale-cache 404 mirror of the 409 and
+  the wrong "saved" toast, and replaces the nested 409 retry); the New button carries a pre-create
+  draft prompt (send()'s implicit create already did); a prompt/preset applied while the first-send
+  create is in flight is delivered to the new conversation instead of reverted; a stale sysprompt
+  blur now PUTs to the conversation the textarea was built for instead of dropping the edit;
+  `resetSettings()` = `applySettings({})`; spec §4 points at `PARAM_META` instead of re-enumerating
+  knobs; E2E preset-option lookup deduplicated. Skipped as design/pre-existing: cap-gated
+  `enable_thinking` pinning via global settings (predates presets; needs caps-aware settings),
+  unknown-params round-trip stripping, apply-copies-null-prompt. 882 green; E2E 55/55 live.
+
 ## [1.34.23]
 
 ### Changed

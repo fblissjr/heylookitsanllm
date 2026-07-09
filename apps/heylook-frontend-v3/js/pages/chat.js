@@ -169,11 +169,15 @@ function toggleSettings(ctx) {
     host.hidden = true;
     return;
   }
-  // Open instantly from cached presets; the refresh repaints when it lands
-  // (a preset list should never queue user interaction behind the store).
+  // Open instantly from cached presets; the refresh repaints only when the
+  // list actually changed, and never while the user's cursor is in the panel
+  // (replaceChildren would destroy uncommitted text before its change event).
   host.hidden = false;
   rebuildSettingsPanel(ctx);
-  refreshPresets(ctx).then(() => { if (ctx.alive) rebuildSettingsPanel(ctx); });
+  refreshPresets(ctx).then((changed) => {
+    if (!ctx.alive || !changed || host.contains(document.activeElement)) return;
+    rebuildSettingsPanel(ctx);
+  });
 }
 
 // Safe to call unconditionally from any state-changing site: no-op while the
@@ -192,12 +196,17 @@ function rebuildSettingsPanel(ctx) {
 
 // One writer for the conversation's system prompt: state now, PUT if a
 // conversation exists (explicit null clears server-side). With no active
-// conversation the value rides along until send() creates one.
+// conversation the value rides along until a create gives it a home.
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
+  const changed = value !== s.systemPrompt;
   s.systemPrompt = value;
-  if (!s.activeId) return;
-  api.updateConversation(s.activeId, { system_prompt: value })
+  if (!s.activeId || !changed) return; // no-op PUTs skipped (preset re-apply)
+  putSystemPrompt(ctx, s.activeId, value);
+}
+
+function putSystemPrompt(ctx, convId, value) {
+  api.updateConversation(convId, { system_prompt: value })
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
@@ -211,10 +220,14 @@ function buildSystemPromptSection(ctx) {
   });
   // Save on blur/commit, not per keystroke -- one PUT per edit session. A
   // stale textarea (conversation changed under an unrebuilt panel) must not
-  // write the old conversation's prompt onto the new one.
+  // write onto the NEW conversation -- the edit still belongs to the one it
+  // was typed for, so deliver it there instead of dropping it.
   input.addEventListener('change', () => {
-    if (s.activeId !== builtFor) return;
-    setSystemPrompt(ctx, input.value.trim() || null);
+    const value = input.value.trim() || null;
+    if (s.activeId === builtFor) setSystemPrompt(ctx, value);
+    else if (builtFor) putSystemPrompt(ctx, builtFor, value);
+    // builtFor null while a conversation is active: a pre-create draft with
+    // no home -- nothing safe to write.
   });
   return createEl('details', { class: 'chat__sysprompt', open: Boolean(s.systemPrompt) }, [
     createEl('summary', {}, ['System prompt']),
@@ -222,15 +235,29 @@ function buildSystemPromptSection(ctx) {
   ]);
 }
 
+// Resolves true when the list (or the selection's validity) actually
+// changed, so cosmetic repaints can be skipped.
 async function refreshPresets(ctx) {
   const s = ctx.state;
+  const fingerprint = () => JSON.stringify(s.presets.map((p) => [p.id, p.name, p.updated_at]));
+  const before = fingerprint();
   try {
     const res = await api.listPresets({ signal: ctx.signal });
     s.presets = res.presets ?? [];
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Could not load presets: ${err.message}`, true);
   }
-  if (!s.presets.some((p) => p.id === s.presetId)) s.presetId = null;
+  let changed = fingerprint() !== before;
+  if (!s.presets.some((p) => p.id === s.presetId)) {
+    changed ||= s.presetId !== null;
+    s.presetId = null;
+  }
+  return changed;
+}
+
+async function refreshPresetsAndRepaint(ctx) {
+  await refreshPresets(ctx);
+  if (ctx.alive) rebuildSettingsPanel(ctx);
 }
 
 // Applying a preset COPIES its fields (LM Studio semantics): params become
@@ -253,28 +280,20 @@ async function savePreset(ctx, name) {
   name = name.trim();
   if (!name) return;
   const body = { name, system_prompt: s.systemPrompt, params: snapshotSettings() };
-  const existing = s.presets.find((p) => p.name === name);
   try {
-    let saved;
-    if (existing) {
-      saved = await api.updatePreset(existing.id, body);
-    } else {
-      // create; a stale local list can hide a name the server already has
-      // (409) -- "save by name" promises overwrite, so refetch and update
-      saved = await api.createPreset(body).catch(async (err) => {
-        if (err.status !== 409) throw err;
-        await refreshPresets(ctx);
-        const winner = ctx.state.presets.find((p) => p.name === name);
-        if (!winner) throw err;
-        return api.updatePreset(winner.id, body);
-      });
-    }
-    if (!ctx.alive) return;
+    // Decide create-vs-overwrite against a FRESH list -- the local cache can
+    // hide a name the server has (-> 409) or list one it no longer has
+    // (-> 404); both break the save-by-name-upserts promise.
     await refreshPresets(ctx);
     if (!ctx.alive) return;
+    const existing = s.presets.find((p) => p.name === name);
+    const saved = existing
+      ? await api.updatePreset(existing.id, body)
+      : await api.createPreset(body);
+    if (!ctx.alive) return;
     s.presetId = saved.id;
-    rebuildSettingsPanel(ctx);
-    showStatus(ctx, `Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
+    await refreshPresetsAndRepaint(ctx);
+    if (ctx.alive) showStatus(ctx, `Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Preset save failed: ${err.message}`, true);
   }
@@ -291,9 +310,7 @@ async function deletePreset(ctx) {
   }
   if (!ctx.alive) return;
   s.presetId = null;
-  await refreshPresets(ctx);
-  if (!ctx.alive) return;
-  rebuildSettingsPanel(ctx);
+  await refreshPresetsAndRepaint(ctx);
 }
 
 function buildPresetSection(ctx) {
@@ -400,6 +417,9 @@ async function newConversation(ctx) {
     const conv = await api.createConversation({
       title: 'New conversation',
       model_id: s.modelSelect.value || undefined,
+      // a prompt drafted before ANY conversation exists comes along; an
+      // active conversation's prompt does NOT leak into the new one
+      system_prompt: (!s.activeId && s.systemPrompt) || undefined,
     });
     if (!ctx.alive) return;
     s.conversations.unshift(conv);
@@ -733,17 +753,23 @@ async function send(ctx) {
 
   try {
     if (!s.activeId) {
+      // a prompt typed (or preset applied) before the first send
+      const sentPrompt = s.systemPrompt;
       const conv = await api.createConversation({
         title,
         model_id: s.modelSelect.value,
-        // a prompt typed (or preset applied) before the first send
-        system_prompt: s.systemPrompt || undefined,
+        system_prompt: sentPrompt || undefined,
       });
       if (!ctx.alive) return;
       s.conversations.unshift(conv);
       s.activeId = conv.id;
       s.messages = [];
-      s.systemPrompt = conv.system_prompt ?? null;
+      if (s.systemPrompt !== sentPrompt) {
+        // prompt changed while the create was in flight -- it has a home now
+        putSystemPrompt(ctx, conv.id, s.systemPrompt);
+      } else {
+        s.systemPrompt = conv.system_prompt ?? null;
+      }
       // an open panel's sysprompt textarea was built for activeId=null --
       // rebind it to the conversation that now owns the prompt
       rebuildSettingsPanel(ctx);
