@@ -127,7 +127,7 @@ curl -X POST http://localhost:8080/v1/admin/reload
 
 Interactive docs at `http://localhost:8080/docs` when the server is running.
 
-Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`. See [internal/backend/api.md](internal/backend/api.md) for full reference.
+Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`. See [docs/architecture/api.md](docs/architecture/api.md) for full reference.
 
 ## Batch Vision Labeling
 

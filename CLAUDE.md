@@ -12,7 +12,7 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 - **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md).
 - **Status + backlog**: [docs/project/CURRENT.md](./docs/project/CURRENT.md) (graded done/left narrative), [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
 - **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [docs/frontend_v3.md](./docs/frontend_v3.md) (git-tracked). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
-- Deep dives: [internal/](./internal/) -- `backend/`, `bugs/` (postmortems; read before touching providers), `research/`, `log/`. (The old React-frontend docs were archived to `internal/frontend/archive/` on 2026-07-09; the live v3 map is `docs/frontend_v3.md`.)
+- Deep dives: **backend reference** is git-tracked in [docs/architecture/](./docs/architecture/) (overview, api, router, config, mlx_provider, mlx_embedding, ecosystem_strategy -- see its [README](./docs/architecture/README.md)). Local-only in [internal/](./internal/): `bugs/` (postmortems; read before touching providers), `log/`, and stale subsystem notes (batch/logprobs/thinking) pending refresh. The old React-frontend docs are in `internal/frontend/archive/`.
 - Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). (The v3 API contract is spec §4; the live schema is at `/openapi.json` + `/docs`.)
 - `internal/`, `models.toml`, `coderef/` are gitignored -- local-only, never committed.
 
@@ -28,7 +28,7 @@ notebooks + presets, single serialized writer thread, transactional ops;
 frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- add tables additively
 via CREATE TABLE IF NOT EXISTS instead). RLM (`rlm.py`): recursive inference
 with sandboxed REPL.
-- [internal/backend/](./internal/backend/) (architecture, api, router, config, providers/mlx) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
+- [docs/architecture/](./docs/architecture/) (overview, api, router, config, mlx_provider, mlx_embedding, ecosystem_strategy) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
 JS, no build, served at `/v3`. 5 pages (chat, notebook, models, perf, explore);
@@ -61,7 +61,7 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - Perf numbers are honest as of v1.34.1: recorded tok/s = native mlx-lm `generation_tps`, TTFT/tok-s exclude queue-wait (own `queue_wait_ms` field), trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()` -- add new chunk fields THERE, not at call sites (batch_processor.py still has 3 unconverted scrape sites, moot when Phase 2 collapses it).
 - The FIFO generation gate is a PROCESS-GLOBAL singleton shared by all providers (`_get_generation_gate`); `generation_queue_stats()` reports gate-wide traffic, not per-model. Any "is this model busy" logic built on it is conservative across models. `unload()` waits for actives AND gate waiters (30s cap) -- the active counter decrements before `gate.release()`, so never gate teardown on actives alone.
 - Live-verifying streaming/latency changes: the 31B dense gemma natively decodes ~10 tok/s (looks identical to the old delivery cap); use the MoE `gemma-4-26B-A4B` (~90 tok/s) as the discriminating model.
-- Upstream posture (details: `internal/research/mlx_ecosystem_strategy_2026-07.md`): mlx-lm is release-starved -- SHA-pin rather than wait for PyPI, check its open-PR backlog BEFORE writing any workaround, expect new capabilities via sidecar packages.
+- Upstream posture (details: `docs/architecture/ecosystem_strategy.md`): mlx-lm is release-starved -- SHA-pin rather than wait for PyPI, check its open-PR backlog BEFORE writing any workaround, expect new capabilities via sidecar packages.
 
 ## Repo conventions (beyond the global ones)
 

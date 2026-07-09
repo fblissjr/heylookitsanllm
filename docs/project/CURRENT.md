@@ -121,7 +121,7 @@ This file is the handoff. Statuses are graded honestly:
 **UNCERTAIN** = done but verification was partial · **STUB/NOT DONE** = planned, not built.
 
 ECOSYSTEM POSTURE (read before perf/provider work):
-`internal/research/mlx_ecosystem_strategy_2026-07.md` -- Python MLX stack is
+`docs/architecture/ecosystem_strategy.md` -- Python MLX stack is
 the right rail but maintenance-mode upstream (SHA-pin, check the open-PR
 backlog before workarounds, expect spec-decode etc. via sidecars like
 dflash-mlx, never an mlx-lm release; Apple's frontier ships in mlx-swift-lm
