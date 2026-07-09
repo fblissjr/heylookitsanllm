@@ -225,3 +225,36 @@ served gemma-4 MoE with the same parity gates before wiring the explore view.
 - `mlx_apply.py` — project venv; mlx-lm gpt2 forced fp32; replicates the forward capturing block
   outputs; applies `wte.as_linear(ln_f(h @ Jᵀ))`; prints the V1 gate.
 - A per-model gemma variant follows the same shape with RMSNorm + √d + softcap-30 unembed.
+
+## Installing a lens (convert + register)
+
+Git-tracked helper (torch + jlens, run in a SEPARATE env — not the MLX server venv):
+
+    uv run --with torch --with safetensors --with huggingface_hub \
+        --with "jlens @ git+https://github.com/anthropics/jacobian-lens" \
+        python scripts/jspace_convert_lens.py \
+        --hf-repo solarkyle/jspace-lenses --hf-file gemma-4-26b-a4b-it/lens.pt \
+        --model-id gemma-4-26b-a4b-it-8bit-mlx --softcap 30
+
+Writes `adapters/jspace/<model_id>/lens.safetensors` + `lens.sidecar.json`. `adapters/` is
+git-tracked (`.gitkeep`) with gitignored contents (like `modelzoo/`); the registry
+(`LensRegistry.from_env`) defaults there, so the model then appears in `GET /v1/jspace/models`
+with zero config (override via `HEYLOOK_JSPACE_DIR`). For risk scores, also drop a
+`normalizer.json` (per-model feature mean/std) and `router.json` (solarkyle spec) in that dir.
+
+## Deferred / follow-ups (not in the easy+medium scope)
+
+- **Calibrated live risk.** A single request can't be z-scored; risk is `null` until a per-model
+  `normalizer.json` is placed. Future: a running-stats normalizer that accrues over analyze calls
+  so risk emerges after N samples, or a one-shot calibration pass. (V4 proved the router math;
+  full V4b = workspace-readout AUC from OUR lens logits on e4b, not just the trace scalars.)
+- **Generation-gate coordination.** Analyze forwards run in a threadpool and bypass the
+  process-global FIFO generation gate — fine single-user, a real gap under concurrent load
+  (two Metal graphs at once). Acquire the gate around analyze before exposing broadly.
+- **Live per-token streaming instrumentation** (hard tier) — read the workspace during generation,
+  not just post-hoc.
+- **VLM vision residuals** — jspace is text-only; the image path is untouched.
+- **Fitting our own lenses** — we download + convert; no backward-pass fitting harness in-repo.
+- **DONE this pass:** the convert+register helper (`scripts/jspace_convert_lens.py` + `adapters/`)
+  and an E2E page check (`tests/e2e/suites/pages.mjs`, lens-gated) — both to make the next
+  iteration cheap (fewer 26B reloads).

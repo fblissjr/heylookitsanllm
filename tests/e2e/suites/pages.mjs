@@ -1,7 +1,8 @@
 // Pages suite: notebook (autosave + generate-at-cursor tail preservation),
 // explore (logprob chips + keyboard nav), perf (no-polling proof + ranges),
-// models (list/load/unload + HF scan + danger-zone clear). Data is cleared by
-// the orchestrator before this runs; the danger-zone clear check runs LAST.
+// jspace (Jacobian-lens workspace strip, lens-gated), models (list/load/unload
+// + HF scan + danger-zone clear). Data is cleared by the orchestrator before
+// this runs; the danger-zone clear check runs LAST.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow } from '../lib/dom.mjs';
@@ -273,6 +274,30 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'rows' });
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px on models page');
     await ctx.setViewport(1280, 900);
+  });
+
+  // =========================== JSPACE ====================================
+  // Lens-gated: only asserts the analyze flow when a lens for the E2E model is
+  // installed at adapters/jspace/<model_id>/ (registry default).
+  let jspaceHasLens = false;
+  await suite.check('jspace page mounts (lens model or empty-state)', async () => {
+    await ctx.open('#/jspace');
+    await page.waitForSelector('.jspace');
+    const opts = await page.$$eval('.jspace__bar select option', (els) => els.map((e) => e.value));
+    jspaceHasLens = opts.includes(config.model);
+    const hasEmpty = (await count(page, '.jspace .empty-state')) > 0;
+    assert(jspaceHasLens || hasEmpty, 'jspace: neither the E2E lens model nor an empty-state');
+  });
+
+  await suite.check('jspace analyze renders the workspace strip', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    await page.select('.jspace__bar select', config.model);
+    await page.click('.jspace__composer textarea');
+    await page.type('.jspace__composer textarea', 'The Eiffel Tower is located in the city of');
+    await clickByText(page, '.jspace__composer button', 'Analyze');
+    await waitFor(async () => (await count(page, '.jspace__strip .jspace__row')) > 0,
+      { timeout: 90000, message: 'workspace strip never rendered' });
+    assert((await count(page, '.jspace__chip')) > 0, 'no workspace chips rendered');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

@@ -34,6 +34,14 @@ def test_available_and_get(tmp_path):
     assert reg.get("model-a") is lens            # cached
 
 
+def test_from_env_override(monkeypatch, tmp_path):
+    _make_lens(tmp_path / "m")
+    monkeypatch.setenv("HEYLOOK_JSPACE_DIR", str(tmp_path))
+    reg = LensRegistry.from_env()
+    assert str(reg.base_dir) == str(tmp_path)
+    assert reg.available() == ["m"]
+
+
 def test_missing_get_raises(tmp_path):
     reg = LensRegistry(tmp_path)
     try:

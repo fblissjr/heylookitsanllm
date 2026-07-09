@@ -7,8 +7,10 @@ Lens conversion (PyTorch .pt -> mx safetensors) is an offline dev-time step
     <base_dir>/<model_id>/lens.sidecar.json
     <base_dir>/<model_id>/normalizer.json     (optional; per-model z-score stats)
 
-``<base_dir>`` comes from ``HEYLOOK_JSPACE_DIR``. The directory name is the
-served model id (symlink/alias if a lens is shared across quantizations).
+``<base_dir>`` defaults to the git-tracked ``adapters/jspace`` at the repo root
+(contents gitignored, like ``modelzoo/``); override with ``HEYLOOK_JSPACE_DIR``.
+The directory name is the served model id (symlink/alias if a lens is shared
+across quantizations). Populate it with ``scripts/jspace_convert_lens.py``.
 """
 from __future__ import annotations
 
@@ -27,7 +29,12 @@ class LensRegistry:
 
     @classmethod
     def from_env(cls) -> "LensRegistry":
-        return cls(os.environ.get("HEYLOOK_JSPACE_DIR"))
+        """``HEYLOOK_JSPACE_DIR`` override, else the git-tracked ``adapters/jspace``
+        at the repo root (registry.py -> jspace -> heylook_llm -> src -> repo)."""
+        base = os.environ.get("HEYLOOK_JSPACE_DIR")
+        if not base:
+            base = Path(__file__).resolve().parents[3] / "adapters" / "jspace"
+        return cls(base)
 
     def _dir(self, model_id: str) -> Path | None:
         return self.base_dir / model_id if self.base_dir else None

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.32]
+
+### Added
+
+- **Lens convert+register helper + `adapters/` store.** `scripts/jspace_convert_lens.py` (git-tracked;
+  torch+jlens, separate env) downloads/loads a jlens `.pt` and writes
+  `adapters/jspace/<model_id>/lens.safetensors` + sidecar. `adapters/` is git-tracked via `.gitkeep`
+  with gitignored contents (mirrors `modelzoo/`); `LensRegistry.from_env` now defaults there (repo
+  root), so a converted lens is served with zero config (`HEYLOOK_JSPACE_DIR` still overrides).
+- **E2E coverage for the J-Space page** (`tests/e2e/suites/pages.mjs`, lens-gated): mounts the page
+  and, when a lens for the E2E model is installed, drives Analyze and asserts the workspace strip
+  renders. Cuts the 26B-reload cost of future iteration.
+
 ## [1.34.31]
 
 ### Added
