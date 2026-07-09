@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.26]
+
+### Added
+
+- **J-space (Jacobian lens) backend core module** `src/heylook_llm/jspace/` -- a post-hoc
+  interpretability read-out of a model's verbalizable "workspace" (per-layer, which vocabulary
+  tokens a residual is disposed toward), from Anthropic's July-2026 global-workspace work.
+  `capture.py` (`ModelAdapter` architecture-introspection + `capture_residuals` via a temporary
+  block wrapper) and `lens.py` (`JSpaceLens`: load converted safetensors + sidecar, transport,
+  apply through the model's real head so gemma soft-cap / tied embeddings stay correct).
+  Download-free unit tests in `tests/unit/test_jspace.py`; apply-parity verified cos ~1.0 vs the
+  genuine reference `jlens` on gpt2 (no softcap) and gemma-2-2b (RMSNorm + softcap 30). Not yet
+  wired to an endpoint -- see [docs/jspace_integration_plan.md](docs/jspace_integration_plan.md).
+
+### Docs
+
+- Promoted the j-space build + verifier plan into git-tracked `docs/jspace_integration_plan.md`
+  (indexed in `docs/README.md` + CLAUDE.md Orient).
+
 ## [1.34.25]
 
 ### Removed

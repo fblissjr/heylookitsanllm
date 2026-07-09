@@ -1,0 +1,102 @@
+"""Unit tests for the j-space (Jacobian lens) module.
+
+Uses tiny random-weight mlx-lm models (no downloads) to verify the
+architecture adapter, residual capture, and the reference invariant
+`unembed(last_block_output) == model_logits` across two unembed shapes:
+gpt2 (LayerNorm final norm, tied head, no softcap) and gemma2 (RMSNorm,
+sqrt(d) embed scaling, tied head, final_logit_softcapping).
+
+The full fitted-lens parity (V1/V2, cos ~1.0 vs the genuine jlens) lives in
+the opt-in spike harness under coderef/jspace_scratch/; here we test the
+mechanics deterministically and download-free.
+"""
+import mlx.core as mx
+import numpy as np
+import pytest
+
+from heylook_llm.jspace import JSpaceLens, ModelAdapter, capture_residuals
+
+
+def _gpt2_tiny():
+    from mlx_lm.models.gpt2 import Model, ModelArgs
+    args = ModelArgs(model_type="gpt2", n_ctx=64, n_embd=32, n_head=4, n_layer=3,
+                     n_positions=64, layer_norm_epsilon=1e-5, vocab_size=50)
+    m = Model(args)
+    mx.eval(m.parameters())
+    return m
+
+
+def _gemma2_tiny():
+    from mlx_lm.models.gemma2 import Model, ModelArgs
+    args = ModelArgs(model_type="gemma2", hidden_size=32, num_hidden_layers=3,
+                     intermediate_size=64, num_attention_heads=4, head_dim=8,
+                     rms_norm_eps=1e-6, vocab_size=50, num_key_value_heads=2)
+    m = Model(args)
+    mx.eval(m.parameters())
+    return m
+
+
+@pytest.fixture(autouse=True)
+def _seed():
+    mx.random.seed(0)
+
+
+@pytest.mark.parametrize("builder,expect_softcap", [(_gpt2_tiny, None), (_gemma2_tiny, 30.0)])
+def test_adapter_resolves(builder, expect_softcap):
+    model = builder()
+    ad = ModelAdapter(model)
+    assert ad.n_layers == 3
+    assert len(ad.layers) == 3
+    assert ad.softcap == expect_softcap
+
+
+@pytest.mark.parametrize("builder", [_gpt2_tiny, _gemma2_tiny])
+def test_capture_shapes(builder):
+    model = builder()
+    ids = [1, 2, 3, 4, 5]
+    res = capture_residuals(model, ids, layers=[0, 2])
+    assert set(res.keys()) == {0, 2}
+    for arr in res.values():
+        assert arr.shape == (len(ids), 32)   # [L, d_model]
+
+
+@pytest.mark.parametrize("builder", [_gpt2_tiny, _gemma2_tiny])
+def test_unembed_invariant(builder):
+    """unembed(last block output) must reproduce the model's real logits."""
+    model = builder()
+    ad = ModelAdapter(model)
+    ids = [1, 2, 3, 4, 5]
+    inputs = mx.array([ids])
+    logits = model(inputs)[0]                              # [L, vocab]
+    res = capture_residuals(model, ids, layers=[ad.n_layers - 1], adapter=ad)
+    recon = ad.unembed(res[ad.n_layers - 1])              # [L, vocab]
+    assert np.allclose(np.asarray(recon), np.asarray(logits), atol=1e-3, rtol=1e-3)
+
+
+def test_lens_apply_identity_matches_unembed():
+    """With identity J, lens.apply == unembed(residual) at the chosen positions."""
+    model = _gpt2_tiny()
+    ad = ModelAdapter(model)
+    ids = [1, 2, 3, 4, 5]
+    res = capture_residuals(model, ids, layers=[0, 1])
+    eye = mx.eye(32, dtype=mx.float32)
+    lens = JSpaceLens(jacobians={0: eye, 1: eye}, source_layers=[0, 1], d_model=32)
+    out = lens.apply(ad, res, positions=[-1])
+    for l in (0, 1):
+        expect = ad.unembed(res[l][[-1]])
+        assert np.allclose(np.asarray(out[l]), np.asarray(expect), atol=1e-4)
+
+
+def test_lens_from_files(tmp_path):
+    from safetensors.numpy import save_file
+    import json
+    d = 32
+    save_file({"0": np.eye(d, dtype=np.float32), "2": np.eye(d, dtype=np.float32)},
+              str(tmp_path / "lens.safetensors"))
+    (tmp_path / "lens.sidecar.json").write_text(json.dumps(
+        {"source_layers": [0, 2], "d_model": d, "final_logit_softcapping": 30.0}))
+    lens = JSpaceLens.from_files(tmp_path / "lens.safetensors", tmp_path / "lens.sidecar.json")
+    assert lens.source_layers == [0, 2]
+    assert lens.d_model == d
+    r = mx.random.normal((4, d))
+    assert lens.transport(r, 0).shape == (4, d)

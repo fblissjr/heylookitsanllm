@@ -3,8 +3,10 @@
 Last updated: 2026-07-09
 
 Status: Phase 0 done; Phase 1 done + **V1 GREEN** (gpt2-small) + **V2 GREEN** (gemma-2-2b,
-softcap+RMSNorm proven). Next: server module + the served gemma-4 MoE. Scope = easy + medium
-tiers only. This is a forward-looking design/verifier plan for a
+softcap+RMSNorm proven). **Backend core module `src/heylook_llm/jspace/` (lens.py + capture.py)
+built, unit-tested (8 green), and e2e-verified** (the real module reproduces cos 1.00000 / 5-of-5
+vs the oracle on gpt2 + gemma-2-2b). Next: features.py/router (Phase 4), the analyze endpoint
+(Phase 2), and the served gemma-4 MoE parity. Scope = easy + medium tiers only. This is a forward-looking design/verifier plan for a
 not-yet-built feature; the server module does not exist yet. Reproducible spike harness +
 fixtures live in the gitignored `coderef/jspace_scratch/` (see the repro section).
 
@@ -116,8 +118,11 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
 
 ## Placement (backend + frontend)
 
-- `src/heylook_llm/jspace/` — `lens.py` (load/convert/apply), `capture.py` (residual forward),
-  `features.py` (entropy/ignition/router).
+- `src/heylook_llm/jspace/` — `lens.py` (JSpaceLens: load safetensors+sidecar, transport, apply)
+  **[built]**, `capture.py` (ModelAdapter arch-introspection + `capture_residuals` via a temporary
+  block wrapper) **[built]**, `features.py` (entropy/ignition/router) **[TODO]**. The offline
+  torch→safetensors converter is dev-time only (not in the runtime; server loads safetensors via
+  `mx.load`). Unit tests: `tests/unit/test_jspace.py` (download-free, tiny random-weight models).
 - API: `api/jspace.py`, `APIRouter(tags=["JSpace"])`, tag added to `openapi_tags` +
   `app.include_router()` in `api.py` (repo convention).
 - Lens assets: `huggingface_hub` download to a gitignored cache; NEVER committed (LFS, 100s
