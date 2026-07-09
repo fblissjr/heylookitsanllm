@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `perf_collector` docstring updated to drop references to the removed app/guard and to
   point at v3 (spec §4, `tests/e2e/`). New `internal/frontend/v3.md` (gitignored) maps
   v3's done/left + the backend<->v3 coupling; CLAUDE.md Orient now names
-  `internal/backend/plan_2026-07.md` as the roadmap.
+  `docs/project/plan_2026-07.md` as the roadmap.
 
 ## [1.34.24]
 
@@ -242,7 +242,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **App-level optloop (`apps/optloop/`) retired.** A measurement audit found its benchmarks import mlx-lm/mlx-vlm directly and never exercise the `src/heylook_llm/` serving path they were chartered to optimize -- a change to the router, radix cache, or generation core scored exactly 1.0 either way -- and no optimization cycle had ever run end-to-end (results.tsv was header-only, `data/cycles/` empty; the only artifacts were `--reset-baseline` writes). The scoring/fingerprint harness itself was sound and lives on in optloop-lib. Serving-path benchmarking will instead be a thin HTTP bench against a running server, planned after the streaming-delivery and headline-metrics fixes (see `internal/backend/plan_2026-07.md`, Phase 5 measurement section). Also removed: `docs/optloop_advanced.md` (its headline topics -- the bench activation gap and `.pth` monkey patching -- documented the retired app-level mechanism).
+- **App-level optloop (`apps/optloop/`) retired.** A measurement audit found its benchmarks import mlx-lm/mlx-vlm directly and never exercise the `src/heylook_llm/` serving path they were chartered to optimize -- a change to the router, radix cache, or generation core scored exactly 1.0 either way -- and no optimization cycle had ever run end-to-end (results.tsv was header-only, `data/cycles/` empty; the only artifacts were `--reset-baseline` writes). The scoring/fingerprint harness itself was sound and lives on in optloop-lib. Serving-path benchmarking will instead be a thin HTTP bench against a running server, planned after the streaming-delivery and headline-metrics fixes (see `docs/project/plan_2026-07.md`, Phase 5 measurement section). Also removed: `docs/optloop_advanced.md` (its headline topics -- the bench activation gap and `.pth` monkey patching -- documented the retired app-level mechanism).
 
 ### Changed
 

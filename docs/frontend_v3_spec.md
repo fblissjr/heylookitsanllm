@@ -3,7 +3,7 @@
 Last updated: 2026-07-09
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
-> graded done/not-done status lives in `internal/session/CURRENT.md`. This doc
+> graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
 > remains the contract of record: §4 is kept current as the backend moves
 > (last contract updates 2026-07-06, marked "v1.31.1+" / "v1.32.0" below).
 

@@ -20,7 +20,7 @@ in `repos/`).
   overhead is <0.1% of per-token time -- real gains require reducing GPU
   work, not Python tuning.
 - Serving-path (HTTP) benchmarking is explicitly OUT of scope here -- see
-  the measurement section of `internal/backend/plan_2026-07.md`.
+  the measurement section of `docs/project/plan_2026-07.md`.
 
 ## The venv gotcha (this bites)
 

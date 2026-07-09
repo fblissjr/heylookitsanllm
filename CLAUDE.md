@@ -9,8 +9,8 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 
 ## Orient first
 
-- **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [internal/backend/plan_2026-07.md](./internal/backend/plan_2026-07.md).
-- **Status + backlog**: [internal/session/CURRENT.md](./internal/session/CURRENT.md) (graded done/left narrative), [internal/session/TODO.md](./internal/session/TODO.md). Read before starting.
+- **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md).
+- **Status + backlog**: [docs/project/CURRENT.md](./docs/project/CURRENT.md) (graded done/left narrative), [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
 - **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [docs/frontend_v3.md](./docs/frontend_v3.md) (git-tracked). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
 - Deep dives: [internal/](./internal/) -- `backend/`, `bugs/` (postmortems; read before touching providers), `research/`, `log/`. (The old React-frontend docs were archived to `internal/frontend/archive/` on 2026-07-09; the live v3 map is `docs/frontend_v3.md`.)
 - Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). (The v3 API contract is spec §4; the live schema is at `/openapi.json` + `/docs`.)
@@ -73,8 +73,8 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - Frontend v2 specifics (Pydantic `model_fields_set`, `<base href="/v2/">` SPA serving, sanitization): see its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 - Never commit runtime data: `*.db`, `*.jsonl`, `/data/*`, `apps/*/data/*` are gitignored; package data at `src/heylook_llm/data/` is intentionally NOT ignored.
 - Commits fine without asking; never push unless told. Update `internal/log/log_YYYY-MM-DD.md` before ending a session.
-- `internal/` is unversioned (gitignored): before destructively rewriting a long-lived internal doc (plans, specs), copy the old version to an `archive/` subdir first -- that copy IS the history.
-- CLAUDE.md carries MECHANISMS (how things work, what bites); STATUS (what's done, counts, "until X lands") lives in `internal/session/CURRENT.md` + the plan. Status lines here rot into being actively wrong -- the perf-distrust note did exactly that within a day.
+- The roadmap/status/backlog (`plan_2026-07.md`, `CURRENT.md`, `TODO.md`) + the v3 map live git-tracked in `docs/project/` and `docs/` -- git IS their history, edit them directly. `internal/` is still unversioned (gitignored): it holds the local-only docs (bugs/, research/, log/, thoughts/, scratch/, frontend/archive/). Before destructively rewriting a long-lived doc that remains under `internal/`, copy the old version to an `archive/` subdir first -- that copy IS the history.
+- CLAUDE.md carries MECHANISMS (how things work, what bites); STATUS (what's done, counts, "until X lands") lives in `docs/project/CURRENT.md` + the plan. Status lines here rot into being actively wrong -- the perf-distrust note did exactly that within a day.
 
 ## Tests
 

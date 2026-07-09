@@ -8,7 +8,7 @@ Optloop-lib is the repo's only inference-optimization benchmark harness. A Claud
 
 The app-level `apps/optloop` harness was deleted 2026-07-06. Its bench scripts loaded models via `mlx_lm.utils.load()` / `mlx_vlm.utils.load()` directly and never imported `heylook_llm`, so a change to `src/heylook_llm/` -- the thing it was chartered to optimize -- scored identically to no change at all. Optloop-lib doesn't have this problem: it benchmarks editable-install fork repos, and the thing under test genuinely IS the library being edited, so direct library calls are the correct measurement here.
 
-Serving-path (HTTP) benchmarking is a separate, currently out-of-scope problem -- see the measurement section of `internal/backend/plan_2026-07.md`. One caveat matters more than usual right now: no optimization cycle has ever completed end-to-end with this harness. The first real run (a speculative-decoding attempt, per `apps/optloop-lib/CLAUDE.md`) doubles as harness validation, not just an optimization session.
+Serving-path (HTTP) benchmarking is a separate, currently out-of-scope problem -- see the measurement section of `docs/project/plan_2026-07.md`. One caveat matters more than usual right now: no optimization cycle has ever completed end-to-end with this harness. The first real run (a speculative-decoding attempt, per `apps/optloop-lib/CLAUDE.md`) doubles as harness validation, not just an optimization session.
 
 ## Quick start
 

@@ -15,9 +15,9 @@ which is local-only and not part of the published tree.)
 | Concern | File | Notes |
 |---------|------|-------|
 | **Build contract / API contract** | `docs/frontend_v3_spec.md` | §4 = the authoritative backend API contract. Update it in the SAME commit as any contract change (standing rule). |
-| **Roadmap** | `internal/backend/plan_2026-07.md` | Phased 0-5. §"v3 frontend guardrails" + Phase 4 (v3 hardening) + Phase 3b (Messages-API migration) are the v3-facing parts. |
-| **Graded status (done/left)** | `internal/session/CURRENT.md` §1-2 | Authoritative SOLID/HALF-BAKED/UNCERTAIN/STUB grading. The snapshot below is a convenience copy and will drift -- trust CURRENT.md. |
-| **Backlog** | `internal/session/TODO.md` | v3 follow-ups live under "Presets/system-prompt follow-ups". |
+| **Roadmap** | `docs/project/plan_2026-07.md` | Phased 0-5. §"v3 frontend guardrails" + Phase 4 (v3 hardening) + Phase 3b (Messages-API migration) are the v3-facing parts. |
+| **Graded status (done/left)** | `docs/project/CURRENT.md` §1-2 | Authoritative SOLID/HALF-BAKED/UNCERTAIN/STUB grading. The snapshot below is a convenience copy and will drift -- trust CURRENT.md. |
+| **Backlog** | `docs/project/TODO.md` | v3 follow-ups live under "Presets/system-prompt follow-ups". |
 
 ## What v3 is
 

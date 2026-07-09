@@ -354,7 +354,7 @@ Phase 1 (DONE v1.13.0)
     +-- Phase 6 (DONE v1.17.0) -- generation core maturity
 ```
 
-All phases complete. Remaining optimization opportunities (shape bucketing, `mx.compile`, automatic draft model selection) are tracked in `internal/session/TODO.md` as deferred items.
+All phases complete. Remaining optimization opportunities (shape bucketing, `mx.compile`, automatic draft model selection) are tracked in `docs/project/TODO.md` as deferred items.
 
 ---
 
