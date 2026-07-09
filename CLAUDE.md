@@ -2,16 +2,18 @@
 
 <!-- Nav hub. Repo-specific only -- global conventions (uv, orjson, no-emoji,
 conventional commits, TDD, path-privacy, docs) live in the user-level CLAUDE.md
-and still apply. Don't duplicate them here. Last verified: 2026-07-06 -->
+and still apply. Don't duplicate them here. Last verified: 2026-07-09 -->
 
-Personal MLX inference server on Apple Silicon: FastAPI backend + two frontends
-(legacy React, vanilla-JS v2).
+Personal MLX inference server on Apple Silicon: FastAPI backend + a vanilla-JS
+frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, legacy).
 
 ## Orient first
 
-- WIP and backlog: [internal/session/CURRENT.md](./internal/session/CURRENT.md), [internal/session/TODO.md](./internal/session/TODO.md). Read before starting.
-- Deep dives: [internal/](./internal/) -- `backend/`, `frontend/`, `bugs/` (postmortems; read before touching providers), `research/`, `log/`.
-- Setup/commands [README.md](./README.md) · frontend API [docs/frontend_api_reference.md](./docs/frontend_api_reference.md) · tests [tests/README.md](./tests/README.md).
+- **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [internal/backend/plan_2026-07.md](./internal/backend/plan_2026-07.md).
+- **Status + backlog**: [internal/session/CURRENT.md](./internal/session/CURRENT.md) (graded done/left narrative), [internal/session/TODO.md](./internal/session/TODO.md). Read before starting.
+- **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [internal/frontend/v3.md](./internal/frontend/v3.md). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
+- Deep dives: [internal/](./internal/) -- `backend/`, `frontend/` (note: architecture.md/applet_catalog.md there describe the RETIRING React app; v3 lives in v3.md), `bugs/` (postmortems; read before touching providers), `research/`, `log/`.
+- Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). ([docs/frontend_api_reference.md](./docs/frontend_api_reference.md) is the OLD React reference -- for v3 use spec §4.)
 - `internal/`, `models.toml`, `coderef/` are gitignored -- local-only, never committed.
 
 ## Architecture
@@ -29,10 +31,14 @@ with sandboxed REPL.
 - [internal/backend/](./internal/backend/) (architecture, api, router, config, providers/mlx) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
-JS, no build, served at `/v3`. Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md)
-(§4 = the authoritative backend API contract -- update it in the same commit
-as any contract change). Read `js/page.js` (createPage lifecycle) before
-touching any page.
+JS, no build, served at `/v3`. 5 pages (chat, notebook, models, perf, explore);
+chat streams over `/v1/chat/completions` today (Messages migration is plan
+Phase 3b), takes image input + renders image content blocks out of the DuckDB
+store, and has a per-conversation system-prompt editor + saved-preset bar.
+Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
+the authoritative backend API contract -- update it in the same commit as any
+contract change); orientation + backend coupling: [internal/frontend/v3.md](./internal/frontend/v3.md).
+Read `js/page.js` (createPage lifecycle) before touching any page.
 
 **Frontend v2 `apps/heylook-frontend-v2/`** and **legacy `apps/heylook-frontend/`**
 (React+Zustand+Vite) -- both RETIRING after v3 cutover (plan Q2/Phase 3);
@@ -72,6 +78,7 @@ don't invest here. Their CLAUDE.md/[ARCHITECTURE.md](./apps/heylook-frontend/ARC
 ## Tests
 
 - Run via `/test-suite` (backend + frontend in parallel). `tests/unit/` + `tests/contract/` are fully green (Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist. (No counts here on purpose: they rot; green-is-the-invariant doesn't.)
+- **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB. NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `node run.mjs [chat|pages]`, MUST run UNSANDBOXED. Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B).
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Root venv: sync with `uv sync --all-extras` -- plain `uv sync` strips the performance/test extras (pyturbojpeg = the multipart JPEG decoder, uvloop, pytest plugins) and the loss is silent until an image request or test run fails.
