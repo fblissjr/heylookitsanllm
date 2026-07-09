@@ -10,7 +10,9 @@ def resolve_stop_tokens(tokenizer) -> set[int]:
     back to eos_token_id (singular). Returns an empty set if neither exists.
     """
     ids = getattr(tokenizer, "eos_token_ids", None)
-    if ids:
+    if isinstance(ids, int):        # some tokenizers expose it as a scalar int
+        return {ids}
+    if ids:                         # non-empty collection
         return set(ids)
     eos_id = getattr(tokenizer, "eos_token_id", None)
     if eos_id is not None:

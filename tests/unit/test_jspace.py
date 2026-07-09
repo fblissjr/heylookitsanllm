@@ -120,6 +120,60 @@ def test_lens_apply_identity_matches_unembed():
         assert np.allclose(np.asarray(out[l]), np.asarray(expect), atol=1e-4)
 
 
+def test_capture_pipeline_fresh_slice_layers():
+    """Regression (#1): pipeline-parallel models (Qwen3.5, deepseek, glm4_moe)
+    expose .layers as a property returning a FRESH slice each access, and the
+    forward iterates that slice. Capture must mutate the underlying list, not the
+    snapshot, or it silently records nothing."""
+    d = 8
+
+    class Blk:
+        def __call__(self, x, *a, **k):
+            return x + 1.0
+
+    class Embed:
+        def __init__(self):
+            self.weight = mx.zeros((5, d))
+
+        def __call__(self, ids):
+            return mx.zeros((ids.shape[0], ids.shape[1], d))
+
+        def as_linear(self, x):
+            return x
+
+    class Inner:                                  # mimics PipelineMixin
+        def __init__(self):
+            self.norm = lambda x: x
+            self.embed_tokens = Embed()
+            self.layers = [Blk(), Blk(), Blk(), Blk()]   # the REAL list
+
+        @property
+        def pipeline_layers(self):
+            return self.layers[0:None]            # fresh slice every access
+
+        def __call__(self, inputs):
+            x = self.embed_tokens(inputs)
+            for layer in self.pipeline_layers:    # iterate the fresh slice
+                x = layer(x)
+            return self.norm(x)
+
+    class Model:
+        def __init__(self):
+            self.model = Inner()
+
+        @property
+        def layers(self):
+            return self.model.pipeline_layers     # fresh slice (the bug trigger)
+
+    m = Model()
+    ad = ModelAdapter(m)
+    assert ad.n_layers == 4
+    res = capture_residuals(m, [1, 2, 3], layers=[0, 2], adapter=ad)
+    assert set(res.keys()) == {0, 2}
+    for arr in res.values():
+        assert arr.shape == (3, d)
+
+
 def test_lens_from_files(tmp_path):
     from safetensors.numpy import save_file
     import json

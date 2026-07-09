@@ -80,15 +80,46 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
             raise HTTPException(status_code=422, detail="provide 'messages' or 'prompt'")
         messages = [{"role": "user", "content": body.prompt}]
 
-    lens = reg.get(body.model)
-    normalizer = reg.normalizer(body.model)
-    router = reg.router(body.model) if normalizer is not None else None
+    # Load lens/normalizer/router here (broken lens files -> a clean error, not a
+    # bare 500 from deep in the pipeline).
     try:
-        # MLX compute is blocking + Metal-bound; run off the event loop.
+        lens = reg.get(body.model)
+        normalizer = reg.normalizer(body.model)
+        router = reg.router(body.model) if normalizer is not None else None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"failed to load lens for {body.model!r}: {e}")
+
+    # Pin the model (no LRU-evict / idle-unload mid-analyze) and run the forwards
+    # under the process-global FIFO generation gate, so analyze serializes with
+    # generation and with other analyze calls -- no concurrent Metal work, no
+    # racing mutation of the shared block list.
+    pinned = False
+    try:
+        router_instance.pin_model(body.model)
+        pinned = True
+    except Exception:
+        pass  # best-effort: a not-currently-loaded/unpinnable model still runs
+    try:
         return await run_in_threadpool(
-            run_analyze, provider, lens, messages,
+            _gated_analyze, provider, lens, messages,
             max_answer_tokens=body.max_answer_tokens, top_k=body.top_k,
             heatmap=body.heatmap, chat=body.chat, router=router, normalizer=normalizer)
     except Exception as e:
         logger.exception("jspace analyze failed")
         raise HTTPException(status_code=500, detail=f"analyze failed: {e}")
+    finally:
+        if pinned:
+            router_instance.unpin_model(body.model)
+
+
+def _gated_analyze(provider, *args, **kwargs):
+    """Run analyze holding the provider's FIFO generation gate (serializes all
+    MLX/Metal work). Falls back to ungated if the provider has no gate."""
+    gate = getattr(provider, "_gen_gate", None)
+    if gate is None:
+        return run_analyze(provider, *args, **kwargs)
+    gate.acquire()
+    try:
+        return run_analyze(provider, *args, **kwargs)
+    finally:
+        gate.release()

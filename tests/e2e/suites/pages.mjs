@@ -283,6 +283,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
   await suite.check('jspace page mounts (lens model or empty-state)', async () => {
     await ctx.open('#/jspace');
     await page.waitForSelector('.jspace');
+    // setup() renders the select options OR the empty-state only AFTER the async
+    // /v1/jspace/models fetch resolves -- wait for one of them before asserting.
+    await waitFor(async () =>
+      (await count(page, '.jspace__bar select option')) > 0 ||
+      (await count(page, '.jspace .empty-state')) > 0,
+      { message: 'jspace models never resolved (no options and no empty-state)' });
     const opts = await page.$$eval('.jspace__bar select option', (els) => els.map((e) => e.value));
     jspaceHasLens = opts.includes(config.model);
     const hasEmpty = (await count(page, '.jspace .empty-state')) > 0;

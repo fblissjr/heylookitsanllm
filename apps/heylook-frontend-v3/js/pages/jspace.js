@@ -119,7 +119,7 @@ function renderResult(ctx, data) {
     createEl('span', { class: 'jspace__answer-label' }, ['answer ']),
     createEl('span', { class: 'jspace__answer-text' }, [data.answer || '(empty)']),
   ]);
-  if (typeof data.risk === 'number') {
+  if (Number.isFinite(data.risk)) {
     const pct = Math.round(data.risk * 100);
     head.append(createEl('span', {
       class: 'jspace__risk',

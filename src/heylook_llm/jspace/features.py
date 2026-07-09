@@ -81,11 +81,17 @@ def workspace_readout(lens_vectors: dict, answer_token_id: int,
     ranks_ans, ranks_hedge, entropies, top1s = [], [], [], []
     for layer in sorted(lens_vectors):
         logits = np.asarray(lens_vectors[layer], dtype=np.float64).ravel()
+        vocab = len(logits)
         order = np.argsort(-logits)
-        rank_of = np.empty(len(order), dtype=np.int64)
-        rank_of[order] = np.arange(len(order))
-        ranks_ans.append(int(rank_of[answer_token_id]))
-        ranks_hedge.append(int(min(rank_of[t] for t in hedge_ids)))
+        rank_of = np.empty(vocab, dtype=np.int64)
+        rank_of[order] = np.arange(vocab)
+        # A token id can exceed the head's vocab (tokenizer padded larger than the
+        # lens/head rows) -> treat any out-of-range id as the worst rank (`vocab`),
+        # and tolerate an empty hedge set, rather than IndexError/ValueError.
+        ranks_ans.append(int(rank_of[answer_token_id])
+                         if 0 <= answer_token_id < vocab else vocab)
+        valid_hedge = [int(rank_of[t]) for t in hedge_ids if 0 <= t < vocab]
+        ranks_hedge.append(min(valid_hedge) if valid_hedge else vocab)
         entropies.append(_entropy(logits))
         top1s.append(int(order[0]))
 

@@ -62,17 +62,21 @@ def main() -> None:
     lens = jlens.JacobianLens.load(lens_pt)
     out = Path(args.out_dir) / args.model_id
     out.mkdir(parents=True, exist_ok=True)
-    save_file({str(l): lens.jacobians[l].contiguous().float() for l in lens.source_layers},
-              str(out / "lens.safetensors"))
-    (out / "lens.sidecar.json").write_text(json.dumps({
+    # Serialize the sidecar FIRST so a non-JSON value can't leave an orphan
+    # lens.safetensors (the registry requires BOTH files, but this avoids the
+    # confusing half-written state entirely).
+    sidecar = json.dumps({
         "model_id": args.model_id,
         "hf_model_name": args.hf_name,
-        "source_layers": lens.source_layers,
-        "d_model": lens.d_model,
-        "n_prompts": lens.n_prompts,
+        "source_layers": [int(l) for l in lens.source_layers],
+        "d_model": int(lens.d_model),
+        "n_prompts": int(lens.n_prompts),
         "final_logit_softcapping": args.softcap,
         "apply": "unembed(residual @ J[l].T)",
-    }, indent=2))
+    }, indent=2)
+    save_file({str(l): lens.jacobians[l].contiguous().float() for l in lens.source_layers},
+              str(out / "lens.safetensors"))
+    (out / "lens.sidecar.json").write_text(sidecar)
     print(f"wrote {out}/lens.safetensors  "
           f"(d_model={lens.d_model}, layers={len(lens.source_layers)}, n_prompts={lens.n_prompts})")
     print(f"-> served as model_id {args.model_id!r} via GET /v1/jspace/models")

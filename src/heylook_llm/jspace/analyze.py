@@ -17,6 +17,7 @@ import numpy as np
 
 from . import features as F
 from .capture import ModelAdapter, capture_residuals
+from ..providers.common.stop_tokens import resolve_stop_tokens
 
 _DEFAULT_HEATMAP_POSITIONS = 24
 
@@ -30,6 +31,19 @@ def _encode_no_special(tok, text):
         return tok.encode(text, add_special_tokens=False)
     except TypeError:
         return tok.encode(text)
+
+
+def _message_text(m: dict) -> str:
+    """Text of a message whose ``content`` is a str OR OpenAI-style content
+    blocks (list of {type, text, ...}); non-text blocks (images) are dropped --
+    j-space is text-only."""
+    content = m.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content
+                       if isinstance(part, dict) and part.get("type", "text") == "text")
+    return ""
 
 
 def format_prompt(model, processor, is_vlm: bool, messages: list[dict],
@@ -46,16 +60,20 @@ def format_prompt(model, processor, is_vlm: bool, messages: list[dict],
     message text, so the final position is a real content token and the
     workspace surfaces sensible "silent words" (e.g. "...city of" -> Paris)."""
     tok = _tokenizer(processor)
+    # Coerce content to plain text (drop image blocks) -- j-space is text-only,
+    # and it keeps the raw-completion join + chat template from choking on the
+    # OpenAI content-block message shape.
+    norm = [{"role": m.get("role", "user"), "content": _message_text(m)} for m in messages]
     if chat:
         if is_vlm:
             from mlx_vlm.prompt_utils import apply_chat_template as vlm_tpl
-            prompt = vlm_tpl(processor, model.config, messages, num_images=0)
+            prompt = vlm_tpl(processor, model.config, norm, num_images=0)
         else:
-            prompt = tok.apply_chat_template(messages, tokenize=False,
+            prompt = tok.apply_chat_template(norm, tokenize=False,
                                              add_generation_prompt=True)
         return list(tok.encode(prompt) if isinstance(prompt, str) else prompt)
 
-    text = "\n".join(m["content"] for m in messages if m.get("content"))
+    text = "\n".join(m["content"] for m in norm if m["content"])
     ids = list(_encode_no_special(tok, text))
     bos = getattr(tok, "bos_token_id", None)
     if bos is not None and (not ids or ids[0] != bos):     # gemma needs the BOS sink
@@ -64,12 +82,11 @@ def format_prompt(model, processor, is_vlm: bool, messages: list[dict],
 
 
 def _eos_ids(tok) -> set[int]:
-    eos = set()
-    e = getattr(tok, "eos_token_id", None)
-    if isinstance(e, int):
-        eos.add(e)
+    """Stop tokens: reuse the shared resolver (handles eos_token_ids PLURAL) and
+    add gemma's <end_of_turn>."""
+    eos = set(resolve_stop_tokens(tok))
     try:
-        eot = tok.convert_tokens_to_ids("<end_of_turn>")   # gemma turn end
+        eot = tok.convert_tokens_to_ids("<end_of_turn>")
         if isinstance(eot, int) and eot >= 0:
             eos.add(eot)
     except Exception:
@@ -78,19 +95,25 @@ def _eos_ids(tok) -> set[int]:
 
 
 def greedy_generate(adapter: ModelAdapter, ids, max_tokens: int, eos_ids):
-    """No-cache greedy decode. Returns (gen_ids, per-token logprobs)."""
+    """No-cache greedy decode. Returns (first_token, gen_ids, per-token logprobs).
+
+    ``first_token`` is the model's first predicted token even when it is a stop
+    token (so the answer-onset workspace read-out reflects the model's real
+    disposition -- 'it wanted to stop' -- rather than silently re-deriving it)."""
     ids = list(ids)
     gen, logps = [], []
-    for _ in range(max_tokens):
+    first_token = None
+    for step in range(max_tokens):
         lg = adapter.logits(mx.array([ids]))[0, -1]
         nxt = int(mx.argmax(lg).item())
-        logp = float((lg[nxt] - mx.logsumexp(lg)).item())
+        if step == 0:
+            first_token = nxt
         if nxt in eos_ids:
             break
+        logps.append(float((lg[nxt] - mx.logsumexp(lg)).item()))
         gen.append(nxt)
-        logps.append(logp)
         ids.append(nxt)
-    return gen, logps
+    return first_token, gen, logps
 
 
 def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
@@ -102,17 +125,24 @@ def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
     ad = ModelAdapter(model)
     ids = format_prompt(model, processor, is_vlm, messages, chat=chat)
 
-    gen_ids, step_logprobs = greedy_generate(ad, ids, max_answer_tokens, _eos_ids(tok))
-    if gen_ids:
-        first_answer_id = gen_ids[0]
-    else:
-        first_answer_id = int(mx.argmax(ad.logits(mx.array([ids]))[0, -1]).item())
+    first_token, gen_ids, step_logprobs = greedy_generate(
+        ad, ids, max_answer_tokens, _eos_ids(tok))
+    # first_token is the model's real first prediction (even if it's a stop token,
+    # i.e. an empty answer). Fallback only for the degenerate max_answer_tokens<1.
+    first_answer_id = (first_token if first_token is not None
+                       else int(mx.argmax(ad.logits(mx.array([ids]))[0, -1]).item()))
     answer = tok.decode(gen_ids, skip_special_tokens=True).strip() if gen_ids else ""
 
     band = F.band_layers(ad.n_layers, lens.source_layers)
     if not band:
         raise ValueError("lens has no fitted layers in the workspace band")
     residuals = capture_residuals(model, ids, band, adapter=ad)
+
+    dm = residuals[band[0]].shape[-1]
+    if dm != lens.d_model:
+        raise ValueError(
+            f"lens d_model {lens.d_model} != model residual width {dm} "
+            f"(wrong lens for this model?)")
 
     # Answer-onset workspace (final prompt position): top-k silent tokens per band layer.
     onset = lens.apply(ad, residuals, positions=[-1], layers=band)
@@ -137,9 +167,14 @@ def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
         cells = lens.apply(ad, residuals, positions=positions, layers=band)
         grid = []
         for l in band:
-            arr = np.asarray(cells[l], dtype=np.float64)     # [P, vocab]
-            row = [{"token": tok.decode([int(arr[p].argmax())]),
-                    "entropy": F._entropy(arr[p])} for p in range(arr.shape[0])]
+            cl = cells[l]                                    # mx.array [P, vocab]
+            # Reduce on-device: bring back only per-position top-1 id + entropy,
+            # not the full [P, vocab] logits (~vocab*P doubles otherwise).
+            top1 = np.asarray(mx.argmax(cl, axis=-1))
+            logp = cl - mx.logsumexp(cl, axis=-1, keepdims=True)
+            ent = np.asarray(-mx.sum(mx.exp(logp) * logp, axis=-1))
+            row = [{"token": tok.decode([int(top1[p])]), "entropy": float(ent[p])}
+                   for p in range(top1.shape[0])]
             grid.append({"layer": int(l), "cells": row})
 
     # Workspace features + optional hallucination risk.

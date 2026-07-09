@@ -29,31 +29,45 @@ class LensRegistry:
 
     @classmethod
     def from_env(cls) -> "LensRegistry":
-        """``HEYLOOK_JSPACE_DIR`` override, else the git-tracked ``adapters/jspace``
-        at the repo root (registry.py -> jspace -> heylook_llm -> src -> repo)."""
+        """``HEYLOOK_JSPACE_DIR`` override, else the git-tracked ``adapters/jspace``.
+        Tries the src-layout repo root (registry.py -> jspace -> heylook_llm -> src
+        -> repo); if that doesn't exist (e.g. a non-editable/wheel install), falls
+        back to ``<cwd>/adapters/jspace`` so a server started from the repo root
+        still finds lenses."""
         base = os.environ.get("HEYLOOK_JSPACE_DIR")
         if not base:
-            base = Path(__file__).resolve().parents[3] / "adapters" / "jspace"
+            candidate = Path(__file__).resolve().parents[3] / "adapters" / "jspace"
+            if not candidate.is_dir():
+                cwd_candidate = Path.cwd() / "adapters" / "jspace"
+                if cwd_candidate.is_dir():
+                    candidate = cwd_candidate
+            base = candidate
         return cls(base)
 
     def _dir(self, model_id: str) -> Path | None:
         return self.base_dir / model_id if self.base_dir else None
 
+    @staticmethod
+    def _is_lens_dir(d: Path) -> bool:
+        # Require BOTH files: a lens.safetensors without its sidecar (e.g. a
+        # crashed/partial convert) must not pass has() then 500 in get().
+        return (d / "lens.safetensors").is_file() and (d / "lens.sidecar.json").is_file()
+
     def has(self, model_id: str) -> bool:
         d = self._dir(model_id)
-        return bool(d and (d / "lens.safetensors").is_file())
+        return bool(d and self._is_lens_dir(d))
 
     def available(self) -> list[str]:
         if not self.base_dir or not self.base_dir.is_dir():
             return []
         return sorted(p.name for p in self.base_dir.iterdir()
-                      if (p / "lens.safetensors").is_file())
+                      if p.is_dir() and self._is_lens_dir(p))
 
     def get(self, model_id: str) -> JSpaceLens:
         if model_id in self._lens_cache:
             return self._lens_cache[model_id]
         d = self._dir(model_id)
-        if not d or not (d / "lens.safetensors").is_file():
+        if not d or not self._is_lens_dir(d):
             raise KeyError(model_id)
         lens = JSpaceLens.from_files(d / "lens.safetensors", d / "lens.sidecar.json")
         self._lens_cache[model_id] = lens
@@ -67,10 +81,19 @@ class LensRegistry:
         spec = json.loads((d / "normalizer.json").read_text())
         return FeatureNormalizer(mean=spec["mean"], std=spec["std"])
 
-    def router(self, model_id: str, *, variant: str = "combined"):
-        """Optional hallucination-risk classifier (solarkyle-style spec)."""
+    def router(self, model_id: str, *, variant: str | None = None):
+        """Optional hallucination-risk classifier (solarkyle-style spec). When
+        ``variant`` is None, prefers 'combined', else 'workspace_only', else the
+        first defined variant -- never KeyErrors on a spec missing 'combined'."""
         d = self._dir(model_id)
         if not d or not (d / "router.json").is_file():
             return None
         from .features import HallucinationRouter
-        return HallucinationRouter.from_file(d / "router.json", variant=variant)
+        spec = json.loads((d / "router.json").read_text())
+        models = spec.get("models", {})
+        if variant is None:
+            variant = next((v for v in ("combined", "workspace_only") if v in models),
+                           next(iter(models), None))
+        if variant is None or variant not in models:
+            return None
+        return HallucinationRouter(spec, variant=variant)

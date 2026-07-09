@@ -18,6 +18,12 @@ import mlx.core as mx
 
 _NORM_ATTRS = ("norm", "ln_f", "final_layernorm", "final_layer_norm")
 _EMBED_ATTRS = ("embed_tokens", "wte", "embed_in")
+# The underlying, mutable block-list attribute on the text decoder. This is the
+# real list the forward's loop reads (directly, or via a `pipeline_layers` slice
+# of it) -- NOT the top ``model.layers`` property, which for pipeline-parallel
+# models (Qwen3.5, deepseek, glm4_moe) returns a FRESH slice each access, so
+# mutating that snapshot would never reach the forward. See capture_residuals.
+_LIST_ATTRS = ("layers", "h")
 
 
 def _holder_chain(model: Any) -> list:
@@ -67,7 +73,12 @@ class ModelAdapter:
                 f"could not locate the text decoder in {type(model).__name__} "
                 f"(walked {[type(h).__name__ for h in holders]})")
 
-        self._layers = model.layers                   # mlx-lm/vlm expose this (delegated)
+        # The REAL underlying block list on the text decoder (see _LIST_ATTRS).
+        self._blocks = self._find(self.inner, _LIST_ATTRS)
+        if self._blocks is None:
+            raise ValueError(
+                f"could not locate the residual block list on {type(self.inner).__name__} "
+                f"(tried {_LIST_ATTRS})")
         self._norm = self._find(self.inner, _NORM_ATTRS)
 
         head_mod = next((hm for hm in (getattr(h, "lm_head", None) for h in holders)
@@ -98,11 +109,11 @@ class ModelAdapter:
 
     @property
     def layers(self):
-        return self._layers
+        return self._blocks
 
     @property
     def n_layers(self) -> int:
-        return len(self._layers)
+        return len(self._blocks)
 
     def final_norm(self, x: mx.array) -> mx.array:
         return self._norm(x)
@@ -178,4 +189,12 @@ def capture_residuals(model, input_ids, layers, *, adapter: ModelAdapter | None 
     finally:
         for i, mod in originals.items():
             blocks[i] = mod
+    missing = [i for i in want if i not in store]
+    if missing:
+        # The forward never called our recorders: adapter.layers is not the object
+        # the forward iterates (would be a silently-empty read-out otherwise).
+        raise RuntimeError(
+            f"jspace capture recorded nothing for layers {missing} on "
+            f"{type(model).__name__}; the forward iterates a different block list "
+            f"than adapter.layers")
     return store

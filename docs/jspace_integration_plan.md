@@ -248,9 +248,10 @@ with zero config (override via `HEYLOOK_JSPACE_DIR`). For risk scores, also drop
   `normalizer.json` is placed. Future: a running-stats normalizer that accrues over analyze calls
   so risk emerges after N samples, or a one-shot calibration pass. (V4 proved the router math;
   full V4b = workspace-readout AUC from OUR lens logits on e4b, not just the trace scalars.)
-- **Generation-gate coordination.** Analyze forwards run in a threadpool and bypass the
-  process-global FIFO generation gate — fine single-user, a real gap under concurrent load
-  (two Metal graphs at once). Acquire the gate around analyze before exposing broadly.
+- **Generation-gate coordination (DONE, v1.34.33).** Analyze now pins the model and runs its
+  forwards under the process-global FIFO generation gate, so it serializes with generation and
+  other analyze calls — no concurrent Metal graphs, no racing block-list mutation. (Backpressure
+  via `check_capacity` / a client cancel path is still a possible refinement.)
 - **Live per-token streaming instrumentation** (hard tier) — read the workspace during generation,
   not just post-hoc.
 - **VLM vision residuals** — jspace is text-only; the image path is untouched.

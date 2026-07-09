@@ -63,6 +63,22 @@ def test_workspace_readout_never_ignites():
     assert r["ignition_depth"] == 1.0                 # 1.0 = never
 
 
+def test_workspace_readout_empty_hedge_no_crash():
+    # Regression (#10): empty hedge_ids must not ValueError.
+    vocab, ans = 20, 7
+    lens = {0: _buried(vocab, ans), 1: _ignited(vocab, ans)}
+    r = workspace_readout(lens, answer_token_id=ans, hedge_ids=[])
+    assert "best_hedge_rank_log" in r
+
+
+def test_workspace_readout_out_of_range_ids_no_crash():
+    # Regression (#10): a token id >= head vocab must not IndexError.
+    vocab = 20
+    lens = {0: _buried(vocab, 7)}
+    r = workspace_readout(lens, answer_token_id=999, hedge_ids=[999, 5])
+    assert r["mean_log_rank_answer"] >= 0
+
+
 def test_router_feature_vector_from_entropy_trajectory():
     e = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]                # linear, slope 1
     readout = {"layer_entropies": e, "ignition_frac": 0.3, "ignition_depth": 0.4,

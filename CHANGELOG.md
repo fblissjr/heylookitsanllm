@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.33]
+
+### Fixed
+
+J-space code-review fixes (xhigh review of the feature branch):
+
+- **Capture is pipeline-safe (#1).** `ModelAdapter` now mutates the underlying block
+  list on the text decoder (`inner.layers`/`.h`), not the top `model.layers` property,
+  which for pipeline-parallel models (Qwen3.5, deepseek, glm4_moe) returns a FRESH slice
+  each access — so capture was silently recording nothing → KeyError 500. `capture_residuals`
+  now also raises a clear error if a forward never hits the recorders (instead of a silent
+  empty read-out).
+- **Analyze respects the concurrency invariants (#2/#3/#4).** `/v1/jspace/analyze` now pins the
+  model (no LRU-evict / idle-unload mid-analyze) and runs the forwards under the process-global
+  FIFO generation gate, so it serializes with generation and other analyze calls — no concurrent
+  Metal command buffers (the documented crash class) and no racing mutation of the shared block list.
+- **Unguarded 500s (#5/#6/#7).** Lens/normalizer/router load inside the error handler; `has()`
+  requires the sidecar too (a partial convert no longer 404-passes then 500s); `router()` picks an
+  available variant instead of KeyError-ing on a missing 'combined'; `format_prompt` accepts
+  OpenAI content-block (list) messages instead of TypeError-ing on the default path.
+- **Feature correctness (#8/#9/#10).** Reuse `resolve_stop_tokens` (honors plural `eos_token_ids`);
+  `greedy_generate` returns the real first token even when it's a stop token (no redundant fallback
+  forward); `workspace_readout` tolerates empty hedge sets and out-of-vocab ids.
+- **E2E (#11).** The jspace mount check waits for the `/v1/jspace/models` fetch to resolve before
+  asserting (was reading the select before it populated).
+
+### Changed
+
+- J-space efficiency + robustness: heatmap reduces to (top-1, entropy) on-device instead of
+  materializing full-vocab float64 host arrays; lens/model `d_model` mismatch raises a clear error;
+  `LensRegistry.from_env` falls back to `<cwd>/adapters/jspace` for non-editable installs; the
+  convert script serializes the sidecar before the safetensors; the risk badge uses `Number.isFinite`.
+
 ## [1.34.32]
 
 ### Added
