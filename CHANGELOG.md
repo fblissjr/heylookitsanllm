@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and, when a lens for the E2E model is installed, drives Analyze and asserts the workspace strip
   renders. Cuts the 26B-reload cost of future iteration.
 
+### Docs
+
+- **`docs/jspace_guide.md`** -- how-it-works + end-to-end tutorial (install a lens, call
+  `/v1/jspace/analyze`, use the v3 J-Space page, interpret the output, enable risk). Indexed in
+  `docs/README.md` + CLAUDE.md.
+
 ## [1.34.31]
 
 ### Added

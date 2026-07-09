@@ -17,9 +17,10 @@ config, providers, and the MLX ecosystem posture). Start at its
 - [project/TODO.md](./project/TODO.md) -- backlog
 
 ## Research / design
-- [jspace_integration_plan.md](./jspace_integration_plan.md) -- Jacobian-lens ("j-space")
-  interpretability feature: build + verifier plan. Phase 1/V1 (gpt2) + V2 (gemma) parity GREEN;
-  spike harness in the gitignored `coderef/jspace_scratch/`.
+- [jspace_guide.md](./jspace_guide.md) -- Jacobian-lens ("j-space") interpretability feature:
+  how-it-works + end-to-end tutorial (install a lens, `/v1/jspace/analyze`, the v3 J-Space page).
+- [jspace_integration_plan.md](./jspace_integration_plan.md) -- the j-space build + verifier plan
+  (design rationale, phases, parity results). Spike harness in the gitignored `coderef/jspace_scratch/`.
 
 ## Frontend (v3)
 - [frontend_v3.md](./frontend_v3.md) -- orientation + backend coupling map
