@@ -7,14 +7,17 @@ optional hallucination-risk. Lenses are fitted offline and placed under
 ``HEYLOOK_JSPACE_DIR/<model_id>/`` (see jspace/registry.py). Feature/lens math:
 src/heylook_llm/jspace/. Design + verifier plan: docs/jspace_integration_plan.md.
 """
+import asyncio
 import logging
 
+import mlx.core as mx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from heylook_llm.jspace.analyze import analyze as run_analyze
 from heylook_llm.jspace.registry import LensRegistry
+from heylook_llm.providers.common.generation_core import _get_generation_stream
+from heylook_llm.streaming_utils import _executor_pool
 
 logger = logging.getLogger(__name__)
 
@@ -99,27 +102,44 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
         pinned = True
     except Exception:
         pass  # best-effort: a not-currently-loaded/unpinnable model still runs
+
+    # Drive the MLX forwards on a PINNED, reused executor thread (a dying MLX
+    # thread aborts the process -- never use starlette's ephemeral threadpool)
+    # inside the thread-local generation stream, exactly like generation.
+    loop = asyncio.get_running_loop()
+    executor = _executor_pool.acquire()
     try:
-        return await run_in_threadpool(
-            _gated_analyze, provider, lens, messages,
-            max_answer_tokens=body.max_answer_tokens, top_k=body.top_k,
-            heatmap=body.heatmap, chat=body.chat, router=router, normalizer=normalizer)
+        return await loop.run_in_executor(
+            executor, _gated_analyze, provider, lens, messages,
+            body.max_answer_tokens, body.top_k, body.heatmap, body.chat, router, normalizer)
     except Exception as e:
         logger.exception("jspace analyze failed")
         raise HTTPException(status_code=500, detail=f"analyze failed: {e}")
     finally:
+        _executor_pool.release(executor)   # reuse; the call returned (not wedged)
         if pinned:
             router_instance.unpin_model(body.model)
 
 
-def _gated_analyze(provider, *args, **kwargs):
-    """Run analyze holding the provider's FIFO generation gate (serializes all
-    MLX/Metal work). Falls back to ungated if the provider has no gate."""
+def _gated_analyze(provider, lens, messages, max_answer_tokens, top_k, heatmap, chat,
+                   router, normalizer):
+    """Runs on a pinned mlx-stream executor thread. Enters the thread-local
+    generation stream (MLX streams are thread-bound -- a fresh thread has none)
+    and holds the process-global FIFO generation gate so all Metal work
+    serializes with generation and other analyze calls."""
     gate = getattr(provider, "_gen_gate", None)
+    gen_stream = _get_generation_stream()
+
+    def _work():
+        with mx.stream(gen_stream):
+            return run_analyze(
+                provider, lens, messages, max_answer_tokens=max_answer_tokens,
+                top_k=top_k, heatmap=heatmap, chat=chat, router=router, normalizer=normalizer)
+
     if gate is None:
-        return run_analyze(provider, *args, **kwargs)
+        return _work()
     gate.acquire()
     try:
-        return run_analyze(provider, *args, **kwargs)
+        return _work()
     finally:
         gate.release()

@@ -33,6 +33,11 @@ class JSpaceLens:
     def __init__(self, jacobians: dict[int, mx.array], source_layers, d_model: int,
                  *, softcap: float | None = None, meta: dict | None = None) -> None:
         self.jacobians = {int(l): j.astype(mx.float32) for l, j in jacobians.items()}
+        # Materialize now (on the loading thread). mx.load is lazy/mmap-backed; if
+        # the first eval happened later on a generation worker thread it would read
+        # via the CPU default stream that thread doesn't have -> a hard crash
+        # ("There is no Stream(cpu, 0)").
+        mx.eval(list(self.jacobians.values()))
         self.source_layers = sorted(int(l) for l in source_layers)
         self.d_model = int(d_model)
         self.softcap = softcap

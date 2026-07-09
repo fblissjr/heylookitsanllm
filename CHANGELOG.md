@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.34]
+
+### Fixed
+
+- **`/v1/jspace/analyze` crashed the process from the frontend** (`There is no Stream(cpu, 0) in
+  current thread`). Two causes, both fixed: (1) it ran the MLX forwards on starlette's ephemeral
+  `run_in_threadpool` worker, which has no thread-local MLX stream (and a dying MLX thread aborts
+  the process). Analyze now runs on a **pinned `mlx-stream` executor** (`streaming_utils._executor_pool`,
+  same as generation) inside `mx.stream(generation_stream)`. (2) The lens `J` matrices are
+  `mx.load`'d lazily (mmap-backed); their first eval landed on the worker thread and dispatched to
+  the CPU default stream that thread lacks. `JSpaceLens` now force-evaluates them at load time
+  (on the loading thread). Verified end-to-end on the served 26B MoE via a worker thread.
+
+### Changed
+
+- **Convert helper is easier to run** (`scripts/jspace_convert_lens.py`): carries PEP 723 inline
+  deps, so `uv run scripts/jspace_convert_lens.py …` provisions torch+jlens itself (a clear error
+  points there if run via the torch-less server venv); accepts a lens *directory* (finds the single
+  `*_jacobian_lens.pt`, e.g. a neuronpedia model dir); rejects a path-shaped `--model-id`.
+
 ## [1.34.33]
 
 ### Fixed
