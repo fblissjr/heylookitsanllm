@@ -178,9 +178,16 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
 - **Quantization transfer — downgraded.** Served MoE is 8-bit (not 4-bit); solarkyle already shows
   NF4 survival. Still worth an explicit measurement on the real MoE (V2-on-MoE), but no longer a
   headline risk. gpt2/gemma-2-2b spikes are fp32↔fp32 (isolate port correctness first).
-- **MoE residual capture point (OPEN).** gemma-4-26b-a4b routes through 128 experts; the lens was
-  fit on the block-output residual. Capturing one layer off silently corrupts everything — the V1
-  residual-parity check is the guard when we reach the MoE.
+- **MoE residual capture point (VALIDATED 2026-07-09).** Ran the module on the served
+  `gemma-4-26b-a4b-it-8bit-mlx` (mlx-vlm VLM): the late-band workspace surfaces the correct entity
+  ("Eiffel Tower ... city of" -> Paris/cities), confirming block-output capture through the
+  128-expert routing + 8-bit-lens transfer. mlx-vlm's own forward comments that the recorded hidden
+  matches HF's `Gemma4TextDecoderLayer` output (the lens's fit convention). Two harness fixes were
+  needed: `_Recorder` must proxy `layer.layer_type` (mask construction), and **gemma requires an
+  explicit `<bos>`** or the residual stream degrades to multilingual-token garbage. Instruct models
+  on RAW completion prompts are noisy (base gemma-2-2b was clean) -> the endpoint must format
+  prompts properly. Remaining: full V4b (workspace-readout AUC from OUR logits, vs the trace's
+  stored scalars).
 - **gemma-4 e-series architecture.** Nano (altup/PLE) is not a clean residual stream; avoid as a
   proxy. Use gemma-2-2b (V2) then the real MoE.
 - **Unified-memory pressure.** A 0.46–1.4 GB lens competes with the KV cache under

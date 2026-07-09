@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.29]
+
+### Fixed
+
+- **J-space `_Recorder` proxies attribute access to the wrapped block** (`capture.py`). The
+  gemma-4 text forward reads `layer.layer_type` during mask construction, so the temporary
+  capture wrapper must delegate attributes -- without this, residual capture on the served
+  gemma-4 VLM raised `AttributeError`. Verified end-to-end on `gemma-4-26b-a4b-it-8bit-mlx`:
+  the late-band workspace surfaces the correct entity (e.g. "Eiffel Tower ... city of" -> Paris),
+  confirming the MoE capture point (through 128-expert routing) and 8-bit-lens transfer. NOTE:
+  gemma requires an explicit `<bos>` (id 2) or the residual stream degrades to garbage.
+
+### Changed
+
+- **Bumped mlx-lm / mlx-vlm to latest upstream commits** (mlx-lm `a790972`: quantized-SDPA GQA
+  batched-padding crash fix; mlx-vlm `05440cc5`). Same versions (0.31.3 / 0.6.5), newer commits.
+
 ## [1.34.28]
 
 ### Changed

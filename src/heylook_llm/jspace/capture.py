@@ -119,7 +119,12 @@ class ModelAdapter:
 
 
 class _Recorder:
-    """Wraps a block: delegates the call, stashes the (batch-stripped) output."""
+    """Wraps a block: delegates the call, stashes the (batch-stripped) output.
+
+    Attribute access is proxied to the wrapped block so the surrounding forward
+    can still read block attributes (e.g. gemma-4's ``layer.layer_type`` in mask
+    construction) while the block is temporarily swapped out.
+    """
 
     __slots__ = ("_mod", "_store", "_idx")
 
@@ -131,6 +136,9 @@ class _Recorder:
         tensor = out[0] if isinstance(out, tuple) else out
         self._store[self._idx] = tensor[0]            # drop batch -> [L, d_model]
         return out
+
+    def __getattr__(self, name):                      # _mod is a slot -> no recursion
+        return getattr(self._mod, name)
 
 
 def capture_residuals(model, input_ids, layers, *, adapter: ModelAdapter | None = None):
