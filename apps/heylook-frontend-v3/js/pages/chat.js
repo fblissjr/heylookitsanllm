@@ -89,7 +89,7 @@ function buildSkeleton(ctx) {
     }
     // Capability-gated controls (enable_thinking) must track the model: an
     // open panel rebuilt here, not only on next open.
-    if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
+    rebuildSettingsPanel(ctx);
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
@@ -163,23 +163,27 @@ function currentCaps(ctx) {
   return model?.capabilities ?? [];
 }
 
-async function toggleSettings(ctx) {
+function toggleSettings(ctx) {
   const host = ctx.state.settingsHost;
   if (!host.hidden) {
     host.hidden = true;
     return;
   }
-  await refreshPresets(ctx);
-  if (!ctx.alive) return;
-  rebuildSettingsPanel(ctx);
+  // Open instantly from cached presets; the refresh repaints when it lands
+  // (a preset list should never queue user interaction behind the store).
   host.hidden = false;
+  rebuildSettingsPanel(ctx);
+  refreshPresets(ctx).then(() => { if (ctx.alive) rebuildSettingsPanel(ctx); });
 }
 
+// Safe to call unconditionally from any state-changing site: no-op while the
+// panel is hidden (it's rebuilt fresh on open).
 function rebuildSettingsPanel(ctx) {
-  ctx.state.settingsHost.replaceChildren(buildSettingsPanel({
-    caps: currentCaps(ctx),
-    lead: [buildPresetSection(ctx), buildSystemPromptSection(ctx)],
-  }));
+  const s = ctx.state;
+  if (s.settingsHost.hidden) return;
+  const panel = buildSettingsPanel({ caps: currentCaps(ctx) });
+  panel.prepend(buildPresetSection(ctx), buildSystemPromptSection(ctx));
+  s.settingsHost.replaceChildren(panel);
 }
 
 // ---------------------------------------------------------------------------
@@ -199,13 +203,19 @@ function setSystemPrompt(ctx, value) {
 
 function buildSystemPromptSection(ctx) {
   const s = ctx.state;
+  const builtFor = s.activeId; // the conversation this textarea belongs to
   const input = createEl('textarea', {
     class: 'chat__sysprompt-input', rows: 3,
     placeholder: 'Optional system prompt for this conversation…',
     value: s.systemPrompt ?? '',
   });
-  // save on blur/commit, not per keystroke -- one PUT per edit session
-  input.addEventListener('change', () => setSystemPrompt(ctx, input.value.trim() || null));
+  // Save on blur/commit, not per keystroke -- one PUT per edit session. A
+  // stale textarea (conversation changed under an unrebuilt panel) must not
+  // write the old conversation's prompt onto the new one.
+  input.addEventListener('change', () => {
+    if (s.activeId !== builtFor) return;
+    setSystemPrompt(ctx, input.value.trim() || null);
+  });
   return createEl('details', { class: 'chat__sysprompt', open: Boolean(s.systemPrompt) }, [
     createEl('summary', {}, ['System prompt']),
     input,
@@ -245,9 +255,20 @@ async function savePreset(ctx, name) {
   const body = { name, system_prompt: s.systemPrompt, params: snapshotSettings() };
   const existing = s.presets.find((p) => p.name === name);
   try {
-    const saved = existing
-      ? await api.updatePreset(existing.id, body)
-      : await api.createPreset(body);
+    let saved;
+    if (existing) {
+      saved = await api.updatePreset(existing.id, body);
+    } else {
+      // create; a stale local list can hide a name the server already has
+      // (409) -- "save by name" promises overwrite, so refetch and update
+      saved = await api.createPreset(body).catch(async (err) => {
+        if (err.status !== 409) throw err;
+        await refreshPresets(ctx);
+        const winner = ctx.state.presets.find((p) => p.name === name);
+        if (!winner) throw err;
+        return api.updatePreset(winner.id, body);
+      });
+    }
     if (!ctx.alive) return;
     await refreshPresets(ctx);
     if (!ctx.alive) return;
@@ -407,7 +428,7 @@ async function deleteConversation(ctx, convId) {
     s.systemPrompt = null;
     if (s.conversations.length) await selectConversation(ctx, s.conversations[0].id);
     else {
-      if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
+      rebuildSettingsPanel(ctx);
       renderMessages(ctx);
     }
   }
@@ -432,7 +453,7 @@ async function selectConversation(ctx, convId) {
       s.modelSelect.value = conv.model_id;
     }
     // an open panel shows the previous conversation's system prompt otherwise
-    if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
+    rebuildSettingsPanel(ctx);
     renderMessages(ctx);
     scrollMessages(ctx, true);
   } catch (err) {
@@ -723,6 +744,9 @@ async function send(ctx) {
       s.activeId = conv.id;
       s.messages = [];
       s.systemPrompt = conv.system_prompt ?? null;
+      // an open panel's sysprompt textarea was built for activeId=null --
+      // rebind it to the conversation that now owns the prompt
+      rebuildSettingsPanel(ctx);
       renderConvList(ctx);
     } else {
       const conv = s.conversations.find((c) => c.id === s.activeId);

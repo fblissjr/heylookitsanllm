@@ -72,11 +72,9 @@ async def create_preset(request: Request, body: PresetCreate):
 )
 async def update_preset(preset_id: str, request: Request, body: PresetUpdate):
     conn = _get_db(request)
-    kwargs = {
-        k: getattr(body, k)
-        for k in body.model_fields_set
-        if k in {"name", "system_prompt", "params"}
-    }
+    # PresetUpdate's fields ARE the updatable set -- db.update_preset
+    # re-filters against _UPDATABLE_PRESET_FIELDS and 400s on empty.
+    kwargs = {k: getattr(body, k) for k in body.model_fields_set}
     try:
         preset = await db.update_preset(conn, preset_id, **kwargs)
     except db.PresetNameTaken as e:

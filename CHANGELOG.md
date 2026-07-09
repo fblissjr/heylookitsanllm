@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.23]
+
+### Changed
+
+- **`/simplify` pass over v1.34.22** (4 review angles: reuse, simplification, efficiency, altitude;
+  applied 7, skipped 4 as deliberate design or house-pattern): settings.js `mergeKnown()` unifies the
+  twice-inlined known-keys merge and `samplerParams()` now derives from `snapshotSettings()`; the
+  one-caller `lead` option reverted in favor of `panel.prepend(...)` in chat.js; the open-panel
+  freshness guard moved inside `rebuildSettingsPanel()` (call sites unconditional, plus a rebind after
+  the implicit first-send create); the sysprompt textarea captures its conversation id at build so a
+  stale blur can't write one conversation's prompt onto another; settings panel opens instantly from
+  cached presets (refresh repaints in the background); preset save-by-name catches a stale-cache 409
+  and retries as overwrite; preset router drops its duplicated field-allowlist (db layer enforces).
+  Skipped by design: unifying user presets with the TOML sampler registry (client-side copy semantics
+  is intentional), generic `_update_row` extraction, shared sysprompt component. E2E chat 28/28 live.
+
 ## [1.34.22]
 
 ### Added
