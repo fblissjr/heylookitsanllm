@@ -77,16 +77,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   These are UI-authored and expanded client-side — distinct from the server's TOML preset registry
   (`ChatRequest.preset`). Tests: +25 unit (store + HTTP), suites 880 green; E2E +3 checks, 55/55 live.
 
-## [1.34.19]
-
-### Fixed
-
-- **optloop-lib spec-decode baseline guard was incomplete** (found by a `/code-review` pass): the CLI-level `--reset-baseline`+`--spec-decode` refusal only caught the explicit flag, but per-model baselines (v1.34.14) mean a spec-decode run against a *not-yet-benched* model hits the implicit `baseline_data is None` branch and would silently write a **speculative** baseline (inflated gen_tps + mismatched fingerprints for all later comparisons). Moved the guard into `run_benchmark` where baseline presence is known, so it fires for both the explicit and implicit cases (before the prompt loop); removed the now-redundant CLI guard.
-
-### Changed
-
-- **`/simplify` cleanup of the session's E2E + optloop code** (4-angle review): shared `resolve_or_download()` in `bench_common.py` collapses the models.toml→HF-download fallback that was copy-pasted across three resolvers; spec-decode result metadata deduped via one `spec_meta` dict; stale text-model default id fixed. E2E harness: new `lib/dom.mjs` helpers (`waitForLabel` for the toggle-button idiom used ~7×, `findModelRow`/`modelRowState` for the models-row lookup duplicated 4× — the value-returning `modelRowState` avoids a handle-per-poll leak, `settingsInputValue`/`setSettingsInput` for the settings panel); `run.mjs` collapses the two identical suite-run blocks into a loop; magic literals (`STOP_TEST_MAX_TOKENS`, cadence thresholds) named. Behavior-identical; Python 70 tests green (re-run the Metal-gated E2E suite to confirm the JS refactors).
-
 ## [1.34.21]
 
 ### Fixed
@@ -110,6 +100,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Images in the v3 chat UI** (the point of pulling Q5 forward): attach via file picker (iPhone camera roll included) or paste; thumbnail strip with per-image remove; user messages with images stored as content blocks and rendered as images in history (reload included); generation converts stored blocks to OpenAI `image_url` data-URL parts (works against the VLM path today; the conversion disappears when v3 moves to /v1/messages). Editing is hidden on image messages (the text editor would silently drop the blocks) -- delete/regenerate still work. Verified: unit suite green (849), full E2E green, plus a live round-trip (store blocks -> reload byte-identical -> VLM correctly describes the image over the v3 wire shape).
+
+## [1.34.19]
+
+### Fixed
+
+- **optloop-lib spec-decode baseline guard was incomplete** (found by a `/code-review` pass): the CLI-level `--reset-baseline`+`--spec-decode` refusal only caught the explicit flag, but per-model baselines (v1.34.14) mean a spec-decode run against a *not-yet-benched* model hits the implicit `baseline_data is None` branch and would silently write a **speculative** baseline (inflated gen_tps + mismatched fingerprints for all later comparisons). Moved the guard into `run_benchmark` where baseline presence is known, so it fires for both the explicit and implicit cases (before the prompt loop); removed the now-redundant CLI guard.
+
+### Changed
+
+- **`/simplify` cleanup of the session's E2E + optloop code** (4-angle review): shared `resolve_or_download()` in `bench_common.py` collapses the models.toml→HF-download fallback that was copy-pasted across three resolvers; spec-decode result metadata deduped via one `spec_meta` dict; stale text-model default id fixed. E2E harness: new `lib/dom.mjs` helpers (`waitForLabel` for the toggle-button idiom used ~7×, `findModelRow`/`modelRowState` for the models-row lookup duplicated 4× — the value-returning `modelRowState` avoids a handle-per-poll leak, `settingsInputValue`/`setSettingsInput` for the settings panel); `run.mjs` collapses the two identical suite-run blocks into a loop; magic literals (`STOP_TEST_MAX_TOKENS`, cadence thresholds) named. Behavior-identical; Python 70 tests green (re-run the Metal-gated E2E suite to confirm the JS refactors).
 
 ## [1.34.18]
 

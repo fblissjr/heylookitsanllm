@@ -11,8 +11,8 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 
 - **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [internal/backend/plan_2026-07.md](./internal/backend/plan_2026-07.md).
 - **Status + backlog**: [internal/session/CURRENT.md](./internal/session/CURRENT.md) (graded done/left narrative), [internal/session/TODO.md](./internal/session/TODO.md). Read before starting.
-- **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [internal/frontend/v3.md](./internal/frontend/v3.md). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
-- Deep dives: [internal/](./internal/) -- `backend/`, `frontend/` (note: architecture.md/applet_catalog.md there describe the RETIRING React app; v3 lives in v3.md), `bugs/` (postmortems; read before touching providers), `research/`, `log/`.
+- **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [docs/frontend_v3.md](./docs/frontend_v3.md) (git-tracked). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
+- Deep dives: [internal/](./internal/) -- `backend/`, `bugs/` (postmortems; read before touching providers), `research/`, `log/`. (The old React-frontend docs were archived to `internal/frontend/archive/` on 2026-07-09; the live v3 map is `docs/frontend_v3.md`.)
 - Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). (The v3 API contract is spec §4; the live schema is at `/openapi.json` + `/docs`.)
 - `internal/`, `models.toml`, `coderef/` are gitignored -- local-only, never committed.
 
@@ -37,7 +37,7 @@ Phase 3b), takes image input + renders image content blocks out of the DuckDB
 store, and has a per-conversation system-prompt editor + saved-preset bar.
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the authoritative backend API contract -- update it in the same commit as any
-contract change); orientation + backend coupling: [internal/frontend/v3.md](./internal/frontend/v3.md).
+contract change); orientation + backend coupling: [docs/frontend_v3.md](./docs/frontend_v3.md).
 Read `js/page.js` (createPage lifecycle) before touching any page.
 
 **Frontend v2 `apps/heylook-frontend-v2/`** (React+Zustand+Vite) -- RETIRING
