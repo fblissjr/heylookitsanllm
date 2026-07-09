@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.27]
+
+### Added
+
+- **J-space workspace features + hallucination-risk router** `src/heylook_llm/jspace/features.py`.
+  Reproduces solarkyle/jspace's feature math: `workspace_readout` (per-band-layer ignition /
+  rank / entropy / hedge-rank from lens logits), `router_feature_vector` (the 10 named features),
+  `baseline_features` (output-confidence), and `HallucinationRouter` + `FeatureNormalizer`
+  (per-model z-scored logistic regression predicting P(answer wrong)). Verified against the
+  shipped e4b TriviaQA trace: AUC 0.795 workspace-only / 0.815 combined, both beating the
+  first-token-logprob baseline (0.771) -- the paper's "workspace beats/adds to output confidence"
+  result. Download-free unit tests in `tests/unit/test_jspace_features.py`.
+
 ## [1.34.26]
 
 ### Added

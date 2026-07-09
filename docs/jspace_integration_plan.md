@@ -120,7 +120,8 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
 
 - `src/heylook_llm/jspace/` — `lens.py` (JSpaceLens: load safetensors+sidecar, transport, apply)
   **[built]**, `capture.py` (ModelAdapter arch-introspection + `capture_residuals` via a temporary
-  block wrapper) **[built]**, `features.py` (entropy/ignition/router) **[TODO]**. The offline
+  block wrapper) **[built]**, `features.py` (workspace_readout / router_feature_vector /
+  HallucinationRouter) **[built]**. The offline
   torch→safetensors converter is dev-time only (not in the runtime; server loads safetensors via
   `mx.load`). Unit tests: `tests/unit/test_jspace.py` (download-free, tiny random-weight models).
 - API: `api/jspace.py`, `APIRouter(tags=["JSpace"])`, tag added to `openapi_tags` +
@@ -143,10 +144,11 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
   router; reuse router LRU/pin (lens keyed to loaded model).
 - **Phase 3 — explore view (medium, TODO).** Layer × token heatmap; hover top-k; color = entropy/
   rank; risk badge.
-- **Phase 4 — hallucination router (bonus, TODO).** `features.py`: 10 workspace features (entropy
-  stats, ignition frac/depth, log-rank, band agreement, hedge rank); z-score per model;
-  `sigmoid(w·z + b)`. Weights shipped by `solarkyle` (`router/workspace_router_e4b.json`), AUC
-  0.74–0.78, zero-shot across Gemmas. Gated by V4.
+- **Phase 4 — hallucination router (bonus, `features.py` [built]).** 10 workspace features
+  (entropy stats, ignition frac/depth, log-rank, band agreement, hedge rank) + 4 output-confidence
+  baselines; z-score per model (`FeatureNormalizer`); `sigmoid(w·z + b)` (`HallucinationRouter`).
+  Weights shipped by `solarkyle` (`router/workspace_router_e4b.json`). **V4 PASS**: e4b TriviaQA
+  trace AUC 0.795 workspace-only / 0.815 combined, both > the 0.771 first-token-logprob baseline.
 
 ## Verifier ladder (with actual results)
 
@@ -163,8 +165,11 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
   eiffel workspace L24 = `[Paris, paris, Paris, France, París]`. (Does NOT cover MoE capture or
   8-bit transfer — those are later, on the real MoE.)
 - **V3 — Semantic sanity.** Canonical probes surface expected workspace tokens mid-to-late layers.
-- **V4 — Router replication (gates Phase 4).** Reproduce AUC 0.74–0.78 on solarkyle's shipped
-  TriviaQA traces + weights offline BEFORE trusting live scores.
+- **V4 — Router replication (DONE, PASS).** Reproduced on solarkyle's e4b TriviaQA trace with the
+  shipped weights: AUC 0.795 workspace-only / 0.815 combined > 0.771 logprob baseline. Validates
+  the router + entropy-trajectory features. **V4b (deferred):** validate `workspace_readout`'s
+  rank/ignition/hedge scalars from OUR lens logits (needs running the module on e4b) — folds into
+  the served-gemma-4 integration.
 - **V5 — E2E + regression.** Endpoint latency + unified-memory headroom on the Mac; assert the
   normal generation path is byte-identical with the feature off. Optional Metal-gated browser E2E.
 
