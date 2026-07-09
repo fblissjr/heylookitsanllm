@@ -20,41 +20,81 @@ _NORM_ATTRS = ("norm", "ln_f", "final_layernorm", "final_layer_norm")
 _EMBED_ATTRS = ("embed_tokens", "wte", "embed_in")
 
 
+def _holder_chain(model: Any) -> list:
+    """Candidate modules that may hold the text decoder / norm / head / softcap,
+    walking the common nestings: ``model`` -> ``.model`` and ``.language_model``
+    -> ``.model`` (mlx-vlm multimodal wrappers put the text stack under
+    ``language_model.model``)."""
+    holders, seen = [], set()
+
+    def add(obj):
+        if obj is not None and id(obj) not in seen:
+            seen.add(id(obj))
+            holders.append(obj)
+
+    add(model)
+    add(getattr(model, "language_model", None))
+    for h in list(holders):
+        add(getattr(h, "model", None))
+    # one more hop for language_model.model
+    for h in list(holders):
+        add(getattr(getattr(h, "language_model", None), "model", None))
+    return holders
+
+
 class ModelAdapter:
-    """Resolves the lens-relevant submodules of an mlx-lm ``Model``.
+    """Resolves the lens-relevant submodules of an mlx-lm / mlx-vlm ``Model``.
 
     Exposes ``layers`` (residual blocks), ``final_norm`` / ``head`` / ``unembed``
     (matching the model's real logit path, so gemma soft-cap and tied embeddings
-    are correct by construction), and ``softcap``.
+    are correct by construction), and ``softcap``. Handles multimodal wrappers
+    (e.g. gemma-4 VLM: text stack under ``model.language_model.model``).
     """
 
     def __init__(self, model: Any) -> None:
         self.model = model
-        self.inner = getattr(model, "model", model)   # mlx-lm: Model.model holds blocks
+        holders = _holder_chain(model)
 
-        self._layers = model.layers                   # all mlx-lm Models expose this
-        self._norm = self._resolve(self.inner, _NORM_ATTRS, "final norm")
+        # The text decoder is the first holder exposing BOTH a final norm and an
+        # input embedding.
+        self.inner = next(
+            (h for h in holders
+             if self._find(h, _NORM_ATTRS) is not None
+             and self._find(h, _EMBED_ATTRS) is not None),
+            None)
+        if self.inner is None:
+            raise ValueError(
+                f"could not locate the text decoder in {type(model).__name__} "
+                f"(walked {[type(h).__name__ for h in holders]})")
 
-        head_mod = getattr(model, "lm_head", None)
-        if head_mod is not None and hasattr(head_mod, "weight"):
+        self._layers = model.layers                   # mlx-lm/vlm expose this (delegated)
+        self._norm = self._find(self.inner, _NORM_ATTRS)
+
+        head_mod = next((hm for hm in (getattr(h, "lm_head", None) for h in holders)
+                         if hm is not None and hasattr(hm, "weight")), None)
+        if head_mod is not None:
             self._head = head_mod                     # untied unembedding
         else:
-            embed = self._resolve(self.inner, _EMBED_ATTRS, "input embedding")
-            self._head = embed.as_linear              # tied unembedding
+            self._head = self._find(self.inner, _EMBED_ATTRS).as_linear  # tied
 
-        cap = getattr(model, "final_logit_softcapping", None)
-        if cap is None:
-            cap = getattr(getattr(model, "args", None), "final_logit_softcapping", None)
-        self.softcap: float | None = float(cap) if cap else None   # 0/None -> None
+        self.softcap: float | None = self._find_softcap(holders)
 
     @staticmethod
-    def _resolve(obj: Any, attrs: tuple[str, ...], what: str) -> Any:
+    def _find(obj: Any, attrs: tuple[str, ...]):
         for a in attrs:
             found = getattr(obj, a, None)
             if found is not None:
                 return found
-        raise ValueError(f"could not locate the {what} on {type(obj).__name__} "
-                         f"(tried {attrs})")
+        return None
+
+    @staticmethod
+    def _find_softcap(holders: list) -> float | None:
+        for h in holders:
+            for src in (h, getattr(h, "args", None), getattr(h, "config", None)):
+                cap = getattr(src, "final_logit_softcapping", None)
+                if cap:
+                    return float(cap)
+        return None
 
     @property
     def layers(self):

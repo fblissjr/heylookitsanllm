@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.28]
+
+### Changed
+
+- **J-space `ModelAdapter` now resolves multimodal-wrapper nesting** (`capture.py`). Walks
+  `model` -> `.model` / `.language_model` -> `.model` to find the text decoder, softcap, and
+  tied/untied head -- so it handles the served gemma-4 VLM (text stack under
+  `model.language_model.model`, `final_logit_softcapping` on `language_model`) as well as the
+  flat mlx-lm gpt2/gemma layouts. New unit test covers the nested-VLM resolution.
+
 ## [1.34.27]
 
 ### Added

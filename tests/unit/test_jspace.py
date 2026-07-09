@@ -50,6 +50,39 @@ def test_adapter_resolves(builder, expect_softcap):
     assert ad.softcap == expect_softcap
 
 
+def test_adapter_resolves_multimodal_nesting():
+    """gemma-4 VLM shape: text stack under model.language_model.model, softcap
+    on language_model. The adapter must drill through the wrapper."""
+    class _Embed:
+        def as_linear(self, x):
+            return x
+
+    class _Inner:                      # Gemma4TextModel-like
+        def __init__(self, layers):
+            self.norm = lambda x: x
+            self.embed_tokens = _Embed()
+            self.layers = layers
+
+    class _LM:                         # mlx-vlm LanguageModel-like
+        def __init__(self, layers):
+            self.model = _Inner(layers)
+            self.final_logit_softcapping = 30.0
+
+    class _VLM:
+        def __init__(self):
+            self.language_model = _LM([object(), object(), object(), object()])
+
+        @property
+        def layers(self):
+            return self.language_model.model.layers
+
+    vlm = _VLM()
+    ad = ModelAdapter(vlm)
+    assert ad.inner is vlm.language_model.model     # drilled to the text decoder
+    assert ad.n_layers == 4
+    assert ad.softcap == 30.0                        # found on language_model
+
+
 @pytest.mark.parametrize("builder", [_gpt2_tiny, _gemma2_tiny])
 def test_capture_shapes(builder):
     model = builder()
