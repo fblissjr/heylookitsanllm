@@ -200,8 +200,10 @@ AUC ~0.80, beating the output-logprob baseline.
 ## 6. Caveats
 
 - **Text-only.** The image path of a VLM is not read; only its language model.
-- **Not gated.** Analyze forwards run in a threadpool and don't coordinate with the FIFO
-  generation gate — fine for single-user local use, a gap under concurrent load.
+- **Serialized, not concurrent.** Analyze pins the model and runs its forwards under the
+  process-global FIFO generation gate, so it serializes with generation and other analyze calls
+  (no concurrent Metal work). While an analyze is in flight the model is pinned, so a request for a
+  *different* model briefly can't evict it — expected for this analysis endpoint.
 - **Provenance.** Lenses are Anthropic's `jlens` output (Apache-2.0 code; gemma lenses inherit
   the Gemma Terms of Use — keep them out of git, which the `adapters/` gitignore does). The
   MLX apply path was verified to reproduce the reference to cosine ~1.0 (see the plan's V1/V2).
