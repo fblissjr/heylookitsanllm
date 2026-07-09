@@ -398,17 +398,16 @@ When the build hits a "backend should support X" moment, use the delegation ladd
 1. **Explore (cheap, read-only)** — before deciding anything, fan out an `Explore` agent to map the
    blast radius: which routers/schema/config the change touches, existing patterns to follow, affected
    tests. Mirror the repo's removing-a-feature checklist in reverse: `api.py` (tags + include_router),
-   `config.py`, `schema/`, `generated-api.ts` (legacy frontend sync), tests, docs.
+   `config.py`, `schema/`, tests, docs.
 2. **Decide (main loop, strongest model)** — API shape, response-model, and compatibility calls stay
-   up-tier. The backend serves two frontends during the transition (legacy React + v3), so changes must
+   up-tier. The backend serves v2 (React) and v3 during the transition, so changes must
    be additive/back-compatible until v2 retires.
 3. **Implement (task-coder)** — hand the change as a complete spec: exact endpoint, request/response
    models, files to touch, tests to write (TDD per repo convention). Mechanical sweeps (renames,
    regenerations) go to `fast-executor`.
-4. **Verify (main loop)** — `uv run pytest tests/unit/ tests/contract/` (693 unit tests green is the
-   invariant; any failure is a regression), then `/openapi-regen` to refresh `generated-api.ts` — the
-   pre-commit drift guard blocks on staleness. Update §4 of THIS spec when the contract changes, so the
-   spec stays the single source of truth for the frontend contract.
+4. **Verify (main loop)** — `uv run pytest tests/unit/ tests/contract/` (green is the invariant; any
+   failure is a regression). Update §4 of THIS spec when the contract changes, so the spec stays the
+   single source of truth for the frontend contract.
 
 Known v2-era gaps already worth this treatment if the build wants them: custom scan `paths` UI
 (backend supports it, v2 never exposed it); a slimmer conversation-list payload is NOT needed (already

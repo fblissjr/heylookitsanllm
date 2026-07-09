@@ -4,7 +4,7 @@ last updated: 2026-07-06
 
 ## Overview
 
-Backend tests for the heylookitsanllm API server. For frontend tests (874 tests across 38 files), see `apps/heylook-frontend/`.
+Backend tests for the heylookitsanllm API server. v3 frontend coverage is the browser E2E harness in `tests/e2e/` (opt-in, unsandboxed).
 
 ## Organization
 
@@ -131,5 +131,5 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 
 ## Related
 
-- `apps/heylook-frontend/` -- Frontend tests (874 tests, 38 files, Vitest)
-- `docs/frontend_api_reference.md` -- API reference for integration tests
+- `tests/e2e/` -- v3 browser E2E (puppeteer-core + system Chrome; opt-in, unsandboxed)
+- `docs/frontend_v3_spec.md` §4 -- the backend API contract

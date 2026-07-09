@@ -30,26 +30,19 @@ Built on Apple MLX for text and vision.
 
 ## Web UI
 
-### v2 Frontend (in progress)
+### v3 Frontend (current)
 
-Vanilla JS frontend at `/v2` -- no React, no bundler, no node_modules. Conversations stored server-side in DuckDB (messages as content blocks; images round-trip).
+Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build step; served directly by the backend. Conversations, notebooks, and presets are stored server-side in DuckDB (messages as content blocks; images round-trip).
 
-- **Chat** -- Streaming conversation with thinking blocks, message editing, regenerate
-- Batch, Models, Performance, Notebook -- coming soon
+- **Chat** -- streaming with thinking blocks, edit/regenerate/delete, image attach, per-conversation system prompt + saved presets
+- **Notebook** -- base-model text continuation with cursor-based generation
+- **Models** -- scan, import, configure, load/unload
+- **Performance** -- system metrics and timing breakdowns
+- **Token Explorer** -- token probability visualization with top-K alternatives
 
-### Legacy Frontend
+See [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) for the build contract (§4 = the backend API contract).
 
-7 applets built with React + Zustand + Vite at `apps/heylook-frontend/`:
-
-- **Chat** -- Streaming conversation with thinking blocks, message editing, continue/regenerate
-- **Batch** -- Multi-prompt batch jobs with result dashboard
-- **Token Explorer** -- Real-time token probability visualization with top-K alternatives
-- **Model Comparison** -- Side-by-side generation from 2-6 models
-- **Performance** -- System metrics, timing breakdowns, throughput sparklines
-- **Notebook** -- Base-model text continuation with cursor-based generation
-- **Models** -- Scan, import, configure, and load/unload models
-
-See [apps/heylook-frontend/ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) for frontend architecture.
+The React frontend `apps/heylook-frontend-v2/` (served at `/v2`) is retiring after v3 cutover; the older legacy React app was removed 2026-07-09.
 
 ## Platform Support
 
@@ -70,11 +63,9 @@ uv sync
 uv sync --extra analytics    # DuckDB analytics
 uv sync --extra performance  # xxhash, uvloop, turbojpeg, cachetools
 uv sync --extra all          # Everything
-
-# Frontend
-cd apps/heylook-frontend
-bun install
 ```
+
+The v3 frontend needs no install or build -- the backend serves it at `/v3`.
 
 ### Start Server
 
@@ -89,15 +80,10 @@ heylookllm --log-level INFO
 heylookllm --port 8080
 ```
 
-### Start Frontend
+### Open the Frontend
 
-```bash
-cd apps/heylook-frontend
-bun run dev          # http://localhost:5173
-bun run dev:all      # frontend + backend together
-```
-
-See [apps/heylook-frontend/README.md](./apps/heylook-frontend/README.md) for testing, build, and project structure.
+Once the server is running, open `http://localhost:8080/v3` -- the v3 UI is served
+by the backend (no separate dev server or build step).
 
 ### Run as Background Service
 

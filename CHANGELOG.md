@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.25]
+
+### Removed
+
+- **Legacy React frontend `apps/heylook-frontend/` deleted.** v3 (served at `/v3`) has
+  parity and the app was no longer mounted by the backend. Retired with it: the OpenAPI
+  drift guard that served only the legacy app -- `scripts/check_openapi_sync.sh`, the
+  pre-commit OpenAPI block, and the `/openapi-regen` skill (v3 hand-writes `js/api.js`;
+  nothing consumes the generated TS types). The live schema stays at `/openapi.json` +
+  `/docs`. Also deleted the stale `docs/frontend_api_reference.md` (React-era integration
+  guide, superseded by the v3 spec §4 + live OpenAPI).
+
+### Docs
+
+- CLAUDE.md, README.md, tests/README.md, docs/frontend_v3_spec.md, .gitignore, and a
+  `perf_collector` docstring updated to drop references to the removed app/guard and to
+  point at v3 (spec §4, `tests/e2e/`). New `internal/frontend/v3.md` (gitignored) maps
+  v3's done/left + the backend<->v3 coupling; CLAUDE.md Orient now names
+  `internal/backend/plan_2026-07.md` as the roadmap.
+
 ## [1.34.24]
 
 ### Fixed

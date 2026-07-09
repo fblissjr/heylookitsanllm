@@ -13,7 +13,7 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 - **Status + backlog**: [internal/session/CURRENT.md](./internal/session/CURRENT.md) (graded done/left narrative), [internal/session/TODO.md](./internal/session/TODO.md). Read before starting.
 - **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [internal/frontend/v3.md](./internal/frontend/v3.md). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
 - Deep dives: [internal/](./internal/) -- `backend/`, `frontend/` (note: architecture.md/applet_catalog.md there describe the RETIRING React app; v3 lives in v3.md), `bugs/` (postmortems; read before touching providers), `research/`, `log/`.
-- Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). ([docs/frontend_api_reference.md](./docs/frontend_api_reference.md) is the OLD React reference -- for v3 use spec §4.)
+- Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). (The v3 API contract is spec §4; the live schema is at `/openapi.json` + `/docs`.)
 - `internal/`, `models.toml`, `coderef/` are gitignored -- local-only, never committed.
 
 ## Architecture
@@ -40,9 +40,10 @@ the authoritative backend API contract -- update it in the same commit as any
 contract change); orientation + backend coupling: [internal/frontend/v3.md](./internal/frontend/v3.md).
 Read `js/page.js` (createPage lifecycle) before touching any page.
 
-**Frontend v2 `apps/heylook-frontend-v2/`** and **legacy `apps/heylook-frontend/`**
-(React+Zustand+Vite) -- both RETIRING after v3 cutover (plan Q2/Phase 3);
-don't invest here. Their CLAUDE.md/[ARCHITECTURE.md](./apps/heylook-frontend/ARCHITECTURE.md) remain for reference.
+**Frontend v2 `apps/heylook-frontend-v2/`** (React+Zustand+Vite) -- RETIRING
+after v3 cutover (plan Q2/Phase 3); don't invest here. See its
+[CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md). (The older legacy React app
+`apps/heylook-frontend/` was deleted 2026-07-09 -- v3 has parity.)
 
 **Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md). NB: root pyproject pins UPSTREAM mlx-lm/mlx-vlm, not its forks -- fork-side bench wins don't reach the server until upstreamed/repointed.
 
@@ -64,8 +65,8 @@ don't invest here. Their CLAUDE.md/[ARCHITECTURE.md](./apps/heylook-frontend/ARC
 
 ## Repo conventions (beyond the global ones)
 
-- New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`, then run `/openapi-regen` to refresh `generated-api.ts`. A pre-commit hook runs `scripts/check_openapi_sync.sh` (offline schema via `app.openapi()`) when a top-level `src/heylook_llm/*.py`, `schema/`, or the generated file is staged, and blocks on drift. Run manually: `cd apps/heylook-frontend && bun run check:api`. The check skips gracefully when uv/bun/MLX are unavailable, so it only blocks on detected drift; the hook lives in `.git/hooks/` (not committed) -- fresh clones rely on `check:api`/CI.
-- Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, `generated-api.ts`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
+- New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`. (The OpenAPI drift guard -- `generated-api.ts` / `scripts/check_openapi_sync.sh` / the pre-commit block / `/openapi-regen` -- was retired 2026-07-09 with the legacy React app that consumed the generated TS types; v3 hand-writes `api.js`. The live schema stays at `/openapi.json` and `/docs`.)
+- Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
 - The security hook false-positives on `mx.eval` (MLX graph materializer, not Python's eval) -- prefer `mx.async_eval` or acknowledge it.
 - Observability invariant: log streams record numbers + metadata only, never prompts/responses/token IDs. Use `sampler_summary_from_request` (memory.py) for "what was this configured with"; route MemoryManager calls through `memory.safe_mm_call(...)` (no-op when None, swallows errors -- observability must never break inference).
 - Pydantic model + custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)` (`JSONResponse` double-serializes). SSE post-generation telemetry (peak mem, cache bytes) goes in the usage chunk's `timing` (client needs `stream_options.include_usage=true`).
@@ -82,6 +83,6 @@ don't invest here. Their CLAUDE.md/[ARCHITECTURE.md](./apps/heylook-frontend/ARC
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Root venv: sync with `uv sync --all-extras` -- plain `uv sync` strips the performance/test extras (pyturbojpeg = the multipart JPEG decoder, uvloop, pytest plugins) and the loss is silent until an image request or test run fails.
-- Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`). Frontend legacy: `cd apps/heylook-frontend && bunx vitest run`.
+- Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`).
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).
 - Sandbox traps: `ENV=x uv run ...` does NOT match the uv exemption (env-var prefix changes the command match -> sandboxed, no Metal); sandboxed `curl` can't reach localhost (probe via `uv run python` + urllib); never launch the server piped to `head` (SIGPIPE wedges it -- redirect to a file). The OpenAPI pre-commit check silently skips under sandbox; to truly verify schema-neutrality, export `app.openapi()` from a HEAD~1 worktree and byte-compare.

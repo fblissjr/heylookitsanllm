@@ -167,8 +167,8 @@ class PerfCollector:
     def build_profile(self, time_range: str) -> dict:
         """Build a frontend-compatible performance profile.
 
-        Returns a dict matching the PerformanceProfile TypeScript interface
-        defined in apps/heylook-frontend/src/applets/performance/types.ts.
+        Returns the PerformanceProfile dict shape consumed by the v3
+        performance page (apps/heylook-frontend-v3/js/pages/perf.js).
         """
         window_seconds = _parse_time_range(time_range)
         cutoff = time.time() - window_seconds
