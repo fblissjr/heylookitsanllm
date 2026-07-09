@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.35]
+
+### Changed
+
+- `scripts/jspace_convert_lens.py` tolerates `--out-dir` already ending in the model id
+  (avoids the double-nested `adapters/jspace/<id>/<id>/` that the registry never sees).
+
+### Docs
+
+- README, CLAUDE.md, and `docs/architecture/api.md` document the j-space feature + endpoints;
+  CLAUDE.md gains the MLX off-event-loop / thread-stream, lazy-`mx.load`, and pipeline-`.layers`
+  gotchas.
+
 ## [1.34.34]
 
 ### Fixed

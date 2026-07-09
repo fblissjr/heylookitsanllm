@@ -97,7 +97,12 @@ def main() -> None:
         lens_pt = _resolve_lens_pt(ap, args.lens_pt)
 
     lens = jlens.JacobianLens.load(lens_pt)
-    out = Path(args.out_dir) / args.model_id
+    # <out-dir>/<model-id>/. Tolerate the common mistake of passing --out-dir
+    # already ending in the model id (else it double-nests and the registry,
+    # which looks one level up, never sees the lens).
+    out = Path(args.out_dir)
+    if out.name != args.model_id:
+        out = out / args.model_id
     out.mkdir(parents=True, exist_ok=True)
     # Serialize the sidecar FIRST so a non-JSON value can't leave an orphan
     # lens.safetensors (the registry requires BOTH files anyway).

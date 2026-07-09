@@ -22,8 +22,8 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 **Backend `src/heylook_llm/`** -- Two providers (`Literal["mlx", "mlx_embedding"]`):
 MLXProvider (text+vision), MLXEmbeddingProvider. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
-config in `models.toml`. 8 API routers: messages, rlm, conversation, notebook,
-preset, admin, admin_ops, scan_import. DuckDB store (`db.py`: conversations +
+config in `models.toml`. 9 API routers: messages, rlm, conversation, notebook,
+preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability). DuckDB store (`db.py`: conversations +
 notebooks + presets, single serialized writer thread, transactional ops;
 `HEYLOOK_DB_PATH` override; dynamic field names gated by `_UPDATABLE_*_FIELDS`
 frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- add tables additively
@@ -61,6 +61,9 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - Verify a library is actually broken before working around it.
 - Perf numbers are honest as of v1.34.1: recorded tok/s = native mlx-lm `generation_tps`, TTFT/tok-s exclude queue-wait (own `queue_wait_ms` field), trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()` -- add new chunk fields THERE, not at call sites (batch_processor.py still has 3 unconverted scrape sites, moot when Phase 2 collapses it).
 - The FIFO generation gate is a PROCESS-GLOBAL singleton shared by all providers (`_get_generation_gate`); `generation_queue_stats()` reports gate-wide traffic, not per-model. Any "is this model busy" logic built on it is conservative across models. `unload()` waits for actives AND gate waiters (30s cap) -- the active counter decrements before `gate.release()`, so never gate teardown on actives alone.
+- Any NEW code path running MLX forwards off the event loop (analysis endpoints etc.) must run on `streaming_utils._executor_pool` (a pinned, REUSED thread) inside `with mx.stream(generation_core._get_generation_stream())`, AND acquire the process-global gen gate + `router.pin_model()`. Starlette's `run_in_threadpool` has no thread-local MLX stream ("There is no Stream(cpu/gpu, 0)") and a dying MLX thread aborts the PROCESS. Verify on a real worker thread, not the main thread (see `jspace_api.py`).
+- `mx.load` is lazy/mmap-backed -- `mx.eval()` the arrays at load time if they'll first be used on a different (worker) thread, else the first eval crashes on that thread's missing CPU stream.
+- A model's `.layers` can be a fresh-slice `@property` (pipeline-parallel Qwen3.5/deepseek/glm4_moe: `pipeline_layers = self.layers[start:end]`), NOT the list the forward iterates -- to hook/mutate blocks use the underlying list on the inner decoder (`inner.layers`/`.h`), not `model.layers`.
 - Live-verifying streaming/latency changes: the 31B dense gemma natively decodes ~10 tok/s (looks identical to the old delivery cap); use the MoE `gemma-4-26B-A4B` (~90 tok/s) as the discriminating model.
 - Upstream posture (details: `docs/architecture/ecosystem_strategy.md`): mlx-lm is release-starved -- SHA-pin rather than wait for PyPI, check its open-PR backlog BEFORE writing any workaround, expect new capabilities via sidecar packages.
 

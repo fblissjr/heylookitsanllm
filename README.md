@@ -20,6 +20,7 @@ Built on Apple MLX for text and vision.
 - **Thinking Blocks**: Qwen3-style `<think>` parsing with token-level detection, round-trip editing, and streaming
 - **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
+- **J-Space**: Post-hoc Jacobian-lens interpretability -- read a model's "silent workspace" (per-layer vocabulary tokens it's disposed toward before answering) plus a hallucination-risk signal, from Anthropic's July-2026 global-workspace work ([guide](docs/jspace_guide.md))
 - **Model Management**: Scan, import, configure, load/unload models from the web UI or API
 - **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
 - **RLM**: Recursive Language Model endpoint -- the model writes Python code to iteratively explore long contexts via a sandboxed REPL ([guide](docs/rlm_guide.md), [advanced patterns](docs/rlm_advanced.md))
@@ -39,6 +40,7 @@ Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build 
 - **Models** -- scan, import, configure, load/unload
 - **Performance** -- system metrics and timing breakdowns
 - **Token Explorer** -- token probability visualization with top-K alternatives
+- **J-Space** -- Jacobian-lens "workspace" heatmap: the silent tokens a model tracks before answering, with an optional hallucination-risk badge (needs a fitted lens installed under `adapters/jspace/`; see the [guide](docs/jspace_guide.md))
 
 See [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) for the build contract (§4 = the backend API contract).
 
@@ -127,7 +129,7 @@ curl -X POST http://localhost:8080/v1/admin/reload
 
 Interactive docs at `http://localhost:8080/docs` when the server is running.
 
-Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`. See [docs/architecture/api.md](docs/architecture/api.md) for full reference.
+Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`, `/v1/jspace/analyze`. See [docs/architecture/api.md](docs/architecture/api.md) for full reference.
 
 ## Batch Vision Labeling
 

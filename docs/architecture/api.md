@@ -1472,6 +1472,16 @@ High-traffic:
 | `/v1/system/metrics` | GET | System + per-model metrics | RAM, CPU, context used |
 | `/v1/performance/profile/{range}` | GET | Aggregated perf analytics | 1h / 6h / 24h / 7d |
 
+### Interpretability Endpoints (`/v1/jspace/*`)
+
+Jacobian-lens ("j-space") read-out of a model's verbalizable workspace. See the
+[j-space guide](../jspace_guide.md) for the full response shape and setup.
+
+| Endpoint | Method | Purpose | Notes |
+|----------|--------|---------|-------|
+| `/v1/jspace/models` | GET | Models with a fitted lens | Lens files under `adapters/jspace/<model_id>/` |
+| `/v1/jspace/analyze` | POST | Per-layer workspace + hallucination-risk | Lens-gated; pins the model + runs under the gen gate on a pinned MLX thread |
+
 ### Documentation Endpoints
 
 | Endpoint | Method | Purpose |
