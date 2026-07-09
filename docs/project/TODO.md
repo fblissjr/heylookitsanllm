@@ -130,4 +130,4 @@ None currently.
 - [ ] Vision + speculative decoding (pre-filled cache incompatible with speculative prefill)
 - [ ] Radix cache for vision (pre-filled cache bypasses radix tree)
 
-- [x] Error-chunk altitude: DONE in v1.33.0 -- provider raises typed GenerationFailed/InvalidGenerationRequest; batch/RLM now fail loudly; non-streaming client errors return 400. See internal/bugs + CHANGELOG 1.33.0.
+- [x] Error-chunk altitude: DONE in v1.33.0 -- provider raises typed GenerationFailed/InvalidGenerationRequest; batch/RLM now fail loudly; non-streaming client errors return 400. See docs/architecture/postmortems + CHANGELOG 1.33.0.

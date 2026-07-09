@@ -17,8 +17,17 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 | [mlx_embedding.md](./mlx_embedding.md) | MLXEmbeddingProvider (dynamic backbone via mlx-lm) |
 | [ecosystem_strategy.md](./ecosystem_strategy.md) | MLX ecosystem posture -- **READ before perf / provider work** |
 
-Still local-only in `internal/` (not refreshed for tracking): the bug
-postmortems (`internal/bugs/`) and stale subsystem notes
-(`internal/backend/{batch,logprobs,thinking}.md`). Links from these docs into
-`internal/` resolve for maintainers with the full checkout; they dangle when
-browsing on GitHub.
+## Postmortems
+
+Crash postmortems referenced throughout these docs (read before touching the
+provider / cache layers):
+
+| Doc | Covers |
+|-----|--------|
+| [postmortems/mlx_thread_teardown_abort.md](./postmortems/mlx_thread_teardown_abort.md) | SIGTRAP process abort on generation-thread teardown (v1.31.2) |
+| [postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md) | "no Stream(gpu, N)" crash on radix cache reuse + the v1.32.0 eligibility gate |
+
+Still local-only in `internal/` (not refreshed for tracking): the stale
+subsystem notes (`internal/backend/{batch,logprobs,thinking}.md`). A few prose
+references into `internal/` from these docs resolve for maintainers with the
+full checkout but dangle when browsing on GitHub.

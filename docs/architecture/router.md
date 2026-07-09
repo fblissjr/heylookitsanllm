@@ -15,8 +15,8 @@ serialize *loading/evicting providers*; they say nothing about
 serializing *generation* on an already-loaded model. See
 [mlx_provider.md](./mlx_provider.md) section 4 for that layer (the FIFO
 generation gate and the pinned executor pool) and
-[../bugs/mlx_thread_teardown_abort.md](../../internal/bugs/mlx_thread_teardown_abort.md) /
-[../bugs/radix_thread_affinity.md](../../internal/bugs/radix_thread_affinity.md) for
+[postmortems/mlx_thread_teardown_abort.md](./postmortems/mlx_thread_teardown_abort.md) /
+[postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md) for
 the postmortems.
 
 ## Overview

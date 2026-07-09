@@ -11,9 +11,9 @@ Two process-abort bugs found and fixed during the frontend v3 build's
 backend co-evolution, plus a library-drift audit. See section 4 below for
 detail, and the full postmortems:
 
-- [internal/bugs/mlx_thread_teardown_abort.md](../../internal/bugs/mlx_thread_teardown_abort.md)
+- [postmortems/mlx_thread_teardown_abort.md](./postmortems/mlx_thread_teardown_abort.md)
   -- SIGTRAP process abort on generation-thread teardown (v1.31.2).
-- [internal/bugs/radix_thread_affinity.md](../../internal/bugs/radix_thread_affinity.md)
+- [postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md)
   -- "no Stream(gpu, N)" crash on radix cache reuse, plus the v1.32.0
   radix-eligibility gate (v1.31.1 / v1.32.0).
 
@@ -158,7 +158,7 @@ is unsafe. As of v1.31.2, that thread is **leased from a
 that ran MLX work must never be torn down while the process lives (MLX's
 thread-local `CompilerCache` can crash the whole process on teardown --
 see
-[internal/bugs/mlx_thread_teardown_abort.md](../../internal/bugs/mlx_thread_teardown_abort.md)).
+[postmortems/mlx_thread_teardown_abort.md](./postmortems/mlx_thread_teardown_abort.md)).
 The pool grows to admitted concurrency (bounded by `1 + max_queue_depth`)
 and never shrinks. A single shared thread for all requests was considered
 and rejected -- it deadlocks against the FIFO gate above (a queued
@@ -179,7 +179,7 @@ mention:
   Unmaterialized (lazy) state is scheduled on a thread-local GPU stream
   that dies with its thread; a later request restoring that state on a
   different thread would crash. See
-  [internal/bugs/radix_thread_affinity.md](../../internal/bugs/radix_thread_affinity.md).
+  [postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md).
 - **Radix is bypassed entirely for non-standard caches.**
   `process_prompt_with_cache` sets
   `prompt_cache._radix_eligible = (cache_type == "standard" and no

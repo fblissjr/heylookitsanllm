@@ -63,7 +63,7 @@ The doc also carries the tripwires (next `mlx` core wheel is the load-bearing si
    downstream ecosystem (LM Studio, vLLM-MLX, dflash-mlx, mlx-community).
    Our orchestration layer (FastAPI/SQLite/RLM/router) is compute-agnostic
    glue; a rewrite buys nothing and burns the encoded correctness knowledge
-   in internal/bugs/ and our invariants.
+   in the postmortems and our invariants.
 2. **The engine's identity is a single-box inference SCHEDULER, not a model
    runner.** Bare "OpenAI endpoint over mlx-lm" is commodity (8+ competitors,
    Ollama, first-party Apple path). Our differentiation: router/admission,
