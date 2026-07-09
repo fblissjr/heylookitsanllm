@@ -1,6 +1,6 @@
 # Documentation index
 
-Last updated: 2026-07-09
+Last updated: 2026-07-09 (jspace plan added)
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
@@ -15,6 +15,11 @@ config, providers, and the MLX ecosystem posture). Start at its
 - [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
+
+## Research / design
+- [jspace_integration_plan.md](./jspace_integration_plan.md) -- Jacobian-lens ("j-space")
+  interpretability feature: build + verifier plan. Phase 1/V1 (gpt2) + V2 (gemma) parity GREEN;
+  spike harness in the gitignored `coderef/jspace_scratch/`.
 
 ## Frontend (v3)
 - [frontend_v3.md](./frontend_v3.md) -- orientation + backend coupling map
