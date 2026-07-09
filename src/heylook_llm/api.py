@@ -159,6 +159,10 @@ app = FastAPI(
         {
             "name": "Presets",
             "description": "Saved presets: named system prompt + sampler parameter bundles"
+        },
+        {
+            "name": "JSpace",
+            "description": "Jacobian-lens interpretability: read the model's verbalizable workspace"
         }
     ]
 )
@@ -198,6 +202,10 @@ app.include_router(notebook_router)
 # Import and include Preset API router
 from heylook_llm.preset_api import preset_router
 app.include_router(preset_router)
+
+# Import and include J-space (Jacobian lens) interpretability router
+from heylook_llm.jspace_api import jspace_router
+app.include_router(jspace_router)
 
 # Data management
 from heylook_llm.auth import require_admin_token, require_api_key

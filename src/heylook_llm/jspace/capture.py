@@ -111,11 +111,22 @@ class ModelAdapter:
         return self._head(x)
 
     def unembed(self, x: mx.array) -> mx.array:
-        """Map a residual ``[..., d_model]`` to logits: softcap(head(final_norm(x)))."""
+        """Map a PRE-norm residual ``[..., d_model]`` to logits:
+        softcap(head(final_norm(x)))."""
         logits = self._head(self._norm(x))
         if self.softcap:
             logits = mx.tanh(logits / self.softcap) * self.softcap
         return logits
+
+    def logits(self, input_ids: mx.array) -> mx.array:
+        """The model's real logits for ``input_ids`` ``[1, L]``: runs the text
+        forward (already applies the final norm) then head + softcap. Used for
+        greedy answer generation in the analyze pipeline."""
+        normed = self.inner(input_ids)                # post-final-norm hidden
+        out = self._head(normed)
+        if self.softcap:
+            out = mx.tanh(out / self.softcap) * self.softcap
+        return out
 
 
 class _Recorder:

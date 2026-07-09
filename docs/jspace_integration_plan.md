@@ -140,8 +140,15 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
   source layers, both probes. Semantic preview: multihop workspace L10 = `[yen, ¥, Yen, Japanese,
   Osaka]` (currency concepts surface late; gpt2-small leans Japan-prior over boot→Italy, expected
   at its size — the *mechanism* is right).
-- **Phase 2 — API endpoint (medium, TODO).** `POST /v1/jspace/analyze`; Pydantic schema; register
-  router; reuse router LRU/pin (lens keyed to loaded model).
+- **Phase 2 — API endpoint (medium, DONE).** `GET /v1/jspace/models` + `POST /v1/jspace/analyze`
+  (`jspace_api.py`, tag `JSpace`, registered in `api.py`). `jspace/analyze.py` reuses the provider's
+  exact prompt formatting (chat template + `<bos>`), greedy-generates the answer, captures the
+  residual stream, returns onset top-k strip + optional layer×position heatmap + features + risk.
+  `jspace/registry.py` = `HEYLOOK_JSPACE_DIR/<model_id>/` lens cache (offline-converted safetensors;
+  optional `normalizer.json`/`router.json` for risk). Registry unit + endpoint contract tests.
+  Compute runs in a threadpool (blocking/Metal-bound); it does NOT yet coordinate with the FIFO
+  generation gate — low-frequency analysis endpoint, but concurrent use with generation is a known
+  gap.
 - **Phase 3 — explore view (medium, TODO).** Layer × token heatmap; hover top-k; color = entropy/
   rank; risk badge.
 - **Phase 4 — hallucination router (bonus, `features.py` [built]).** 10 workspace features

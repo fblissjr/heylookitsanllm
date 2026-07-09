@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.30]
+
+### Added
+
+- **`/v1/jspace` interpretability API** (`jspace_api.py`, tag `JSpace`). `GET /v1/jspace/models`
+  lists served models with a fitted lens; `POST /v1/jspace/analyze` formats the prompt exactly as
+  the provider does (chat template + `<bos>`), greedily generates a short answer, captures the
+  residual stream, and returns the Jacobian-lens workspace: per-band-layer top-k "silent" tokens
+  at the answer-onset, an optional layer x position heatmap, workspace features, and (when a
+  per-model normalizer + router are configured) a hallucination-risk score. New
+  `jspace/analyze.py` (pipeline) + `jspace/registry.py` (`HEYLOOK_JSPACE_DIR/<model_id>/` lens
+  cache; offline-converted safetensors). Lenses are loaded, never converted, at runtime.
+  Registry unit tests + endpoint contract tests (routing/guards, no model needed).
+
 ## [1.34.29]
 
 ### Fixed
