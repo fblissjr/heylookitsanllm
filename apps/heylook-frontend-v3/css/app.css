@@ -1176,3 +1176,53 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .explore__detail { flex: none; max-width: none; }
 }
 
+
+/* ==== page: jspace (Jacobian lens / workspace) ==== */
+
+.jspace { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+
+.jspace__bar {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.75rem 1.25rem 0.5rem;
+}
+.jspace__bar select { max-width: 16rem; }
+.jspace__opt { display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--text-sm); color: var(--ink-muted); }
+
+.jspace__composer { display: flex; gap: 0.5rem; align-items: flex-end; padding: 0 1.25rem 0.5rem; }
+.jspace__composer textarea { flex: 1; resize: none; font-size: var(--text-body); line-height: 1.5; max-height: 200px; }
+
+.jspace__status { font-family: var(--mono); color: var(--ink-muted); padding: 0 1.25rem 0.35rem; min-height: 1.4rem; }
+
+.jspace__result { flex: 1; min-height: 0; overflow: auto; padding: 0.25rem 1.25rem 1.5rem; }
+
+.jspace__answer { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.jspace__answer-label { font-family: var(--mono); font-size: var(--text-sm); color: var(--ink-muted); }
+.jspace__answer-text { font-size: var(--text-lg); font-weight: 600; color: var(--ink); }
+.jspace__risk {
+  margin-left: auto; padding: 0.15rem 0.6rem; border-radius: var(--r-ctl);
+  font-family: var(--mono); font-size: var(--text-sm); color: #14261c; font-weight: 600;
+}
+
+.jspace__section-label { margin: 0.9rem 0 0.35rem; }
+
+.jspace__strip { display: flex; flex-direction: column; gap: 0.2rem; }
+.jspace__row { display: grid; grid-template-columns: 2.5rem 2.2rem 1fr; align-items: center; gap: 0.5rem; }
+.jspace__layer { font-family: var(--mono); font-size: var(--text-sm); color: var(--ink-muted); }
+.jspace__ent { font-family: var(--mono); font-size: var(--text-sm); color: var(--ink-muted); text-align: right; }
+.jspace__chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.jspace__chip {
+  padding: 0.05rem 0.4rem; border-radius: var(--r-ctl);
+  font-family: var(--mono); font-size: var(--text-sm); color: #1a1a1a; white-space: pre;
+}
+
+.jspace__heatmap { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+.jspace__hrow { display: flex; align-items: center; gap: 2px; }
+.jspace__hrow .jspace__layer { width: 2.5rem; flex: none; }
+.jspace__hcell {
+  flex: none; width: 3.2rem; padding: 0.1rem 0.2rem; border-radius: 3px;
+  font-family: var(--mono); font-size: 0.62rem; color: #1a1a1a; white-space: nowrap; overflow: hidden;
+}
+
+@media (max-width: 767px) {
+  .jspace__row { grid-template-columns: 2.2rem 1.8rem 1fr; }
+}

@@ -32,7 +32,7 @@ with sandboxed REPL.
 - [docs/architecture/](./docs/architecture/) (overview, api, router, config, mlx_provider, mlx_embedding, ecosystem_strategy) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
-JS, no build, served at `/v3`. 5 pages (chat, notebook, models, perf, explore);
+JS, no build, served at `/v3`. 6 pages (chat, notebook, models, perf, explore, jspace);
 chat streams over `/v1/chat/completions` today (Messages migration is plan
 Phase 3b), takes image input + renders image content blocks out of the DuckDB
 store, and has a per-conversation system-prompt editor + saved-preset bar.

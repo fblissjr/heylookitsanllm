@@ -32,17 +32,35 @@ def _encode_no_special(tok, text):
         return tok.encode(text)
 
 
-def format_prompt(model, processor, is_vlm: bool, messages: list[dict]) -> list[int]:
-    """Formatted + tokenized input ids, matching MLXProvider._apply_template
-    (chat template then tokenizer.encode -- includes gemma's <bos>)."""
+def format_prompt(model, processor, is_vlm: bool, messages: list[dict],
+                  *, chat: bool = False) -> list[int]:
+    """Tokenized input ids.
+
+    chat=True: full chat template (matches MLXProvider._apply_template) -- the
+    right way to prompt an instruct model, but the final position is the
+    generation-prompt boundary (formatting tokens), so the workspace read-out
+    there is dominated by format, not content. Good for the risk features
+    (which use the answer token's rank), poor for the top-k visualization.
+
+    chat=False (default, viz-first): raw completion -- ``<bos>`` + the joined
+    message text, so the final position is a real content token and the
+    workspace surfaces sensible "silent words" (e.g. "...city of" -> Paris)."""
     tok = _tokenizer(processor)
-    if is_vlm:
-        from mlx_vlm.prompt_utils import apply_chat_template as vlm_tpl
-        prompt = vlm_tpl(processor, model.config, messages, num_images=0)
-    else:
-        prompt = tok.apply_chat_template(messages, tokenize=False,
-                                         add_generation_prompt=True)
-    return list(tok.encode(prompt) if isinstance(prompt, str) else prompt)
+    if chat:
+        if is_vlm:
+            from mlx_vlm.prompt_utils import apply_chat_template as vlm_tpl
+            prompt = vlm_tpl(processor, model.config, messages, num_images=0)
+        else:
+            prompt = tok.apply_chat_template(messages, tokenize=False,
+                                             add_generation_prompt=True)
+        return list(tok.encode(prompt) if isinstance(prompt, str) else prompt)
+
+    text = "\n".join(m["content"] for m in messages if m.get("content"))
+    ids = list(_encode_no_special(tok, text))
+    bos = getattr(tok, "bos_token_id", None)
+    if bos is not None and (not ids or ids[0] != bos):     # gemma needs the BOS sink
+        ids = [bos] + ids
+    return ids
 
 
 def _eos_ids(tok) -> set[int]:
@@ -76,20 +94,20 @@ def greedy_generate(adapter: ModelAdapter, ids, max_tokens: int, eos_ids):
 
 
 def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
-            top_k: int = 8, heatmap: bool = False,
+            top_k: int = 8, heatmap: bool = False, chat: bool = False,
             heatmap_positions: int = _DEFAULT_HEATMAP_POSITIONS,
             router=None, normalizer: F.FeatureNormalizer | None = None) -> dict:
     model, processor, is_vlm = provider.model, provider.processor, provider.is_vlm
     tok = _tokenizer(processor)
     ad = ModelAdapter(model)
-    ids = format_prompt(model, processor, is_vlm, messages)
+    ids = format_prompt(model, processor, is_vlm, messages, chat=chat)
 
     gen_ids, step_logprobs = greedy_generate(ad, ids, max_answer_tokens, _eos_ids(tok))
     if gen_ids:
         first_answer_id = gen_ids[0]
     else:
         first_answer_id = int(mx.argmax(ad.logits(mx.array([ids]))[0, -1]).item())
-    answer = tok.decode(gen_ids).strip() if gen_ids else ""
+    answer = tok.decode(gen_ids, skip_special_tokens=True).strip() if gen_ids else ""
 
     band = F.band_layers(ad.n_layers, lens.source_layers)
     if not band:

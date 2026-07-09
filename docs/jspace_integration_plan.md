@@ -2,12 +2,12 @@
 
 Last updated: 2026-07-09
 
-Status: Phase 0 done; Phase 1 done + **V1 GREEN** (gpt2-small) + **V2 GREEN** (gemma-2-2b,
-softcap+RMSNorm proven). **Backend core module `src/heylook_llm/jspace/` (lens.py + capture.py)
-built, unit-tested (8 green), and e2e-verified** (the real module reproduces cos 1.00000 / 5-of-5
-vs the oracle on gpt2 + gemma-2-2b). Next: features.py/router (Phase 4), the analyze endpoint
-(Phase 2), and the served gemma-4 MoE parity. Scope = easy + medium tiers only. This is a forward-looking design/verifier plan for a
-not-yet-built feature; the server module does not exist yet. Reproducible spike harness +
+Status: **ALL PHASES DONE (easy + medium tiers).** Phase 0-1 (V1 gpt2 + V2 gemma-2-2b apply-parity
+cos 1.0), Phase 4 router (V4 AUC 0.795/0.815), Phase 2 endpoint (`/v1/jspace/analyze`), Phase 3 v3
+`jspace` page -- all built, tested, and verified end-to-end on the served gemma-4-26b-a4b 8-bit MoE
+VLM (raw "...city of" -> Paris in the workspace). Deferred to future work: live per-token streaming
+instrumentation, VLM vision residuals, our own lens fitting, calibrated live risk (needs per-model
+traffic normalizer), generation-gate coordination. Scope was easy + medium tiers only. Reproducible spike harness +
 fixtures live in the gitignored `coderef/jspace_scratch/` (see the repro section).
 
 ## What this is
@@ -149,8 +149,15 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
   Compute runs in a threadpool (blocking/Metal-bound); it does NOT yet coordinate with the FIFO
   generation gate — low-frequency analysis endpoint, but concurrent use with generation is a known
   gap.
-- **Phase 3 — explore view (medium, TODO).** Layer × token heatmap; hover top-k; color = entropy/
-  rank; risk badge.
+- **Phase 3 — frontend view (medium, DONE).** New v3 page `apps/heylook-frontend-v3/js/pages/jspace.js`
+  (dedicated `jspace` nav route, not surgery on explore.js): model picker (lens-gated via
+  `/v1/jspace/models`), prompt, `raw`/`chat` + heatmap toggles, calls `/v1/jspace/analyze`, renders
+  the layer×top-k "silent words" strip (colored by within-layer rank), an optional layer×position
+  heatmap (colored by confidence), and a risk badge. Reuses the explore-chip OKLCH formula.
+  **Verified end-to-end on the served 26B MoE**: raw completion "...city of" -> answer Paris, onset
+  workspace surfaces [Amsterdam, Paris, paris, PARIS, Kolkata]. KEY: read at a CONTENT token (raw
+  completion, default) not the chat generation-prompt boundary (formatting junk) -- `chat=true`
+  reserved for the risk features.
 - **Phase 4 — hallucination router (bonus, `features.py` [built]).** 10 workspace features
   (entropy stats, ignition frac/depth, log-rank, band agreement, hedge rank) + 4 output-confidence
   baselines; z-score per model (`FeatureNormalizer`); `sigmoid(w·z + b)` (`HallucinationRouter`).

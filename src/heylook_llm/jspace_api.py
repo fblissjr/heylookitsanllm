@@ -36,6 +36,7 @@ class AnalyzeRequest(BaseModel):
     max_answer_tokens: int = 8
     top_k: int = 8
     heatmap: bool = False
+    chat: bool = False   # False = raw completion (crisp viz); True = chat template (risk)
 
 
 @jspace_router.get(
@@ -87,7 +88,7 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
         return await run_in_threadpool(
             run_analyze, provider, lens, messages,
             max_answer_tokens=body.max_answer_tokens, top_k=body.top_k,
-            heatmap=body.heatmap, router=router, normalizer=normalizer)
+            heatmap=body.heatmap, chat=body.chat, router=router, normalizer=normalizer)
     except Exception as e:
         logger.exception("jspace analyze failed")
         raise HTTPException(status_code=500, detail=f"analyze failed: {e}")

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.31]
+
+### Added
+
+- **v3 `J-Space` page** (`apps/heylook-frontend-v3/js/pages/jspace.js`, new `jspace` nav route).
+  Model picker (lens-gated), prompt, `raw`/`chat` + heatmap toggles; renders the layer×top-k
+  "silent words" strip (colored by within-layer rank), an optional layer×position heatmap (colored
+  by confidence), and a hallucination-risk badge. Reuses the explore-chip OKLCH formula.
+
+### Changed
+
+- **`/v1/jspace/analyze` defaults to raw-completion prompting** (`chat=false`). The chat template's
+  final position is the generation-prompt boundary, where the lens top-k is formatting junk; a raw
+  completion reads a real content token so the workspace surfaces sensible tokens (verified on the
+  served 26B MoE: "...the city of" -> Paris). `chat=true` (chat template) is kept for the risk
+  features. Answer decode now strips special tokens.
+
 ## [1.34.30]
 
 ### Added

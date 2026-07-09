@@ -40,7 +40,7 @@ js/
   settings.js               # sampler panel; null = backend-cascade; snapshotSettings()/applySettings(); `lead` hook on buildSettingsPanel
   markdown.js, utils.js
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
-  pages/  chat.js  notebook.js  models.js  perf.js  explore.js
+  pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js
 ```
 
 Batch was dropped from v3 scope on purpose (spec §6); the backend endpoint remains.
@@ -76,6 +76,7 @@ presets** (v1.34.22); browser E2E in `tests/e2e/` (55 checks live-green).
 | models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan`, load/unload) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
 | explore | `/v1/chat/completions` **with logprobs** |
+| jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
 | shared | `/v1/data/clear` (danger zone; presets are EXCLUDED from it -- config, not data) |
 
 Chat/notebook/explore stream over the **OpenAI wire** (`/v1/chat/completions`)
