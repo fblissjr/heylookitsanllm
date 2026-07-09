@@ -316,6 +316,53 @@ export async function runChatSuite({ suite, ctx, config }) {
     await setSettingsInput(page, 'Temperature', '');
   });
 
+  // ---- system prompt + presets --------------------------------------------
+  const SYS_PROMPT = 'Answer in exactly one word.';
+
+  await suite.check('system prompt edit persists to the conversation', async () => {
+    // settings panel is open from the checks above
+    await page.evaluate(() => { document.querySelector('.chat__sysprompt').open = true; });
+    await page.click('.chat__sysprompt-input');
+    await page.type('.chat__sysprompt-input', SYS_PROMPT);
+    await page.click(COMPOSER); // blur -> change -> PUT
+    await waitFor(async () => page.evaluate(async (sys) => {
+      const res = await fetch('/v1/conversations');
+      const { conversations } = await res.json();
+      return conversations.some((c) => c.system_prompt === sys);
+    }, SYS_PROMPT), { message: 'system prompt not saved server-side' });
+  });
+
+  await suite.check('preset save + apply round-trips sampler state', async () => {
+    await setSettingsInput(page, 'Temperature', '0.31');
+    await page.click('.preset-section .input');
+    await page.type('.preset-section .input', 'e2e-preset');
+    await clickByText(page, '.preset-row button', 'Save');
+    await waitFor(async () => page.evaluate(() =>
+      [...document.querySelectorAll('.preset-row select option')]
+        .some((o) => o.textContent === 'e2e-preset')),
+      { message: 'saved preset not listed in the select' });
+    // drift the panel, then re-apply the preset and expect the pin back
+    await setSettingsInput(page, 'Temperature', '1.9');
+    const optValue = await page.evaluate(() =>
+      [...document.querySelectorAll('.preset-row select option')]
+        .find((o) => o.textContent === 'e2e-preset')?.value);
+    await page.select('.preset-row select', optValue);
+    await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
+      { message: 'applying the preset did not restore temperature' });
+    // back to cascade so nothing leaks into later generations
+    await setSettingsInput(page, 'Temperature', '');
+  });
+
+  await suite.check('preset delete (armed) removes it from the select', async () => {
+    const delBtn = await page.$('.preset-section .btn--ghost');
+    await armedClick(delBtn);
+    await delBtn.dispose();
+    await waitFor(async () => page.evaluate(() =>
+      ![...document.querySelectorAll('.preset-row select option')]
+        .some((o) => o.textContent === 'e2e-preset')),
+      { message: 'deleted preset still listed' });
+  });
+
   // ---- conversation management -------------------------------------------
   await suite.check('New button creates an additional conversation', async () => {
     const before = await count(page, '.conv-item');

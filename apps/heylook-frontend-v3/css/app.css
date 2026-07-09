@@ -269,6 +269,18 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
 
+/* chat-owned lead sections: preset bar + per-conversation system prompt */
+.preset-section { display: flex; flex-direction: column; gap: 0.4rem; }
+.preset-row { display: flex; gap: 0.4rem; }
+.preset-row select,
+.preset-row .input { flex: 1; min-width: 0; text-align: left; }
+.chat__sysprompt-input {
+  width: 100%;
+  min-height: 3.5rem;
+  margin-top: 0.5rem;
+  resize: vertical;
+}
+
 /* ================= chat ================= */
 
 .chat {

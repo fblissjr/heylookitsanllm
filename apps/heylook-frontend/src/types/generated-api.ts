@@ -472,6 +472,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Presets
+         * @description List all saved presets (system prompt + sampler params), ordered by name.
+         */
+        get: operations["list_presets_v1_presets_get"];
+        put?: never;
+        /**
+         * Create Preset
+         * @description Create a named preset. Names are unique.
+         */
+        post: operations["create_preset_v1_presets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/presets/{preset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Preset
+         * @description Update preset fields (name, system prompt, params). Only set fields are patched.
+         */
+        put: operations["update_preset_v1_presets__preset_id__put"];
+        post?: never;
+        /**
+         * Delete Preset
+         * @description Delete a preset.
+         */
+        delete: operations["delete_preset_v1_presets__preset_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/data/clear": {
         parameters: {
             query?: never;
@@ -1965,6 +2013,31 @@ export interface components {
             generation_tps: number;
             /** Peak Memory Gb */
             peak_memory_gb: number;
+        };
+        /** PresetCreate */
+        PresetCreate: {
+            /** Name */
+            name: string;
+            /** System Prompt */
+            system_prompt?: string | undefined;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
+        };
+        /** PresetUpdate */
+        PresetUpdate: {
+            /** Name */
+            name?: string | undefined;
+            /** System Prompt */
+            system_prompt?: string | undefined;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            } | undefined;
         };
         /** RLMMetadata */
         RLMMetadata: {
@@ -3481,6 +3554,125 @@ export interface operations {
             header?: never;
             path: {
                 notebook_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_presets_v1_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    create_preset_v1_presets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresetCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_preset_v1_presets__preset_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresetUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_preset_v1_presets__preset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
             };
             cookie?: never;
         };

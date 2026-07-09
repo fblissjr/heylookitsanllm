@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.22]
+
+### Added
+
+- **Per-conversation system prompt editing + saved presets in v3** (LM-Studio-style). Backend: new
+  `presets` table in the DuckDB store (additive `CREATE TABLE IF NOT EXISTS` — no schema-version bump,
+  existing data untouched) holding named `system_prompt` + sampler-`params` bundles; name uniqueness
+  enforced in code on the store's single serialized writer; presets deliberately survive
+  `POST /v1/data/clear` (config, not data). New `/v1/presets` router (list/create/update/delete;
+  409 on name collision, 400 on bad fields) — spec §4 + `generated-api.ts` updated in this commit.
+  v3 chat settings panel: a per-conversation system-prompt editor (PUTs to the conversation on blur;
+  a prompt typed before the first send rides along on create) and a preset bar (apply = copy params
+  into the panel + prompt onto the conversation; save-by-name creates or overwrites; armed delete).
+  These are UI-authored and expanded client-side — distinct from the server's TOML preset registry
+  (`ChatRequest.preset`). Tests: +25 unit (store + HTTP), suites 880 green; E2E +3 checks, 55/55 live.
+
 ## [1.34.19]
 
 ### Fixed

@@ -19,10 +19,13 @@ Personal MLX inference server on Apple Silicon: FastAPI backend + two frontends
 **Backend `src/heylook_llm/`** -- Two providers (`Literal["mlx", "mlx_embedding"]`):
 MLXProvider (text+vision), MLXEmbeddingProvider. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
-config in `models.toml`. 7 API routers: messages, rlm, conversation, notebook,
-admin, admin_ops, scan_import. SQLite conversation store via aiosqlite (`db.py`,
-`conversation_api.py`; `HEYLOOK_DB_PATH` override; dynamic field names gated by
-`_UPDATABLE_MESSAGE_FIELDS`). RLM (`rlm.py`): recursive inference with sandboxed REPL.
+config in `models.toml`. 8 API routers: messages, rlm, conversation, notebook,
+preset, admin, admin_ops, scan_import. DuckDB store (`db.py`: conversations +
+notebooks + presets, single serialized writer thread, transactional ops;
+`HEYLOOK_DB_PATH` override; dynamic field names gated by `_UPDATABLE_*_FIELDS`
+frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- add tables additively
+via CREATE TABLE IF NOT EXISTS instead). RLM (`rlm.py`): recursive inference
+with sandboxed REPL.
 - [internal/backend/](./internal/backend/) (architecture, api, router, config, providers/mlx) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla

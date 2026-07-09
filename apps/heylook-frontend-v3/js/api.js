@@ -56,6 +56,12 @@ const ROUTES = {
   updateMessage:     ['PUT', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`, true],
   deleteMessagesAfter:['DELETE', (id, pos) => `/v1/conversations/${id}/messages?after=${pos}`],
 
+  // presets (saved system prompt + sampler bundles)
+  listPresets:       ['GET', () => '/v1/presets'],
+  createPreset:      ['POST', () => '/v1/presets', true],
+  updatePreset:      ['PUT', (id) => `/v1/presets/${id}`, true],
+  deletePreset:      ['DELETE', (id) => `/v1/presets/${id}`],
+
   // notebooks
   listNotebooks:     ['GET', () => '/v1/notebooks'],
   createNotebook:    ['POST', () => '/v1/notebooks', true],

@@ -14,7 +14,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { buildSettingsPanel, samplerParams } from '../settings.js';
+import { buildSettingsPanel, samplerParams, snapshotSettings, applySettings } from '../settings.js';
 
 export default createPage({
   async setup(ctx) {
@@ -26,6 +26,8 @@ export default createPage({
     s.systemPrompt = null;
     s.stream = null;      // { controller, targetConvId, content, thinking, els, retries }
     s.editingId = null;
+    s.presets = [];       // saved system-prompt + sampler bundles (server-side)
+    s.presetId = null;    // select-box state only -- applying copies, not binds
 
     buildSkeleton(ctx);
     // One throttle for the whole mount (it reads s.stream), not one per
@@ -87,9 +89,7 @@ function buildSkeleton(ctx) {
     }
     // Capability-gated controls (enable_thinking) must track the model: an
     // open panel rebuilt here, not only on next open.
-    if (!s.settingsHost.hidden) {
-      s.settingsHost.replaceChildren(buildSettingsPanel({ caps: currentCaps(ctx) }));
-    }
+    if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
@@ -163,14 +163,150 @@ function currentCaps(ctx) {
   return model?.capabilities ?? [];
 }
 
-function toggleSettings(ctx) {
+async function toggleSettings(ctx) {
   const host = ctx.state.settingsHost;
-  if (host.hidden) {
-    host.replaceChildren(buildSettingsPanel({ caps: currentCaps(ctx) }));
-    host.hidden = false;
-  } else {
+  if (!host.hidden) {
     host.hidden = true;
+    return;
   }
+  await refreshPresets(ctx);
+  if (!ctx.alive) return;
+  rebuildSettingsPanel(ctx);
+  host.hidden = false;
+}
+
+function rebuildSettingsPanel(ctx) {
+  ctx.state.settingsHost.replaceChildren(buildSettingsPanel({
+    caps: currentCaps(ctx),
+    lead: [buildPresetSection(ctx), buildSystemPromptSection(ctx)],
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// system prompt (per-conversation) + presets (saved prompt/sampler bundles)
+// ---------------------------------------------------------------------------
+
+// One writer for the conversation's system prompt: state now, PUT if a
+// conversation exists (explicit null clears server-side). With no active
+// conversation the value rides along until send() creates one.
+function setSystemPrompt(ctx, value) {
+  const s = ctx.state;
+  s.systemPrompt = value;
+  if (!s.activeId) return;
+  api.updateConversation(s.activeId, { system_prompt: value })
+    .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
+}
+
+function buildSystemPromptSection(ctx) {
+  const s = ctx.state;
+  const input = createEl('textarea', {
+    class: 'chat__sysprompt-input', rows: 3,
+    placeholder: 'Optional system prompt for this conversation…',
+    value: s.systemPrompt ?? '',
+  });
+  // save on blur/commit, not per keystroke -- one PUT per edit session
+  input.addEventListener('change', () => setSystemPrompt(ctx, input.value.trim() || null));
+  return createEl('details', { class: 'chat__sysprompt', open: Boolean(s.systemPrompt) }, [
+    createEl('summary', {}, ['System prompt']),
+    input,
+  ]);
+}
+
+async function refreshPresets(ctx) {
+  const s = ctx.state;
+  try {
+    const res = await api.listPresets({ signal: ctx.signal });
+    s.presets = res.presets ?? [];
+  } catch (err) {
+    if (ctx.alive) showStatus(ctx, `Could not load presets: ${err.message}`, true);
+  }
+  if (!s.presets.some((p) => p.id === s.presetId)) s.presetId = null;
+}
+
+// Applying a preset COPIES its fields (LM Studio semantics): params become
+// the whole sampler panel state, system_prompt lands on the conversation.
+// There is no live binding -- later edits don't touch the preset until Save.
+function applyPreset(ctx, presetId) {
+  const s = ctx.state;
+  s.presetId = presetId || null;
+  const preset = s.presets.find((p) => p.id === presetId);
+  if (preset) {
+    applySettings(preset.params ?? {});
+    setSystemPrompt(ctx, preset.system_prompt ?? null);
+    showStatus(ctx, `Preset "${preset.name}" applied.`);
+  }
+  rebuildSettingsPanel(ctx);
+}
+
+async function savePreset(ctx, name) {
+  const s = ctx.state;
+  name = name.trim();
+  if (!name) return;
+  const body = { name, system_prompt: s.systemPrompt, params: snapshotSettings() };
+  const existing = s.presets.find((p) => p.name === name);
+  try {
+    const saved = existing
+      ? await api.updatePreset(existing.id, body)
+      : await api.createPreset(body);
+    if (!ctx.alive) return;
+    await refreshPresets(ctx);
+    if (!ctx.alive) return;
+    s.presetId = saved.id;
+    rebuildSettingsPanel(ctx);
+    showStatus(ctx, `Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
+  } catch (err) {
+    if (ctx.alive) showStatus(ctx, `Preset save failed: ${err.message}`, true);
+  }
+}
+
+async function deletePreset(ctx) {
+  const s = ctx.state;
+  if (!s.presetId) return;
+  try {
+    await api.deletePreset(s.presetId);
+  } catch (err) {
+    if (ctx.alive) showStatus(ctx, `Preset delete failed: ${err.message}`, true);
+    return;
+  }
+  if (!ctx.alive) return;
+  s.presetId = null;
+  await refreshPresets(ctx);
+  if (!ctx.alive) return;
+  rebuildSettingsPanel(ctx);
+}
+
+function buildPresetSection(ctx) {
+  const s = ctx.state;
+  const selected = s.presets.find((p) => p.id === s.presetId);
+
+  const select = createEl('select', { title: 'Apply a saved preset' }, [
+    createEl('option', { value: '' }, ['Presets…']),
+    ...s.presets.map((p) => createEl('option', { value: p.id }, [p.name])),
+  ]);
+  select.value = s.presetId ?? '';
+  select.addEventListener('change', () => applyPreset(ctx, select.value));
+
+  const delBtn = armedConfirm(
+    createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !selected }, ['Del']),
+    () => deletePreset(ctx),
+  );
+
+  // Save under the typed name: matches an existing preset -> overwrite it,
+  // new name -> create. Picking a preset pre-fills its name for overwrite.
+  const nameInput = createEl('input', {
+    class: 'input', placeholder: 'Save as…', value: selected?.name ?? '',
+  });
+  const saveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save']);
+  saveBtn.addEventListener('click', () => savePreset(ctx, nameInput.value));
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') savePreset(ctx, nameInput.value);
+  });
+
+  return createEl('div', { class: 'preset-section' }, [
+    createEl('h3', {}, ['Preset']),
+    createEl('div', { class: 'preset-row' }, [select, delBtn]),
+    createEl('div', { class: 'preset-row' }, [nameInput, saveBtn]),
+  ]);
 }
 
 function showStatus(ctx, text, isError = false) {
@@ -270,7 +406,10 @@ async function deleteConversation(ctx, convId) {
     s.messages = [];
     s.systemPrompt = null;
     if (s.conversations.length) await selectConversation(ctx, s.conversations[0].id);
-    else renderMessages(ctx);
+    else {
+      if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
+      renderMessages(ctx);
+    }
   }
   if (ctx.alive) renderConvList(ctx);
 }
@@ -292,6 +431,8 @@ async function selectConversation(ctx, convId) {
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
+    // an open panel shows the previous conversation's system prompt otherwise
+    if (!s.settingsHost.hidden) rebuildSettingsPanel(ctx);
     renderMessages(ctx);
     scrollMessages(ctx, true);
   } catch (err) {
@@ -574,6 +715,8 @@ async function send(ctx) {
       const conv = await api.createConversation({
         title,
         model_id: s.modelSelect.value,
+        // a prompt typed (or preset applied) before the first send
+        system_prompt: s.systemPrompt || undefined,
       });
       if (!ctx.alive) return;
       s.conversations.unshift(conv);

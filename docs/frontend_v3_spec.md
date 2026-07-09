@@ -1,6 +1,6 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-06
+Last updated: 2026-07-09
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `internal/session/CURRENT.md`. This doc
@@ -224,6 +224,20 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
 `POST /` `{title,content,system_prompt?,model_id?}`; `PUT /{id}` partial (incl content); `DELETE /{id}`.
+
+**Presets** (prefix `/v1/presets`, no auth; added v1.34.22): saved bundles of system prompt + sampler
+params, LM-Studio-style. UI-authored and expanded **client-side** (apply = copy `system_prompt` onto the
+conversation + copy `params` into the settings panel); NOT the server's TOML preset registry that
+`ChatRequest.preset` names — no wire relationship between the two.
+- `GET /` → `{presets:[{id,name,system_prompt,params,created_at,updated_at}], total}` ordered by name.
+- `POST /` (201) `{name, system_prompt?, params?:{}}` → preset. Names unique → 409; blank name → 400.
+- `PUT /{id}` `{name?,system_prompt?,params?}` (only set fields patched; `system_prompt:null` clears;
+  empty→400; rename collision→409) → updated preset.
+- `DELETE /{id}` → `{status:"deleted",id}`.
+- `params` is an open sampler-knob object (same keys the settings panel manages: temperature, top_p,
+  top_k, min_p, max_tokens, repetition_penalty, repetition_context_size, presence_penalty, seed,
+  enable_thinking); a preset stores only the knobs it pins — absent keys stay on the null-means-cascade
+  contract when applied. Presets survive `POST /v1/data/clear` (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`;

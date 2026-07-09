@@ -155,6 +155,10 @@ app = FastAPI(
         {
             "name": "Notebooks",
             "description": "Notebook storage for text documents with LLM generation"
+        },
+        {
+            "name": "Presets",
+            "description": "Saved presets: named system prompt + sampler parameter bundles"
         }
     ]
 )
@@ -190,6 +194,10 @@ app.include_router(conversation_router)
 # Import and include Notebook API router
 from heylook_llm.notebook_api import notebook_router
 app.include_router(notebook_router)
+
+# Import and include Preset API router
+from heylook_llm.preset_api import preset_router
+app.include_router(preset_router)
 
 # Data management
 from heylook_llm.auth import require_admin_token, require_api_key

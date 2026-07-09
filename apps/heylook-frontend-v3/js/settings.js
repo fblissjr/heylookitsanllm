@@ -60,6 +60,26 @@ export function resetSettings() {
   scheduleSave();
 }
 
+// Preset capture: every non-null key, raw. Unlike samplerParams() it keeps
+// zeros -- a preset pinning top_k=0 records the user's panel state even
+// though requests omit it.
+export function snapshotSettings() {
+  const out = {};
+  for (const key of Object.keys(PARAM_META)) {
+    const v = cache[key];
+    if (v !== null && v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
+// Preset apply: the preset's params become the whole panel state -- absent
+// keys revert to null (backend cascade), matching "a preset IS the settings".
+export function applySettings(params) {
+  cache = emptySettings();
+  for (const k of Object.keys(cache)) if (k in params) cache[k] = params[k];
+  scheduleSave();
+}
+
 // Request-body params: only non-null keys; top_k and presence_penalty are
 // only meaningful when > 0 (backend treats 0 as unset).
 export function samplerParams() {
@@ -101,7 +121,9 @@ function bindControl(key, meta) {
   return input;
 }
 
-export function buildSettingsPanel({ caps = [] } = {}) {
+// `lead` lets a page prepend its own sections (e.g. chat's preset bar and
+// per-conversation system prompt) inside the same panel card.
+export function buildSettingsPanel({ caps = [], lead = [] } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
@@ -125,6 +147,7 @@ export function buildSettingsPanel({ caps = [] } = {}) {
   });
 
   return createEl('div', { class: 'settings-panel' }, [
+    ...lead,
     createEl('h3', {}, ['Sampling']),
     ...rows.core,
     rows.advanced.length

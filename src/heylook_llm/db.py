@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS notebooks (
     updated_at    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS presets (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    system_prompt TEXT,
+    params        TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -195,7 +204,7 @@ class Store:
                 "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
                 row[0], _SCHEMA_VERSION,
             )
-            for table in ("messages", "conversations", "notebooks", "schema_meta"):
+            for table in ("messages", "conversations", "notebooks", "presets", "schema_meta"):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             self._create_schema()
             self._conn.execute(
@@ -594,5 +603,136 @@ async def delete_notebook(db: Store, notebook_id: str) -> bool:
         ).fetchone() is not None
         if exists:
             conn.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
+        return exists
+    return await db.run(op)
+
+
+# ---------------------------------------------------------------------------
+# Preset CRUD
+# ---------------------------------------------------------------------------
+# User presets: named system_prompt + sampler-params bundles authored from the
+# UI. Distinct from the bundled TOML sampler registry (presets.py), which is
+# server-side and request-scoped via ``ChatRequest.preset`` -- these are
+# expanded client-side into explicit request fields. Name uniqueness is
+# enforced in code, not a constraint: the single serialized writer makes the
+# check race-free (same rationale as the dropped messages FK). Deliberately
+# NOT touched by clear_all_data -- presets are configuration, not data.
+
+class PresetNameTaken(ValueError):
+    """Raised when a preset name is already in use."""
+
+
+_PRESET_NAMES = ["id", "name", "system_prompt", "params", "created_at", "updated_at"]
+_PRESET_COLS = ", ".join(_PRESET_NAMES)
+_UPDATABLE_PRESET_FIELDS: frozenset[str] = frozenset({"name", "system_prompt", "params"})
+
+
+def _validate_preset_fields(fields: dict) -> dict:
+    """Normalize name/params in place-of-write; ValueError at the boundary so
+    garbage never persists (same policy as normalize_blocks)."""
+    out = dict(fields)
+    if "name" in out:
+        if not isinstance(out["name"], str) or not out["name"].strip():
+            raise ValueError("Preset 'name' must be a non-empty string")
+        out["name"] = out["name"].strip()
+    if "params" in out:
+        if not isinstance(out["params"], dict):
+            raise ValueError("Preset 'params' must be an object")
+    return out
+
+
+def _preset_row_to_dict(row) -> dict:
+    d = dict(zip(_PRESET_NAMES, row))
+    d["params"] = orjson.loads(d["params"])
+    return d
+
+
+def _preset_name_taken(conn, name: str, *, exclude_id: str | None = None) -> bool:
+    row = conn.execute(
+        "SELECT id FROM presets WHERE name = ?", (name,)
+    ).fetchone()
+    return row is not None and row[0] != exclude_id
+
+
+async def list_presets(db: Store) -> list[dict]:
+    """Return all presets ordered by name."""
+    def op(conn):
+        rows = conn.execute(
+            f"SELECT {_PRESET_COLS} FROM presets ORDER BY name"
+        ).fetchall()
+        return [_preset_row_to_dict(r) for r in rows]
+    return await db.run(op)
+
+
+async def create_preset(
+    db: Store,
+    *,
+    name: str,
+    system_prompt: str | None = None,
+    params: dict | None = None,
+) -> dict:
+    """Create a preset. Raises PresetNameTaken if the name is in use."""
+    fields = _validate_preset_fields({"name": name, "params": params or {}})
+    preset_id = new_id()
+    now = _now_iso()
+
+    def op(conn):
+        if _preset_name_taken(conn, fields["name"]):
+            raise PresetNameTaken(f"Preset name already exists: {fields['name']}")
+        conn.execute(
+            "INSERT INTO presets (id, name, system_prompt, params, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (preset_id, fields["name"], system_prompt,
+             orjson.dumps(fields["params"]).decode(), now, now),
+        )
+    await db.run(op)
+    return {
+        "id": preset_id,
+        "name": fields["name"],
+        "system_prompt": system_prompt,
+        "params": fields["params"],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+async def update_preset(db: Store, preset_id: str, **fields) -> dict | None:
+    """Update preset fields. Returns the updated preset, or None if not found.
+
+    Raises ValueError on no/invalid fields, PresetNameTaken on a name collision.
+    """
+    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_PRESET_FIELDS}
+    if not updates:
+        raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_PRESET_FIELDS)})")
+    updates = _validate_preset_fields(updates)
+    if "params" in updates:
+        updates["params"] = orjson.dumps(updates["params"]).decode()
+
+    now = _now_iso()
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_PRESET_COLS} FROM presets WHERE id = ?", (preset_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        if "name" in updates and _preset_name_taken(conn, updates["name"], exclude_id=preset_id):
+            raise PresetNameTaken(f"Preset name already exists: {updates['name']}")
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [now, preset_id]
+        conn.execute(f"UPDATE presets SET {set_clause}, updated_at=? WHERE id=?", values)
+        existing = dict(zip(_PRESET_NAMES, row))
+        existing.update(**updates, updated_at=now)
+        return _preset_row_to_dict([existing[k] for k in _PRESET_NAMES])
+    return await db.run(op)
+
+
+async def delete_preset(db: Store, preset_id: str) -> bool:
+    """Delete a preset. Returns True if it existed."""
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM presets WHERE id = ?", (preset_id,)
+        ).fetchone() is not None
+        if exists:
+            conn.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
         return exists
     return await db.run(op)
