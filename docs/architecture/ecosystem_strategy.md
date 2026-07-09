@@ -1,6 +1,6 @@
 # MLX ecosystem strategy — context for performance work
 
-last updated: 2026-07-06
+Last updated: 2026-07-06
 
 Audience: Claude sessions building or refactoring heylookitsanllm, especially
 performance work (plan_2026-07.md Phase 5 and beyond). This doc explains the

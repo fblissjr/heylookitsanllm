@@ -170,10 +170,9 @@ those models. Tests: `tests/unit/test_prompt_cache_gating.py`.
 
 **This gate is keyed on the `cache_type` config field, not on model
 architecture.** It does not, by itself, address the *different* hybrid-cache
-risk described in `radix_cache_vlm_crash.md` (models like Qwen3.5 that mix
+risk of hybrid caches (models like Qwen3.5 that mix
 `KVCache` and `ArraysCache` layers via a custom `model.make_cache()`) --
-see the pointer note added to that file for why these are two distinct,
-independently-tracked risks.
+a separate, independently-tracked risk.
 
 ## Also Fixed Alongside (Same Release, Different Bug)
 

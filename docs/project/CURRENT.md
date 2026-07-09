@@ -284,8 +284,6 @@ Fixed: everything in section 2 above. Deferred (documented, not built):
   leased from _PinnedExecutorPool, never shut down.
 - Radix snapshots must be mx.eval'd before insert; radix only for
   cache_type=standard without max_kv_size.
-- OpenAPI drift guard blocks schema-touching commits; regen offline
-  (scripts/check_openapi_sync.sh flow or /openapi-regen).
 - Verification of /v3 in a browser: puppeteer-core + system Chrome;
   claude-in-chrome blocks localhost by policy.
 

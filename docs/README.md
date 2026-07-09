@@ -2,8 +2,8 @@
 
 Last updated: 2026-07-09
 
-Git-tracked docs for heylookitsanllm. Working notes, daily logs, and bug
-postmortems live local-only in `internal/` (gitignored) and are not part of this
+Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
+and research live local-only in `internal/` (gitignored) and are not part of this
 tree. The project's nav hub for agents is the root [CLAUDE.md](../CLAUDE.md).
 
 ## Architecture reference

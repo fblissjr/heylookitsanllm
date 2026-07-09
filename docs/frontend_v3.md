@@ -7,9 +7,6 @@ used to sit beside this file (architecture, applet catalog, migration plan,
 design system, api schema) described the retiring v2/legacy app and were retired
 to the internal archive on 2026-07-09.
 
-(Maintainer-facing map: some links below point to planning docs under `internal/`,
-which is local-only and not part of the published tree.)
-
 ## Where the authoritative docs are (this file is a map, not a copy)
 
 | Concern | File | Notes |

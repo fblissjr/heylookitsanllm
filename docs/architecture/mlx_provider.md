@@ -258,7 +258,7 @@ into the result as if it succeeded. RLM specifically feeds that text back
 into its own REPL loop as a sub-answer. Tracked as a deferred fix
 (typed `GenerationFailed` exception raised from the provider generator,
 translated to an error only at the two streaming/HTTP writers) in
-`internal/session/TODO.md`.
+`docs/project/TODO.md`.
 
 ## 5. Token-Level Data and Logprobs (IMPLEMENTED 2025-12-15)
 
