@@ -537,10 +537,15 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    analytic assembly (a further, FLOP-reducing speedup) remains unported.
 4. **Corpus recipe** (chat + safety, NOT WikiText) + **own-fit** on the served abliterated Qwen3.5-27B
    (Metal-gated; stop the server for a full-depth run). `scripts/fit_served_qwen_bootstrap.py`: bootstrap
-   (layers 61-62, cos-sane J) + a graded late-band fit (layers 60/56/52, chunk 128, ~24min) both GREEN on
-   real weights; the fit now runs the fidelity gate and stamps per-layer scores on the sidecar. Still a
-   stub: `corpus.py::build_corpus` (HF load + chat-template + on-policy gen + position mask — needs the
-   `datasets` dep + GPU for on-policy gen; recipes are spec'd).
+   (layers 61-62) + a graded late-band fit (layers 60/56/52, chunk 128, ~24min) both GREEN on real
+   weights; the fit runs the fidelity gate + stamps per-layer scores + provenance on the sidecar.
+   **TARGET THE PRODUCT BAND (layers 16-47).** The server only reads `features.band_layers` = the
+   `[0.25,0.75)` slice; a fit outside it (the 52-62 late-band runs) serves NOTHING in the product. Band
+   layers are the deep end (long tails) → the real production fit is the server-stopped big run, ideally
+   with `corpus.py::build_corpus` (still a stub — HF `datasets` + chat-template + on-policy gen + position
+   mask; needs the `datasets` dep + GPU; recipes spec'd). The v3 visualizer is a fast before/after read
+   once an own-fit is installed at `adapters/jspace/<model_id>/` (a user-driven swap of the provisional
+   lens).
 5. **Held-out fidelity gate** (DONE — `verify.py::fidelity_gate`: per-layer top-1/top-k/KL vs true logits
    on held-out prompts, identity-layer tripwire, save-refusal) + **lens diff** (DONE — `verify.py::diff`:
    two lenses on the same activations → per-layer top movers). The abliterated-vs-stock diff is the first
