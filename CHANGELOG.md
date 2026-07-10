@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.40]
+
+### Fixed
+
+Chat-template hardening batch (the quick-fix findings from the v1.34.38 review):
+
+- Server-side import (`/v1/admin/models/import`) and the CLI wizard now share one
+  detection helper (`template_info.detect_chat_template_source`) -- the two inline
+  copies had already drifted -- and tilde/relative model paths no longer silently
+  skip jinja detection (`expanduser`).
+- `chat_template_source = "auto"` no longer takes the force-install branch (it is
+  documented as fill-only-when-missing; force could clobber a natively-loaded dict
+  of named templates). `"chat_template_json"` is now an accepted explicit value --
+  it was a resolved-source label users could see in load logs but not configure.
+- The missing-template error is decided from tokenizer state
+  (`chat_template`/`has_chat_template`) instead of string-matching transformers'
+  error prose (version-fragile), mentions all three supported sources, and now
+  covers all three apply sites (chat, batch, hidden-states) instead of one.
+  mlx-lm wrapper-level python templates (`chat_template_type`, e.g. DeepSeek-V3.2
+  conversions) are recognized, so their render errors are no longer mislabeled.
+- The load-time "NO chat template" warning consumes `install_chat_template()`'s
+  result and checks the wrapper's `has_chat_template`, fixing both a missed-warning
+  case (resolved template whose install failed) and a false-alarm case
+  (`chat_template_type` models that render fine with a None tokenizer attr).
+
 ## [1.34.39]
 
 ### Fixed

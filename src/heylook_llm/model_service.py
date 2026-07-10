@@ -28,6 +28,7 @@ from typing import Any, Optional
 import tomli_w  # type: ignore[import-untyped]
 
 from heylook_llm.config import AppConfig, ModelConfig
+from heylook_llm.providers.common.template_info import detect_chat_template_source
 
 logger = logging.getLogger(__name__)
 
@@ -737,12 +738,14 @@ class ModelService:
                         if profile:
                             entry_config = profile.apply(entry_config, model_info)
 
-                    # Same detection as the CLI import wizard: record the
-                    # explicit template policy when the folder ships a
-                    # chat_template.jinja, so models.toml reflects it instead
-                    # of relying on HF's version-dependent auto-detection.
-                    if model_path and (Path(model_path) / "chat_template.jinja").is_file():
-                        entry_config["chat_template_source"] = "jinja"
+                    # Same detection as the CLI import wizard (shared helper --
+                    # the two paths drifted once): record the explicit template
+                    # policy so models.toml reflects it instead of relying on
+                    # HF's version-dependent auto-detection.
+                    if model_path:
+                        detected = detect_chat_template_source(model_path)
+                        if detected:
+                            entry_config["chat_template_source"] = detected
 
                 # Apply any overrides from the import request
                 overrides = model_data.get("overrides", {})

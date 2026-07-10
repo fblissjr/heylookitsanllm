@@ -219,19 +219,26 @@ class ChatTemplateTokenizer:
     ) -> str:
         """Apply chat template with enable_thinking support."""
         try:
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=enable_thinking,
-            )
-        except TypeError:
-            # Tokenizer doesn't support enable_thinking parameter
-            return self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            try:
+                return self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=enable_thinking,
+                )
+            except TypeError:
+                # Tokenizer doesn't support enable_thinking parameter
+                return self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+        except ValueError as e:
+            from heylook_llm.providers.common.template_info import missing_template_error
+            err = missing_template_error(self.tokenizer)
+            if err is not None:
+                raise err from e
+            raise
 
     def _encode(self, text: str) -> List[int]:
         """Encode text to token IDs."""

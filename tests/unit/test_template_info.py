@@ -379,3 +379,135 @@ class TestInstallChatTemplate:
         from heylook_llm.providers.common.template_info import install_chat_template
 
         assert install_chat_template(None, self._info(), force=True) is False
+
+
+class TestDetectChatTemplateSource:
+    """``detect_chat_template_source(model_dir)`` is the ONE import-time
+    detection both the CLI wizard and the /v1/admin import route call --
+    the two inline copies drifted (.exists() vs .is_file()) within a day
+    of each other."""
+
+    def test_returns_jinja_when_file_present(self, tmp_path):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+
+        (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
+
+        assert detect_chat_template_source(tmp_path) == "jinja"
+
+    def test_returns_none_when_absent(self, tmp_path):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+
+        assert detect_chat_template_source(tmp_path) is None
+
+    def test_directory_named_like_template_is_not_detected(self, tmp_path):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+
+        (tmp_path / "chat_template.jinja").mkdir()
+
+        assert detect_chat_template_source(tmp_path) is None
+
+    def test_expands_tilde_paths(self, tmp_path, monkeypatch):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        model_dir = tmp_path / "m"
+        model_dir.mkdir()
+        (model_dir / "chat_template.jinja").write_text("{{ messages }}")
+
+        assert detect_chat_template_source("~/m") == "jinja"  # path-privacy: ignore
+
+
+class TestExplicitChatTemplateJsonSource:
+    """'chat_template_json' appears as a resolved-source label in load logs,
+    so it must also be an accepted explicit ``chat_template_source`` value --
+    otherwise configuring what the log reports warns 'not recognized' and,
+    worse, still force-installs the auto pick."""
+
+    def test_source_chat_template_json_forces_json_file(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
+        (tmp_path / "chat_template.json").write_text(
+            json.dumps({"chat_template": "{{ 'forced json' }}"})
+        )
+
+        info = read_template_info(tmp_path, source="chat_template_json")
+
+        assert info.chat_template == "{{ 'forced json' }}"
+        assert info.template_source == "chat_template_json"
+
+    def test_source_chat_template_json_missing_falls_back_to_auto(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
+
+        info = read_template_info(tmp_path, source="chat_template_json")
+
+        assert info.chat_template == "{{ 'jinja' }}"
+        assert info.template_source == "jinja"
+
+
+class TestIsExplicitSource:
+    """force-install must engage only for a genuinely explicit source --
+    the documented value \"auto\" is truthy but means the fill-only path."""
+
+    def test_none_and_empty_are_not_explicit(self):
+        from heylook_llm.providers.common.template_info import is_explicit_source
+
+        assert is_explicit_source(None) is False
+        assert is_explicit_source("") is False
+
+    def test_auto_is_not_explicit(self):
+        from heylook_llm.providers.common.template_info import is_explicit_source
+
+        assert is_explicit_source("auto") is False
+        assert is_explicit_source(" AUTO ") is False
+
+    def test_named_sources_and_paths_are_explicit(self):
+        from heylook_llm.providers.common.template_info import is_explicit_source
+
+        assert is_explicit_source("jinja") is True
+        assert is_explicit_source("tokenizer_config") is True
+        assert is_explicit_source("chat_template_json") is True
+        assert is_explicit_source("/abs/path/custom.jinja") is True
+
+
+class TestMissingTemplateError:
+    """``missing_template_error(tokenizer, model_id)`` decides 'the model
+    truly has no chat template' from TOKENIZER STATE, not from matching
+    transformers' error prose (which is version-fragile). It must respect
+    mlx-lm's wrapper-level python templates (``has_chat_template``), which
+    render fine while the HF ``chat_template`` attr stays None."""
+
+    def test_returns_actionable_error_when_no_template(self):
+        from heylook_llm.providers.common.template_info import missing_template_error
+
+        tok = _FakeTokenizer(chat_template=None)
+        err = missing_template_error(tok, "my-model")
+
+        assert isinstance(err, ValueError)
+        assert "my-model" in str(err)
+        assert "chat_template" in str(err)
+
+    def test_returns_none_when_template_present(self):
+        from heylook_llm.providers.common.template_info import missing_template_error
+
+        tok = _FakeTokenizer(chat_template="{{ x }}")
+
+        assert missing_template_error(tok, "m") is None
+
+    def test_returns_none_for_wrapper_level_python_template(self):
+        from heylook_llm.providers.common.template_info import missing_template_error
+
+        tok = _FakeTokenizer(chat_template=None)
+        tok.has_chat_template = True
+
+        assert missing_template_error(tok, "m") is None
+
+    def test_message_is_generic_without_model_id(self):
+        from heylook_llm.providers.common.template_info import missing_template_error
+
+        err = missing_template_error(_FakeTokenizer(chat_template=None), None)
+
+        assert isinstance(err, ValueError)
+        assert "chat_template" in str(err)

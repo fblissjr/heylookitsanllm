@@ -28,6 +28,12 @@ from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
 from .common.generation_gate import GenerationGate, GenerationCancelled
+from .common.template_info import (
+    install_chat_template,
+    is_explicit_source,
+    missing_template_error,
+    read_template_info,
+)
 
 # -- transformers 5.x compatibility patches (no torchvision) --
 # On MLX-only setups, torchvision is absent and transformers assumes it is
@@ -265,13 +271,10 @@ class UnifiedTextStrategy:
                 # transformers raises a raw ValueError when the tokenizer has
                 # no chat template at all; that message surfaces verbatim as
                 # the HTTP error detail, so make it name the model and the fix.
-                if "chat_template is not set" in str(e):
-                    raise ValueError(
-                        f"Model '{self.model_id}' has no chat template: the model "
-                        f"folder ships no chat_template.jinja and tokenizer_config.json "
-                        f"has no chat_template field. Add one of those files or set "
-                        f"chat_template_source in models.toml."
-                    ) from e
+                # Decided from tokenizer state, not upstream error prose.
+                err = missing_template_error(tokenizer, self.model_id)
+                if err is not None:
+                    raise err from e
                 raise
 
         if isinstance(prompt, str):
@@ -586,7 +589,6 @@ class MLXProvider(BaseProvider):
             # resulting ModelTemplateInfo is the single source of truth for
             # output-parsing decisions: reasoning parser selection, strip-
             # tokens set, observability label. No hardcoded format lookup.
-            from .common.template_info import read_template_info
             self._template_info = read_template_info(
                 Path(model_path),
                 self.config.get("chat_template_source"),
@@ -605,16 +607,26 @@ class MLXProvider(BaseProvider):
             # justified a load-time instance is covered by the pattern cache
             # in reasoning_parser._compile_strip_pattern.
             # Explicit chat_template_source: registry entry is authoritative,
-            # overwrite whatever the tokenizer loaded. Auto: only fill a
-            # MISSING tokenizer template (e.g. chat_template.json-only models
-            # that AutoTokenizer loads nothing for).
-            from .common.template_info import install_chat_template
+            # overwrite whatever the tokenizer loaded. Auto (unset or "auto"):
+            # only fill a MISSING tokenizer template (e.g. chat_template.json-
+            # only models that AutoTokenizer loads nothing for).
             tok = self.get_tokenizer()
-            install_chat_template(
+            installed = install_chat_template(
                 tok, self._template_info,
-                force=bool(self.config.get("chat_template_source")),
+                force=is_explicit_source(self.config.get("chat_template_source")),
             )
-            if not self._template_info.chat_template and not getattr(tok, "chat_template", None):
+            # Warn only when NOTHING can render: no install happened, the
+            # tokenizer has no HF template, and there's no wrapper-level
+            # python template (mlx-lm chat_template_type sets
+            # has_chat_template on the wrapper while the inner tokenizer's
+            # chat_template attr stays None).
+            has_template = (
+                installed
+                or bool(getattr(tok, "chat_template", None))
+                or getattr(tok, "has_chat_template", False)
+                or getattr(self.processor, "has_chat_template", False)
+            )
+            if not has_template:
                 logging.warning(
                     "Model %s has NO chat template (no chat_template.jinja, no "
                     "tokenizer_config chat_template, no chat_template.json). "
@@ -920,11 +932,17 @@ class MLXProvider(BaseProvider):
             # Prefill: if last message is assistant, don't add generation prompt
             add_gen_prompt = resolve_add_generation_prompt(messages_for_template)
 
-            prompt = tokenizer.apply_chat_template(
-                messages_for_template,
-                tokenize=False,
-                add_generation_prompt=add_gen_prompt
-            )
+            try:
+                prompt = tokenizer.apply_chat_template(
+                    messages_for_template,
+                    tokenize=False,
+                    add_generation_prompt=add_gen_prompt
+                )
+            except ValueError as e:
+                err = missing_template_error(tokenizer, self.model_id)
+                if err is not None:
+                    raise err from e
+                raise
 
             tokens = tokenizer.encode(prompt)
             prompts.append(tokens)

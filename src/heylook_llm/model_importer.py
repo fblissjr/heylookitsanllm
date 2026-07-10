@@ -22,6 +22,7 @@ from heylook_llm.model_service import (
     get_smart_defaults,
     load_profiles,
 )
+from heylook_llm.providers.common.template_info import detect_chat_template_source
 
 __all__ = [
     "ModelImporter",
@@ -293,13 +294,15 @@ class ModelImporter:
 
         # Chat-template source policy (C4.5):
         # 1) CLI --chat-template override wins.
-        # 2) Else if chat_template.jinja exists, record "jinja" so HF's
-        #    auto-detection (which varies by transformers version) becomes
-        #    explicit + user-editable in models.toml.
+        # 2) Else record the shared detection (same helper as the /v1/admin
+        #    import route) so HF's auto-detection (which varies by
+        #    transformers version) becomes explicit + user-editable.
         if self.chat_template_override:
             config["chat_template_source"] = self.chat_template_override
-        elif (path / "chat_template.jinja").exists():
-            config["chat_template_source"] = "jinja"
+        else:
+            detected = detect_chat_template_source(path)
+            if detected:
+                config["chat_template_source"] = detected
 
         if self.preset_name:
             config["default_preset"] = self.preset_name

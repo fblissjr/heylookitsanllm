@@ -113,9 +113,10 @@ def main():
         help="Chat template source policy recorded on the imported model. "
              "'auto' (default): HF picks the right one; 'jinja': force-load "
              "chat_template.jinja from the model dir; 'tokenizer_config': "
-             "force the embedded template; or an absolute path to a .jinja "
-             "file. Import wizard auto-sets 'jinja' when chat_template.jinja "
-             "is present; pass this flag to override.",
+             "force the embedded template; 'chat_template_json': force the "
+             "processor-side chat_template.json; or an absolute path to a "
+             ".jinja file. Import wizard auto-sets 'jinja' when "
+             "chat_template.jinja is present; pass this flag to override.",
     )
     import_parser.add_argument(
         "--merge",

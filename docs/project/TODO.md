@@ -84,42 +84,18 @@ v1.34.38 made template resolution a registry concern (server import detects jinj
 chat_template.json fallback, auto-install-when-missing, actionable errors). The
 review (10 verified findings) split into a quick hardening batch and design items.
 
-**Quick hardening batch** (all small, do together):
-
-- [ ] **`expanduser()` on server-import detection** (P2): `model_service.py`
-  import_models does `Path(model_path) / "chat_template.jinja"` raw -- a tilde or
-  relative path from the API silently skips detection (every other model-path site
-  in model_service resolves first).
-- [ ] **Share the detection helper** (P2): the jinja detection is hand-copied in
-  `model_importer.py` (`.exists()`) and `model_service.py` (`.is_file()`) -- hoist
-  into `template_info.py` (e.g. `detect_chat_template_source(model_dir)`) so the
-  CLI wizard and the /v1/admin import route can't drift again.
-- [ ] **`chat_template_source = "auto"` force-installs** (P2): `mlx_provider.py`
-  load_model uses `force=bool(config value)`; the documented value "auto" is truthy
-  and takes the overwrite branch, which can destroy a natively-loaded DICT of named
-  templates (transformers `additional_chat_templates/`). Normalize: force only when
-  set AND != "auto". Also accept "chat_template_json" as an explicit value --
-  it's a source label users see in load logs but can't configure.
-- [ ] **Missing-template error: state check, not prose match** (P2): `_apply_template`
-  string-matches transformers' "chat_template is not set" (version-fragile; the test
-  mocks the exact string so drift is invisible) and the message omits
-  chat_template.json + asserts filesystem facts that can be false when install
-  silently failed. Decide via `getattr(tokenizer, "chat_template", None)` inside the
-  except; derive the source list from template_info constants. Apply the same
-  translation at the other two apply sites (batch path, `hidden_states.py`).
-- [ ] **Warning should consume install's return** (P3): load_model ignores
-  `install_chat_template()`'s bool and re-derives a weaker condition -- a resolved
-  template whose install failed on all targets warns nothing yet still fails at
-  request time.
+- [x] **Quick hardening batch**: DONE v1.34.40 (same day) -- shared
+  `detect_chat_template_source()` helper used by both import paths (+ expanduser,
+  fixing tilde-path detection); `"auto"` no longer force-installs and
+  `"chat_template_json"` became an accepted explicit source; the missing-template
+  error is decided from tokenizer state (not transformers' error prose), respects
+  wrapper-level python templates (`has_chat_template`), and covers all three apply
+  sites (chat, batch, hidden-states); the load warning consumes install's return
+  and no longer false-alarms on `chat_template_type` models (this also closed the
+  "wrapper-level templates false-alarm the warning" design item).
 
 **Design items** (need a decision, not just a patch):
 
-- [ ] **Wrapper-level python chat templates false-alarm the warning** (P2):
-  mlx-lm's `chat_template_type` (e.g. DeepSeek-V3.2 conversions) renders via
-  `TokenizerWrapper._chat_template` while the inner HF tokenizer's attr stays None;
-  the new load-time "Chat requests will fail" warning checks only the inner
-  tokenizer + files, so it fires for a working model. Consult the wrapper's
-  `has_chat_template` on `self.processor` before warning.
 - [ ] **List-form `chat_template` silently dropped** (P3): HF's legacy named-template
   list (`[{"name","template"}]`, still read AND written by transformers 5.5.4; real
   repos ship it, e.g. command-r-plus conversions) is treated as no-template by

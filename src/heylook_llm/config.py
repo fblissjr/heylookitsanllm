@@ -195,6 +195,7 @@ class MLXModelConfig(BaseModel):
     #   template_info resolved (jinja > tokenizer_config > chat_template.json)
     # - "jinja": force-load chat_template.jinja from the model dir
     # - "tokenizer_config": force the template embedded in tokenizer_config.json
+    # - "chat_template_json": force the processor-side chat_template.json
     # - absolute path: load that specific .jinja file
     # Useful when a model ships a broken jinja but a working embedded template,
     # or when the user wants to test a custom template without re-exporting.

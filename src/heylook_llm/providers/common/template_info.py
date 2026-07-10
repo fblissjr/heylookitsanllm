@@ -3,7 +3,8 @@
 Single source of truth for output-parsing decisions. Reads:
 
 - ``chat_template.jinja`` (newer HF convention) OR the ``chat_template``
-  field embedded in ``tokenizer_config.json``. Policy controlled by
+  field embedded in ``tokenizer_config.json`` OR ``chat_template.json``
+  (processor-side convention). Policy controlled by
   ``MLXModelConfig.chat_template_source``.
 - ``added_tokens_decoder`` from ``tokenizer_config.json`` -- every entry
   marked ``"special": true`` becomes part of the special-tokens set.
@@ -124,6 +125,16 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
         )
         normalized = AUTO
 
+    if normalized == CHAT_TEMPLATE_JSON:
+        body = _read_embedded_template(model_dir / "chat_template.json")
+        if body is not None:
+            return body, CHAT_TEMPLATE_JSON
+        logging.warning(
+            "chat_template_source='chat_template_json' but %s has no usable "
+            "chat_template.json; falling back to auto", model_dir,
+        )
+        normalized = AUTO
+
     # Absolute path override.
     if source and normalized not in (AUTO, JINJA, TOKENIZER_CONFIG):
         candidate = Path(source)
@@ -150,6 +161,56 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     if body is not None:
         return body, CHAT_TEMPLATE_JSON
     return "", AUTO
+
+
+def detect_chat_template_source(model_dir) -> Optional[str]:
+    """Import-time detection shared by BOTH import paths (CLI wizard and the
+    /v1/admin import route): record ``"jinja"`` when the folder ships a
+    ``chat_template.jinja``, else leave the source unset (auto).
+
+    Expands ``~`` -- the admin API accepts arbitrary path strings.
+    """
+    model_dir = Path(model_dir).expanduser()
+    if (model_dir / "chat_template.jinja").is_file():
+        return JINJA
+    return None
+
+
+def is_explicit_source(source: Optional[str]) -> bool:
+    """True when ``chat_template_source`` names an explicit template choice.
+
+    ``None``/empty/``"auto"`` are NOT explicit: auto means fill-only-when-
+    missing, never force-install (a force with auto's resolution could clobber
+    a natively-loaded dict of named templates).
+    """
+    if not source:
+        return False
+    return source.strip().lower() not in ("", AUTO)
+
+
+def missing_template_error(tokenizer, model_id: Optional[str] = None) -> Optional[ValueError]:
+    """Return an actionable error if the tokenizer truly has no chat template,
+    else None.
+
+    Call from an ``except ValueError`` around ``apply_chat_template`` --
+    transformers raises a raw ValueError there whose message would otherwise
+    surface verbatim as the HTTP error detail. The decision is made from
+    tokenizer STATE, not by matching upstream error prose (version-fragile):
+    ``chat_template`` covers HF templates; ``has_chat_template`` covers
+    mlx-lm's wrapper-level python templates (``chat_template_type``), which
+    render fine while the HF attribute stays None.
+    """
+    if getattr(tokenizer, "chat_template", None):
+        return None
+    if getattr(tokenizer, "has_chat_template", False):
+        return None
+    who = f"Model '{model_id}'" if model_id else "This model"
+    return ValueError(
+        f"{who} has no chat template: none of chat_template.jinja, a "
+        f"tokenizer_config.json 'chat_template' field, or chat_template.json "
+        f"loaded from the model folder. Add one of those files or set "
+        f"chat_template_source in models.toml."
+    )
 
 
 def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool) -> bool:

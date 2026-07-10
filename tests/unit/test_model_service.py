@@ -276,6 +276,21 @@ class TestServerImportChatTemplateDetection:
         assert len(imported) == 1
         assert imported[0].config.chat_template_source is None
 
+    def test_import_detects_jinja_through_tilde_path(self, tmp_path, monkeypatch):
+        """The admin API accepts arbitrary path strings; a tilde path must not
+        silently skip detection (parity with the CLI wizard, which scans
+        resolved directories)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        service = self._make_service(tmp_path)
+        self._make_model_dir(tmp_path, with_jinja=True)
+
+        imported = service.import_models([
+            {"id": "some-model", "path": "~/some-model", "provider": "mlx"},  # path-privacy: ignore
+        ])
+
+        assert len(imported) == 1
+        assert imported[0].config.chat_template_source == "jinja"
+
     def test_import_override_wins_over_detection(self, tmp_path):
         service = self._make_service(tmp_path)
         model_dir = self._make_model_dir(tmp_path, with_jinja=True)
