@@ -482,6 +482,26 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   cover it) so the chain driver + save + apply + held-out fidelity gate are proven
   end-to-end. De-risks the driver independently of the kernel.
 
+- **Fidelity-gate semantics — don't miscalibrate it (2026-07-10).** Two lessons from grading the
+  first own-fits on the served 8-bit 27B. (a) The identity/target-layer tripwire must grade on
+  **KL≈0**, not top-1==1.0: on a QUANTIZED model, fp32-vs-native rounding swaps near-tied tokens so
+  identity top-1 is <1.0 (~0.97) even when the apply path is exactly correct (identity KL~0.006,
+  top-10~0.99). A top-1 threshold false-alarms; KL still catches a genuinely broken apply path (it
+  goes large). (b) Agreement-with-FINAL-logits is a strict requirement ONLY at the identity layer;
+  **earlier layers SHOULD diverge** — that divergence is the lens's signal (the "silent" tokens a
+  layer is disposed toward before later layers revise). So the production gate should assert
+  identity-exact + monotonic improvement toward the target, NOT an absolute top-k floor on early
+  layers, or it penalizes exactly what makes the lens useful. Measured depth gradient on the fuller
+  fit: top-1 0.44→0.16 as the source layer moves from 3 to 11 blocks back.
+
+- **Quantization ⇒ its own lens (why our own-fit matters, restated concretely).** Only the fitted
+  `J_l` matrices carry a fit-time-quant assumption; the final norm + head stay OUTSIDE `J` and are
+  applied from the live served model, so they are always the correct quant (this is why the identity
+  lens reproduces the served model's true logits). A lens fit on a different quant is approximately
+  transferable (quantization preserves the function) but degraded, worse at deeper layers. We fit on
+  the exact served 8-bit checkpoint via `mlx_lm.load` (the VJP runs through that dequantized forward),
+  so we are matched — the same reason the inherited stock-fit lens is only provisional.
+
 ## Sequencing
 
 1. **Scaffold `jlens-mlx`** (DONE 2026-07-10) — structure, attribution, `MIGRATION.md`, `DESIGN.md`.
