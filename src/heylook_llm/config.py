@@ -190,7 +190,9 @@ class MLXModelConfig(BaseModel):
     # kill inference.
     default_preset: Optional[str] = None
     # Chat-template source policy (C4.5):
-    # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present)
+    # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present);
+    #   if the tokenizer ends up template-less, the provider installs whatever
+    #   template_info resolved (jinja > tokenizer_config > chat_template.json)
     # - "jinja": force-load chat_template.jinja from the model dir
     # - "tokenizer_config": force the template embedded in tokenizer_config.json
     # - absolute path: load that specific .jinja file

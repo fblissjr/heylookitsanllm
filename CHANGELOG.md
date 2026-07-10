@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.38]
+
+### Added
+
+- **Chat-template resolution hardened as a registry concern.** The server-side
+  scan+import route (`/v1/admin/models/import`, what the v3 models page uses) now
+  applies the same `chat_template.jinja` auto-detection as the CLI import wizard,
+  recording `chat_template_source = "jinja"` on the imported entry (request
+  overrides still win). Template resolution (`template_info.py`) gains a last
+  auto-fallback to processor-side `chat_template.json` -- previously a model
+  shipping ONLY that file looked template-less at the tokenizer level. In auto
+  mode the provider now installs the resolved template onto the tokenizer when
+  the tokenizer loaded none (explicit `chat_template_source` still force-installs);
+  the install logic is consolidated into a tested `install_chat_template()` helper.
+  The v3 models page shows `template: <source>` in each model's meta line when set.
+
+### Fixed
+
+- A model folder with no chat template anywhere (no `chat_template.jinja`, no
+  embedded `tokenizer_config.json` template, no `chat_template.json`) previously
+  surfaced transformers' raw `ValueError` as the HTTP 500 detail on the first chat
+  request. The provider now warns at load time and raises an actionable error
+  naming the model and the fix (add a template file or set `chat_template_source`).
+
 ## [1.34.37]
 
 ### Added

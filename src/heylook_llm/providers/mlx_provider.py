@@ -250,16 +250,29 @@ class UnifiedTextStrategy:
                 enable_thinking = self.model_config.get('enable_thinking', True)
 
             try:
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False,
-                    add_generation_prompt=add_gen_prompt,
-                    enable_thinking=enable_thinking,
-                )
-            except TypeError:
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=False,
-                    add_generation_prompt=add_gen_prompt,
-                )
+                try:
+                    prompt = tokenizer.apply_chat_template(
+                        messages, tokenize=False,
+                        add_generation_prompt=add_gen_prompt,
+                        enable_thinking=enable_thinking,
+                    )
+                except TypeError:
+                    prompt = tokenizer.apply_chat_template(
+                        messages, tokenize=False,
+                        add_generation_prompt=add_gen_prompt,
+                    )
+            except ValueError as e:
+                # transformers raises a raw ValueError when the tokenizer has
+                # no chat template at all; that message surfaces verbatim as
+                # the HTTP error detail, so make it name the model and the fix.
+                if "chat_template is not set" in str(e):
+                    raise ValueError(
+                        f"Model '{self.model_id}' has no chat template: the model "
+                        f"folder ships no chat_template.jinja and tokenizer_config.json "
+                        f"has no chat_template field. Add one of those files or set "
+                        f"chat_template_source in models.toml."
+                    ) from e
+                raise
 
         if isinstance(prompt, str):
             return tokenizer.encode(prompt)
@@ -591,21 +604,24 @@ class MLXProvider(BaseProvider):
             # across requests. The strip-regex compile cost that once
             # justified a load-time instance is covered by the pattern cache
             # in reasoning_parser._compile_strip_pattern.
-            # If the user pointed at an explicit template file/kind, also
-            # install it on the tokenizer so apply_chat_template honors it.
-            if self.config.get("chat_template_source") and self._template_info.chat_template:
-                tok = self.get_tokenizer()
-                if tok is not None:
-                    try:
-                        tok.chat_template = self._template_info.chat_template
-                    except (AttributeError, TypeError) as exc:
-                        logging.debug("could not install chat_template on tokenizer: %s", exc)
-                    inner = getattr(tok, "_tokenizer", None)
-                    if inner is not None and inner is not tok:
-                        try:
-                            inner.chat_template = self._template_info.chat_template
-                        except (AttributeError, TypeError):
-                            pass
+            # Explicit chat_template_source: registry entry is authoritative,
+            # overwrite whatever the tokenizer loaded. Auto: only fill a
+            # MISSING tokenizer template (e.g. chat_template.json-only models
+            # that AutoTokenizer loads nothing for).
+            from .common.template_info import install_chat_template
+            tok = self.get_tokenizer()
+            install_chat_template(
+                tok, self._template_info,
+                force=bool(self.config.get("chat_template_source")),
+            )
+            if not self._template_info.chat_template and not getattr(tok, "chat_template", None):
+                logging.warning(
+                    "Model %s has NO chat template (no chat_template.jinja, no "
+                    "tokenizer_config chat_template, no chat_template.json). "
+                    "Chat requests will fail -- add a template file to the model "
+                    "folder or set chat_template_source in models.toml.",
+                    self.model_id,
+                )
 
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 

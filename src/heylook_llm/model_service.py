@@ -737,6 +737,13 @@ class ModelService:
                         if profile:
                             entry_config = profile.apply(entry_config, model_info)
 
+                    # Same detection as the CLI import wizard: record the
+                    # explicit template policy when the folder ships a
+                    # chat_template.jinja, so models.toml reflects it instead
+                    # of relying on HF's version-dependent auto-detection.
+                    if model_path and (Path(model_path) / "chat_template.jinja").is_file():
+                        entry_config["chat_template_source"] = "jinja"
+
                 # Apply any overrides from the import request
                 overrides = model_data.get("overrides", {})
                 entry_config.update(overrides)

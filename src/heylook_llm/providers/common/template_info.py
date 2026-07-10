@@ -33,6 +33,7 @@ import orjson
 AUTO = "auto"
 JINJA = "jinja"
 TOKENIZER_CONFIG = "tokenizer_config"
+CHAT_TEMPLATE_JSON = "chat_template_json"
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,8 @@ def read_template_info(
 
     ``source`` values (from ``MLXModelConfig.chat_template_source``):
       - ``None`` / ``"auto"``: prefer ``chat_template.jinja`` if present,
-        fall back to the embedded template.
+        fall back to the embedded template, then to ``chat_template.json``
+        (the processor-side convention some VLM conversions use).
       - ``"jinja"``: force-load ``chat_template.jinja``.
       - ``"tokenizer_config"``: force the embedded template.
       - absolute path to a ``.jinja`` file: load that file.
@@ -141,7 +143,42 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     body = _read_embedded_template(config_path)
     if body is not None:
         return body, TOKENIZER_CONFIG
+    # Last resort: processor-side chat_template.json. The tokenizer never
+    # loads this file, so a model shipping ONLY it would otherwise render
+    # template-less at the tokenizer level.
+    body = _read_embedded_template(model_dir / "chat_template.json")
+    if body is not None:
+        return body, CHAT_TEMPLATE_JSON
     return "", AUTO
+
+
+def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool) -> bool:
+    """Attach the resolved template to a live tokenizer (and its inner
+    ``_tokenizer`` for mlx-lm's TokenizerWrapper).
+
+    ``force=True`` (explicit ``chat_template_source``): always overwrite --
+    the registry entry is authoritative.
+    ``force=False`` (auto): only fill in a MISSING tokenizer template.
+    Covers models whose template lives somewhere AutoTokenizer doesn't look
+    (e.g. only ``chat_template.json``) without stomping on what transformers
+    loaded natively.
+
+    Returns True if a template was installed. Never raises.
+    """
+    if tokenizer is None or not info.chat_template:
+        return False
+    if not force and getattr(tokenizer, "chat_template", None):
+        return False
+    inner = getattr(tokenizer, "_tokenizer", None)
+    targets = [tokenizer] if inner is None or inner is tokenizer else [tokenizer, inner]
+    installed = False
+    for target in targets:
+        try:
+            target.chat_template = info.chat_template
+            installed = True
+        except (AttributeError, TypeError) as exc:
+            logging.debug("could not install chat_template on %r: %s", type(target), exc)
+    return installed
 
 
 def _read_file(path: Path) -> Optional[str]:

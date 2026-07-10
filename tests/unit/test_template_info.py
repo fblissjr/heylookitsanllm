@@ -245,3 +245,137 @@ class TestReadTemplateInfoFallbacks:
         info = read_template_info(tmp_path, source=None)
 
         assert info.special_tokens == frozenset()
+
+
+class TestChatTemplateJsonFallback:
+    """Some VLM conversions ship the template only as ``chat_template.json``
+    (the processor-side convention: ``{"chat_template": "..."}``). The
+    tokenizer never sees that file, so template_info must read it as the
+    last auto fallback -- otherwise a chat_template.json-only model looks
+    template-less to us while the processor knows better."""
+
+    def test_auto_falls_back_to_chat_template_json(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        (tmp_path / "chat_template.json").write_text(
+            json.dumps({"chat_template": "{{ 'from chat_template.json' }}"})
+        )
+
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.chat_template == "{{ 'from chat_template.json' }}"
+        assert info.template_source == "chat_template_json"
+
+    def test_embedded_template_wins_over_chat_template_json(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(
+            tmp_path, jinja=None,
+            tokenizer_config={
+                "added_tokens_decoder": {},
+                "chat_template": "{{ 'embedded' }}",
+            },
+        )
+        (tmp_path / "chat_template.json").write_text(
+            json.dumps({"chat_template": "{{ 'json' }}"})
+        )
+
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.chat_template == "{{ 'embedded' }}"
+        assert info.template_source == "tokenizer_config"
+
+    def test_jinja_wins_over_chat_template_json(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
+        (tmp_path / "chat_template.json").write_text(
+            json.dumps({"chat_template": "{{ 'json' }}"})
+        )
+
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.chat_template == "{{ 'jinja' }}"
+        assert info.template_source == "jinja"
+
+    def test_malformed_chat_template_json_does_not_raise(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        (tmp_path / "chat_template.json").write_text("{{{ not json")
+
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.chat_template == ""
+
+
+class _FakeTokenizer:
+    def __init__(self, chat_template=None, inner=None):
+        self.chat_template = chat_template
+        if inner is not None:
+            self._tokenizer = inner
+
+
+class TestInstallChatTemplate:
+    """``install_chat_template(tokenizer, info, force=...)`` is the single
+    place the resolved template gets attached to a live tokenizer.
+
+    - force=True (explicit ``chat_template_source``): always overwrite.
+    - force=False (auto): only fill in a MISSING tokenizer template --
+      covers chat_template.json-only models where AutoTokenizer loads
+      nothing, without stomping on what transformers loaded natively.
+    """
+
+    def _info(self, template="{{ 'resolved' }}"):
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+        return ModelTemplateInfo(chat_template=template)
+
+    def test_force_overwrites_existing_template(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        tok = _FakeTokenizer(chat_template="{{ 'native' }}")
+        installed = install_chat_template(tok, self._info(), force=True)
+
+        assert installed is True
+        assert tok.chat_template == "{{ 'resolved' }}"
+
+    def test_auto_fills_missing_template(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        tok = _FakeTokenizer(chat_template=None)
+        installed = install_chat_template(tok, self._info(), force=False)
+
+        assert installed is True
+        assert tok.chat_template == "{{ 'resolved' }}"
+
+    def test_auto_preserves_native_template(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        tok = _FakeTokenizer(chat_template="{{ 'native' }}")
+        installed = install_chat_template(tok, self._info(), force=False)
+
+        assert installed is False
+        assert tok.chat_template == "{{ 'native' }}"
+
+    def test_noop_when_no_resolved_template(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        tok = _FakeTokenizer(chat_template=None)
+        installed = install_chat_template(tok, self._info(template=""), force=True)
+
+        assert installed is False
+        assert tok.chat_template is None
+
+    def test_installs_on_inner_tokenizer_too(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        inner = _FakeTokenizer(chat_template=None)
+        tok = _FakeTokenizer(chat_template=None, inner=inner)
+        install_chat_template(tok, self._info(), force=True)
+
+        assert tok.chat_template == "{{ 'resolved' }}"
+        assert inner.chat_template == "{{ 'resolved' }}"
+
+    def test_none_tokenizer_is_safe(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        assert install_chat_template(None, self._info(), force=True) is False

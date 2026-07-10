@@ -117,6 +117,9 @@ function renderModelList(ctx) {
 function modelMetaLine(model) {
   const parts = [model.provider];
   if (model.capabilities?.length) parts.push(model.capabilities.join(', '));
+  if (model.config?.chat_template_source) {
+    parts.push(`template: ${model.config.chat_template_source}`);
+  }
   if (model.tags?.length) parts.push(model.tags.join(', '));
   if (!model.enabled) parts.push('disabled');
   return parts.join(' · ');

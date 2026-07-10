@@ -233,6 +233,65 @@ class TestImportWizardChatTemplateDetection:
         assert models[0]["config"]["chat_template_source"] == "tokenizer_config"
 
 
+class TestServerImportChatTemplateDetection:
+    """``ModelService.import_models`` (the /v1/admin scan+import route the
+    v3 frontend uses) must apply the same chat_template.jinja detection as
+    the CLI import wizard -- otherwise frontend-imported models silently
+    lose the explicit ``chat_template_source`` the registry relies on."""
+
+    def _make_service(self, tmp_path):
+        from heylook_llm.model_service import ModelService
+        config_path = tmp_path / "models.toml"
+        config_path.write_text('default_model = "none"\nmodels = []\n')
+        return ModelService(str(config_path))
+
+    def _make_model_dir(self, tmp_path, *, with_jinja):
+        model_dir = tmp_path / "some-model"
+        model_dir.mkdir()
+        (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}))
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 64)
+        if with_jinja:
+            (model_dir / "chat_template.jinja").write_text("{{ messages }}")
+        return model_dir
+
+    def test_import_detects_jinja_in_model_folder(self, tmp_path):
+        service = self._make_service(tmp_path)
+        model_dir = self._make_model_dir(tmp_path, with_jinja=True)
+
+        imported = service.import_models([
+            {"id": "some-model", "path": str(model_dir), "provider": "mlx"},
+        ])
+
+        assert len(imported) == 1
+        assert imported[0].config.chat_template_source == "jinja"
+
+    def test_import_without_jinja_leaves_source_unset(self, tmp_path):
+        service = self._make_service(tmp_path)
+        model_dir = self._make_model_dir(tmp_path, with_jinja=False)
+
+        imported = service.import_models([
+            {"id": "some-model", "path": str(model_dir), "provider": "mlx"},
+        ])
+
+        assert len(imported) == 1
+        assert imported[0].config.chat_template_source is None
+
+    def test_import_override_wins_over_detection(self, tmp_path):
+        service = self._make_service(tmp_path)
+        model_dir = self._make_model_dir(tmp_path, with_jinja=True)
+
+        imported = service.import_models([
+            {
+                "id": "some-model",
+                "path": str(model_dir),
+                "provider": "mlx",
+                "overrides": {"chat_template_source": "tokenizer_config"},
+            },
+        ])
+
+        assert imported[0].config.chat_template_source == "tokenizer_config"
+
+
 class TestEmbeddingModelDetection:
     """Embedding model detection is unchanged by C4."""
 

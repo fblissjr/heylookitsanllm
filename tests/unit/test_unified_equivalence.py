@@ -155,3 +155,51 @@ class TestModelWrapping:
         wrapper1 = strategy._get_generation_model(mock_model)
         wrapper2 = strategy._get_generation_model(mock_model)
         assert wrapper1 is wrapper2
+
+
+class TestApplyTemplateMissingTemplate:
+    """A model folder with NO chat template anywhere (no chat_template.jinja,
+    no embedded tokenizer_config template) makes transformers raise a raw
+    ValueError deep inside apply_chat_template. The strategy must convert
+    that into an actionable error naming the model and the fix, because the
+    raw message surfaces verbatim as the HTTP error detail."""
+
+    def test_missing_template_error_is_actionable(self, mock_mlx):
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+        strategy = UnifiedTextStrategy(
+            draft_model=None, model_id="no-template-model", is_vlm=False,
+            model_config={},
+        )
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.side_effect = ValueError(
+            "Cannot use chat template functions because tokenizer.chat_template "
+            "is not set and no template argument was passed!"
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            strategy._apply_template(
+                [{"role": "user", "content": "hi"}],
+                tokenizer, MagicMock(), MagicMock(), {},
+            )
+
+        msg = str(exc_info.value)
+        assert "no-template-model" in msg
+        assert "chat_template" in msg
+
+    def test_other_value_errors_still_propagate(self, mock_mlx):
+        """Template-rendering ValueErrors unrelated to a missing template
+        (e.g. a template raising on bad message shape) keep their message."""
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+        strategy = UnifiedTextStrategy(
+            draft_model=None, model_id="m", is_vlm=False, model_config={},
+        )
+        tokenizer = MagicMock()
+        tokenizer.apply_chat_template.side_effect = ValueError("roles must alternate")
+
+        with pytest.raises(ValueError, match="roles must alternate"):
+            strategy._apply_template(
+                [{"role": "user", "content": "hi"}],
+                tokenizer, MagicMock(), MagicMock(), {},
+            )
