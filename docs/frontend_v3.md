@@ -126,6 +126,13 @@ it yet (the reference in `chat.js:799` is a migration marker).
   management** (fit/convert + "which models have a lens") lands on the same
   surface, since a lens is another per-model artifact
   (`adapters/jspace/<model_id>/`). Direction captured in the plan; not yet scoped.
+- **J-space visualizer enhancements (Phase-5-ish, gated on `DESIGN.md`)** -- the
+  `jspace` page is a static workspace strip today. Planned, cheapest-first:
+  click-to-pin per-cell top-N readout -> a layer slider/focus -> live streaming rows
+  -> steer/swap/ablate interventions (needs backend). Gated on seeding a v3
+  `DESIGN.md` (plan Phase 4 item 2) so the viz has a visual language first. Detail:
+  `docs/jspace_integration_plan.md` Part 2 "Frontend visualizer". Apply API
+  (`/v1/jspace/{models,analyze}`) unchanged; streaming + interventions would add endpoints.
 
 ## Verifying v3 in a browser
 

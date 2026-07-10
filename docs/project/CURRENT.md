@@ -1,7 +1,21 @@
 # Current Work
 
-Last updated: 2026-07-09 (v1.34.25 -- presets shipped v1.34.22-.24; legacy React
-app deleted + OpenAPI drift guard retired v1.34.25)
+Last updated: 2026-07-10 (j-space apply shipped ~v1.34.31-.35; lens fitting
+extracted to the `jlens-mlx` sibling repo. Prior v1.34.25: presets v1.34.22-.24;
+legacy React app deleted + OpenAPI drift guard retired)
+
+UPDATE 2026-07-10 (j-space + jlens-mlx): the j-space **apply** feature
+(Jacobian-lens workspace readout) shipped in the ~v1.34.31-.35 range (per
+CHANGELOG) -- `/v1/jspace/{models,analyze}`, the v3 `jspace` page, V1/V2
+apply-parity (cos 1.0), the V4 hallucination router, gen-gate coordination, a
+thread-stream crash fix. Lens **fitting** was EXTRACTED to a new sibling repo
+**`jlens-mlx`** (this server only APPLIES -- same lean-scheduler pattern as Q6's
+`rlm-heylook`). Two GREEN milestones there: apply-path parity + a baseline fitter
+(Anthropic direct-VJP design -- norm outside J, no chain, no closed-form seed)
+cross-checked vs Anthropic's torch `jlens` (J cos 1.0). Go-forward:
+`docs/jspace_integration_plan.md` Part 2. Known issue: the served
+`Qwen3.5-27B-heretic` lens is `hf_model_name=""` / likely fit on STOCK Qwen --
+treat its readouts as provisional until we own-fit.
 
 UPDATE 2026-07-09 (v1.34.22): per-conversation system prompt editing +
 saved presets shipped in v3. Backend: new `presets` table in the DuckDB

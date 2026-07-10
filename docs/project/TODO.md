@@ -2,7 +2,33 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-09*
+*Last reviewed: 2026-07-10*
+
+## J-space / jlens-mlx (from jspace_integration_plan.md Part 2)
+
+Fitting lives in the `jlens-mlx` sibling repo; this server applies. Apply feature +
+baseline fitter are GREEN (see CURRENT.md 2026-07-10).
+
+- [ ] **Corpus recipe + first own-fit** (P2): stratified corpus (chat + reasoning +
+  over-weighted safety + matched-benign + WikiText control), fit on-policy, first own-fit
+  on the served `Qwen3.5-27B-heretic` (Metal-gated; add the GDN speed accelerator only if
+  the direct-VJP baseline is too slow through the 48 GDN layers).
+- [ ] **Held-out fidelity gate + heretic-vs-stock lens diff** (P2): per-layer KL/top-k vs
+  true logits on held-out data (refuse to save below threshold); the stock-vs-heretic diff
+  is the first real finding.
+- [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
+  tie-aware calibrated epsilon, mutation-checked -- turns the one-time V1/V2 parity into a
+  wired regression gate.
+- [ ] **Visualizer track** (P3, gated on `DESIGN.md`): click-to-pin per-cell top-N -> layer
+  slider -> live streaming -> steer/swap/ablate interventions.
+- [ ] **Re-home `verify_endpoint.py` / `probe_thread.py`** (P3): now in
+  `jlens-mlx/migrated_from_scratch/`; they test the running server + MLX thread semantics,
+  so they belong back as real heylook `tests/`.
+- [ ] **HF lens repo** (P3): publish OUR fitted lenses post-own-fit; gated -- don't
+  republish the converted third-party lenses (Gemma ToU).
+- [ ] **Stale docstrings** (P4): `tests/unit/test_jspace.py`, `test_jspace_features.py`,
+  `src/heylook_llm/jspace/capture.py` still name `coderef/jspace_scratch/` (dissolved into
+  `jlens-mlx/migrated_from_scratch/`) -- fix when next touching those files.
 
 ## Presets/system-prompt follow-ups (from the v1.34.22-.24 review passes)
 
