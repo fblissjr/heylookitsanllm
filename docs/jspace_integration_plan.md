@@ -492,7 +492,11 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    J_target==I exact, apply-parity cos 1.0 (`scripts/fit_gpt2_baseline.py`); AND our MLX fit ==
    Anthropic's torch `jlens` on the same corpus — J cos **1.000000**, max_abs_err ~5e-6
    (`scripts/xcheck_fit_{torch,mlx}.py`). So the fitter is verified against the reference, not
-   just autodiff-asserted. No vendored code; jlens-qwen36's rms² seed bug caught + avoided.
+   just autodiff-asserted. **The cross-check now spans TWO arch families:** gpt2 (LayerNorm) +
+   **gemma-2-2b** (RMSNorm + logit-softcap-30, via a small gemma array-mask tail -- gemma's
+   attention reads `mask.dtype`) -- J cos **1.000000**, max_abs_err ~5e-4 -- so RMSNorm+softcap
+   generalization is verified. Only `qwen3_5` GDN remains (needs the GDN tail). No vendored
+   code; jlens-qwen36's rms² seed bug caught + avoided.
 4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-heretic`
    (Metal-gated; add the GDN speed accelerator only if the baseline is too slow through the 48 GDN
    layers — a direct VJP per source layer is O(n_layers·d_model) VJPs).
