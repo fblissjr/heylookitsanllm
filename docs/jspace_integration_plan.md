@@ -487,10 +487,12 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
 1. **Scaffold `jlens-mlx`** (DONE 2026-07-10) — structure, attribution, `MIGRATION.md`, `DESIGN.md`.
 2. **Apply path GREEN** (DONE 2026-07-10) — mirrored capture/lens; gpt2 V1 parity cos 1.0
    (`scripts/check_gpt2_parity.py`).
-3. **Baseline fitter GREEN** (DONE 2026-07-10) — direct end-to-end `mx.vjp` (Anthropic design;
-   norm outside J; no chain, no closed-form seed). gpt2 verified: J_target==I exact, apply-parity
-   cos 1.0, layer fit ||J||/sqrt(d)=1.68 (`scripts/fit_gpt2_baseline.py`). No vendored code;
-   jlens-qwen36's rms² seed bug caught + avoided.
+3. **Baseline fitter GREEN + cross-checked vs the reference** (DONE 2026-07-10) — direct
+   end-to-end `mx.vjp` (Anthropic design; norm outside J; no chain, no closed-form seed). gpt2:
+   J_target==I exact, apply-parity cos 1.0 (`scripts/fit_gpt2_baseline.py`); AND our MLX fit ==
+   Anthropic's torch `jlens` on the same corpus — J cos **1.000000**, max_abs_err ~5e-6
+   (`scripts/xcheck_fit_{torch,mlx}.py`). So the fitter is verified against the reference, not
+   just autodiff-asserted. No vendored code; jlens-qwen36's rms² seed bug caught + avoided.
 4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-heretic`
    (Metal-gated; add the GDN speed accelerator only if the baseline is too slow through the 48 GDN
    layers — a direct VJP per source layer is O(n_layers·d_model) VJPs).
