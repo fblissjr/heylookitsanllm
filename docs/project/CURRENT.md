@@ -14,7 +14,7 @@ thread-stream crash fix. Lens **fitting** was EXTRACTED to a new sibling repo
 (Anthropic direct-VJP design -- norm outside J, no chain, no closed-form seed)
 cross-checked vs Anthropic's torch `jlens` (J cos 1.0). Go-forward:
 `docs/jspace_integration_plan.md` Part 2. Known issue: the served
-`Qwen3.5-27B-heretic` lens is `hf_model_name=""` / likely fit on STOCK Qwen --
+`Qwen3.5-27B-abliterated` lens is `hf_model_name=""` / likely fit on STOCK Qwen --
 treat its readouts as provisional until we own-fit.
 
 UPDATE 2026-07-09 (v1.34.22): per-conversation system prompt editing +
@@ -69,7 +69,7 @@ the stale Mar-15 mlx-vlm fork -- pulling the owner's synced forks (mlx-vlm
 gemma-4 dense/MoE AND Qwen3-VL clean through the manual vision path. No
 wrap_language_model port needed (that v1.34.13 TODO is moot). Owner's synced
 forks + downloaded models (gemma-4 8bit dense/MoE + assistant drafter),
-per-model baselines (v1.34.14), heretic scrubbed everywhere (v1.34.15),
+per-model baselines (v1.34.14), model-name scrub (v1.34.15),
 3 models safe-merged into models.toml (append; 13 tuned entries intact).
 Baselines: dense gemma-4-31b-it-8bit = 15.3 gen_tps / 1592ms vision / 33.3GB;
 MoE gemma-4-26b-a4b-it-8bit = 48.1 gen_tps / 524ms vision / 27.3GB. MoE ~3x

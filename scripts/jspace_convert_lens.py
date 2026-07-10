@@ -28,7 +28,7 @@ Or from a local .pt (or a directory containing exactly one *_jacobian_lens.pt /
 lens.pt, e.g. a neuronpedia model dir):
 
     uv run scripts/jspace_convert_lens.py \\
-        --lens-pt path/to/neuronpedia/qwen3-32b --model-id Qwen3.5-27B-heretic-8bit-mlx
+        --lens-pt path/to/neuronpedia/qwen3-32b --model-id Qwen3.5-27B-abliterated-8bit-mlx
 
 ``--model-id`` is a bare name (the served model id), NOT a path. See
 docs/jspace_guide.md.

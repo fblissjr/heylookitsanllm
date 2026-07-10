@@ -342,7 +342,7 @@ away BOTH bug classes we hit porting it (the `rms²` seed bug and the chain-inde
   GDN backward + analytic assembly is a ~30-60× speedup — we PORT it (verified vs `mx.vjp`,
   attributed, **NOT vendored**) only when the baseline is too slow on the real 27B. Small-model
   baselines (gpt2 / gemma-2-2b) need none of it.
-- **Coverage:** `qwen3_5` (our served `Qwen3.5-27B-heretic` IS this arch — 64 layers,
+- **Coverage:** `qwen3_5` (our served `Qwen3.5-27B-abliterated` IS this arch — 64 layers,
   `full_attention_interval=4` → 48 GDN + 16 full-attn, `d_model` 5120) is the fit target; the
   baseline works on any arch; the GDN accelerator lands when the 27B baseline's speed demands it.
   `Qwen3_5ForConditionalGeneration` is a multimodal/MTP wrapper — reach the text stack via
@@ -365,7 +365,7 @@ mismatch and need the most data. First-class, swappable:
 - **position policy as a pluggable mask** — average over assistant / think-span tokens; explicitly drop BOS/sink/role tokens (high-norm Jacobian outliers). NOT a hardcoded "skip first 4" (that heuristic is calibrated for raw-text BOS sinks; wrong under ChatML).
 - **on-policy corpus builder** — fit on the model's own sampled generations at generated-token positions, mixed ~50–70% with human-written diversity.
 - **held-out fidelity gate** — per-layer KL / top-k agreement vs true logits on held-out target-distribution data; refuse to save a lens without it. Never grade a lens on its own fitting corpus.
-- **lens diffing** as a first-class op — WikiText-fit vs chat-fit, stock-Qwen vs heretic. For the abliteration case, the diff IS the finding.
+- **lens diffing** as a first-class op — WikiText-fit vs chat-fit, stock-Qwen vs abliterated. For the abliteration case, the diff IS the finding.
 - **VLM:** image tokens are projector outputs off the text-embedding manifold (larger norms, different attention topology). STRATIFY — a modality-conditioned image-position lens — rather than pool (averaging two separated clusters linearizes around a faithful-to-neither midpoint); validate fidelity per-modality; image positions get their own mask.
 
 ## Tooling to adopt from `jlens-qwen36` (the bench and the gate travel together)
@@ -453,9 +453,9 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   for model-agnostic + intervention patterns, `jlens-qwen36` for kernel/perf updates.
 
 - **The Qwen lens we serve TODAY is probably mismatched.**
-  `adapters/jspace/Qwen3.5-27B-heretic-8bit-mlx/lens.sidecar.json` is `n_prompts=672`,
+  `adapters/jspace/Qwen3.5-27B-abliterated-8bit-mlx/lens.sidecar.json` is `n_prompts=672`,
   `hf_model_name=""` — unknown provenance, almost certainly fit on **stock** Qwen, not the
-  heretic (abliterated) weights we serve. So it reads the wrong function precisely where
+  abliterated (abliterated) weights we serve. So it reads the wrong function precisely where
   abliteration edited it. Concrete motivation for the first own-fit; until then, treat the
   served Qwen readouts as provisional.
 
@@ -497,9 +497,9 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    attention reads `mask.dtype`) -- J cos **1.000000**, max_abs_err ~5e-4 -- so RMSNorm+softcap
    generalization is verified. Only `qwen3_5` GDN remains (needs the GDN tail). No vendored
    code; jlens-qwen36's rms² seed bug caught + avoided.
-4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-heretic`
+4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-abliterated`
    (Metal-gated; add the GDN speed accelerator only if the baseline is too slow through the 48 GDN
    layers — a direct VJP per source layer is O(n_layers·d_model) VJPs).
-5. **Held-out fidelity gate** + **lens diff** (heretic vs stock) — the diff is the first real finding.
+5. **Held-out fidelity gate** + **lens diff** (abliterated vs stock) — the diff is the first real finding.
 6. Back here: the standing **golden gate**; then the **visualizer** once `DESIGN.md` lands.
 7. **HF lens repo** once there's an own-fit worth publishing.

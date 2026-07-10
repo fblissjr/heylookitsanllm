@@ -11,10 +11,10 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 
 - [ ] **Corpus recipe + first own-fit** (P2): stratified corpus (chat + reasoning +
   over-weighted safety + matched-benign + WikiText control), fit on-policy, first own-fit
-  on the served `Qwen3.5-27B-heretic` (Metal-gated; add the GDN speed accelerator only if
+  on the served `Qwen3.5-27B-abliterated` (Metal-gated; add the GDN speed accelerator only if
   the direct-VJP baseline is too slow through the 48 GDN layers).
-- [ ] **Held-out fidelity gate + heretic-vs-stock lens diff** (P2): per-layer KL/top-k vs
-  true logits on held-out data (refuse to save below threshold); the stock-vs-heretic diff
+- [ ] **Held-out fidelity gate + abliterated-vs-stock lens diff** (P2): per-layer KL/top-k vs
+  true logits on held-out data (refuse to save below threshold); the stock-vs-abliterated diff
   is the first real finding.
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
   tie-aware calibrated epsilon, mutation-checked -- turns the one-time V1/V2 parity into a
