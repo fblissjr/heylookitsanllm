@@ -78,6 +78,61 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   `internal/frontend/archive/`. CLAUDE.md Orient-first + architecture paragraph
   point at it and at the plan as the roadmap.
 
+## Chat-template resolution follow-ups (from the v1.34.38 review, 2026-07-10)
+
+v1.34.38 made template resolution a registry concern (server import detects jinja,
+chat_template.json fallback, auto-install-when-missing, actionable errors). The
+review (10 verified findings) split into a quick hardening batch and design items.
+
+**Quick hardening batch** (all small, do together):
+
+- [ ] **`expanduser()` on server-import detection** (P2): `model_service.py`
+  import_models does `Path(model_path) / "chat_template.jinja"` raw -- a tilde or
+  relative path from the API silently skips detection (every other model-path site
+  in model_service resolves first).
+- [ ] **Share the detection helper** (P2): the jinja detection is hand-copied in
+  `model_importer.py` (`.exists()`) and `model_service.py` (`.is_file()`) -- hoist
+  into `template_info.py` (e.g. `detect_chat_template_source(model_dir)`) so the
+  CLI wizard and the /v1/admin import route can't drift again.
+- [ ] **`chat_template_source = "auto"` force-installs** (P2): `mlx_provider.py`
+  load_model uses `force=bool(config value)`; the documented value "auto" is truthy
+  and takes the overwrite branch, which can destroy a natively-loaded DICT of named
+  templates (transformers `additional_chat_templates/`). Normalize: force only when
+  set AND != "auto". Also accept "chat_template_json" as an explicit value --
+  it's a source label users see in load logs but can't configure.
+- [ ] **Missing-template error: state check, not prose match** (P2): `_apply_template`
+  string-matches transformers' "chat_template is not set" (version-fragile; the test
+  mocks the exact string so drift is invisible) and the message omits
+  chat_template.json + asserts filesystem facts that can be false when install
+  silently failed. Decide via `getattr(tokenizer, "chat_template", None)` inside the
+  except; derive the source list from template_info constants. Apply the same
+  translation at the other two apply sites (batch path, `hidden_states.py`).
+- [ ] **Warning should consume install's return** (P3): load_model ignores
+  `install_chat_template()`'s bool and re-derives a weaker condition -- a resolved
+  template whose install failed on all targets warns nothing yet still fails at
+  request time.
+
+**Design items** (need a decision, not just a patch):
+
+- [ ] **Wrapper-level python chat templates false-alarm the warning** (P2):
+  mlx-lm's `chat_template_type` (e.g. DeepSeek-V3.2 conversions) renders via
+  `TokenizerWrapper._chat_template` while the inner HF tokenizer's attr stays None;
+  the new load-time "Chat requests will fail" warning checks only the inner
+  tokenizer + files, so it fires for a working model. Consult the wrapper's
+  `has_chat_template` on `self.processor` before warning.
+- [ ] **List-form `chat_template` silently dropped** (P3): HF's legacy named-template
+  list (`[{"name","template"}]`, still read AND written by transformers 5.5.4; real
+  repos ship it, e.g. command-r-plus conversions) is treated as no-template by
+  `_read_embedded_template` -- empty template for harmony/thinking detection and a
+  false "lacks a chat_template field" warning under explicit source. Decide: pick
+  the "default" entry, or keep string-only and log the list case explicitly.
+- [ ] **chat_template.json fallback can change response shape** (P4, note-only?):
+  a json-only model whose template carries <think> markers now selects the thinking
+  parser (split `thinking` field) where it previously streamed inline -- arguably
+  correct (the processor already applied that template) and no local model hits it
+  (all json-shipping folders also have jinja), but it's an undocumented behavior
+  change; consider a CHANGELOG amendment when touching this area next.
+
 ## Recently Completed (Phase 2 -- 2026-03-13)
 
 - [x] Remove STT provider (`mlx_stt_provider.py`, `stt_api.py`, parakeet-mlx dep)
