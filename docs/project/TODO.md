@@ -28,6 +28,14 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   slider + aggregation view, and a "provisional lens" badge off the sidecar
   provenance (`/v1/jspace/models` meta). Remaining, in order: live streaming
   (new SSE analyze endpoint) -> steer/swap/ablate interventions (last).
+  **Fold into the streaming rework** (both live in the analyze grid loop it
+  will rewrite; from the 2026-07-10 review): (a) unify the onset column's two
+  numeric paths -- onset_strip uses float64 np.argsort, the heatmap's last
+  column uses float32 argpartition, so near-tied logits can show different
+  top-1 tokens for the same position (breaks the echo highlight); one shared
+  per-position reduce fixes it. (b) batch the per-layer device-to-host syncs
+  (~4 x band_layers sequential np.asarray evals under the gen gate) into one
+  mx.eval, and memo tok.decode per request (~5k redundant single-id decodes).
 - [ ] **Re-home `verify_endpoint.py` / `probe_thread.py`** (P3): now in
   `jlens-mlx/migrated_from_scratch/`; they test the running server + MLX thread semantics,
   so they belong back as real heylook `tests/`.

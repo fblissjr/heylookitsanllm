@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.39]
+
+### Fixed
+
+- **`heatmap_top_k` is now schema-bounded (0-64)** on `POST /v1/jspace/analyze`: previously any
+  int was accepted and clamped only to vocab size, letting one request decode band x positions x
+  vocab tokens (a multi-GB response) while holding the process-global generation gate.
+- v3 jspace interaction fixes from the review pass: arrow-key pin walking now respects the
+  layer-range scope (it could land the pin on a hidden row); `scrollIntoView` on the pinned cell
+  now fires only for keyboard navigation (strip clicks no longer yank the viewport to the
+  heatmap's far-right onset column); non-answer logit bars no longer show a literal "undefined"
+  tooltip; the echo highlight accepts the empty-string token (rendered as the empty-token glyph);
+  slider drags dedupe unchanged ranges and route the aggregation repaint through the frame
+  throttle.
+
+### Tests
+
+- Contract: out-of-range `heatmap_top_k` rejected (422). E2E pages suite grows to 35 checks:
+  arrow-walk-respects-scope assertions and a heatmap-off analyze check (strip-only render,
+  onset_strip aggregation fallback, strip-row pin) -- the path the review found uncovered.
+
 ## [1.34.38]
 
 ### Added

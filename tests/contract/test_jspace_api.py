@@ -86,6 +86,18 @@ def test_analyze_accepts_messages(client):
     assert r.status_code == 200
 
 
+def test_analyze_rejects_unbounded_heatmap_top_k(client):
+    # One request with a huge k would decode band x positions x k tokens while
+    # holding the generation gate -- the schema bound is the only guard.
+    r = client.post("/v1/jspace/analyze",
+                    json={"model": "m1", "prompt": "hi", "heatmap": True,
+                          "heatmap_top_k": 999999})
+    assert r.status_code == 422
+    r = client.post("/v1/jspace/analyze",
+                    json={"model": "m1", "prompt": "hi", "heatmap_top_k": -1})
+    assert r.status_code == 422
+
+
 def test_analyze_forwards_heatmap_top_k(client, monkeypatch):
     seen = {}
 

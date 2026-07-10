@@ -12,7 +12,7 @@ import logging
 
 import mlx.core as mx
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from heylook_llm.jspace.analyze import analyze as run_analyze
 from heylook_llm.jspace.registry import LensRegistry
@@ -39,7 +39,11 @@ class AnalyzeRequest(BaseModel):
     max_answer_tokens: int = 8
     top_k: int = 8
     heatmap: bool = False
-    heatmap_top_k: int = 0   # >0: each heatmap cell also carries its top-k tokens
+    # >0: each heatmap cell also carries its top-k tokens. Bounded: the cost is
+    # band_layers x positions x k decoded tokens, computed on the pinned MLX
+    # executor thread under the process-global generation gate -- an unbounded k
+    # (clamped only to vocab downstream) would let one request wedge all inference.
+    heatmap_top_k: int = Field(0, ge=0, le=64)
     chat: bool = False   # False = raw completion (crisp viz); True = chat template (risk)
 
 

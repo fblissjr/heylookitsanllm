@@ -1,6 +1,6 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-09
+Last updated: 2026-07-10
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc

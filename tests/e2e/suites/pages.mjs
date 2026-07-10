@@ -353,8 +353,34 @@ export async function runPagesSuite({ suite, ctx, config }) {
       'expected all but one strip row scoped out');
     assert((await count(page, '.jspace__hrow--out')) === slots - 1,
       'expected all but one heatmap row scoped out');
+    // Arrow-walk must respect the scope: pin the one visible row, walk, and
+    // the pin must never land on a hidden (--out) row.
+    await page.click('.jspace__row:not(.jspace__row--out)');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowDown');
+    assert((await count(page, '.jspace__row--pinned')) === 1, 'scoped pin lost during arrow walk');
+    assert((await count(page, '.jspace__row--out.jspace__row--pinned')) === 0,
+      'arrow walk moved the pin onto a scoped-out row');
+    await page.keyboard.press('Escape');
     await clickByText(page, '.jspace__slider button', 'reset');
     assert((await count(page, '.jspace__row--out')) === 0, 'reset did not restore the rows');
+  });
+
+  await suite.check('jspace: heatmap-off analyze renders strip-only and pins from onset_strip', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    await page.click('#jspace-heatmap'); // toggle heatmap back OFF
+    await clickByText(page, '.jspace__composer button', 'Analyze');
+    await waitFor(async () => (await count(page, '.jspace__detail')) > 0 &&
+      (await count(page, '.jspace__heatmap')) === 0,
+      { timeout: 90000, message: 'heatmap-off result never rendered' });
+    assert((await count(page, '.jspace__strip .jspace__row')) > 0, 'strip missing');
+    assert((await count(page, '.jspace__detail .jspace__agg-row')) > 0,
+      'aggregation (onset_strip fallback) empty');
+    await page.click('.jspace__strip .jspace__row');
+    assert((await count(page, '.jspace__row--pinned')) === 1, 'strip row not pinned');
+    assert((await count(page, '.jspace__detail .jspace-bar')) > 0,
+      'onset pin has no bars without a heatmap');
+    await page.keyboard.press('Escape');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

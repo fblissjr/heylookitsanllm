@@ -29,7 +29,7 @@ fit.
 
 **Hard gate: seed a v3 `DESIGN.md` before building any new visual UI.** v3 has an implicit
 OKLCH strength/chip system (in `css/app.css` comments) but no written design language. The plan
-(`docs/plan_2026-07.md` Phase 4 item 2) requires formalizing it first so the visualizer has a
+(`docs/project/plan_2026-07.md` Phase 4 item 2) requires formalizing it first so the visualizer has a
 visual vocabulary to build on. This is itself a frontend task and has no dependency on anything
 else — do it first.
 

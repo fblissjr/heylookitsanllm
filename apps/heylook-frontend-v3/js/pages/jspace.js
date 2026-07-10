@@ -170,17 +170,21 @@ function pinnedTopToken(data, pin) {
   return data.heatmap.find((r) => r.layer === pin.layer)?.cells[pin.posIdx]?.token ?? null;
 }
 
-function setPin(ctx, pin) {
+// scrollPin: bring the pinned cell into view -- keyboard navigation only.
+// Click pins never scroll (the target is already under the pointer, and a
+// strip click maps to the heatmap's far-right onset column -- scrolling there
+// would yank the viewport away from the strip the user clicked).
+function setPin(ctx, pin, scrollPin = false) {
   const s = ctx.state;
   s.pinned = pin;
   if (pin) s.aggTok = null;
-  updateMarks(ctx);
+  updateMarks(ctx, scrollPin);
   renderDetail(ctx);
 }
 
 // One pass over the marker classes: pin ring, echo highlight (the pinned
 // cell's top token, or the toggled aggregation token when nothing is pinned).
-function updateMarks(ctx) {
+function updateMarks(ctx, scrollPin = false) {
   const s = ctx.state;
   const d = s.data;
   const pin = s.pinned;
@@ -195,9 +199,11 @@ function updateMarks(ctx) {
     const isPinned = !!pin && layer === pin.layer &&
       (pin.posIdx == null ? posIdx === onsetPosIdx(d) : posIdx === pin.posIdx);
     cell.classList.toggle('jspace__hcell--pinned', isPinned);
+    // != null (not truthiness): the empty-string token is a legal echo target
+    // (it renders as the ∅ glyph).
     cell.classList.toggle('jspace__hcell--echo',
-      !!echoTok && !isPinned && cell.dataset.tok === echoTok);
-    if (isPinned) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      echoTok != null && !isPinned && cell.dataset.tok === echoTok);
+    if (isPinned && scrollPin) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 }
 
@@ -222,6 +228,10 @@ function setRange(ctx, range) {
   const band = s.data.band_layers;
   // Selecting the whole band is the same as no selection.
   if (range && range[0] <= band[0] && range[1] >= band[band.length - 1]) range = null;
+  // Dedupe: most drag pointermoves land in the same slot -- skip the class
+  // sweeps and repaint when nothing changed.
+  const prev = s.range;
+  if (prev === range || (prev && range && prev[0] === range[0] && prev[1] === range[1])) return;
   s.range = range;
   for (const [layer, slot] of s.slotEls) {
     slot.classList.toggle('jspace__slot--in', !!range && layer >= range[0] && layer <= range[1]);
@@ -234,7 +244,9 @@ function setRange(ctx, range) {
   for (const [layer, row] of s.rowEls) row.classList.toggle('jspace__row--out', !inScope(ctx, layer));
   for (const [layer, row] of s.hrowEls) row.classList.toggle('jspace__hrow--out', !inScope(ctx, layer));
   if (s.pinned && !inScope(ctx, s.pinned.layer)) { setPin(ctx, null); return; }
-  renderDetail(ctx);
+  // Throttled: setRange fires per pointermove during a drag; the aggregation
+  // panel rebuild only needs to run once per frame.
+  s.paintDetail();
 }
 
 function buildSlider(ctx, data) {
@@ -297,19 +309,23 @@ function handleKeydown(ctx, e) {
   if (e.key === 'Escape') { setPin(ctx, null); return; }
   if (!s.pinned) return;
 
-  const band = s.data.band_layers ?? [];
+  // Walk only the layers inside the slider scope -- otherwise the pin lands
+  // on a display:none row (setRange evicts out-of-scope pins for the same reason).
+  const band = (s.data.band_layers ?? []).filter((l) => inScope(ctx, l));
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     // Rows render deep -> shallow (descending layer), so Up = deeper.
     e.preventDefault();
     const li = band.indexOf(s.pinned.layer) + (e.key === 'ArrowUp' ? 1 : -1);
-    if (li >= 0 && li < band.length) setPin(ctx, { layer: band[li], posIdx: s.pinned.posIdx });
+    if (li >= 0 && li < band.length) {
+      setPin(ctx, { layer: band[li], posIdx: s.pinned.posIdx }, true);
+    }
   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     const count = s.data.heatmap_positions?.length ?? 0;
     if (!count) return;
     e.preventDefault();
     const cur = s.pinned.posIdx ?? onsetPosIdx(s.data);
     const np = cur + (e.key === 'ArrowRight' ? 1 : -1);
-    if (np >= 0 && np < count) setPin(ctx, { layer: s.pinned.layer, posIdx: np });
+    if (np >= 0 && np < count) setPin(ctx, { layer: s.pinned.layer, posIdx: np }, true);
   }
 }
 
@@ -451,9 +467,11 @@ function buildBars(topK, firstAnswerToken) {
   const width = (l) => (hi > lo ? 4 + 96 * (l - lo) / (hi - lo) : 100);
   return topK.map((c) => {
     const isAnswer = c.token === firstAnswerToken;
+    // Conditional spread: createEl assigns undefined props verbatim, and
+    // el.title = undefined coerces to the literal string "undefined".
     return createEl('div', {
       class: `jspace-bar${isAnswer ? ' jspace-bar--answer' : ''}`,
-      title: isAnswer ? 'matches the first answer token' : undefined,
+      ...(isAnswer ? { title: 'matches the first answer token' } : {}),
     }, [
       createEl('span', { class: 'jspace-bar__label' }, [glyph(c.token)]),
       createEl('div', { class: 'jspace-bar__track' }, [
