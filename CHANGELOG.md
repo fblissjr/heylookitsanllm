@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.37]
+
+### Added
+
+- **Per-cell top-N analyze extension** (`POST /v1/jspace/analyze`): new `heatmap_top_k`
+  (default 0 = unchanged) makes each heatmap cell carry `top_k: [{token, logit}...]`
+  (reduced on-device via argpartition -- the full per-layer logits never leave the GPU
+  path). The v3 jspace page sends it with the heatmap toggle, so pinning ANY cell now
+  shows its full silent-token readout (spec section 4 updated in the same commit).
+- **J-space visualizer sequence item 2 -- layer-range slider + aggregation** (v3, pure
+  client-side): a slot-per-band-layer slider (click = one layer, drag = a contiguous
+  range, hover = live preview, reset) scopes the strip and heatmap rows; the detail
+  panel's unpinned state becomes a most-common-silent-tokens aggregation (top-k
+  appearance counts over the scoped layers, heatmap-wide when per-cell top-k data
+  exists), and clicking an aggregation row echo-highlights where that token wins in
+  the grid.
+- **Lens provenance surfaced**: `GET /v1/jspace/models` now returns
+  `meta: {model: {provisional, fit_date, fit_source, n_prompts}}` from the lens
+  sidecar (`provisional` = no own-fit `hf_model_name` stamp); the jspace page shows a
+  "provisional lens" badge for such models. Pairs with the fitting-track change that
+  stamps own-fit sidecars with provenance.
+
+### Tests
+
+- analyze() pipeline now unit-tested end-to-end on a tiny random-weight gpt2 (per-cell
+  top-k shape/ordering + back-compat cell shape); registry provenance unit test;
+  contract tests for heatmap_top_k forwarding and models-meta. E2E pages suite grows
+  to 34 checks (aggregation panel, slider scoping/reset; the non-onset pin check now
+  expects full bars).
+
 ## [1.34.36]
 
 ### Added

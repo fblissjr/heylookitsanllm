@@ -8,9 +8,9 @@
 //
 // Interaction (DESIGN.md §3-4): click a workspace row or heatmap cell to PIN
 // its readout in the detail panel; Esc unpins; arrows walk layers/positions.
-// The answer-onset column (the strip; the heatmap's last column) is the only
-// place the API returns full top-k today -- other cells pin a reduced
-// top-1+entropy readout until the per-cell top-N analyze extension lands.
+// Heatmap cells carry their own top-k (heatmap_top_k); the answer-onset
+// column (the strip; the heatmap's last column) reads from onset_strip. A
+// cell without top-k data falls back to a reduced top-1+entropy readout.
 
 import { createPage } from '../page.js';
 import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
@@ -34,15 +34,21 @@ export default createPage({
     s.models = [];
     s.busy = false;
     s.data = null;
-    s.pinned = null; // { layer, posIdx } -- posIdx null = answer onset (no heatmap)
+    s.pinned = null;     // { layer, posIdx } -- posIdx null = answer onset (no heatmap)
+    s.range = null;      // [lo, hi] band-layer sub-range; null = all band layers
+    s.hoverLayer = null; // slider hover -> live single-layer aggregation preview
+    s.aggTok = null;     // aggregation row toggled -> echo highlight across the grid
 
     buildSkeleton(ctx);
+    s.paintDetail = ctx.throttle(() => { if (ctx.alive) renderDetail(ctx); });
 
     const res = await api.jspaceModels({ signal: ctx.signal }).catch(() => ({ models: [] }));
     if (!ctx.alive) return;
     s.models = res.models ?? [];
+    s.lensMeta = res.meta ?? {};
     if (s.models.length) {
       fillOptions(s.modelSelect, s.models);
+      updateLensBadge(ctx);
       setStatus(s.statusEl, `${s.models.length} model(s) with a lens. Enter a prompt and analyze.`);
     } else {
       s.modelSelect.disabled = true;
@@ -60,6 +66,16 @@ function buildSkeleton(ctx) {
   const s = ctx.state;
 
   s.modelSelect = createEl('select', { title: 'Model' });
+  s.modelSelect.addEventListener('change', () => updateLensBadge(ctx));
+
+  // Shown when the selected model's lens has no own-fit provenance stamp --
+  // its readouts are directionally useful but not trustworthy in detail.
+  s.lensBadge = createEl('span', {
+    class: 'jspace__lens-badge small muted',
+    hidden: true,
+    title: 'This lens was converted from a third-party fit of unknown provenance '
+      + '(possibly on different weights). Readouts are provisional until an own-fit lands.',
+  }, ['provisional lens']);
 
   s.textarea = createEl('textarea', { rows: 2, placeholder: 'A prompt to probe, e.g. "The Eiffel Tower is in the city of"…' });
   s.textarea.addEventListener('input', () => autoGrow(s.textarea));
@@ -84,13 +100,18 @@ function buildSkeleton(ctx) {
   s.resultEl = createEl('div', { class: 'jspace__result' });
 
   s.rootEl = createEl('div', { class: 'jspace', tabindex: '0' }, [
-    createEl('header', { class: 'jspace__bar' }, [s.modelSelect, heatmapLabel, chatLabel]),
+    createEl('header', { class: 'jspace__bar' }, [s.modelSelect, s.lensBadge, heatmapLabel, chatLabel]),
     createEl('div', { class: 'jspace__composer' }, [s.textarea, s.analyzeBtn]),
     s.statusEl,
     s.resultEl,
   ]);
   s.rootEl.addEventListener('keydown', (e) => handleKeydown(ctx, e));
   ctx.el.append(s.rootEl);
+}
+
+function updateLensBadge(ctx) {
+  const s = ctx.state;
+  s.lensBadge.hidden = !s.lensMeta?.[s.modelSelect.value]?.provisional;
 }
 
 async function analyze(ctx) {
@@ -106,6 +127,7 @@ async function analyze(ctx) {
   try {
     const data = await api.jspaceAnalyze(
       { model, prompt, heatmap: s.heatmapToggle.checked, chat: s.chatToggle.checked,
+        heatmap_top_k: s.heatmapToggle.checked ? 8 : 0,
         max_answer_tokens: 8, top_k: 8 },
       { signal: ctx.signal });
     if (!ctx.alive) return;
@@ -151,9 +173,19 @@ function pinnedTopToken(data, pin) {
 function setPin(ctx, pin) {
   const s = ctx.state;
   s.pinned = pin;
+  if (pin) s.aggTok = null;
+  updateMarks(ctx);
+  renderDetail(ctx);
+}
+
+// One pass over the marker classes: pin ring, echo highlight (the pinned
+// cell's top token, or the toggled aggregation token when nothing is pinned).
+function updateMarks(ctx) {
+  const s = ctx.state;
   const d = s.data;
+  const pin = s.pinned;
   const onset = pin && isOnsetPin(d, pin);
-  const echoTok = pin ? pinnedTopToken(d, pin) : null;
+  const echoTok = pin ? pinnedTopToken(d, pin) : s.aggTok;
 
   for (const [layer, row] of s.rowEls) {
     row.classList.toggle('jspace__row--pinned', !!pin && onset && layer === pin.layer);
@@ -167,7 +199,95 @@ function setPin(ctx, pin) {
       !!echoTok && !isPinned && cell.dataset.tok === echoTok);
     if (isPinned) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
+}
+
+// ---------------------------------------------------------------------------
+// layer-range scope (slot-based slider; client-side filter -- no refetch)
+// ---------------------------------------------------------------------------
+
+function inScope(ctx, layer) {
+  const r = ctx.state.range;
+  return !r || (layer >= r[0] && layer <= r[1]);
+}
+
+function scopedLayers(ctx) {
+  const s = ctx.state;
+  const band = s.data?.band_layers ?? [];
+  if (s.hoverLayer != null) return [s.hoverLayer];
+  return band.filter((l) => inScope(ctx, l));
+}
+
+function setRange(ctx, range) {
+  const s = ctx.state;
+  const band = s.data.band_layers;
+  // Selecting the whole band is the same as no selection.
+  if (range && range[0] <= band[0] && range[1] >= band[band.length - 1]) range = null;
+  s.range = range;
+  for (const [layer, slot] of s.slotEls) {
+    slot.classList.toggle('jspace__slot--in', !!range && layer >= range[0] && layer <= range[1]);
+  }
+  s.sliderLabel.textContent = range
+    ? (range[0] === range[1] ? `L${range[0]}` : `L${range[0]}–L${range[1]}`)
+    : 'all band layers';
+  s.sliderReset.hidden = !range;
+
+  for (const [layer, row] of s.rowEls) row.classList.toggle('jspace__row--out', !inScope(ctx, layer));
+  for (const [layer, row] of s.hrowEls) row.classList.toggle('jspace__hrow--out', !inScope(ctx, layer));
+  if (s.pinned && !inScope(ctx, s.pinned.layer)) { setPin(ctx, null); return; }
   renderDetail(ctx);
+}
+
+function buildSlider(ctx, data) {
+  const s = ctx.state;
+  const band = data.band_layers;
+  s.slotEls = new Map();
+  const slots = band.map((l) => {
+    const el = createEl('span', { class: 'jspace__slot', title: `L${l}` });
+    s.slotEls.set(l, el);
+    return el;
+  });
+  s.sliderTrack = createEl('div', { class: 'jspace__slider-track' }, slots);
+  s.sliderLabel = createEl('span', { class: 'jspace__slider-label small muted' }, ['all band layers']);
+  s.sliderReset = createEl('button', { class: 'btn btn--ghost btn--sm', hidden: true }, ['reset']);
+  s.sliderReset.addEventListener('click', () => setRange(ctx, null));
+
+  const layerAt = (e) => {
+    const rect = s.sliderTrack.getBoundingClientRect();
+    const i = Math.floor(((e.clientX - rect.left) / rect.width) * band.length);
+    return band[Math.max(0, Math.min(band.length - 1, i))];
+  };
+  let dragStart = null;
+  s.sliderTrack.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    dragStart = layerAt(e);
+    s.hoverLayer = null;
+    setRange(ctx, [dragStart, dragStart]);
+    s.sliderTrack.setPointerCapture(e.pointerId);
+  });
+  s.sliderTrack.addEventListener('pointermove', (e) => {
+    if (dragStart != null) {
+      const l = layerAt(e);
+      setRange(ctx, [Math.min(dragStart, l), Math.max(dragStart, l)]);
+    } else {
+      // Hover scrubs a live single-layer aggregation preview (list only).
+      const l = layerAt(e);
+      if (l !== s.hoverLayer) { s.hoverLayer = l; s.paintDetail(); }
+    }
+  });
+  const endDrag = () => { dragStart = null; };
+  s.sliderTrack.addEventListener('pointerup', endDrag);
+  s.sliderTrack.addEventListener('pointercancel', endDrag);
+  s.sliderTrack.addEventListener('pointerleave', () => {
+    if (dragStart == null && s.hoverLayer != null) { s.hoverLayer = null; s.paintDetail(); }
+  });
+
+  return createEl('div', { class: 'jspace__slider' }, [
+    createEl('span', { class: 'jspace__layer' }, [`L${band[0]}`]),
+    s.sliderTrack,
+    createEl('span', { class: 'jspace__layer' }, [`L${band[band.length - 1]}`]),
+    s.sliderLabel,
+    s.sliderReset,
+  ]);
 }
 
 function handleKeydown(ctx, e) {
@@ -201,8 +321,12 @@ function renderResult(ctx, data) {
   const s = ctx.state;
   s.data = data;
   s.pinned = null;
+  s.range = null;
+  s.hoverLayer = null;
+  s.aggTok = null;
   s.rowEls = new Map();   // layer -> strip row element
   s.cellEls = new Map();  // "layer:posIdx" -> heatmap cell element
+  s.hrowEls = new Map();  // layer -> heatmap row element
 
   // Answer + optional risk badge.
   const head = createEl('div', { class: 'jspace__answer' }, [
@@ -241,6 +365,7 @@ function renderResult(ctx, data) {
   }
 
   const main = createEl('div', { class: 'jspace__main' }, [
+    ...(data.band_layers?.length > 1 ? [buildSlider(ctx, data)] : []),
     createEl('div', { class: 'jspace__section-label small muted' }, ['workspace at answer-onset (deep → shallow)']),
     strip,
   ]);
@@ -289,10 +414,12 @@ function buildHeatmap(ctx, data) {
       s.cellEls.set(`${rowData.layer}:${i}`, cell);
       return cell;
     });
-    grid.append(createEl('div', { class: 'jspace__hrow' }, [
+    const hrow = createEl('div', { class: 'jspace__hrow' }, [
       createEl('span', { class: 'jspace__layer' }, [`L${rowData.layer}`]),
       ...cells,
-    ]));
+    ]);
+    s.hrowEls.set(rowData.layer, hrow);
+    grid.append(hrow);
   }
   return createEl('div', {}, [
     createEl('div', { class: 'jspace__section-label small muted' }, ['layer × position (top-1 token, color = confidence)']),
@@ -337,15 +464,67 @@ function buildBars(topK, firstAnswerToken) {
   });
 }
 
+// Most-common silent tokens over the scoped layers (Neuronpedia-style count
+// aggregation). When per-cell top-k exists, aggregate the heatmap only (its
+// last column IS the onset -- counting the strip too would double it);
+// otherwise fall back to the onset strip.
+function computeAgg(ctx) {
+  const s = ctx.state;
+  const d = s.data;
+  const layers = new Set(scopedLayers(ctx));
+  const counts = new Map();
+  const add = (c) => counts.set(c.token, (counts.get(c.token) ?? 0) + 1);
+  const heatmapHasTopK = d.heatmap?.some((r) => r.cells.some((c) => c.top_k?.length));
+  if (heatmapHasTopK) {
+    for (const row of d.heatmap) {
+      if (!layers.has(row.layer)) continue;
+      for (const cell of row.cells) (cell.top_k ?? []).forEach(add);
+    }
+  } else {
+    for (const row of d.onset_strip ?? []) {
+      if (layers.has(row.layer)) row.top_k.forEach(add);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+}
+
+function buildAggPanel(ctx) {
+  const s = ctx.state;
+  const layers = scopedLayers(ctx);
+  if (!layers.length) return createEl('div', { class: 'empty-state' }, ['No layers in range.']);
+  const label = layers.length === 1
+    ? `L${layers[0]}` : `L${layers[0]}–L${layers[layers.length - 1]}`;
+  const rows = computeAgg(ctx).map(([tok, n]) => {
+    const row = createEl('div', {
+      class: `jspace__agg-row${s.aggTok === tok ? ' jspace__agg-row--active' : ''}`,
+      title: 'toggle: highlight where this token wins in the grid',
+    }, [
+      createEl('span', { class: 'jspace__agg-tok' }, [glyph(tok)]),
+      createEl('span', { class: 'muted' }, [String(n)]),
+    ]);
+    row.addEventListener('click', () => {
+      s.aggTok = s.aggTok === tok ? null : tok;
+      updateMarks(ctx);
+      renderDetail(ctx);
+    });
+    return row;
+  });
+  return createEl('div', { class: 'jspace-detail__content' }, [
+    createEl('h3', { class: 'jspace-detail__heading jspace-detail__heading--first' },
+      [`Common silent tokens · ${label}`]),
+    createEl('div', { class: 'jspace__agg' },
+      rows.length ? rows : [createEl('div', { class: 'muted small' }, ['Nothing to aggregate.'])]),
+    createEl('div', { class: 'muted small jspace-detail__note' }, [
+      'Top-k appearance counts over the scoped layers. Click a workspace row or heatmap cell to pin its full readout; Esc unpins; arrows walk the grid.',
+    ]),
+  ]);
+}
+
 function buildDetailPanel(ctx) {
   const s = ctx.state;
   const d = s.data;
   const pin = s.pinned;
-  if (!pin) {
-    return createEl('div', { class: 'empty-state' }, [
-      'Click a workspace row or a heatmap cell to pin its silent-token readout. Esc unpins; arrow keys walk layers and positions.',
-    ]);
-  }
+  if (!pin) return buildAggPanel(ctx);
 
   const onset = isOnsetPin(d, pin);
   const posIdx = pin.posIdx ?? onsetPosIdx(d);
@@ -359,20 +538,20 @@ function buildDetailPanel(ctx) {
     detailRow('Position', createEl('span', { class: 'jspace-detail__mono' }, [posLabel])),
   ];
 
-  if (onset) {
-    const row = d.onset_strip.find((r) => r.layer === pin.layer);
-    parts.push(detailRow('Entropy', createEl('span', { class: 'jspace-detail__mono' },
-      [`${row.entropy.toFixed(2)} nats`])));
-    parts.push(createEl('h3', { class: 'jspace-detail__heading' }, [`Silent tokens (top ${row.top_k.length})`]));
-    parts.push(createEl('div', { class: 'jspace-bars' }, buildBars(row.top_k, d.first_answer_token)));
+  const cell = onset ? null : d.heatmap.find((r) => r.layer === pin.layer)?.cells[posIdx];
+  const source = onset ? d.onset_strip.find((r) => r.layer === pin.layer) : cell;
+  parts.push(detailRow('Entropy', createEl('span', { class: 'jspace-detail__mono' },
+    [`${source.entropy.toFixed(2)} nats`])));
+
+  const topK = source.top_k;
+  if (topK?.length) {
+    parts.push(createEl('h3', { class: 'jspace-detail__heading' }, [`Silent tokens (top ${topK.length})`]));
+    parts.push(createEl('div', { class: 'jspace-bars' }, buildBars(topK, d.first_answer_token)));
   } else {
-    const cell = d.heatmap.find((r) => r.layer === pin.layer)?.cells[posIdx];
-    parts.push(detailRow('Entropy', createEl('span', { class: 'jspace-detail__mono' },
-      [`${cell.entropy.toFixed(2)} nats`])));
     parts.push(createEl('h3', { class: 'jspace-detail__heading' }, ['Top token']));
     parts.push(createEl('div', { class: 'jspace-detail__mono' }, [`"${glyph(cell.token)}"`]));
     parts.push(createEl('div', { class: 'muted small jspace-detail__note' }, [
-      'The API returns top-1 + entropy for non-onset cells today; the full per-cell top-N readout lands with the analyze extension.',
+      'This cell has no per-cell top-N data (analyzed without heatmap_top_k) — top-1 + entropy only.',
     ]));
   }
 

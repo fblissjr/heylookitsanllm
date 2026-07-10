@@ -320,20 +320,41 @@ export async function runPagesSuite({ suite, ctx, config }) {
     if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
     await page.keyboard.press('Escape');
     assert((await count(page, '.jspace__row--pinned')) === 0, 'pin survived Escape');
-    assert((await count(page, '.jspace__detail .empty-state')) === 1, 'detail panel did not reset');
+    // Unpinned detail = the aggregation view, not the cell readout.
+    assert((await count(page, '.jspace__detail .jspace__agg')) === 1, 'detail panel did not reset');
+    assert((await count(page, '.jspace__detail .jspace-bar')) === 0, 'cell readout survived Escape');
   });
 
-  await suite.check('jspace: non-onset heatmap cell pins the reduced readout', async () => {
+  await suite.check('jspace: non-onset heatmap cell pins its per-cell top-N', async () => {
     if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
     // First data row (nth-of-type 2: row 1 is the token header), first column
-    // -- not the onset column, so the panel shows top-1 + the extension note.
+    // -- not the onset column; per-cell top-k comes from heatmap_top_k.
     await page.click('.jspace__heatmap .jspace__hrow:nth-of-type(2) .jspace__hcell');
     assert((await count(page, '.jspace__hcell--pinned')) === 1, 'heatmap cell not marked pinned');
-    assert((await count(page, '.jspace__detail .jspace-detail__note')) === 1,
-      'reduced-readout note missing for a non-onset cell');
+    assert((await count(page, '.jspace__detail .jspace-bar')) > 0,
+      'pinned non-onset cell has no top-N bars (heatmap_top_k data missing)');
     // Clicking the pinned cell again unpins.
     await page.click('.jspace__hcell--pinned');
     assert((await count(page, '.jspace__hcell--pinned')) === 0, 'cell pin did not toggle off');
+  });
+
+  await suite.check('jspace: unpinned detail panel aggregates common tokens', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    assert((await count(page, '.jspace__detail .jspace__agg-row')) > 0,
+      'aggregation list empty while unpinned');
+  });
+
+  await suite.check('jspace: layer slider slot click scopes the rows; reset restores', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    const slots = await count(page, '.jspace__slot');
+    if (slots < 2) { console.log('    (skipped: single-layer band, no slider)'); return; }
+    await page.click('.jspace__slot'); // first slot -> single-layer range
+    assert((await count(page, '.jspace__row--out')) === slots - 1,
+      'expected all but one strip row scoped out');
+    assert((await count(page, '.jspace__hrow--out')) === slots - 1,
+      'expected all but one heatmap row scoped out');
+    await clickByText(page, '.jspace__slider button', 'reset');
+    assert((await count(page, '.jspace__row--out')) === 0, 'reset did not restore the rows');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

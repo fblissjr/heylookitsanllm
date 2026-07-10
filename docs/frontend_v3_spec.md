@@ -257,10 +257,15 @@ count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests}],
 bottlenecks}` (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
 **Capabilities** `GET /v1/capabilities`.
-**J-space** `GET /v1/jspace/models` → `{models:[id], base_dir}` (models with a fitted lens);
-`POST /v1/jspace/analyze` body `{model, prompt|messages, chat?, heatmap?, max_answer_tokens?, top_k?}`
-→ `{answer, first_answer_token, prompt_tokens, band_layers, onset_strip:[{layer,entropy,top_k:[{token,logit}]}],
-heatmap?:[{layer,cells:[{token,entropy}]}], features, risk}`. Lens-gated (404 if no lens for the model).
+**J-space** `GET /v1/jspace/models` → `{models:[id], meta:{[id]:{provisional,fit_date,fit_source,
+n_prompts}}, base_dir}` (models with a fitted lens; `meta` added v1.34.37 — `provisional` means the
+lens sidecar has no own-fit provenance stamp and drives the UI's "provisional lens" badge);
+`POST /v1/jspace/analyze` body `{model, prompt|messages, chat?, heatmap?, heatmap_top_k?,
+max_answer_tokens?, top_k?}` → `{answer, first_answer_token, prompt_tokens, band_layers,
+onset_strip:[{layer,entropy,top_k:[{token,logit}]}], heatmap?:[{layer,cells:[{token,entropy,top_k?}]}],
+heatmap_positions?, features, risk}`. `heatmap_top_k` (v1.34.37, default 0): when >0 each heatmap
+cell also carries `top_k:[{token,logit}]` (descending), enabling per-cell pinned readouts; 0 keeps
+the pre-extension `{token,entropy}` cell shape. Lens-gated (404 if no lens for the model).
 
 ---
 

@@ -210,14 +210,18 @@ All in the plan with full rationale; one-liners here so nothing is missed:
   the j-space matrix-vs-aggregation decision) -- but the impeccable design
   gates (`audit`/`polish` per page) still NEVER RAN. iPhone-Safari checked
   only via viewport emulation, not a real device.
-- **HALF-BAKED -- j-space visualizer track (v1.34.36)**: DESIGN.md gate
-  cleared; sequence item 1 (click-to-pin readout) SHIPPED + live-green in
-  E2E (strip rows + heatmap cells pin a detail panel; answer-onset pins show
-  the full top-k with logit bars + first-answer-token emphasis; other cells
-  show top-1+entropy with a "pending extension" note; Esc/arrow-key walk;
-  same-top-token echo highlight; onset-column marker + token header row on
-  the heatmap). Next per TODO.md: per-cell top-N analyze extension (scoped),
-  layer-range slider, streaming, interventions last.
+- **HALF-BAKED -- j-space visualizer track (v1.34.36-.37)**: DESIGN.md gate
+  cleared; SHIPPED + live-green in E2E: item 1 click-to-pin readout (strip
+  rows + heatmap cells pin a detail panel with logit bars +
+  first-answer-token emphasis; Esc/arrow-key walk; same-top-token echo;
+  onset marker + token header row), the `heatmap_top_k` analyze extension
+  (every heatmap cell now pins its full top-k -- reduced on-device), item 2
+  layer-range slider (slot-based; click/drag/hover-preview/reset; pure
+  client-side) + most-common-silent-tokens aggregation in the unpinned
+  detail panel (click a row = echo-highlight where it wins), and a
+  "provisional lens" badge from `/v1/jspace/models` meta (consumes the
+  fitting track's sidecar provenance stamps). Next per TODO.md: live
+  streaming (new SSE endpoint), interventions last.
 - **NOT DONE -- cutover**: retiring v2 / promoting v3 is deliberately open
   until the owner has lived in /v3. Nothing blocks it.
 - **DONE -- E2E in repo (v1.34.8)**: rebuilt under `tests/e2e/` (puppeteer-core

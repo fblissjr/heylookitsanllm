@@ -2,13 +2,16 @@
 
 Last updated: 2026-07-10
 
-> **Progress (2026-07-10, v1.34.36):** the DESIGN.md gate is CLEARED
+> **Progress (2026-07-10, v1.34.36–.37):** the DESIGN.md gate is CLEARED
 > (`apps/heylook-frontend-v3/DESIGN.md` — OKLCH system formalized; paradigm =
-> matrix-first with the layer slider + aggregation sidebar as the growth path)
-> and **sequence item 1 is SHIPPED** (click-to-pin readout, onset column full
-> top-k, other cells reduced until the per-cell extension; E2E-covered). The
-> per-cell top-N analyze extension is scoped in `docs/project/TODO.md`. Next:
-> item 2 (layer slider), then streaming, interventions last.
+> matrix-first with the layer slider + aggregation sidebar as the growth path).
+> SHIPPED: **item 1** (click-to-pin readout, Esc/arrow walk, echo highlight,
+> onset marker), the **per-cell top-N analyze extension** (`heatmap_top_k` —
+> every heatmap cell pins its full readout), **item 2** (slot-based layer-range
+> slider + most-common-tokens aggregation in the unpinned detail panel), and a
+> **"provisional lens" badge** off `/v1/jspace/models` `meta` (sidecar
+> provenance). All E2E-covered. Next: item 3 (live streaming endpoint), then
+> interventions.
 
 A self-contained brief for a Claude starting the **j-space (Jacobian-lens) visualizer**
 track in the v3 frontend. This track runs **in parallel** with the lens-fitting work (that

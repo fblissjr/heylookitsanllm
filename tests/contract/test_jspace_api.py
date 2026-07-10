@@ -41,6 +41,9 @@ class _FakeRegistry:
     def router(self, model_id):
         return None
 
+    def provenance(self, model_id):
+        return {"provisional": True, "n_prompts": 1}
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -56,7 +59,9 @@ def client(monkeypatch):
 def test_models_lists_available(client):
     r = client.get("/v1/jspace/models")
     assert r.status_code == 200
-    assert r.json()["models"] == ["m1"]
+    body = r.json()
+    assert body["models"] == ["m1"]
+    assert body["meta"]["m1"]["provisional"] is True   # per-lens provenance rides along
 
 
 def test_analyze_404_when_no_lens(client):
@@ -79,3 +84,17 @@ def test_analyze_accepts_messages(client):
     r = client.post("/v1/jspace/analyze",
                     json={"model": "m1", "messages": [{"role": "user", "content": "hi"}]})
     assert r.status_code == 200
+
+
+def test_analyze_forwards_heatmap_top_k(client, monkeypatch):
+    seen = {}
+
+    def _capture(*a, **k):
+        seen.update(k)
+        return {"ok": True}
+
+    monkeypatch.setattr(jspace_api, "run_analyze", _capture)
+    r = client.post("/v1/jspace/analyze",
+                    json={"model": "m1", "prompt": "hi", "heatmap": True, "heatmap_top_k": 5})
+    assert r.status_code == 200
+    assert seen["heatmap"] is True and seen["heatmap_top_k"] == 5

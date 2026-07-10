@@ -187,3 +187,28 @@ def test_lens_from_files(tmp_path):
     assert lens.d_model == d
     r = mx.random.normal((4, d))
     assert lens.transport(r, 0).shape == (4, d)
+
+
+def test_registry_provenance(tmp_path):
+    """provenance(): provisional = empty/missing hf_model_name in the sidecar
+    (a converted third-party lens of unknown origin); own-fits stamp it."""
+    import json
+    from heylook_llm.jspace.registry import LensRegistry
+
+    def _install(model_id, sidecar):
+        d = tmp_path / model_id
+        d.mkdir()
+        (d / "lens.safetensors").write_bytes(b"")
+        (d / "lens.sidecar.json").write_text(json.dumps(sidecar))
+
+    _install("own", {"hf_model_name": "org/model", "n_prompts": 5000,
+                     "fit_date": "2026-07-11", "fit_source": "jlens-mlx"})
+    _install("thirdparty", {"hf_model_name": "", "n_prompts": 672})
+
+    reg = LensRegistry(tmp_path)
+    own = reg.provenance("own")
+    assert own == {"provisional": False, "fit_date": "2026-07-11",
+                   "fit_source": "jlens-mlx", "n_prompts": 5000}
+    third = reg.provenance("thirdparty")
+    assert third["provisional"] is True and third["n_prompts"] == 672
+    assert reg.provenance("missing") is None

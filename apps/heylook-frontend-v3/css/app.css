@@ -1193,6 +1193,13 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .jspace__bar select { max-width: 16rem; }
 .jspace__opt { display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--text-sm); color: var(--ink-muted); }
+.jspace__lens-badge {
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px dashed var(--line-strong);
+  white-space: nowrap;
+  cursor: help;
+}
 
 .jspace__composer { display: flex; gap: 0.5rem; align-items: flex-end; padding: 0 1.25rem 0.5rem; }
 .jspace__composer textarea { flex: 1; resize: none; font-size: var(--text-body); line-height: 1.5; max-height: 200px; }
@@ -1248,6 +1255,48 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .jspace__hcell--echo { box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 45%, transparent); }
 .jspace__hcell--pinned,
 .jspace__hcell--pinned:hover { box-shadow: 0 0 0 2px var(--accent); }
+
+/* layer-range slider: one slot per band layer; click = single layer, drag =
+   contiguous range, hover = live aggregation preview (DESIGN.md §4) */
+.jspace__slider { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 0.25rem; }
+.jspace__slider-track {
+  display: flex;
+  flex: 1;
+  max-width: 24rem;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  overflow: hidden;
+  touch-action: none;
+  cursor: pointer;
+}
+.jspace__slot { flex: 1; background: var(--surface); border-right: 1px solid var(--line); }
+.jspace__slot:last-child { border-right: none; }
+.jspace__slot:hover { background: var(--surface-2); }
+.jspace__slot--in,
+.jspace__slot--in:hover { background: var(--brand-tint); }
+.jspace__slider-label { white-space: nowrap; }
+
+/* rows scoped out by the layer range */
+.jspace__row--out, .jspace__hrow--out { display: none; }
+
+/* aggregation list (unpinned detail panel): token + appearance count */
+.jspace__agg { display: flex; flex-direction: column; gap: 0.1rem; }
+.jspace__agg-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.jspace__agg-row:hover { background: var(--surface-2); }
+.jspace__agg-row--active { background: var(--brand-tint); }
+.jspace__agg-tok { overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.jspace-detail__heading--first { margin-top: 0; }
 
 /* result layout: grid + strip on the left, pinned readout panel beside it */
 .jspace__layout { display: flex; gap: 1.25rem; align-items: flex-start; }

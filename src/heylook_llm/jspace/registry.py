@@ -73,6 +73,25 @@ class LensRegistry:
         self._lens_cache[model_id] = lens
         return lens
 
+    def provenance(self, model_id: str) -> dict | None:
+        """Lens provenance for the UI. ``provisional`` = no own-fit stamp (empty
+        or missing ``hf_model_name`` in the sidecar -- e.g. a converted
+        third-party lens of unknown origin). Deliberately does NOT return the
+        model name itself -- the UI only needs the flag."""
+        d = self._dir(model_id)
+        if not d or not self._is_lens_dir(d):
+            return None
+        try:
+            side = json.loads((d / "lens.sidecar.json").read_text())
+        except Exception:
+            return {"provisional": True}
+        return {
+            "provisional": not side.get("hf_model_name"),
+            "fit_date": side.get("fit_date"),
+            "fit_source": side.get("fit_source"),
+            "n_prompts": side.get("n_prompts"),
+        }
+
     def normalizer(self, model_id: str) -> FeatureNormalizer | None:
         """Optional per-model feature z-scoring stats for the risk router."""
         d = self._dir(model_id)

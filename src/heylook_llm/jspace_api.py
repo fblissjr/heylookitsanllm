@@ -39,6 +39,7 @@ class AnalyzeRequest(BaseModel):
     max_answer_tokens: int = 8
     top_k: int = 8
     heatmap: bool = False
+    heatmap_top_k: int = 0   # >0: each heatmap cell also carries its top-k tokens
     chat: bool = False   # False = raw completion (crisp viz); True = chat template (risk)
 
 
@@ -49,7 +50,9 @@ class AnalyzeRequest(BaseModel):
 )
 async def jspace_models(request: Request):
     reg = _registry(request)
-    return {"models": reg.available(),
+    models = reg.available()
+    return {"models": models,
+            "meta": {m: reg.provenance(m) for m in models},
             "base_dir": str(reg.base_dir) if reg.base_dir else None}
 
 
@@ -111,7 +114,8 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
     try:
         return await loop.run_in_executor(
             executor, _gated_analyze, provider, lens, messages,
-            body.max_answer_tokens, body.top_k, body.heatmap, body.chat, router, normalizer)
+            body.max_answer_tokens, body.top_k, body.heatmap, body.heatmap_top_k,
+            body.chat, router, normalizer)
     except Exception as e:
         logger.exception("jspace analyze failed")
         raise HTTPException(status_code=500, detail=f"analyze failed: {e}")
@@ -121,8 +125,8 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
             router_instance.unpin_model(body.model)
 
 
-def _gated_analyze(provider, lens, messages, max_answer_tokens, top_k, heatmap, chat,
-                   router, normalizer):
+def _gated_analyze(provider, lens, messages, max_answer_tokens, top_k, heatmap,
+                   heatmap_top_k, chat, router, normalizer):
     """Runs on a pinned mlx-stream executor thread. Enters the thread-local
     generation stream (MLX streams are thread-bound -- a fresh thread has none)
     and holds the process-global FIFO generation gate so all Metal work
@@ -134,7 +138,8 @@ def _gated_analyze(provider, lens, messages, max_answer_tokens, top_k, heatmap, 
         with mx.stream(gen_stream):
             return run_analyze(
                 provider, lens, messages, max_answer_tokens=max_answer_tokens,
-                top_k=top_k, heatmap=heatmap, chat=chat, router=router, normalizer=normalizer)
+                top_k=top_k, heatmap=heatmap, heatmap_top_k=heatmap_top_k, chat=chat,
+                router=router, normalizer=normalizer)
 
     if gate is None:
         return _work()

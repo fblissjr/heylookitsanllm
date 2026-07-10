@@ -119,6 +119,7 @@ def greedy_generate(adapter: ModelAdapter, ids, max_tokens: int, eos_ids):
 def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
             top_k: int = 8, heatmap: bool = False, chat: bool = False,
             heatmap_positions: int = _DEFAULT_HEATMAP_POSITIONS,
+            heatmap_top_k: int = 0,
             router=None, normalizer: F.FeatureNormalizer | None = None) -> dict:
     model, processor, is_vlm = provider.model, provider.processor, provider.is_vlm
     tok = _tokenizer(processor)
@@ -166,15 +167,29 @@ def analyze(provider, lens, messages: list[dict], *, max_answer_tokens: int = 8,
         positions = list(range(start, seq))
         cells = lens.apply(ad, residuals, positions=positions, layers=band)
         grid = []
+        k = max(0, min(heatmap_top_k, int(cells[band[0]].shape[-1])))
         for l in band:
             cl = cells[l]                                    # mx.array [P, vocab]
-            # Reduce on-device: bring back only per-position top-1 id + entropy,
-            # not the full [P, vocab] logits (~vocab*P doubles otherwise).
+            # Reduce on-device: bring back only per-position top-1 id + entropy
+            # (+ the top-k ids/scores when asked), not the full [P, vocab]
+            # logits (~vocab*P doubles otherwise).
             top1 = np.asarray(mx.argmax(cl, axis=-1))
             logp = cl - mx.logsumexp(cl, axis=-1, keepdims=True)
             ent = np.asarray(-mx.sum(mx.exp(logp) * logp, axis=-1))
-            row = [{"token": tok.decode([int(top1[p])]), "entropy": float(ent[p])}
-                   for p in range(top1.shape[0])]
+            kids = kscores = None
+            if k > 0:
+                part = mx.argpartition(cl, kth=-k, axis=-1)[:, -k:]     # [P, k] unsorted
+                kids = np.asarray(part)
+                kscores = np.asarray(mx.take_along_axis(cl, part, axis=-1))
+            row = []
+            for p in range(top1.shape[0]):
+                cell = {"token": tok.decode([int(top1[p])]), "entropy": float(ent[p])}
+                if kids is not None and kscores is not None:
+                    pk_ids, pk_scores = kids[p], kscores[p]
+                    order = np.argsort(-pk_scores)
+                    cell["top_k"] = [{"token": tok.decode([int(pk_ids[j])]),
+                                      "logit": float(pk_scores[j])} for j in order]
+                row.append(cell)
             grid.append({"layer": int(l), "cells": row})
 
     # Workspace features + optional hallucination risk.

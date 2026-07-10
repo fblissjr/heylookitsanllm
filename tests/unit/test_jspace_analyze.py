@@ -1,9 +1,11 @@
 """Unit tests for analyze.py helpers (content-block messages, stop tokens,
-greedy first-token) with fakes — no model/download needed."""
+greedy first-token) with fakes — no model/download needed — plus the full
+analyze() pipeline on a tiny random-weight gpt2 (heatmap per-cell top-k)."""
 import mlx.core as mx
 
+from heylook_llm.jspace import JSpaceLens
 from heylook_llm.jspace.analyze import (
-    _eos_ids, _message_text, format_prompt, greedy_generate)
+    _eos_ids, _message_text, analyze, format_prompt, greedy_generate)
 
 
 def test_message_text_str_and_blocks():
@@ -73,3 +75,66 @@ def test_greedy_generate_eos_first_token_reported():
     # Regression (#9): first_token is the model's real prediction even when it's EOS.
     first, gen, logps = greedy_generate(_FixedArgmaxAdapter(1), [1, 2], max_tokens=4, eos_ids={1})
     assert first == 1 and gen == [] and logps == []
+
+
+# ---------------------------------------------------------------------------
+# full analyze() pipeline on a tiny random-weight gpt2 (no downloads)
+# ---------------------------------------------------------------------------
+
+class _TinyTok:
+    """Deterministic in-vocab fake tokenizer for the tiny gpt2 (vocab 50)."""
+    bos_token_id = None
+    eos_token_id = 0
+
+    def encode(self, text, add_special_tokens=True):
+        return [1 + (i % 40) for i in range(len(text.split()) + 2)]
+
+    def decode(self, ids, skip_special_tokens=False):
+        return " ".join(f"t{i}" for i in ids)
+
+    def convert_tokens_to_ids(self, t):
+        return -1
+
+
+class _TinyProvider:
+    is_vlm = False
+    model_id = "tiny"
+
+    def __init__(self, model):
+        self.model = model
+        self.processor = _TinyTok()
+
+
+def _tiny_analyze(**kwargs):
+    from mlx_lm.models.gpt2 import Model, ModelArgs
+    mx.random.seed(0)
+    args = ModelArgs(model_type="gpt2", n_ctx=64, n_embd=32, n_head=4, n_layer=3,
+                     n_positions=64, layer_norm_epsilon=1e-5, vocab_size=50)
+    model = Model(args)
+    mx.eval(model.parameters())
+    eye = mx.eye(32, dtype=mx.float32)
+    lens = JSpaceLens(jacobians={0: eye, 1: eye, 2: eye},
+                      source_layers=[0, 1, 2], d_model=32)
+    return analyze(_TinyProvider(model), lens,
+                   [{"role": "user", "content": "one two three four"}],
+                   max_answer_tokens=2, top_k=4, **kwargs)
+
+
+def test_analyze_heatmap_top_k_per_cell():
+    out = _tiny_analyze(heatmap=True, heatmap_top_k=3)
+    assert out["heatmap"], "expected a heatmap grid"
+    for row in out["heatmap"]:
+        for cell in row["cells"]:
+            tk = cell["top_k"]
+            assert len(tk) == 3
+            logits = [c["logit"] for c in tk]
+            assert logits == sorted(logits, reverse=True)
+            assert tk[0]["token"] == cell["token"]   # top-1 agrees with the cell
+
+
+def test_analyze_heatmap_default_has_no_top_k():
+    # Back-compat: without heatmap_top_k, cells stay {token, entropy} only.
+    out = _tiny_analyze(heatmap=True)
+    for row in out["heatmap"]:
+        for cell in row["cells"]:
+            assert "top_k" not in cell
