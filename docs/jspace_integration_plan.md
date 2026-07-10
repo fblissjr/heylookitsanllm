@@ -506,16 +506,24 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    OUTPUTS (`init_value=0`), gate grads always on. The custom kernel makes each GDN layer's backward one
    launch (~8x over the ops loop on a tiny model; bigger with depth) — but it does NOT change the outer
    cost: a direct VJP fits `J_l` with **one backward per output dim = d_model (5120) VJPs per source
-   layer per prompt** (Anthropic's estimator). Measured on the served 27B: ~19ms/VJP for a 1-block tail,
-   ~28ms per added tail block → ~96s/layer/prompt at the deepest layer, scaling with tail length. So a
-   full-depth multi-layer fit is hours→days as-is; the needed production speedup is **cotangent
-   dim-batching** (batch the D one-hot cotangents through one backward — `gdn_vjp_batched` already does
-   this for the GDN recurrence; the generic path is still one-at-a-time) and/or the analytic assembly.
-4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on the served abliterated
-   Qwen3.5-27B (Metal-gated; stop the server for the full run). Bootstrap done via
-   `scripts/fit_served_qwen_bootstrap.py` (real weights, late-band layers, small prompt set → a loadable
-   lens). Before the full-depth fit, land dim-batching in `providers/generic_vjp.py` or the fit is
-   impractically slow (see 3b).
-5. **Held-out fidelity gate** + **lens diff** (abliterated vs stock) — the diff is the first real finding.
+   layer per prompt** (Anthropic's estimator).
+3c. **Cotangent dim-batching DONE** (2026-07-10) — `providers/generic_vjp.py` now batches C output-dim
+   rows through the tail's NATIVE batch axis (C independent copies of the primal, each hot at a different
+   output dim; one `mx.vjp` per chunk). Avoids `mx.vmap` over the GDN `custom_function` (no vmap rule) —
+   the batch axis is one the GDN kernel already handles. Verified batched J == chunk_size=1 J to fp32
+   round-off (synthetic gate [4], rel 2e-7). Measured on the served 27B: **2.4× at chunk≥64** (33.3→13.8s
+   for a 1-block tail; saturates by 64, memory 29GB@256). Deeper tails cost ~17s/added-block at chunk=128
+   (J_52 tail=11 = 188s, peak 39.5GB). Same FLOPs as one-at-a-time — the win is GPU utilization. The
+   analytic assembly (a further, FLOP-reducing speedup) remains unported.
+4. **Corpus recipe** (chat + safety, NOT WikiText) + **own-fit** on the served abliterated Qwen3.5-27B
+   (Metal-gated; stop the server for a full-depth run). `scripts/fit_served_qwen_bootstrap.py`: bootstrap
+   (layers 61-62, cos-sane J) + a graded late-band fit (layers 60/56/52, chunk 128, ~24min) both GREEN on
+   real weights; the fit now runs the fidelity gate and stamps per-layer scores on the sidecar. Still a
+   stub: `corpus.py::build_corpus` (HF load + chat-template + on-policy gen + position mask — needs the
+   `datasets` dep + GPU for on-policy gen; recipes are spec'd).
+5. **Held-out fidelity gate** (DONE — `verify.py::fidelity_gate`: per-layer top-1/top-k/KL vs true logits
+   on held-out prompts, identity-layer tripwire, save-refusal) + **lens diff** (DONE — `verify.py::diff`:
+   two lenses on the same activations → per-layer top movers). The abliterated-vs-stock diff is the first
+   real finding — still needs a STOCK Qwen3.5-27B fit to diff against (separate model, not local yet).
 6. Back here: the standing **golden gate**; then the **visualizer** once `DESIGN.md` lands.
 7. **HF lens repo** once there's an own-fit worth publishing.
