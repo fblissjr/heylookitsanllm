@@ -527,6 +527,17 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    launch (~8x over the ops loop on a tiny model; bigger with depth) — but it does NOT change the outer
    cost: a direct VJP fits `J_l` with **one backward per output dim = d_model (5120) VJPs per source
    layer per prompt** (Anthropic's estimator).
+3d. **Exact reverse-mode CHAIN fitter DONE + VERIFIED** (2026-07-10) — `jlens_mlx/chain.py`. Fits ALL
+   source layers in ONE backward sweep from the target, reading the intermediate cotangent at each
+   layer, instead of re-running each layer's full tail. Cost drops from O(n_source·avg_tail) to
+   O(n_blocks) block-passes — **~20× fewer for a dense band fit** (full band 16–47: ~1000 → ~47
+   passes), stacking on dim-batching's 2.4× (~50× vs session start). **EXACT, not an approximation**
+   (it carries the full [C,S,D] cotangent through every block and averages only at the readout, so it
+   is NOT the decorrelated "chain of averaged M_l"): verified == the direct baseline on qwen3_5 (GDN)
+   + gpt2 (LayerNorm), cos 1.000000 / rel ≤8e-7, identity exact (`scripts/check_chain_vs_direct.py`).
+   `fit_corpus`/`fit_lens` use it by default (`use_chain=True`); the direct path stays the golden
+   reference + fallback. CAVEAT: the gemma array-mask branch is un-gated — `use_chain=False` or gate it
+   first. This is what makes the dense band production fit a few-hours job instead of multi-day.
 3c. **Cotangent dim-batching DONE** (2026-07-10) — `providers/generic_vjp.py` now batches C output-dim
    rows through the tail's NATIVE batch axis (C independent copies of the primal, each hot at a different
    output dim; one `mx.vjp` per chunk). Avoids `mx.vmap` over the GDN `custom_function` (no vmap rule) —
