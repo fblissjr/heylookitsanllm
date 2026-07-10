@@ -495,11 +495,27 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    just autodiff-asserted. **The cross-check now spans TWO arch families:** gpt2 (LayerNorm) +
    **gemma-2-2b** (RMSNorm + logit-softcap-30, via a small gemma array-mask tail -- gemma's
    attention reads `mask.dtype`) -- J cos **1.000000**, max_abs_err ~5e-4 -- so RMSNorm+softcap
-   generalization is verified. Only `qwen3_5` GDN remains (needs the GDN tail). No vendored
-   code; jlens-qwen36's rms² seed bug caught + avoided.
-4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-abliterated`
-   (Metal-gated; add the GDN speed accelerator only if the baseline is too slow through the 48 GDN
-   layers — a direct VJP per source layer is O(n_layers·d_model) VJPs).
+   generalization is verified. No vendored code; jlens-qwen36's rms² seed bug caught + avoided.
+3b. **`qwen3_5` GDN tail GREEN** (DONE 2026-07-10) — the last arch. `jlens_mlx/providers/qwen3_5_gdn.py`:
+   per-layer fa/ssm mask dispatch (mirrors `Qwen3_5TextModel.__call__`) + the jlens-qwen36 Metal GDN
+   backward PORTED (not vendored) as an `mx.custom_function` VJP over the STOCK fused forward, swapped
+   in via a reentrant context manager (both `gated_delta_update` refs) so the forward is byte-identical
+   to mlx-lm. Re-verified vs `mx.vjp` at every grain (`scripts/check_qwen3_5_synthetic.py`): kernel
+   dq/dk/dv/dg/dbeta rel err ~3e-7 / cos 1.000000 (incl. GQA rf=3, B=2, T=128 boundary), forward parity
+   bit-exact, whole-fit J (kernel) vs pure-autodiff J cos 1.000000. Adaptations: atomic buffers as kernel
+   OUTPUTS (`init_value=0`), gate grads always on. The custom kernel makes each GDN layer's backward one
+   launch (~8x over the ops loop on a tiny model; bigger with depth) — but it does NOT change the outer
+   cost: a direct VJP fits `J_l` with **one backward per output dim = d_model (5120) VJPs per source
+   layer per prompt** (Anthropic's estimator). Measured on the served 27B: ~19ms/VJP for a 1-block tail,
+   ~28ms per added tail block → ~96s/layer/prompt at the deepest layer, scaling with tail length. So a
+   full-depth multi-layer fit is hours→days as-is; the needed production speedup is **cotangent
+   dim-batching** (batch the D one-hot cotangents through one backward — `gdn_vjp_batched` already does
+   this for the GDN recurrence; the generic path is still one-at-a-time) and/or the analytic assembly.
+4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on the served abliterated
+   Qwen3.5-27B (Metal-gated; stop the server for the full run). Bootstrap done via
+   `scripts/fit_served_qwen_bootstrap.py` (real weights, late-band layers, small prompt set → a loadable
+   lens). Before the full-depth fit, land dim-batching in `providers/generic_vjp.py` or the fit is
+   impractically slow (see 3b).
 5. **Held-out fidelity gate** + **lens diff** (abliterated vs stock) — the diff is the first real finding.
 6. Back here: the standing **golden gate**; then the **visualizer** once `DESIGN.md` lands.
 7. **HF lens repo** once there's an own-fit worth publishing.
