@@ -541,11 +541,14 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    weights; the fit runs the fidelity gate + stamps per-layer scores + provenance on the sidecar.
    **TARGET THE PRODUCT BAND (layers 16-47).** The server only reads `features.band_layers` = the
    `[0.25,0.75)` slice; a fit outside it (the 52-62 late-band runs) serves NOTHING in the product. Band
-   layers are the deep end (long tails) → the real production fit is the server-stopped big run, ideally
-   with `corpus.py::build_corpus` (still a stub — HF `datasets` + chat-template + on-policy gen + position
-   mask; needs the `datasets` dep + GPU; recipes spec'd). The v3 visualizer is a fast before/after read
-   once an own-fit is installed at `adapters/jspace/<model_id>/` (a user-driven swap of the provisional
-   lens).
+   layers are the deep end (long tails) → the real production fit is the server-stopped big run, driven by
+   `corpus.py::build_corpus` (**IMPLEMENTED** 2026-07-10: streaming HF load + weighted strata + chat-
+   template + role-aware position masks; on-policy generation is a separated GPU step; `datasets` already
+   in the venv) + `fit.fit_corpus` (averages J over the corpus using each item's mask). `build_corpus`
+   needs the mlx-lm TokenizerWrapper (jinja template) — a raw AutoTokenizer from a model dir can miss it.
+   Preview composition offline first with `scripts/build_corpus_preview.py`. The v3 visualizer is a fast
+   before/after read once an own-fit is installed at `adapters/jspace/<model_id>/` (a user-driven swap of
+   the provisional lens).
 5. **Held-out fidelity gate** (DONE — `verify.py::fidelity_gate`: per-layer top-1/top-k/KL vs true logits
    on held-out prompts, identity-layer tripwire, save-refusal) + **lens diff** (DONE — `verify.py::diff`:
    two lenses on the same activations → per-layer top movers). The abliterated-vs-stock diff is the first
