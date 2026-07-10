@@ -19,8 +19,21 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
   tie-aware calibrated epsilon, mutation-checked -- turns the one-time V1/V2 parity into a
   wired regression gate.
-- [ ] **Visualizer track** (P3, gated on `DESIGN.md`): click-to-pin per-cell top-N -> layer
-  slider -> live streaming -> steer/swap/ablate interventions.
+- [ ] **Visualizer track** (P3): gate cleared 2026-07-10 -- `apps/heylook-frontend-v3/DESIGN.md`
+  seeded (OKLCH strength/chip system formalized; paradigm = matrix-first, Neuronpedia-style
+  layer-range slider + aggregation sidebar as the growth path) and item 1 SHIPPED
+  (click-to-pin readout: strip rows + heatmap cells, Esc/arrow walk, echo highlight,
+  onset-column marker; answer-onset pins show full top-k, other cells top-1+entropy).
+  Remaining, in order: layer slider/focus (client-side filter, no backend) -> live
+  streaming (new SSE analyze endpoint) -> steer/swap/ablate interventions (last).
+- [ ] **Per-cell top-N analyze extension** (P3, backend, unblocks full click-to-pin):
+  add `heatmap_top_k: int = 0` to `POST /v1/jspace/analyze`; when >0 each heatmap cell
+  carries `top_k: [{token, logit}...]` beside token+entropy. Cheap: `analyze.py` already
+  has the full `[P, vocab]` lens logits per layer in the grid loop -- reduce top-k
+  on-device (argpartition) before decode, mirroring the onset-strip path. Response cost
+  ~band x positions x k rows (~100KB at defaults). Frontend already renders the reduced
+  panel with a "pending extension" note; on landing, drop the note and reuse the
+  onset-strip bars. Update `docs/frontend_v3_spec.md` section 4 in the same commit.
 - [ ] **Re-home `verify_endpoint.py` / `probe_thread.py`** (P3): now in
   `jlens-mlx/migrated_from_scratch/`; they test the running server + MLX thread semantics,
   so they belong back as real heylook `tests/`.

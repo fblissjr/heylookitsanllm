@@ -1,6 +1,8 @@
 /* heylook v3 -- single stylesheet, no build step.
    Palette: pure white writing surface; warmth lives in the honey-bronze
-   brand color and type rhythm, not in surface tints (seed oklch(0.842 0.165 91.3)). */
+   brand color and type rhythm, not in surface tints (seed oklch(0.842 0.165 91.3)).
+   The written design language (token roles, the data-strength chip formula,
+   selection/pin grammar) is ../DESIGN.md -- keep the two in sync. */
 
 /* ================= tokens ================= */
 
@@ -1180,6 +1182,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* ==== page: jspace (Jacobian lens / workspace) ==== */
 
 .jspace { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+/* Keyboard nav (Esc/arrows on the pin) is driven off this container's focus,
+   like explore -- the pin ring is the real indicator, not a page-wide ring. */
+.jspace:focus,
+.jspace:focus-visible { outline: none; }
 
 .jspace__bar {
   display: flex; align-items: center; gap: 0.75rem;
@@ -1215,7 +1221,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-family: var(--mono); font-size: var(--text-sm); color: #1a1a1a; white-space: pre;
 }
 
-.jspace__heatmap { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+.jspace__heatmap { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; padding: 2px; }
 .jspace__hrow { display: flex; align-items: center; gap: 2px; }
 .jspace__hrow .jspace__layer { width: 2.5rem; flex: none; }
 .jspace__hcell {
@@ -1223,6 +1229,94 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-family: var(--mono); font-size: 0.62rem; color: #1a1a1a; white-space: nowrap; overflow: hidden;
 }
 
+/* header row: prompt token per position; the last column is the answer onset */
+.jspace__hpos {
+  flex: none; width: 3.2rem; padding: 0.1rem 0.2rem;
+  font-family: var(--mono); font-size: 0.62rem; color: var(--ink-muted);
+  white-space: nowrap; overflow: hidden;
+}
+.jspace__hpos--onset { color: var(--accent); font-weight: 600; }
+
+/* pin grammar (DESIGN.md §3): hover = 1px line ring, pinned = 2px accent
+   ring, echo (same top token as the pinned cell) = soft accent ring */
+.jspace__row--selectable { cursor: pointer; border-radius: var(--r-ctl); }
+.jspace__row--selectable:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.jspace__row--pinned,
+.jspace__row--pinned:hover { box-shadow: 0 0 0 2px var(--accent); }
+.jspace__hcell--selectable { cursor: pointer; }
+.jspace__hcell--selectable:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.jspace__hcell--echo { box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 45%, transparent); }
+.jspace__hcell--pinned,
+.jspace__hcell--pinned:hover { box-shadow: 0 0 0 2px var(--accent); }
+
+/* result layout: grid + strip on the left, pinned readout panel beside it */
+.jspace__layout { display: flex; gap: 1.25rem; align-items: flex-start; }
+.jspace__main { flex: 1 1 auto; min-width: 0; }
+
+.jspace__detail {
+  flex: 0 0 300px;
+  max-width: 320px;
+  min-width: 0;
+  position: sticky;
+  top: 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 0.85rem 1rem;
+}
+.jspace-detail__content { display: flex; flex-direction: column; gap: 0.15rem; }
+.jspace-detail__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.jspace-detail__row:last-of-type { border-bottom: none; }
+.jspace-detail__mono { font-family: var(--mono); font-size: var(--text-ui); }
+.jspace-detail__heading {
+  color: var(--ink-muted);
+  font-weight: 550;
+  margin: 0.85rem 0 0.4rem;
+}
+.jspace-detail__note { margin-top: 0.5rem; }
+
+.jspace-bars { display: flex; flex-direction: column; gap: 0.4rem; }
+.jspace-bar {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 5rem) 1fr 3rem;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--text-sm);
+  font-family: var(--mono);
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--r-ctl);
+}
+.jspace-bar--answer { background: var(--brand-tint); font-weight: 600; }
+.jspace-bar__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.jspace-bar__track {
+  background: var(--surface-2);
+  border-radius: 4px;
+  height: 0.5rem;
+  overflow: hidden;
+}
+.jspace-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--brand) 60%, transparent);
+}
+.jspace-bar--answer .jspace-bar__fill {
+  background: color-mix(in oklch, var(--brand) 85%, transparent);
+}
+.jspace-bar__logit { text-align: right; }
+
 @media (max-width: 767px) {
   .jspace__row { grid-template-columns: 2.2rem 1.8rem 1fr; }
+  .jspace__layout { flex-direction: column; }
+  .jspace__detail { position: static; flex: none; width: 100%; max-width: none; }
 }

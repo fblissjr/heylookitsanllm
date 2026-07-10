@@ -204,11 +204,20 @@ All in the plan with full rationale; one-liners here so nothing is missed:
   against the spec, reviewed, 27 E2E checks (autosave, generate-at-cursor,
   scan/import/load/unload, no-polling perf, logprob chips + keyboard nav,
   390px viewports).
-- **UNCERTAIN -- visual design**: functionality verified, but the impeccable
-  design gates (`audit`/`polish` per page) NEVER RAN (plugin skill wasn't
-  invocable that session) and `DESIGN.md` was never seeded. Tokens/rationale
-  live only in css/app.css comments. Looks fine in screenshots; iPhone-Safari
-  was checked only via viewport emulation, not a real device.
+- **UNCERTAIN -- visual design**: functionality verified, and
+  `apps/heylook-frontend-v3/DESIGN.md` is now SEEDED (2026-07-10, v1.34.36:
+  token roles, the OKLCH data-strength chip formula, selection/pin grammar,
+  the j-space matrix-vs-aggregation decision) -- but the impeccable design
+  gates (`audit`/`polish` per page) still NEVER RAN. iPhone-Safari checked
+  only via viewport emulation, not a real device.
+- **HALF-BAKED -- j-space visualizer track (v1.34.36)**: DESIGN.md gate
+  cleared; sequence item 1 (click-to-pin readout) SHIPPED + live-green in
+  E2E (strip rows + heatmap cells pin a detail panel; answer-onset pins show
+  the full top-k with logit bars + first-answer-token emphasis; other cells
+  show top-1+entropy with a "pending extension" note; Esc/arrow-key walk;
+  same-top-token echo highlight; onset-column marker + token header row on
+  the heatmap). Next per TODO.md: per-cell top-N analyze extension (scoped),
+  layer-range slider, streaming, interventions last.
 - **NOT DONE -- cutover**: retiring v2 / promoting v3 is deliberately open
   until the owner has lived in /v3. Nothing blocks it.
 - **DONE -- E2E in repo (v1.34.8)**: rebuilt under `tests/e2e/` (puppeteer-core

@@ -1,6 +1,6 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-10 (v1.34.25)
+Last updated: 2026-07-10 (v1.34.36)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -56,9 +56,12 @@ the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); browser E2E in `tests/e2e/` (55 checks live-green).
 
 **Left**:
-- **UNCERTAIN -- visual design**: impeccable design gates never ran; no
-  `DESIGN.md` seeded; tokens/rationale live only in `css/app.css` comments. iPhone
-  Safari checked via viewport emulation, not a real device. (plan Phase 4 item 2)
+- **UNCERTAIN -- visual design**: impeccable design gates never ran.
+  `apps/heylook-frontend-v3/DESIGN.md` is now seeded (2026-07-10: token roles,
+  the OKLCH data-strength chip formula, selection/pin grammar, the j-space
+  matrix-vs-aggregation call) but it's a seed, not a completed impeccable
+  pass. iPhone Safari checked via viewport emulation, not a real device.
+  (plan Phase 4 item 2)
 - **NOT DONE -- cutover**: retiring v2 & promoting v3 is deliberately open until
   the owner has lived in `/v3` daily. Nothing blocks it. (plan Phase 3; the older
   legacy React app was already deleted in v1.34.25)

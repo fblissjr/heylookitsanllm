@@ -295,15 +295,45 @@ export async function runPagesSuite({ suite, ctx, config }) {
     assert(jspaceHasLens || hasEmpty, 'jspace: neither the E2E lens model nor an empty-state');
   });
 
-  await suite.check('jspace analyze renders the workspace strip', async () => {
+  await suite.check('jspace analyze renders the workspace strip + heatmap', async () => {
     if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
     await page.select('.jspace__bar select', config.model);
+    await page.click('#jspace-heatmap'); // heatmap on: one analyze covers strip + grid + pin checks
     await page.click('.jspace__composer textarea');
     await page.type('.jspace__composer textarea', 'The Eiffel Tower is located in the city of');
     await clickByText(page, '.jspace__composer button', 'Analyze');
     await waitFor(async () => (await count(page, '.jspace__strip .jspace__row')) > 0,
       { timeout: 90000, message: 'workspace strip never rendered' });
     assert((await count(page, '.jspace__chip')) > 0, 'no workspace chips rendered');
+    assert((await count(page, '.jspace__hcell')) > 0, 'no heatmap cells rendered');
+    assert((await count(page, '.jspace__hpos--onset')) === 1, 'answer-onset column marker missing');
+  });
+
+  await suite.check('jspace: clicking a workspace row pins the top-N readout', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    await page.click('.jspace__strip .jspace__row');
+    assert((await count(page, '.jspace__row--pinned')) === 1, 'strip row not marked pinned');
+    assert((await count(page, '.jspace__detail .jspace-bar')) > 0, 'pinned panel has no top-N bars');
+  });
+
+  await suite.check('jspace: Escape unpins the readout', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    await page.keyboard.press('Escape');
+    assert((await count(page, '.jspace__row--pinned')) === 0, 'pin survived Escape');
+    assert((await count(page, '.jspace__detail .empty-state')) === 1, 'detail panel did not reset');
+  });
+
+  await suite.check('jspace: non-onset heatmap cell pins the reduced readout', async () => {
+    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
+    // First data row (nth-of-type 2: row 1 is the token header), first column
+    // -- not the onset column, so the panel shows top-1 + the extension note.
+    await page.click('.jspace__heatmap .jspace__hrow:nth-of-type(2) .jspace__hcell');
+    assert((await count(page, '.jspace__hcell--pinned')) === 1, 'heatmap cell not marked pinned');
+    assert((await count(page, '.jspace__detail .jspace-detail__note')) === 1,
+      'reduced-readout note missing for a non-onset cell');
+    // Clicking the pinned cell again unpins.
+    await page.click('.jspace__hcell--pinned');
+    assert((await count(page, '.jspace__hcell--pinned')) === 0, 'cell pin did not toggle off');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

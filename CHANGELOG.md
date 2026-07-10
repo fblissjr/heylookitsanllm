@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.36]
+
+### Added
+
+- **v3 design language seeded** (`apps/heylook-frontend-v3/DESIGN.md`, plan Phase 4 item 2):
+  formalizes the token roles and the OKLCH data-strength chip formula that lived only in
+  `css/app.css` comments, defines the selection/pin grammar, and records the j-space
+  visualizer paradigm decision (matrix-first; Neuronpedia-style layer-range slider +
+  aggregation sidebar as the growth path).
+- **J-space visualizer sequence item 1 -- click-to-pin readout** (v3 `jspace` page, no
+  backend change): workspace strip rows and heatmap cells pin a per-(layer, position)
+  detail panel. Answer-onset pins (the strip; the heatmap's last column) show the full
+  top-k silent tokens as logit bars with the first-answer-token emphasized; other cells
+  show top-1 + entropy with a note that the per-cell top-N analyze extension (scoped in
+  TODO.md) unlocks them. Esc unpins, arrow keys walk layers/positions, cells sharing the
+  pinned cell's top token get an echo highlight, and the heatmap gains a prompt-token
+  header row with an answer-onset column marker.
+
+### Tests
+
+- E2E pages suite extends the lens-gated jspace block to 32 checks total (heatmap render +
+  onset marker, row pin, Escape unpin, non-onset cell pin/unpin); 32/32 live-green.
+
 ## [1.34.35]
 
 ### Changed
