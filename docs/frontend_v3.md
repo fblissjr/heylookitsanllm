@@ -1,6 +1,6 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-09 (v1.34.25)
+Last updated: 2026-07-10 (v1.34.25)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -117,6 +117,15 @@ it yet (the reference in `chat.js:799` is a migration marker).
 - **Radix single-slot (Q7)** has a named v3 UX cost: sidebar conversation switches
   re-prefill (TTFT on big models). Decided knowingly; measure switch frequency if
   it hurts.
+- **Model-management page promotion (plan Phase 6)** -- the `models` page today
+  lists + loads/unloads via `/v1/admin/models`. Phase 6's redesign
+  (registry-over-scan, add-by-path-anywhere, non-clobbering toml merge) makes
+  this page the real model-management UI: add-by-path, edit id/tags/config,
+  enable/disable, dedupe, re-scan-as-merge -- so `models.toml` becomes an
+  implementation detail, not the interface. Coupled: j-space **lens
+  management** (fit/convert + "which models have a lens") lands on the same
+  surface, since a lens is another per-model artifact
+  (`adapters/jspace/<model_id>/`). Direction captured in the plan; not yet scoped.
 
 ## Verifying v3 in a browser
 

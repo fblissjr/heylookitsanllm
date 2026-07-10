@@ -1,14 +1,19 @@
 # J-space (Jacobian lens) integration — build + verifier plan
 
-Last updated: 2026-07-09
+Last updated: 2026-07-10
+
+> **Part 2 -- go-forward plan (2026-07-10), at the bottom of this doc,** supersedes the
+> "Deferred / follow-ups" list: fit our own lens (new `jlens-mlx` sibling repo), the
+> modular fitter + customizable corpus, tooling to adopt from the references, and the
+> visualizer track. The repo boundary + `jspace_scratch` dissolution are decided there.
 
 Status: **ALL PHASES DONE (easy + medium tiers).** Phase 0-1 (V1 gpt2 + V2 gemma-2-2b apply-parity
 cos 1.0), Phase 4 router (V4 AUC 0.795/0.815), Phase 2 endpoint (`/v1/jspace/analyze`), Phase 3 v3
 `jspace` page -- all built, tested, and verified end-to-end on the served gemma-4-26b-a4b 8-bit MoE
 VLM (raw "...city of" -> Paris in the workspace). Deferred to future work: live per-token streaming
 instrumentation, VLM vision residuals, our own lens fitting, calibrated live risk (needs per-model
-traffic normalizer), generation-gate coordination. Scope was easy + medium tiers only. Reproducible spike harness +
-fixtures live in the gitignored `coderef/jspace_scratch/` (see the repro section).
+traffic normalizer), generation-gate coordination. Scope was easy + medium tiers only. The Phase-1 spike harness + fixtures were relocated 2026-07-10 to the `jlens-mlx`
+sibling repo (`migrated_from_scratch/`); see Part 2.
 
 ## What this is
 
@@ -107,7 +112,7 @@ Lens `.pt` + `jlens` are PyTorch; the server is MLX. So:
 
 1. **Offline, once per lens** (torch, dev-time only): load `lens.pt`, extract the `J` dict, save
    per-layer `J[l]` as `mx`-loadable **safetensors** + a JSON sidecar (`source_layers`, `d_model`,
-   `final_logit_softcapping`). Converter is implemented (`coderef/jspace_scratch/make_oracle.py`).
+   `final_logit_softcapping`). Converter is implemented (relocated 2026-07-10 to the `jlens-mlx` repo's `migrated_from_scratch/make_oracle.py`).
 2. **In-server apply (MLX)**: `softcap(head(final_norm(h_l @ J[l].T)))` — route through the
    model's REAL final norm + head + softcap so gemma's caps and tied embeddings are correct by
    construction (also a correctness anchor).
@@ -217,7 +222,11 @@ gemma-specific unembed (V2, in progress) and later the MoE capture point. Finish
 real `src/heylook_llm/jspace/` module + endpoint against a proven-safe model, then scale to the
 served gemma-4 MoE with the same parity gates before wiring the explore view.
 
-## Reproduce (spike harness — gitignored `coderef/jspace_scratch/`)
+## Reproduce (spike harness — relocated 2026-07-10 to the `jlens-mlx` repo, `migrated_from_scratch/`)
+
+> The paths below said `coderef/jspace_scratch/`; that dir was dissolved into the
+> `jlens-mlx` sibling repo's `migrated_from_scratch/` on 2026-07-10 (see Part 2). The
+> file names are unchanged.
 
 - `make_oracle.py` — throwaway torch venv (torch + transformers + editable `jlens` from
   `coderef/jacobian-lens`); env-parameterized (`HF_MODEL`/`LENS_PT`/`PREFIX`/`JSPACE_OUT`).
@@ -259,3 +268,232 @@ with zero config (override via `HEYLOOK_JSPACE_DIR`). For risk scores, also drop
 - **DONE this pass:** the convert+register helper (`scripts/jspace_convert_lens.py` + `adapters/`)
   and an E2E page check (`tests/e2e/suites/pages.mjs`, lens-gated) — both to make the next
   iteration cheap (fewer 26B reloads).
+
+---
+
+# Part 2 — go-forward plan (2026-07-10): fit our own lens + a real visualizer
+
+Supersedes the "Deferred / follow-ups" list above. Context: a three-way study of our
+apply-only impl vs two references — `WeZZard/jlens-qwen36` (MLX, fits on-device,
+`qwen3_5`-arch only, code-quality verified: analytic Jacobians checked vs `mx.vjp`,
+custom GDN Metal kernel checked vs the ops fallback, golden regression gate with
+mutation-checking) and **Neuronpedia** (torch / nnsight+nnterp + transformer_lens,
+model-agnostic, the interp OG, ships steer/swap/ablate) — plus the owner's two goals:
+(a) **fit our own lenses** on Apple silicon, and (b) make the jspace feature (backend +
+visualizer) materially better.
+
+## Repository boundary (DECIDED 2026-07-10)
+
+The fitting pipeline is heavy, dev-time, mlx-only research code that produces an
+artifact the server consumes; it does NOT belong in this server (which stays a lean
+scheduler — same reasoning as Q6's RLM extraction). Split by kind of artifact:
+
+| Kind | Home | Notes |
+|---|---|---|
+| Fitting/research code (modular fitter, Metal kernels, corpus tooling, parity/fidelity harnesses, lens diffing) | **`jlens-mlx`** — NEW standalone sibling repo (like `rlm-heylook`, `batch-labeler`) | mlx-only deps; borrows from two Apache-2.0 upstreams |
+| Lens weights (`lens.safetensors` ~0.5–3 GB + sidecars) | **A HuggingFace repo**, LFS-backed — **GATED on first own-fit** (caveat below) | ecosystem convention; server already downloads models from HF |
+| Apply-only runtime (`src/heylook_llm/jspace/`, `jspace_api.py`, `jspace.js`, docs, golden gate + tiny fixtures) | **this repo** (stays) | consumes lens artifacts via `adapters/jspace/<model_id>/` (gitignored contents, like `modelzoo/`) |
+| PyTorch reference | **`fblissjr/jacobian-lens` fork** — kept THIN (reference mirror + optional torch-side lenses), rebaseable on Anthropic | cited by `jlens-mlx`; the MLX work does NOT go here (mixing torch+MLX kills rebase-ability) |
+
+**HF-publish caveat (why it's gated, not now):** we have not fit our own lens yet;
+today's `adapters/jspace/*` lenses were CONVERTED from third-party pre-fits
+(solarkyle/neuronpedia) and the gemma ones inherit the **Gemma Terms of Use** —
+republishing them would be a licensing problem. The HF lens repo is for OUR fitted
+lenses; stand it up after the first own-fit in `jlens-mlx`. Until then the server keeps
+consuming locally-converted lenses via `adapters/` (never committed). Bonus once own-fits
+are published as MLX-native safetensors: `scripts/jspace_convert_lens.py` collapses from
+"torch+jlens throwaway venv converts a `.pt`" to a pure HF download — no torch on the
+server side at all.
+
+## `jspace_scratch` dissolution (DECIDED)
+
+`coderef/jspace_scratch/` was the gitignored Phase-1 verifier spike — five kinds of thing
+in one coat. **DONE 2026-07-10:** relocated into `jlens-mlx/migrated_from_scratch/` (code +
+sidecars tracked; GB binaries preserved but gitignored) and the `coderef/jspace_scratch/`
+dir removed. The sort mapping:
+
+| Scratch file(s) | Destination |
+|---|---|
+| `make_oracle.py`, `convert_lens.py` (torch converter + oracle gen) | `jlens-mlx` (research converter; the user-facing installer is already `scripts/jspace_convert_lens.py` here) |
+| `mlx_apply.py`, `mlx_apply_gemma.py` (V1/V2 parity harness) | `jlens-mlx`; its assertions become THIS repo's golden gate |
+| `validate_moe.py`, `verify_router.py`, `verify_module.py` (research verification) | `jlens-mlx` |
+| `verify_endpoint.py`, `probe_thread.py` (server-integration checks) | THIS repo `tests/` (real tests, not scratch) |
+| `oracle_*.npz/json` fixtures | tiny gpt2 → `tests/golden/`; larger gemma → `jlens-mlx` or regenerate on demand |
+| `lens_gpt2.safetensors` (tiny) | `tests/` fixture (golden gate). `lens_gemma22b.*` → HF (post own-fit) |
+| `README.md` | salvaged into `jlens-mlx` README + this doc |
+
+## The modular fitter (design — avoids a single-arch trainer)
+
+**PIVOTED 2026-07-10** to Anthropic's `jacobian-lens` design after a 3-way cross-check
+(Anthropic fits via `torch.autograd.grad`; `solarkyle/jspace` builds on the same Anthropic
+reference; Neuronpedia is apply-only). Simpler than jlens-qwen36's approach AND it designs
+away BOTH bug classes we hit porting it (the `rms²` seed bug and the chain-indexing off-by-one).
+
+- **Baseline fitter (correct-by-construction, arch-agnostic).** For each source layer `l`,
+  `J_l = d(h_final_block)/d(h_l)` via a **direct end-to-end `mx.vjp`** (one-hot cotangents at
+  valid output positions, position-averaged) — porting Anthropic's `fitting.py` autograd loop
+  to MLX. **No chain** of per-layer `M_l`, **no closed-form norm seed**: the final norm stays
+  OUTSIDE `J`, applied as the real nonlinear module at decode (`unembed(final_norm(J_l·h))` —
+  the apply path our server already uses, so fit-here/apply-there is consistent by construction).
+  Works on any differentiable MLX model; the only error surface is autodiff's (i.e. none).
+  Rademacher probing is an optional readout-grade speedup.
+- **GDN speed accelerator (optional, per-arch, DEFERRED).** A direct VJP through qwen3_5's 48
+  Gated-DeltaNet layers is slow (MLX's fused GDN kernel has no VJP). jlens-qwen36's custom Metal
+  GDN backward + analytic assembly is a ~30-60× speedup — we PORT it (verified vs `mx.vjp`,
+  attributed, **NOT vendored**) only when the baseline is too slow on the real 27B. Small-model
+  baselines (gpt2 / gemma-2-2b) need none of it.
+- **Coverage:** `qwen3_5` (our served `Qwen3.5-27B-heretic` IS this arch — 64 layers,
+  `full_attention_interval=4` → 48 GDN + 16 full-attn, `d_model` 5120) is the fit target; the
+  baseline works on any arch; the GDN accelerator lands when the 27B baseline's speed demands it.
+  `Qwen3_5ForConditionalGeneration` is a multimodal/MTP wrapper — reach the text stack via
+  `.language_model.model` (same walk as `capture.py`).
+
+## Customizable fitting corpus (design — corpus choice is load-bearing)
+
+Fitting a lens is closest to **quantization calibration** (estimate a moment of the
+activation distribution, deploy on a possibly-different one) with a **control-vector**
+twist (a circuit the corpus never activates contributes ~0 to the averaged Jacobian → the
+lens is structurally blind to it). WikiText is a bad default here; for our **abliterated**
+model it is actively wrong — it contains ~0 refusal-triggering content, so the
+refusal/safety circuitry is dormant across the whole corpus and the lens goes blind along
+exactly the directions abliteration edited (the directions we most want to read). And the
+lens is a chained product through depth, so early-layer lenses inherit every downstream
+mismatch and need the most data. First-class, swappable:
+
+- **corpus recipe as config + provenance** stamped on the lens artifact (recipe + model SHA + position policy). No lens without provenance.
+- **chat-templated by default** (keep one raw-prose control arm).
+- **position policy as a pluggable mask** — average over assistant / think-span tokens; explicitly drop BOS/sink/role tokens (high-norm Jacobian outliers). NOT a hardcoded "skip first 4" (that heuristic is calibrated for raw-text BOS sinks; wrong under ChatML).
+- **on-policy corpus builder** — fit on the model's own sampled generations at generated-token positions, mixed ~50–70% with human-written diversity.
+- **held-out fidelity gate** — per-layer KL / top-k agreement vs true logits on held-out target-distribution data; refuse to save a lens without it. Never grade a lens on its own fitting corpus.
+- **lens diffing** as a first-class op — WikiText-fit vs chat-fit, stock-Qwen vs heretic. For the abliteration case, the diff IS the finding.
+- **VLM:** image tokens are projector outputs off the text-embedding manifold (larger norms, different attention topology). STRATIFY — a modality-conditioned image-position lens — rather than pool (averaging two separated clusters linearizes around a faithful-to-neither midpoint); validate fidelity per-modality; image positions get their own mask.
+
+## Tooling to adopt from `jlens-qwen36` (the bench and the gate travel together)
+
+Its test/perf discipline is more mature than ours; the value is the *process*, not the
+fitting scripts:
+
+1. **Standing golden gate for `jspace/analyze`** (highest-leverage) — `analyze()` is
+   deterministic (greedy), so freeze `onset_strip` top-k ids + `features` into a golden
+   JSON with a tie-aware **calibrated** epsilon (measure the worst tie-gap over N cells,
+   pick ~4.6× headroom so matmul-batch-shape ulp noise doesn't false-positive), and
+   **mutation-check** it (deliberately break the code, confirm the gate fails, revert).
+   Turns the one-time V1/V2 parity into a wired regression gate. →
+   `scripts/gen_jspace_gate_golden.py` + `tests/unit/test_jspace_gate.py` + `tests/golden/`.
+2. **Perf ledger** (Target / Gate / Baseline / ranked-Backlog-with-REJECTED-hypotheses /
+   History), per campaign (per model+workload), as the working memory for `fast-mlx`
+   sessions. Antidote to the "perf claim rots within a day" failure MEMORY.md records.
+3. **In-process, stage-attributed generation bench** (`scripts/benchmark.py` is HTTP-only,
+   can't separate forward vs sampler vs detok) → `scripts/bench_generation.py`, stage
+   timers routed through the existing `perf_collector.ChunkTelemetry`; must run on
+   `_executor_pool` + gen gate or document the bypass.
+4. **Branch-pinning `LensRegistry` test** (never-silent-fallback; assert the error names the
+   bad input + lists what's available + offers the escape hatch; single-candidate
+   auto-select is loud).
+5. **Merge `workspace_range.py` with our hardcoded `band_layers`** (`features.py` hardcodes
+   the 0.25–0.75 fraction) → a data-driven per-model band + a converted-lens smoke test
+   (we have none).
+6. **`sitecustomize.py` shim pattern** — a self-removing root shim for mlx-lm-vs-transformers-v5
+   import breaks. Pocket it; adopt only when we actually hit one (we have the same collision
+   surface: HEAD mlx-lm + `transformers` override).
+
+## Frontend visualizer (GATED on DESIGN.md / impeccable)
+
+The reference visualizers are far richer than our static strip. Do NOT clone
+`jlens-qwen36`'s glass aesthetic — seed a v3 `DESIGN.md` first (plan Phase 4 item 2; v3
+already has an implicit OKLCH strength/chip system to formalize). Then, cheapest-high-value
+first (each mostly reuses data we already return, or a small per-cell top-k backend
+extension):
+
+1. **click-to-pin per-cell top-N readout** (jlens-qwen36's core interaction; directly answers "go layer by layer").
+2. **layer slider / focus** to walk depth (Neuronpedia's `LayerRangeSlider` — a drag range that re-scopes the readout).
+3. **live streaming** (per-token workspace rows) — needs a new streaming analyze endpoint.
+4. **interventions (steer/swap/ablate)** UI — needs real backend (residual-stream hook at layer L + forward-from-layer re-gen); sequence AFTER streaming. Both references converge on the same math: transport a token's unembed direction by `J_lᵀ`, then add (steer) / project-out (ablate) / swap source→target.
+
+## Attribution (both MLX/torch upstreams Apache-2.0; Neuronpedia MIT, ideas only)
+
+`jlens-mlx` ships `NOTICE` + per-file provenance headers crediting
+`anthropics/jacobian-lens` (via the fork) and `WeZZard/jlens-qwen36`; Neuronpedia credited
+as design inspiration. `docs/jspace_guide.md` already credits the lineage — consolidate to
+one acknowledgements pointer.
+
+## Observations & watch-items (2026-07-10)
+
+Folded in from the study + scaffold pass; captured so they aren't re-derived, not yet actioned.
+
+- **DESIGN PIVOTED to Anthropic's fitter (2026-07-10, evidence-driven).** A 3-way cross-check
+  (Anthropic `jacobian-lens` fits via `torch.autograd.grad`; `solarkyle/jspace` builds on the same
+  reference; Neuronpedia is apply-only) settled the fit design: **direct end-to-end `mx.vjp`, norm
+  outside `J`, no chain, no closed-form seed** — see "The modular fitter" above. jlens-qwen36 is
+  now scoped to one optional thing: the GDN speed kernel. We do **not** vendor it.
+- **CONCRETE BUG caught by porting.** jlens-qwen36's `analytic.py::rms_norm_jacobian` rank-1 term
+  is over `rms**2` where the correct derivative is `rms**3` (contradicts its own docstring).
+  Verified vs `mx.vjp`: rms^3 matches autodiff to ~5e-7, the vendored rms^2 diverges ~0.35. The
+  Anthropic pivot avoids it entirely (no closed form). This is why we PORT + verify, never vendor +
+  trust. Writeup + repro: `internal/research/upstream_jlens_qwen36_rmsnorm_seed_bug.md` /
+  `jlens-mlx/scripts/check_rmsnorm_seed.py`.
+- **`coderef/jspace` = solarkyle's replication — the ORIGIN of assets we already ship** (the gemma
+  lenses `solarkyle/jspace-lenses` and the hallucination router in `features.py` / V4). torch/Modal,
+  fits via the Anthropic reference (confirms the pivot). Its value is the downstream **analysis
+  layer** (hallucination anatomy, lie detection, uncertainty/emotion probes, cross-model transfer) —
+  a research backlog for what to do with our fitted lenses, plus a corpus-recipe reference.
+
+- **`jlens-qwen36` is trustworthy — verified first-hand, with one caveat.** Its analytic
+  Jacobians are checked vs `mx.vjp`, its custom GDN Metal kernel vs the ops fallback
+  (< 1e-4), the full assembled layer vs the exact VJP on real activations, and it has a
+  golden regression gate with mutation-checking + an honest perf ledger (rejects its own
+  optimizations on real-weight measurement). Caveat: it's a 79-commit / 3-day solo sprint,
+  and its validation covers **`qwen3_5` only**. The vendored seed's golden gate does NOT
+  transfer — when we wire the generic-VJP path or add a new-arch accelerator, re-validate
+  independently (parity vs `mx.vjp` on a tiny model).
+
+- **The references are moving targets — don't freeze the seed.** `jlens-qwen36` last
+  committed the day we studied it; Neuronpedia shipped Jacobian Lens ~2 weeks ago and is
+  iterating fast (gpt-oss support, more models, headvis). Periodically re-pull: Neuronpedia
+  for model-agnostic + intervention patterns, `jlens-qwen36` for kernel/perf updates.
+
+- **The Qwen lens we serve TODAY is probably mismatched.**
+  `adapters/jspace/Qwen3.5-27B-heretic-8bit-mlx/lens.sidecar.json` is `n_prompts=672`,
+  `hf_model_name=""` — unknown provenance, almost certainly fit on **stock** Qwen, not the
+  heretic (abliterated) weights we serve. So it reads the wrong function precisely where
+  abliteration edited it. Concrete motivation for the first own-fit; until then, treat the
+  served Qwen readouts as provisional.
+
+- **Visualizer: decide aggregation-vs-matrix in the DESIGN.md pass.** Neuronpedia
+  deliberately uses a sidebar **aggregation** (most-common readout tokens over a layer
+  range), NOT a position×layer matrix, because a full matrix gets unwieldy on long
+  transcripts; `jlens-qwen36` uses a virtualized matrix + spring-glide. For our vanilla-JS
+  v3, `jlens-qwen36`'s grid is the more directly liftable (same tech); Neuronpedia is the
+  better *design* reference. Pick the paradigm before building.
+
+- **Don't build three benches.** The proposed in-process stage-attributed
+  `bench_generation.py` (tooling item 3) overlaps optloop-lib's charter AND Phase 5 item 2's
+  "thin HTTP serving-path bench" in `plan_2026-07.md`. Reconcile before building:
+  `bench_generation` = in-process stage attribution (fast-mlx working memory); the HTTP
+  bench = serving-path; optloop-lib = library-fork level. Three lanes, one each.
+
+- **`verify_endpoint.py` / `probe_thread.py` belong back here.** They test the running
+  heylook endpoint + MLX thread semantics, and are currently parked in
+  `jlens-mlx/migrated_from_scratch/`. Re-home them as real server `tests/` (tracked in the
+  `jlens-mlx` `MIGRATION.md`; mirrored here so the server side remembers).
+
+- **Recommended porting order: thin vertical slice first.** Before the hard GDN Metal work,
+  wire the **generic-VJP** path on a tiny model (the migrated gpt2/pythia oracles already
+  cover it) so the chain driver + save + apply + held-out fidelity gate are proven
+  end-to-end. De-risks the driver independently of the kernel.
+
+## Sequencing
+
+1. **Scaffold `jlens-mlx`** (DONE 2026-07-10) — structure, attribution, `MIGRATION.md`, `DESIGN.md`.
+2. **Apply path GREEN** (DONE 2026-07-10) — mirrored capture/lens; gpt2 V1 parity cos 1.0
+   (`scripts/check_gpt2_parity.py`).
+3. **Baseline fitter GREEN** (DONE 2026-07-10) — direct end-to-end `mx.vjp` (Anthropic design;
+   norm outside J; no chain, no closed-form seed). gpt2 verified: J_target==I exact, apply-parity
+   cos 1.0, layer fit ||J||/sqrt(d)=1.68 (`scripts/fit_gpt2_baseline.py`). No vendored code;
+   jlens-qwen36's rms² seed bug caught + avoided.
+4. **Corpus recipe** (chat + safety, NOT WikiText) + **first own-fit** on `Qwen3.5-27B-heretic`
+   (Metal-gated; add the GDN speed accelerator only if the baseline is too slow through the 48 GDN
+   layers — a direct VJP per source layer is O(n_layers·d_model) VJPs).
+5. **Held-out fidelity gate** + **lens diff** (heretic vs stock) — the diff is the first real finding.
+6. Back here: the standing **golden gate**; then the **visualizer** once `DESIGN.md` lands.
+7. **HF lens repo** once there's an own-fit worth publishing.

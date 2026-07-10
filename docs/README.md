@@ -20,7 +20,7 @@ config, providers, and the MLX ecosystem posture). Start at its
 - [jspace_guide.md](./jspace_guide.md) -- Jacobian-lens ("j-space") interpretability feature:
   how-it-works + end-to-end tutorial (install a lens, `/v1/jspace/analyze`, the v3 J-Space page).
 - [jspace_integration_plan.md](./jspace_integration_plan.md) -- the j-space build + verifier plan
-  (design rationale, phases, parity results). Spike harness in the gitignored `coderef/jspace_scratch/`.
+  (design rationale, phases, parity results). Lens **fitting** + the Phase-1 spike harness moved to the `jlens-mlx` sibling repo (2026-07-10).
 
 ## Frontend (v3)
 - [frontend_v3.md](./frontend_v3.md) -- orientation + backend coupling map
