@@ -492,7 +492,16 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   layer is disposed toward before later layers revise). So the production gate should assert
   identity-exact + monotonic improvement toward the target, NOT an absolute top-k floor on early
   layers, or it penalizes exactly what makes the lens useful. Measured depth gradient on the fuller
-  fit: top-1 0.44→0.16 as the source layer moves from 3 to 11 blocks back.
+  fit: top-1 0.44→0.16 as the source layer moves from 3 to 11 blocks back, decaying to ~0 by ~16
+  blocks (the whole product band 16–47 sits in that ~0-agreement regime). (c) **EMPIRICALLY CONFIRMED
+  (band-5L own-fit, `scripts/readout.py`):** on "…Eiffel Tower…city of", the DEEPER band layers L40/L42
+  surface ' Paris'/' city' (meaningful disposition toward the answer) while the near-target L44–47
+  collapse to degenerate ' __'/'___' tokens — and the gate scored the DEGENERATE L47 (top-1 0.031)
+  *higher* than the MEANINGFUL L40 (0.000), because L47 matched the model's junk output tokens (the
+  true next-token dist is itself ' __'/'**'-heavy on this abliterated+quant model). So: judge band
+  layers QUALITATIVELY (readout tokens) or by a disposition-aware metric, NOT final-logit agreement.
+  The near-target degeneracy is the MODEL's (its output collapses to blank/format tokens), not the
+  fit's — the lens correctly shows the cleaner mid-depth 'Paris' disposition before that collapse.
 
 - **Quantization ⇒ its own lens (why our own-fit matters, restated concretely).** Only the fitted
   `J_l` matrices carry a fit-time-quant assumption; the final norm + head stay OUTSIDE `J` and are
