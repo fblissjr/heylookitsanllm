@@ -1,6 +1,6 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-10 (v1.34.36)
+Last updated: 2026-07-11 (DRY settings drawer)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -37,7 +37,8 @@ js/
   page.js                   # createPage lifecycle (READ FIRST)
   api.js                    # table-generated endpoint wrappers
   streaming.js              # SSE over /v1/chat/completions (keepalive, reader.cancel, abort-as-completion, 503 retry, mid-stream {"error"})
-  settings.js               # sampler panel; null = backend-cascade; snapshotSettings()/applySettings(); `lead` hook on buildSettingsPanel
+  settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/onDisplayChange); null = backend-cascade; snapshotSettings()/applySettings()
+  settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sampling/display/extras)
   markdown.js, utils.js
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
   pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js
@@ -53,7 +54,10 @@ telemetry line, mobile drawer); shared layer (page.js, hash router, api.js,
 streaming.js, settings cascade); notebook, models, perf, explore; **images in
 chat** (attach incl. iPhone camera roll + paste, thumbnail strip, rendered from
 the content-block store, v1.34.20); **per-conversation system prompt + saved
-presets** (v1.34.22); browser E2E in `tests/e2e/` (55 checks live-green).
+presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
+extracted into an app-shell global slide-over shared by all 6 pages --
+sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
+code-reviewed); browser E2E in `tests/e2e/` (55 checks live-green).
 
 **Left**:
 - **UNCERTAIN -- visual design**: impeccable design gates never ran.
@@ -65,8 +69,10 @@ presets** (v1.34.22); browser E2E in `tests/e2e/` (55 checks live-green).
 - **NOT DONE -- cutover**: retiring v2 & promoting v3 is deliberately open until
   the owner has lived in `/v3` daily. Nothing blocks it. (plan Phase 3; the older
   legacy React app was already deleted in v1.34.25)
-- Small backlog: notebook preset bar; "panel drifted from preset" indicator;
-  `enable_thinking` tri-state. (TODO.md)
+- Small backlog: `show_special_tokens` render-consumer wiring (pref exists but
+  gated `wired:false` until a surface honors it); notebook preset bar (now a
+  drawer-section add); "panel drifted from preset" indicator; `enable_thinking`
+  tri-state. (TODO.md)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 

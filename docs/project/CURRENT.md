@@ -1,8 +1,41 @@
 # Current Work
 
-Last updated: 2026-07-10 (j-space apply shipped ~v1.34.31-.35; lens fitting
-extracted to the `jlens-mlx` sibling repo. Prior v1.34.25: presets v1.34.22-.24;
-legacy React app deleted + OpenAPI drift guard retired)
+Last updated: 2026-07-11 (jlens-mlx fitting deep session + DRY settings drawer;
+prior 2026-07-10: j-space apply shipped ~v1.34.31-.35, lens fitting extracted to
+the `jlens-mlx` sibling repo)
+
+UPDATE 2026-07-11 (jlens-mlx fitting + DRY settings drawer):
+- **Fitting pipeline matured** (jlens-mlx sibling repo): exact reverse-mode CHAIN fitter
+  (verified == direct, cos 1.0; the default), cotangent dim-batching (2.4x), a corpus builder
+  (weighted strata + on-policy generation + role/think position masks), a sequence-length cap
+  (drop-not-truncate), per-item checkpoint/resume + JLENS_FINALIZE, and `decode_corpus` (stores a
+  readable corpus by default). Own-fits on the served abliterated Qwen3.5-27B: band-5L done;
+  `band-n12b` (band layers 16-47, N=12, cap 128 = all on-kernel) running as of this date.
+- **Perf reality (designer+verifier pass):** the chain fit is ~44 min/item, a full band ~7-8h, and
+  there is NO config-level 2-3x. `chunk_size` is a dead knob; the trap is the GDN kernel **MAX_T=128
+  cliff** -- items >128 tokens fall to the slow differentiable ops fallback (~10x slower + memory
+  blowup, OOM-adjacent at 143GB/192). Added a guardrail (warn + kernel-eligibility metadata in the
+  sidecar); rule of thumb: cap corpora <=128 for the served qwen. Real speedup = seq-tile the GDN
+  scan (scoped, deferred -- exact since it's a recurrence).
+- **Fidelity gate misleads -> legibility metric:** the final-logit-agreement gate ranked a degenerate
+  near-target layer ABOVE a meaningful mid-band one (band-5L: ' __' junk beat ' Paris'). New
+  disposition-aware `verify.legibility_report` ranks band layers by real-content-vs-junk, wired into
+  the fit output + sidecar (15 tests).
+- **Abliteration study tooled + ready:** control = `mlx-community/Qwen3.5-27B-8bit` (downloaded, same
+  base+quant, differs only in abliteration; heretic KL 0.065 from base). `scripts/diff_lenses.py`
+  drives `verify.diff`. Fit both bands, then diff.
+- **Fit/apply capture parity is ASSERTED, not verified** (fit captures cache-less; apply uses a fresh
+  cache the hybrid qwen3_5 requires) -> a cheap go-forward numerical check. Does NOT invalidate current
+  lenses (identity KL~0 is consistent). The old "capture.py must be byte-identical" invariant was false,
+  corrected.
+- **DRY settings drawer (v3 Phase 2 / plan Phase 4):** the chat settings UI extracted into an app-shell
+  **global slide-over drawer** shared by all 6 pages (sampling / global display prefs / per-page extras
+  taxonomy). Edge cases preserved (focus guard, preset fingerprint diff, stale-textarea sysprompt),
+  browser-verified, code-reviewed. `show_special_tokens` display pref gated (`wired:false`) until a
+  render surface honors it (DESIGN.md §6).
+- **Docs:** an end-to-end research report (`internal/research/jspace_jlens_end_to_end.md`) written, then
+  two-agent critiqued + corrected; `docs/jspace_integration_plan.md` Part 2 extended (Neuronpedia
+  refinements, `coderef/mlxui-core` prior-art for activation patching, the fit/apply parity item).
 
 UPDATE 2026-07-10 (j-space + jlens-mlx): the j-space **apply** feature
 (Jacobian-lens workspace readout) shipped in the ~v1.34.31-.35 range (per

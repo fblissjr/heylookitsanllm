@@ -2,20 +2,33 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-10*
+*Last reviewed: 2026-07-11*
 
 ## J-space / jlens-mlx (from jspace_integration_plan.md Part 2)
 
 Fitting lives in the `jlens-mlx` sibling repo; this server applies. Apply feature +
 baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 
-- [ ] **Corpus recipe + first own-fit** (P2): stratified corpus (chat + reasoning +
-  over-weighted safety + matched-benign + WikiText control), fit on-policy, first own-fit
-  on the served `Qwen3.5-27B-abliterated` (Metal-gated; add the GDN speed accelerator only if
-  the direct-VJP baseline is too slow through the 48 GDN layers).
-- [ ] **Held-out fidelity gate + abliterated-vs-stock lens diff** (P2): per-layer KL/top-k vs
-  true logits on held-out data (refuse to save below threshold); the stock-vs-abliterated diff
-  is the first real finding.
+- [~] **Corpus recipe + own-fit** (P2, 2026-07-11): the full pipeline is BUILT (chain fitter,
+  dim-batching, GDN kernel, `build_corpus` w/ strata + on-policy + masks, seq-cap, checkpoint/resume,
+  `decode_corpus`). Own-fits on the served abliterated Qwen3.5-27B: band-5L done; `band-n12b` (band
+  16-47, N=12, cap 128) running. NEXT: clean-control fit (`mlx-community/Qwen3.5-27B-8bit`, downloaded)
+  then the abliteration DIFF (`scripts/diff_lenses.py`) -- the first real finding.
+- [~] **Fidelity gate -> legibility metric** (P2, 2026-07-11): the KL/top-k identity tripwire ships;
+  the naive final-logit-agreement gate MISLEADS on band layers (ranked degenerate ' __' above
+  meaningful ' Paris'), so a disposition-aware `verify.legibility_report` (content-vs-junk ranking)
+  is now the band-layer signal, wired into the fit + sidecar. Apply/regrade it onto `band-n12b` when it
+  finishes (`regrade_lens.py` doesn't emit legibility yet -- ~2min add).
+- [ ] **Fit/apply capture parity -- numerical check** (P2, 2026-07-11): fitting captures residuals
+  cache-less; apply uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are
+  causal-from-scratch so they SHOULD match, but it's asserted, never verified -- and it's the
+  foundation of served-model lens correctness. Cheap check: capture `h_l` both ways on one input,
+  assert allclose. (Does not invalidate current lenses; identity KL~0 is consistent.)
+- [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
+  band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
+  lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so
+  long items stay on the fast kernel. Delicate; must re-pass `check_chain_vs_direct` (cos 1.0). A
+  guardrail (warn + kernel-eligibility sidecar metadata) already stops the silent slow path.
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
   tie-aware calibrated epsilon, mutation-checked -- turns the one-time V1/V2 parity into a
   wired regression gate.
@@ -77,6 +90,22 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   `internal/frontend/v3.md`); the 5 stale React-frontend docs were archived to
   `internal/frontend/archive/`. CLAUDE.md Orient-first + architecture paragraph
   point at it and at the plan as the roadmap.
+- [x] **DRY settings drawer** (P2, plan Phase 4): DONE 2026-07-11 -- the chat settings UI
+  extracted into an app-shell **global slide-over drawer** (`js/settings-drawer.js`) shared
+  by all 6 pages; `registerSettings(contribution)` with the sampling / global display prefs /
+  per-page extras taxonomy (DESIGN.md §6). jspace's toggles + samplers-greyed, notebook/chat
+  sysprompt as sections, presets on chat. Edge cases preserved, browser-verified, code-reviewed.
+- [ ] **Wire `show_special_tokens` render consumers** (P2, 2026-07-11): the display pref exists +
+  is honesty-first `true`, but is gated (`wired:false`) out of the UI because NO surface reads it --
+  the token-rendering paths still strip specials (DESIGN.md §6 "known violation"). Wire chat /
+  notebook / token-explorer to read `getDisplayPref` + subscribe to `onDisplayChange` (unsubscribe on
+  teardown), then flip `wired:true`. Edit surfaces must ALWAYS show raw tokens regardless (§6).
+- [ ] **jspace viz: chat-turn default + special tokens + prefill/token-walker** (P2/P3, 2026-07-11):
+  see `docs/jspace_integration_plan.md` Part 2 (2026-07-11 refinements). Flip analyze to chat-turn-
+  default (verify the "format-dominated onset" claim -- likely a provisional-lens artifact), show
+  special tokens, add prefill/edit-the-assistant + per-token selection (the `coderef/mlxui-core`
+  possibility-horizon walker collapses prefill+selection into one primitive). Activation patching
+  (steer/swap/ablate) = port `mlxui-core`'s op-semantics via forward-hooks, NOT its per-arch subclassing.
 
 ## Chat-template resolution follow-ups (from the v1.34.38 review, 2026-07-10)
 
