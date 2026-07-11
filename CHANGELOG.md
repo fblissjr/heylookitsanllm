@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.49]
+
+### Added
+
+- `POST /v1/telemetry/events` (redesign Phase 3, backend): frontend telemetry
+  ingestion. v3's client logger batches events (JS errors, fetch failures, stream
+  stalls) and posts them here; each is appended to the observability events stream
+  with `source=frontend-v3`, level-gated, batch- and field-size-bounded. Metadata
+  only. 5 tests.
+
 ## [1.34.48]
 
 ### Changed

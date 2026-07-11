@@ -164,6 +164,10 @@ app = FastAPI(
             "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, resolved env > DB > default"
         },
         {
+            "name": "Telemetry",
+            "description": "Frontend client telemetry ingestion (v3 -> observability events stream)"
+        },
+        {
             "name": "Monitoring",
             "description": "Performance monitoring and server status endpoints"
         },
@@ -225,6 +229,10 @@ app.include_router(preset_router)
 # Operational settings admin (App-DB settings table; env > DB > default)
 from heylook_llm.config_api import config_router
 app.include_router(config_router)
+
+# Frontend telemetry ingestion (v3 client events -> observability events stream)
+from heylook_llm.telemetry_api import telemetry_router
+app.include_router(telemetry_router)
 
 # Import and include J-space (Jacobian lens) interpretability router
 from heylook_llm.jspace_api import jspace_router
