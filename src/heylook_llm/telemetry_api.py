@@ -57,13 +57,14 @@ async def ingest_events(payload: dict = Body(...)):
         if not isinstance(ev, dict) or "type" not in ev:
             continue
         level = ev.get("level", "info")
+        fields = _sanitize_fields(ev)
+        fields["level"] = level  # severity carried as a field
         observability.record_event(
             str(ev["type"]),
             tier="events",
             min_level=_SEVERITY_MIN_LEVEL.get(level, "standard"),
             source="frontend-v3",
-            level=level,
-            **_sanitize_fields(ev),
+            fields=fields,
         )
         accepted += 1
     return {"accepted": accepted}

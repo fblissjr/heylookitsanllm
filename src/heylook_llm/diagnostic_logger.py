@@ -49,13 +49,13 @@ def diag_event(
     fields = dict(data)
     if request_id is not None:
         fields["request_id"] = request_id
+    fields["level"] = level  # severity carried as a field
     observability.record_event(
         event_type,
         tier="events",
         min_level=_SEVERITY_MIN_LEVEL.get(level, "standard"),
         source="backend",
-        level=level,
-        **fields,
+        fields=fields,
     )
 
 

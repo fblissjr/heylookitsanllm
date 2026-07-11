@@ -199,7 +199,7 @@ class ModelRouter:
         logging.info(f"Cache full. Evicting model: {evict_id}")
         diag_event("model_evict", model=evict_id)
         observability.record_event("model_unload", tier="events", min_level="minimal",
-                                   model=evict_id, reason="lru_evict")
+                                   fields={"model": evict_id, "reason": "lru_evict"})
         from heylook_llm.memory import safe_mm_call
         safe_mm_call(self.memory_manager, "register_model_unload", evict_id, reason="lru_evict")
 
@@ -345,8 +345,8 @@ class ModelRouter:
                 diag_event("model_load", model=model_id, provider=model_config.provider,
                            load_time_s=round(load_time, 2))
                 observability.record_event("model_load", tier="events", min_level="minimal",
-                                           model=model_id, provider=model_config.provider,
-                                           load_time_s=round(load_time, 2))
+                                           fields={"model": model_id, "provider": model_config.provider,
+                                                   "load_time_s": round(load_time, 2)})
 
                 if self.memory_manager is not None:
                     from heylook_llm.memory import capture_model_metadata, safe_mm_call
@@ -534,7 +534,7 @@ class ModelRouter:
         logging.info(f"Idle timeout. Unloading model: {model_id}")
         diag_event("model_idle_unload", model=model_id)
         observability.record_event("model_unload", tier="events", min_level="minimal",
-                                   model=model_id, reason="idle_timeout")
+                                   fields={"model": model_id, "reason": "idle_timeout"})
         from heylook_llm.memory import safe_mm_call
         safe_mm_call(self.memory_manager, "register_model_unload", model_id, reason="idle_timeout")
         self._teardown_provider(provider)

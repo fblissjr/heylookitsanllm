@@ -86,12 +86,15 @@ async def update_config(request: Request, updates: dict = Body(...)):
     # rejects unknown keys, field types/bounds reject bad values -- nothing
     # persists unless the update is valid.
     try:
-        SettingsSchema(**updates)
+        validated = SettingsSchema(**updates)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors())
-    for key, value in updates.items():
+    # Persist the Pydantic-COERCED value (validated.<key>), not the raw request
+    # value -- so `stored` holds a typed value (e.g. 30, not "30") that matches
+    # `effective` instead of relying on re-coercion on every read.
+    for key in updates:
         try:
-            await db.set_setting(conn, key, value)
+            await db.set_setting(conn, key, getattr(validated, key))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     # Refresh the in-process spine cache so an observability level/retention

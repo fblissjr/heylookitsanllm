@@ -73,7 +73,7 @@ def record_event(
     tier: str,
     min_level: str,
     source: str = "backend",
-    **fields: Any,
+    fields: dict[str, Any] | None = None,
 ) -> None:
     """Append one telemetry/diagnostic line. Best-effort -- never raises.
 
@@ -82,7 +82,13 @@ def record_event(
         tier: "metrics" (content-free) or "events" (may carry bounded error text).
         min_level: lowest configured level at which this event is recorded.
         source: "backend" (default) or "frontend-v3".
-        **fields: numeric / metadata payload (metrics tier: no free text).
+        fields: numeric / metadata payload dict (metrics tier: no free text).
+
+    ``fields`` is passed as an explicit dict, NOT ``**fields``: callers that
+    forward arbitrary (client/diag) keys can't collide with this function's
+    reserved kwargs (``tier``/``min_level``/``source``/``event_type``), and the
+    reserved record keys (``ts``/``iso``/``type``/``source``) are spread LAST so a
+    stray same-named field can't override them.
     """
     try:
         if not _enabled(min_level):
@@ -93,13 +99,13 @@ def record_event(
             return
         ts = time.time()
         record = {
+            **(fields or {}),
             "ts": ts,
             # local-time ISO 8601 w/ offset -- readable without converting epoch;
             # `ts` stays authoritative for sort/aggregation/correlation.
             "iso": datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds"),
             "type": event_type,
             "source": source,
-            **fields,
         }
         path = _log_dir / stream
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,8 +131,15 @@ def rotate_streams(
         stem = base.stem                              # "events"
         try:
             if base.exists() and base.stat().st_size > max_bytes:
-                # roll: events.jsonl -> events.<ts>.jsonl (fresh file on next write)
-                base.rename(_log_dir / f"{stem}.{int(now)}.jsonl")
+                # roll: events.jsonl -> events.<ts>.jsonl (fresh file on next write).
+                # Pick a non-existing name so two rolls in the same second don't
+                # clobber (rename overwrites silently on POSIX).
+                archive = _log_dir / f"{stem}.{int(now)}.jsonl"
+                suffix = 1
+                while archive.exists():
+                    archive = _log_dir / f"{stem}.{int(now)}.{suffix}.jsonl"
+                    suffix += 1
+                base.rename(archive)
         except Exception:
             logger.debug("rotate: roll failed for %s", base, exc_info=True)
         if retention_days > 0:

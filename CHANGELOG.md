@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.53]
+
+### Fixed
+
+/code-review pass on the observability + config work:
+
+- **record_event field collisions** (correctness): the ingestion API took
+  `**fields`, so a diag caller or v3 client sending a key named `source`/`tier`/
+  `min_level`/`type` would either raise `TypeError` (500 + dropped batch on the
+  telemetry endpoint; broke `diag_event`'s best-effort on the request path) or
+  silently override the record's own `type`/`source`. `record_event` now takes an
+  explicit `fields=<dict>` (reserved record keys spread last, always win); all
+  call sites updated.
+- **Rotation clobber**: two same-second rolls overwrote the earlier archive
+  (`rename` is silent on POSIX). Rotation now picks a non-existing archive name.
+- **Config stored raw value**: `PUT /v1/admin/config` persisted the request value,
+  not the Pydantic-coerced one (`stored` could be `"30"` vs effective `30`); now
+  stores the coerced value.
+
+### Documentation
+
+- CLAUDE.md, README, and `docs/observability_guide.md` updated for the spine
+  (`logs/metrics.jsonl` + `logs/events.jsonl`), `observability_level` as the single
+  control, the `logs/` location, and the accurate content model (metrics tier
+  content-free; events tier may carry bounded error text -- `minimal` is NOT
+  "content-free").
+
 ## [1.34.52]
 
 ### Changed

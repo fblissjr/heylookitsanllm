@@ -3,7 +3,9 @@
 
 One ingestion path appends a line to the right stream (metrics vs events),
 gated by the configured verbosity level, and NEVER raises (observability must
-not break inference). Every line carries ts + iso + type + source.
+not break inference). Every line carries ts + iso + type + source. Payload is
+an explicit `fields` dict so arbitrary caller keys can't collide with the
+reserved kwargs/record keys.
 """
 
 import os
@@ -28,53 +30,64 @@ def _read(path):
 class TestRecord:
     def test_writes_line_with_ts_iso_type_source(self, logs):
         obs.record_event("request_complete", tier="metrics", min_level="minimal",
-                          model="m", generation_tps=42.0)
+                          fields={"model": "m", "generation_tps": 42.0})
         (rec,) = _read(logs / "metrics.jsonl")
         assert rec["type"] == "request_complete"
         assert rec["source"] == "backend"
         assert isinstance(rec["ts"], float)
-        assert rec["iso"].endswith(tuple("0123456789")) or "T" in rec["iso"]
+        assert "T" in rec["iso"]
         assert rec["model"] == "m"
         assert rec["generation_tps"] == 42.0
 
     def test_tier_routes_to_stream(self, logs):
-        obs.record_event("request_complete", tier="metrics", min_level="minimal", n=1)
-        obs.record_event("request_error", tier="events", min_level="minimal", n=2)
+        obs.record_event("request_complete", tier="metrics", min_level="minimal", fields={"n": 1})
+        obs.record_event("request_error", tier="events", min_level="minimal", fields={"n": 2})
         assert len(_read(logs / "metrics.jsonl")) == 1
         assert len(_read(logs / "events.jsonl")) == 1
 
     def test_source_override(self, logs):
         obs.record_event("client_error", tier="events", min_level="standard",
-                         source="frontend-v3", msg="boom")
+                         source="frontend-v3", fields={"msg": "boom"})
         (rec,) = _read(logs / "events.jsonl")
         assert rec["source"] == "frontend-v3"
+
+    def test_reserved_field_names_cannot_collide_or_override(self, logs):
+        # a payload with keys matching reserved kwargs/record keys must NOT crash
+        # (fields is one param, not **kwargs) and must NOT override ts/iso/type/source
+        obs.record_event("real_type", tier="events", min_level="minimal",
+                         fields={"type": "spoofed", "source": "spoofed", "tier": "x",
+                                 "min_level": "x", "ok": 1})
+        (rec,) = _read(logs / "events.jsonl")
+        assert rec["type"] == "real_type"      # reserved keys win
+        assert rec["source"] == "backend"
+        assert rec["ok"] == 1                    # non-reserved field preserved
 
 
 class TestLevelGating:
     def test_off_writes_nothing(self, tmp_path):
         obs.configure(level="off", log_dir=tmp_path)
-        obs.record_event("x", tier="metrics", min_level="minimal", a=1)
+        obs.record_event("x", tier="metrics", min_level="minimal", fields={"a": 1})
         assert not (tmp_path / "metrics.jsonl").exists()
 
     def test_minimal_gates_out_higher_levels(self, tmp_path):
         obs.configure(level="minimal", log_dir=tmp_path)
-        obs.record_event("counted", tier="metrics", min_level="minimal", a=1)   # kept
-        obs.record_event("detailed", tier="events", min_level="standard", a=2)  # dropped
-        obs.record_event("chunk", tier="events", min_level="debug", a=3)        # dropped
+        obs.record_event("counted", tier="metrics", min_level="minimal", fields={"a": 1})   # kept
+        obs.record_event("detailed", tier="events", min_level="standard", fields={"a": 2})  # dropped
+        obs.record_event("chunk", tier="events", min_level="debug", fields={"a": 3})        # dropped
         assert len(_read(tmp_path / "metrics.jsonl")) == 1
         assert not (tmp_path / "events.jsonl").exists()
 
     def test_debug_keeps_everything(self, tmp_path):
         obs.configure(level="debug", log_dir=tmp_path)
         for lvl in ("minimal", "standard", "debug"):
-            obs.record_event("e", tier="events", min_level=lvl, lvl=lvl)
+            obs.record_event("e", tier="events", min_level=lvl, fields={"lvl": lvl})
         assert len(_read(tmp_path / "events.jsonl")) == 3
 
 
 class TestRotation:
     def test_size_cap_rolls_active_to_archive(self, tmp_path):
         obs.configure(level="debug", log_dir=tmp_path)
-        obs.record_event("e", tier="events", min_level="minimal", a=1)
+        obs.record_event("e", tier="events", min_level="minimal", fields={"a": 1})
         active = tmp_path / "events.jsonl"
         assert active.exists()
         # tiny cap forces a roll; active file renamed to events.<ts>.jsonl
@@ -83,12 +96,21 @@ class TestRotation:
         assert len(archives) == 1
         assert not active.exists()
         # writing again creates a fresh active file
-        obs.record_event("e2", tier="events", min_level="minimal", a=2)
+        obs.record_event("e2", tier="events", min_level="minimal", fields={"a": 2})
         assert active.exists()
+
+    def test_same_second_rolls_do_not_clobber(self, tmp_path):
+        # two rolls at the same integer second must produce two archives, not one
+        obs.configure(level="debug", log_dir=tmp_path)
+        obs.record_event("e", tier="events", min_level="minimal", fields={"a": 1})
+        obs.rotate_streams(retention_days=0, max_bytes=1, now=1000.0)
+        obs.record_event("e", tier="events", min_level="minimal", fields={"a": 2})
+        obs.rotate_streams(retention_days=0, max_bytes=1, now=1000.0)  # same second
+        assert len(list(tmp_path.glob("events.*.jsonl"))) == 2
 
     def test_age_cap_deletes_old_archives(self, tmp_path):
         obs.configure(level="debug", log_dir=tmp_path)
-        obs.record_event("e", tier="events", min_level="minimal", a=1)
+        obs.record_event("e", tier="events", min_level="minimal", fields={"a": 1})
         obs.rotate_streams(retention_days=30, max_bytes=1, now=1000.0)  # roll active -> archive
         (archive,) = list(tmp_path.glob("events.*.jsonl"))
         # age is measured by the archive's mtime; backdate it 40 days before ref
@@ -99,7 +121,7 @@ class TestRotation:
 
     def test_retention_zero_keeps_archives(self, tmp_path):
         obs.configure(level="debug", log_dir=tmp_path)
-        obs.record_event("e", tier="events", min_level="minimal", a=1)
+        obs.record_event("e", tier="events", min_level="minimal", fields={"a": 1})
         obs.rotate_streams(retention_days=0, max_bytes=1, now=0.0)
         obs.rotate_streams(retention_days=0, max_bytes=10**9, now=10**6)
         assert len(list(tmp_path.glob("events.*.jsonl"))) == 1
@@ -117,8 +139,7 @@ class TestNeverRaises:
         clash = tmp_path / "clash"
         clash.write_text("i am a file")
         obs.configure(level="debug", log_dir=clash / "sub")
-        # must swallow, not raise
-        obs.record_event("x", tier="metrics", min_level="minimal", a=1)
+        obs.record_event("x", tier="metrics", min_level="minimal", fields={"a": 1})
 
     def test_unknown_tier_does_not_raise(self, logs):
-        obs.record_event("x", tier="nonsense", min_level="minimal", a=1)
+        obs.record_event("x", tier="nonsense", min_level="minimal", fields={"a": 1})

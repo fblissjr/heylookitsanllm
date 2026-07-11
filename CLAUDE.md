@@ -23,10 +23,12 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 MLXProvider (text+vision), MLXEmbeddingProvider. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
 config in `models.toml`. 9 API routers: messages, rlm, conversation, notebook,
-preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability). DuckDB store (`db.py`: conversations +
-notebooks + presets, single serialized writer thread, transactional ops;
+preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
+settings), telemetry (frontend ingestion). DuckDB store (`db.py`: conversations +
+notebooks + presets + `settings`, single serialized writer thread, transactional ops;
 `HEYLOOK_DB_PATH` override; dynamic field names gated by `_UPDATABLE_*_FIELDS`
-frozensets; a `_SCHEMA_VERSION` bump DROPS all tables). DB/config POLICY (solo
+frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- `settings`/`presets` are
+additive + drop-safe, key->value/config, not in the drop list). DB/config POLICY (solo
 deploy, no data to preserve): NEVER write migration code -- dropping, recreating,
 or truncating any DuckDB store or config on a schema change is fine and preferred.
 Use additive `CREATE TABLE IF NOT EXISTS` only when you just need to ADD a table
@@ -77,7 +79,9 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`. (The OpenAPI drift guard -- `generated-api.ts` / `scripts/check_openapi_sync.sh` / the pre-commit block / `/openapi-regen` -- was retired 2026-07-09 with the legacy React app that consumed the generated TS types; v3 hand-writes `api.js`. The live schema stays at `/openapi.json` and `/docs`.)
 - Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
 - The security hook false-positives on `mx.eval` (MLX graph materializer, not Python's eval) -- prefer `mx.async_eval` or acknowledge it.
-- Observability invariant: log streams record numbers + metadata only, never prompts/responses/token IDs. Use `sampler_summary_from_request` (memory.py) for "what was this configured with"; route MemoryManager calls through `memory.safe_mm_call(...)` (no-op when None, swallows errors -- observability must never break inference).
+- Observability spine (`observability.py`): ONE ingestion path `record_event(type, *, tier, min_level, source, fields=<dict>)` -> level-gated JSONL under `logs/` (`metrics.jsonl` content-free/aggregatable; `events.jsonl` correlated, may carry BOUNDED error text -- type+message+cause-chain, still NEVER prompts/responses/token IDs). `fields` is an explicit dict (NOT `**kwargs`) so caller/client keys can't collide with the reserved kwargs. Best-effort: never raises (inference must not break). `diag_event` (diagnostic_logger.py) delegates here; `memory.py`'s legacy streams also write under `logs/` and are gated by the master off switch (see below).
+- Observability CONTROL is a single knob: `observability_level` (off|minimal|standard|debug), an operational SETTING resolved **DB > default** (no env override -- env silently beating the admin UI is a footgun; env is bootstrap-only: `HEYLOOK_LOGS_DIR`, `HEYLOOK_DB_PATH`). `off` is the master kill switch (silences the spine AND memory.py's streams). Settings live in the App-DB `settings` table (`db.get_setting`/`set_setting`), contract in `settings.py` (`SettingsSchema` + `resolve_settings`), CRUD via `/v1/admin/config`; the level+retention are cached in-process (`observability.configure`), refreshed at startup + on PUT. Rotation is file-based (size + age, hourly on the tick). Content invariant is level-INDEPENDENT: `minimal` is NOT "content-free" (its events carry error text) -- only the metrics tier is guaranteed content-free.
+- Route MemoryManager calls through `memory.safe_mm_call(...)` (no-op when None, swallows errors); use `sampler_summary_from_request` (memory.py) for "what was this configured with". Redesign status + the memory.py-stream consolidation follow-ups: `docs/project/TODO.md` + `internal/research/observability_and_config_redesign.md`.
 - Pydantic model + custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)` (`JSONResponse` double-serializes). SSE post-generation telemetry (peak mem, cache bytes) goes in the usage chunk's `timing` (client needs `stream_options.include_usage=true`).
 - Frontend v2 specifics (Pydantic `model_fields_set`, `<base href="/v2/">` SPA serving, sanitization): see its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 - Never commit runtime data: `*.db`, `*.jsonl`, `/data/*`, `apps/*/data/*` are gitignored; package data at `src/heylook_llm/data/` is intentionally NOT ignored. `modelzoo/` and `adapters/` (j-space lenses; `HEYLOOK_JSPACE_DIR` default `adapters/jspace/<model_id>/`) are git-tracked dirs with gitignored contents (only their `.gitkeep`).

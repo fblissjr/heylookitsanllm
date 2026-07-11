@@ -1,8 +1,35 @@
 # Observability Guide
 
-Last updated: 2026-04-18
+Last updated: 2026-07-11
 
-`heylookitsanllm` writes four disk-backed JSONL streams under `internal/log/`
+> **REDESIGN (2026-07): read this first.** Telemetry now writes under **`logs/`**
+> (not `internal/log/`, which is for human session diaries). There is a unified
+> ingestion spine (`observability.py` `record_event`) with two go-forward streams:
+> - **`logs/metrics.jsonl`** -- content-free, aggregatable per-request metrics
+>   (tokens, tok/s, TTFT, timings, peak memory, kv/cache, `stop_reason`,
+>   `image_count`, and engine dims `provider`/`effective_loader`/`is_vlm`).
+> - **`logs/events.jsonl`** -- correlated discrete records: errors (type + `stage`
+>   + bounded message + cause chain), model load/unload, and frontend client
+>   events (`source=frontend-v3`). May carry bounded error text; **never** prompts/
+>   responses/token IDs.
+>
+> **One control:** `observability_level` (`off`|`minimal`|`standard`|`debug`,
+> default `minimal`), an operational setting resolved **DB > default** (no env
+> override) and settable via `POST /v1/admin/config`. `off` disables **all**
+> telemetry (spine + the legacy streams below). Rotation is file-based (size +
+> `observability_retention_days`, default 30d, swept hourly).
+>
+> **Content guarantee is level-independent but tier-specific:** the *metrics* tier
+> is guaranteed content-free (safe to share); the *events* tier may contain
+> bounded error text at any level including `minimal`.
+>
+> The four `memory.py` streams below (`request_events`/`model_events`/
+> `memory_baseline`/`baseline`) still exist under `logs/` and partly duplicate the
+> spine; they are being consolidated into it (see
+> `internal/research/observability_and_config_redesign.md` +
+> `docs/project/TODO.md`). Recipes below apply -- just read paths as `logs/…`.
+
+`heylookitsanllm` also writes four legacy disk-backed JSONL streams under `logs/`
 (gitignored). They exist so you can (a) prove the server is leak-free over long
 windows, (b) see what workloads the server actually serves, and (c) tune
 presets and unload policy based on real usage, not guesses.
@@ -49,7 +76,7 @@ snapshot recursively and asserts that no key named `prompt`, `messages`,
 
 ## The four streams
 
-All live under `internal/log/`, one JSON line per record, `orjson`-serialized.
+All live under `logs/`, one JSON line per record, `orjson`-serialized.
 
 ### `baseline.jsonl` — one-shot startup record
 
@@ -234,7 +261,7 @@ heylookllm --log-level INFO
 Confirm the startup record:
 
 ```bash
-tail -1 internal/log/baseline.jsonl | python -m json.tool
+tail -1 logs/baseline.jsonl | python -m json.tool
 ```
 
 You should see your GPU's `device_info` and the current log toggles.
@@ -262,7 +289,7 @@ Leave the server running normally. After an hour you should have at least one
 requests you sent.
 
 ```bash
-wc -l internal/log/*.jsonl
+wc -l logs/*.jsonl
 ```
 
 ### Day 3 — first leak check
@@ -271,7 +298,7 @@ After 72 hours of uptime:
 
 ```bash
 jq -r '[.ts, .rss_bytes, .mlx_active_bytes] | @tsv' \
-  internal/log/memory_baseline.jsonl | \
+  logs/memory_baseline.jsonl | \
   awk '{print strftime("%Y-%m-%d %H:%M", $1), $2/1e9"GB rss", $3/1e9"GB mlx"}'
 ```
 
@@ -289,13 +316,13 @@ Point `jq` at `request_events.jsonl` to answer actual questions.
 ### Top models by request count
 
 ```bash
-jq -r '.model' internal/log/request_events.jsonl | sort | uniq -c | sort -rn
+jq -r '.model' logs/request_events.jsonl | sort | uniq -c | sort -rn
 ```
 
 ### Time-of-day density
 
 ```bash
-jq -r '.timestamp | strftime("%H")' internal/log/request_events.jsonl | \
+jq -r '.timestamp | strftime("%H")' logs/request_events.jsonl | \
   sort | uniq -c
 ```
 
@@ -307,7 +334,7 @@ unloading via the forthcoming idle-daemon + foreground/background toggle.
 ```bash
 jq -r '[.model, (.sampler_summary.temperature // "default"),
         (.sampler_summary.max_tokens // "default")] | @tsv' \
-  internal/log/request_events.jsonl | sort | uniq -c | sort -rn
+  logs/request_events.jsonl | sort | uniq -c | sort -rn
 ```
 
 If every request to model `X` uses the same temperature, that's a signal the
@@ -318,7 +345,7 @@ configurations, that's a signal for two presets.
 
 ```bash
 jq -r '[.model, (.prompt_tokens // 0), (.cached_tokens // 0)] | @tsv' \
-  internal/log/request_events.jsonl | \
+  logs/request_events.jsonl | \
   awk '{agg_total[$1] += $2; agg_cached[$1] += $3}
        END {for (m in agg_total) printf "%s\t%.1f%%\n", m, 100*agg_cached[m]/agg_total[m]}'
 ```
@@ -332,7 +359,7 @@ aggressively. Cross-reference against `memory_baseline.jsonl`'s
 
 ```bash
 jq -r '.peak_memory_gb | select(. != null)' \
-  internal/log/request_events.jsonl | \
+  logs/request_events.jsonl | \
   sort -n | awk '
     {vals[NR]=$1}
     END {
@@ -350,7 +377,7 @@ near the envelope.
 
 ```bash
 jq -r '[.model, .thinking_tokens, .content_tokens] | @tsv' \
-  internal/log/request_events.jsonl | \
+  logs/request_events.jsonl | \
   awk '{t[$1]+=$2; c[$1]+=$3} END {for (m in t) printf "%s\tthink=%d content=%d ratio=%.2f\n", m, t[m], c[m], (c[m]?t[m]/c[m]:0)}'
 ```
 
@@ -360,7 +387,7 @@ Thinking-heavy models with low content output are candidates for a
 ### Model load frequency
 
 ```bash
-jq -r 'select(.event=="load") | .model_id' internal/log/model_events.jsonl | \
+jq -r 'select(.event=="load") | .model_id' logs/model_events.jsonl | \
   sort | uniq -c | sort -rn
 ```
 
@@ -401,7 +428,7 @@ a different value still win.
 Put this in a cron or a `/loop` to run weekly:
 
 ```bash
-tail -n 168 internal/log/memory_baseline.jsonl | \
+tail -n 168 logs/memory_baseline.jsonl | \
   jq -r '.mlx_active_bytes' | \
   awk 'NR==1 {first=$1} END {
     if ($1 > first * 1.5) print "LEAK: active_mlx grew", ($1-first)/1e9, "GB over last week"
@@ -421,7 +448,7 @@ defaults match how the server is actually used.
 
 ```bash
 jq -r 'select(.peak_memory_gb > 30) | [.model, .timestamp, .peak_memory_gb] | @tsv' \
-  internal/log/request_events.jsonl | \
+  logs/request_events.jsonl | \
   awk '{print strftime("%Y-%m-%d %H:%M", $2), $1, $3"GB"}'
 ```
 
