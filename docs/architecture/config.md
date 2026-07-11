@@ -114,7 +114,9 @@ Do not put it in `models.toml`.)
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model_path` | string | required | HuggingFace model ID or local path |
-| `vision` | bool | `false` | Enable vision-language model loading |
+| `modalities` | list[str] | derived | Author-declared capability set (`text`/`vision`/`audio`/`video`); `text` always present. Detected at import from the model's `config.json` blocks (`vision_config`/`audio_config` + `*_token_id`). Absent -> derived from `vision`. **Authoritative** description of the model. |
+| `loader` | `auto`\|`mlx-vlm`\|`mlx-lm` | `auto` | Engine routing (within `provider="mlx"`). `auto`: mlx-vlm iff the model declares vision AND mlx-vlm registers its `model_type`, else mlx-lm (degrades only on positive non-support). Explicit forces the engine (e.g. run a dual-capable VLM as text via `mlx-lm`). |
+| `vision` | bool | `false` | **Derived mirror** of `"vision" in modalities`, retained for back-compat. Setting it seeds `modalities` when `modalities` is omitted; if both are set, `modalities` wins. Load routing goes through `loader`/`effective_loader`, not this flag. |
 | `max_tokens` | int | none | Default maximum tokens to generate. Unset falls through the effective-request cascade to `GLOBAL_SAMPLER_FLOOR['max_tokens']` (4096) -- see below. |
 | `temperature` | float | none | Default sampling temperature. Unset falls through to the cascade (0.7 floor). |
 | `top_p` | float | none | Nucleus sampling threshold |

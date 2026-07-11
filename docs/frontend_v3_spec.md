@@ -248,7 +248,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 (Backend also exposes toggle/status/validate/profiles/bulk-profile/discovered — out of scope unless a
 trimmed feature needs them.)
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?}]}` (enabled models only).
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).

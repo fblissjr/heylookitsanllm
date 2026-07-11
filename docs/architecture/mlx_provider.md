@@ -23,8 +23,13 @@ The `MLXProvider` uses two strategies that **share a single generation loop** (`
 
 ### 1.1. Dynamic Model Loading
 
-*   **Text-Only Models (`"vision": false`):** Loaded with `mlx_lm.utils.load`.
-*   **Vision Models (`"vision": true`):** Loaded with `mlx_vlm.utils.load` (correctly initializes `vision_tower` and multimodal components).
+Which library loads a model is decided by `effective_loader` (v1.34.43),
+resolved in `providers/common/loader_routing.py` from the config's `modalities`
++ `loader` fields (NOT the raw `vision` bool -- that is now a derived mirror; see
+config.md). `is_vlm = (effective_loader == "mlx-vlm")`.
+
+*   **`effective_loader == "mlx-lm"`:** Loaded with `mlx_lm.utils.load`. This is text-only models, and any model explicitly routed with `loader = "mlx-lm"` (e.g. a dual-capable VLM you want to run as text).
+*   **`effective_loader == "mlx-vlm"`:** Loaded with `mlx_vlm.utils.load` (correctly initializes `vision_tower` and multimodal components). Under `loader = "auto"`, a model reaches here only if it declares vision AND mlx-vlm registers its `model_type`; a vision model mlx-vlm cannot load degrades to `mlx-lm` instead of crashing.
 
 **Hard-Learned Lesson:** Loading a VLM with `lm_load` causes `TypeError`/`AttributeError` deep inside the model's `__init__` due to text-only structural assumptions.
 
