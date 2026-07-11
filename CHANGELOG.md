@@ -80,10 +80,11 @@ operational-settings layer that the JSONL observability spine will build on:
   (Phase 6 refinement; see `docs/project/plan_2026-07.md`):
   - `modalities: list[str]` -- author-declared capability set
     (`text`/`vision`/`audio`/`video`), detected at import from the config's own
-    `vision_config`/`audio_config` blocks + `*_token_id` keys
+    `vision_config`/`audio_config` blocks + `*_token_id`/`image_token_index` keys
     (`model_importer.detect_modalities`), with `mmproj`-style files as a
     fallback. Represents genuinely multi-modal models (e.g. gemma-4 declares
-    text+vision+audio) that a single `vision` bool could not.
+    text+vision+audio) that a single `vision` bool could not. Validated against a
+    19-model modelzoo audit (LLaVA/Mistral use `image_token_index`, not `_id`).
   - `loader: "auto" | "mlx-vlm" | "mlx-lm"` -- engine routing within
     `provider="mlx"`. `auto` picks mlx-vlm when the model declares vision AND
     mlx-vlm registers its `model_type`, else mlx-lm; it degrades to mlx-lm only
