@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.46]
+
+### Added
+
+Observability spine wired live (redesign Phase 1, slices 2-5):
+
+- **Startup wiring + disclosure**: the spine is `configure()`d from the settings
+  layer at boot (level/retention resolved env > DB > default), and a startup log
+  line discloses what's written and that it's local ("nothing transmitted").
+  `/v1/admin/config` PUT refreshes the in-process cache so a level change takes
+  effect immediately.
+- **Env hardening**: `resolve_settings_safe` never raises -- a bad `HEYLOOK_*`
+  value falls back to defaults + a warning (and is surfaced in the config API
+  response) instead of crashing startup.
+- **File rotation**: `logs/*.jsonl` streams roll past a size cap to timestamped
+  archives; archives older than the retention window (default 30d) are swept
+  hourly on the maintenance tick. Best-effort, never raises.
+- **`internal/log/` reconcile**: `memory.py`'s telemetry streams now write under
+  `logs/` (runtime data), not `internal/log/` (human session diaries). Overridable
+  via `HEYLOOK_LOGS_DIR`.
+- **First real emitters**: model load/unload/evict now emit `record_event` (events
+  tier) alongside the existing diagnostics.
+
+### Changed
+
+- README monitoring paths updated to `logs/`.
+
 ## [1.34.45]
 
 ### Added

@@ -12,7 +12,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from heylook_llm import db
+from heylook_llm import db, observability
 from heylook_llm.config_api import config_router
 
 
@@ -75,3 +75,13 @@ class TestConfigEndpoints:
     async def test_reset_unknown_key_404(self, client):
         res = await client.delete("/v1/admin/config/bogus")
         assert res.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_put_refreshes_spine_level_immediately(self, client):
+        # a level change must take effect in the in-process spine cache without
+        # a restart (config_api calls apply_observability_settings after persist)
+        await client.put("/v1/admin/config", json={"observability_level": "debug"})
+        assert observability.current_level() == "debug"
+        await client.put("/v1/admin/config", json={"observability_level": "off"})
+        assert observability.current_level() == "off"
+

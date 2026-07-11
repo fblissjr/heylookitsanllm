@@ -43,13 +43,20 @@ _STREAMS: dict[str, str] = {"metrics": "metrics.jsonl", "events": "events.jsonl"
 # configure() still behaves sanely rather than crashing.
 _level: str = "minimal"
 _log_dir: Path = Path("logs")
+_retention_days: int = 30
+
+# Rotation: roll the active stream past this size, hourly sweep on the tick.
+_MAX_STREAM_BYTES = 50 * 1024 * 1024  # 50 MB
+_ROTATE_INTERVAL_S = 3600.0
+_last_rotate_ts: float = 0.0
 
 
-def configure(level: str, log_dir: Path | str) -> None:
-    """Set the active verbosity + log directory (startup / on settings change)."""
-    global _level, _log_dir
+def configure(level: str, log_dir: Path | str, retention_days: int = 30) -> None:
+    """Set the active verbosity + log directory + retention (startup / on change)."""
+    global _level, _log_dir, _retention_days
     _level = level if level in _LEVEL_ORDER else "minimal"
     _log_dir = Path(log_dir)
+    _retention_days = int(retention_days)
 
 
 def current_level() -> str:
@@ -101,3 +108,47 @@ def record_event(
             f.write(line)
     except Exception:
         logger.debug("record_event failed", exc_info=True)
+
+
+def rotate_streams(
+    retention_days: int,
+    max_bytes: int = _MAX_STREAM_BYTES,
+    now: float | None = None,
+) -> None:
+    """Size cap -> roll the active stream to a timestamped archive; age cap ->
+    delete archives older than ``retention_days`` (0 keeps forever). Best-effort;
+    the active ``<stream>.jsonl`` is never deleted, only rolled. Never raises."""
+    now = time.time() if now is None else now
+    cutoff = now - retention_days * 86400
+    for stream in _STREAMS.values():
+        base = _log_dir / stream                      # e.g. logs/events.jsonl
+        stem = base.stem                              # "events"
+        try:
+            if base.exists() and base.stat().st_size > max_bytes:
+                # roll: events.jsonl -> events.<ts>.jsonl (fresh file on next write)
+                base.rename(_log_dir / f"{stem}.{int(now)}.jsonl")
+        except Exception:
+            logger.debug("rotate: roll failed for %s", base, exc_info=True)
+        if retention_days > 0:
+            for archive in _log_dir.glob(f"{stem}.*.jsonl"):
+                try:
+                    if archive.stat().st_mtime < cutoff:
+                        archive.unlink()
+                except Exception:
+                    logger.debug("rotate: unlink failed for %s", archive, exc_info=True)
+
+
+def maybe_rotate(now: float | None = None) -> bool:
+    """Throttled rotation for the maintenance tick (~hourly). Uses the cached
+    retention. Returns True if a sweep ran. Never raises."""
+    global _last_rotate_ts
+    try:
+        now = time.time() if now is None else now
+        if now - _last_rotate_ts < _ROTATE_INTERVAL_S:
+            return False
+        _last_rotate_ts = now
+        rotate_streams(_retention_days, now=now)
+        return True
+    except Exception:
+        logger.debug("maybe_rotate failed", exc_info=True)
+        return False

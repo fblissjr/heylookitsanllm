@@ -151,10 +151,11 @@ done over HTTP against a running server instead.
 
 ## Monitoring and Optimization
 
-Point `tail -f` at `internal/log/memory_baseline.jsonl` (hourly) or
-`internal/log/request_events.jsonl` (per-request) to watch the server's
-shape over time. Recipes for finding leaks, usage patterns, and preset tuning
-are in [docs/observability_guide.md](docs/observability_guide.md).
+Point `tail -f` at `logs/memory_baseline.jsonl` (hourly) or
+`logs/request_events.jsonl` (per-request) to watch the server's shape over time
+(runtime telemetry lives under `logs/`, not `internal/log/`). Recipes for finding
+leaks, usage patterns, and preset tuning are in
+[docs/observability_guide.md](docs/observability_guide.md).
 
 Everything here is stored in **local files only -- nothing leaves your machine.**
 On by default; the three streams are individually controllable via env vars. To

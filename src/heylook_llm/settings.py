@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 _ENV_PREFIX = "HEYLOOK_"
 
@@ -66,3 +66,22 @@ def resolve_settings(
         if key in env:
             merged[name] = env[key]  # env wins; Pydantic coerces the string
     return SettingsSchema(**merged)
+
+
+def resolve_settings_safe(
+    db_values: Mapping[str, Any],
+    env: Mapping[str, str] | None = None,
+) -> tuple[SettingsSchema, str | None]:
+    """Like ``resolve_settings`` but NEVER raises.
+
+    On an invalid env/DB value returns all-defaults + a short human-readable
+    error string (for logging + surfacing in the API). Use at startup and in
+    read paths where a typo in a ``HEYLOOK_*`` var must not crash the server.
+    """
+    try:
+        return resolve_settings(db_values, env), None
+    except ValidationError as e:
+        summary = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
+        )
+        return SettingsSchema(), summary

@@ -11,29 +11,61 @@ docs/frontend_v3_spec.md §4.
 
 import logging
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import ValidationError
 
-from heylook_llm import db
+from heylook_llm import db, observability
 from heylook_llm.db import get_db as _get_db
-from heylook_llm.settings import SettingsSchema, resolve_settings, setting_env_key
+from heylook_llm.settings import (
+    SettingsSchema,
+    resolve_settings_safe,
+    setting_env_key,
+)
 
 logger = logging.getLogger(__name__)
 
 config_router = APIRouter(prefix="/v1/admin/config", tags=["Config"])
 
 
+def observability_log_dir() -> Path:
+    """Where the JSONL telemetry streams live (bootstrap config -- env or default)."""
+    return Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
+
+
+async def apply_observability_settings(conn) -> SettingsSchema:
+    """Resolve effective settings and push obs level + log dir into the spine cache.
+
+    Called at startup and after every settings change so the (sync, hot-path)
+    ``record_event`` cache stays current without a DB hit. Never raises -- a bad
+    env/DB value falls back to defaults + a warning.
+    """
+    stored = await db.get_all_settings(conn)
+    settings, err = resolve_settings_safe(stored)
+    if err:
+        logger.warning("Observability settings invalid, using defaults: %s", err)
+    observability.configure(
+        level=settings.observability_level,
+        log_dir=observability_log_dir(),
+        retention_days=settings.observability_retention_days,
+    )
+    return settings
+
+
 async def _snapshot(conn) -> dict:
     """Effective settings + what's stored + what env is forcing (precedence made visible)."""
     stored = await db.get_all_settings(conn)
-    effective = resolve_settings(stored)
+    effective, err = resolve_settings_safe(stored)
     env_overrides = [n for n in SettingsSchema.model_fields if setting_env_key(n) in os.environ]
-    return {
+    snap = {
         "effective": effective.model_dump(),   # env > DB > default -- what's actually in force
         "stored": stored,                       # only explicitly-set DB values
         "env_overrides": env_overrides,         # fields currently pinned by an env var
     }
+    if err:
+        snap["error"] = err                     # surface an invalid env/DB value, don't 500
+    return snap
 
 
 @config_router.get(
@@ -68,6 +100,9 @@ async def update_config(request: Request, updates: dict = Body(...)):
             await db.set_setting(conn, key, value)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    # Refresh the in-process spine cache so an observability level/retention
+    # change takes effect immediately (no restart, no per-event DB hit).
+    await apply_observability_settings(conn)
     return await _snapshot(conn)
 
 

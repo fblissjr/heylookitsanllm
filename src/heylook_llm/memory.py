@@ -1,14 +1,16 @@
 """
 Memory & observability telemetry for heylookitsanllm.
 
-Three disk-backed JSONL streams plus a one-shot startup record:
-- internal/log/memory_baseline.jsonl : periodic resource snapshot (configurable
+Three disk-backed JSONL streams plus a one-shot startup record, written under
+``logs/`` (runtime data, gitignored) -- NOT ``internal/log/``, which is for
+human session diaries:
+- logs/memory_baseline.jsonl : periodic resource snapshot (configurable
   interval, default 3600s, disable with 0)
-- internal/log/request_events.jsonl  : one line per completed request (sampler
+- logs/request_events.jsonl  : one line per completed request (sampler
   settings, timings, peak memory, cache hit rate, draft stats, stop reason)
-- internal/log/model_events.jsonl    : model load/unload events with
+- logs/model_events.jsonl    : model load/unload events with
   weights_bytes, quantization, param_count, context_length
-- internal/log/baseline.jsonl        : one-shot startup record with
+- logs/baseline.jsonl        : one-shot startup record with
   mx.device_info() + AppConfig subset
 
 Content invariant (load-bearing, applies to every stream): numeric and metadata
@@ -48,7 +50,9 @@ except ImportError:
 from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
 
 
-DEFAULT_LOG_DIR = Path("internal/log")
+# Runtime telemetry lives under logs/ (gitignored), NOT internal/log/ (human
+# session diaries). Overridable via HEYLOOK_LOGS_DIR (shared with the spine).
+DEFAULT_LOG_DIR = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
 BASELINE_FILE = "memory_baseline.jsonl"
 REQUEST_FILE = "request_events.jsonl"
 MODEL_FILE = "model_events.jsonl"

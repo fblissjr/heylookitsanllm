@@ -9,7 +9,12 @@ types + defaults and rejects bad values. Env stays the always-wins escape hatch.
 import pytest
 from pydantic import ValidationError
 
-from heylook_llm.settings import SettingsSchema, resolve_settings, setting_env_key
+from heylook_llm.settings import (
+    SettingsSchema,
+    resolve_settings,
+    resolve_settings_safe,
+    setting_env_key,
+)
 
 
 class TestDefaults:
@@ -51,6 +56,23 @@ class TestRobustness:
     def test_invalid_env_value_raises(self):
         with pytest.raises(ValidationError):
             resolve_settings({}, env={"HEYLOOK_OBSERVABILITY_RETENTION_DAYS": "-5"})
+
+
+class TestSafeResolution:
+    def test_safe_ok_returns_none_error(self):
+        s, err = resolve_settings_safe({"observability_level": "debug"}, env={})
+        assert s.observability_level == "debug"
+        assert err is None
+
+    def test_safe_bad_db_value_falls_back(self):
+        s, err = resolve_settings_safe({"observability_level": "loud"}, env={})
+        assert s.observability_level == "minimal"  # default
+        assert err is not None and "observability_level" in err
+
+    def test_safe_bad_env_falls_back(self):
+        s, err = resolve_settings_safe({}, env={"HEYLOOK_OBSERVABILITY_RETENTION_DAYS": "-9"})
+        assert s.observability_retention_days == 30  # default
+        assert err is not None
 
 
 class TestEnvKeyConvention:

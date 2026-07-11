@@ -96,6 +96,10 @@ async def _resource_snapshot_loop(app: FastAPI) -> None:
         safe_mm_call(getattr(app.state, "memory_manager", None), "maybe_log_baseline")
         safe_mm_call(getattr(app.state, "memory_manager", None), "tick")
 
+        # Throttled (~hourly) rotation of the JSONL telemetry streams (size + age).
+        from heylook_llm import observability
+        observability.maybe_rotate()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -113,6 +117,16 @@ async def lifespan(app: FastAPI):
     # Initialize conversation database
     from heylook_llm.db import get_connection
     app.state.db = await get_connection()
+
+    # Wire the observability spine from the settings layer (env > DB > default)
+    # and disclose what's being written (open-source: user must see it's local).
+    from heylook_llm.config_api import apply_observability_settings, observability_log_dir
+    _obs = await apply_observability_settings(app.state.db)
+    logging.info(
+        "Observability: level=%s · %s (JSONL) · %dd retention · nothing transmitted "
+        "· configure/disable: docs/observability_guide.md",
+        _obs.observability_level, observability_log_dir(), _obs.observability_retention_days,
+    )
 
     yield
 
