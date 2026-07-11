@@ -25,6 +25,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import orjson
@@ -82,6 +83,12 @@ CREATE TABLE IF NOT EXISTS presets (
     params        TEXT NOT NULL DEFAULT '{}',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -745,5 +752,70 @@ async def delete_preset(db: Store, preset_id: str) -> bool:
         ).fetchone() is not None
         if exists:
             conn.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
+        return exists
+    return await db.run(op)
+
+
+# ---------------------------------------------------------------------------
+# Settings key->value store
+# ---------------------------------------------------------------------------
+# Operational settings (obs level/retention, etc.) edited via /v1/admin/config,
+# persisted alongside presets. key -> JSON value. Schema-stable: a new setting is
+# a new ROW, never a DDL change, so the table survives the drop/recreate schema
+# policy without a drop-list carve-out (same posture as presets -- config, not
+# data; NOT touched by clear_all_data). The single serialized writer makes the
+# check-then-write upsert race-free (same rationale as presets' name check).
+
+async def get_setting(db: Store, key: str) -> Any | None:
+    """Return the JSON-decoded value for ``key``, or None if unset."""
+    def op(conn):
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return orjson.loads(row[0]) if row is not None else None
+    return await db.run(op)
+
+
+async def get_all_settings(db: Store) -> dict:
+    """Return all stored settings as a ``{key: decoded_value}`` map."""
+    def op(conn):
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {k: orjson.loads(v) for k, v in rows}
+    return await db.run(op)
+
+
+async def set_setting(db: Store, key: str, value: Any) -> None:
+    """Upsert one setting. ValueError at the boundary so garbage never persists."""
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("Setting 'key' must be a non-empty string")
+    try:
+        encoded = orjson.dumps(value).decode()
+    except TypeError as e:  # orjson.JSONEncodeError subclasses TypeError
+        raise ValueError(f"Setting value is not JSON-serializable: {e}")
+    now = _now_iso()
+
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM settings WHERE key = ?", (key,)
+        ).fetchone() is not None
+        if exists:
+            conn.execute(
+                "UPDATE settings SET value = ?, updated_at = ? WHERE key = ?",
+                (encoded, now, key),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, encoded, now),
+            )
+    await db.run(op)
+
+
+async def delete_setting(db: Store, key: str) -> bool:
+    """Delete a setting (resets it to its schema default). True if it existed."""
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM settings WHERE key = ?", (key,)
+        ).fetchone() is not None
+        if exists:
+            conn.execute("DELETE FROM settings WHERE key = ?", (key,))
         return exists
     return await db.run(op)

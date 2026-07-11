@@ -145,6 +145,10 @@ app = FastAPI(
             "description": "Model management endpoints for CRUD, scanning, importing, and monitoring models"
         },
         {
+            "name": "Config",
+            "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, resolved env > DB > default"
+        },
+        {
             "name": "Monitoring",
             "description": "Performance monitoring and server status endpoints"
         },
@@ -202,6 +206,10 @@ app.include_router(notebook_router)
 # Import and include Preset API router
 from heylook_llm.preset_api import preset_router
 app.include_router(preset_router)
+
+# Operational settings admin (App-DB settings table; env > DB > default)
+from heylook_llm.config_api import config_router
+app.include_router(config_router)
 
 # Import and include J-space (Jacobian lens) interpretability router
 from heylook_llm.jspace_api import jspace_router

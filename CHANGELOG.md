@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.44]
+
+### Added
+
+Config foundation (observability + config redesign, Phase 0) -- the runtime-mutable
+operational-settings layer that the JSONL observability spine will build on:
+
+- App DB `settings` table (key -> JSON value), added additively alongside presets.
+  Schema-stable (a new setting is a new row, never DDL), so it survives the
+  drop/recreate schema policy without a drop-list carve-out; treated as config,
+  not data. Store CRUD in `db.py` (`get_setting`/`get_all_settings`/`set_setting`/
+  `delete_setting`).
+- `settings.py`: the `SettingsSchema` Pydantic contract (types, defaults,
+  `extra="forbid"`) + `resolve_settings()` with **env > DB > default** precedence
+  (`HEYLOOK_<FIELD>` overrides stay the always-wins escape hatch). First fields:
+  `observability_level` (off/minimal/standard/debug, default minimal) and
+  `observability_retention_days` (default 30) -- consumed by the Phase 1 spine.
+- `/v1/admin/config` router (GET effective+stored+env-overrides, PUT validated
+  updates, DELETE resets a key) -- the backend for the v3 admin/settings config
+  panel. 422 on unknown key / invalid value before anything persists.
+- 23 tests (store, resolver precedence, HTTP contract); no new database (reuses
+  the App DB), no registry change.
+
 ## [1.34.43]
 
 ### Added
