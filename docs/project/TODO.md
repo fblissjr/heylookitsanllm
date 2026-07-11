@@ -109,6 +109,43 @@ review (10 verified findings) split into a quick hardening batch and design item
   (all json-shipping folders also have jinja), but it's an undocumented behavior
   change; consider a CHANGELOG amendment when touching this area next.
 
+## Model registry: modalities/loader follow-ups (from the v1.34.43 split, 2026-07-11)
+
+v1.34.43 split the overloaded `vision: bool` into `modalities` (description,
+`model_importer.detect_modalities`) + `loader` (routing,
+`providers/common/loader_routing.py`); `is_vlm`/`MLXProvider.effective_loader`
+derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
+("Refinement 2026-07-11"). Shipped, simplified (v1.34.43+), and audited against a
+19-model modelzoo sweep. Three deferred items, none urgent, all Phase-6-coupled:
+
+- [ ] **Registry entry `kind` (chat vs draft/MTP vs embedding)** (P2, needs a
+  field + a decision): `provider` (mlx|mlx_embedding) doesn't capture that some
+  `provider="mlx"` entries are NOT servable chat models -- e.g.
+  `gemma-4-26B-A4B-it-assistant-bf16-mlx` is an MTP/draft head ("no chat template
+  on purpose"), flagged only by a `draft` tag. Because it inherits gemma's
+  `vision_config`/`audio_config`, `detect_modalities` OVER-CLAIMS
+  `[text,vision,audio]` for it (routing stays correct via the positive-knowledge
+  degrade -> mlx-lm; the over-claim is cosmetic, and only on re-import since the
+  toml entry is hand-set `vision=false`). Fix: a `kind` field so UI /
+  `/v1/models` capabilities / telemetry / `detect_modalities` don't treat a draft
+  head as a chat model. This is the clearest driver for the Phase 6 "entry KIND
+  is under-modeled" note.
+- [ ] **Manual `loader` override isn't durable until the Phase 6 tomlkit merge**
+  (P2, coupled): `loader` is honored at load, but a re-scan REGENERATES
+  `models.toml` and wipes a hand-set value (Option 2 by design -- reserve `auto`
+  now, durable editing when the non-clobbering merge lands). Sharp edge until
+  then; don't advertise the manual override in the UI before it's durable.
+- [ ] **Remove the `vision` derived-mirror once readers migrate to `modalities`**
+  (P3, cleanup): `vision` is kept as a validator-maintained mirror of
+  `"vision" in modalities` for back-compat. Migrate readers to `modalities`
+  (grep `config.vision` / `.get("vision")` / `config["vision"]` -- known:
+  `api.py::_infer_model_capabilities`, `model_importer` entry-build,
+  `loader_routing._modalities_of` raw-dict fallback), then drop the mirror + the
+  bool. Do NOT do piecemeal -- it's a coordinated removal.
+
+See also the Phase 6 "per-model SIDECAR ARTIFACTS" note (draft model / j-space
+lens / future LoRA managed as a group on the admin CRUD surface).
+
 ## Recently Completed (Phase 2 -- 2026-03-13)
 
 - [x] Remove STT provider (`mlx_stt_provider.py`, `stt_api.py`, parakeet-mlx dep)
