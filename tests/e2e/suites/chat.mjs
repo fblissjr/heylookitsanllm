@@ -4,7 +4,7 @@
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
 const SEND_BTN = '.chat__composer .btn--primary';
@@ -107,12 +107,14 @@ export async function runChatSuite({ suite, ctx, config }) {
   const { page } = ctx;
   await ctx.open('#/chat');
 
-  await suite.check('app boots with 5 nav routes', async () => {
+  await suite.check('app boots with 6 nav routes', async () => {
     await page.waitForSelector('#nav-desktop .nav-item');
+    // The settings gear is also an #nav-desktop .nav-item but has no data-route;
+    // filter to real routes (defined dataset.route) before counting.
     const routes = await page.$$eval('#nav-desktop .nav-item', (els) =>
-      [...new Set(els.map((e) => e.dataset.route))]);
-    assert(routes.length === 5, `expected 5 routes, got ${routes.join(',')}`);
-    assert(['chat', 'notebook', 'explore', 'models', 'perf'].every((r) => routes.includes(r)),
+      [...new Set(els.map((e) => e.dataset.route).filter(Boolean))]);
+    assert(routes.length === 6, `expected 6 routes, got ${routes.join(',')}`);
+    assert(['chat', 'notebook', 'explore', 'jspace', 'models', 'perf'].every((r) => routes.includes(r)),
       `missing route in ${routes.join(',')}`);
   });
 
@@ -148,7 +150,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     // streaming placeholder appears at some point
     await waitFor(async () => (await sendBtnLabel(page)) === 'Stop', { message: 'never entered streaming' });
     await waitIdle(page);
-    assert((await assistantCount(page)) === 1, 'one assistant message');
+    // finishStream flips the Send button to idle (releaseStream) BEFORE it awaits
+    // the save and renders the persisted (non-streaming) message, so poll for the
+    // message rather than racing the assert against that gap.
+    await waitFor(async () => (await assistantCount(page)) === 1, { message: 'assistant reply not persisted/rendered' });
     const reply = await lastAssistantText(page);
     assert(reply.length > 0, 'assistant reply is empty');
   });
@@ -283,6 +288,8 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('post-abort health: a new send completes normally', async () => {
     await ctx.open('#/chat'); // back to small max_tokens
     await page.select(MODEL_SELECT, config.model);
+    // conversations load async after mount -- wait for the list before clicking.
+    await waitFor(async () => (await count(page, '.conv-item')) >= 1, { message: 'conv list' });
     await page.click('.conv-item');
     await waitFor(async () => (await userCount(page)) >= 1, { message: 'messages loaded' });
     const before = await assistantCount(page);
@@ -292,10 +299,13 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await assistantCount(page)) === before + 1, 'new reply not added after prior abort');
   });
 
-  // ---- settings ----------------------------------------------------------
-  await suite.check('settings panel toggles open with sampling controls', async () => {
-    await clickByText(page, '.chat__bar button', 'Settings');
-    await page.waitForSelector('.chat__settings .settings-panel', { timeout: 5000 });
+  // ---- settings (in the app-shell drawer) --------------------------------
+  // The drawer opens once here and stays open through the settings + preset +
+  // sysprompt checks; it is closed before the conversation-management checks
+  // (a modal drawer makes #app inert, so the page is not interactable while open).
+  await suite.check('settings drawer opens with sampling controls', async () => {
+    await openDrawer(page);
+    await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
     const labels = await page.$$eval('.settings-panel .settings-row label', (els) => els.map((e) => e.textContent.trim()));
     assert(labels.includes('Temperature'), `labels: ${labels.join(', ')}`);
     assert(labels.includes('Max tokens'), 'no Max tokens control');
@@ -325,11 +335,14 @@ export async function runChatSuite({ suite, ctx, config }) {
       .find((o) => o.textContent === n)?.value ?? null, name);
 
   await suite.check('system prompt edit persists to the conversation', async () => {
-    // settings panel is open from the checks above
+    // drawer is open from the checks above; the sysprompt editor is one of chat's
+    // contributed sections inside it.
     await page.evaluate(() => { document.querySelector('.chat__sysprompt').open = true; });
     await page.click('.chat__sysprompt-input');
     await page.type('.chat__sysprompt-input', SYS_PROMPT);
-    await page.click(COMPOSER); // blur -> change -> PUT
+    // Commit via blur (change -> PUT). The composer lives in #app, which is inert
+    // while the drawer is open, so blur the field directly instead of clicking it.
+    await page.$eval('.chat__sysprompt-input', (el) => el.blur());
     await waitFor(async () => page.evaluate(async (sys) => {
       const res = await fetch('/v1/conversations');
       const { conversations } = await res.json();
@@ -359,6 +372,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     await delBtn.dispose();
     await waitFor(async () => (await presetOptionValue('e2e-preset')) === null,
       { message: 'deleted preset still listed' });
+    // done with the drawer -- close it so #app is interactable again.
+    await closeDrawer(page);
   });
 
   // ---- conversation management -------------------------------------------

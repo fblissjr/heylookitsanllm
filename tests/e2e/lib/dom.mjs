@@ -90,3 +90,50 @@ export async function setSettingsInput(page, label, value) {
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }, label, value);
 }
+
+// The settings/presets/sysprompt/jspace-toggles all live in the app-shell
+// settings drawer now (js/settings-drawer.js), not inline on the page. The
+// drawer is a MODAL: while open it makes #app `inert`, and its backdrop covers
+// the page -- so a puppeteer click aimed at the (inert) sidebar gear lands on
+// the backdrop and closes it instead. It also survives a same-document (hash)
+// navigation. Both make a naive "click the gear" flaky, so these helpers reset
+// to a known-closed, #app-live state first.
+
+// Close the drawer if open and GUARANTEE #app is interactable again. Clicks the
+// drawer's own Close button (it's inside the drawer, never inert), then clears
+// inert defensively so a leaked-open drawer never seals the page for the next click.
+// Waits for BOTH the drawer to go and the backdrop to actually hide -- the
+// backdrop's visibility transition is *delayed* ~140ms (reduced-motion doesn't
+// cancel a delay), and until it hides it still covers #app, so a too-early click
+// on page content lands on the backdrop instead of the button.
+export async function closeDrawer(page) {
+  await page.evaluate(() => {
+    document.querySelector('.drawer--open .drawer__close')?.click();
+    const app = document.getElementById('app');
+    if (app) app.inert = false;
+  });
+  await page.waitForFunction(() => {
+    if (document.querySelector('.drawer--open')) return false;
+    const bd = document.querySelector('.drawer-backdrop');
+    return !bd || getComputedStyle(bd).visibility === 'hidden';
+  }, { timeout: 5000 });
+}
+
+// Open the drawer cleanly for the CURRENT page: reset first (handles a leaked or
+// stale open drawer + inert #app), then fire the gear's handler. We use
+// evaluate().click() rather than page.click() on purpose: right after
+// closeDrawer the backdrop is still fading out, so a hit-tested click would land
+// on it and re-close; dispatching the handler directly is immune to that. Then
+// wait for the panel to finish sliding in -- a click on drawer content mid-slide
+// misses (the element is still off-screen right).
+export async function openDrawer(page) {
+  await closeDrawer(page);
+  await page.evaluate(() => document.querySelector('.drawer-gear')?.click());
+  await page.waitForSelector('.drawer--open .drawer__body', { timeout: 5000 });
+  await page.waitForFunction(() => {
+    const p = document.querySelector('.drawer--open');
+    if (!p) return false;
+    const r = p.getBoundingClientRect();
+    return r.right <= window.innerWidth + 1 && r.left >= 0; // fully slid in
+  }, { timeout: 5000 });
+}

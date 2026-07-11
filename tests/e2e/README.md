@@ -1,6 +1,6 @@
 # v3 frontend E2E harness
 
-Last updated: 2026-07-07
+Last updated: 2026-07-11
 
 Browser end-to-end tests for the `/v3` frontend. Drives a **real** running server
 with a real model through **system Chrome** (puppeteer-core). `claude-in-chrome`
@@ -62,14 +62,30 @@ change, re-run before diagnosing a delivery regression.
   settings seed, hash-router navigation, page-error capture).
 - `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, summary printer.
 - `lib/dom.mjs` — shared DOM helpers (`clickByText`, `armedClick` two-tap
-  confirm, overflow check).
-- `suites/chat.mjs` — ~25 checks: streaming, a client-side streaming-cadence
+  confirm, overflow check, `settingsInputValue`/`setSettingsInput`, and
+  `openDrawer`/`closeDrawer` — see the drawer note below).
+- `suites/chat.mjs` — ~28 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, conversation CRUD,
   390px mobile.
-- `suites/pages.mjs` — ~27 checks: notebook autosave + generate-at-cursor tail
+- `suites/pages.mjs` — ~35 checks: notebook autosave + generate-at-cursor tail
   preservation, explore logprob chips + keyboard nav, perf no-polling proof +
-  ranges, models list/load/unload + HF scan + danger-zone clear.
+  ranges, models list/load/unload + HF scan, jspace Jacobian-lens workspace
+  (lens-gated), danger-zone clear.
+
+## Settings drawer (interaction gotcha)
+
+Sampler params, presets, the per-document system-prompt editor, and jspace's
+heatmap/chat toggles all live in the **app-shell settings drawer**
+(`js/settings-drawer.js`), not inline on the page. The suites reach them via
+`openDrawer(page)` / `closeDrawer(page)` (`lib/dom.mjs`). The drawer is a MODAL:
+while open it makes `#app` `inert` and its backdrop covers the page, so those
+helpers are deliberately defensive — they reset any leaked-open drawer, fire the
+gear's handler via `evaluate` (a real click can be intercepted by the fading
+backdrop), and wait for both the slide-in and the backdrop's *delayed* hide to
+settle. Drive settings/presets/sysprompt/jspace-toggles ONLY through these
+helpers; a raw `page.click` on drawer content or on page content immediately
+after a close will flake on the transition windows.
 
 ## Notes / gotchas
 
@@ -87,4 +103,8 @@ change, re-run before diagnosing a delivery regression.
   median gap < 50ms and > 30 tok/s, which needs a FAST model. The default MoE
   passes with margin (~11ms, ~88/s); a natively-slow dense model (e.g. the 31B
   gemma at ~10 tok/s) would false-fail — override `E2E_MODEL` only with a fast
-  model, or expect this one check to flag.
+  model, or expect this one check to flag. It is also sensitive to **machine
+  load**: a Mac Studio thermally/memory-throttled by many back-to-back 26B E2E
+  spawns decodes far slower (200–300ms gaps observed), which false-flags this one
+  check even though delivery isn't regressed. If it's the *only* failure, re-run
+  on an idle machine before treating it as real.

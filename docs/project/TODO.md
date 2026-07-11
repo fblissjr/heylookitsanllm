@@ -108,13 +108,18 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   baseline). Rules recorded in DESIGN.md §7. Deferred P3s (single-user pragmatic floor): conv/
   notebook list items not keyboard-focusable (`<div>`, not button); jspace layer-range slider is
   pointer-only.
-- [ ] **E2E suite stale vs the settings-drawer refactor** (P2, found 2026-07-11 during the design
-  pass): `tests/e2e/` fails 14 checks on BOTH HEAD and the design branch -- NOT regressions. The
-  suite predates `42a1769` (drawer unification) + the jspace route: it still clicks a `.chat__bar`
-  "Settings" button opening `.chat__settings`, pokes on-page `.chat__sysprompt`/`#jspace-heatmap`
-  (all moved into the shared drawer), and asserts exactly 5 nav routes (there are 6). Update the
-  chat + pages suites to drive settings/presets/sysprompt/jspace-toggles through the drawer, and fix
-  the route-count assertion. Until then the suite under-covers the drawer surfaces.
+- [x] **E2E suite stale vs the settings-drawer refactor** (P2): DONE 2026-07-11. The suite predated
+  `42a1769` (drawer unification) + the jspace route -- it clicked a `.chat__bar` "Settings" button,
+  poked on-page `.chat__sysprompt`/`#jspace-heatmap`, and asserted 5 routes, so 14 checks failed on
+  BOTH HEAD and the design branch (never regressions). Added `openDrawer`/`closeDrawer` helpers
+  (`lib/dom.mjs`) that drive settings/presets/sysprompt/jspace-toggles through the shared drawer, and
+  fixed the route count (6). The drawer is modal (inert #app + covering backdrop), so the helpers are
+  transition-aware: reset a leaked-open drawer, fire the gear via `evaluate` (a real click hits the
+  fading backdrop), and wait for the slide-in + the backdrop's *delayed* hide to settle -- documented
+  in the E2E README's new "Settings drawer" gotcha. Also hardened two pre-existing latent races
+  (assistant-reply-persists polled instead of racing finishStream's save; post-abort waits for the
+  conv list). Result: 62/63 green; the sole miss is the load-sensitive streaming-cadence perf check
+  (Mac Studio throttled after many back-to-back 26B spawns -- passes idle, README notes it).
 - [ ] **Wire `show_special_tokens` render consumers** (P2, 2026-07-11): the display pref exists +
   is honesty-first `true`, but is gated (`wired:false`) out of the UI because NO surface reads it --
   the token-rendering paths still strip specials (DESIGN.md §6 "known violation"). Wire chat /

@@ -5,7 +5,7 @@
 // this runs; the danger-zone clear check runs LAST.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer } from '../lib/dom.mjs';
 
 // Record requests whose URL matches `regex` from the moment this is called until
 // stop(). Used to prove the perf page does NOT poll.
@@ -75,19 +75,29 @@ export async function runPagesSuite({ suite, ctx, config }) {
   });
 
   await suite.check('system prompt autosaves and reopens expanded', async () => {
-    await page.evaluate(() => {
+    // The per-notebook system-prompt editor is a contributed section of the
+    // app-shell settings drawer now, so it only exists in the DOM while the
+    // drawer is open (a notebook must already be active from prior checks).
+    await openDrawer(page);
+    // Set value + fire the input event directly (the sysprompt autosaves on
+    // 'input'); avoids depending on the field's clickability inside the drawer.
+    await page.evaluate((val) => {
       const d = document.querySelector('.notebook__sysprompt');
-      if (!d.open) d.querySelector('summary').click();
-    });
-    await page.click('.notebook__sysprompt-input');
-    await page.type('.notebook__sysprompt-input', 'You are a marine biologist.');
-    await sleep(700);
-    await ctx.open('#/notebook');
+      d.open = true;
+      const ta = d.querySelector('.notebook__sysprompt-input');
+      ta.value = val;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 'You are a marine biologist.');
+    await sleep(700); // input-event autosave debounce (500ms)
+    await ctx.open('#/notebook');  // reload closes the drawer
+    await page.waitForSelector('.notebook__content'); // notebook re-selected + editor ready
+    await openDrawer(page);         // reopen to reach the contributed sysprompt section
     await page.waitForSelector('.notebook__sysprompt-input');
     await waitFor(async () => (await page.$eval('.notebook__sysprompt-input', (e) => e.value)).includes('marine biologist'),
       { message: 'system prompt not persisted' });
     const open = await page.$eval('.notebook__sysprompt', (e) => e.open);
     assert(open, 'system prompt details did not reopen expanded');
+    await closeDrawer(page);
   });
 
   await suite.check('stop mid-generation keeps partial text', async () => {
@@ -298,7 +308,11 @@ export async function runPagesSuite({ suite, ctx, config }) {
   await suite.check('jspace analyze renders the workspace strip + heatmap', async () => {
     if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
     await page.select('.jspace__bar select', config.model);
-    await page.click('#jspace-heatmap'); // heatmap on: one analyze covers strip + grid + pin checks
+    // The heatmap toggle is a drawer extra now; flip it on there, then close the
+    // drawer (its checked state persists) before driving the page's Analyze.
+    await openDrawer(page);
+    await page.evaluate(() => document.querySelector('#jspace-heatmap').click()); // heatmap on
+    await closeDrawer(page);
     await page.click('.jspace__composer textarea');
     await page.type('.jspace__composer textarea', 'The Eiffel Tower is located in the city of');
     await clickByText(page, '.jspace__composer button', 'Analyze');
@@ -368,7 +382,9 @@ export async function runPagesSuite({ suite, ctx, config }) {
 
   await suite.check('jspace: heatmap-off analyze renders strip-only and pins from onset_strip', async () => {
     if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    await page.click('#jspace-heatmap'); // toggle heatmap back OFF
+    await openDrawer(page);
+    await page.evaluate(() => document.querySelector('#jspace-heatmap').click()); // toggle heatmap back OFF
+    await closeDrawer(page);
     await clickByText(page, '.jspace__composer button', 'Analyze');
     await waitFor(async () => (await count(page, '.jspace__detail')) > 0 &&
       (await count(page, '.jspace__heatmap')) === 0,
