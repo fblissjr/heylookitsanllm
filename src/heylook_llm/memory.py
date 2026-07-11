@@ -88,6 +88,21 @@ class ModelMetadata:
     context_length: int
 
 
+def _telemetry_off() -> bool:
+    """True when observability is globally disabled (``observability_level == 'off'``).
+
+    This is the master kill switch: the level (a single, UI-editable control) also
+    silences these legacy memory.py streams, so ``observability_level = off`` turns
+    ALL telemetry off in one place. Best-effort -- never raises; a resolution
+    hiccup defaults to 'not off' (keep logging) rather than silently dropping data.
+    """
+    try:
+        from heylook_llm import observability
+        return observability.current_level() == "off"
+    except Exception:
+        return False
+
+
 def parse_bool_env(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -265,7 +280,7 @@ class MemoryManager:
         with self._lock:
             self.model_metadata[metadata.model_id] = metadata
 
-        if not self.model_event_log_enabled:
+        if not self.model_event_log_enabled or _telemetry_off():
             return
 
         record = {
@@ -290,7 +305,7 @@ class MemoryManager:
         with self._lock:
             self.model_metadata.pop(model_id, None)
 
-        if not self.model_event_log_enabled:
+        if not self.model_event_log_enabled or _telemetry_off():
             return
 
         record = {
@@ -305,7 +320,7 @@ class MemoryManager:
 
     def log_request_event(self, event: dict) -> None:
         """Append one per-request record. Caller enforces the content invariant."""
-        if not self.request_log_enabled:
+        if not self.request_log_enabled or _telemetry_off():
             return
         self._append_jsonl(self.log_dir / REQUEST_FILE, event)
 
@@ -439,7 +454,7 @@ class MemoryManager:
 
     def maybe_log_baseline(self) -> bool:
         """Write a baseline record if ``baseline_interval`` has elapsed."""
-        if self.baseline_interval <= 0:
+        if self.baseline_interval <= 0 or _telemetry_off():
             return False
         now = time.time()
         if now - self._last_baseline_ts < self.baseline_interval:

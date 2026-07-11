@@ -37,6 +37,21 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "mlx_perf: MLX performance tests")
 
 
+@pytest.fixture(autouse=True)
+def _reset_observability():
+    """Deterministic observability global state per test.
+
+    The spine's level/log-dir are module globals mutated by ``configure()``; a
+    test leaving level='off' would otherwise silence another test's expected
+    telemetry (and the memory.py master off-gate depends on the level). Reset to
+    a clean baseline before each test; tests that need a specific level set it
+    themselves in-body (autouse runs first, so their override wins).
+    """
+    from heylook_llm import observability
+    observability.configure(level="minimal", log_dir=os.environ["HEYLOOK_LOGS_DIR"])
+    yield
+
+
 # ---------------------------------------------------------------------------
 # MLX mocking fixtures
 # ---------------------------------------------------------------------------

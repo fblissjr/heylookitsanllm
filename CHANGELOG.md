@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.52]
+
+### Changed
+
+- **`observability_level` is now the master telemetry kill switch** (unifying the
+  control, owner ask): setting it to `off` silences memory.py's legacy streams
+  (`request_events`/`model_events`/`memory_baseline`) too, not just the spine --
+  one place to turn ALL telemetry off. Additive gate; the legacy per-stream env
+  toggles still work for granular control. (Full retirement of those toggles +
+  removing the streams the spine now duplicates is deferred until the spine is
+  fully live-verified -- deleting proven streams for an unverified replacement is
+  the risk the live check just caught with the provider bug.)
+- Tests: an autouse fixture resets the observability global level per test
+  (deterministic; the level is a mutated module global).
+
 ## [1.34.51]
 
 ### Fixed

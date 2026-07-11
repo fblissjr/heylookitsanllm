@@ -111,6 +111,20 @@ def test_env_interval_zero_disables_baseline(tmp_path: Path, monkeypatch: pytest
     assert not (tmp_path / "memory_baseline.jsonl").exists()
 
 
+def test_off_level_silences_streams(mm: MemoryManager, tmp_path: Path):
+    """observability_level=off is the master kill switch -- it silences the
+    legacy memory.py streams too, so telemetry has a single 'turn it all off'."""
+    from heylook_llm import observability
+    observability.configure(level="off", log_dir=tmp_path)
+    mm.register_model_load(
+        ModelMetadata("m", "/p", 0, "a", "none", 0, 0), load_duration_ms=1.0
+    )
+    mm.log_request_event({"ts": time.time(), "model": "m"})
+    assert not (tmp_path / "model_events.jsonl").exists()
+    assert not (tmp_path / "request_events.jsonl").exists()
+    assert mm.maybe_log_baseline() is False
+
+
 def test_register_model_load_writes_event(mm: MemoryManager, tmp_path: Path):
     metadata = ModelMetadata(
         model_id="test-model",
