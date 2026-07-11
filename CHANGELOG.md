@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.41]
+
+### Changed
+
+Diagnostic log (`logs/events.jsonl`) now actually explains errors:
+
+- Every event carries a human-readable `iso` field (local time with UTC offset)
+  alongside the epoch `ts` -- `ts` stays authoritative for sorting/latency math,
+  `iso` makes the file legible without converting epoch seconds by hand.
+- `request_error` events now record `error_type` (the exception class), `stage`
+  (where in setup it failed: routing / provider_get / capacity_check /
+  generator_create / streaming), `model`, and -- for wrapped errors -- a `chain`
+  of the underlying causes. Previously the record held only `str(e)`, so the
+  actual "why" (exception type, root cause) only reached the console logger.
+- Mid-stream generation failures are now logged. The streaming `GenerationFailed`
+  path previously wrote nothing to `events.jsonl`, leaving a `generation_start`
+  with no matching completion; a new catch-all also logs unexpected mid-stream
+  errors and closes the SSE stream cleanly (in-band error payload + `[DONE]`)
+  instead of propagating a raw exception into an already-started response.
+- Cause chains are captured via `traceback.format_exception_only` (type +
+  message only, never frame locals), so prompt/response text cannot leak.
+
 ## [1.34.40]
 
 ### Fixed

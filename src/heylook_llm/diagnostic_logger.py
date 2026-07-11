@@ -9,6 +9,8 @@ Uses orjson for fast serialization. Simple rotation: truncate first half when >5
 import logging
 import os
 import time
+import traceback
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -63,8 +65,14 @@ def diag_event(
         level: 'error', 'warn', 'info', 'debug'
         **data: arbitrary key-value pairs to include
     """
+    ts = time.time()
     event = {
-        "ts": time.time(),
+        "ts": ts,
+        # Local-time ISO 8601 with UTC offset. `ts` stays authoritative for
+        # sorting and latency math / joining events by request_id; `iso` is the
+        # human- (and Claude-) readable rendering so the file is legible without
+        # converting epoch seconds by hand.
+        "iso": datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds"),
         "level": level,
         "type": event_type,
     }
@@ -83,3 +91,42 @@ def diag_event(
                 f.write(line)
     except Exception:
         _logger.debug("Failed to write diagnostic event", exc_info=True)
+
+
+def exception_detail(exc: BaseException) -> dict:
+    """Render an exception into a JSON-safe dict for a diagnostic event.
+
+    Captures the exception class, its message, and -- when the error was raised
+    from another (``raise X from Y``, or an implicit ``__context__``) -- a
+    bounded ``chain`` of the underlying causes. Each chain link is rendered with
+    ``traceback.format_exception_only``, which emits only the type and message,
+    NEVER frame locals. That keeps prompt/response text (which can live in a
+    frame's locals) out of the log, so this is safe to write even though
+    events.jsonl is not bound by the telemetry-stream content invariant.
+
+    Shape: ``{"error_type": ..., "error": ..., "chain": [...]}``. ``chain`` is
+    omitted unless there is a distinct underlying cause.
+    """
+    detail: dict = {
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+    }
+    try:
+        chain: list[str] = []
+        # Walk __cause__ (explicit `from`) then fall back to __context__
+        # (implicit "during handling of the above"). Cap the depth so a
+        # pathological cycle or deep wrap can't bloat a single log line.
+        cursor: BaseException | None = exc.__cause__ or exc.__context__
+        seen: set[int] = {id(exc)}
+        while cursor is not None and id(cursor) not in seen and len(chain) < 5:
+            seen.add(id(cursor))
+            for ln in traceback.format_exception_only(type(cursor), cursor):
+                ln = ln.rstrip("\n")
+                if ln.strip():
+                    chain.append(ln)
+            cursor = cursor.__cause__ or cursor.__context__
+        if chain:
+            detail["chain"] = chain
+    except Exception:
+        pass
+    return detail

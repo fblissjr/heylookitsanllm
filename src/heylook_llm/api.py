@@ -29,7 +29,7 @@ from heylook_llm.perf_collector import (
     net_ttft_ms,
 )
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
-from heylook_llm.diagnostic_logger import diag_event
+from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm.presets import PresetNotFound
 from heylook_llm.reasoning_parser import (
     parse_reasoning,
@@ -585,17 +585,23 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     # Per-request cooperative abort signal (see below); created before the try
     # so it's always bound for the streaming branch.
     abort_event = AbortEvent()
+    # Tracks how far setup progressed, so a caught exception records WHERE it
+    # died (which the bare error string never tells you). Updated before each
+    # step; read by the except handlers below.
+    stage = "routing"
     try:
         log_request_stage(request_id, "routing")
         diag_event("request_routed", request_id=request_id, model=chat_request.model)
 
         # Run CPU-bound operations in thread pool (timed for perf collection)
+        stage = "provider_get"
         provider_get_start = time.time()
         provider = await asyncio.to_thread(router.get_provider, chat_request.model)
         provider_get_ms = (time.time() - provider_get_start) * 1000
 
         # Backpressure: reject early (503, handled below) if the generation
         # queue is already full, before committing to a response.
+        stage = "capacity_check"
         provider.check_capacity()
 
         if router.log_level <= logging.DEBUG:
@@ -606,6 +612,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                    provider=provider.__class__.__name__,
                    provider_get_ms=round(provider_get_ms, 1))
         # Run model generation in thread pool, with the per-request abort signal.
+        stage = "generator_create"
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request, abort_event)
 
     except RuntimeError as e:
@@ -613,7 +620,8 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         if "MODEL_BUSY" in str(e):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
-            diag_event("request_error", request_id=request_id, level="warn", error="model_busy")
+            diag_event("request_error", request_id=request_id, level="warn",
+                       error="model_busy", model=chat_request.model, stage=stage)
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
 
             # Return 503 Service Unavailable with retry headers so OpenAI-style
@@ -643,20 +651,24 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             # Other runtime errors
             logging.error(f"Runtime error: {e}", exc_info=True)
             log_request_complete(request_id, success=False, error_msg=str(e))
+            diag_event("request_error", request_id=request_id, level="error",
+                       model=chat_request.model, stage=stage, **exception_detail(e))
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
             raise HTTPException(status_code=500, detail=str(e))
 
     except PresetNotFound as e:
         # Bad request: client named a preset the server doesn't have. 400, not 500.
         log_request_complete(request_id, success=False, error_msg=str(e))
-        diag_event("request_error", request_id=request_id, level="warn", error="preset_not_found")
+        diag_event("request_error", request_id=request_id, level="warn",
+                   error="preset_not_found", model=chat_request.model, stage=stage)
         _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
         raise HTTPException(status_code=400, detail=str(e))
 
     except Exception as e:
         logging.error(f"Failed to get provider or create generator: {e}", exc_info=True)
         log_request_complete(request_id, success=False, error_msg=str(e))
-        diag_event("request_error", request_id=request_id, level="error", error=str(e))
+        diag_event("request_error", request_id=request_id, level="error",
+                   model=chat_request.model, stage=stage, **exception_detail(e))
         _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -924,10 +936,40 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                     logprobs_delta = None  # Only include logprobs in first delta for this token
 
     except GenerationFailed as e:
+        # HTTP 200 + headers were already flushed when streaming began, so a
+        # mid-stream failure can only be surfaced in-band. Record it here --
+        # this path previously wrote NOTHING to events.jsonl, so an OOM/crash
+        # during decode left only a `generation_start` with no matching
+        # completion. stage="streaming" distinguishes it from setup-phase errors.
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="error",
+                   model=chat_request.model, stage="streaming",
+                   tokens_emitted=token_count, **exception_detail(e))
         error_payload = {"error": {
             "message": str(e),
             "type": "server_error",
             "code": "generation_failed",
+        }}
+        yield f"data: {json.dumps(error_payload)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    except Exception as e:
+        # Unexpected (non-GenerationFailed) mid-stream error. Previously this
+        # propagated out of the async generator to Starlette with no diagnostic
+        # record, truncating the SSE stream mid-flight. Behavior change: log it,
+        # then close the stream cleanly with an in-band error payload + [DONE]
+        # (same shape as the GenerationFailed path) instead of propagating a raw
+        # exception into an already-started response.
+        logging.error(f"Unexpected streaming error for {request_id[:8]}: {e}", exc_info=True)
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="error",
+                   model=chat_request.model, stage="streaming",
+                   tokens_emitted=token_count, **exception_detail(e))
+        error_payload = {"error": {
+            "message": "Internal error during generation.",
+            "type": "server_error",
+            "code": "internal_error",
         }}
         yield f"data: {json.dumps(error_payload)}\n\n"
         yield "data: [DONE]\n\n"
@@ -1117,8 +1159,19 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     try:
         await asyncio.to_thread(consume_generator)
     except InvalidGenerationRequest as e:
+        # Non-streaming errors raise HTTPException past the setup-phase handlers
+        # in create_chat_completion, so log the diagnostic here (symmetric with
+        # the streaming path). stage="generating" -- failure was during decode.
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="warn",
+                   model=chat_request.model, stage="generating",
+                   tokens_emitted=token_count, **exception_detail(e))
         raise HTTPException(status_code=400, detail=str(e))
     except GenerationFailed as e:
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="error",
+                   model=chat_request.model, stage="generating",
+                   tokens_emitted=token_count, **exception_detail(e))
         raise HTTPException(status_code=500, detail=str(e))
 
     # Surface memory telemetry to the route handler for response headers.

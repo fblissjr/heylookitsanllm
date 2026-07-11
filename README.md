@@ -27,7 +27,7 @@ Built on Apple MLX for text and vision.
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
-- **Observability**: Three disk-backed JSONL streams (periodic memory baseline, per-request events with sampler + timings + peak memory, model load/unload events). Counts and metadata only -- never prompt or response text. Env-var configurable; see [docs/observability_guide.md](docs/observability_guide.md) for the full rundown plus monitoring/optimization recipes.
+- **Observability**: Three disk-backed JSONL streams (periodic memory baseline, per-request events with sampler + timings + peak memory, model load/unload events). Counts and metadata only -- never prompt or response text. **Everything is written to local files only -- nothing is transmitted anywhere.** On by default; disable or change it via env vars ([how](#monitoring-and-optimization)). See [docs/observability_guide.md](docs/observability_guide.md) for the full rundown plus monitoring/optimization recipes.
 
 ## Web UI
 
@@ -156,12 +156,23 @@ Point `tail -f` at `internal/log/memory_baseline.jsonl` (hourly) or
 shape over time. Recipes for finding leaks, usage patterns, and preset tuning
 are in [docs/observability_guide.md](docs/observability_guide.md).
 
-Quick dev loop with 60-second baselines and no request-event spam:
+Everything here is stored in **local files only -- nothing leaves your machine.**
+On by default; the three streams are individually controllable via env vars. To
+disable them entirely:
+
+```bash
+HEYLOOK_REQUEST_LOG_ENABLED=0 HEYLOOK_MODEL_EVENT_LOG_ENABLED=0 \
+  HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS=0 heylookllm
+```
+
+Or a quick dev loop with 60-second baselines and no request-event spam:
 
 ```bash
 HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS=60 HEYLOOK_REQUEST_LOG_ENABLED=0 \
   heylookllm --log-level INFO
 ```
+
+To tune each stream independently, see [docs/observability_guide.md](docs/observability_guide.md).
 
 ## Troubleshooting
 
