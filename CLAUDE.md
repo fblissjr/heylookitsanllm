@@ -44,7 +44,11 @@ store, and has a per-conversation system-prompt editor + saved-preset bar.
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the authoritative backend API contract -- update it in the same commit as any
 contract change); orientation + backend coupling: [docs/frontend_v3.md](./docs/frontend_v3.md).
-Read `js/page.js` (createPage lifecycle) before touching any page.
+Read `js/page.js` (createPage lifecycle) before touching any page. Design system +
+the load-bearing a11y/mobile-parity rules new UI MUST honor -- touch-reveal
+fallbacks (`@media (hover:none)`; hover-only affordances are unreachable on
+iPhone), the settings drawer as a **modal** (seals `#app` with `inert`, closes on
+`hashchange`), aria-live states, label association -- are [DESIGN.md](./apps/heylook-frontend-v3/DESIGN.md) §7.
 
 **Frontend v2 `apps/heylook-frontend-v2/`** (React+Zustand+Vite) -- RETIRING
 after v3 cutover (plan Q2/Phase 3); don't invest here. See its

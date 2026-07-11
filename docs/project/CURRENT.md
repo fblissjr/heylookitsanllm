@@ -237,12 +237,15 @@ All in the plan with full rationale; one-liners here so nothing is missed:
   against the spec, reviewed, 27 E2E checks (autosave, generate-at-cursor,
   scan/import/load/unload, no-polling perf, logprob chips + keyboard nav,
   390px viewports).
-- **UNCERTAIN -- visual design**: functionality verified, and
-  `apps/heylook-frontend-v3/DESIGN.md` is now SEEDED (2026-07-10, v1.34.36:
-  token roles, the OKLCH data-strength chip formula, selection/pin grammar,
-  the j-space matrix-vs-aggregation decision) -- but the impeccable design
-  gates (`audit`/`polish` per page) still NEVER RAN. iPhone-Safari checked
-  only via viewport emulation, not a real device.
+- **DONE -- visual design (2026-07-11)**: the impeccable `audit` + `polish`
+  gates ran across all 6 pages + shell + drawer (slop-clean, scored 17/20).
+  Fixed a mobile + a11y cluster -- notably delete/rename were unreachable on
+  iPhone (hover-gated, no touch fallback) -- plus aria-live status/error, `<label
+  for>` association, a real drawer focus-trap (`inert` #app, closes on hashchange),
+  the mobile settings gear (FAB -> bottom-nav), explore chip titles, aria-current.
+  Load-bearing rules new UI must honor: `apps/heylook-frontend-v3/DESIGN.md` §7.
+  iPhone-Safari verified via viewport + touch-media emulation (19/19), not a real
+  device.
 - **HALF-BAKED -- j-space visualizer track (v1.34.36-.37)**: DESIGN.md gate
   cleared; SHIPPED + live-green in E2E: item 1 click-to-pin readout (strip
   rows + heatmap cells pin a detail panel with logit bars +

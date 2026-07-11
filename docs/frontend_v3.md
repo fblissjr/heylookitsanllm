@@ -1,6 +1,6 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-11 (DRY settings drawer)
+Last updated: 2026-07-11 (impeccable design pass + E2E un-staled)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -57,15 +57,20 @@ the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
 extracted into an app-shell global slide-over shared by all 6 pages --
 sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
-code-reviewed); browser E2E in `tests/e2e/` (55 checks live-green).
+code-reviewed); browser E2E in `tests/e2e/` (63 checks, drawer-driven; green bar
+the load-sensitive streaming-cadence guard).
+
+**Done (was "Left")**:
+- **DONE -- visual design (2026-07-11)**: the impeccable audit + polish pass ran
+  across all 6 pages + shell + drawer (slop-clean, scored 17/20). Fixed a mobile +
+  a11y cluster -- notably **delete/rename were unreachable on iPhone** (hover-gated,
+  no touch fallback) -- plus aria-live status, `<label for>` association, a real
+  drawer focus-trap, and the mobile settings gear (FAB -> bottom-nav item; a FAB
+  collided with chat's Send). The load-bearing a11y/mobile-parity rules new UI must
+  honor are `apps/heylook-frontend-v3/DESIGN.md` §7. iPhone-17-Pro verified via
+  viewport + touch-media emulation (19/19), not a real device. (plan Phase 4 item 2)
 
 **Left**:
-- **UNCERTAIN -- visual design**: impeccable design gates never ran.
-  `apps/heylook-frontend-v3/DESIGN.md` is now seeded (2026-07-10: token roles,
-  the OKLCH data-strength chip formula, selection/pin grammar, the j-space
-  matrix-vs-aggregation call) but it's a seed, not a completed impeccable
-  pass. iPhone Safari checked via viewport emulation, not a real device.
-  (plan Phase 4 item 2)
 - **NOT DONE -- cutover**: retiring v2 & promoting v3 is deliberately open until
   the owner has lived in `/v3` daily. Nothing blocks it. (plan Phase 3; the older
   legacy React app was already deleted in v1.34.25)
