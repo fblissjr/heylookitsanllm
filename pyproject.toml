@@ -27,7 +27,7 @@ dependencies = [
     "mlx>=0.22.0; sys_platform == 'darwin'",
     "mlx-lm>=0.21.0; sys_platform == 'darwin'",
     "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
-    "transformers>=5.3.0",
+    "transformers>=5.13.1",
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
     "pydantic>=2.5.0",
@@ -40,6 +40,8 @@ dependencies = [
     "psutil>=5.9.0",  # System metrics (RAM, CPU)
     "orjson>=3.9.15",  # Fast JSON serialization
     "duckdb>=1.5.2",
+    "mlx-lm",
+    "mlx-vlm",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
@@ -94,8 +96,8 @@ version = {attr = "heylook_llm.__version__"}
 override-dependencies = ["transformers>=5.3.0"]
 
 [tool.uv.sources]
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git" }
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git" }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git", rev = "a790972f0f844d81067ed45c28b524220a10c019" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git", rev = "8e2638b71f1834f3aead54acac5118e333d2175d" }
 
 [dependency-groups]
 dev = [
