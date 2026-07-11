@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # deleting a parent even when its children are deleted in the same
 # transaction -- a documented DuckDB limitation. Referential integrity is
 # enforced in code: single writer, explicit cascade in delete_conversation).
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4  # v4: conversations.params (per-conversation sampler settings)
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
 _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id"})
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     title       TEXT NOT NULL DEFAULT 'New Conversation',
     model_id    TEXT,
     system_prompt TEXT,
+    params        TEXT NOT NULL DEFAULT '{}',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -301,10 +302,31 @@ async def clear_all_data(db: Store) -> dict:
 
 # Single source of truth per table: the SELECT string derives from the names
 # list, so the two can never drift (zip would silently mispair otherwise).
-_CONV_NAMES = ["id", "title", "model_id", "system_prompt", "created_at", "updated_at"]
+_CONV_NAMES = ["id", "title", "model_id", "system_prompt", "params", "created_at", "updated_at"]
 _MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
 _CONV_COLS = ", ".join(_CONV_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
+
+
+def _conv_row_to_dict(row) -> dict:
+    """Zip a conversations row + JSON-decode the ``params`` blob (per-conversation
+    sampler settings; stored as JSON TEXT like ``presets.params``)."""
+    d = dict(zip(_CONV_NAMES, row))
+    try:
+        d["params"] = orjson.loads(d["params"]) if d.get("params") else {}
+    except (orjson.JSONDecodeError, TypeError):
+        d["params"] = {}
+    return d
+
+
+def _encode_conv_params(params) -> str:
+    """Validate + JSON-encode conversation params at the write boundary."""
+    if not isinstance(params, dict):
+        raise ValueError("Conversation 'params' must be an object")
+    try:
+        return orjson.dumps(params).decode()
+    except TypeError as e:
+        raise ValueError(f"Conversation 'params' is not JSON-serializable: {e}")
 
 
 def _touch_conversation(conn, conv_id: str, now: str) -> None:
@@ -317,7 +339,7 @@ async def list_conversations(db: Store) -> list[dict]:
         rows = conn.execute(
             f"SELECT {_CONV_COLS} FROM conversations ORDER BY updated_at DESC"
         ).fetchall()
-        return [dict(zip(_CONV_NAMES, r)) for r in rows]
+        return [_conv_row_to_dict(r) for r in rows]
     return await db.run(op)
 
 
@@ -329,7 +351,7 @@ async def get_conversation(db: Store, conv_id: str) -> dict | None:
         ).fetchone()
         if row is None:
             return None
-        conv = dict(zip(_CONV_NAMES, row))
+        conv = _conv_row_to_dict(row)
         msgs = conn.execute(
             f"SELECT {_MSG_COLS} FROM messages WHERE conversation_id = ? ORDER BY position",
             (conv_id,),
@@ -345,15 +367,18 @@ async def create_conversation(
     title: str = "New Conversation",
     model_id: str | None = None,
     system_prompt: str | None = None,
+    params: dict | None = None,
 ) -> dict:
     """Create a new conversation and return it."""
     conv_id = new_id()
     now = _now_iso()
+    params = params or {}
+    params_json = _encode_conv_params(params)
     def op(conn):
         conn.execute(
-            "INSERT INTO conversations (id, title, model_id, system_prompt, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (conv_id, title, model_id, system_prompt, now, now),
+            "INSERT INTO conversations (id, title, model_id, system_prompt, params, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conv_id, title, model_id, system_prompt, params_json, now, now),
         )
     await db.run(op)
     return {
@@ -361,6 +386,7 @@ async def create_conversation(
         "title": title,
         "model_id": model_id,
         "system_prompt": system_prompt,
+        "params": params,
         "created_at": now,
         "updated_at": now,
         "messages": [],
@@ -375,12 +401,19 @@ async def update_conversation(
     """Update mutable conversation fields. Returns updated conversation or None.
 
     Pass only the fields to change. Supports explicit ``None`` to clear nullable
-    columns (model_id, system_prompt). Allowed fields: title, model_id, system_prompt.
+    columns (model_id, system_prompt). Allowed fields: title, model_id,
+    system_prompt, params (a JSON object of per-conversation sampler settings).
     """
-    allowed = {"title", "model_id", "system_prompt"}
+    allowed = {"title", "model_id", "system_prompt", "params"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return None
+
+    # params is stored as a JSON blob -- validate/encode for SQL, keep the decoded
+    # dict for the returned object.
+    sql_updates = dict(updates)
+    if "params" in sql_updates:
+        sql_updates["params"] = _encode_conv_params(sql_updates["params"])
 
     now = _now_iso()
     def op(conn):
@@ -389,13 +422,13 @@ async def update_conversation(
         ).fetchone()
         if row is None:
             return None
-        existing = dict(zip(_CONV_NAMES, row))
-        set_clause = ", ".join(f"{k}=?" for k in updates)
-        values = list(updates.values()) + [now, conv_id]
+        existing = _conv_row_to_dict(row)
+        set_clause = ", ".join(f"{k}=?" for k in sql_updates)
+        values = list(sql_updates.values()) + [now, conv_id]
         conn.execute(
             f"UPDATE conversations SET {set_clause}, updated_at=? WHERE id=?", values
         )
-        existing.update(**updates, updated_at=now)
+        existing.update(**updates, updated_at=now)  # `updates` has the DECODED params
         return existing
     return await db.run(op)
 

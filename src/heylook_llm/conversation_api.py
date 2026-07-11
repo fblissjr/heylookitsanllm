@@ -30,12 +30,14 @@ class ConversationCreate(BaseModel):
     title: str = "New Conversation"
     model_id: str | None = None
     system_prompt: str | None = None
+    params: dict = {}  # per-conversation sampler settings (temperature, top_p, ...)
 
 
 class ConversationUpdate(BaseModel):
     title: str | None = None
     model_id: str | None = None
     system_prompt: str | None = None
+    params: dict | None = None
 
 
 # content accepts a plain string OR a content-block list (Messages-style,
@@ -77,7 +79,8 @@ async def list_conversations(request: Request):
 async def create_conversation(request: Request, body: ConversationCreate):
     conn = _get_db(request)
     conv = await db.create_conversation(
-        conn, title=body.title, model_id=body.model_id, system_prompt=body.system_prompt
+        conn, title=body.title, model_id=body.model_id,
+        system_prompt=body.system_prompt, params=body.params
     )
     return conv
 
@@ -102,7 +105,7 @@ async def get_conversation(conv_id: str, request: Request):
 )
 async def update_conversation(conv_id: str, request: Request, body: ConversationUpdate):
     conn = _get_db(request)
-    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "model_id", "system_prompt"}}
+    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "model_id", "system_prompt", "params"}}
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
     conv = await db.update_conversation(conn, conv_id, **kwargs)

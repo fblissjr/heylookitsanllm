@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.56]
+
+### Added
+
+- **Per-conversation sampler settings** (settings-storage unification, backend):
+  conversations gain a `params` JSON column (temperature, top_p, ... -- next to
+  `system_prompt`, so per-conversation tuning lives WITH the conversation on the
+  server instead of split into browser localStorage). Threaded through
+  `create_conversation`/`update_conversation` + `Conversation{Create,Update}` +
+  `PUT /v1/conversations/{id}`. `_SCHEMA_VERSION` 3 -> 4 (drops tables per the
+  solo-deploy policy -- accepted). Frontend wiring (hydrate the settings drawer
+  from `conversation.params`, PUT on change) is the v3 lane. 5 tests.
+
 ## [1.34.55]
 
 ### Fixed

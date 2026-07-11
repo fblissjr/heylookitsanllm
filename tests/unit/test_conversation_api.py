@@ -261,3 +261,45 @@ class TestMessageCRUD:
         fetched = await db.get_conversation(conn, conv["id"])
         assert fetched is not None
         assert fetched["updated_at"] >= original_updated
+
+
+@pytest.mark.unit
+class TestConversationParams:
+    """Per-conversation sampler settings (params) -- JSON blob, unifies the
+    'settings in browser vs server' split by keeping tuning with the conversation
+    (next to system_prompt) on the server."""
+
+    @pytest.mark.asyncio
+    async def test_create_defaults_to_empty_params(self, conn):
+        conv = await db.create_conversation(conn, title="c")
+        assert conv["params"] == {}
+        assert (await db.get_conversation(conn, conv["id"]))["params"] == {}
+
+    @pytest.mark.asyncio
+    async def test_params_round_trip_types(self, conn):
+        p = {"temperature": 1.0, "top_p": 0.9, "top_k": 40, "seed": None, "enable_thinking": True}
+        conv = await db.create_conversation(conn, title="c", params=p)
+        assert conv["params"] == p
+        assert (await db.get_conversation(conn, conv["id"]))["params"] == p
+
+    @pytest.mark.asyncio
+    async def test_update_params(self, conn):
+        conv = await db.create_conversation(conn, title="c", params={"temperature": 1.0})
+        updated = await db.update_conversation(conn, conv["id"], params={"temperature": 0.5, "top_k": 20})
+        assert updated["params"] == {"temperature": 0.5, "top_k": 20}
+        assert (await db.get_conversation(conn, conv["id"]))["params"] == {"temperature": 0.5, "top_k": 20}
+
+    @pytest.mark.asyncio
+    async def test_update_params_independent_of_system_prompt(self, conn):
+        conv = await db.create_conversation(conn, title="c", system_prompt="be terse",
+                                            params={"temperature": 1.0})
+        await db.update_conversation(conn, conv["id"], params={"temperature": 0.2})
+        got = await db.get_conversation(conn, conv["id"])
+        assert got["system_prompt"] == "be terse"     # untouched
+        assert got["params"] == {"temperature": 0.2}
+
+    @pytest.mark.asyncio
+    async def test_params_listed(self, conn):
+        await db.create_conversation(conn, title="c", params={"temperature": 0.7})
+        (row,) = await db.list_conversations(conn)
+        assert row["params"] == {"temperature": 0.7}
