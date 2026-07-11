@@ -1,6 +1,6 @@
 # v3 design language
 
-Last updated: 2026-07-10
+Last updated: 2026-07-11
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. This is a **seed** (plan Phase 4 item 2): it formalizes what v3 already
@@ -124,3 +124,69 @@ Streaming, busy, empty, and error states are designed, not defaulted:
 - Empty states explain the *path out* (e.g. jspace's "no lens installed" names
   the directory to install one into).
 - Buttons never spin; the status line speaks.
+
+## 6. Special tokens are content, not chrome (SHOW, don't hide)
+
+Chat structure tokens — `<|im_start|>`, `<|im_end|>`, `assistant`, `<bos>`,
+`<think>`/`</think>`, role markers — are **load-bearing signal, not noise**. They
+say *where in the turn the model is*, which is exactly what an interpretability
+surface exists to expose. Hiding them is the opposite of this project's
+measure-first ethos, and it's what the reference tool (Neuronpedia's Jacobian
+Lens) pointedly does *not* do — it renders `<|im_start|>assistant` in the
+transcript on purpose.
+
+**Why (so this isn't re-litigated):** stripping specials doesn't just lose
+context, it *manufactures a class of bug*.
+1. **Position integrity.** Prefill and activation patching address activations by
+   position index. If the UI hides tokens the model actually sees, the token the
+   user clicks no longer maps to that index — a silent off-by-N between UI and
+   reality, undebuggable because the discrepancy is invisible by construction.
+2. **The specials are often the object of study** — the assistant onset, the
+   `<think>`/`</think>` boundaries, the token where a refusal fires. That's where
+   the interesting disposition lives; hide it and you've hidden the answer.
+3. **Template bugs go invisible** — this repo has a documented chat-template
+   minefield (doubled BOS, python-vs-jinja templates, list-form templates). A
+   stripped view can't show you when the prompt was malformed.
+
+Rule, across **jspace, notebook, and token explorer** (and chat where the
+rendering path allows): show special tokens **by default**, rendered as visually
+distinct tokens (a dim/outlined chip, `--mono`, whitespace as the honest glyphs
+from §2). Collapsing them is an **opt-in toggle, default off** — never the
+default, never unconditional stripping.
+
+**Realized as ONE global display toggle**, not a per-page control — it lives in
+the shared settings drawer and every token-rendering surface reads it (the
+canonical cross-cutting display pref; see the settings taxonomy below). Two
+invariants:
+- **Display-only.** The toggle changes rendering, never what is sent to the
+  model. This keeps it from becoming a second generation-settings path.
+- **One preference, two render mechanisms.** Token-array surfaces (token
+  explorer, jspace) receive token *ids* and flag/style the special ones;
+  decoded-text surfaces (chat, notebook) render a *string*, so "show specials"
+  means *not stripping them from the decoded text*. Same switch, two code paths —
+  don't ship it as if it were uniform.
+
+The shared settings drawer therefore holds three kinds of thing, and the Phase-2
+extraction should model them distinctly: **generation params** (samplers — the
+existing `settings.js` store), **global display prefs** (show-special-tokens),
+and **per-page extras** (jspace's heatmap/chat toggles, explore's logprobs).
+
+**Editing is raw-token-honest (a hard rule, not subject to the toggle).** Any
+surface that lets the user *edit* a message — editing a chat turn, prefilling or
+continuing an assistant message — must operate on the **full raw text, including
+every special/`<think>`/role token present**. You cannot edit through a stripped
+"clean" view: round-tripping a lossy render on save would silently drop or
+overwrite specials the user never saw and couldn't have intended to change. So
+the display toggle above is a *read*-mode preference only; **edit mode always
+exposes raw tokens when they exist**, regardless of the toggle. If a message has
+no special tokens, there's nothing to expose and the edit box is just its text.
+(This is the same position-integrity concern as #1, sharpened: in a read view a
+hidden token is a missing label; in an *edit* view it's a token you can destroy
+without knowing it was there.)
+
+Known violation to fix (backend): `jspace/analyze.py` decodes the answer with
+`skip_special_tokens=True` and its raw-completion path (`chat=False`) drops the
+chat template entirely — so the assistant turn and its markers never reach the
+UI. The interpretability default should be the *chat turn with markers shown*;
+"raw completion, markers stripped" is at most a secondary mode. This is tracked
+in `docs/jspace_integration_plan.md` (Part 2).

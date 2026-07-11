@@ -3,6 +3,7 @@
 // from ROUTES, so nav-active bookkeeping lives here, not in pages.
 
 import { createEl } from './utils.js';
+import { mountSettingsDrawer } from './settings-drawer.js';
 
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
@@ -30,6 +31,10 @@ for (const [name, route] of Object.entries(ROUTES)) {
   navBottom.append(bottom);
   navLinks.push(desktop, bottom);
 }
+
+// App-shell singleton: a persistent gear + right slide-over shared by every
+// page. Pages contribute to it in setup() and clear on teardown.
+mountSettingsDrawer(navDesktop);
 
 let currentPage = null;
 let navToken = 0;

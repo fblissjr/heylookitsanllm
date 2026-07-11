@@ -15,6 +15,7 @@ import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions } fr
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { samplerParams } from '../settings.js';
+import * as drawer from '../settings-drawer.js';
 
 export default createPage({
   async setup(ctx) {
@@ -32,6 +33,15 @@ export default createPage({
     buildSkeleton(ctx);
     s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
     ctx.onTeardown(() => s.scheduleSave.flush());
+
+    // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
+    // sampler controls; its per-notebook system-prompt editor leads the panel.
+    const unregisterSettings = drawer.registerSettings({
+      caps: () => notebookCaps(ctx),
+      samplers: 'enabled',
+      sections: () => [s.sysPromptDetails],
+    });
+    ctx.onTeardown(unregisterSettings);
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
     s.paint = ctx.throttle(() => paintGen(ctx));
@@ -97,6 +107,8 @@ function buildSkeleton(ctx) {
     s.modelId = s.modelSelect.value;
     s.dirty = true;
     s.scheduleSave();
+    // capability-gated sampler controls (enable_thinking) track the model
+    drawer.requestRebuild({ force: true });
   });
 
   const row = createEl('div', { class: 'notebook__row' }, [s.titleInput, s.modelSelect]);
@@ -110,6 +122,8 @@ function buildSkeleton(ctx) {
     s.dirty = true;
     s.scheduleSave();
   });
+  // Lives in the shared settings drawer (registered as a section), not inline
+  // in the form -- but state (value/open) is still driven by populateFields.
   s.sysPromptDetails = createEl('details', { class: 'notebook__sysprompt' }, [
     createEl('summary', {}, ['System prompt']),
     s.sysPromptInput,
@@ -130,7 +144,7 @@ function buildSkeleton(ctx) {
   s.generateBtn.addEventListener('click', () => (s.gen ? stopGenerate(ctx) : startGenerate(ctx)));
   const actions = createEl('div', { class: 'notebook__actions' }, [s.generateBtn]);
 
-  s.formEl = createEl('div', { class: 'notebook__form' }, [row, s.sysPromptDetails, contentWrap, actions]);
+  s.formEl = createEl('div', { class: 'notebook__form' }, [row, contentWrap, actions]);
   s.emptyEl = createEl('div', { class: 'empty-state notebook__empty' }, [
     'Create a notebook to draft with the model — Generate continues from your cursor.',
   ]);
@@ -151,6 +165,11 @@ function buildSkeleton(ctx) {
 function fillModelSelect(ctx) {
   const s = ctx.state;
   fillOptions(s.modelSelect, s.models.map((m) => m.id));
+}
+
+function notebookCaps(ctx) {
+  const model = ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value);
+  return model?.capabilities ?? [];
 }
 
 function showStatus(ctx, text, isError = false) {

@@ -10,6 +10,7 @@
 import { createPage } from '../page.js';
 import { createEl, armedConfirm } from '../utils.js';
 import { api } from '../api.js';
+import * as drawer from '../settings-drawer.js';
 
 export default createPage({
   async setup(ctx) {
@@ -21,6 +22,9 @@ export default createPage({
     s.importingIds = new Set(); // scan result ids mid import
 
     buildSkeleton(ctx);
+    // No sampler/page settings here -- register so the drawer still offers the
+    // global Display prefs and hides the sampler panel.
+    ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
     await fetchModels(ctx);
   },
 });

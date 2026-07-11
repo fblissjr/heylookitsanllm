@@ -14,6 +14,7 @@
 import { createPage } from '../page.js';
 import { createEl, formatBytes } from '../utils.js';
 import { api } from '../api.js';
+import * as drawer from '../settings-drawer.js';
 
 const RANGES = ['1h', '6h', '24h', '7d'];
 const DEFAULT_RANGE = '1h';
@@ -25,6 +26,9 @@ export default createPage({
     s.activeRange = DEFAULT_RANGE;
 
     buildSkeleton(ctx);
+    // No sampler/page settings here -- register so the drawer still offers the
+    // global Display prefs and hides the sampler panel.
+    ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
 
     s.refreshBtn.addEventListener('click', () => loadMetrics(ctx, true));
     for (const btn of s.rangeButtons) {

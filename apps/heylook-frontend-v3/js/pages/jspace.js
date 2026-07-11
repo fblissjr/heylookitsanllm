@@ -15,6 +15,7 @@
 import { createPage } from '../page.js';
 import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
+import * as drawer from '../settings-drawer.js';
 
 // Probability/strength in [0,1] -> OKLCH fill (25=red .. 145=green), matching
 // the explore-page chip formula (DESIGN.md §2: fixed L/C, hue carries data).
@@ -41,6 +42,15 @@ export default createPage({
 
     buildSkeleton(ctx);
     s.paintDetail = ctx.throttle(() => { if (ctx.alive) renderDetail(ctx); });
+
+    // J-space is greedy (analyze never sends sampler params): show the sampling
+    // panel read-only so that's honest, and host the analyze-shaping toggles
+    // (heatmap, chat mode) as drawer extras rather than page chrome.
+    const unregisterSettings = drawer.registerSettings({
+      samplers: 'disabled',
+      extras: () => [s.heatmapLabel, s.chatLabel],
+    });
+    ctx.onTeardown(unregisterSettings);
 
     const res = await api.jspaceModels({ signal: ctx.signal }).catch(() => ({ models: [] }));
     if (!ctx.alive) return;
@@ -83,14 +93,17 @@ function buildSkeleton(ctx) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); analyze(ctx); }
   });
 
+  // Analyze-shaping toggles -- read at analyze() time, and hosted in the shared
+  // settings drawer (extras), not the page header. Kept on state so the
+  // drawer contribution's extras() can hand the drawer the same elements.
   s.heatmapToggle = createEl('input', { type: 'checkbox', id: 'jspace-heatmap' });
-  const heatmapLabel = createEl('label', { class: 'jspace__opt', for: 'jspace-heatmap' },
+  s.heatmapLabel = createEl('label', { class: 'jspace__opt', for: 'jspace-heatmap' },
     [s.heatmapToggle, ' layer×token heatmap']);
 
   // Raw completion (default) reads the workspace at a content token -> crisp
   // "silent words". Chat mode formats an instruct turn (needed for risk).
   s.chatToggle = createEl('input', { type: 'checkbox', id: 'jspace-chat' });
-  const chatLabel = createEl('label', { class: 'jspace__opt', for: 'jspace-chat' },
+  s.chatLabel = createEl('label', { class: 'jspace__opt', for: 'jspace-chat' },
     [s.chatToggle, ' chat mode']);
 
   s.analyzeBtn = createEl('button', { class: 'btn btn--primary' }, ['Analyze']);
@@ -100,7 +113,7 @@ function buildSkeleton(ctx) {
   s.resultEl = createEl('div', { class: 'jspace__result' });
 
   s.rootEl = createEl('div', { class: 'jspace', tabindex: '0' }, [
-    createEl('header', { class: 'jspace__bar' }, [s.modelSelect, s.lensBadge, heatmapLabel, chatLabel]),
+    createEl('header', { class: 'jspace__bar' }, [s.modelSelect, s.lensBadge]),
     createEl('div', { class: 'jspace__composer' }, [s.textarea, s.analyzeBtn]),
     s.statusEl,
     s.resultEl,

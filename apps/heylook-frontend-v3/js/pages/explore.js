@@ -14,6 +14,7 @@ import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { samplerParams } from '../settings.js';
+import * as drawer from '../settings-drawer.js';
 
 export default createPage({
   async setup(ctx) {
@@ -25,6 +26,16 @@ export default createPage({
 
     buildSkeleton(ctx);
     s.paintStrip = ctx.throttle(() => { if (ctx.alive) renderStrip(ctx); });
+
+    // Explore consumes samplerParams(); logprobs are hard-wired on for this
+    // view, so the drawer just states that honestly as an extra (no control).
+    const unregisterSettings = drawer.registerSettings({
+      caps: () => exploreCaps(ctx),
+      samplers: 'enabled',
+      extras: () => [createEl('div', { class: 'settings-note muted small' },
+        ['Logprobs on: top-5 alternatives per token (fixed for this view).'])],
+    });
+    ctx.onTeardown(unregisterSettings);
 
     renderStrip(ctx);
     renderDetail(ctx);
@@ -44,6 +55,8 @@ function buildSkeleton(ctx) {
   const s = ctx.state;
 
   s.modelSelect = createEl('select', { title: 'Model' });
+  // capability-gated sampler controls (enable_thinking) track the model
+  s.modelSelect.addEventListener('change', () => drawer.requestRebuild({ force: true }));
 
   s.textarea = createEl('textarea', { rows: 2, placeholder: 'Write a prompt…' });
   s.textarea.addEventListener('input', () => autoGrow(s.textarea));
@@ -85,6 +98,11 @@ function buildSkeleton(ctx) {
 function fillModelSelect(ctx) {
   const s = ctx.state;
   fillOptions(s.modelSelect, s.models.map((m) => m.id));
+}
+
+function exploreCaps(ctx) {
+  const model = ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value);
+  return model?.capabilities ?? [];
 }
 
 function showStatus(ctx, text, isError = false) {

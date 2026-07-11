@@ -14,7 +14,8 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { buildSettingsPanel, samplerParams, snapshotSettings, applySettings } from '../settings.js';
+import { samplerParams, snapshotSettings, applySettings } from '../settings.js';
+import * as drawer from '../settings-drawer.js';
 
 export default createPage({
   async setup(ctx) {
@@ -37,6 +38,22 @@ export default createPage({
     ctx.onTeardown(() => {
       if (s.stream) beforeUnloadGuard.disable();
     });
+
+    // Chat's shared-drawer contribution: the preset bar + per-conversation
+    // system-prompt editor lead the panel; full sampler controls; caps track
+    // the selected model. onOpen lazily refreshes presets (fingerprint-diffed,
+    // focus-guarded) so an open costs nothing until the list actually changed.
+    const unregisterSettings = drawer.registerSettings({
+      caps: () => currentCaps(ctx),
+      samplers: 'enabled',
+      sections: () => [buildPresetSection(ctx), buildSystemPromptSection(ctx)],
+      onOpen: () => {
+        refreshPresets(ctx).then((changed) => {
+          if (ctx.alive && changed) drawer.requestRebuild();
+        });
+      },
+    });
+    ctx.onTeardown(unregisterSettings);
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -87,17 +104,13 @@ function buildSkeleton(ctx) {
       const conv = s.conversations.find((c) => c.id === ctx.state.activeId);
       if (conv) conv.model_id = s.modelSelect.value;
     }
-    // Capability-gated controls (enable_thinking) must track the model: an
-    // open panel rebuilt here, not only on next open.
-    rebuildSettingsPanel(ctx);
+    // Capability-gated controls (enable_thinking) must track the model: force
+    // an open drawer to rebuild here, not only on its next open.
+    drawer.requestRebuild({ force: true });
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
   convsToggle.addEventListener('click', () => s.rootEl.classList.toggle('chat--convs-open'));
-
-  s.gearBtn = createEl('button', { class: 'btn btn--sm btn--ghost', title: 'Sampling settings' }, ['Settings']);
-  s.gearBtn.addEventListener('click', () => toggleSettings(ctx));
-  s.settingsHost = createEl('div', { class: 'chat__settings', hidden: true });
 
   s.messagesInner = createEl('div', { class: 'chat__messages-inner' });
   s.messagesEl = createEl('div', { class: 'chat__messages' }, [s.messagesInner]);
@@ -140,9 +153,7 @@ function buildSkeleton(ctx) {
       convsToggle,
       s.modelSelect,
       createEl('div', { class: 'chat__bar-spacer' }),
-      s.gearBtn,
     ]),
-    s.settingsHost,
     s.messagesEl,
     s.statusEl,
     s.attachStrip,
@@ -161,33 +172,6 @@ function fillModelSelect(ctx) {
 function currentCaps(ctx) {
   const model = ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value);
   return model?.capabilities ?? [];
-}
-
-function toggleSettings(ctx) {
-  const host = ctx.state.settingsHost;
-  if (!host.hidden) {
-    host.hidden = true;
-    return;
-  }
-  // Open instantly from cached presets; the refresh repaints only when the
-  // list actually changed, and never while the user's cursor is in the panel
-  // (replaceChildren would destroy uncommitted text before its change event).
-  host.hidden = false;
-  rebuildSettingsPanel(ctx);
-  refreshPresets(ctx).then((changed) => {
-    if (!ctx.alive || !changed || host.contains(document.activeElement)) return;
-    rebuildSettingsPanel(ctx);
-  });
-}
-
-// Safe to call unconditionally from any state-changing site: no-op while the
-// panel is hidden (it's rebuilt fresh on open).
-function rebuildSettingsPanel(ctx) {
-  const s = ctx.state;
-  if (s.settingsHost.hidden) return;
-  const panel = buildSettingsPanel({ caps: currentCaps(ctx) });
-  panel.prepend(buildPresetSection(ctx), buildSystemPromptSection(ctx));
-  s.settingsHost.replaceChildren(panel);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +241,7 @@ async function refreshPresets(ctx) {
 
 async function refreshPresetsAndRepaint(ctx) {
   await refreshPresets(ctx);
-  if (ctx.alive) rebuildSettingsPanel(ctx);
+  if (ctx.alive) drawer.requestRebuild({ force: true });
 }
 
 // Applying a preset COPIES its fields (LM Studio semantics): params become
@@ -272,7 +256,9 @@ function applyPreset(ctx, presetId) {
     setSystemPrompt(ctx, preset.system_prompt ?? null);
     showStatus(ctx, `Preset "${preset.name}" applied.`);
   }
-  rebuildSettingsPanel(ctx);
+  // Force: the preset <select> that triggered this lives in the drawer, so the
+  // focus guard would otherwise skip the repaint that shows the applied values.
+  drawer.requestRebuild({ force: true });
 }
 
 async function savePreset(ctx, name) {
@@ -448,7 +434,7 @@ async function deleteConversation(ctx, convId) {
     s.systemPrompt = null;
     if (s.conversations.length) await selectConversation(ctx, s.conversations[0].id);
     else {
-      rebuildSettingsPanel(ctx);
+      drawer.requestRebuild({ force: true });
       renderMessages(ctx);
     }
   }
@@ -472,8 +458,8 @@ async function selectConversation(ctx, convId) {
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
-    // an open panel shows the previous conversation's system prompt otherwise
-    rebuildSettingsPanel(ctx);
+    // an open drawer shows the previous conversation's system prompt otherwise
+    drawer.requestRebuild({ force: true });
     renderMessages(ctx);
     scrollMessages(ctx, true);
   } catch (err) {
@@ -770,9 +756,9 @@ async function send(ctx) {
       } else {
         s.systemPrompt = conv.system_prompt ?? null;
       }
-      // an open panel's sysprompt textarea was built for activeId=null --
+      // an open drawer's sysprompt textarea was built for activeId=null --
       // rebind it to the conversation that now owns the prompt
-      rebuildSettingsPanel(ctx);
+      drawer.requestRebuild({ force: true });
       renderConvList(ctx);
     } else {
       const conv = s.conversations.find((c) => c.id === s.activeId);

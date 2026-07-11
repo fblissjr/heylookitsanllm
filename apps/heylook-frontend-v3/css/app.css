@@ -283,6 +283,98 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   resize: vertical;
 }
 
+/* a muted footnote inside a settings panel (e.g. the greedy/logprobs note) */
+.settings-note { margin-top: 0.25rem; }
+
+/* ================= settings drawer (app-shell singleton) ================= */
+
+/* desktop gear: a nav-item pinned to the foot of the sidebar rail */
+.drawer-gear { text-align: left; cursor: pointer; margin-top: 0.25rem; }
+.drawer-gear-mobile { display: none; }
+
+/* right slide-over + backdrop, both direct children of <body>. Closed state
+   is offscreen (translateX) + inert; visibility is delayed to the end of the
+   slide so an offscreen panel can't create a horizontal scrollbar. The global
+   prefers-reduced-motion kill switch (top of file) collapses the slide to a
+   snap -- no transitionend is relied on. */
+.drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(22rem, 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: -4px 0 24px oklch(0.28 0.02 78 / 0.12);
+  z-index: var(--z-drawer);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform var(--t-fast) var(--ease), visibility 0s linear var(--t-fast);
+}
+.drawer--open {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform var(--t-fast) var(--ease), visibility 0s linear 0s;
+}
+
+.drawer__head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.drawer__head h2 { font-size: var(--text-ui); color: var(--ink-muted); font-weight: 550; }
+.drawer__body {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.28 0.02 78 / 0.28);
+  z-index: var(--z-drawer);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--t-fast) var(--ease), visibility 0s linear var(--t-fast);
+}
+.drawer-backdrop--open {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--t-fast) var(--ease), visibility 0s linear 0s;
+}
+
+@media (max-width: 767px) {
+  /* #sidebar (with the desktop gear) is hidden on phones -- give the drawer a
+     floating gear above the bottom nav so it stays reachable. */
+  .drawer-gear-mobile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    right: 0.75rem;
+    bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 0.75rem);
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 2px 10px oklch(0.28 0.02 78 / 0.14);
+    color: var(--ink);
+    font-size: 1.15rem;
+    cursor: pointer;
+    z-index: var(--z-raised);
+  }
+}
+
 /* ================= chat ================= */
 
 .chat {
@@ -349,16 +441,6 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .chat__bar select { max-width: 16rem; }
 .chat__bar-spacer { flex: 1; }
 .chat__convs-toggle { display: none; }
-
-.chat__settings {
-  position: absolute;
-  top: 3.2rem;
-  right: 1rem;
-  width: min(20rem, calc(100vw - 2rem));
-  z-index: var(--z-raised);
-  box-shadow: 0 4px 24px oklch(0.28 0.02 78 / 0.12);
-}
-.chat__thread { position: relative; }
 
 .chat__messages {
   flex: 1;
