@@ -95,6 +95,19 @@ export function autoGrow(textarea, maxPx = 200) {
   textarea.style.height = `${Math.min(textarea.scrollHeight, maxPx)}px`;
 }
 
+// Mobile: a slide-in list pane (chat conversations, notebook list) covers most
+// of the page; a tap on the visible content outside the pane and its toggle
+// dismisses it. Wire on the page root; `insideSelectors` are the elements a
+// click must NOT dismiss on (the pane itself, its toggle button).
+export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
+  root.addEventListener('click', (e) => {
+    if (root.classList.contains(openClass) &&
+        !insideSelectors.some((sel) => e.target.closest(sel))) {
+      root.classList.remove(openClass);
+    }
+  });
+}
+
 // Two-tap destructive confirm: first click arms the button for 3s,
 // second click within that window runs the action.
 export function armedConfirm(btn, action, armedLabel = 'Confirm?') {

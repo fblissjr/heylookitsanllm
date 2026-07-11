@@ -41,7 +41,7 @@ let current = null;   // the registered page contribution (or null)
 // mount (once, by app.js)
 // ---------------------------------------------------------------------------
 
-export function mountSettingsDrawer(navDesktop) {
+export function mountSettingsDrawer(navDesktop, navBottom) {
   if (mounted) return;
   mounted = true;
   appEl = document.getElementById('app');
@@ -63,7 +63,7 @@ export function mountSettingsDrawer(navDesktop) {
     title: 'Settings', 'aria-label': 'Open settings',
   }, ['⚙']);
   bottomGearBtn.addEventListener('click', () => open(bottomGearBtn));
-  document.getElementById('bottom-nav')?.append(bottomGearBtn);
+  navBottom.append(bottomGearBtn);
 
   backdropEl = createEl('div', { class: 'drawer-backdrop' });
   backdropEl.addEventListener('click', () => close());
@@ -94,6 +94,12 @@ export function mountSettingsDrawer(navDesktop) {
   document.addEventListener('keydown', (e) => {
     if (isOpen && e.key === 'Escape') close();
   });
+
+  // A route change (nav link, or browser back/forward -- a common way to dismiss
+  // a modal) must not leave #app sealed under the newly-mounted page. Registered
+  // before app.js's own hashchange->navigate listener, so inert is cleared before
+  // the next page mounts.
+  window.addEventListener('hashchange', () => { if (isOpen) close(); });
 }
 
 // ---------------------------------------------------------------------------

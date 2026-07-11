@@ -11,7 +11,7 @@
 // - Stop is normal completion: partial text is kept, not discarded.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
@@ -167,15 +167,9 @@ function buildSkeleton(ctx) {
   ]);
 
   s.rootEl = createEl('div', { class: 'notebook' }, [listPane, editorSection]);
-  // Mobile: the notebook list drawer covers most of the editor; tapping the
-  // visible editor area (outside the pane and its toggle) dismisses it.
-  s.rootEl.addEventListener('click', (e) => {
-    if (s.rootEl.classList.contains('notebook--list-open') &&
-        !e.target.closest('.notebook__list-pane') &&
-        !e.target.closest('.notebook__list-toggle')) {
-      s.rootEl.classList.remove('notebook--list-open');
-    }
-  });
+  // Mobile: tapping the visible editor (outside the list pane + toggle) dismisses
+  // the slide-in pane.
+  dismissPaneOnOutsideClick(s.rootEl, 'notebook--list-open', '.notebook__list-pane', '.notebook__list-toggle');
   ctx.el.append(s.rootEl);
 }
 

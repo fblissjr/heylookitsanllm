@@ -34,7 +34,7 @@ for (const [name, route] of Object.entries(ROUTES)) {
 
 // App-shell singleton: a persistent gear + right slide-over shared by every
 // page. Pages contribute to it in setup() and clear on teardown.
-mountSettingsDrawer(navDesktop);
+mountSettingsDrawer(navDesktop, navBottom);
 
 let currentPage = null;
 let navToken = 0;

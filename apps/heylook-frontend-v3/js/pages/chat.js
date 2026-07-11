@@ -10,7 +10,7 @@
 // - Abort (Stop button) is normal completion: partial content is saved.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -171,15 +171,9 @@ function buildSkeleton(ctx) {
   ]);
 
   s.rootEl = createEl('div', { class: 'chat' }, [convPane, thread]);
-  // Mobile: the conversations drawer covers most of the thread; tapping the
-  // visible thread area (outside the pane and its toggle) dismisses it.
-  s.rootEl.addEventListener('click', (e) => {
-    if (s.rootEl.classList.contains('chat--convs-open') &&
-        !e.target.closest('.chat__convs') &&
-        !e.target.closest('.chat__convs-toggle')) {
-      s.rootEl.classList.remove('chat--convs-open');
-    }
-  });
+  // Mobile: tapping the visible thread (outside the conversations pane + toggle)
+  // dismisses the slide-in pane.
+  dismissPaneOnOutsideClick(s.rootEl, 'chat--convs-open', '.chat__convs', '.chat__convs-toggle');
   ctx.el.append(s.rootEl);
 }
 

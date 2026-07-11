@@ -377,6 +377,11 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   // ---- conversation management -------------------------------------------
+  // Defensive: if any settings/preset check above failed before its closeDrawer,
+  // the drawer would still be open (#app inert) and cascade-fail every check
+  // here. closeDrawer is a no-op when already closed.
+  await closeDrawer(page);
+
   await suite.check('New button creates an additional conversation', async () => {
     const before = await count(page, '.conv-item');
     await clickByText(page, '.chat__convs-head button', 'New');
