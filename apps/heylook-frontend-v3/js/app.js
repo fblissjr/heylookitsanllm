@@ -53,7 +53,10 @@ async function navigate() {
   document.title = `${route.title} · heylook`;
   document.body.dataset.page = routeName;
   for (const link of navLinks) {
-    link.classList.toggle('nav-item--active', link.dataset.route === routeName);
+    const active = link.dataset.route === routeName;
+    link.classList.toggle('nav-item--active', active);
+    if (active) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
   }
 
   try {
@@ -67,7 +70,7 @@ async function navigate() {
     if (token !== navToken) return;
     console.error(`page "${routeName}" failed to mount`, err);
     currentPage = null;
-    main.replaceChildren(createEl('div', { class: 'error-note' }, [
+    main.replaceChildren(createEl('div', { class: 'error-note', role: 'alert' }, [
       `This page failed to load (${err.message}). `,
       'Navigation still works -- pick another page or reload.',
     ]));

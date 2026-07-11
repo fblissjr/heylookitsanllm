@@ -80,7 +80,7 @@ function buildDangerZone(ctx) {
 }
 
 function showError(ctx, message) {
-  ctx.state.statusEl.replaceChildren(createEl('div', { class: 'error-note' }, [message]));
+  ctx.state.statusEl.replaceChildren(createEl('div', { class: 'error-note', role: 'alert' }, [message]));
 }
 
 function clearError(ctx) {

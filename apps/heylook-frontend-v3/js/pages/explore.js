@@ -70,7 +70,7 @@ function buildSkeleton(ctx) {
   s.genBtn = createEl('button', { class: 'btn btn--primary' }, ['Generate']);
   s.genBtn.addEventListener('click', () => (s.stream ? stopStream(ctx) : generate(ctx)));
 
-  s.statusEl = createEl('div', { class: 'explore__status small' });
+  s.statusEl = createEl('div', { class: 'explore__status small', role: 'status' });
 
   s.thinkingBody = createEl('div', { class: 'thinking__body' });
   s.thinkingEl = createEl('details', { class: 'thinking explore__thinking', hidden: true }, [
@@ -157,7 +157,12 @@ function appendGlyphs(el, text) {
 function buildChip(ctx, tok, idx) {
   const hue = 25 + tok.prob * 120;
   const selected = ctx.state.selectedIndex === idx;
-  const chip = createEl('span', { class: `tok${selected ? ' tok--selected' : ''}` });
+  // Probability is titled, not color-only (DESIGN.md §2): the chip hue encodes
+  // it, but a tooltip + a11y readout must carry it too.
+  const chip = createEl('span', {
+    class: `tok${selected ? ' tok--selected' : ''}`,
+    title: `p ${(tok.prob * 100).toFixed(1)}%`,
+  });
   chip.style.background = `oklch(0.86 0.11 ${hue})`;
   appendGlyphs(chip, tok.token);
   chip.addEventListener('click', () => {

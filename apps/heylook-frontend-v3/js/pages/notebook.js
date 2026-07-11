@@ -158,7 +158,7 @@ function buildSkeleton(ctx) {
   ]);
 
   s.editorBody = createEl('div', { class: 'notebook__body' });
-  s.statusEl = createEl('div', { class: 'notebook__status' });
+  s.statusEl = createEl('div', { class: 'notebook__status', role: 'status' });
 
   const editorSection = createEl('section', { class: 'notebook__editor' }, [
     toolbar,
@@ -167,6 +167,15 @@ function buildSkeleton(ctx) {
   ]);
 
   s.rootEl = createEl('div', { class: 'notebook' }, [listPane, editorSection]);
+  // Mobile: the notebook list drawer covers most of the editor; tapping the
+  // visible editor area (outside the pane and its toggle) dismisses it.
+  s.rootEl.addEventListener('click', (e) => {
+    if (s.rootEl.classList.contains('notebook--list-open') &&
+        !e.target.closest('.notebook__list-pane') &&
+        !e.target.closest('.notebook__list-toggle')) {
+      s.rootEl.classList.remove('notebook--list-open');
+    }
+  });
   ctx.el.append(s.rootEl);
 }
 

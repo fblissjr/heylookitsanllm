@@ -109,7 +109,7 @@ function buildSkeleton(ctx) {
   s.analyzeBtn = createEl('button', { class: 'btn btn--primary' }, ['Analyze']);
   s.analyzeBtn.addEventListener('click', () => analyze(ctx));
 
-  s.statusEl = createEl('div', { class: 'jspace__status small' });
+  s.statusEl = createEl('div', { class: 'jspace__status small', role: 'status' });
   s.resultEl = createEl('div', { class: 'jspace__result' });
 
   s.rootEl = createEl('div', { class: 'jspace', tabindex: '0' }, [

@@ -3,11 +3,13 @@
 Last updated: 2026-07-11
 
 The written form of the design system that previously lived only in `css/app.css`
-comments. This is a **seed** (plan Phase 4 item 2): it formalizes what v3 already
-does well enough that new UI — starting with the j-space visualizer — can stay
-on-system, and records the visualizer's load-bearing paradigm decision. It is not
-a completed impeccable pass; run `/impeccable audit` per page before calling the
-visual work done.
+comments. It formalizes what v3 does so that new UI — starting with the j-space
+visualizer — stays on-system, and records the visualizer's load-bearing paradigm
+decision. The **impeccable audit + polish pass (plan Phase 4 item 2) ran
+2026-07-11** across all six pages + the app shell + the settings drawer; its
+accessibility + mobile-parity rules are §7 below (they are as load-bearing as the
+token system — new UI must honor them). The slop-detector is clean; the technical
+score was 17/20 (the pass fixed the mobile + a11y cluster that cost the points).
 
 Product context (users, register, anti-references) lives in the repo-root
 `PRODUCT.md` — read it first. The one-line version: warm minimal, thinking space
@@ -190,3 +192,54 @@ chat template entirely — so the assistant turn and its markers never reach the
 UI. The interpretability default should be the *chat turn with markers shown*;
 "raw completion, markers stripped" is at most a secondary mode. This is tracked
 in `docs/jspace_integration_plan.md` (Part 2).
+
+## 7. Accessibility & mobile parity (impeccable pass, 2026-07-11)
+
+The pragmatic-a11y floor (`PRODUCT.md`) and the "one design, two screens"
+principle are enforced by concrete rules, not aspiration. New UI must follow
+them or it silently regresses the phone surface (a co-primary target, per the
+owner: "equally well on desktop web and iPhone 17 Pro Safari").
+
+- **Hover-revealed actions need a touch fallback.** Any control hidden until
+  `:hover` (row delete/rename, message actions) MUST also reveal under
+  `@media (hover: none)` — touch has no hover, so a hover-only affordance is
+  *unreachable* on the phone (this exact bug hid conversation/notebook delete
+  on iOS). `.message__actions` was the reference; `.conv-item__delete/__edit`
+  and `.notebook-item__delete` now match it. Prefer this to `dblclick`, which
+  iOS Safari maps to zoom (conversation rename kept a reveal-on-touch "Ren"
+  button for this reason).
+- **The settings entry point is device-specific, one drawer.** Desktop = a gear
+  `nav-item` at the foot of the sidebar rail; phone = a trailing `⚙` item in
+  `#bottom-nav` (`.drawer-gear-bottom`). **Not a floating FAB** — a page with a
+  *bottom* composer (chat) leaves no bottom-right corner free, so a FAB collides
+  with Send. The bottom-nav gear rides `#bottom-nav`'s own `<=767px` show/hide
+  and, being inside `#app`, is sealed by the drawer's focus-trap for free.
+- **The drawer is a real modal dialog.** `role="dialog"` + `aria-modal`,
+  `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
+  moves focus to Close, and on close restores focus to the opener. Escape and a
+  backdrop click both close.
+- **Honest states are announced, not just shown.** Status lines carry
+  `role="status"` (polite: streaming, "server busy — retrying", token counts);
+  error surfaces (`.error-note`, router mount-failure) carry `role="alert"`
+  (assertive). `setStatus` writing `textContent` into a live region is what
+  makes streaming/error legible to a screen reader.
+- **Form controls are programmatically labeled.** Sampler + display inputs use
+  `<label for>`/`id` (the drawer renders one panel at a time, so ids are safe).
+  A visible label beside an unassociated input is not a label.
+- **Data-color is never the only channel.** Every strength/probability chip
+  carries a `title` (explore = `p N%`, jspace = logit/entropy) so the value is
+  available without color — this is the §2 rule, now enforced on the explore
+  strip too.
+- **Active nav carries `aria-current="page"`.** Set in the router alongside the
+  `--active` class.
+- **Touch targets:** comfortable on phone — bottom-nav items ≥44px, models-page
+  actions bump to 44px, the attach-thumb remove control is ≥24px. `btn--sm`
+  (26px) is acceptable for dense desktop-hover action clusters (≥ the 24px AA
+  floor) but never the sole phone affordance.
+
+Verify phone behavior at an iPhone-class viewport with **touch media emulated**
+(`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it
+never exercises the touch-reveal rules above. claude-in-chrome refuses
+localhost; drive it with puppeteer + system Chrome (as `tests/e2e/` does) and
+force the media features over raw CDP (`Emulation.setEmulatedMedia`), since
+puppeteer-core whitelists `emulateMediaFeatures` and rejects `hover`/`pointer`.

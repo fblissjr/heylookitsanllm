@@ -125,7 +125,7 @@ function buildSkeleton(ctx) {
   s.messagesInner = createEl('div', { class: 'chat__messages-inner' });
   s.messagesEl = createEl('div', { class: 'chat__messages' }, [s.messagesInner]);
 
-  s.statusEl = createEl('div', { class: 'chat__status' });
+  s.statusEl = createEl('div', { class: 'chat__status', role: 'status' });
 
   s.textarea = createEl('textarea', { rows: 1, placeholder: 'Message… (Enter to send)' });
   s.textarea.addEventListener('input', () => autoGrow(s.textarea));
@@ -171,6 +171,15 @@ function buildSkeleton(ctx) {
   ]);
 
   s.rootEl = createEl('div', { class: 'chat' }, [convPane, thread]);
+  // Mobile: the conversations drawer covers most of the thread; tapping the
+  // visible thread area (outside the pane and its toggle) dismisses it.
+  s.rootEl.addEventListener('click', (e) => {
+    if (s.rootEl.classList.contains('chat--convs-open') &&
+        !e.target.closest('.chat__convs') &&
+        !e.target.closest('.chat__convs-toggle')) {
+      s.rootEl.classList.remove('chat--convs-open');
+    }
+  });
   ctx.el.append(s.rootEl);
 }
 
@@ -365,13 +374,20 @@ function renderConvList(ctx) {
       e.stopPropagation();
       startRename(ctx, conv, title);
     });
+    // dblclick is desktop-only (double-tap zooms on iOS); a reveal-on-hover/touch
+    // button gives touch a rename path. Same visibility grammar as Del.
+    const ren = createEl('button', { class: 'btn btn--sm btn--ghost conv-item__edit', title: 'Rename' }, ['Ren']);
+    ren.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startRename(ctx, conv, title);
+    });
     const del = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost conv-item__delete' }, ['Del']),
       () => deleteConversation(ctx, conv.id),
     );
     const item = createEl('div', {
       class: `conv-item${conv.id === s.activeId ? ' conv-item--active' : ''}`,
-    }, [title, del]);
+    }, [title, ren, del]);
     item.addEventListener('click', () => {
       selectConversation(ctx, conv.id);
       s.rootEl.classList.remove('chat--convs-open');

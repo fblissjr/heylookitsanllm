@@ -30,7 +30,8 @@ let bodyEl = null;    // render target (the ONLY thing render() replaces)
 let backdropEl = null;
 let closeBtn = null;
 let gearBtn = null;
-let mobileGearBtn = null;
+let bottomGearBtn = null;   // phone-width opener: a trailing item in #bottom-nav
+let appEl = null;     // #app -- made inert while the modal drawer is open
 
 let isOpen = false;
 let lastOpener = null;
@@ -43,6 +44,7 @@ let current = null;   // the registered page contribution (or null)
 export function mountSettingsDrawer(navDesktop) {
   if (mounted) return;
   mounted = true;
+  appEl = document.getElementById('app');
 
   gearBtn = createEl('button', {
     type: 'button', class: 'nav-item drawer-gear',
@@ -52,13 +54,16 @@ export function mountSettingsDrawer(navDesktop) {
   navDesktop.append(gearBtn);
 
   // Phone widths hide #sidebar (and with it the desktop gear), so the drawer
-  // needs its own reachable affordance there -- a floating gear above the
-  // bottom nav. Same open() target; CSS shows it only <=767px.
-  mobileGearBtn = createEl('button', {
-    type: 'button', class: 'drawer-gear-mobile',
+  // needs its own reachable affordance there -- a trailing gear item in the
+  // bottom nav (a bottom composer, e.g. chat, leaves no room for a floating
+  // FAB). #bottom-nav rides its own <=767px show/hide, and lives inside #app so
+  // the inert focus-trap covers it for free. Same open() target.
+  bottomGearBtn = createEl('button', {
+    type: 'button', class: 'nav-item drawer-gear-bottom',
     title: 'Settings', 'aria-label': 'Open settings',
   }, ['⚙']);
-  mobileGearBtn.addEventListener('click', () => open(mobileGearBtn));
+  bottomGearBtn.addEventListener('click', () => open(bottomGearBtn));
+  document.getElementById('bottom-nav')?.append(bottomGearBtn);
 
   backdropEl = createEl('div', { class: 'drawer-backdrop' });
   backdropEl.addEventListener('click', () => close());
@@ -81,7 +86,7 @@ export function mountSettingsDrawer(navDesktop) {
   ]);
   panelEl.inert = true; // not focusable/tabbable while closed
 
-  document.body.append(mobileGearBtn, backdropEl, panelEl);
+  document.body.append(backdropEl, panelEl);
 
   // Escape closes. Focus lives inside the drawer while open (modal backdrop),
   // so this never races page-level Escape handlers (jspace unpin, explore
@@ -133,6 +138,11 @@ function open(opener) {
   lastOpener = opener ?? gearBtn;
   render();
   panelEl.inert = false;
+  // Modal: seal the rest of the page so Tab can't escape the dialog. The
+  // drawer + backdrop are body children (siblings of #app), so they stay live;
+  // the bottom-nav gear is inside #app, so it's sealed too (correct: it's the
+  // opener, behind the backdrop).
+  if (appEl) appEl.inert = true;
   panelEl.classList.add('drawer--open');
   backdropEl.classList.add('drawer-backdrop--open');
   // Focus the close button (in the header, OUTSIDE bodyEl) so the drawer is
@@ -147,6 +157,8 @@ function close() {
   panelEl.classList.remove('drawer--open');
   backdropEl.classList.remove('drawer-backdrop--open');
   panelEl.inert = true;
+  // Un-seal the page BEFORE restoring focus -- the opener lives inside #app.
+  if (appEl) appEl.inert = false;
   // Clear the body: open() always re-renders, so a closed drawer holds nothing.
   // Prevents a page's contributed nodes (e.g. jspace's fixed-id toggles) from
   // lingering in the hidden drawer after that page unmounts (stale retention +

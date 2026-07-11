@@ -95,6 +95,26 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   by all 6 pages; `registerSettings(contribution)` with the sampling / global display prefs /
   per-page extras taxonomy (DESIGN.md §6). jspace's toggles + samplers-greyed, notebook/chat
   sysprompt as sections, presets on chat. Edge cases preserved, browser-verified, code-reviewed.
+- [x] **Impeccable design-quality pass (plan Phase 4 item 2)**: DONE 2026-07-11 -- ran
+  `/impeccable audit` + `polish` across all 6 pages + app shell + settings drawer. Slop-detector
+  clean; technical score 17/20. Fixed the mobile + a11y cluster: **delete/rename were unreachable
+  on iPhone** (hover-gated, no `@media(hover:none)` fallback -- a genuine touch bug); status lines
+  now `role=status` / error surfaces `role=alert` (honest states reach screen readers); sampler +
+  display inputs get `<label for>`/id; drawer became a real modal (seals `#app` via `inert`);
+  explore chips carry a `title` (non-color access, DESIGN.md §2); `aria-current` on active nav;
+  `--radius-sm` undefined-token nit fixed. **Mobile settings gear moved FAB -> trailing `⚙` item
+  in `#bottom-nav`** (owner-chosen: a FAB collided with chat's Send button). Verified at an
+  iPhone-17-Pro viewport with touch-media emulation (19/19 checks) + full E2E (zero regressions vs
+  baseline). Rules recorded in DESIGN.md §7. Deferred P3s (single-user pragmatic floor): conv/
+  notebook list items not keyboard-focusable (`<div>`, not button); jspace layer-range slider is
+  pointer-only.
+- [ ] **E2E suite stale vs the settings-drawer refactor** (P2, found 2026-07-11 during the design
+  pass): `tests/e2e/` fails 14 checks on BOTH HEAD and the design branch -- NOT regressions. The
+  suite predates `42a1769` (drawer unification) + the jspace route: it still clicks a `.chat__bar`
+  "Settings" button opening `.chat__settings`, pokes on-page `.chat__sysprompt`/`#jspace-heatmap`
+  (all moved into the shared drawer), and asserts exactly 5 nav routes (there are 6). Update the
+  chat + pages suites to drive settings/presets/sysprompt/jspace-toggles through the drawer, and fix
+  the route-count assertion. Until then the suite under-covers the drawer surfaces.
 - [ ] **Wire `show_special_tokens` render consumers** (P2, 2026-07-11): the display pref exists +
   is honesty-first `true`, but is gated (`wired:false`) out of the UI because NO surface reads it --
   the token-rendering paths still strip specials (DESIGN.md §6 "known violation"). Wire chat /

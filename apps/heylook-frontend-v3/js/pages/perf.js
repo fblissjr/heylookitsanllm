@@ -52,7 +52,7 @@ export default createPage({
 function buildSkeleton(ctx) {
   const s = ctx.state;
 
-  s.errorEl = createEl('div', { class: 'error-note', hidden: true });
+  s.errorEl = createEl('div', { class: 'error-note', role: 'alert', hidden: true });
 
   s.updatedEl = createEl('span', { class: 'perf__updated small muted' }, ['']);
   s.refreshBtn = createEl('button', { class: 'btn btn--sm' }, ['Refresh']);
@@ -88,6 +88,7 @@ function buildSkeleton(ctx) {
   s.rangeButtons = RANGES.map((range) => createEl('button', {
     class: `btn btn--sm perf__range-btn${range === DEFAULT_RANGE ? ' perf__range-btn--active' : ''}`,
     dataset: { range },
+    'aria-pressed': range === DEFAULT_RANGE ? 'true' : 'false',
   }, [range]));
 
   s.profileBody = createEl('div', { class: 'perf__profile-body' });
@@ -205,7 +206,9 @@ async function loadProfile(ctx, range) {
   const s = ctx.state;
   s.activeRange = range;
   for (const btn of s.rangeButtons) {
-    btn.classList.toggle('perf__range-btn--active', btn.dataset.range === range);
+    const on = btn.dataset.range === range;
+    btn.classList.toggle('perf__range-btn--active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
   s.profileBody.replaceChildren(createEl('div', { class: 'empty-state' }, ['Loading…']));
 
@@ -254,10 +257,10 @@ function buildTimingTable(rows) {
   return createEl('div', { class: 'perf-table-wrap' }, [
     createEl('table', { class: 'perf-table' }, [
       createEl('thead', {}, [createEl('tr', {}, [
-        createEl('th', {}, ['Operation']),
-        createEl('th', {}, ['Avg ms']),
-        createEl('th', {}, ['Count']),
-        createEl('th', {}, ['%']),
+        createEl('th', { scope: 'col' }, ['Operation']),
+        createEl('th', { scope: 'col' }, ['Avg ms']),
+        createEl('th', { scope: 'col' }, ['Count']),
+        createEl('th', { scope: 'col' }, ['%']),
       ])]),
       createEl('tbody', {}, body),
     ]),
@@ -285,10 +288,10 @@ function buildTrendsTable(rows) {
   return createEl('div', { class: 'perf-table-wrap' }, [
     createEl('table', { class: 'perf-table' }, [
       createEl('thead', {}, [createEl('tr', {}, [
-        createEl('th', {}, ['Hour']),
-        createEl('th', {}, ['Resp ms']),
-        createEl('th', {}, ['Tok/s']),
-        createEl('th', {}, ['Requests']),
+        createEl('th', { scope: 'col' }, ['Hour']),
+        createEl('th', { scope: 'col' }, ['Resp ms']),
+        createEl('th', { scope: 'col' }, ['Tok/s']),
+        createEl('th', { scope: 'col' }, ['Requests']),
       ])]),
       createEl('tbody', {}, body),
     ]),

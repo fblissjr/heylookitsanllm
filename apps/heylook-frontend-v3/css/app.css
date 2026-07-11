@@ -165,6 +165,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
     border-radius: 0;
     font-size: var(--text-sm);
     min-height: 44px;
+    white-space: nowrap;   /* keep labels single-line once the gear is a 7th item */
   }
   #bottom-nav .nav-item--active { background: none; color: var(--accent); font-weight: 600; }
 }
@@ -290,7 +291,11 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 /* desktop gear: a nav-item pinned to the foot of the sidebar rail */
 .drawer-gear { text-align: left; cursor: pointer; margin-top: 0.25rem; }
-.drawer-gear-mobile { display: none; }
+/* phone gear: the trailing item in #bottom-nav (itself hidden on desktop, so
+   this needs no display toggle). Reset native button chrome so it reads like
+   its sibling nav-item links; a compact trailing slot keeps label room. */
+.drawer-gear-bottom { background: none; border: none; cursor: pointer; }
+#bottom-nav .drawer-gear-bottom { flex: 0 0 auto; min-width: 48px; font-size: 1.2rem; }
 
 /* right slide-over + backdrop, both direct children of <body>. Closed state
    is offscreen (translateX) + inert; visibility is delayed to the end of the
@@ -352,28 +357,6 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   transition: opacity var(--t-fast) var(--ease), visibility 0s linear 0s;
 }
 
-@media (max-width: 767px) {
-  /* #sidebar (with the desktop gear) is hidden on phones -- give the drawer a
-     floating gear above the bottom nav so it stays reachable. */
-  .drawer-gear-mobile {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: fixed;
-    right: 0.75rem;
-    bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 0.75rem);
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    box-shadow: 0 2px 10px oklch(0.28 0.02 78 / 0.14);
-    color: var(--ink);
-    font-size: 1.15rem;
-    cursor: pointer;
-    z-index: var(--z-raised);
-  }
-}
 
 /* ================= chat ================= */
 
@@ -419,10 +402,17 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   text-overflow: ellipsis;
   min-width: 0;
 }
-.conv-item__delete { visibility: hidden; }
+.conv-item__delete,
+.conv-item__edit { visibility: hidden; }
 .conv-item:hover .conv-item__delete,
+.conv-item:hover .conv-item__edit,
 .conv-item .btn--armed { visibility: visible; }
 .conv-item__rename { width: 100%; }
+/* touch has no hover: the row's actions can't be revealed, so show them. */
+@media (hover: none) {
+  .conv-item__delete,
+  .conv-item__edit { visibility: visible; }
+}
 
 .chat__thread {
   display: flex;
@@ -558,21 +548,21 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   width: 56px;
   height: 56px;
   object-fit: cover;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--r-ctl);
   border: 1px solid var(--line-strong);
   display: block;
 }
 .attach-thumb__remove {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 20px;
-  height: 20px;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
   background: var(--surface);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
@@ -585,7 +575,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .message-image {
   max-width: min(260px, 100%);
   max-height: 260px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--r-ctl);
   border: 1px solid var(--line);
   display: block;
 }
@@ -802,6 +792,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .notebook-item__delete { visibility: hidden; }
 .notebook-item:hover .notebook-item__delete,
 .notebook-item .btn--armed { visibility: visible; }
+/* touch has no hover: the delete can't be revealed, so show it. */
+@media (hover: none) {
+  .notebook-item__delete { visibility: visible; }
+}
 
 /* ---- editor pane -- warm-minimal writing surface ---- */
 

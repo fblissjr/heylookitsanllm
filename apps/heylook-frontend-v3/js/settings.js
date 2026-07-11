@@ -208,13 +208,14 @@ export function onDisplayChange(cb) {
 
 function bindControl(key, meta) {
   if (meta.type === 'checkbox') {
-    const box = createEl('input', { type: 'checkbox', checked: cache[key] === true });
+    const box = createEl('input', { id: `set-${key}`, type: 'checkbox', checked: cache[key] === true });
     // unchecking sets null (cascade), NOT false -- false would override the
     // backend's per-model thinking default.
     box.addEventListener('change', () => setSetting(key, box.checked ? true : null));
     return box;
   }
   const input = createEl('input', {
+    id: `set-${key}`,
     class: 'input',
     type: 'number',
     min: meta.min, max: meta.max, step: meta.step,
@@ -237,7 +238,7 @@ export function buildSettingsPanel({ caps = [] } = {}) {
     const control = bindControl(key, meta);
     controls.push({ key, meta, control });
     rows[meta.section].push(createEl('div', { class: 'settings-row' }, [
-      createEl('label', {}, [meta.label]),
+      createEl('label', { for: `set-${key}` }, [meta.label]),
       control,
     ]));
   }
@@ -272,10 +273,10 @@ export function buildSettingsPanel({ caps = [] } = {}) {
 // UI. Returns null when nothing is wired yet, so the drawer omits the section.
 export function buildDisplayPanel() {
   const rows = Object.entries(DISPLAY_META).filter(([, meta]) => meta.wired).map(([key, meta]) => {
-    const box = createEl('input', { type: 'checkbox', checked: getDisplayPref(key) === true });
+    const box = createEl('input', { id: `disp-${key}`, type: 'checkbox', checked: getDisplayPref(key) === true });
     box.addEventListener('change', () => setDisplayPref(key, box.checked));
     return createEl('div', { class: 'settings-row' }, [
-      createEl('label', { title: meta.help || '' }, [meta.label]),
+      createEl('label', { for: `disp-${key}`, title: meta.help || '' }, [meta.label]),
       box,
     ]);
   });
