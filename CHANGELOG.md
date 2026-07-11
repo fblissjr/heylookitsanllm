@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.58]
+
+### Changed
+
+- **Per-document sampler settings unified across chat AND notebook** (no branched
+  copies of the same wiring):
+  - Backend: `notebooks` gain a `params` JSON column (like conversations);
+    `_SCHEMA_VERSION` 4 -> 5. Conversations + notebooks share ONE encode/decode
+    pair (`_encode_params`/`_decode_params` in db.py). Threaded through notebook
+    create/update + `Notebook{Create,Update}` + `PUT /v1/notebooks/{id}`. 3 tests.
+  - Frontend: one shared `bindDocumentParams({activeId, updateDoc, onError})` +
+    `hydrateDocParams(doc)` in settings.js. Both chat.js and notebook.js call them
+    (chat's bespoke `saveConversationParams` copy removed) -- sampler knobs bind to
+    the active conversation/notebook's `params`, hydrate silently on select,
+    debounce-PUT on change, and carry forward on create.
+
 ## [1.34.57]
 
 ### Changed

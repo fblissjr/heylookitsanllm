@@ -25,6 +25,7 @@ class NotebookCreate(BaseModel):
     content: str = ""
     system_prompt: str | None = None
     model_id: str | None = None
+    params: dict = {}  # per-notebook sampler settings (same shape as conversations)
 
 
 class NotebookUpdate(BaseModel):
@@ -32,6 +33,7 @@ class NotebookUpdate(BaseModel):
     content: str | None = None
     system_prompt: str | None = None
     model_id: str | None = None
+    params: dict | None = None
 
 
 @notebook_router.get(
@@ -55,7 +57,7 @@ async def create_notebook(request: Request, body: NotebookCreate):
     conn = _get_db(request)
     nb = await db.create_notebook(
         conn, title=body.title, content=body.content,
-        system_prompt=body.system_prompt, model_id=body.model_id,
+        system_prompt=body.system_prompt, model_id=body.model_id, params=body.params,
     )
     return nb
 
@@ -80,7 +82,7 @@ async def get_notebook(notebook_id: str, request: Request):
 )
 async def update_notebook(notebook_id: str, request: Request, body: NotebookUpdate):
     conn = _get_db(request)
-    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "content", "system_prompt", "model_id"}}
+    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "content", "system_prompt", "model_id", "params"}}
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
     nb = await db.update_notebook(conn, notebook_id, **kwargs)

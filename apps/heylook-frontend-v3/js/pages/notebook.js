@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
-import { samplerParams } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 
 export default createPage({
@@ -42,6 +42,14 @@ export default createPage({
       sections: () => [s.sysPromptDetails],
     });
     ctx.onTeardown(unregisterSettings);
+    // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --
+    // one mechanism, no branched copy. Panel change -> debounced PUT to the
+    // active notebook's `params`; hydrate on select is silent.
+    ctx.onTeardown(bindDocumentParams({
+      activeId: () => ctx.state.activeId,
+      updateDoc: (id, body) => api.updateNotebook(id, body),
+      onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
+    }));
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
     s.paint = ctx.throttle(() => paintGen(ctx));
@@ -228,7 +236,7 @@ async function newNotebook(ctx) {
   const s = ctx.state;
   s.scheduleSave.flush();
   try {
-    const nb = await api.createNotebook({ title: 'Untitled', content: '' });
+    const nb = await api.createNotebook({ title: 'Untitled', content: '', params: snapshotSettings() });
     if (!ctx.alive) return;
     s.notebooks.unshift(nb);
     renderList(ctx);
@@ -281,8 +289,11 @@ async function selectNotebook(ctx, id) {
     s.content = nb.content ?? '';
     s.systemPrompt = nb.system_prompt ?? '';
     s.modelId = nb.model_id ?? '';
+    hydrateDocParams(nb);  // sampler panel <- this notebook (silent, no re-PUT)
     s.dirty = false;
     populateFields(ctx);
+    // an open drawer shows the previous notebook's params/sysprompt otherwise
+    drawer.requestRebuild({ force: true });
   } catch (err) {
     if (ctx.alive && s.activeId === id) {
       showStatus(ctx, `Could not load notebook: ${err.message}`, true);

@@ -93,3 +93,29 @@ class TestNotebookCRUD:
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, conn):
         assert await db.get_notebook(conn, "nope") is None
+
+
+@pytest.mark.unit
+class TestNotebookParams:
+    """Per-notebook sampler settings -- same JSON-blob shape + shared encode/decode
+    as conversations (unified, not a branched copy)."""
+
+    @pytest.mark.asyncio
+    async def test_create_defaults_to_empty_params(self, conn):
+        nb = await db.create_notebook(conn, title="n")
+        assert nb["params"] == {}
+        assert (await db.get_notebook(conn, nb["id"]))["params"] == {}
+
+    @pytest.mark.asyncio
+    async def test_params_round_trip(self, conn):
+        p = {"temperature": 1.0, "top_k": 40, "seed": None}
+        nb = await db.create_notebook(conn, title="n", params=p)
+        assert nb["params"] == p
+        assert (await db.get_notebook(conn, nb["id"]))["params"] == p
+
+    @pytest.mark.asyncio
+    async def test_update_params(self, conn):
+        nb = await db.create_notebook(conn, title="n", params={"temperature": 1.0})
+        updated = await db.update_notebook(conn, nb["id"], params={"temperature": 0.3})
+        assert updated["params"] == {"temperature": 0.3}
+        assert (await db.get_notebook(conn, nb["id"]))["params"] == {"temperature": 0.3}

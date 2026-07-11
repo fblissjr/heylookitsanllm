@@ -110,6 +110,39 @@ export function samplerParams() {
 }
 
 // ---------------------------------------------------------------------------
+// Per-DOCUMENT sampler settings. ONE mechanism shared by every page whose doc
+// carries `params` (chat conversations, notebooks, ...) so sampler tuning lives
+// with the document on the server, not as browser-global state -- and the pages
+// don't branch into copies of the same wiring.
+// ---------------------------------------------------------------------------
+
+// Bind the sampler panel to a document's `params`: on any panel change,
+// debounce-PUT the whole snapshot to the ACTIVE document. `activeId()` -> the
+// current doc id (null = no doc yet; the panel rides along until create seeds
+// it). `updateDoc(id, body)` = the page's update call. Returns an unsubscribe fn
+// (register in the page's teardown). The debounce timer is per-binding (closure),
+// and `id` is captured at schedule time so a doc switch mid-debounce still writes
+// to the one the edit was for.
+export function bindDocumentParams({ activeId, updateDoc, onError, delay = 400 }) {
+  let timer = null;
+  return onSettingsChange(() => {
+    const id = activeId();
+    if (!id) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      Promise.resolve(updateDoc(id, { params: snapshotSettings() }))
+        .catch(onError || (() => {}));
+    }, delay);
+  });
+}
+
+// Load a document's stored params into the panel WITHOUT firing listeners, so
+// selecting/loading a doc doesn't immediately PUT its own params back.
+export function hydrateDocParams(doc) {
+  applySettings(doc?.params ?? {}, { silent: true });
+}
+
+// ---------------------------------------------------------------------------
 // Global display preferences -- render toggles, NOT sampler params. Kept in a
 // SEPARATE store (own key, own cache) from PARAM_META so a display flag can
 // never leak into samplerParams()/snapshotSettings() and reach the model. These

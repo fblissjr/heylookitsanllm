@@ -36,10 +36,10 @@ logger = logging.getLogger(__name__)
 # deleting a parent even when its children are deleted in the same
 # transaction -- a documented DuckDB limitation. Referential integrity is
 # enforced in code: single writer, explicit cascade in delete_conversation).
-_SCHEMA_VERSION = 4  # v4: conversations.params (per-conversation sampler settings)
+_SCHEMA_VERSION = 5  # v5: notebooks.params (v4 added conversations.params) -- per-document sampler settings
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
-_UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id"})
+_UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id", "params"})
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS conversations (
@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS notebooks (
     content       TEXT NOT NULL DEFAULT '',
     system_prompt TEXT,
     model_id      TEXT,
+    params        TEXT NOT NULL DEFAULT '{}',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
@@ -308,10 +309,12 @@ _CONV_COLS = ", ".join(_CONV_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
 
 
-def _conv_row_to_dict(row) -> dict:
-    """Zip a conversations row + JSON-decode the ``params`` blob (per-conversation
-    sampler settings; stored as JSON TEXT like ``presets.params``)."""
-    d = dict(zip(_CONV_NAMES, row))
+# Per-document sampler settings (`params`) are stored as a JSON TEXT blob, like
+# `presets.params`. ONE decode/encode pair is shared by conversations AND
+# notebooks so the two never branch into separate copies of the same logic.
+
+def _decode_params(d: dict) -> dict:
+    """JSON-decode the ``params`` blob on a conversation/notebook row dict."""
     try:
         d["params"] = orjson.loads(d["params"]) if d.get("params") else {}
     except (orjson.JSONDecodeError, TypeError):
@@ -319,14 +322,18 @@ def _conv_row_to_dict(row) -> dict:
     return d
 
 
-def _encode_conv_params(params) -> str:
-    """Validate + JSON-encode conversation params at the write boundary."""
+def _encode_params(params) -> str:
+    """Validate + JSON-encode a document's ``params`` at the write boundary."""
     if not isinstance(params, dict):
-        raise ValueError("Conversation 'params' must be an object")
+        raise ValueError("'params' must be an object")
     try:
         return orjson.dumps(params).decode()
     except TypeError as e:
-        raise ValueError(f"Conversation 'params' is not JSON-serializable: {e}")
+        raise ValueError(f"'params' is not JSON-serializable: {e}")
+
+
+def _conv_row_to_dict(row) -> dict:
+    return _decode_params(dict(zip(_CONV_NAMES, row)))
 
 
 def _touch_conversation(conn, conv_id: str, now: str) -> None:
@@ -373,7 +380,7 @@ async def create_conversation(
     conv_id = new_id()
     now = _now_iso()
     params = params or {}
-    params_json = _encode_conv_params(params)
+    params_json = _encode_params(params)
     def op(conn):
         conn.execute(
             "INSERT INTO conversations (id, title, model_id, system_prompt, params, created_at, updated_at) "
@@ -413,7 +420,7 @@ async def update_conversation(
     # dict for the returned object.
     sql_updates = dict(updates)
     if "params" in sql_updates:
-        sql_updates["params"] = _encode_conv_params(sql_updates["params"])
+        sql_updates["params"] = _encode_params(sql_updates["params"])
 
     now = _now_iso()
     def op(conn):
@@ -565,7 +572,7 @@ async def truncate_messages_after(
 # Notebook CRUD
 # ---------------------------------------------------------------------------
 
-_NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "created_at", "updated_at"]
+_NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "params", "created_at", "updated_at"]
 _NB_LIST_NAMES = ["id", "title", "system_prompt", "model_id", "created_at", "updated_at"]
 _NB_COLS = ", ".join(_NB_NAMES)
 _NB_LIST_COLS = ", ".join(_NB_LIST_NAMES)
@@ -587,7 +594,7 @@ async def get_notebook(db: Store, notebook_id: str) -> dict | None:
         row = conn.execute(
             f"SELECT {_NB_COLS} FROM notebooks WHERE id = ?", (notebook_id,)
         ).fetchone()
-        return dict(zip(_NB_NAMES, row)) if row else None
+        return _decode_params(dict(zip(_NB_NAMES, row))) if row else None
     return await db.run(op)
 
 
@@ -598,20 +605,23 @@ async def create_notebook(
     content: str = "",
     system_prompt: str | None = None,
     model_id: str | None = None,
+    params: dict | None = None,
 ) -> dict:
     """Create a new notebook and return it."""
     nb_id = new_id()
     now = _now_iso()
+    params = params or {}
+    params_json = _encode_params(params)
     def op(conn):
         conn.execute(
-            "INSERT INTO notebooks (id, title, content, system_prompt, model_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (nb_id, title, content, system_prompt, model_id, now, now),
+            "INSERT INTO notebooks (id, title, content, system_prompt, model_id, params, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (nb_id, title, content, system_prompt, model_id, params_json, now, now),
         )
     await db.run(op)
     return {
         "id": nb_id, "title": title, "content": content,
-        "system_prompt": system_prompt, "model_id": model_id,
+        "system_prompt": system_prompt, "model_id": model_id, "params": params,
         "created_at": now, "updated_at": now,
     }
 
@@ -621,10 +631,17 @@ async def update_notebook(
     notebook_id: str,
     **fields: str | None,
 ) -> dict | None:
-    """Update notebook fields. Returns updated notebook or None if not found."""
+    """Update notebook fields. Returns updated notebook or None if not found.
+
+    Allowed fields include ``params`` (per-notebook sampler settings, a JSON
+    object -- same shape + shared encode/decode as conversations)."""
     updates = {k: v for k, v in fields.items() if k in _UPDATABLE_NOTEBOOK_FIELDS}
     if not updates:
         raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_NOTEBOOK_FIELDS)})")
+
+    sql_updates = dict(updates)
+    if "params" in sql_updates:
+        sql_updates["params"] = _encode_params(sql_updates["params"])
 
     now = _now_iso()
     def op(conn):
@@ -633,11 +650,11 @@ async def update_notebook(
         ).fetchone()
         if row is None:
             return None
-        existing = dict(zip(_NB_NAMES, row))
-        set_clause = ", ".join(f"{k}=?" for k in updates)
-        values = list(updates.values()) + [now, notebook_id]
+        existing = _decode_params(dict(zip(_NB_NAMES, row)))
+        set_clause = ", ".join(f"{k}=?" for k in sql_updates)
+        values = list(sql_updates.values()) + [now, notebook_id]
         conn.execute(f"UPDATE notebooks SET {set_clause}, updated_at=? WHERE id=?", values)
-        existing.update(**updates, updated_at=now)
+        existing.update(**updates, updated_at=now)  # `updates` has the DECODED params
         return existing
     return await db.run(op)
 

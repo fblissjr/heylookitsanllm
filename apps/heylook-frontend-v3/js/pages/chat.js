@@ -14,7 +14,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, applySettings, onSettingsChange } from '../settings.js';
+import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 
 export default createPage({
@@ -55,11 +55,15 @@ export default createPage({
     });
     ctx.onTeardown(unregisterSettings);
 
-    // Sampler knobs are per-conversation (like the system prompt): a panel change
-    // persists to the active conversation's `params`. Hydrate happens on select
-    // via applySettings(..., {silent:true}), so this only fires on real edits +
+    // Sampler knobs are per-conversation (like the system prompt) via the shared
+    // per-document binding: a panel change persists to the active conversation's
+    // `params`; hydrate on select is silent so this only fires on real edits +
     // preset applies.
-    ctx.onTeardown(onSettingsChange(() => saveConversationParams(ctx)));
+    ctx.onTeardown(bindDocumentParams({
+      activeId: () => ctx.state.activeId,
+      updateDoc: (id, body) => api.updateConversation(id, body),
+      onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
+    }));
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -198,23 +202,6 @@ function setSystemPrompt(ctx, value) {
 function putSystemPrompt(ctx, convId, value) {
   api.updateConversation(convId, { system_prompt: value })
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
-}
-
-// Per-conversation sampler settings: debounced PUT of the whole panel state to
-// the active conversation's `params`. Fired on any drawer knob change / preset
-// apply (settings.js onSettingsChange). `convId` is captured at schedule time so
-// a conversation switch mid-debounce still writes to the one the edit was for.
-// No active conversation -> the panel rides along until a create gives it a home
-// (newConversation / first send pass snapshotSettings()).
-let paramsSaveTimer = null;
-function saveConversationParams(ctx) {
-  const convId = ctx.state.activeId;
-  if (!convId) return;
-  clearTimeout(paramsSaveTimer);
-  paramsSaveTimer = setTimeout(() => {
-    api.updateConversation(convId, { params: snapshotSettings() })
-      .catch((err) => showStatus(ctx, `Settings save failed: ${err.message}`, true));
-  }, 400);
 }
 
 function buildSystemPromptSection(ctx) {
@@ -481,8 +468,7 @@ async function selectConversation(ctx, convId) {
     if (!ctx.alive || s.activeId !== convId) return;
     s.messages = conv.messages ?? [];
     s.systemPrompt = conv.system_prompt ?? null;
-    // hydrate the sampler panel from THIS conversation (silent -> no re-PUT)
-    applySettings(conv.params ?? {}, { silent: true });
+    hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }

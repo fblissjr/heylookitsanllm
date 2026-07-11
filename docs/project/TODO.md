@@ -195,13 +195,11 @@ Full design + status: `internal/research/observability_and_config_redesign.md`
   model's own eos tokens (v1.34.55).
 
 **Backend TODO (mine):**
-- [ ] **Per-conversation sampler settings** (P2, decided: COLUMN, data-loss OK):
-  add `params TEXT DEFAULT '{}'` to the `conversations` table (`db.py`), bump
-  `_SCHEMA_VERSION` (drops tables -- accepted), thread `params` through
-  `create_conversation`/`update_conversation` (`db.py:304`/`:380`) +
-  `ConversationCreate`/`ConversationUpdate` + PUT allowed set
-  (`conversation_api.py:105`). Unifies "settings in browser vs server" -- sampler
-  knobs join the system prompt on the server. Spec: redesign note §3b.
+- [x] **Per-DOCUMENT sampler settings** DONE 2026-07-11 (v1.34.56-.58): `params`
+  JSON column on BOTH `conversations` (v4) and `notebooks` (v5), shared
+  `_encode_params`/`_decode_params`; threaded through create/update + API models +
+  PUT allowed sets. Unifies "settings in browser vs server" -- sampler knobs join
+  the system prompt on the server. Frontend below shares ONE binding.
 - [ ] **memory.py stream CONSOLIDATION** (P2): spine now duplicates memory.py's
   `request_events`/`model_events` streams. Once live-verified, remove the dupes +
   retire the 3 legacy env toggles (`HEYLOOK_REQUEST_LOG_ENABLED` /
@@ -216,12 +214,13 @@ Full design + status: `internal/research/observability_and_config_redesign.md`
 - [ ] **Never-stops health signal** (P3): flag models whose requests consistently
   hit `stop_reason=length`/`abort` (surfaces broken templates in the metrics).
 
-**Frontend TODO (v3 `settings-drawer.js` stream -- NOT the backend lane):**
-- [ ] **Per-conversation settings UI** (P2): hydrate the sampler drawer from
-  `conversation.params` (server), debounced `PUT /v1/conversations/{id}` on change
-  (same pattern as the system-prompt editor); demote localStorage to new-chat
-  defaults only. Coordinate the column shape with the backend item above. Spec:
-  redesign note §3b.
+**Frontend TODO (v3):**
+- [x] **Per-document settings UI** DONE 2026-07-11 (v1.34.57-.58): ONE shared
+  `settings.bindDocumentParams`/`hydrateDocParams`; chat.js + notebook.js both use
+  it (no branched copy). Sampler drawer binds to the active conversation/notebook's
+  `params`, hydrates silently on select, debounce-PUTs on change, carries forward
+  on create; localStorage demoted to new-chat seed. **Browser/E2E UX check still
+  recommended** (v3 has no unit tests).
 - [ ] **v3 observability CONFIG + VIEW pages** (P2, owner-required): admin panel
   edits `observability_level`/retention via `/v1/admin/config`; a read page
   surfaces `logs/*.jsonl` (recent events/errors + metric summaries via
