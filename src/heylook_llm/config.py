@@ -229,15 +229,9 @@ class MLXModelConfig(BaseModel):
         if self.modalities is None:
             self.modalities = ["text", "vision"] if self.vision else ["text"]
         else:
-            seen: set[str] = set()
-            norm = ["text"]
-            seen.add("text")
-            for m in self.modalities:
-                if m not in seen:
-                    seen.add(m)
-                    norm.append(m)
-            self.modalities = norm
-            self.vision = "vision" in seen
+            # Normalize: "text" always first, order-preserving dedup.
+            self.modalities = list(dict.fromkeys(["text", *self.modalities]))
+            self.vision = "vision" in self.modalities
         return self
 
     @model_validator(mode="after")

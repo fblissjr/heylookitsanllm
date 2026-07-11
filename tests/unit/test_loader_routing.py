@@ -63,7 +63,8 @@ class TestResolveEffectiveLoader:
         assert calls == [1]                        # probed, got None, trusted vision
 
     def test_legacy_vision_bool_without_modalities(self):
-        # Old dict shape (no modalities key) still routes correctly.
+        # The provider accepts raw dicts (no modalities key) -> derive from the
+        # legacy vision bool, matching MLXModelConfig._resolve_modalities.
         assert resolve_effective_loader(
             {"vision": True}, _getter("gemma4", []),
             vlm_supports=lambda mt: True) == "mlx-vlm"

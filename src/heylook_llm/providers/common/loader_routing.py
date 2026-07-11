@@ -24,10 +24,14 @@ from typing import Callable, Optional
 
 
 def mlx_vlm_supports(model_type: str) -> bool:
-    """Whether mlx-vlm registers a model class for ``model_type`` (i.e. can load
-    it as a VLM). Mirrors ``mlx_vlm.utils.get_model_and_args``: lower-case, apply
-    MODEL_REMAPPING, then try to import the module. Any failure (mlx-vlm absent,
-    unknown type) is a clean False."""
+    """Whether mlx-vlm registers a dedicated model class for ``model_type`` (i.e.
+    can load it as a real VLM): lower-case, apply MODEL_REMAPPING, then try to
+    import the module. Any failure (mlx-vlm absent, unknown type) is a clean False.
+
+    We intentionally do NOT call ``mlx_vlm.utils.get_model_and_args`` here: it
+    falls back to a ``text_only`` module (and resolves speculator/dflash aliases)
+    rather than raising, so "it resolved" does not mean "loadable as a VLM" -- the
+    direct module-import probe is the honest gate signal this router needs."""
     if not model_type:
         return False
     try:
@@ -54,11 +58,11 @@ def read_model_type(model_path: str) -> Optional[str]:
 
 
 def _modalities_of(config: dict) -> list:
-    mods = config.get("modalities")
-    if mods:
-        return mods
-    # Legacy dict shape (no modalities): derive from the vision bool.
-    return ["text", "vision"] if config.get("vision") else ["text"]
+    """Modalities from a config dict. Normally present (validated `model_dump`),
+    but the provider also accepts a raw dict (tests, back-compat callers), so
+    fall back to deriving from the legacy `vision` bool -- the same rule as
+    `MLXModelConfig._resolve_modalities`, kept in sync deliberately."""
+    return config.get("modalities") or (["text", "vision"] if config.get("vision") else ["text"])
 
 
 def resolve_effective_loader(
@@ -69,15 +73,15 @@ def resolve_effective_loader(
 ) -> str:
     """Resolve to ``"mlx-vlm"`` or ``"mlx-lm"``.
 
-    ``config``: the model's config dict (``loader``, ``modalities``/``vision``).
+    ``config``: the model's config dict (``loader`` + ``modalities``/``vision``).
+    Usually a validated ``model_dump()``, but the provider accepts raw dicts too,
+    so modalities are read via :func:`_modalities_of`.
     ``model_type_getter``: lazy -- called only when ``auto`` must probe the
     mlx-vlm registry (skipped for explicit loaders and non-vision models).
     """
     loader = config.get("loader", "auto")
-    if loader == "mlx-vlm":
-        return "mlx-vlm"
-    if loader == "mlx-lm":
-        return "mlx-lm"
+    if loader != "auto":
+        return loader                      # explicit engine (Literal: mlx-vlm | mlx-lm)
 
     # auto: non-vision -> text loader.
     if "vision" not in _modalities_of(config):
