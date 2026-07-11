@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.48]
+
+### Changed
+
+Error/event consolidation (redesign Phase 2) -- one writer, one schema for
+`logs/events.jsonl`:
+
+- `diagnostic_logger.diag_event` now **delegates to `observability.record_event`**
+  (events tier) instead of owning its own file writer + rotation. All api.py/
+  router.py call sites are unchanged. Consequences: diag fields are **flattened**
+  onto the record (queryable top-level keys) instead of nested under `data`;
+  the diag `level` (severity) is carried as a field and mapped to the spine's
+  verbosity gate (errors/warnings surface at `minimal`, info at `standard`); and
+  events are now level-gated + rotated like the rest of the spine. `exception_detail`
+  is unchanged. `HEYLOOK_DIAG_LOG` is retired (use `HEYLOOK_LOGS_DIR`).
+- Tests: `HEYLOOK_LOGS_DIR` is isolated to a temp dir in the root conftest, so the
+  suite no longer writes telemetry into the repo's `logs/` (also fixes a
+  pre-existing `events.jsonl` pollution).
+
 ## [1.34.47]
 
 ### Added

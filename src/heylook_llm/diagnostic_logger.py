@@ -1,96 +1,62 @@
 # src/heylook_llm/diagnostic_logger.py
 """
-Structured diagnostic logger -- append-only JSONL file with size cap.
+Diagnostic events -- call-site API that delegates to the observability spine.
 
-Events are written to logs/events.jsonl (configurable via HEYLOOK_DIAG_LOG env).
-Uses orjson for fast serialization. Simple rotation: truncate first half when >50MB.
+``diag_event`` is retained as the API used across api.py/router.py; as of the
+observability redesign (Phase 2) it delegates to ``observability.record_event``
+(events tier), so there is ONE writer + ONE schema + ONE rotation for
+``logs/events.jsonl``. ``exception_detail`` is unchanged (a pure helper).
+
+Schema note: diag fields are now flattened onto the record (queryable top-level
+keys) instead of nested under ``data``; ``request_id`` and the diag ``level``
+(severity) are carried as fields. The diag ``level`` (error/warn/info/debug) is a
+SEVERITY; it is mapped to the spine's verbosity gate below (errors/warnings
+surface at ``minimal``).
 """
 
-import logging
-import os
-import time
 import traceback
-from datetime import datetime
-from pathlib import Path
-from threading import Lock
-from typing import Optional
 
-from heylook_llm.optimizations import fast_json as json
+from heylook_llm import observability
 
-_MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
-
-_log_path: Optional[Path] = None
-_lock = Lock()
-_logger = logging.getLogger(__name__)
-
-
-def _get_log_path() -> Path:
-    global _log_path
-    if _log_path is None:
-        env_path = os.environ.get("HEYLOOK_DIAG_LOG")
-        if env_path:
-            _log_path = Path(env_path)
-        else:
-            _log_path = Path("logs/events.jsonl")
-        _log_path.parent.mkdir(parents=True, exist_ok=True)
-    return _log_path
-
-
-def _rotate_if_needed(path: Path) -> None:
-    """Truncate first half of the file when it exceeds the size cap."""
-    try:
-        if path.exists() and path.stat().st_size > _MAX_FILE_BYTES:
-            data = path.read_bytes()
-            # Find midpoint newline
-            mid = len(data) // 2
-            newline_pos = data.index(b"\n", mid)
-            path.write_bytes(data[newline_pos + 1 :])
-            _logger.debug("Rotated diagnostic log (truncated first half)")
-    except Exception:
-        _logger.debug("Diagnostic log rotation failed", exc_info=True)
+# diag severity -> spine verbosity gate. An error/warning is worth recording as
+# soon as observability is on at all (minimal); info needs standard; debug needs
+# debug. `off` still suppresses everything (off = zero telemetry, by design).
+_SEVERITY_MIN_LEVEL = {
+    "error": "minimal",
+    "warn": "minimal",
+    "info": "standard",
+    "debug": "debug",
+}
 
 
 def diag_event(
     event_type: str,
-    request_id: Optional[str] = None,
+    request_id: str | None = None,
     level: str = "info",
     **data,
 ) -> None:
-    """
-    Write a structured diagnostic event to the JSONL log.
+    """Record a diagnostic event via the observability spine (events tier).
 
     Args:
-        event_type: e.g. 'request_start', 'model_load', 'model_evict'
-        request_id: correlation ID from X-Request-ID header
-        level: 'error', 'warn', 'info', 'debug'
-        **data: arbitrary key-value pairs to include
+        event_type: e.g. 'request_start', 'model_load', 'request_error'
+        request_id: correlation ID from X-Request-ID header (carried as a field)
+        level: SEVERITY -- 'error', 'warn', 'info', 'debug' -- carried as a field
+               and mapped to the spine verbosity gate (see _SEVERITY_MIN_LEVEL).
+        **data: key-value fields, flattened onto the record (queryable top-level).
+
+    Best-effort: record_event never raises.
     """
-    ts = time.time()
-    event = {
-        "ts": ts,
-        # Local-time ISO 8601 with UTC offset. `ts` stays authoritative for
-        # sorting and latency math / joining events by request_id; `iso` is the
-        # human- (and Claude-) readable rendering so the file is legible without
-        # converting epoch seconds by hand.
-        "iso": datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds"),
-        "level": level,
-        "type": event_type,
-    }
-    if request_id:
-        event["request_id"] = request_id
-    if data:
-        event["data"] = data
-
-    try:
-        line = json.dumps(event) + "\n"
-        path = _get_log_path()
-
-        with _lock:
-            _rotate_if_needed(path)
-            with open(path, "a") as f:
-                f.write(line)
-    except Exception:
-        _logger.debug("Failed to write diagnostic event", exc_info=True)
+    fields = dict(data)
+    if request_id is not None:
+        fields["request_id"] = request_id
+    observability.record_event(
+        event_type,
+        tier="events",
+        min_level=_SEVERITY_MIN_LEVEL.get(level, "standard"),
+        source="backend",
+        level=level,
+        **fields,
+    )
 
 
 def exception_detail(exc: BaseException) -> dict:

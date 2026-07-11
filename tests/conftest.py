@@ -2,10 +2,19 @@
 #
 # Root conftest providing shared fixtures for all test modules.
 
+import os
 import sys
+import tempfile
 from unittest.mock import patch
 
 import pytest
+
+# Isolate telemetry writes to a temp dir so tests never pollute the repo's logs/.
+# Both the observability spine (observability_log_dir()) and memory.py's
+# DEFAULT_LOG_DIR honor HEYLOOK_LOGS_DIR; memory.py reads it at import time, so
+# this must run before any heylook module import -- module top is early enough.
+# setdefault: respect an explicit HEYLOOK_LOGS_DIR from the environment.
+os.environ.setdefault("HEYLOOK_LOGS_DIR", tempfile.mkdtemp(prefix="heylook-test-logs-"))
 
 from heylook_llm.config import (
     ChatMessage,
