@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.54]
+
+### Fixed
+
+- **Aborted / manually-stopped streaming requests are now logged** (owner report):
+  on client disconnect, `GeneratorExit`/`CancelledError` is thrown into the
+  streaming generator mid-yield and unwinds past the normal finalizer, so a
+  stopped request produced NO `request_complete` and left a silent gap. A new
+  `except (GeneratorExit, CancelledError)` on the stream loop emits a partial
+  `request_complete` (`success=false`, `stop_reason="abort"`, partial
+  `completion_tokens` + elapsed) then re-raises. Sync-only in the handler (no
+  await/yield during unwind). `provider` type derivation extracted to a shared
+  `_provider_type` helper.
+
 ## [1.34.53]
 
 ### Fixed

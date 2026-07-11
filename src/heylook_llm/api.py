@@ -749,6 +749,17 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             headers=response_headers,
         )
 
+def _provider_type(provider) -> str | None:
+    """Provider TYPE ("mlx" | "mlx_embedding"), derived from the provider CLASS.
+
+    The provider object has no `.provider` attr (that lives on the model config),
+    so `getattr(provider, "provider")` yielded null -- found via live verification.
+    """
+    if provider is None:
+        return None
+    return "mlx_embedding" if type(provider).__name__ == "MLXEmbeddingProvider" else "mlx"
+
+
 def _maybe_log_request_event(
     perf_ctx,
     event,
@@ -776,13 +787,7 @@ def _maybe_log_request_event(
         return
     from heylook_llm.memory import safe_mm_call, sampler_summary_from_request
     safe_mm_call(mm, "mark_request_end")
-    # Provider TYPE ("mlx" | "mlx_embedding") -- derived from the provider class.
-    # The provider object has no `.provider` attr (that lives on the model config),
-    # so the old getattr(provider, "provider") always yielded null/"unknown"
-    # (found via live verification). Class-name is the robust in-hand signal.
-    provider_type = None
-    if provider is not None:
-        provider_type = "mlx_embedding" if type(provider).__name__ == "MLXEmbeddingProvider" else "mlx"
+    provider_type = _provider_type(provider)
     try:
         from dataclasses import asdict
         record = asdict(event)
@@ -1044,6 +1049,34 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         yield f"data: {json.dumps(error_payload)}\n\n"
         yield "data: [DONE]\n\n"
         return
+
+    except (GeneratorExit, asyncio.CancelledError):
+        # Client disconnected / request cancelled mid-stream (you stopped it, or
+        # the browser closed the SSE). The normal finalization below never runs,
+        # so log the PARTIAL request here -- this is the "log even if it didn't
+        # finish" case. Best-effort, SYNC only (no await/yield -- we're unwinding
+        # and must not swallow these BaseExceptions), then re-raise so the
+        # generator closes properly.
+        try:
+            now = time.time()
+            observability.record_event(
+                "request_complete", tier="metrics", min_level="minimal",
+                fields={
+                    "model": model_id or "unknown",
+                    "provider": _provider_type(provider),
+                    "effective_loader": getattr(provider, "effective_loader", None),
+                    "is_vlm": getattr(provider, "is_vlm", None),
+                    "success": False,
+                    "completion_tokens": token_count,
+                    "total_ms": round((now - generation_start_time) * 1000, 1),
+                    "stop_reason": "abort",
+                    "image_count": (perf_ctx or {}).get("image_count", 0),
+                },
+            )
+            log_request_complete(request_id, success=False, error_msg="aborted (client disconnect)")
+        except Exception:
+            pass
+        raise
 
     # Flush any remaining buffer
     for delta_type, text in thinking_parser.flush():
