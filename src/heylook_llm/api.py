@@ -30,6 +30,7 @@ from heylook_llm.perf_collector import (
 )
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event, exception_detail
+from heylook_llm import observability
 from heylook_llm.presets import PresetNotFound
 from heylook_llm.reasoning_parser import (
     parse_reasoning,
@@ -789,6 +790,29 @@ def _maybe_log_request_event(
         mm.log_request_event(record)
     except Exception:
         logging.debug("memory_manager.log_request_event failed", exc_info=True)
+
+    # Observability spine: mirror the numeric request metrics into the content-free
+    # metrics stream (logs/metrics.jsonl) for aggregation. Registry dims via getattr
+    # (null for embedding providers, per the frozen §4.3 contract). Best-effort.
+    observability.record_event(
+        "request_complete", tier="metrics", min_level="minimal",
+        model=getattr(event, "model", None),
+        provider=getattr(provider, "provider", None) if provider else None,
+        effective_loader=getattr(provider, "effective_loader", None),
+        is_vlm=getattr(provider, "is_vlm", None),
+        success=getattr(event, "success", None),
+        prompt_tokens=getattr(event, "prompt_tokens", None),
+        completion_tokens=getattr(event, "completion_tokens", None),
+        generation_tps=getattr(event, "tokens_per_second", None),
+        ttft_ms=getattr(event, "first_token_ms", None),
+        total_ms=getattr(event, "total_ms", None),
+        queue_ms=getattr(event, "queue_ms", None),
+        peak_memory_gb=peak_memory_gb,
+        kv_cache_bytes=kv_cache_bytes,
+        cached_tokens=cached_tokens,
+        stop_reason=stop_reason,
+        image_count=perf_ctx.get("image_count", 0),
+    )
 
 
 def _record_error_event(model: str, request_start_time: float, provider_get_ms: float, image_resize_ms: float, had_images: bool, perf_ctx=None, chat_request=None) -> None:

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.47]
+
+### Added
+
+- Per-request metrics emission (redesign Phase 1): completed requests now emit a
+  content-free `request_complete` line to `logs/metrics.jsonl` (tokens, tps, ttft,
+  timings, peak memory, kv bytes, cache, stop reason, image count), plus the
+  frozen §4.3 registry dims (`provider`/`effective_loader`/`is_vlm`) read null-safely
+  via `getattr` -- an embedding provider yields null, not a crash. This is the
+  highest-value telemetry the spine carries. 3 tests.
+
 ## [1.34.46]
 
 ### Added
