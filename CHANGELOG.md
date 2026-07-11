@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.45]
+
+### Added
+
+Observability spine core (redesign Phase 1, slice 1) -- the single JSONL
+ingestion path. Internal foundation; wiring + emission from real call sites and
+the `internal/log/` reconcile follow in subsequent slices:
+
+- `observability.record_event(type, *, tier, min_level, source, **fields)` --
+  appends one JSON line (with `ts` + local-time `iso`) to the right stream
+  (`logs/metrics.jsonl` content-free, `logs/events.jsonl` correlated), gated by
+  the configured verbosity (`off < minimal < standard < debug`). **Best-effort:
+  never raises** (observability must not break inference). Level + log dir are
+  cached in-process (`configure()`), so the hot path never touches the DB.
+- 8 tests (write shape, tier routing, level gating, never-raises).
+
 ## [1.34.44]
 
 ### Added
