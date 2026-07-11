@@ -147,6 +147,11 @@ function close() {
   panelEl.classList.remove('drawer--open');
   backdropEl.classList.remove('drawer-backdrop--open');
   panelEl.inert = true;
+  // Clear the body: open() always re-renders, so a closed drawer holds nothing.
+  // Prevents a page's contributed nodes (e.g. jspace's fixed-id toggles) from
+  // lingering in the hidden drawer after that page unmounts (stale retention +
+  // a transient duplicate-id window on re-entry).
+  bodyEl.replaceChildren();
   lastOpener?.focus?.();
 }
 
@@ -170,7 +175,8 @@ function render() {
     children.push(panel);
   }
 
-  children.push(buildDisplayPanel());
+  const displayPanel = buildDisplayPanel();   // null while no display pref is wired yet
+  if (displayPanel) children.push(displayPanel);
 
   if (current?.extras) children.push(...current.extras());
 

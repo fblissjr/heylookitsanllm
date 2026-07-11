@@ -106,6 +106,12 @@ export const DISPLAY_META = {
     label: 'Show special tokens',
     type: 'checkbox',
     default: true,   // honesty-first: shown by default (DESIGN.md §6)
+    // NOT yet honored by any render surface (the token-rendering paths still strip
+    // specials -- DESIGN.md §6 "known violation"). Kept in the store (getDisplayPref
+    // returns the `true` default, so a future consumer reads "shown"), but HIDDEN from
+    // the drawer UI until wired -- surfacing a toggle that does nothing misleads. Flip
+    // to true when a surface reads getDisplayPref/onDisplayChange for it.
+    wired: false,
     help: 'Render <|im_start|>, <think>, role markers etc. as distinct tokens. '
         + 'Display-only -- never changes what is sent to the model. Edit surfaces '
         + 'always expose raw tokens regardless of this toggle.',
@@ -210,8 +216,11 @@ export function buildSettingsPanel({ caps = [] } = {}) {
 // Global display-prefs section (the second section-kind, alongside Sampling and
 // per-page extras). Rendered in the shared drawer on every page -- these prefs
 // are model-agnostic, so no capability gating.
+// Renders only prefs whose render surface actually honors them (`wired`); a pref
+// with no consumer is a lie as a control, so it stays in the store but out of the
+// UI. Returns null when nothing is wired yet, so the drawer omits the section.
 export function buildDisplayPanel() {
-  const rows = Object.entries(DISPLAY_META).map(([key, meta]) => {
+  const rows = Object.entries(DISPLAY_META).filter(([, meta]) => meta.wired).map(([key, meta]) => {
     const box = createEl('input', { type: 'checkbox', checked: getDisplayPref(key) === true });
     box.addEventListener('change', () => setDisplayPref(key, box.checked));
     return createEl('div', { class: 'settings-row' }, [
@@ -219,6 +228,7 @@ export function buildDisplayPanel() {
       box,
     ]);
   });
+  if (!rows.length) return null;
   return createEl('div', { class: 'settings-panel' }, [
     createEl('h3', {}, ['Display']),
     ...rows,
