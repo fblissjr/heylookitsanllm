@@ -776,6 +776,13 @@ def _maybe_log_request_event(
         return
     from heylook_llm.memory import safe_mm_call, sampler_summary_from_request
     safe_mm_call(mm, "mark_request_end")
+    # Provider TYPE ("mlx" | "mlx_embedding") -- derived from the provider class.
+    # The provider object has no `.provider` attr (that lives on the model config),
+    # so the old getattr(provider, "provider") always yielded null/"unknown"
+    # (found via live verification). Class-name is the robust in-hand signal.
+    provider_type = None
+    if provider is not None:
+        provider_type = "mlx_embedding" if type(provider).__name__ == "MLXEmbeddingProvider" else "mlx"
     try:
         from dataclasses import asdict
         record = asdict(event)
@@ -791,7 +798,7 @@ def _maybe_log_request_event(
         if content_duration_ms is not None:
             record["content_duration_ms"] = content_duration_ms
         record["stop_reason"] = stop_reason
-        record["provider_type"] = getattr(provider, "provider", "unknown") if provider else "unknown"
+        record["provider_type"] = provider_type or "unknown"
         record["image_count"] = perf_ctx.get("image_count", 0)
         prompt_tok = int(record.get("prompt_tokens") or 0)
         record["cache_hit_rate"] = round(cached_tokens / prompt_tok, 4) if prompt_tok > 0 else 0.0
@@ -805,7 +812,7 @@ def _maybe_log_request_event(
     observability.record_event(
         "request_complete", tier="metrics", min_level="minimal",
         model=getattr(event, "model", None),
-        provider=getattr(provider, "provider", None) if provider else None,
+        provider=provider_type,
         effective_loader=getattr(provider, "effective_loader", None),
         is_vlm=getattr(provider, "is_vlm", None),
         success=getattr(event, "success", None),

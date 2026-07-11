@@ -22,13 +22,17 @@ class _StubMM:
         pass
 
 
-class _Provider:
-    def __init__(self, provider, effective_loader=None, is_vlm=None):
-        self.provider = provider
+class MLXProvider:
+    """Stub named to match the real class -- provider type is derived from the class name."""
+    def __init__(self, effective_loader=None, is_vlm=None):
         if effective_loader is not None:
             self.effective_loader = effective_loader
         if is_vlm is not None:
             self.is_vlm = is_vlm
+
+
+class MLXEmbeddingProvider:
+    """Stub named to match the real embedding class (no loader/is_vlm attrs)."""
 
 
 def _event(**kw):
@@ -51,13 +55,13 @@ def test_request_complete_emitted_with_metrics(tmp_path):
     _maybe_log_request_event(
         {"memory_manager": _StubMM(), "image_count": 2},
         _event(),
-        provider=_Provider("mlx", effective_loader="mlx-vlm", is_vlm=True),
+        provider=MLXProvider(effective_loader="mlx-vlm", is_vlm=True),
         peak_memory_gb=3.5, kv_cache_bytes=1024, cached_tokens=4, stop_reason="stop",
     )
     (rec,) = _read(tmp_path / "metrics.jsonl")
     assert rec["type"] == "request_complete"
     assert rec["model"] == "m"
-    assert rec["provider"] == "mlx"
+    assert rec["provider"] == "mlx"  # derived from provider class name
     assert rec["effective_loader"] == "mlx-vlm"
     assert rec["is_vlm"] is True
     assert rec["completion_tokens"] == 50
@@ -71,7 +75,7 @@ def test_embedding_provider_yields_null_loader(tmp_path):
     _maybe_log_request_event(
         {"memory_manager": _StubMM(), "image_count": 0},
         _event(model="emb"),
-        provider=_Provider("mlx_embedding"),  # no effective_loader / is_vlm attrs
+        provider=MLXEmbeddingProvider(),  # no effective_loader / is_vlm attrs
     )
     (rec,) = _read(tmp_path / "metrics.jsonl")
     assert rec["provider"] == "mlx_embedding"
@@ -84,6 +88,6 @@ def test_off_level_suppresses_metrics(tmp_path):
     _maybe_log_request_event(
         {"memory_manager": _StubMM(), "image_count": 0},
         _event(),
-        provider=_Provider("mlx", effective_loader="mlx-lm", is_vlm=False),
+        provider=MLXProvider(effective_loader="mlx-lm", is_vlm=False),
     )
     assert not (tmp_path / "metrics.jsonl").exists()

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.51]
+
+### Fixed
+
+- Telemetry `provider` field was always null (found via live verification): the
+  per-request emission + memory.py's `provider_type` read `getattr(provider,
+  "provider")` on the provider OBJECT, which has no such attribute. Now derived
+  from the provider class (`MLXEmbeddingProvider` -> `mlx_embedding`, else `mlx`).
+  Live run confirmed the text/mlx-lm path: `request_complete` with
+  `effective_loader=mlx-lm`, `is_vlm=false`, and real token/tps/memory metrics.
+
 ## [1.34.50]
 
 ### Changed
