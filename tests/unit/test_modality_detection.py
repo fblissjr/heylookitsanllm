@@ -44,6 +44,13 @@ class TestDetectModalities:
         _write(tmp_path, {"model_type": "x", "image_token_id": 12345})
         assert importer.detect_modalities(tmp_path) == ["text", "vision"]
 
+    def test_image_token_index_signal(self, importer, tmp_path):
+        # LLaVA/Mistral/Pixtral naming uses image_token_INDEX (not _id); a
+        # stripped/converted checkpoint may carry it without a vision_config
+        # block (found on soundTeam/MS3.2-24b-Angel in the modelzoo audit).
+        _write(tmp_path, {"model_type": "llava", "image_token_index": 32000})
+        assert importer.detect_modalities(tmp_path) == ["text", "vision"]
+
     def test_audio_config_block(self, importer, tmp_path):
         _write(tmp_path, {"model_type": "x", "audio_config": {"n_mels": 128}})
         assert importer.detect_modalities(tmp_path) == ["text", "audio"]

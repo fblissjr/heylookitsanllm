@@ -254,6 +254,7 @@ class ModelImporter:
         if (
             "vision_config" in cfg
             or "image_token_id" in cfg
+            or "image_token_index" in cfg   # LLaVA/Mistral/Pixtral spelling of the above
             or "vision_start_token_id" in cfg
             or "image_size" in cfg          # legacy signal, kept as a weak fallback
             or self._has_vision_files(path)
