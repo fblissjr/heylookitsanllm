@@ -1,6 +1,6 @@
 # J-space (Jacobian lens) integration — build + verifier plan
 
-Last updated: 2026-07-10
+Last updated: 2026-07-11
 
 > **Part 2 -- go-forward plan (2026-07-10), at the bottom of this doc,** supersedes the
 > "Deferred / follow-ups" list: fit our own lens (new `jlens-mlx` sibling repo), the
@@ -410,6 +410,90 @@ extension):
 3. **live streaming** (per-token workspace rows) — needs a new streaming analyze endpoint.
 4. **interventions (steer/swap/ablate)** UI — needs real backend (residual-stream hook at layer L + forward-from-layer re-gen); sequence AFTER streaming. Both references converge on the same math: transport a token's unembed direction by `J_lᵀ`, then add (steer) / project-out (ablate) / swap source→target.
 
+### Refinements from the live Neuronpedia comparison (2026-07-11)
+
+Held our shipped page (gemma-4-26b, provisional lens) against the live reference
+(Gurnee et al.'s Qwen 3.6 27B demo). Root finding: the reference is **chat-turn-first
+and selection-first**; ours is **raw-completion-first and static-render-first**. Most
+gaps fall out of that one difference. Priority order (highest value first):
+
+1. **Chat turn should be the DEFAULT, not the opt-in.** `analyze.py` defaults to
+   `chat=False` (raw completion, no template, special tokens stripped) — the reason
+   our readouts read like noise while the reference reads like thoughts. Flip the
+   default to the chat turn with markers shown (DESIGN.md §6). Cheap, high-impact,
+   and it makes every other feature legible.
+2. **Prefill / edit the assistant message** — the reference's *core* experiment
+   ("Optional: Prefill assistant"): fix the assistant's words, read how the j-space
+   changes. We only ever read the model's own greedy answer. Backend change: analyze
+   must accept a prefilled assistant span and read the workspace over *those*
+   positions. This is the single biggest capability gap.
+3. **Per-token selection** — select any token / set of tokens in the transcript to
+   drive the readout (reference images). This is what our `layer×token heatmap`
+   toggle is a static workaround for: once you can select a position, the dense
+   all-positions grid mostly stops earning its screen space. Selection is the real
+   feature; the heatmap is the placeholder.
+4. **Settings integration — with a deliberate exclusion.** Wire the chat tab's
+   **system-prompt** editor (and prefill, per #2) into jspace; a sysprompt reshapes
+   the whole disposition. Do **not** import sampler settings — jspace generation is
+   intentionally greedy (`greedy_generate`) for reproducibility; temperature/top-p
+   would make readouts non-deterministic. Presets only insofar as they carry a
+   sysprompt, not samplers.
+5. **Steer/Swap + Diff-vs-Logit-lens** (reference's swap `tennis`→`rugby`, and
+   Jacobian/Logit/Diff modes) — these are genuinely new backend endpoints
+   (activation patching; per-position logit-lens readout), not frontend polish.
+   Same as item 4 above; sequence last.
+
+Cross-cutting: **special tokens are shown, never stripped by default** — see
+DESIGN.md §6 (applies to jspace, notebook, token explorer). Note the two visible
+toggles today (`chat mode`, `layer×token heatmap`) are both symptoms of missing
+capabilities (#1 and #3); expect them to be reworked, not kept as-is.
+
+Caveat that colors all of the above: the shipped page runs a **provisional**
+(third-party, unknown-provenance) gemma lens, so a chunk of the "missing features"
+impression is actually noisy readouts. A clean own-fit lens (jlens-mlx track) and
+these viz features reinforce each other — build them in tandem, not in isolation.
+
+### Prior art mined from `coderef/mlxui-core` (the owner's shelved earlier UI, 2026-07-11)
+
+That project (gitignored reference; last touched ~mid-2025) contains a **fully-built
+steering backend that no frontend ever consumed** — so several of the items above are
+ports, not green-field builds. What to take and what to leave:
+
+- **Activation-patching core is portable** (`control_layer.py`): residual `add`/
+  `subtract`/`set` with a correct **apply-then-clear-in-`finally`** lifecycle (controls
+  never leak across requests), plus an arch-agnostic **control-point taxonomy**
+  (`control_meta.py`: `pre_attention_layernorm_input`, `attention_output`,
+  `post_mlp_residual`, …). Port the **op semantics + the taxonomy vocabulary**; our
+  intervention endpoint and jspace capture points should both speak it. Add `swap`
+  (source→target) and `ablate` (project-out) ourselves — only add/subtract/set shipped.
+- **DELIVER VIA HOOKS, not its plumbing.** It steered by subclassing every architecture
+  (model surgery); its mlx-lm mask/cache internals are ~11 months stale. We already have
+  the better substrate — forward-hooks on `inner.layers` (the fresh-slice-property trap
+  is in CLAUDE.md), the pinned-executor MLX-thread discipline, radix cache. The lesson of
+  that project is the separation it never achieved: a stateless capture/intervention layer
+  decoupled from model internals. Mine the **vocabulary and UX, not the plumbing.**
+- **Possibility-horizon token walker** (`explorerStore` + an `explorer` step API: greedy
+  pick + top-k alternatives, click to commit, click a past token to backtrack) — this is
+  simultaneously the **per-token selection** primitive (#3) *and* the **prefill/edit**
+  mechanism (#2). It **collapses items #2 and #3 into one primitive**; reimplement in
+  vanilla JS, mirror the whole-path-in / alternatives-out step API. Pairs with per-token
+  capture of the sampling params that produced each token (self-describing, replayable path).
+- **Manifest-driven shared settings drawer** confirms the DRY-settings direction: a param
+  manifest auto-renders the form (our `settings.js` already does this via `PARAM_META`),
+  app-level singleton shared across modes, right-drawer + backdrop + ESC + mutually-exclusive
+  panels. Phase 2 extracts the shell; the pattern is validated, not invented here.
+- **Tier-2 payoff layer (novel to us, design-complete, later):** contrastive control-vector
+  **derivation** (± example prompts → a steering direction), a **feature analyzer** (scan
+  layers×points → where a concept is most strongly represented), and **dual steered-vs-natural
+  distribution viz**. These *complement* the lens — jspace explains directions, these
+  manufacture and localize them. Reuses the `adapters/`/`modelzoo/` git-tracked-dir pattern
+  for a repo of named control vectors. (Note: the miner flagged a capture-loop bug in
+  `feature_analyzer.py:96-145` and schema drift in `mlx_provider.py:536/545` — verify before
+  porting.)
+- **Traps — do not revive:** the per-arch subclass approach (`controlled_models/gemma3.py`),
+  stale mlx-lm mask/cache signatures, aspirational schema branches, and a pile of orphaned
+  frontend files. Mine ideas, not wiring.
+
 ## Attribution (both MLX/torch upstreams Apache-2.0; Neuronpedia MIT, ideas only)
 
 `jlens-mlx` ships `NOTICE` + per-file provenance headers crediting
@@ -502,6 +586,12 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   layers QUALITATIVELY (readout tokens) or by a disposition-aware metric, NOT final-logit agreement.
   The near-target degeneracy is the MODEL's (its output collapses to blank/format tokens), not the
   fit's — the lens correctly shows the cleaner mid-depth 'Paris' disposition before that collapse.
+  **Evidence caveat (2026-07-11 review):** the RANKING half (the gate's top-1/top-10/KL per band
+  layer) is in `out/fit_band5.log`; the TOKEN-readout half ('Paris' vs degenerate ' __') was an
+  ad-hoc `scripts/readout.py` run that was NEVER saved to a committed log. The finding is real (it
+  was observed live), but its qualitative evidence is not yet artifact-backed — re-capture a
+  `readout.py` run to `out/` to pin it. Also note the logged KL series is NON-monotone (J_42 KL
+  10.15 is the band-worst, above J_40's 9.36); the gate ranks its "worst" layer by top-k, not KL.
 
 - **Quantization ⇒ its own lens (why our own-fit matters, restated concretely).** Only the fitted
   `J_l` matrices carry a fit-time-quant assumption; the final norm + head stay OUTSIDE `J` and are
@@ -510,6 +600,21 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   transferable (quantization preserves the function) but degraded, worse at deeper layers. We fit on
   the exact served 8-bit checkpoint via `mlx_lm.load` (the VJP runs through that dequantized forward),
   so we are matched — the same reason the inherited stock-fit lens is only provisional.
+
+- **Fit/apply capture parity is ASSERTED, not verified (2026-07-11 review; go-forward check).**
+  The fit captures source residuals cache-less (`ad.inner`; the tail-VJP drives the blocks with an
+  explicit `create_attention_mask(cache=None)` / `create_ssm_mask`), while the apply path runs the
+  full forward with a FRESH cache (`ad.run_inner`) — REQUIRED because the hybrid served qwen3_5
+  crashes on a cache-less forward (its full-attention block dereferences `cache.offset` unguarded).
+  Both are causal-from-scratch, so they SHOULD produce identical source-layer residuals, and the
+  identity layer reproducing true logits at KL≈0 is consistent with a faithful apply path — but the
+  equivalence is only asserted (`src/heylook_llm/jspace/capture.py:84-90,128-134`), never numerically
+  checked. LOW risk (same math), but it is the FOUNDATION of served-model lens correctness, so it
+  earns a cheap parity test: capture `h_l` both ways on one input and assert `allclose`. Does NOT
+  invalidate the running band-full fit (the lens is internally self-consistent — fit and applied on
+  the same convention within jlens; the question is only cross-repo apply-side reproduction). The old
+  "`capture.py` fit/apply twins must be byte-identical" invariant was FALSE (the apply side legitimately
+  grew `run_inner`/`fresh_cache`) and is corrected in jlens `7f477a0`.
 
 ## Sequencing
 
