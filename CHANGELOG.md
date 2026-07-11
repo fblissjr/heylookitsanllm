@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.57]
+
+### Changed
+
+- **Sampler settings are now per-conversation** (v3, settings-storage unification
+  frontend): the drawer's sampler knobs bind to the active conversation's `params`
+  (server), mirroring the per-conversation system-prompt editor -- no longer
+  browser-only global state. On conversation select the panel hydrates from
+  `conversation.params` (silent, no re-PUT); a knob change / preset apply
+  debounce-PUTs `{params}` to the conversation; new chats + first-send create with
+  the current panel (`snapshotSettings()`), so knobs carry forward. `settings.js`
+  gains `onSettingsChange` (mirrors `onDisplayChange`) + a `silent` hydrate option
+  on `applySettings`. localStorage is now just the new-chat seed. Resolves the
+  "some settings in browser, some on server" split (redesign note §3b).
+
 ## [1.34.56]
 
 ### Added

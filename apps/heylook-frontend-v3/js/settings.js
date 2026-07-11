@@ -54,9 +54,23 @@ function scheduleSave() {
 
 export function getSetting(key) { return cache[key]; }
 
+// Sampler-change listeners -- fired on any panel mutation so a surface can
+// persist the panel elsewhere (chat binds this to PUT the active conversation's
+// `params`). Mirrors onDisplayChange; return value is an unsubscribe fn (call it
+// in the page's teardown so listeners don't outlive the mount).
+const samplerListeners = new Set();
+export function onSettingsChange(cb) {
+  samplerListeners.add(cb);
+  return () => samplerListeners.delete(cb);
+}
+function fireSettingsChange() {
+  for (const cb of samplerListeners) { try { cb(); } catch { /* isolate */ } }
+}
+
 export function setSetting(key, value) {
   cache[key] = value;
   scheduleSave();
+  fireSettingsChange();
 }
 
 export function resetSettings() {
@@ -77,9 +91,13 @@ export function snapshotSettings() {
 
 // Preset apply: the preset's params become the whole panel state -- absent
 // keys revert to null (backend cascade), matching "a preset IS the settings".
-export function applySettings(params) {
+// `silent`: skip firing listeners -- used when HYDRATING the panel from a
+// conversation's stored params, so loading a conversation doesn't immediately
+// PUT its own params straight back.
+export function applySettings(params, { silent = false } = {}) {
   cache = mergeKnown(params);
   scheduleSave();
+  if (!silent) fireSettingsChange();
 }
 
 // Request-body params: the snapshot minus the knobs that are only
