@@ -222,20 +222,52 @@ class ModelImporter:
                     return True
         return False
 
-    def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
-        """Check if a model supports vision."""
+    def _has_vision_files(self, path: Path) -> bool:
+        """Vision-tower / mmproj sidecar files -- the fallback signal for sparse
+        checkpoints (GGUF/split) whose config.json lacks a vision block."""
         vision_files = ["mmproj", "vision_tower", "image_encoder", "visual_encoder"]
-        for file in path.iterdir():
-            if any(v in file.name.lower() for v in vision_files):
-                return True
+        try:
+            return any(
+                any(v in f.name.lower() for v in vision_files) for f in path.iterdir()
+            )
+        except OSError:
+            return False
 
+    def detect_modalities(self, path: Path, config_data: Optional[dict] = None) -> list[str]:
+        """The model's author-declared modality set, ``text`` always first.
+
+        Primary signal is the config's OWN structure -- ``vision_config`` /
+        ``audio_config`` sub-blocks and ``*_token_id`` keys are how the model
+        declares which modalities it routes (ground truth). ``mmproj``-style
+        weight files are a vision fallback for sparse checkpoints. Pure
+        description: whether mlx-vlm can *load* it (the loader=auto gate) is a
+        separate, library-aware decision made in the provider.
+
+        Robust by construction -- a draft/MTP head or a dir with no/odd
+        config.json yields ``["text"]`` rather than raising.
+        """
         if config_data is None:
             config_data = self._read_model_config(path)
+        cfg = config_data or {}
 
-        if config_data and any(key in config_data for key in ["vision_config", "is_vision", "image_size"]):
-            return True
+        mods = ["text"]
+        if (
+            "vision_config" in cfg
+            or "image_token_id" in cfg
+            or "vision_start_token_id" in cfg
+            or "image_size" in cfg          # legacy signal, kept as a weak fallback
+            or self._has_vision_files(path)
+        ):
+            mods.append("vision")
+        if "audio_config" in cfg or "audio_token_id" in cfg:
+            mods.append("audio")
+        if "video_config" in cfg or "video_token_id" in cfg:
+            mods.append("video")
+        return mods
 
-        return False
+    def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
+        """Back-compat shim: vision is one modality of :meth:`detect_modalities`."""
+        return "vision" in self.detect_modalities(path, config_data)
 
     def _get_model_size(self, path: Path) -> tuple[Optional[str], Optional[float]]:
         """Return (param-count label from the name, ACTUAL weight bytes in GB).
@@ -278,7 +310,8 @@ class ModelImporter:
         self.existing_ids.add(model_id)
 
         is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
-        is_vision = self._is_vision_model(path, config_data)
+        modalities = self.detect_modalities(path, config_data)
+        is_vision = "vision" in modalities
         size_str, size_gb = self._get_model_size(path)
 
         model_info = {
@@ -289,7 +322,12 @@ class ModelImporter:
 
         tags = self._detect_tags(model_id, is_vision, is_quantized, size_gb)
 
-        config: dict[str, Any] = {"model_path": str(path), "vision": is_vision}
+        # ``modalities`` is the description of record; ``vision`` is retained as
+        # a derived mirror for back-compat readers (config schema keeps them in
+        # sync). Non-text modalities (audio/video) can only be expressed here.
+        config: dict[str, Any] = {
+            "model_path": str(path), "vision": is_vision, "modalities": modalities,
+        }
         config.update(get_smart_defaults(model_info))
 
         # Chat-template source policy (C4.5):

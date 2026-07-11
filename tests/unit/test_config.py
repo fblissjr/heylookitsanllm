@@ -271,3 +271,75 @@ class TestMLXModelConfigValidation:
         # _build_cache_config/make_cache. Removed outright.
         with pytest.raises(ValidationError):
             MLXModelConfig(**self.BASE, quantized_kv_start=1024)
+
+
+@pytest.mark.unit
+class TestModalitiesAndLoader:
+    """modalities/loader split (Phase 6 refinement 2026-07-11).
+
+    ``vision: bool`` used to do two jobs -- DESCRIBE the model (has a vision
+    tower) and SELECT the loader (mlx-vlm vs mlx-lm). ``modalities`` (list) is
+    the description; ``loader`` (routing) is separate. ``vision`` is retained but
+    demoted to a derived mirror of ``"vision" in modalities`` for back-compat.
+    """
+
+    BASE = {"model_path": "/fake/model"}
+
+    def test_defaults_are_text_only(self):
+        cfg = MLXModelConfig(**self.BASE)
+        assert cfg.modalities == ["text"]
+        assert cfg.vision is False
+        assert cfg.loader == "auto"
+
+    def test_legacy_vision_true_derives_modalities(self):
+        # Old entries carry only ``vision = true``; modalities derives from it.
+        cfg = MLXModelConfig(**self.BASE, vision=True)
+        assert cfg.modalities == ["text", "vision"]
+        assert cfg.vision is True
+
+    def test_explicit_modalities_syncs_vision_true(self):
+        cfg = MLXModelConfig(**self.BASE, modalities=["text", "vision", "audio"])
+        assert cfg.vision is True                     # derived from modalities
+        assert "audio" in cfg.modalities
+
+    def test_explicit_modalities_without_vision_sets_vision_false(self):
+        # A non-vision multimodal model (e.g. text+audio) must NOT read as vision.
+        cfg = MLXModelConfig(**self.BASE, modalities=["text", "audio"])
+        assert cfg.vision is False
+        assert cfg.modalities == ["text", "audio"]
+
+    def test_modalities_are_authoritative_over_vision(self):
+        # Contradiction (vision=True but modalities lacks it): modalities wins,
+        # since it is the richer, author-declared description.
+        cfg = MLXModelConfig(**self.BASE, vision=True, modalities=["text"])
+        assert cfg.vision is False
+        assert cfg.modalities == ["text"]
+
+    def test_text_always_present(self):
+        # Every language model does text; normalize it in even if omitted.
+        cfg = MLXModelConfig(**self.BASE, modalities=["vision"])
+        assert cfg.modalities[0] == "text"
+        assert "vision" in cfg.modalities
+
+    def test_modalities_deduped(self):
+        cfg = MLXModelConfig(**self.BASE, modalities=["text", "vision", "vision"])
+        assert cfg.modalities == ["text", "vision"]
+
+    def test_loader_default_auto(self):
+        assert MLXModelConfig(**self.BASE).loader == "auto"
+
+    def test_loader_accepts_explicit_engines(self):
+        for good in ("auto", "mlx-vlm", "mlx-lm"):
+            assert MLXModelConfig(**self.BASE, loader=good).loader == good
+
+    def test_loader_rejects_unknown(self):
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, loader="mlx_embedding")
+        with pytest.raises(ValidationError):
+            MLXModelConfig(**self.BASE, loader="vllm")
+
+    def test_modalities_and_loader_not_runtime_defaults(self):
+        # They are model-level metadata, not per-request sampler defaults --
+        # they must not leak into MLX_RUNTIME_DEFAULT_FIELDS.
+        assert "modalities" not in MLX_RUNTIME_DEFAULT_FIELDS
+        assert "loader" not in MLX_RUNTIME_DEFAULT_FIELDS

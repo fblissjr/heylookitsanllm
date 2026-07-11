@@ -81,6 +81,15 @@ class ModelAdapter:
                 f"(tried {_LIST_ATTRS})")
         self._norm = self._find(self.inner, _NORM_ATTRS)
 
+        # A factory for a fresh per-layer cache list, if the model exposes one.
+        # Hybrid models (mlx-vlm qwen3.5: KVCache + ArraysCache) REQUIRE a real
+        # cache -- their full-attention block dereferences ``cache.offset`` with
+        # no None-guard, so a cache-less forward crashes (AttributeError on
+        # NoneType). Non-hybrid models (gemma, gpt2) tolerate cache=None, but
+        # handing them a fresh empty cache is the normal generation path and
+        # produces identical residuals. See _resolve_make_cache / fresh_cache.
+        self._make_cache = self._resolve_make_cache(holders)
+
         head_mod = next((hm for hm in (getattr(h, "lm_head", None) for h in holders)
                          if hm is not None and hasattr(hm, "weight")), None)
         if head_mod is not None:
@@ -97,6 +106,41 @@ class ModelAdapter:
             if found is not None:
                 return found
         return None
+
+    def _resolve_make_cache(self, holders: list):
+        """The first holder ``make_cache`` that yields a per-layer list matching
+        this model's block count, or None. Length-matching guards against a
+        wrapper whose ``make_cache`` returns something else (e.g. a vision cache).
+        The probe result is discarded -- fresh caches start empty and cheap."""
+        n = self.n_layers
+        for h in holders:
+            mk = getattr(h, "make_cache", None)
+            if not callable(mk):
+                continue
+            try:
+                probe = mk()
+            except Exception:
+                continue
+            if isinstance(probe, (list, tuple)) and len(probe) == n:
+                return mk
+        return None
+
+    def fresh_cache(self):
+        """A new, empty per-layer cache for a single standalone (full-sequence)
+        forward, or None when the model tolerates a cache-less forward. Each
+        analyze forward re-prefills the whole sequence, so a throwaway fresh
+        cache (offset 0) reproduces no-cache semantics -- required for the
+        hybrid mlx-vlm path (see _make_cache)."""
+        return self._make_cache() if self._make_cache is not None else None
+
+    def run_inner(self, input_ids: mx.array) -> mx.array:
+        """The inner (pre-head) forward with a fresh cache when the model needs
+        one. The cache is passed as a KWARG only when non-None: architectures
+        differ in positional order (mlx-vlm qwen3.5 puts inputs_embeds second),
+        and a cache-less path must not force a ``cache=`` arg on forwards that
+        don't declare one."""
+        cache = self.fresh_cache()
+        return self.inner(input_ids) if cache is None else self.inner(input_ids, cache=cache)
 
     @staticmethod
     def _find_softcap(holders: list) -> float | None:
@@ -133,7 +177,7 @@ class ModelAdapter:
         """The model's real logits for ``input_ids`` ``[1, L]``: runs the text
         forward (already applies the final norm) then head + softcap. Used for
         greedy answer generation in the analyze pipeline."""
-        normed = self.inner(input_ids)                # post-final-norm hidden
+        normed = self.run_inner(input_ids)            # post-final-norm hidden
         out = self._head(normed)
         if self.softcap:
             out = mx.tanh(out / self.softcap) * self.softcap
@@ -184,7 +228,9 @@ def capture_residuals(model, input_ids, layers, *, adapter: ModelAdapter | None 
     try:
         for i in want:
             blocks[i] = _Recorder(originals[i], store, i)
-        ad.inner(mx.array([list(input_ids)]))         # inner forward; head skipped
+        # Fresh empty cache when the model needs one (hybrid mlx-vlm attention
+        # requires a real cache); see ModelAdapter.run_inner. Head is skipped.
+        ad.run_inner(mx.array([list(input_ids)]))
         mx.eval(list(store.values()))
     finally:
         for i, mod in originals.items():

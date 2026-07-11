@@ -288,6 +288,13 @@ async def list_models(request: Request):
         if model_config:
             model_entry["provider"] = model_config.provider
 
+            # modalities = full author-declared DESCRIPTION (text/vision/audio/
+            # video); capabilities below stays gated to what the server actually
+            # SERVES (image input today) -- description != served.
+            modalities = getattr(model_config.config, "modalities", None)
+            if modalities:
+                model_entry["modalities"] = modalities
+
             # Use explicit capabilities if set, otherwise auto-detect
             if model_config.capabilities:
                 model_entry["capabilities"] = model_config.capabilities

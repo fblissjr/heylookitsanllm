@@ -145,7 +145,21 @@ class MLXModelConfig(BaseModel):
     model_path: str
     draft_model_path: Optional[str] = None
     num_draft_tokens: Optional[int] = Field(3, json_schema_extra={"is_runtime_default": True})
+    # DESCRIPTION vs ROUTING split (Phase 6 refinement 2026-07-11). ``vision``
+    # historically did both jobs; it is now a derived mirror of
+    # ``"vision" in modalities`` (kept for back-compat with readers of
+    # config["vision"]). ``modalities`` is the author-declared capability set;
+    # ``loader`` selects the mlx engine (within provider="mlx" only).
     vision: bool = False
+    # None = "not provided" -> derived from ``vision`` in _resolve_modalities.
+    # Detected at import from the config's own blocks (vision_config/audio_config
+    # + *_token_id); see model_importer.detect_modalities.
+    modalities: Optional[List[str]] = None
+    # Engine routing. "auto": mlx-vlm if "vision" in modalities AND mlx-vlm
+    # registers the model_type, else mlx-lm. Explicit values force the engine
+    # (e.g. run a dual-capable VLM as text via "mlx-lm"). Resolution + the
+    # effective loader live in the provider (is_vlm derives from it).
+    loader: Literal["auto", "mlx-vlm", "mlx-lm"] = "auto"
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -200,6 +214,31 @@ class MLXModelConfig(BaseModel):
     # Useful when a model ships a broken jinja but a working embedded template,
     # or when the user wants to test a custom template without re-exporting.
     chat_template_source: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _resolve_modalities(self):
+        """Reconcile ``modalities`` <-> ``vision`` (modalities is authoritative).
+
+        - ``modalities`` unset: derive from the legacy ``vision`` bool so old
+          toml entries (``vision = true``, no modalities) keep working.
+        - ``modalities`` set: normalize (``text`` always first, deduped, order
+          preserved) and sync ``vision`` to ``"vision" in modalities`` so a
+          contradiction (``vision = true`` but modalities lacks it) resolves in
+          favor of the richer, author-declared list.
+        """
+        if self.modalities is None:
+            self.modalities = ["text", "vision"] if self.vision else ["text"]
+        else:
+            seen: set[str] = set()
+            norm = ["text"]
+            seen.add("text")
+            for m in self.modalities:
+                if m not in seen:
+                    seen.add(m)
+                    norm.append(m)
+            self.modalities = norm
+            self.vision = "vision" in seen
+        return self
 
     @model_validator(mode="after")
     def _rotating_requires_max_kv_size(self):

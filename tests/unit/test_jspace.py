@@ -174,6 +174,111 @@ def test_capture_pipeline_fresh_slice_layers():
         assert arr.shape == (3, d)
 
 
+def test_capture_hybrid_requires_cache():
+    """Regression (#2): mlx-vlm hybrid models (qwen3.5: KVCache+ArraysCache)
+    dereference ``cache.offset`` in their attention block with NO None-guard, so
+    the old cache-less inner forward crashed with AttributeError on NoneType.
+    The adapter must source a fresh per-layer cache from the model's make_cache
+    and pass it (as a KWARG) into both logits() and capture_residuals()."""
+    d = 8
+
+    class CacheEntry:                         # KVCache-like: has .offset
+        offset = 0
+
+    class Blk:
+        def __call__(self, x, *a, cache=None, **k):
+            _ = cache.offset                  # AttributeError if cache is None
+            return x + 1.0
+
+    class Embed:
+        def __init__(self):
+            self.weight = mx.zeros((5, d))
+
+        def __call__(self, ids):
+            return mx.zeros((ids.shape[0], ids.shape[1], d))
+
+        def as_linear(self, x):
+            return x
+
+    class Inner:
+        def __init__(self):
+            self.norm = lambda x: x
+            self.embed_tokens = Embed()
+            self.layers = [Blk(), Blk(), Blk()]
+
+        def __call__(self, inputs, cache=None):
+            x = self.embed_tokens(inputs)
+            if cache is None:
+                cache = [None] * len(self.layers)
+            for layer, c in zip(self.layers, cache):
+                x = layer(x, cache=c)         # None here -> crash (the bug)
+            return self.norm(x)
+
+    class Model:
+        def __init__(self):
+            self.model = Inner()
+
+        def make_cache(self):
+            return [CacheEntry() for _ in self.model.layers]
+
+    m = Model()
+    ad = ModelAdapter(m)
+    assert ad._make_cache is not None              # resolved the factory
+    assert len(ad.fresh_cache()) == ad.n_layers    # length-matched, per-layer
+
+    # Both forwards must run without the AttributeError (they now feed a real
+    # cache, so the block's cache.offset deref works).
+    assert np.asarray(ad.logits(mx.array([[1, 2, 3]]))).shape[:2] == (1, 3)
+    res = capture_residuals(m, [1, 2, 3], layers=[0, 2], adapter=ad)
+    assert set(res.keys()) == {0, 2}
+
+
+def test_fresh_cache_rejects_wrong_length():
+    """_resolve_make_cache length-matches: a make_cache that returns the wrong
+    number of entries (e.g. a wrapper's vision cache) is ignored, and models
+    that tolerate a cache-less forward fall back to None."""
+    d = 8
+
+    class Blk:
+        def __call__(self, x, *a, **k):
+            return x + 1.0
+
+    class Embed:
+        def __init__(self):
+            self.weight = mx.zeros((5, d))
+
+        def __call__(self, ids):
+            return mx.zeros((ids.shape[0], ids.shape[1], d))
+
+        def as_linear(self, x):
+            return x
+
+    class Inner:
+        def __init__(self):
+            self.norm = lambda x: x
+            self.embed_tokens = Embed()
+            self.layers = [Blk(), Blk(), Blk()]
+
+        def __call__(self, inputs, cache=None):
+            x = self.embed_tokens(inputs)
+            for layer in self.layers:
+                x = layer(x)
+            return self.norm(x)
+
+    class Model:
+        def __init__(self):
+            self.model = Inner()
+
+        def make_cache(self):
+            return [object()]                 # length 1 != 3 layers -> rejected
+
+    ad = ModelAdapter(Model())
+    assert ad._make_cache is None
+    assert ad.fresh_cache() is None
+    res = capture_residuals(ad.model, [1, 2, 3], layers=[0, 2], adapter=ad)
+    assert set(res.keys()) == {0, 2}
+
+
 def test_lens_from_files(tmp_path):
     from safetensors.numpy import save_file
     import json

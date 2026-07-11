@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.43]
+
+### Added
+
+- Model registry now describes modality and engine routing as two separate
+  fields on `MLXModelConfig`, decoupling what a model IS from how it loads
+  (Phase 6 refinement; see `docs/project/plan_2026-07.md`):
+  - `modalities: list[str]` -- author-declared capability set
+    (`text`/`vision`/`audio`/`video`), detected at import from the config's own
+    `vision_config`/`audio_config` blocks + `*_token_id` keys
+    (`model_importer.detect_modalities`), with `mmproj`-style files as a
+    fallback. Represents genuinely multi-modal models (e.g. gemma-4 declares
+    text+vision+audio) that a single `vision` bool could not.
+  - `loader: "auto" | "mlx-vlm" | "mlx-lm"` -- engine routing within
+    `provider="mlx"`. `auto` picks mlx-vlm when the model declares vision AND
+    mlx-vlm registers its `model_type`, else mlx-lm; it degrades to mlx-lm only
+    on POSITIVE knowledge that mlx-vlm lacks the type (uncertainty keeps the
+    historical vision->mlx-vlm default). An explicit value forces the engine
+    (e.g. run a dual-capable VLM as text via `mlx-lm`). Resolution lives in
+    `providers/common/loader_routing.py`; `is_vlm` + a new
+    `MLXProvider.effective_loader` derive from it.
+- `/v1/models` entries now carry `modalities` (full description); `capabilities`
+  stays gated to what the server actually serves (image input) -- description !=
+  served.
+
+### Changed
+
+- `vision: bool` (MLXModelConfig) is demoted to a derived mirror of
+  `"vision" in modalities` (kept for back-compat readers of `config["vision"]`);
+  `modalities` is authoritative. Absent `modalities` derives from `vision`, so
+  existing `models.toml` entries and the provider load path are unchanged. The
+  richer modality set (e.g. audio) lands on re-import.
+
+## [1.34.42]
+
+### Fixed
+
+- jspace `/v1/jspace/analyze` crashed (`AttributeError: 'NoneType' object has no
+  attribute 'offset'`) on hybrid mlx-vlm models -- specifically Qwen3.5 (the
+  KVCache+ArraysCache GDN architecture). Their full-attention block dereferences
+  `cache.offset` with no None-guard, so the cache-less inner forward the lens
+  used for read-out (`ModelAdapter.logits` / `capture_residuals`) blew up. gemma
+  was unaffected (its attention tolerates a missing cache). The adapter now
+  sources a fresh, empty per-layer cache from the model's own `make_cache()`
+  (length-matched to the block count) and passes it into every inner forward;
+  each analyze forward re-prefills the whole sequence, so a throwaway offset-0
+  cache reproduces the old no-cache semantics. Models without a matching
+  `make_cache` still run cache-less, unchanged.
+
 ## [1.34.41]
 
 ### Changed

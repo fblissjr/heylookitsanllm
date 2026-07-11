@@ -27,6 +27,7 @@ from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
+from .common.loader_routing import resolve_effective_loader, read_model_type
 from .common.generation_gate import GenerationGate, GenerationCancelled
 from .common.template_info import (
     install_chat_template,
@@ -542,7 +543,13 @@ class MLXProvider(BaseProvider):
         self.model = None
         self.processor = None
         self.draft_model = None
-        self.is_vlm = self.config.get("vision", False)
+        # Engine routing: modalities (description) + loader (hint) -> the mlx
+        # engine that loads. is_vlm derives from it. "auto" degrades a vision
+        # model mlx-vlm can't load to mlx-lm rather than crashing at load; an
+        # explicit loader forces the engine. See common/loader_routing.py.
+        self.effective_loader = resolve_effective_loader(
+            self.config, lambda: read_model_type(self.config.get("model_path", "")))
+        self.is_vlm = self.effective_loader == "mlx-vlm"
 
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
