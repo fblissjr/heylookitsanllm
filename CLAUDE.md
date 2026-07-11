@@ -26,9 +26,12 @@ config in `models.toml`. 9 API routers: messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability). DuckDB store (`db.py`: conversations +
 notebooks + presets, single serialized writer thread, transactional ops;
 `HEYLOOK_DB_PATH` override; dynamic field names gated by `_UPDATABLE_*_FIELDS`
-frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- add tables additively
-via CREATE TABLE IF NOT EXISTS instead). RLM (`rlm.py`): recursive inference
-with sandboxed REPL.
+frozensets; a `_SCHEMA_VERSION` bump DROPS all tables). DB/config POLICY (solo
+deploy, no data to preserve): NEVER write migration code -- dropping, recreating,
+or truncating any DuckDB store or config on a schema change is fine and preferred.
+Use additive `CREATE TABLE IF NOT EXISTS` only when you just need to ADD a table
+(cheap, non-destructive); for an actual schema CHANGE, bump `_SCHEMA_VERSION` /
+drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
 - [docs/architecture/](./docs/architecture/) (overview, api, router, config, mlx_provider, mlx_embedding, ecosystem_strategy) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
