@@ -146,6 +146,67 @@ derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
 See also the Phase 6 "per-model SIDECAR ARTIFACTS" note (draft model / j-space
 lens / future LoRA managed as a group on the admin CRUD surface).
 
+## Observability + config redesign (2026-07-11)
+
+Full design + status: `internal/research/observability_and_config_redesign.md`
+(local-only). Backend spine + config layer landed this session
+(v1.34.44-.55).
+
+**Done (backend):**
+- [x] Config foundation: App-DB `settings` table + `/v1/admin/config` (env > DB >
+  default, then made DB-authoritative -- no env override for operational settings).
+- [x] Observability spine: `observability.py` `record_event` -> `logs/*.jsonl`
+  (metrics + events tiers), level-gated (`observability_level`), file rotation,
+  startup disclosure; `diag_event` delegates to it; per-request + model-lifecycle
+  emission; `POST /v1/telemetry/events` for v3 client events.
+- [x] `internal/log/` -> `logs/` reconcile; `observability_level=off` master kill
+  switch over memory.py's legacy streams.
+- [x] Aborted/stopped streaming requests now logged (`stop_reason=abort`).
+- [x] Chat-template robustness: reject stop-less templates, validate vs the
+  model's own eos tokens (v1.34.55).
+
+**Backend TODO (mine):**
+- [ ] **Per-conversation sampler settings** (P2, decided: COLUMN, data-loss OK):
+  add `params TEXT DEFAULT '{}'` to the `conversations` table (`db.py`), bump
+  `_SCHEMA_VERSION` (drops tables -- accepted), thread `params` through
+  `create_conversation`/`update_conversation` (`db.py:304`/`:380`) +
+  `ConversationCreate`/`ConversationUpdate` + PUT allowed set
+  (`conversation_api.py:105`). Unifies "settings in browser vs server" -- sampler
+  knobs join the system prompt on the server. Spec: redesign note §3b.
+- [ ] **memory.py stream CONSOLIDATION** (P2): spine now duplicates memory.py's
+  `request_events`/`model_events` streams. Once live-verified, remove the dupes +
+  retire the 3 legacy env toggles (`HEYLOOK_REQUEST_LOG_ENABLED` /
+  `_MODEL_EVENT_LOG_ENABLED` / `_BASELINE_LOG_INTERVAL_SECONDS`); resource snapshot
+  moves to the spine. Gated on full live verification.
+- [ ] **Live-verify the spine end-to-end** (P2): confirm `provider=mlx` +
+  `effective_loader` (text=mlx-lm / vision=mlx-vlm) + `stop_reason=abort` in
+  `logs/metrics.jsonl` from real runs before removing memory.py streams.
+- [ ] **`modalities` dim in `request_complete`** (P3): only
+  `provider`/`effective_loader`/`is_vlm` captured; `modalities` needs
+  `model_config` threaded to `_maybe_log_request_event`.
+- [ ] **Never-stops health signal** (P3): flag models whose requests consistently
+  hit `stop_reason=length`/`abort` (surfaces broken templates in the metrics).
+
+**Frontend TODO (v3 `settings-drawer.js` stream -- NOT the backend lane):**
+- [ ] **Per-conversation settings UI** (P2): hydrate the sampler drawer from
+  `conversation.params` (server), debounced `PUT /v1/conversations/{id}` on change
+  (same pattern as the system-prompt editor); demote localStorage to new-chat
+  defaults only. Coordinate the column shape with the backend item above. Spec:
+  redesign note §3b.
+- [ ] **v3 observability CONFIG + VIEW pages** (P2, owner-required): admin panel
+  edits `observability_level`/retention via `/v1/admin/config`; a read page
+  surfaces `logs/*.jsonl` (recent events/errors + metric summaries via
+  `read_json_auto`). `js/telemetry.js` client logger -> `POST /v1/telemetry/events`.
+- [ ] **Default sampler temp** (P3, owner: 1.0): no code default exists today
+  (`settings.js emptySettings()` -> null; the `1.2` seen was a saved localStorage
+  value). If a code default is wanted, set it in the new-chat defaults (frontend)
+  or as a `None`->1.0 backend fallback -- decide where.
+
+**Docs / rot:**
+- [ ] `docs/observability_guide.md` has a redesign banner + corrected paths but
+  its body still describes the legacy `internal/log/` 4-stream layout -- full
+  rewrite pending (P3).
+
 ## Recently Completed (Phase 2 -- 2026-03-13)
 
 - [x] Remove STT provider (`mlx_stt_provider.py`, `stt_api.py`, parakeet-mlx dep)
