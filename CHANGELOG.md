@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.50]
+
+### Changed
+
+- **Operational settings are DB-authoritative -- the env-override layer is removed**
+  (owner feedback: env silently overriding a value set in the admin UI is a
+  footgun). `observability_level`/`retention` now resolve DB > default only; there
+  is no `HEYLOOK_OBSERVABILITY_LEVEL`. Env vars are reserved for bootstrap paths
+  that have no UI counterpart and thus can't conflict (`HEYLOOK_LOGS_DIR`,
+  `HEYLOOK_DB_PATH`). The `/v1/admin/config` response drops `env_overrides`.
+
 ## [1.34.49]
 
 ### Added

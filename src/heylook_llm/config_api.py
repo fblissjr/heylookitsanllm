@@ -18,11 +18,7 @@ from pydantic import ValidationError
 
 from heylook_llm import db, observability
 from heylook_llm.db import get_db as _get_db
-from heylook_llm.settings import (
-    SettingsSchema,
-    resolve_settings_safe,
-    setting_env_key,
-)
+from heylook_llm.settings import SettingsSchema, resolve_settings_safe
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +53,12 @@ async def _snapshot(conn) -> dict:
     """Effective settings + what's stored + what env is forcing (precedence made visible)."""
     stored = await db.get_all_settings(conn)
     effective, err = resolve_settings_safe(stored)
-    env_overrides = [n for n in SettingsSchema.model_fields if setting_env_key(n) in os.environ]
     snap = {
-        "effective": effective.model_dump(),   # env > DB > default -- what's actually in force
+        "effective": effective.model_dump(),   # DB > default -- what's actually in force
         "stored": stored,                       # only explicitly-set DB values
-        "env_overrides": env_overrides,         # fields currently pinned by an env var
     }
     if err:
-        snap["error"] = err                     # surface an invalid env/DB value, don't 500
+        snap["error"] = err                     # surface an invalid stored value, don't 500
     return snap
 
 

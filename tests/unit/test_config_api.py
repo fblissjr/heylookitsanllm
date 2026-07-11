@@ -37,7 +37,6 @@ class TestConfigEndpoints:
         assert body["effective"]["observability_level"] == "minimal"
         assert body["effective"]["observability_retention_days"] == 30
         assert body["stored"] == {}
-        assert body["env_overrides"] == []
 
     @pytest.mark.asyncio
     async def test_put_persists_and_returns_effective(self, client):
