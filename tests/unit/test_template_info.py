@@ -511,3 +511,59 @@ class TestMissingTemplateError:
 
         assert isinstance(err, ValueError)
         assert "chat_template" in str(err)
+
+
+class TestStopTokenValidation:
+    """A stop-less chat template (renders none of the model's OWN stop tokens)
+    is rejected + self-heals, so a broken/corrupted jinja can't cause runaway
+    generation. The stop set is read from the model's config, never hardcoded."""
+
+    # gemma-like: eos_token_id resolves via added_tokens_decoder to <eos> + <end_of_turn>
+    _CFG = {
+        "eos_token": "<eos>",
+        "eos_token_id": [1, 106],
+        "added_tokens_decoder": {
+            "1": {"content": "<eos>", "special": True},
+            "106": {"content": "<end_of_turn>", "special": True},
+        },
+    }
+
+    def test_broken_jinja_rejected_no_valid_fallback(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        # renders <|turn>model -- none of the model's stop tokens; embedded has none either
+        _write_model_dir(tmp_path, jinja="{{ '<|turn>model\\n' }}", tokenizer_config=self._CFG)
+        info = read_template_info(tmp_path, source="jinja")
+        assert info.chat_template == ""                       # broken jinja NOT installed
+        assert info.template_source == "none(stopless)"
+
+    def test_valid_jinja_kept(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        _write_model_dir(tmp_path, jinja="{{ '<start_of_turn>model\\n<end_of_turn>' }}",
+                         tokenizer_config=self._CFG)
+        info = read_template_info(tmp_path, source="jinja")
+        assert "<end_of_turn>" in info.chat_template
+
+    def test_self_heals_to_embedded(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        cfg = dict(self._CFG, chat_template="{{ '<end_of_turn>' }}")  # embedded IS valid
+        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config=cfg)
+        info = read_template_info(tmp_path, source="jinja")
+        assert "<end_of_turn>" in info.chat_template
+        assert info.template_source == "tokenizer_config"
+
+    def test_detect_skips_broken_jinja(self, tmp_path):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config=self._CFG)
+        assert detect_chat_template_source(tmp_path) is None
+
+    def test_detect_keeps_valid_jinja(self, tmp_path):
+        from heylook_llm.providers.common.template_info import detect_chat_template_source
+        _write_model_dir(tmp_path, jinja="{{ '<end_of_turn>' }}", tokenizer_config=self._CFG)
+        assert detect_chat_template_source(tmp_path) == "jinja"
+
+    def test_unknown_stop_set_not_rejected(self, tmp_path):
+        # can't determine the model's stop tokens -> DON'T reject (never break on uncertainty)
+        from heylook_llm.providers.common.template_info import read_template_info
+        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config={})
+        info = read_template_info(tmp_path, source="jinja")
+        assert "<|turn>model" in info.chat_template

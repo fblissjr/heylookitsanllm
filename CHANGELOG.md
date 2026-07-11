@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.55]
+
+### Fixed
+
+Chat-template robustness -- a broken/corrupted `chat_template.jinja` no longer
+causes silent runaway generation (owner hit this after a re-import force-installed
+a gemma jinja that emitted `<|turn>model` with no `<end_of_turn>`, so the model
+generated to the max_tokens cap):
+
+- **Load-time self-heal** (`read_template_info`): a resolved template that renders
+  none of the model's OWN stop tokens is rejected; resolution walks the remaining
+  file sources for a valid one, and if none, installs nothing so the loader's
+  built-in template stands (rescues already-broken configs without a re-import).
+- **Import-time guard** (`detect_chat_template_source`): a stop-less
+  `chat_template.jinja` is no longer recorded as `chat_template_source = jinja`.
+- **Non-hardcoded** stop-token detection: `_read_eos_tokens` reads the model's
+  declared `eos_token`/`eos_token_id` (resolved via `added_tokens_decoder`, across
+  `tokenizer_config.json` + `generation_config.json`) -- we validate against the
+  model's real stop set, never a hardcoded marker list. Conservative: an empty
+  template, or a model whose stop set can't be determined, is never rejected.
+- 6 tests.
+
 ## [1.34.54]
 
 ### Fixed

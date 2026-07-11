@@ -36,6 +36,22 @@ JINJA = "jinja"
 TOKENIZER_CONFIG = "tokenizer_config"
 CHAT_TEMPLATE_JSON = "chat_template_json"
 
+def _template_can_stop(body: str, eos_tokens: "frozenset[str]") -> bool:
+    """True unless we're CONFIDENT the template can't signal the model to stop.
+
+    A chat template that never renders one of the model's stop tokens can't tell
+    the model to stop -> runaway generation (found in the wild: a corrupted gemma
+    jinja emitting ``<|turn>model`` with no ``<end_of_turn>`` -- coherent answer,
+    then generated to the max_tokens cap). Rather than hardcode a marker list
+    (fragile: misses new families, false-rejects exotic ones), we ask the MODEL
+    what stops it (``_read_eos_tokens``) and check the template renders at least
+    one. Conservative: an empty template, or a model whose stop tokens we can't
+    determine, is NOT rejected (never break on uncertainty).
+    """
+    if not body or not eos_tokens:
+        return True
+    return any(tok and tok in body for tok in eos_tokens)
+
 
 @dataclass(frozen=True)
 class ModelTemplateInfo:
@@ -77,8 +93,32 @@ def read_template_info(
     strings, so model load survives a broken config file.
     """
     model_dir = Path(model_dir)
-    template, template_source = _read_template(model_dir, source)
     special_tokens = _read_special_tokens(model_dir)
+    eos_tokens = _read_eos_tokens(model_dir)
+    template, template_source = _read_template(model_dir, source)
+
+    # Robustness: reject a template that renders none of the model's OWN stop
+    # tokens (it would run away). Walk the remaining file sources for a valid one;
+    # if none, install NOTHING (empty template -> install_chat_template no-ops ->
+    # the loader's built-in template stands) rather than force-install a broken file.
+    if template and not _template_can_stop(template, eos_tokens):
+        logging.warning(
+            "chat template for %s (source=%s) renders none of the model's stop "
+            "tokens %s -- it would generate until the max_tokens cap. Trying other sources.",
+            model_dir.name, template_source, sorted(eos_tokens),
+        )
+        template, template_source = "", "none(stopless)"
+        for alt in (TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON):
+            alt_body, alt_source = _read_template(model_dir, alt)
+            if alt_body and _template_can_stop(alt_body, eos_tokens):
+                template, template_source = alt_body, alt_source
+                break
+        if not template:
+            logging.warning(
+                "No file chat template with a stop token for %s -- installing none; "
+                "the loader's built-in template will be used. Fix chat_template.jinja "
+                "or set chat_template_source in models.toml.", model_dir.name,
+            )
 
     has_harmony = bool(
         _HARMONY_CHANNEL_PATTERN.search(template)
@@ -171,8 +211,21 @@ def detect_chat_template_source(model_dir) -> Optional[str]:
     Expands ``~`` -- the admin API accepts arbitrary path strings.
     """
     model_dir = Path(model_dir).expanduser()
-    if (model_dir / "chat_template.jinja").is_file():
-        return JINJA
+    jinja_path = model_dir / "chat_template.jinja"
+    if jinja_path.is_file():
+        # Only prefer the jinja if it actually renders a stop token. A broken/
+        # corrupted jinja (no <end_of_turn>/<|im_end|>/...) would force-install a
+        # stop-less template -> runaway generation. If it's stop-less, don't record
+        # `jinja` -- leave the source unset (auto), and the load-time guard in
+        # read_template_info also rejects it.
+        body = _read_file(jinja_path)
+        if body and _template_can_stop(body, _read_eos_tokens(model_dir)):
+            return JINJA
+        logging.warning(
+            "chat_template.jinja in %s renders none of the model's stop tokens -- "
+            "NOT recording it as chat_template_source (it would run away). "
+            "Leaving source=auto.", model_dir.name,
+        )
     return None
 
 
@@ -270,6 +323,54 @@ def _read_json(path: Path):
     except (OSError, orjson.JSONDecodeError) as exc:
         logging.warning("template_info: cannot parse %s: %s", path, exc)
         return None
+
+
+def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
+    """The model's OWN declared stop tokens as strings -- NOT hardcoded.
+
+    Unions ``eos_token`` (string) and every id in ``eos_token_id`` (from
+    ``tokenizer_config.json`` and ``generation_config.json``, either of which may
+    be a scalar or a list), resolving ids to strings via ``added_tokens_decoder``.
+    This is what generation actually stops on, straight from the model's files, so
+    a template is validated against the model's real stop set rather than a guess.
+    Empty when we can't determine them (callers then don't reject -- see
+    ``_template_can_stop``).
+    """
+    tcfg = _read_json(model_dir / "tokenizer_config.json")
+    gcfg = _read_json(model_dir / "generation_config.json")
+    tcfg = tcfg if isinstance(tcfg, dict) else {}
+    gcfg = gcfg if isinstance(gcfg, dict) else {}
+
+    out: set[str] = set()
+
+    def _tok_str(v) -> Optional[str]:
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict) and isinstance(v.get("content"), str):
+            return v["content"]
+        return None
+
+    eos_str = _tok_str(tcfg.get("eos_token"))
+    if eos_str:
+        out.add(eos_str)
+
+    # id -> string map from added_tokens_decoder (id-keyed dict)
+    id_to_str: dict[str, str] = {}
+    decoder = tcfg.get("added_tokens_decoder")
+    if isinstance(decoder, dict):
+        for tid, spec in decoder.items():
+            s = _tok_str(spec)
+            if s:
+                id_to_str[str(tid)] = s
+
+    for src in (tcfg.get("eos_token_id"), gcfg.get("eos_token_id")):
+        ids = src if isinstance(src, list) else ([src] if src is not None else [])
+        for i in ids:
+            s = id_to_str.get(str(i))
+            if s:
+                out.add(s)
+
+    return frozenset(out)
 
 
 def _read_special_tokens(model_dir: Path) -> frozenset[str]:
