@@ -2,28 +2,52 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-11*
+*Last reviewed: 2026-07-12*
 
 ## J-space / jlens-mlx (from jspace_integration_plan.md Part 2)
 
 Fitting lives in the `jlens-mlx` sibling repo; this server applies. Apply feature +
 baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 
-- [~] **Corpus recipe + own-fit** (P2, 2026-07-11): the full pipeline is BUILT (chain fitter,
-  dim-batching, GDN kernel, `build_corpus` w/ strata + on-policy + masks, seq-cap, checkpoint/resume,
-  `decode_corpus`). Own-fits on the served abliterated Qwen3.5-27B: band-5L done; `band-n12b` (band
-  16-47, N=12, cap 128) running. NEXT: clean-control fit (`mlx-community/Qwen3.5-27B-8bit`, downloaded)
-  then the abliteration DIFF (`scripts/diff_lenses.py`) -- the first real finding.
+- [ ] **Refit the band lens on the fixed corpus** (P1, 2026-07-12): `band-n12`/`band-n12b` were
+  degenerate (mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
+  `enable_thinking=True` -> every on-policy completion collapsed into shared CoT-preamble
+  boilerplate, 62% of fitted positions). Both fits' results are DISCARDED (method stack unaffected).
+  jlens-mlx now has explicit `enable_thinking` control (default False) + a diversity gate
+  (`238826e`/`951dd76`/`232b98b`) -- refit band 16-47 on the fixed corpus is the next action.
+  Supersedes the old "band-n12b running" status. See `docs/jspace_integration_plan.md` §
+  "Observations & watch-items", 2026-07-12 subsection.
 - [~] **Fidelity gate -> legibility metric** (P2, 2026-07-11): the KL/top-k identity tripwire ships;
   the naive final-logit-agreement gate MISLEADS on band layers (ranked degenerate ' __' above
   meaningful ' Paris'), so a disposition-aware `verify.legibility_report` (content-vs-junk ranking)
-  is now the band-layer signal, wired into the fit + sidecar. Apply/regrade it onto `band-n12b` when it
-  finishes (`regrade_lens.py` doesn't emit legibility yet -- ~2min add).
-- [ ] **Fit/apply capture parity -- numerical check** (P2, 2026-07-11): fitting captures residuals
-  cache-less; apply uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are
-  causal-from-scratch so they SHOULD match, but it's asserted, never verified -- and it's the
-  foundation of served-model lens correctness. Cheap check: capture `h_l` both ways on one input,
-  assert allclose. (Does not invalidate current lenses; identity KL~0 is consistent.)
+  is now the band-layer signal, wired into the fit + sidecar. Apply/regrade it onto the band refit
+  once it's done on the fixed corpus (`regrade_lens.py` doesn't emit legibility yet -- ~2min add).
+- [ ] **Fit/apply capture parity -- numerical check** (P2, 2026-07-11; re-affirmed 2026-07-12 as the
+  top open correctness IOU by an architecture review): fitting captures residuals cache-less; apply
+  uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are causal-from-scratch so
+  they SHOULD match, but it's asserted, never verified -- and it's the foundation of served-model
+  lens correctness. Cheap check: capture `h_l` both ways on one input, assert allclose. (Does not
+  invalidate current lenses; identity KL~0 is consistent.)
+- [ ] **Port the PR-eval harness to a jlens branch + post PR comments** (P2, 2026-07-12): the
+  2026-07-12 upstream mlx-lm GDN differentiability eval (PRs #1389/#1217, both numerically correct,
+  see the plan doc) was run ad hoc; port it to a jlens-mlx `upstream-pr-eval` branch, then the owner
+  posts data-backed comments on #1217 (full dataset) and #1389 (the log-domain fp32 `dg`-gradient
+  finding -- not a bug, cancels at the parameter leaves). Draft comments live in jlens's internal
+  folder.
+- [ ] **Audit GDN cache-slice captures for the #1077 `mx.contiguous()` pattern** (P3, 2026-07-12):
+  upstream mlx-lm #1077 (merged) fixed a shared-buffer memory leak by adding `mx.contiguous()` on
+  GDN cache slices. Check our code (jspace capture path + any other raw GDN cache-slice reads) for
+  the same unguarded-shared-buffer pattern.
+- [ ] **Watch #1217 merge before any mlx-lm pin bump** (P2, 2026-07-12): #1217 adds a `training=`
+  kwarg passed unconditionally at every qwen3_5 call site upstream; jlens-mlx's `gdn_fit_patch`
+  already absorbs unknown future kwargs (`951dd76`) so a bump won't TypeError mid-fit, but confirm
+  before bumping the served-side pin too.
+- [ ] **Consider #1515/#1532, #1486/#1456, #1526 on the next serving-side mlx-lm bump** (P3,
+  2026-07-12): #1515+#1532 add anchor-stride prefix reuse for non-trimmable hybrid caches (large
+  TTFT claims, relevant to qwen3_5 serving); #1486/#1456 fix hybrid ArraysCache trimmability for
+  speculative decoding (issue #1446); #1526 fixes `max_kv_size` being silently dropped for models
+  with their own `make_cache` (qwen3_5 still needs the analogous one-line fix upstream). None of
+  these are fitting-path, all are serving-path -- triage on the next pin bump, not now.
 - [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
   band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
   lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so

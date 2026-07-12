@@ -1,6 +1,6 @@
 # J-space (Jacobian lens) integration — build + verifier plan
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 > **Part 2 -- go-forward plan (2026-07-10), at the bottom of this doc,** supersedes the
 > "Deferred / follow-ups" list: fit our own lens (new `jlens-mlx` sibling repo), the
@@ -314,11 +314,11 @@ dir removed. The sort mapping:
 
 | Scratch file(s) | Destination |
 |---|---|
-| `make_oracle.py`, `convert_lens.py` (torch converter + oracle gen) | `jlens-mlx` (research converter; the user-facing installer is already `scripts/jspace_convert_lens.py` here) |
-| `mlx_apply.py`, `mlx_apply_gemma.py` (V1/V2 parity harness) | `jlens-mlx`; its assertions become THIS repo's golden gate |
-| `validate_moe.py`, `verify_router.py`, `verify_module.py` (research verification) | `jlens-mlx` |
-| `verify_endpoint.py`, `probe_thread.py` (server-integration checks) | THIS repo `tests/` (real tests, not scratch) |
-| `oracle_*.npz/json` fixtures | tiny gpt2 → `tests/golden/`; larger gemma → `jlens-mlx` or regenerate on demand |
+| `make_oracle.py`, `convert_lens.py` (torch converter + oracle gen) | **RESOLVED 2026-07-12 (`232b98b`):** moved to jlens-mlx's `scripts/` (not `migrated_from_scratch/`) |
+| `mlx_apply.py`, `mlx_apply_gemma.py` (V1/V2 parity harness) | **RESOLVED differently 2026-07-12 (`232b98b`):** `mlx_apply.py` git-rm'd from jlens-mlx (history preserved, not re-homed — golden gate coverage now lives in `tests/golden/` per below) |
+| `validate_moe.py`, `verify_router.py`, `verify_module.py` (research verification) | **RESOLVED differently 2026-07-12 (`232b98b`):** `validate_moe.py`/`verify_router.py` moved to jlens-mlx's gitignored `internal/reference/`; `verify_module.py` git-rm'd (history preserved) |
+| `verify_endpoint.py`, `probe_thread.py` (server-integration checks) | **RESOLVED differently 2026-07-12 (`232b98b`):** git-rm'd from jlens-mlx (history preserved) rather than re-homed here — see the updated watch-item below (this repo's `tests/contract/test_jspace_api.py` + `tests/unit/test_jspace_analyze.py` are the current coverage; confirm they subsume these or recover from jlens git history) |
+| `oracle_*.npz/json` fixtures | **RESOLVED 2026-07-12 (`232b98b`):** tiny gpt2 → `tests/golden/` (as planned); larger gemma set stayed in jlens-mlx pending a future real-weights parity gate |
 | `lens_gpt2.safetensors` (tiny) | `tests/` fixture (golden gate). `lens_gemma22b.*` → HF (post own-fit) |
 | `README.md` | salvaged into `jlens-mlx` README + this doc |
 
@@ -341,7 +341,9 @@ away BOTH bug classes we hit porting it (the `rms²` seed bug and the chain-inde
   Gated-DeltaNet layers is slow (MLX's fused GDN kernel has no VJP). jlens-qwen36's custom Metal
   GDN backward + analytic assembly is a ~30-60× speedup — we PORT it (verified vs `mx.vjp`,
   attributed, **NOT vendored**) only when the baseline is too slow on the real 27B. Small-model
-  baselines (gpt2 / gemma-2-2b) need none of it.
+  baselines (gpt2 / gemma-2-2b) need none of it. Upstream mlx-lm PRs #1389 and #1217 (differentiable
+  gated-delta ops, validated 2026-07-12 — see "Observations & watch-items") are expected to supersede
+  this custom kernel once either merges; see that entry for numbers.
 - **Coverage:** `qwen3_5` (our served `Qwen3.5-27B-abliterated` IS this arch — 64 layers,
   `full_attention_interval=4` → 48 GDN + 16 full-attn, `d_model` 5120) is the fit target; the
   baseline works on any arch; the GDN accelerator lands when the 27B baseline's speed demands it.
@@ -556,10 +558,13 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   `bench_generation` = in-process stage attribution (fast-mlx working memory); the HTTP
   bench = serving-path; optloop-lib = library-fork level. Three lanes, one each.
 
-- **`verify_endpoint.py` / `probe_thread.py` belong back here.** They test the running
-  heylook endpoint + MLX thread semantics, and are currently parked in
-  `jlens-mlx/migrated_from_scratch/`. Re-home them as real server `tests/` (tracked in the
-  `jlens-mlx` `MIGRATION.md`; mirrored here so the server side remembers).
+- **`verify_endpoint.py` / `probe_thread.py` — UPDATED 2026-07-12.** These were NOT re-homed:
+  jlens-mlx commit `232b98b` git-rm'd them from `migrated_from_scratch/` outright (history
+  preserved in jlens git log, not carried forward as files). This repo already has
+  `tests/contract/test_jspace_api.py` + `tests/unit/test_jspace_analyze.py` covering the running
+  endpoint + MLX thread semantics. Action: confirm those two test files actually cover what
+  `verify_endpoint.py`/`probe_thread.py` checked; if there's a gap, recover the originals from
+  jlens-mlx's git history (pre-`232b98b`) rather than rewriting from scratch.
 
 - **Recommended porting order: thin vertical slice first.** Before the hard GDN Metal work,
   wire the **generic-VJP** path on a tiny model (the migrated gpt2/pythia oracles already
@@ -601,7 +606,8 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   the exact served 8-bit checkpoint via `mlx_lm.load` (the VJP runs through that dequantized forward),
   so we are matched — the same reason the inherited stock-fit lens is only provisional.
 
-- **Fit/apply capture parity is ASSERTED, not verified (2026-07-11 review; go-forward check).**
+- **Fit/apply capture parity is ASSERTED, not verified (2026-07-11 review; go-forward check;
+  re-affirmed 2026-07-12 as the top open correctness IOU by an architecture review).**
   The fit captures source residuals cache-less (`ad.inner`; the tail-VJP drives the blocks with an
   explicit `create_attention_mask(cache=None)` / `create_ssm_mask`), while the apply path runs the
   full forward with a FRESH cache (`ad.run_inner`) — REQUIRED because the hybrid served qwen3_5
@@ -615,6 +621,74 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   the same convention within jlens; the question is only cross-repo apply-side reproduction). The old
   "`capture.py` fit/apply twins must be byte-identical" invariant was FALSE (the apply side legitimately
   grew `run_inner`/`fresh_cache`) and is corrected in jlens `7f477a0`.
+
+### 2026-07-12 — corpus incident + upstream GDN differentiability
+
+**Corpus incident (jlens-mlx, fitting for the served Qwen3.5-27B abliterated 8-bit).** The
+band-n12/band-n12b fit corpora were degenerate. Root cause: mlx-lm's
+`TokenizerWrapper.apply_chat_template` silently injects `enable_thinking=True` for any model with
+think tokens; the model's template then opens an unclosed `<think>`, and every on-policy 48-token
+completion was the same CoT-preamble boilerplate ("Here's a thinking process..."). 62% of ALL
+fitted positions (71% of on-policy) were boilerplate tokens shared across items; the
+harmful/benign JBB contrast collapsed at the fitted positions. The running band-n12b fit was
+stopped at 9/11 items (checkpoint kept, resumable); **band-n12/band-n12b results are discarded.**
+The method stack (chain-vs-direct, kernel parity) is unaffected — this was calibration data, not
+math. Secondary findings: off-policy masks included the trailing assistant/`<think>` template
+scaffold; positions skipped only 4 leading tokens where the reference implementation skips 16
+(attention sinks); at least one mystery mid-run crash was `mlx_lm.utils.load` raising
+`HFValidationError` on a relative local model path.
+
+**Fixes (jlens-mlx sibling repo, `main`).**
+- `238826e`: `Recipe.enable_thinking` field (default `False`, always passed explicitly);
+  role-aware off-policy content spans computed from the template (scaffold excluded);
+  `SINK_SKIP=16` floor on all fitted positions; `diversity_report()` + a fit-time gate (hard-fail
+  `shared_fraction>0.5` unless `JLENS_ALLOW_DEGENERATE=1`, warn >0.35 — the bad corpus measured
+  0.598); `corpus_decoded.md` now always written at build AND regenerated on resume; model paths
+  resolved absolute; `JLENS_N` override uses `dataclasses.replace`. 61 tests green incl. an
+  anonymized regression fixture. Relevant serving fact: heylook itself always passes
+  `enable_thinking` explicitly (per-request, else the model-config default `False` in
+  `config.py`), so the served default for this model is non-thinking — fitting with
+  `enable_thinking=False` is the on-distribution choice.
+- `951dd76`: `gdn_fit_patch`'s replacement now absorbs unknown future kwargs (an open upstream PR
+  adds a `training=` kwarg passed unconditionally at every qwen3_5 call site; without this a pin
+  bump would TypeError mid-fit).
+- `232b98b`: `migrated_from_scratch/` mostly dissolved (see the updated dissolution table and the
+  `verify_endpoint.py`/`probe_thread.py` watch-item above) — gpt2 golden fixtures moved to
+  `tests/golden/`; `make_oracle.py`/`convert_lens.py` moved to `scripts/`; `mlx_apply.py`,
+  `probe_thread.py`, `verify_endpoint.py`, `verify_module.py` git-rm'd (history preserved);
+  `validate_moe.py`/`verify_router.py` moved to jlens's gitignored `internal/reference/`; the
+  gemma-2-2b lens/oracle set + README remain, pending a future gemma real-weights parity gate; the
+  repo's `.gitignore` had committed merge-conflict markers, now resolved.
+
+**Upstream mlx-lm GDN differentiability (measured 2026-07-12 on the M2 Ultra, isolated venvs;
+baseline `main@15b522f`, PR#1389@`6fc3a29`, PR#1217@`29706ad`, mlx 0.32.0).**
+- PR #1389 (chunk-parallel differentiable gated-delta ops) and PR #1217 (Metal VJP kernel for
+  `gated_delta_update` + a `training=` kwarg) are BOTH numerically correct: three-way
+  parameter-level gradient agreement (their implementations vs jlens's independently-ported Metal
+  backward vs sequential autodiff) to rel ≤ 2.6e-7 at real 27B GQA shapes.
+- End-to-end 27B QLoRA (seq ~700): ~145-150 tok/s at 38-39 GB peak on either PR vs ~50 tok/s at
+  117.5 GB on main (identical val-loss trajectories). Inference non-regression: generation 21.6
+  tok/s and identical peak memory on all branches.
+- Practical implication: the T≤128 GDN kernel cap (the "MAX_T=128 cliff" driving the seq-tile TODO
+  item) is removed by either PR (#1389: 91ms/2.2GB per layer fwd+bwd at T=2048; #1217: 73ms). When
+  either merges, jlens's custom kernel becomes a cross-check oracle rather than the production
+  path, and a fit-at-128 / evaluate-fidelity-at-1024-4096 transfer experiment becomes affordable.
+- **Decision: do NOT fork mlx-lm for the fit path** — the outer-layer design keeps fit-side
+  forward numerics identical to the upstream SHA the server serves. The owner's mlx-lm fork exists
+  for eval branches only.
+- Other triage results relevant to THIS repo (heylook serving, not fitting): open PRs #1486/#1456
+  fix hybrid ArraysCache trimmability for speculative decoding (upstream issue #1446); #1515+#1532
+  add anchor-stride prefix reuse for non-trimmable hybrid caches (large TTFT claims — relevant to
+  qwen3_5 serving); #1526 fixes `max_kv_size` being silently dropped for models with their own
+  `make_cache` (qwen3_5 still needs the analogous one-line fix upstream); MERGED #1077 fixed a
+  shared-buffer memory leak via `mx.contiguous()` on GDN cache slices — follow-up: audit any of
+  our code capturing raw GDN cache slices for the same pattern; MERGED #997 (2026-03) made GDN
+  state fp32, its author (a maintainer) noted finetuning needs a proper kernel — context for why
+  #1217/#1389 exist.
+- Pending: port the eval harness to a jlens `upstream-pr-eval` branch; the owner will then post
+  data-backed comments on #1217 (full dataset) and #1389 (short note incl. a finding: #1389's raw
+  `dg` gradient looks divergent at saturated gates due to log-domain fp32 conditioning but cancels
+  exactly at the a/b parameter leaves — not a bug). Draft comments live in jlens's internal folder.
 
 ## Sequencing
 
@@ -674,6 +748,12 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
    Preview composition offline first with `scripts/build_corpus_preview.py`. The v3 visualizer is a fast
    before/after read once an own-fit is installed at `adapters/jspace/<model_id>/` (a user-driven swap of
    the provisional lens).
+
+   **UPDATE 2026-07-12:** the first production band fit attempt (`band-n12b`) was stopped for corpus
+   degeneracy — see "Observations & watch-items" above. `build_corpus` now carries explicit
+   `enable_thinking` control (default `False`, matching the served default) and a diversity gate
+   (`diversity_report()`, hard-fails `shared_fraction>0.5`). The refit on the fixed corpus is the next
+   action.
 5. **Held-out fidelity gate** (DONE — `verify.py::fidelity_gate`: per-layer top-1/top-k/KL vs true logits
    on held-out prompts, identity-layer tripwire, save-refusal) + **lens diff** (DONE — `verify.py::diff`:
    two lenses on the same activations → per-layer top movers). The abliterated-vs-stock diff is the first

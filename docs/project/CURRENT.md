@@ -1,8 +1,28 @@
 # Current Work
 
-Last updated: 2026-07-11 (jlens-mlx fitting deep session + DRY settings drawer;
-prior 2026-07-10: j-space apply shipped ~v1.34.31-.35, lens fitting extracted to
-the `jlens-mlx` sibling repo)
+Last updated: 2026-07-12 (jlens-mlx side-track: corpus incident found + fixed,
+upstream mlx-lm GDN PRs validated, no-fork decision; no heylook code changes)
+
+UPDATE 2026-07-12 (jlens-mlx corpus incident + upstream GDN PR eval, sibling repo):
+- **Corpus incident found + fixed.** The `band-n12`/`band-n12b` own-fits on the served abliterated
+  Qwen3.5-27B were degenerate: mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
+  `enable_thinking=True`, so every on-policy completion collapsed into shared CoT-preamble
+  boilerplate (62% of all fitted positions, 71% of on-policy). `band-n12b` was stopped at 9/11
+  items (checkpoint kept); both fits' results are discarded — the fitter math itself (chain-vs-
+  direct, kernel parity) is unaffected. Fixed in jlens-mlx (`238826e`/`951dd76`/`232b98b`):
+  explicit `enable_thinking` (default False, matching heylook's own served default), role-aware
+  off-policy spans, a 16-token sink floor, and a diversity gate that hard-fails a corpus this
+  degenerate. Refit on the fixed corpus is next.
+- **Upstream mlx-lm GDN differentiability PRs validated.** PRs #1389 and #1217 (both add
+  differentiable gated-delta ops) are numerically correct (3-way gradient agreement, rel ≤2.6e-7)
+  and remove the GDN kernel's `T≤128` cap that's been capping fit corpus length — 27B QLoRA
+  ~145-150 tok/s / 38-39GB on either PR vs ~50 tok/s / 117.5GB on main, no inference regression.
+  **Decision: do not fork mlx-lm for the fit path** — jlens-mlx's outer-layer design keeps fit-side
+  numerics identical to the SHA the server serves; the fork stays eval-only. Full detail + the
+  serving-relevant PR triage (#1486/#1456, #1515/#1532, #1526, #1077, #997):
+  `docs/jspace_integration_plan.md` § "Observations & watch-items", 2026-07-12 subsection.
+- No heylook (this repo) code changed today — pure jlens-mlx + docs session. TODO.md updated with
+  the follow-up items.
 
 UPDATE 2026-07-11 (jlens-mlx fitting + DRY settings drawer):
 - **Fitting pipeline matured** (jlens-mlx sibling repo): exact reverse-mode CHAIN fitter
