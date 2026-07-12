@@ -28,7 +28,7 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   they SHOULD match, but it's asserted, never verified -- and it's the foundation of served-model
   lens correctness. Cheap check: capture `h_l` both ways on one input, assert allclose. (Does not
   invalidate current lenses; identity KL~0 is consistent.)
-- [ ] **Port the PR-eval harness to a jlens branch + post PR comments** (P2, 2026-07-12): the
+- [~] **Post the PR comments** (P2, 2026-07-12; harness port DONE -- `bench/upstream_pr_eval/` on the pushed jlens `upstream-pr-eval` branch, links filled in the drafts): the
   2026-07-12 upstream mlx-lm GDN differentiability eval (PRs #1389/#1217, both numerically correct,
   see the plan doc) was run ad hoc; port it to a jlens-mlx `upstream-pr-eval` branch, then the owner
   posts data-backed comments on #1217 (full dataset) and #1389 (the log-domain fp32 `dg`-gradient
@@ -73,9 +73,11 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   per-position reduce fixes it. (b) batch the per-layer device-to-host syncs
   (~4 x band_layers sequential np.asarray evals under the gen gate) into one
   mx.eval, and memo tok.decode per request (~5k redundant single-id decodes).
-- [ ] **Re-home `verify_endpoint.py` / `probe_thread.py`** (P3): now in
-  `jlens-mlx/migrated_from_scratch/`; they test the running server + MLX thread semantics,
-  so they belong back as real heylook `tests/`.
+- [ ] **Confirm coverage for the deleted `verify_endpoint.py` / `probe_thread.py`** (P3,
+  updated 2026-07-12): they were git-rm'd from jlens (its `migrated_from_scratch/` is fully
+  dissolved; recoverable from jlens git history). This repo's `tests/contract/test_jspace_api.py`
+  + `tests/unit/test_jspace_analyze.py` likely cover the same ground -- diff the checks, recover
+  from history only if a gap shows.
 - [ ] **HF lens repo** (P3): publish OUR fitted lenses post-own-fit; gated -- don't
   republish the converted third-party lenses (Gemma ToU).
 - [ ] **Stale docstrings** (P4): `tests/unit/test_jspace.py`, `test_jspace_features.py`,
