@@ -614,7 +614,8 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   crashes on a cache-less forward (its full-attention block dereferences `cache.offset` unguarded).
   Both are causal-from-scratch, so they SHOULD produce identical source-layer residuals, and the
   identity layer reproducing true logits at KL≈0 is consistent with a faithful apply path — but the
-  equivalence is only asserted (`src/heylook_llm/jspace/capture.py:84-90,128-134`), never numerically
+  equivalence was only asserted until 2026-07-12 -- now VERIFIED BIT-EXACT (rel_err 0.0, 9
+  layers incl. band edges, served 27B; gate script check_capture_parity.py in the jlens repo). Historical text follows: it had been asserted (`src/heylook_llm/jspace/capture.py:84-90,128-134`), never numerically
   checked. LOW risk (same math), but it is the FOUNDATION of served-model lens correctness, so it
   earns a cheap parity test: capture `h_l` both ways on one input and assert `allclose`. Does NOT
   invalidate the running band-full fit (the lens is internally self-consistent — fit and applied on

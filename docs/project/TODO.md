@@ -22,7 +22,7 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   meaningful ' Paris'), so a disposition-aware `verify.legibility_report` (content-vs-junk ranking)
   is now the band-layer signal, wired into the fit + sidecar. Apply/regrade it onto the band refit
   once it's done on the fixed corpus (`regrade_lens.py` doesn't emit legibility yet -- ~2min add).
-- [ ] **Fit/apply capture parity -- numerical check** (P1, gates the refit -- run it FIRST in the refit session; 2026-07-11, re-affirmed 2026-07-12 as the
+- [x] **Fit/apply capture parity -- numerical check** (DONE 2026-07-12: BIT-EXACT, rel_err 0.0 at 9 layers incl. band edges on the served 27B; gate script `check_capture_parity.py` in the jlens sibling repo, jlens commit 36d859b -- rerun it at the top of every refit session; 2026-07-11, re-affirmed 2026-07-12 as the
   top open correctness IOU by an architecture review): fitting captures residuals cache-less; apply
   uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are causal-from-scratch so
   they SHOULD match, but it's asserted, never verified -- and it's the foundation of served-model
