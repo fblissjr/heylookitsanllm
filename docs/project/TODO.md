@@ -48,21 +48,40 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   speculative decoding (issue #1446); #1526 fixes `max_kv_size` being silently dropped for models
   with their own `make_cache` (qwen3_5 still needs the analogous one-line fix upstream). None of
   these are fitting-path, all are serving-path -- triage on the next pin bump, not now.
-- [~] **Fit memory levers (de-brittle the fit; in progress 2026-07-12)** (P1): one item on the
-  full band 16-47 peaks ~107GB unified (reverse-mode keeps the ~47-block tail resident x the
-  128 dim-batch, fp32). Two levers, both in isolated worktrees, equality-gated, GPU-benched on
-  the free GPU (NOT on a live run):
-  (a) **gradient checkpointing** — wrap tail-block forwards in `mx.checkpoint` to recompute
-  activations in the backward instead of storing them (~107 -> ~40GB est., ~20-30% more compute);
-  `JLENS_CHECKPOINT`, default off = bit-identical; must compose with the GDN custom_function VJP
-  (the main correctness risk). Gate: `scripts/check_checkpoint.py`.
-  (b) **chunk 128 -> 64 default** — dim-batch is a linear memory multiplier and speed saturates
-  at 64, so ~halves memory near-free; confirm on the FULL band (old measurement was shallow-band)
-  before flipping the default. These + item-batching (`feat/item-batch`, parked) compose: tomorrow's
-  bench is `chunk x item_batch x checkpoint`, optimizing throughput-per-GB.
-  NB the T<=128 GDN kernel brittleness is NOT addressed here on purpose — it sunsets when mlx-lm
-  PR #1389/#1217 merge (we delete the kernel + monkey-patch). Memory-brittle: fix now. Kernel-
-  brittle: wait + adopt.
+- [~] **Fit memory levers (de-brittle the fit; updated 2026-07-12 PM)** (P1): the real peak is
+  much higher than earlier estimated (the ~107GB figure was wrong — see jlens
+  `docs/fit_metrics.md` §4): measured ~161GB for a 77-token item on the full band 16-47, peak
+  scaling ~linearly with sequence length (~1.7GB/token, ~29GB intercept ≈ model weights). Two
+  distinct problems, two WORKAROUNDS shipped tonight (both unblock the run; neither is a root
+  fix):
+  - **(a) transition SIGKILLs (exit 137), DONE (workaround).** MLX's caching allocator never
+    returns freed buffers to the OS, pinning RSS at the run's max-item high-water (~161GB) for
+    the whole process lifetime, tripping the macOS jetsam killer at item transitions on the
+    192GB box. Fixed with `mx.clear_cache()` between items (jlens commit `e56fad6`) — drops RSS
+    to ~27GB between items, negligible cost.
+  - **(b) item 10 intrinsically too big, DONE (workaround).** At the measured slope, item 10
+    (seq 126) extrapolates to ~245GB, over the 192GB ceiling — a single-item OOM `clear_cache`
+    can't fix (it needs that memory live, not just freed between items). Workaround: new
+    `JLENS_MAX_FIT_SEQ` env (jlens commit `073cc04`) skips items over the cap, advancing the
+    checkpoint past them. `band-n14-fixed` is running with `JLENS_MAX_FIT_SEQ=100`, dropping
+    only item 10 -> an **11-item lens**.
+  The original chunk 128->64 lever is FALSIFIED as a memory lever (measured 2.8% reduction, not
+  the ~50% estimated — chunk is free on speed but dim-batch memory is chunk-independent).
+  NOT urgent (tonight's fit is unblocked), but a standing liability for longer-context transfer
+  experiments, the stock-model diff, and item-batching, all of which want headroom. Deeper
+  follow-ups (NOT done, parked for a future session, do M2 before M3; tracked in jlens
+  `docs/fit_metrics.md` §3):
+  - **M2 — instrument the memory.** Sample `mx.get_active_memory`/`get_cache_memory` around each
+    chain-sweep phase to find WHERE the per-token memory lives. First-principles estimates range
+    34-320GB depending on assumptions, none match the measured ~161GB, and chunk-independence
+    rules out the obvious dim-batch-cotangent hypothesis — the footprint is genuinely
+    unexplained. Cheap; the prerequisite for any real reduction and the honest end of guessing.
+  - **M3 — the checkpointing bench.** `feat/checkpoint` (built, equality-gated, unproven at real
+    scale) is the one lever that could reduce a SINGLE item's peak — the actual fix for problem
+    (b) above (fit long items instead of dropping them). Bench it on the real 27B.
+  NB the T<=128 GDN kernel brittleness is a separate, unrelated issue (see the fit-speedup item
+  below) — it sunsets when mlx-lm PR #1389/#1217 merge (we delete the kernel + monkey-patch).
+  Memory-brittle: two workarounds shipped, deeper fix (M2/M3) open. Kernel-brittle: wait + adopt.
 - [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
   band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
   lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so
