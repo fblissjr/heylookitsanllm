@@ -753,7 +753,11 @@ baseline `main@15b522f`, PR#1389@`6fc3a29`, PR#1217@`29706ad`, mlx 0.32.0).**
    degeneracy — see "Observations & watch-items" above. `build_corpus` now carries explicit
    `enable_thinking` control (default `False`, matching the served default) and a diversity gate
    (`diversity_report()`, hard-fails `shared_fraction>0.5`). The refit on the fixed corpus is the next
-   action.
+   action, and it OPENS with the fit-vs-apply capture parity check (the asserted-not-verified
+   IOU above): capture `h_l` via the cache-less fit path and the fresh-cache apply path on one
+   prompt, assert allclose — BEFORE spending GPU-hours fitting on captured residuals. Decided
+   2026-07-12: this check gates the refit, not the upstream-PR comments (whose evidence is
+   independent of the capture path).
 5. **Held-out fidelity gate** (DONE — `verify.py::fidelity_gate`: per-layer top-1/top-k/KL vs true logits
    on held-out prompts, identity-layer tripwire, save-refusal) + **lens diff** (DONE — `verify.py::diff`:
    two lenses on the same activations → per-layer top movers). The abliterated-vs-stock diff is the first
