@@ -48,6 +48,21 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   speculative decoding (issue #1446); #1526 fixes `max_kv_size` being silently dropped for models
   with their own `make_cache` (qwen3_5 still needs the analogous one-line fix upstream). None of
   these are fitting-path, all are serving-path -- triage on the next pin bump, not now.
+- [~] **Fit memory levers (de-brittle the fit; in progress 2026-07-12)** (P1): one item on the
+  full band 16-47 peaks ~107GB unified (reverse-mode keeps the ~47-block tail resident x the
+  128 dim-batch, fp32). Two levers, both in isolated worktrees, equality-gated, GPU-benched on
+  the free GPU (NOT on a live run):
+  (a) **gradient checkpointing** — wrap tail-block forwards in `mx.checkpoint` to recompute
+  activations in the backward instead of storing them (~107 -> ~40GB est., ~20-30% more compute);
+  `JLENS_CHECKPOINT`, default off = bit-identical; must compose with the GDN custom_function VJP
+  (the main correctness risk). Gate: `scripts/check_checkpoint.py`.
+  (b) **chunk 128 -> 64 default** — dim-batch is a linear memory multiplier and speed saturates
+  at 64, so ~halves memory near-free; confirm on the FULL band (old measurement was shallow-band)
+  before flipping the default. These + item-batching (`feat/item-batch`, parked) compose: tomorrow's
+  bench is `chunk x item_batch x checkpoint`, optimizing throughput-per-GB.
+  NB the T<=128 GDN kernel brittleness is NOT addressed here on purpose — it sunsets when mlx-lm
+  PR #1389/#1217 merge (we delete the kernel + monkey-patch). Memory-brittle: fix now. Kernel-
+  brittle: wait + adopt.
 - [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
   band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
   lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so

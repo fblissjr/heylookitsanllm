@@ -42,6 +42,7 @@ dependencies = [
     "duckdb>=1.5.2",
     "mlx-lm",
     "mlx-vlm",
+    "torch>=2.13.0",
 ]
 
 # ─── Optional groups ────────────────────────────────────────────────────────
