@@ -591,12 +591,17 @@ Folded in from the study + scaffold pass; captured so they aren't re-derived, no
   layers QUALITATIVELY (readout tokens) or by a disposition-aware metric, NOT final-logit agreement.
   The near-target degeneracy is the MODEL's (its output collapses to blank/format tokens), not the
   fit's — the lens correctly shows the cleaner mid-depth 'Paris' disposition before that collapse.
-  **Evidence caveat (2026-07-11 review):** the RANKING half (the gate's top-1/top-10/KL per band
-  layer) is in `out/fit_band5.log`; the TOKEN-readout half ('Paris' vs degenerate ' __') was an
-  ad-hoc `scripts/readout.py` run that was NEVER saved to a committed log. The finding is real (it
-  was observed live), but its qualitative evidence is not yet artifact-backed — re-capture a
-  `readout.py` run to `out/` to pin it. Also note the logged KL series is NON-monotone (J_42 KL
-  10.15 is the band-worst, above J_40's 9.36); the gate ranks its "worst" layer by top-k, not KL.
+  **(d) RE-CONFIRMED on the clean-corpus full-band own-fit (2026-07-12, `band-n14-fixed`), and the
+  "disposition-aware metric" escape hatch is now FALSIFIED.** Same Eiffel probe, artifact-backed
+  this time (`out/readout_band-n14-fixed.txt`): L40-42 surface ` Paris`/` city`/` France`, L45-47
+  collapse to ` __`/` ____`. Crucially, the NEW disposition-aware `verify.legibility_report` metric
+  — the thing (c) proposed as the fix — MISLEADS THE SAME WAY: it ranked the degenerate J_45/46/47
+  HIGHEST (legibility 0.91-0.93) and the meaningful J_40 at 0.85, because the degenerate readouts
+  agree with the model's own degenerate output. So the failure is reproduced with a CLEAN corpus AND
+  the new metric → it's a metric problem, not a corpus problem, and legibility is NOT the fix (c)
+  hoped. Judge readouts QUALITATIVELY (`readout.py`); a genuinely disposition-aware metric (one that
+  penalizes ` __`/format-token readouts) is unsolved. The earlier band-5L "never saved to a log"
+  evidence gap is closed for band-n14-fixed. (The logged KL series is still NON-monotone.)
 
 - **Quantization ⇒ its own lens (why our own-fit matters, restated concretely).** Only the fitted
   `J_l` matrices carry a fit-time-quant assumption; the final norm + head stay OUTSIDE `J` and are
@@ -690,6 +695,37 @@ baseline `main@15b522f`, PR#1389@`6fc3a29`, PR#1217@`29706ad`, mlx 0.32.0).**
   data-backed comments on #1217 (full dataset) and #1389 (short note incl. a finding: #1389's raw
   `dg` gradient looks divergent at saturated gates due to log-domain fp32 conditioning but cancels
   exactly at the a/b parameter leaves — not a bug). Draft comments live in jlens's internal folder.
+
+### 2026-07-12 PM — first clean own-fit lens, the memory model, the abliteration diff
+
+**First clean-corpus full-band own-fit lens (`band-n14-fixed`).** 11 items (item 10 skipped), band
+16-47, `identity_ok: true`, ~4.25h, zero SIGKILLs. This is the first own-fit on the served
+abliterated 27B built on a NON-degenerate corpus — the concrete prerequisite the plan flagged for
+the HF lens repo (§"lens weights, gated on first own-fit") and for the visualizer track. The
+qualitative readout is assessed above (the fidelity-gate lesson, item (d)): the lens surfaces real
+mid-band disposition (Paris/city/France at L40-42) but the legibility metric misleads, so a good
+lens is confirmed by EYE, not by the score.
+
+**Memory model corrected — peak scales with FITTED POSITIONS, not sequence length.** ~63GB base +
+~2.1GB/fitted-position (validated live: 56 positions → 174.6GB). The forward runs over the full
+sequence but the backward/Jacobian runs only over the fitted positions, which sets peak. On-policy
+items fit ~47 generated tokens (`on_policy_max_tokens=48`). The transition SIGKILLs were the MLX
+caching allocator pinning RSS at the high-water (fixed for real with `mx.clear_cache()` between
+items, jlens `e56fad6`); item 10's `JLENS_MAX_FIT_SEQ` drop was an over-drop on the wrong
+(sequence-slope) model — under the positions model it would have fit. Consequence for this plan:
+long-context transfer experiments (fit-at-128 / evaluate-at-1024+) are gated by POSITIONS fitted,
+not sequence length, and the real headroom lever is checkpointing (jlens `feat/checkpoint`, M3),
+not a sequence cap.
+
+**Abliteration diff — running (the payoff experiment, §"lens diffing").** A stock-model lens
+(`Qwen3.5-27B-8bit-mlx`) is fitting on the SAME corpus as the abliterated lens (same token
+sequences reused, item 10 skipped consistently) so the only variable between the two lenses is the
+model. When it lands, `diff_lenses.py` (ablit vs stock) isolates the transport-geometry difference
+abliteration introduced — "the diff IS the finding" (§370). Caveat: the two 8-bit builds may differ
+in converter version, so a little of the diff is quant noise; benign-stratum readouts are the sanity
+floor. Also this session: capture parity VERIFIED bit-exact (the top open correctness IOU, now
+closed); the DuckDB fit-metrics store + dashboard finished; both unmerged fit-math branches
+(`feat/item-batch`, `feat/checkpoint`) code-reviewed clean.
 
 ## Sequencing
 

@@ -9,19 +9,29 @@ Cross-session task backlog organized by priority.
 Fitting lives in the `jlens-mlx` sibling repo; this server applies. Apply feature +
 baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 
-- [ ] **Refit the band lens on the fixed corpus** (P1, 2026-07-12): `band-n12`/`band-n12b` were
+- [x] **Refit the band lens on the fixed corpus** (DONE 2026-07-12): `band-n12`/`band-n12b` were
   degenerate (mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
   `enable_thinking=True` -> every on-policy completion collapsed into shared CoT-preamble
   boilerplate, 62% of fitted positions). Both fits' results are DISCARDED (method stack unaffected).
   jlens-mlx now has explicit `enable_thinking` control (default False) + a diversity gate
-  (`238826e`/`951dd76`/`232b98b`) -- refit band 16-47 on the fixed corpus is the next action.
-  Supersedes the old "band-n12b running" status. See `docs/jspace_integration_plan.md` §
-  "Observations & watch-items", 2026-07-12 subsection.
-- [~] **Fidelity gate -> legibility metric** (P2, 2026-07-11): the KL/top-k identity tripwire ships;
-  the naive final-logit-agreement gate MISLEADS on band layers (ranked degenerate ' __' above
-  meaningful ' Paris'), so a disposition-aware `verify.legibility_report` (content-vs-junk ranking)
-  is now the band-layer signal, wired into the fit + sidecar. Apply/regrade it onto the band refit
-  once it's done on the fixed corpus (`regrade_lens.py` doesn't emit legibility yet -- ~2min add).
+  (`238826e`/`951dd76`/`232b98b`). REFIT COMPLETE: `out/band-n14-fixed` (11 items, band 16-47,
+  `identity_ok: true`, ~4.25h, zero SIGKILLs). Qualitative readout done -- L40-42 surface meaningful
+  tokens (Paris/city/France), L45-47 degenerate but that's the model's own degeneracy. See the
+  "Fidelity gate" item below for the metric caveat.
+- [ ] **Abliteration diff -- run it** (P1, 2026-07-12): a stock-model lens (`Qwen3.5-27B-8bit-mlx`)
+  is fitting overnight on the SAME corpus as the abliterated lens (`out/band-n14-stock`, same token
+  sequences reused, item 10 skipped consistently) so the only variable is the model. When it lands,
+  run `diff_lenses.py` (ablit vs stock) -> the transport-geometry difference abliteration introduced
+  (the finding the project chases). Caveat: both 8-bit builds may differ in converter version, so a
+  little of the diff is quant noise; benign-stratum readouts are the sanity floor.
+- [~] **A genuinely disposition-aware metric is STILL OPEN** (P2, updated 2026-07-12): the KL/top-k
+  identity tripwire ships. BUT the qualitative readout on `band-n14-fixed` proved the
+  `verify.legibility_report` metric ALSO MISLEADS -- it ranked the degenerate deep layers J_45/46/47
+  HIGHEST (0.91-0.93) while the meaningful J_40 scored 0.85, because the degenerate ' __'/' ____'
+  readouts "agree" with the model's own degenerate next-token output. This is the SAME failure mode
+  as the old final-logit fidelity gate, now reproduced with a clean corpus AND the new metric -- so
+  it is a metric problem, not a corpus problem. For now, judge readouts QUALITATIVELY (`readout.py`).
+  An actually-disposition-aware metric (penalize format/junk-token readouts) is unsolved.
 - [x] **Fit/apply capture parity -- numerical check** (DONE 2026-07-12: BIT-EXACT, rel_err 0.0 at 9 layers incl. band edges on the served 27B; gate script `check_capture_parity.py` in the jlens sibling repo, jlens commit 36d859b -- rerun it at the top of every refit session; 2026-07-11, re-affirmed 2026-07-12 as the
   top open correctness IOU by an architecture review): fitting captures residuals cache-less; apply
   uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are causal-from-scratch so
@@ -48,25 +58,25 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   speculative decoding (issue #1446); #1526 fixes `max_kv_size` being silently dropped for models
   with their own `make_cache` (qwen3_5 still needs the analogous one-line fix upstream). None of
   these are fitting-path, all are serving-path -- triage on the next pin bump, not now.
-- [~] **Fit memory levers (de-brittle the fit; updated 2026-07-12 PM)** (P1): the real peak is
-  much higher than earlier estimated (the ~107GB figure was wrong — see jlens
-  `docs/fit_metrics.md` §4): measured ~161GB for a 77-token item on the full band 16-47, peak
-  scaling ~linearly with sequence length (~1.7GB/token, ~29GB intercept ≈ model weights). Two
-  distinct problems, two WORKAROUNDS shipped tonight (both unblock the run; neither is a root
-  fix):
-  - **(a) transition SIGKILLs (exit 137), DONE (workaround).** MLX's caching allocator never
+- [~] **Fit memory levers (de-brittle the fit; CORRECTED 2026-07-12 PM)** (P1): peak scales with
+  FITTED POSITIONS, not sequence length. The earlier "~1.7GB/token of sequence" slope was a corpus
+  confound (short items had both few positions AND short sequences). The real model: **~63GB base
+  + ~2.1GB per fitted position** (flat across seq 72-78 at 47 positions; validated live -- item 11
+  at 56 positions -> 174.6GB). The forward runs over the full sequence; the backward/Jacobian runs
+  only over the fitted positions, and that sets peak. On-policy items fit ~47 generated tokens
+  (capped by `on_policy_max_tokens=48`). Two distinct problems tonight:
+  - **(a) transition SIGKILLs (exit 137), DONE (real fix).** MLX's caching allocator never
     returns freed buffers to the OS, pinning RSS at the run's max-item high-water (~161GB) for
     the whole process lifetime, tripping the macOS jetsam killer at item transitions on the
     192GB box. Fixed with `mx.clear_cache()` between items (jlens commit `e56fad6`) — drops RSS
-    to ~27GB between items, negligible cost.
-  - **(b) item 10 intrinsically too big, DONE (workaround).** At the measured slope, item 10
-    (seq 126) extrapolates to ~245GB, over the 192GB ceiling — a single-item OOM `clear_cache`
-    can't fix (it needs that memory live, not just freed between items). Workaround: new
-    `JLENS_MAX_FIT_SEQ` env (jlens commit `073cc04`) skips items over the cap, advancing the
-    checkpoint past them. `band-n14-fixed` is running with `JLENS_MAX_FIT_SEQ=100`, dropping
-    only item 10 -> an **11-item lens**.
-  The original chunk 128->64 lever is FALSIFIED as a memory lever (measured 2.8% reduction, not
-  the ~50% estimated — chunk is free on speed but dim-batch memory is chunk-independent).
+    between items, negligible cost. (`reset_peak_memory` resets the counter, not the pool.)
+  - **(b) item 10 dropped -- but LIKELY UNNECESSARY.** Item 10 (seq 126) was dropped via the new
+    `JLENS_MAX_FIT_SEQ` env (jlens commit `073cc04`), on the WRONG (sequence-slope) extrapolation
+    to ~245GB. Under the corrected positions model it has ~47 fitted positions -> ~163GB peak and
+    would have FIT. So `JLENS_MAX_FIT_SEQ` is the wrong knob (positions / `on_policy_max_tokens`
+    is the lever); `band-n14-fixed` is an 11-item lens that could be re-fit to 12. Not urgent.
+  The chunk 128->64 lever is FALSIFIED as a memory lever (measured 2.8% reduction — dim-batch
+  memory is chunk-independent).
   NOT urgent (tonight's fit is unblocked), but a standing liability for longer-context transfer
   experiments, the stock-model diff, and item-batching, all of which want headroom. Deeper
   follow-ups (NOT done, parked for a future session, do M2 before M3; tracked in jlens
@@ -77,11 +87,13 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
     rules out the obvious dim-batch-cotangent hypothesis — the footprint is genuinely
     unexplained. Cheap; the prerequisite for any real reduction and the honest end of guessing.
   - **M3 — the checkpointing bench.** `feat/checkpoint` (built, equality-gated, unproven at real
-    scale) is the one lever that could reduce a SINGLE item's peak — the actual fix for problem
-    (b) above (fit long items instead of dropping them). Bench it on the real 27B.
+    scale) is the one lever that could reduce a SINGLE item's peak — the real headroom fix for
+    genuinely high-position items (long-context transfer experiments), the case `JLENS_MAX_FIT_SEQ`
+    only papers over. Bench it on the real 27B.
   NB the T<=128 GDN kernel brittleness is a separate, unrelated issue (see the fit-speedup item
   below) — it sunsets when mlx-lm PR #1389/#1217 merge (we delete the kernel + monkey-patch).
-  Memory-brittle: two workarounds shipped, deeper fix (M2/M3) open. Kernel-brittle: wait + adopt.
+  Memory-brittle: (a) fixed for real, (b) was an over-drop; deeper headroom fix (M2/M3) still open
+  for high-position items. Kernel-brittle: wait + adopt.
 - [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
   band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
   lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so

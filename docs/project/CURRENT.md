@@ -1,7 +1,29 @@
 # Current Work
 
-Last updated: 2026-07-12 (jlens-mlx side-track: corpus incident found + fixed,
-upstream mlx-lm GDN PRs validated, no-fork decision; no heylook code changes)
+Last updated: 2026-07-12 PM (jlens-mlx side-track: first clean own-fit lens produced +
+readout-assessed, memory model corrected to fitted-positions, abliteration diff running;
+no heylook code changes)
+
+UPDATE 2026-07-12 PM (jlens-mlx: first clean own-fit lens + the memory saga, sibling repo):
+- **First clean-corpus full-band own-fit lens produced.** `out/band-n14-fixed`: 11 items, band
+  16-47, `identity_ok: true`, ~4.25h, zero SIGKILLs. Qualitative readout (the honest test) on the
+  Eiffel probe: L40-42 surface meaningful tokens (Paris/city/France) -- the lens works where it
+  matters; L45-47 collapse to degenerate ` __`/` ____`, but that's the MODEL's own degeneracy
+  (abliterated+quant), not a fit fault.
+- **The legibility metric MISLEADS -- same failure as the old fidelity gate.** It ranked the
+  degenerate J_45/46/47 HIGHEST (0.91-0.93) and the meaningful J_40 at 0.85, because the degenerate
+  readouts agree with the model's own degenerate output. Reproduced with a clean corpus AND the new
+  disposition-aware metric -> it's a metric problem, not a corpus one. Judge readouts qualitatively;
+  a real disposition-aware metric is still open.
+- **Memory model CORRECTED: peak scales with FITTED POSITIONS, not sequence length** (~63GB base +
+  ~2.1GB/position; validated live). The caching-allocator SIGKILLs (transition exit-137) were fixed
+  for real with `mx.clear_cache()` between items (jlens `e56fad6`); item 10's drop via
+  `JLENS_MAX_FIT_SEQ` was an over-drop on the wrong (sequence-slope) model -- it would have fit.
+- **Abliteration diff set up as the overnight run.** A stock-model lens (`Qwen3.5-27B-8bit-mlx`) is
+  fitting on the SAME corpus (`out/band-n14-stock`, same token sequences) so only the model varies;
+  by morning, `diff_lenses.py` (ablit vs stock) yields the transport-geometry difference abliteration
+  introduced. Also this session: capture parity verified BIT-EXACT (`36d859b`), fit metrics store +
+  dashboard finished, both fit-math branches code-reviewed clean.
 
 UPDATE 2026-07-12 (jlens-mlx corpus incident + upstream GDN PR eval, sibling repo):
 - **Corpus incident found + fixed.** The `band-n12`/`band-n12b` own-fits on the served abliterated
