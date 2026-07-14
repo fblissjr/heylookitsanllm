@@ -726,8 +726,9 @@ abliterated transport surfaces safety/refusal vocab MORE in the mid-late band (L
 `безопасность`) and SUPPRESSES geography (China/Europe) + retrieval verbs. Counterintuitive by
 design and this is exactly why the lens matters: abliteration edits the TRANSPORT, not the readout —
 Heretic (confirmed by reading its source) orthogonalizes the residual-WRITING matrices (every layer's
-`attn.o_proj`/`mlp.down_proj`) against `r = mean(harmful) - mean(harmless)`, tail blocks INSIDE the
-fitted Jacobian (`model.norm` is untouched); the diff IS the finding (§370), a PURE TRANSPORT
+`attn.o_proj`/`mlp.down_proj`) against a `mean(harmful) - mean(harmless)` direction — PER-LAYER for
+Trial 144 (`direction_scope="per layer"`, corrected 2026-07-14; each layer vs its own `r_l`, not one
+global r) — tail blocks INSIDE the fitted Jacobian (`model.norm` is untouched); the diff IS the finding (§370), a PURE TRANSPORT
 difference. **Interpretation RETRACTED 2026-07-13 (second correction, same day):** the diff was
 first read as "behavior ablated, disposition preserved — the lens sees what behavior hides,"
 i.e. a content-conditional safety-concept disposition. A per-prompt re-run (see the caveat below)
