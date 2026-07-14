@@ -1,8 +1,57 @@
 # Current Work
 
-Last updated: 2026-07-12 PM (jlens-mlx side-track: first clean own-fit lens produced +
-readout-assessed, memory model corrected to fitted-positions, abliteration diff running;
+Last updated: 2026-07-13 (jlens-mlx side-track: abliteration diff LANDED + visual explainer;
 no heylook code changes)
+
+UPDATE 2026-07-13 (jlens-mlx: abliteration diff finding + explainer, sibling repo):
+- **The abliteration diff landed -- and it's the finding the project chases.** Stock lens
+  (`out/band-n14-stock`, `identity_ok: true`) fit clean overnight on the SAME corpus as the
+  abliterated `band-n14-fixed`; `diff_lenses.py` run BOTH substrate directions.
+- **Result (robust, substrate-independent -- both directions agree layer-for-layer):** the
+  abliterated transport surfaces safety/refusal vocab MORE in the mid-late band (L32-42:
+  `Safety`/`unsafe`/`unethical`/`dangerous`/`Cannot`/`violations`, CJK `安全风险`/`违反`, Russian
+  `безопасность`), and SUPPRESSES geography (China/Europe) + retrieval verbs. The tallest raw-l2 bars
+  are the illegible early band (`*`-junk); the SIGNAL is the coherent mid-late safety cluster (read
+  the shape, not the peak -- same lesson as the legibility metric).
+- **Why MORE, not less (the headline) -- CORRECTED 2026-07-13:** abliteration edits the TRANSPORT,
+  not the readout. Heretic (confirmed by reading its source) does directional ablation:
+  it orthogonalizes the residual-WRITING matrices (every layer's `attn.o_proj`/`mlp.down_proj`)
+  against `r = mean(harmful) - mean(harmless)` -- tail blocks INSIDE the fitted Jacobian, not
+  outside it. `model.norm` is untouched (bit-identical), so the diff is a PURE TRANSPORT
+  difference. **Interpretation RETRACTED 2026-07-13 (second correction, same day):** the diff is
+  NOT a content-conditional "disposition preserved" reading -- a per-prompt re-run
+  (`scripts/per_prompt_diff.py`, `out/per_prompt_diff.txt`) showed a benign weeknight-recipe
+  prompt lights up the same L32-42 safety band just as strongly (mean l2 596 vs 524-571 for the
+  safety-adjacent prompts) and surfaces the same refusal vocab (Nothing/Impossible/cannot/unsafe).
+  The effect is PROMPT-INDEPENDENT -- no benign floor, no evidence of a content-conditional
+  internal state. The diff recovers abliteration's STATIC WEIGHT-EDIT FINGERPRINT: a refusal
+  direction in vocabulary space, readable on any input because the weight edit is always present,
+  localized to WHERE the edit lives (L33/L36, matching the weight footprint).
+- **Cross-validated by an independent weight-footprint analysis** (`scripts/abliteration_footprint.py`,
+  jlens sibling repo; `out/abliteration_footprint.txt`): dequantizing both 8-bit builds shows the
+  vision tower bit-identical (LM-only edit) and the edit ~6x concentrated in the residual-writing
+  matrices vs input matrices (at the quant floor); the per-layer weight-delta peak (L33/L36)
+  co-localizes with the transport-diff safety cluster (L32-42) -- two independent measurements
+  agreeing on WHERE abliteration lives.
+- **Artifacts (jlens research repo):** raw diffs in `out/` (`diff_ablit_vs_stock.txt` + `…_hereticsub.txt`);
+  tracked write-up + visual explainer at `docs/abliteration_diff.md` + `docs/abliteration_diff_explainer.html`.
+  Both original caveats RESOLVED: benign floor FALSIFIED on the old pair then REVERSED 2026-07-14 on a clean
+  matched pair (magnitude prompt-independent, content prompt-conditional, floor HOLDS); quant-converter match
+  CLOSED 2026-07-13 -- self-converted the base (mlx-vlm 0.6.5) vs the mlx-community base is uniform
+  ~0.004 drift, no tent, o_proj/down_proj at the floor (~8x below the abliteration signal,
+  structureless) -- converter asymmetry cannot manufacture the finding
+  (`out/converter_drift_base_vs_mlxcommunity.txt`).
+- **Own controlled abliteration + clean matched pair (2026-07-13 PM).** Owner ran Heretic on their
+  4090 to abliterate the base (Trial 144: 41/100 refusals from 89 baseline, KL 0.0282, tent centers
+  o_proj 45.6 / down_proj 57.9). Self-converted BOTH base and `heretic-ours` to 8-bit MLX with
+  mlx-vlm 0.6.5 (VLM-aware; keeps the vision tower) -> `modelzoo/Qwen/Qwen3.5-27B-{8bit,heretic-8bit}-ours`.
+  Clean footprint (`out/footprint_ourpair_trial144.txt`): untouched matrices EXACTLY 0.0 (same base+
+  converter), only o_proj/down_proj/linear_attn.out_proj change (zero leakage). TWO results: (a) the
+  footprint method is CALIBRATED against ground truth -- it recovers the known tent centers within ~2
+  layers; (b) the ablation locus is RECIPE-DEPENDENT -- Trial 144 peaks DEEP (L42-59) vs coder3101's
+  SHALLOW (L33/36), so "L33/36" was coder3101-specific, not a model property. **Overnight: two band
+  lens fits running detached** (`jlens out/run_matched_pair_fits.sh`) -> by AM, diff+footprint on the
+  clean pair; prediction = safety cluster deeper (~L42-59), still prompt-independent.
 
 UPDATE 2026-07-12 PM (jlens-mlx: first clean own-fit lens + the memory saga, sibling repo):
 - **First clean-corpus full-band own-fit lens produced.** `out/band-n14-fixed`: 11 items, band

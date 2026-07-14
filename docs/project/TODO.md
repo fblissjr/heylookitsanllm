@@ -18,12 +18,35 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   `identity_ok: true`, ~4.25h, zero SIGKILLs). Qualitative readout done -- L40-42 surface meaningful
   tokens (Paris/city/France), L45-47 degenerate but that's the model's own degeneracy. See the
   "Fidelity gate" item below for the metric caveat.
-- [ ] **Abliteration diff -- run it** (P1, 2026-07-12): a stock-model lens (`Qwen3.5-27B-8bit-mlx`)
-  is fitting overnight on the SAME corpus as the abliterated lens (`out/band-n14-stock`, same token
-  sequences reused, item 10 skipped consistently) so the only variable is the model. When it lands,
-  run `diff_lenses.py` (ablit vs stock) -> the transport-geometry difference abliteration introduced
-  (the finding the project chases). Caveat: both 8-bit builds may differ in converter version, so a
-  little of the diff is quant noise; benign-stratum readouts are the sanity floor.
+- [x] **Abliteration diff -- DONE 2026-07-13** (P1): stock lens (`out/band-n14-stock`,
+  `identity_ok: true`, same corpus as `band-n14-fixed`, item 10 skipped in both) fit clean overnight;
+  `diff_lenses.py` run BOTH substrate directions (stock + heretic). FINDING (robust,
+  substrate-independent, layer-for-layer agreement): the abliterated transport surfaces safety/refusal
+  vocab MORE in the mid-late band (L32-42: `Safety`/`unsafe`/`unethical`/`dangerous`/`Cannot`/
+  `violations` + CJK `安全风险`/`违反` + Russian `безопасность`), and SUPPRESSES geography (China/Europe)
+  + retrieval verbs. Counterintuitive on purpose: abliteration edits the TRANSPORT, not the readout --
+  Heretic (confirmed by reading its source) orthogonalizes the residual-WRITING matrices (every
+  layer's `attn.o_proj`/`mlp.down_proj`) against `r = mean(harmful) - mean(harmless)`, tail blocks
+  INSIDE the fitted Jacobian (`model.norm` is untouched). **Interpretation RETRACTED 2026-07-13
+  (second correction, same day):** a per-prompt re-run (below) falsified the content-conditional
+  "disposition preserved" reading -- the diff is abliteration's STATIC WEIGHT-EDIT FINGERPRINT,
+  readable on any input, not a content-conditional internal state. Cross-validated by an independent weight-footprint analysis
+  (`scripts/abliteration_footprint.py`, jlens sibling repo; `out/abliteration_footprint.txt`): edit ~6x
+  concentrated in residual-writing matrices, vision tower bit-identical, weight-delta peak (L33/L36)
+  co-localizes with the transport-diff safety cluster (L32-42). Write-up + explainer live in the jlens
+  research repo: `docs/abliteration_diff.md` + `docs/abliteration_diff_explainer.html`. Two open caveats -> two
+  follow-ups below.
+- [x] **Abliteration diff -- per-prompt benign floor** (DONE 2026-07-13, P2): `scripts/per_prompt_diff.py`
+  (`out/per_prompt_diff.txt`, jlens sibling repo) re-ran `diff_lenses.py` one prompt at a time instead of
+  pooled. RESULT: FALSIFIED the benign floor. The benign weeknight-recipe prompt lights up the same
+  L32-42 safety band just as strongly as the safety-adjacent prompts (mean l2 596 vs 524-571) and
+  surfaces the same refusal vocab (Nothing/Impossible/cannot/unsafe). The effect is PROMPT-INDEPENDENT
+  -- this retracts the "disposition preserved" content-conditional reading above; see the interpretation
+  update. Converter-match now CLOSED 2026-07-13: self-converted the base (mlx-vlm 0.6.5) diffed vs the
+  mlx-community base is uniform ~0.003-0.004 drift, no tent, with `o_proj`/`down_proj` among the LOWEST
+  (~8x below the abliteration signal, structureless) -- converter asymmetry cannot manufacture the
+  finding (`scripts/abliteration_footprint.py`; `out/converter_drift_base_vs_mlxcommunity.txt`). Both
+  original caveats on this finding are now resolved.
 - [~] **A genuinely disposition-aware metric is STILL OPEN** (P2, updated 2026-07-12): the KL/top-k
   identity tripwire ships. BUT the qualitative readout on `band-n14-fixed` proved the
   `verify.legibility_report` metric ALSO MISLEADS -- it ranked the degenerate deep layers J_45/46/47

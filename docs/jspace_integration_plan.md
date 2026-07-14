@@ -1,6 +1,6 @@
 # J-space (Jacobian lens) integration — build + verifier plan
 
-Last updated: 2026-07-12
+Last updated: 2026-07-14
 
 > **Part 2 -- go-forward plan (2026-07-10), at the bottom of this doc,** supersedes the
 > "Deferred / follow-ups" list: fit our own lens (new `jlens-mlx` sibling repo), the
@@ -717,15 +717,40 @@ long-context transfer experiments (fit-at-128 / evaluate-at-1024+) are gated by 
 not sequence length, and the real headroom lever is checkpointing (jlens `feat/checkpoint`, M3),
 not a sequence cap.
 
-**Abliteration diff — running (the payoff experiment, §"lens diffing").** A stock-model lens
-(`Qwen3.5-27B-8bit-mlx`) is fitting on the SAME corpus as the abliterated lens (same token
-sequences reused, item 10 skipped consistently) so the only variable between the two lenses is the
-model. When it lands, `diff_lenses.py` (ablit vs stock) isolates the transport-geometry difference
-abliteration introduced — "the diff IS the finding" (§370). Caveat: the two 8-bit builds may differ
-in converter version, so a little of the diff is quant noise; benign-stratum readouts are the sanity
-floor. Also this session: capture parity VERIFIED bit-exact (the top open correctness IOU, now
-closed); the DuckDB fit-metrics store + dashboard finished; both unmerged fit-math branches
-(`feat/item-batch`, `feat/checkpoint`) code-reviewed clean.
+**Abliteration diff — DONE 2026-07-13 (the payoff experiment landed, §"lens diffing").** The stock
+lens (`out/band-n14-stock`, `identity_ok: true`) fit clean on the SAME corpus as the abliterated
+lens (same token sequences, item 10 skipped in both), so the model is the only variable.
+`diff_lenses.py` was run BOTH substrate directions. **Finding (robust, substrate-independent):** the
+abliterated transport surfaces safety/refusal vocab MORE in the mid-late band (L32–42:
+`Safety`/`unsafe`/`unethical`/`dangerous`/`Cannot`/`violations`, CJK `安全风险`/`违反`, Russian
+`безопасность`) and SUPPRESSES geography (China/Europe) + retrieval verbs. Counterintuitive by
+design and this is exactly why the lens matters: abliteration edits the TRANSPORT, not the readout —
+Heretic (confirmed by reading its source) orthogonalizes the residual-WRITING matrices (every layer's
+`attn.o_proj`/`mlp.down_proj`) against `r = mean(harmful) - mean(harmless)`, tail blocks INSIDE the
+fitted Jacobian (`model.norm` is untouched); the diff IS the finding (§370), a PURE TRANSPORT
+difference. **Interpretation RETRACTED 2026-07-13 (second correction, same day):** the diff was
+first read as "behavior ablated, disposition preserved — the lens sees what behavior hides,"
+i.e. a content-conditional safety-concept disposition. A per-prompt re-run (see the caveat below)
+falsified that: the diff instead recovers abliteration's STATIC WEIGHT-EDIT FINGERPRINT — a
+refusal direction in vocabulary space, readable on any input because the weight edit is always
+present — and WHERE it lives, not a content-conditional internal state. Cross-validated by
+an independent weight-footprint analysis (`scripts/abliteration_footprint.py`, jlens sibling repo;
+`out/abliteration_footprint.txt`): edit ~6x concentrated in residual-writing matrices, vision tower
+bit-identical, weight-delta peak (L33/L36) co-localizes with the transport-diff safety cluster
+(L32–42). **Full write-up + visual explainer live in the jlens research repo** (the research home; heylook is the
+*application* side — where the lens is run during inference): `docs/abliteration_diff.md` +
+`docs/abliteration_diff_explainer.html`. Integration-relevant takeaway: the diff recovers abliteration's
+edit, which is what validates applying the lens during heylook inference. Both original caveats resolved
+there — converter-match CLOSED 2026-07-13; benign floor FALSIFIED on the old (uncontrolled) pair then
+**REVERSED 2026-07-14 on a clean matched pair** (self-converted base + our own controlled abliteration,
+Trial 144 deep tent L42–59, both via the identical mlx-vlm 0.6.5, so only the abliteration differs). The
+edit's l2 magnitude is prompt-independent (~450 across benign/safety) but its token-space content is
+prompt-conditional (safety vocab on safety prompts, formatting on a benign recipe) → the content floor
+HOLDS. A deep-band L48–59 fit is running to locate the refusal-cluster peak. Also this session:
+capture parity
+VERIFIED bit-exact (the top open correctness IOU, now closed); the DuckDB fit-metrics store +
+dashboard finished; both unmerged fit-math branches (`feat/item-batch`, `feat/checkpoint`)
+code-reviewed clean.
 
 ## Sequencing
 
