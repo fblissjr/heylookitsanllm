@@ -1,6 +1,6 @@
 # Test Suite
 
-last updated: 2026-07-06
+last updated: 2026-07-20
 
 ## Overview
 
@@ -132,4 +132,7 @@ Tests requiring a running heylookllm server (`heylookllm --port 8080`):
 ## Related
 
 - `tests/e2e/` -- v3 browser E2E (puppeteer-core + system Chrome; opt-in, unsandboxed)
+- `tests/eval/` -- LLM behavior-eval harness (chat-template/thinking-parser/stop-token/
+  vision-budget regressions; needs a running server, opt-in, not wired into `/test-suite`).
+  See `tests/eval/README.md`.
 - `docs/frontend_v3_spec.md` §4 -- the backend API contract

@@ -1,5 +1,7 @@
 # Hey Look, It's an LLM
 
+Last updated: 2026-07-20
+
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
     <img src="assets/heylookitsanllm.jpeg" alt="Hey Look It's an LLM" width="400">
@@ -17,7 +19,7 @@ Built on Apple MLX for text and vision.
 - **Multi-Provider**:
   - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
   - **MLX Embedding**: Sentence embeddings with dynamic backbone loading (any mlx-lm architecture)
-- **Thinking Blocks**: Qwen3-style `<think>` parsing with token-level detection, round-trip editing, and streaming
+- **Thinking Blocks**: format-aware reasoning parsing driven by the model's own chat template -- Qwen3-style `<think>` tags (including Qwen3.5's pre-filled-`<think>` templates) and gemma-4's channel format, with round-trip editing and streaming. Text-based only; there is no token-ID-based detection
 - **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
 - **J-Space**: Post-hoc Jacobian-lens interpretability -- read a model's "silent workspace" (per-layer vocabulary tokens it's disposed toward before answering) plus a hallucination-risk signal, from Anthropic's July-2026 global-workspace work ([guide](docs/jspace_guide.md))
@@ -35,7 +37,7 @@ Built on Apple MLX for text and vision.
 
 Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build step; served directly by the backend. Conversations, notebooks, and presets are stored server-side in DuckDB (messages as content blocks; images round-trip).
 
-- **Chat** -- streaming with thinking blocks, edit/regenerate/delete, image attach, per-conversation system prompt + saved presets
+- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, multi-image attach, a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets
 - **Notebook** -- base-model text continuation with cursor-based generation
 - **Models** -- scan, import, configure, load/unload
 - **Performance** -- system metrics and timing breakdowns

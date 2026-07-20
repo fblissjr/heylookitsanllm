@@ -1,8 +1,17 @@
 # Configuration System
 
-Last updated: 2026-07-06
+Last updated: 2026-07-20
 
 This document explains the configuration system, `models.toml` structure, Pydantic schemas, and how to configure models for each provider.
+
+**Not the same thing as operational settings.** This document covers
+`models.toml` / `MLXModelConfig` -- the model registry, loaded at startup
+and reloaded via `POST /v1/admin/reload`. Runtime-mutable server behavior
+(observability verbosity, the MLX buffer-cache cap) is a separate system,
+`settings.py` / `SettingsSchema`, resolved DB-over-default and edited via
+`/v1/admin/config` -- see [api.md](./api.md#operational-config-v1adminconfig).
+The two are unrelated: a `models.toml` edit needs a reload; a
+`/v1/admin/config` change applies immediately with no reload.
 
 ## What changed 2026-07-05/06
 
@@ -129,7 +138,8 @@ Do not put it in `models.toml`.)
 | `kv_bits` | `Literal[2, 4, 8]` | none | KV quantization bits -- constrained to what MLX's `QuantizedKVCache` actually supports |
 | `kv_group_size` | `Literal[32, 64, 128]` | `64` | KV quantization group size -- constrained to what MLX supports |
 | `max_queue_depth` | int (`ge=1`) | `8` | Requests admitted behind the active generation before 503 backpressure. A real config field as of v1.32.0 -- previously read by the generation gate but not declared on `MLXModelConfig`, so it was silently dropped by Pydantic and permanently 8 regardless of `models.toml` |
-| `enable_thinking` | bool | `false` | Qwen3 thinking block support |
+| `enable_thinking` | bool | `false` | Thinking-mode default for this model (any thinking-capable template, not Qwen3-specific -- see "Sampler Defaults" below for the request-time cascade) |
+| `vision_tokens` | int | none | Per-model default visual token budget per image (16-16384). A request's own `vision_tokens` overrides; `none` leaves the image processor's own default. Mapped per model family by `providers/common/vision_budget.py` (gemma-4: discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels`) |
 | `supports_thinking` | bool | `false` | Capability metadata flag |
 | `default_preset` | string | none | Preset name applied when a request doesn't specify one -- see "Sampler Defaults and the Effective-Request Cascade" below |
 | `draft_model_path` | string | none | Path to draft model for speculative decoding |
@@ -260,7 +270,7 @@ than it used to be:
   fails validation at load/import time. Enforced here because
   `cache_helpers.make_cache` raises for exactly this at first generation
   -- a config guaranteed to fail should never validate cleanly.
-- **`max_queue_depth: int = Field(8, ge=1)`**: promoted from
+- **`max_queue_depth: int = Field(default=8, ge=1)`**: promoted from
   "read by the generation gate, absent from the schema" (silently
   dropped by Pydantic, permanently 8 regardless of what `models.toml`
   said) to a real, validated field.

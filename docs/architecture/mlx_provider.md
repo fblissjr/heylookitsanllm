@@ -1,9 +1,16 @@
 # Developer Notes: MLX Provider
 
 > **Status**: CURRENT
-> **Last Updated**: 2026-07-06
+> **Last Updated**: 2026-07-20
 
 This document provides a deep-dive technical reference for the `MLXProvider` in `heylookitsanllm`. This provider is responsible for running models using Apple's MLX framework and is based on the `mlx-lm` and `mlx-vlm` libraries.
+
+## What changed 2026-07-20
+
+Stop-token/EOS resolution and the per-image vision token budget were both
+new this window; see sections 4.6 and 4.7. `mlx-lm`/`mlx-vlm` pins bumped
+again (4.3). No process-abort or crash fixes this window -- see "What
+changed 2026-07-05/06" below for those.
 
 ## What changed 2026-07-05/06
 
@@ -54,6 +61,14 @@ MLXProvider.create_chat_completion()
 1. **Chat template**: `tokenizer.apply_chat_template(enable_thinking=...)` for text-only, `vlm_apply_chat_template(processor, config, ...)` for VLM
 2. **Model object**: Raw model for text-only, `LanguageModelLogitsWrapper(model.language_model)` for VLM
 
+`enable_thinking` reaches the template on both VLM code paths: the
+text-only-request leg (`vlm_apply_chat_template`, above) and the
+vision-request leg (`VLMVisionStrategy` -> `prepare_vlm_inputs_parallel` ->
+`vlm_inputs.py`'s own `apply_chat_template` call). Both forward it only as
+a template kwarg (`{"enable_thinking": ...}` or `{}` if `None`) -- the
+resolved value itself comes from `_resolve_enable_thinking()` (request
+field, else the model's `enable_thinking` config default).
+
 Everything else -- message prep, cache config, prompt cache lookup, generation loop, acceptance tracking, KV snapshot storage -- lives in `generation_core`, shared across both paths.
 
 **`VLMVisionStrategy`** (v1.18.0) uses the pre-filled cache pattern inspired by vllm-mlx:
@@ -84,6 +99,8 @@ This gives vision requests the full sampler suite (top_k, min_p, presence_penalt
 | `providers/common/model_wrappers.py` | `LanguageModelLogitsWrapper` -- adapts VLM language model for mlx-lm |
 | `providers/common/prompt_cache.py` | Radix-tree prompt cache manager |
 | `providers/common/samplers.py` | Sampler/processor construction |
+| `providers/common/stop_tokens.py` | `extend_eos_from_generation_config` -- load-time EOS union (4.6) |
+| `providers/common/vision_budget.py` | `vision_budget_kwargs` -- per-image visual token budget mapping (4.7) |
 
 ### 1.5. LanguageModelLogitsWrapper
 
@@ -218,6 +235,17 @@ no-op. A dead VLM strict-load `TypeError` fallback (`_load_vlm_with_weight_fix`)
 was removed at the same time -- `mlx-vlm`'s `load()` has accepted `strict`
 for a long time, making the fallback unreachable.
 
+**Pins bumped again 2026-07-20** (`pyproject.toml` `[tool.uv.sources]`):
+`mlx-lm` SHA-pinned one commit forward (XTC server fix, not load-bearing
+here); `mlx-vlm` to `0.6.6` (+53 commits -- gemma-4 bf16 dtype-leak fix,
+`prepare_inputs` mask preservation, qwen3-vl PIL video normalization).
+`transformers` stays on the `>=5.3.0` `override-dependencies` floor
+(resolves to `5.5.4`) rather than the `>=5.14` mlx-vlm HEAD declares --
+same reasoning as the patches above (no torchvision on an MLX-only
+install); the contract test suite is the gate against silent breakage,
+not a version bump. No new drift audit was run against these two bumps;
+the consumed-surface list in 4.4 was not re-verified.
+
 ### 4.4. Library-drift audit (2026-07-06)
 
 Every load-bearing assumption this codebase makes about `mlx-lm` /
@@ -264,6 +292,61 @@ into its own REPL loop as a sub-answer. Tracked as a deferred fix
 (typed `GenerationFailed` exception raised from the provider generator,
 translated to an error only at the two streaming/HTTP writers) in
 `docs/project/TODO.md`.
+
+### 4.6. Stop tokens and EOS resolution (2026-07-20)
+
+Which token IDs stop generation is resolved in two places, both feeding
+the sampler's stop set rather than relying on the raw tokenizer's own
+notion of EOS:
+
+- **At load time**, `extend_eos_from_generation_config()`
+  (`providers/common/stop_tokens.py`, called from `MLXProvider.load_model`)
+  reads `generation_config.json`'s `eos_token_id` (which can be a list) and
+  unions those IDs into the raw tokenizer's stop set. Some model exports
+  declare additional stop IDs there that the tokenizer's own config doesn't
+  carry -- without this, generation runs past a model-declared stop point.
+- **At generation time**, `generation_core.ensure_gen_tokenizer()` wraps
+  the raw tokenizer with the full resolved stop set before it reaches
+  `stream_generate`, so both load-time and template-declared EOS tokens are
+  honored regardless of call site.
+- `template_info._read_eos_tokens()` (used for chat-template capability
+  detection, not generation) independently resolves EOS strings via
+  `tokenizer.json`'s `added_tokens`, so template probing and actual
+  generation don't have to agree on a tokenizer API that may not expose
+  the same set both ways.
+
+A separate decode-path patch, `tokenizer_hygiene.py`, was **deleted** this
+window. It existed to strip declared special tokens the fast detokenizer
+occasionally leaks into decoded text. That stripping now happens in the
+reasoning parsers themselves (`reasoning_parser.py`'s `_strip_specials`,
+built from `ModelTemplateInfo.special_tokens` and applied by every parser
+-- `PassThroughParser`, `HarmonyChannelParser`, `GemmaChannelParser`) --
+one fewer module, same guarantee, applied at the point where routed text
+(content vs. thinking) is already being assembled.
+
+### 4.7. Vision token budget (`vision_tokens`, 2026-07-20)
+
+A model-agnostic per-image visual token budget, resolved through the same
+effective-request cascade as sampler fields (request `vision_tokens` field
+-> per-model `models.toml` default -> unset). `VLMVisionStrategy` maps the
+resolved value onto whatever budget parameter the loaded processor exposes
+via `providers/common/vision_budget.vision_budget_kwargs()`, duck-typed on
+processor attributes rather than model name:
+
+- gemma-4 (`image_processor.max_soft_tokens`): snaps to the nearest
+  supported discrete bucket (ties prefer the smaller/cheaper).
+- qwen2/3-VL (`patch_size` + `merge_size`): continuous budget, converted to
+  `max_pixels = vision_tokens * (patch * merge) ** 2`.
+- Anything else: `{}` -- the request degrades to the processor's own
+  default silently, not an error.
+
+The resulting kwargs are passed through `mlx_vlm.utils.prepare_inputs` into
+the transformers processor, which validates them itself. Because different
+budgets produce different-shaped vision features, the vision feature cache
+key is tagged with the budget (`vision_budget[max_soft_tokens=280]`-style
+prefix) whenever `budget_kwargs` is non-empty -- otherwise a cached
+full-budget encode could be served for a request that asked for a smaller
+one, or vice versa.
 
 ## 5. Token-Level Data and Logprobs (IMPLEMENTED 2025-12-15)
 

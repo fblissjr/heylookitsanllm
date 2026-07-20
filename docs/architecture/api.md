@@ -1,6 +1,6 @@
 # API Architecture
 
-Last updated: 2026-07-09
+Last updated: 2026-07-20
 
 This document provides complete documentation of the FastAPI server architecture, all endpoints, request/response formats, and implementation details.
 
@@ -38,6 +38,16 @@ enabled = true
 ```
 
 **Purpose**: Allow clients to discover what features each model supports (chat, vision, hidden_states, thinking, etc.)
+
+**Auto-detection**: `capabilities` in `models.toml` is explicit and wins if
+set. Otherwise the server infers per-model: `vision` from the `vision`
+config field, `hidden_states` for any `mlx` model, and `thinking` from
+either an explicit `enable_thinking`/`supports_thinking` config flag or --
+failing those -- whether the model's own chat template references the
+`enable_thinking` template variable (`api.py`'s `_template_supports_thinking`,
+`lru_cache`d per model path). The template reference is the real
+cross-model signal: Qwen3 renders `<think>` blocks from it, gemma-4 renders
+thought channels, and no manual `models.toml` flag is needed for either.
 
 ### 2026-01-09: Structured Hidden States Endpoint
 
@@ -383,6 +393,7 @@ async def chat_completions(request: ChatCompletionRequest):
 - `frequency_penalty` (optional) - Frequency penalty
 - `logprobs` (optional, default false) - Include log probabilities in response
 - `top_logprobs` (optional, 0-20) - Number of most likely alternative tokens to return at each position
+- `vision_tokens` (optional, 16-16384) - Target visual tokens per image, snapped to whatever budget parameter the loaded model's image processor exposes (gemma-4: nearest discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels` from patch/merge size). No effect on models without a recognized image processor. Falls back to a per-model `vision_tokens` default in `models.toml`, then the processor's own default. See `providers/common/vision_budget.py`.
 
 ### Chat Completions Multipart
 
@@ -886,9 +897,12 @@ data: {"answer": "...", "finish_reason": "final", "usage": {...}, "rlm": {...}}
 
 ## Admin Endpoints
 
-Admin endpoints live on three routers in `src/heylook_llm/admin_api.py`
-(`admin_router`, `admin_ops_router`, `scan_import_router`). This section
-covers the high-traffic ones; read `admin_api.py` for the full surface.
+Model-management admin endpoints live on three routers in
+`src/heylook_llm/admin_api.py` (`admin_router`, `admin_ops_router`,
+`scan_import_router`). Operational settings (`/v1/admin/config`) are a
+separate router, `config_router` in `src/heylook_llm/config_api.py` -- see
+[Operational Config](#operational-config-v1adminconfig) below. This section
+covers the high-traffic ones; read the two files for the full surface.
 
 ### Reload Configuration
 
@@ -923,6 +937,36 @@ Full CRUD + scan-and-import surface in `admin_api.py`:
 - `POST /v1/admin/models/scan` -- walk a directory / HF cache for importable models
 - `POST /v1/admin/models/import` -- import selected models into `models.toml`
 - `POST /v1/admin/models/validate` -- dry-run a config
+
+### Operational Config (`/v1/admin/config`)
+
+CRUD for runtime-mutable operational settings in `config_api.py`, tag
+"Config". Distinct from `models.toml` (the model registry, above) and from
+`/v1/presets` (user-saved chat presets) -- this is settings, resolved
+**DB > default** (no env override; see [config.md](./config.md) for why).
+Backed by the `settings` key/value table in the DuckDB store.
+
+- `GET /v1/admin/config` -- effective settings, the raw stored overrides,
+  and any resolution error (an invalid stored value falls back to defaults
+  rather than 500ing).
+- `PUT /v1/admin/config` -- body is a `{key: value}` map. Validated against
+  the full schema first (422 on an unknown key or out-of-range value) --
+  nothing persists unless the whole update is valid.
+- `DELETE /v1/admin/config/{key}` -- clear a stored override, falling back
+  to the default. 404 for an unknown key.
+
+Current fields (`SettingsSchema`, `settings.py`):
+
+| Field | Type | Default | Effect |
+|---|---|---|---|
+| `observability_level` | `off`\|`minimal`\|`standard`\|`debug` | `minimal` | Master verbosity for the telemetry spine -- see [observability guide](../observability_guide.md) |
+| `observability_retention_days` | int | `30` | Age cutoff for rotated `logs/*.jsonl` archives; `0` keeps forever |
+| `mlx_cache_limit_gb` | float, none | none | Caps MLX's buffer cache (`mx.set_cache_limit`) so idle RSS doesn't pin at the prompt-spike high-water mark. `none` = MLX's own default |
+
+Both `PUT` and `DELETE` call `apply_runtime_settings()` (renamed from
+`apply_observability_settings` when it grew a second consumer) so a change
+takes effect immediately -- no restart, and `GET` never reports an
+effective value the running process hasn't already adopted.
 
 ### Conversation Storage (`/v1/conversations/*`)
 
@@ -1452,6 +1496,8 @@ High-traffic:
 | `/v1/admin/models/{id}/load` / `/unload` | POST | Control LRU residency | Admin router |
 | `/v1/admin/models/scan` | POST | Discover importable models | Scan/import router |
 | `/v1/admin/models/import` | POST | Import scanned models | Scan/import router |
+| `/v1/admin/config` | GET/PUT | Read/write operational settings | `config_router`; DB > default, no env override |
+| `/v1/admin/config/{key}` | DELETE | Reset a setting to default | Re-applies immediately, same as PUT |
 
 ### Data & Storage Endpoints
 

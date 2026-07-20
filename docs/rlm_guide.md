@@ -1,6 +1,6 @@
 # RLM (Recursive Language Model) Guide
 
-Last updated: 2026-03-16
+Last updated: 2026-07-20
 
 The RLM endpoint lets a language model write and execute Python code to work through a problem iteratively. Instead of trying to answer in one shot, the model gets a persistent REPL where it can explore your data, call itself on sub-problems, and build up an answer step by step.
 
@@ -188,7 +188,7 @@ The model also has:
 | `sub_max_tokens` | null | Override max_tokens for sub-calls |
 | `sub_temperature` | null | Override temperature for sub-calls |
 | `sub_top_p` | null | Override top_p for sub-calls |
-| `enable_thinking` | null | Enable thinking mode (Qwen3 models) |
+| `enable_thinking` | null | Enable thinking mode, for any thinking-capable model (format is auto-detected from the model's chat template -- Qwen3 `<think>` tags, gemma-4 channels, etc.) |
 | `compaction` | false | Enable history compaction when context fills up |
 | `compaction_threshold` | 0.8 | Compact when estimated tokens exceed this fraction of `max_context_tokens` (0.5-0.95) |
 | `max_context_tokens` | 8192 | Model's context window size, used for compaction threshold calculation |

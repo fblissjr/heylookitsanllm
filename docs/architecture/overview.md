@@ -1,6 +1,6 @@
 # Backend Architecture
 
-Last updated: 2026-07-09
+Last updated: 2026-07-20
 
 This document describes the core architecture of the `heylookitsanllm` server: how requests flow from the API layer through the model router to provider backends, and the key technical decisions behind caching and VLM handling.
 
@@ -124,6 +124,7 @@ the endpoint surface.
 - **Analytics DB pruning**: Cleanup thread prunes oldest 25% of records and runs VACUUM when DB exceeds `max_db_size_mb`
 - **Startup logging**: Server startup logs analytics DB size (with limit) and log directory size for disk usage visibility
 - **Radix cache memory pressure**: Optional `memory_pressure_fn` callback triggers eviction when GPU memory exceeds 85% of recommended working set
+- **MLX buffer-cache cap**: `mlx_cache_limit_gb` (operational setting, `settings.py`) caps `mx.set_cache_limit` so idle RSS doesn't pin at the prompt-spike high-water mark; `None` (default) leaves MLX's own allocator behavior uncapped. Applied at startup and on every `/v1/admin/config` change via `apply_runtime_settings()`. See [api.md](./api.md#operational-config-v1adminconfig).
 
 ## Related Documentation
 

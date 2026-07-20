@@ -1,7 +1,114 @@
 # Current Work
 
-Last updated: 2026-07-13 (jlens-mlx side-track: abliteration diff LANDED + visual explainer;
-no heylook code changes)
+Last updated: 2026-07-20 (v1.34.59-.65 + dep bump 0bfe60b -- gemma-4/Qwen3.5
+thinking rework, model-agnostic vision token budget, v3 composer polish, eval
+harness, mlx-lm/mlx-vlm dep bump; jlens-mlx side-track below unchanged since
+2026-07-13)
+
+UPDATE 2026-07-20 (v1.34.59-.65 + dep bump 0bfe60b -- all heylook code; jlens-mlx
+entries below are unchanged from 2026-07-13):
+
+- **Gemma-4 thinking, end to end (v1.34.60-.63) -- SOLID + live-verified.** Root
+  cause chain: the stop-token gate rejected gemma-4's canonical template because
+  `_read_eos_tokens` only read `added_tokens_decoder` (tokenizer_config.json),
+  missing the `<turn|>` terminator (id 106) that lives in tokenizer.json's
+  `added_tokens` -- template_info emptied, thinking leaked inline as plain text
+  with channel markers stripped (v1.34.62 fix: union both files, same
+  dual-source rule as `_read_special_tokens`). New `GemmaChannelParser`
+  (streaming state machine, `thought` channel -> `thinking` field) selected via
+  template sniffing. VLM path additionally dropped `enable_thinking` on both
+  legs (text-only + `prepare_vlm_inputs_parallel`) and generated past
+  end-of-turn (raw HF tokenizers don't absorb `generation_config.json`'s eos
+  list; mlx-lm's `stream_generate` auto-wraps with only the single
+  `eos_token_id`) -- fixed by `extend_eos_from_generation_config` at load +
+  `run_generation` wrapping raw tokenizers itself (`ensure_gen_tokenizer`) with
+  the full resolved stop set (v1.34.63). Also removed the decode-path hygiene
+  patch (`tokenizer_hygiene.py`, v1.34.5x) that defaulted
+  `skip_special_tokens=True` and stripped channel markers before the parser
+  could see them. Live-verified on gemma-4-31b: vision + text, think on/off,
+  1/2/large images -- the previously reported multi-image + thinking gibberish
+  did not reproduce.
+- **Qwen3.5 thinking fixed + hardcoded vocab ids removed (v1.34.64).** Its
+  template pre-fills `<think>\n` into the generation prompt, so output started
+  mid-block with no opening tag and the parser routed everything to content --
+  new `prefills_thinking` detection + `initial_thinking` parser state. The
+  token-level thinking mode keyed on hardcoded Qwen3 ids (151667/151668),
+  silently failing to split for any other `<think>`-family vocabulary; the
+  parser is text-based only now (same as the harmony/gemma channel parsers).
+- **Thinking capability auto-detected from the template (v1.34.60).** A chat
+  template that references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4
+  thought channels) now reports the `thinking` capability on `/v1/models`
+  without a manual `models.toml` flag -- the v3 checkbox/composer icon appear
+  for these models automatically. Messages API's hardcoded `<think>`-only
+  parser also replaced with `select_reasoning_parser` (streaming and
+  non-streaming), matching chat/completions.
+- **Model-agnostic vision token budget (v1.34.64) -- SOLID, live-verified,
+  ahead of the Q8 spike.** `vision_tokens` request field + per-model
+  models.toml default + v3 drawer control (cap-gated on `vision`), mapped by
+  duck-typing the loaded processor: gemma-4 discrete buckets (snap to
+  70/140/280/560/1120), qwen2/3-VL continuous pixel budget, unknown families
+  degrade to processor defaults. Vision-feature cache key carries the budget.
+  Verified on gemma-4-31b + Qwen3.5-27B (pixel patches 630/2520/10080 at
+  70/280/1120). Closes the TODO.md research item (collapsed there into this
+  entry). The Q8 ACCURACY question (does a bigger budget improve detail QA?)
+  is still open -- the new eval harness's vision tasks are the vehicle.
+- **v3 composer polish (v1.34.60-.61).** Multi-image attach capped at 8 with
+  an aria-live announcement when exceeded + per-image "Remove image N" labels
+  (the attach strip/picker/paste/N-block store shipped earlier, v1.34.20 --
+  this closes the cap + a11y gaps). Attach button and a new thinking-toggle
+  button are now icon buttons (`.btn--icon`, 40px touch floor, same cap-gate +
+  true/unset semantics as the drawer checkbox, kept in sync via
+  `onSettingsChange`); toggle state is styled off `aria-pressed`, not a class
+  (pattern recorded in `apps/heylook-frontend-v3/DESIGN.md` §7).
+- **`mlx_cache_limit_gb` operational setting (v1.34.59).** Opt-in cap on MLX's
+  buffer cache via `/v1/admin/config` (bounds idle RSS -- the allocator never
+  returns freed buffers to the OS -- at the cost of realloc on the next spike;
+  clearing restores MLX's own default). Plus a real bug fix: `DELETE
+  /v1/admin/config/{key}` now re-applies immediately instead of only taking
+  effect after a restart.
+- **`tests/eval/` -- opt-in LLM behavior-eval harness (v1.34.65), NEW.** 13
+  tasks / 7 programmatic judges (`color_mention`, `marker_leak`, `repetition`,
+  `token_budget_exhausted`, `exact_word_count`, `non_empty_non_gibberish`,
+  `substring_present`), generalized from that day's live-verification scripts.
+  Covers the four bug classes fixed today: thinking split/leak, stop
+  discipline, vision single/multi-image correctness, vision_tokens budgets.
+  Needs an already-running server (never spawns one); not wired into
+  `/test-suite` -- opt-in via `uv run python tests/eval/run.py`. Direction for
+  an API surface + a v3 eval page: TODO.md.
+- **Pyright noise triage (v1.34.65).** Real fixes: deprecated
+  `datetime.utcnow`, untyped `= None` defaults, a latent bug (batch responses
+  could hand pydantic `model=None` -> runtime 500, now coalesced), a float
+  re-binding bug in `_format_bytes`, duck-typed route discovery. Systemic: all
+  96 positional Pydantic `Field(default, ...)` calls converted to explicit
+  `default=` keyword form (this pyright build only recognizes the keyword
+  form -- the source of every false "arguments missing" constructor
+  complaint). `pyrightconfig.json` already existed from a prior session; this
+  pass didn't need a new one, just fixed the real signal it was surfacing.
+- **Dependency bump (0bfe60b): mlx-lm a790972->15b522f, mlx-vlm
+  8e2638b->c9e27b08 (0.6.5->0.6.6, 53 commits).** Consumed surface verified
+  signature-stable (22 contract tests green); transformers stays pinned to
+  5.5.4 via the deliberate `override-dependencies` (mlx-vlm HEAD declares
+  `>=5.14`; decoupled on purpose, contract tests are the gate, not the
+  version floor). Verified: full suite 1085 green + a live eval-bank A/B (old
+  vs new pin) on gemma-4-31b + Qwen3.5-27B, no regressions (two chronic
+  trivial-prompt degeneration flaps exist on BOTH pins; one budget-exhaustion
+  flap is harness calibration, not model drift).
+- **MTP research probe (no server code shipped; `internal/research/mtp_probe/`,
+  local-only).** First live measurement of the gemma-4 MTP assistant head
+  (open mlx-lm PR #1276's model class, vendored standalone) drafting for the
+  daily-driver MoE: 50.8% greedy acceptance with thinking on (CoT preamble
+  flatters it), 36.2% with thinking off (still net-positive, ~1.30x decode
+  ceiling projected at ~5-10% drafter overhead). Found and documented a PR
+  #1276 gap (`AssistantAttention` doesn't do per-layer-type KV head selection,
+  mis-shapes SDPA on this pair's `num_global_key_value_heads=2`); commenting on
+  the PR with the data is an optional owner action, tracked in TODO.md. Feeds
+  the existing "Gemma-4 MTP self-speculation" TODO item; doctrine still
+  applies (greedy-only, fingerprint gate invalid for any batched-verify run).
+
+No obsoletions found in this file from today's work -- all additive. The
+Phase 4 item 3 "enable_thinking tri-state (auto/on/off)" REMAINING note below
+is still accurate and unaffected: today's composer icon shipped the same
+binary true/unset semantics as the existing drawer checkbox, not a tri-state.
 
 UPDATE 2026-07-13 (jlens-mlx: abliteration diff finding + explainer, sibling repo):
 - **The abliteration diff landed -- and it's the finding the project chases.** Stock lens

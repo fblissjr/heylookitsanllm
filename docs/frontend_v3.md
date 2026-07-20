@@ -1,6 +1,7 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-11 (impeccable design pass + E2E un-staled)
+Last updated: 2026-07-20 (thinking + vision-budget backend work landed;
+composer polish)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -58,7 +59,17 @@ presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
 extracted into an app-shell global slide-over shared by all 6 pages --
 sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
 code-reviewed); browser E2E in `tests/e2e/` (63 checks, drawer-driven; green bar
-the load-sensitive streaming-cadence guard).
+the load-sensitive streaming-cadence guard); **composer icons + multi-image
+hardening** (2026-07-20, v1.34.60-.61: attach + thinking-toggle are now
+`.btn--icon` buttons styled off `aria-pressed`, multi-image attach capped at 8
+with an aria-live announcement + per-image "Remove image N" labels); **vision
+token budget** (2026-07-20, v1.34.64: `vision_tokens` drawer control,
+cap-gated on the model's `vision` capability, mapped server-side by
+duck-typing the loaded processor -- gemma-4 buckets / qwen pixel budget);
+**thinking now actually works broadly** (2026-07-20, v1.34.60-.64: gemma-4's
+canonical template thinking channel and Qwen3.5's prefilled-`<think>` template
+both split into the collapsible thinking block correctly; the checkbox/icon
+auto-appear from template detection, no `models.toml` flag needed).
 
 **Done (was "Left")**:
 - **DONE -- visual design (2026-07-11)**: the impeccable audit + polish pass ran

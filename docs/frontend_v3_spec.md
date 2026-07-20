@@ -1,6 +1,6 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-10
+Last updated: 2026-07-20 (chat composer image/thinking UI, §5)
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
@@ -250,7 +250,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 (Backend also exposes toggle/status/validate/profiles/bulk-profile/discovered — out of scope unless a
 trimmed feature needs them.)
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).
@@ -288,6 +288,17 @@ usage/timing. Per-message actions: Edit (inline textarea → Save / Save&Regener
 (`DELETE .../messages?after=position-1`). Near-bottom-aware auto-scroll (only if within 100px, or forced on
 send/switch/stream-start). Stale-response guard: capture `targetConvId` at stream start, bail in callbacks if
 `activeId` changed. beforeunload during stream. Remove the unused `bus.js` import (dead code in v2).
+
+**Composer image + thinking controls (added post-spec, v1.34.20 + v1.34.60-.61 --
+documented here for the current build):** attach and thinking-toggle are icon
+buttons (`.btn--icon`, see DESIGN.md §7) beside the textarea, not text buttons.
+Attach opens a file picker (`multiple`, iPhone camera roll included) or accepts
+paste; images render as a thumbnail strip capped at **8 attachments**, with an
+aria-live announcement when the cap is hit and a "Remove image N" label per
+thumbnail. The thinking toggle is visible only when the selected model reports
+the `thinking` capability (see §4 Models list -- auto-detected from the chat
+template, no `models.toml` flag required) and mirrors the drawer checkbox's
+true/unset semantics 1:1 via `onSettingsChange`.
 
 ### notebook (v2: 341 lines) — plain-text, no pretext, no markdown render
 Multi-doc: sidebar list (new/select/delete-confirm) + editor (title input, model select, collapsible system-

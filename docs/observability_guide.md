@@ -1,46 +1,51 @@
 # Observability Guide
 
-Last updated: 2026-07-11
+Last updated: 2026-07-20
 
-> **REDESIGN (2026-07): read this first.** Telemetry now writes under **`logs/`**
-> (not `internal/log/`, which is for human session diaries). There is a unified
-> ingestion spine (`observability.py` `record_event`) with two go-forward streams:
-> - **`logs/metrics.jsonl`** -- content-free, aggregatable per-request metrics
->   (tokens, tok/s, TTFT, timings, peak memory, kv/cache, `stop_reason`,
->   `image_count`, and engine dims `provider`/`effective_loader`/`is_vlm`).
-> - **`logs/events.jsonl`** -- correlated discrete records: errors (type + `stage`
->   + bounded message + cause chain), model load/unload, and frontend client
->   events (`source=frontend-v3`). May carry bounded error text; **never** prompts/
->   responses/token IDs.
->
-> **One control:** `observability_level` (`off`|`minimal`|`standard`|`debug`,
-> default `minimal`), an operational setting resolved **DB > default** (no env
-> override) and settable via `POST /v1/admin/config`. `off` disables **all**
-> telemetry (spine + the legacy streams below). Rotation is file-based (size +
-> `observability_retention_days`, default 30d, swept hourly).
->
-> **Content guarantee is level-independent but tier-specific:** the *metrics* tier
-> is guaranteed content-free (safe to share); the *events* tier may contain
-> bounded error text at any level including `minimal`.
->
-> The four `memory.py` streams below (`request_events`/`model_events`/
-> `memory_baseline`/`baseline`) still exist under `logs/` and partly duplicate the
-> spine; they are being consolidated into it (see
-> `internal/research/observability_and_config_redesign.md` +
-> `docs/project/TODO.md`). Recipes below apply -- just read paths as `logs/…`.
+`heylookitsanllm` writes disk-backed JSONL telemetry under **`logs/`**
+(gitignored; not `internal/log/`, which is human session diaries). Two
+systems currently coexist:
 
-`heylookitsanllm` also writes four legacy disk-backed JSONL streams under `logs/`
-(gitignored). They exist so you can (a) prove the server is leak-free over long
-windows, (b) see what workloads the server actually serves, and (c) tune
-presets and unload policy based on real usage, not guesses.
+- **The spine** (`observability.py`'s `record_event`) -- the go-forward
+  ingestion path. Two tiers: `logs/metrics.jsonl` (content-free,
+  aggregatable) and `logs/events.jsonl` (correlated discrete records,
+  may carry bounded error text). See [The spine](#the-spine-metricsjsonl-and-eventsjsonl).
+- **Four legacy `memory.py` streams** -- `request_events.jsonl`,
+  `model_events.jsonl`, `memory_baseline.jsonl`, `baseline.jsonl`. Predate
+  the spine, still actively written, partly duplicate it. Being folded in
+  (see `internal/research/observability_and_config_redesign.md` +
+  `docs/project/TODO.md`); until that lands both exist. See
+  [Legacy streams](#legacy-streams-request_events-model_events-memory_baseline-baseline).
 
-This guide covers what's logged, how to configure it, the content guarantees,
-and concrete recipes for monitoring and optimization.
+They exist so you can (a) prove the server is leak-free over long windows,
+(b) see what workloads the server actually serves, and (c) tune presets and
+unload policy based on real usage, not guesses.
+
+**One control for both:** `observability_level`
+(`off`|`minimal`|`standard`|`debug`, default `minimal`) -- an operational
+setting resolved **DB > default** (no env override; an env var silently
+beating the admin UI is a footgun) via `settings.py`'s `SettingsSchema`,
+edited through `GET`/`PUT /v1/admin/config` and `DELETE
+/v1/admin/config/{key}` (`config_api.py`). `off` disables **everything** --
+spine and legacy streams both, in one place (`memory.py`'s
+`_telemetry_off()` reads the same cached level the spine does). Every
+settings change (`PUT` or `DELETE`) calls `apply_runtime_settings()`
+(renamed from `apply_observability_settings` when it grew a second
+consumer, the MLX buffer-cache cap) so the in-process cache updates
+immediately -- no restart, and a `GET` right after never shows an
+effective value the running process hasn't already adopted. See
+[api.md](./architecture/api.md#operational-config-v1adminconfig) for the
+full settings surface (it also carries `mlx_cache_limit_gb`, unrelated to
+observability).
+
+This guide covers what's logged, how to configure it, the content
+guarantees, and concrete recipes for monitoring and optimization.
 
 ## Contents
 
 - [Content invariant](#content-invariant) — what is and isn't recorded
-- [The four streams](#the-four-streams)
+- [The spine: metrics.jsonl and events.jsonl](#the-spine-metricsjsonl-and-eventsjsonl)
+- [Legacy streams](#legacy-streams-request_events-model_events-memory_baseline-baseline)
 - [Environment variables and config](#environment-variables-and-config)
 - [Response-time telemetry (headers and SSE)](#response-time-telemetry-headers-and-sse)
 - [Tutorial: run for monitoring](#tutorial-run-for-monitoring)
@@ -74,9 +79,80 @@ snapshot recursively and asserts that no key named `prompt`, `messages`,
 
 ---
 
-## The four streams
+## The spine: metrics.jsonl and events.jsonl
+
+Single ingestion path: `observability.record_event(event_type, *, tier,
+min_level, source="backend", fields={...})`. Best-effort -- catches and
+swallows its own exceptions (`safe_mm_call` discipline: observability must
+never break inference). Gated by `min_level` against the configured
+`observability_level`; `fields` is always an explicit dict (never
+`**kwargs`) so a caller forwarding arbitrary client/diagnostic keys can't
+collide with the reserved `ts`/`iso`/`type`/`source` fields, which are
+always spread last and always win.
+
+Both streams live at `logs/metrics.jsonl` / `logs/events.jsonl`, one
+`orjson`-serialized JSON line per record, one field set added by every call:
+`ts` (epoch), `iso` (local-time ISO 8601), `type` (the event name), `source`
+(`"backend"` or `"frontend-v3"`).
+
+### `metrics.jsonl` — content-free, aggregatable
+
+The current caller is the request-completion path (`api.py`), emitted
+alongside (not instead of) the legacy `request_events.jsonl` write:
+
+```json
+{"model": "qwen3-4b-4bit", "provider": "mlx", "effective_loader": "mlx-lm",
+ "is_vlm": false, "success": true, "prompt_tokens": 1024,
+ "completion_tokens": 320, "generation_tps": 175.0, "ttft_ms": 125.4,
+ "total_ms": 1842.5, "queue_ms": 12.1, "peak_memory_gb": 6.82,
+ "kv_cache_bytes": 524288, "cached_tokens": 400, "stop_reason": "stop",
+ "image_count": 0, "type": "request_complete", "source": "backend",
+ "ts": 1776533200.4, "iso": "2026-07-20T14:33:20.400-07:00"}
+```
+
+An aborted (client-disconnected) request logs the same event type with
+`success: false`, `stop_reason: "abort"`, and only the fields known at that
+point -- there's no full timing breakdown for a request that didn't finish
+normally.
+
+### `events.jsonl` — correlated, may carry bounded error text
+
+Model lifecycle (`router.py`, `min_level="minimal"`):
+
+```json
+{"model_id": "qwen3-4b-4bit", "reason": "lru_evict", "type": "model_unload",
+ "source": "backend", "ts": 1776540123.8, "iso": "..."}
+```
+
+Frontend client telemetry (`telemetry_api.py`'s `POST
+/v1/telemetry/events`): v3's `js/telemetry.js` batches client-side events
+(JS errors, fetch failures, stream stalls, UX events) and posts them here
+with `source="frontend-v3"`, so backend and frontend telemetry share one
+queryable surface, correlatable by request ID. Client severity maps to a
+verbosity gate (`error`/`warn` -> `minimal`, `info` -> `standard`, `debug`
+-> `debug`); the endpoint bounds batch size (100) and per-field string
+length (2000 chars) as a backstop, but the primary content guarantee is
+still the client sending metadata only, same discipline as the backend.
+
+Diagnostic events (`diagnostic_logger.py`'s `diag_event`, ad-hoc debug
+records from various call sites) also route through here.
+
+### Rotation
+
+`observability.rotate_streams()` rolls a stream past 50MB to a timestamped
+archive (`events.1776540123.jsonl`) and deletes archives older than
+`observability_retention_days` (default 30; `0` keeps forever). Run from a
+throttled ~hourly sweep (`observability.maybe_rotate()`, called from the
+same background tick as the legacy-stream baseline snapshot in `api.py`).
+Rotation applies only to the two spine streams -- the four legacy streams
+below have no rotation (see [Known limitations](#known-limitations)).
+
+## Legacy streams (request_events, model_events, memory_baseline, baseline)
 
 All live under `logs/`, one JSON line per record, `orjson`-serialized.
+Implemented in `memory.py`, predate the spine above, and are gated by the
+same `observability_level` master switch (`off` silences these too) plus
+their own per-stream env toggles (below).
 
 ### `baseline.jsonl` — one-shot startup record
 
@@ -193,9 +269,15 @@ Toggle with `HEYLOOK_MODEL_EVENT_LOG_ENABLED=0`.
 
 ## Environment variables and config
 
-All three log streams are controlled from two sources: `AppConfig` fields in
-`models.toml`, and matching environment variables that override them at
-startup. Env vars win when both are set.
+This section is about the three *legacy* per-stream toggles
+(`request_events.jsonl`, `model_events.jsonl`, `memory_baseline.jsonl`)
+only. `observability_level` (the master switch, plus retention and the MLX
+cache cap) is a separate system with deliberately **no env override** --
+see the top of this guide and [api.md](./architecture/api.md#operational-config-v1adminconfig).
+
+The three legacy streams are controlled from two sources: `AppConfig`
+fields in `models.toml`, and matching environment variables that override
+them at startup. Env vars win when both are set.
 
 | Variable | Config field | Default | Effect |
 | --- | --- | --- | --- |
@@ -440,7 +522,7 @@ tail -n 168 logs/memory_baseline.jsonl | \
 
 Run the "usage-pattern" queries above after a week of collection, then pick
 preset categories that match real clusters rather than assumed ones. The
-current presets in `src/heylook_llm/data/profiles/` are a starting point; use
+current presets in `src/heylook_llm/data/presets/` are a starting point; use
 the sampler-distribution and cache-hit-rate queries to validate whether the
 defaults match how the server is actually used.
 
@@ -478,10 +560,13 @@ These are accepted trade-offs in this slice; candidates for future work.
   sub-millisecond on local storage, but a slow or full disk would block the
   event loop. For single-user M2 Ultra workloads this is fine; moving to a
   background writer thread is tracked as follow-up work.
-- **No log rotation.** `request_events.jsonl` grows ~500 bytes per request
-  indefinitely. At 10 req/s continuous that's ~13 GB/month. Rotate manually
+- **No rotation for the legacy streams.** `request_events.jsonl` grows
+  ~500 bytes per request indefinitely (the spine's `metrics.jsonl` does
+  rotate -- see [Rotation](#rotation) above; the legacy streams predate that
+  mechanism and haven't been wired into it). At 10 req/s continuous that's
+  ~13 GB/month. Rotate manually
   (`mv request_events.jsonl request_events.YYYY-MM.jsonl`) or run a cron
-  job. Size-based rotation will be added when the file actually hurts.
+  job until the legacy-stream consolidation (top of this guide) lands.
 - **CPU percent is an hour-averaged value** at the default interval. That's
   a trend signal, not a real-time monitor. Use the Performance page (in-memory
   ring buffer, 60-second resolution) for live CPU view.
@@ -496,6 +581,9 @@ These are accepted trade-offs in this slice; candidates for future work.
 
 ## Related
 
-- `src/heylook_llm/memory.py` — implementation
+- `src/heylook_llm/observability.py` — the spine: `record_event`, rotation
+- `src/heylook_llm/settings.py` / `src/heylook_llm/config_api.py` — the
+  `observability_level`/`mlx_cache_limit_gb` settings surface
+- `src/heylook_llm/memory.py` — the legacy streams' implementation
 - `tests/unit/test_memory_manager.py` — test suite including the content-invariant walk
 - [CLAUDE.md](../CLAUDE.md) — project conventions and the content invariant rule

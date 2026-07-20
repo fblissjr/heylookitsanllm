@@ -1,6 +1,7 @@
 # Product
 
-Last updated: 2026-07-05
+Last updated: 2026-07-20 (Product Purpose: added the j-space interpretability
+page, shipped after this doc was first written)
 
 Design context for the heylookitsanllm frontends (current build target: frontend v3,
 `docs/frontend_v3_spec.md`). Read by impeccable commands before any design work.
@@ -21,10 +22,12 @@ no persuasion problem, and no second user to design for.
 ## Product Purpose
 
 A personal frontend for a local LLM server: conversations, a plain-text notebook with
-generate-at-cursor, model load/unload/import administration, on-demand system metrics, and
-a token-probability explorer. Success is the owner reaching for it daily because it is
-faster, calmer, and more pleasant than any hosted alternative -- and because the whole
-thing stays simple enough to hold in one head (vanilla JS, no framework, no build step).
+generate-at-cursor, model load/unload/import administration, on-demand system metrics, a
+token-probability explorer, and a j-space page for reading a model's internal layer-by-layer
+workspace (Jacobian-lens interpretability -- an introspection surface, not a chat feature).
+Success is the owner reaching for it daily because it is faster, calmer, and more pleasant
+than any hosted alternative -- and because the whole thing stays simple enough to hold in
+one head (vanilla JS, no framework, no build step).
 
 ## Brand Personality
 

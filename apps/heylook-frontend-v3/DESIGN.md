@@ -1,6 +1,7 @@
 # v3 design language
 
-Last updated: 2026-07-11
+Last updated: 2026-07-20 (added the aria-pressed toggle-button pattern to §7,
+introduced by the composer icon buttons)
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. It formalizes what v3 does so that new UI — starting with the j-space
@@ -236,6 +237,13 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   actions bump to 44px, the attach-thumb remove control is ≥24px. `btn--sm`
   (26px) is acceptable for dense desktop-hover action clusters (≥ the 24px AA
   floor) but never the sole phone affordance.
+- **`aria-pressed` is the toggle-button style hook, not a class.** Icon-only
+  toggle buttons (`.btn--icon`, e.g. the chat composer's thinking toggle) set
+  `aria-pressed="true"/"false"` and style state off that attribute
+  (`.btn--icon[aria-pressed="true"] { ... }` in `app.css`) instead of a
+  `.active`/`.is-on` class. One state, expressed once, correct for assistive
+  tech by construction instead of by convention. Use this pattern for any new
+  binary toggle rendered as an icon button.
 
 Verify phone behavior at an iPhone-class viewport with **touch media emulated**
 (`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it

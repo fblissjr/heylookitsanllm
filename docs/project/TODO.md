@@ -25,17 +25,15 @@ ordering and the sole-user/minimal-custom-code posture.
   `num_global_key_value_heads=2` on full-attention layers or SDPA mis-shapes
   (their network test uses the E4B where counts coincide). Acceptance numbers
   are shareable.
-- [ ] **mlx-vlm pin bump as a planned migration** (P2, not a routine bump):
-  8e2638b..0.6.6 (53 commits) is signature-stable on our consumed surface
-  (prepare_inputs / load / apply_chat_template / LanguageModelOutput untouched)
-  but raises floors to transformers>=5.14 (we lock 5.5.4 + carry 4 transformers
-  compat patches) and mlx>=0.32 (already satisfied). Worth having: gemma-4 bf16
-  dtype-leak fix (94e06ec3, fp32 upcast of language weights = real memory),
-  prepare_inputs attention-mask preservation (26220e71, our direct path),
-  qwen3-vl PIL video-frame normalization (84025353). Checklist: transformers
-  uplift first, re-validate `_apply_transformers_patches`, run
-  tests/contract/test_mlxvlm_surface.py, check nothing imports moved per-model
-  MLP/VisionAttention/swiglu symbols (0942a56e refactor), then bump.
+- [x] **mlx-vlm pin bump -- DONE 2026-07-20** (0bfe60b): bumped mlx-lm
+  a790972->15b522f (+1 commit, server XTC fix, N/A to us) and mlx-vlm
+  8e2638b->c9e27b08 (0.6.5->0.6.6, 53 commits: gemma-4 bf16 dtype-leak fix,
+  `prepare_inputs` mask preservation, qwen3-vl PIL video-frame normalization).
+  Consumed surface confirmed signature-stable (22 contract tests green);
+  transformers deliberately stays pinned at 5.5.4 via `override-dependencies`
+  (mlx-vlm HEAD declares `>=5.14` -- decoupled on purpose, contract tests are
+  the gate, not the floor). Verified: full suite 1085 green + a live eval-bank
+  A/B (old vs new pin) on gemma-4-31b + Qwen3.5-27B, no regressions.
 - [ ] **optloop experiments** (P3, both gated on prerequisites): (a) re-test
   classic draft spec-decode with a ~4B gemma draft (the closed negative result
   used a 1B draft; vllm-metal's 1.36-1.48x with a favorable pairing says the
@@ -60,40 +58,29 @@ ordering and the sole-user/minimal-custom-code posture.
   storage could ride the observability JSONL + DuckDB-over-files pattern.
   Also queue: run the eval bank as the optional gate for changes touching
   templates/parsers/stop-tokens/vision (the 4 bug classes it was built on).
-- [ ] **Pyright noise triage + pyrightconfig** (P3, dev-ergonomics): edits to
-  api.py/mlx_provider.py resurface ~10 standing complaints each (dynamic
-  patterns pyright can't follow + pydantic Field inference); at least one
-  looks like a REAL stale reference (`LogprobsCollector.add_token_and_get_delta`).
-  One triage pass: fix real ones, then a tuned pyrightconfig.json for the
-  documented dynamic idioms so new-code signal is readable.
+- [x] **Pyright noise triage -- DONE 2026-07-20** (0e236e4): real fixes
+  (deprecated `datetime.utcnow`, untyped `= None` defaults, a latent bug where
+  batch responses could hand pydantic `model=None` -> runtime 500 now
+  coalesced, a float re-binding bug in `_format_bytes`, duck-typed route
+  discovery) plus a systemic sweep of all 96 positional Pydantic
+  `Field(default, ...)` calls to explicit `default=` keyword form (this
+  pyright build only recognizes the keyword form -- the source of most false
+  "arguments missing" complaints). `pyrightconfig.json` already existed from
+  an earlier session; this pass didn't need a new one. The
+  `LogprobsCollector.add_token_and_get_delta` stale-reference suspicion was
+  not confirmed as real during this pass -- re-check if it resurfaces.
 - [x] **Vision token budget knob -- SHIPPED GENERALIZED 2026-07-20**
   (v1.34.64, ahead of the Q8 spike): model-agnostic `vision_tokens`
   (request + models.toml per-model default + v3 drawer control) mapped by
   duck-typing the processor (gemma buckets / qwen pixel budget); cache key
   carries the budget; live-verified on gemma-4-31b + Qwen3.5-27B. The Q8
   ACCURACY question (does 1120 improve detail QA?) remains open -- the
-  eval harness vision tasks are the vehicle. Original notes below.
-- [ ] **Vision token budget knob (max_soft_tokens 280 -> 1120)** (P3, feeds
-  the Q8 preprocessing spike): gemma-4's `processor_config.json` sets
-  `image_processor.max_soft_tokens: 280` (default bucket, token-efficient);
-  Google documents bumping to 1120 for sharp OCR / 2.51MP detail. Server-owned
-  preprocessing (Q8) should know this knob: per-model or per-request override
-  when detail matters. VERIFIED 2026-07-20: transformers' gemma-4 image
-  processor takes `max_soft_tokens` as instance default AND per-call param,
-  validated against buckets {70,140,280,560,1120}; expansion count flows from
-  processor output (no template/tokenizer change). Reference implementation =
-  Google's own visualizer, local copy at `coderef/` (gemma4 vision-token-budget
-  HF space): patch 16 / pool 3 / 48px macro blocks; budget->MP: 280~0.65,
-  560~1.29, 1120~2.58; images are scaled INTO the budget both directions
-  (small images upscale -- cost is always ~the bucket). Plan: per-MODEL
-  `vision_token_budget` in models.toml applied at load (~30 lines); a
-  per-REQUEST version must add the budget to the VisionFeatureCache key
-  (feature shapes differ per bucket) -- do not ship per-request without it.
-  Optional v3 nano-feature: per-attachment estimated token cost in the
-  composer (the resize math is ~15 lines client-side).
-  Note: 2026-07-20 upstream also added
-  `response_template` to tokenizer_config.json batch-wide -- training-time
-  field, inference-irrelevant, no local action.
+  eval harness vision tasks are the vehicle.
+- [ ] **Optional v3 nano-feature: per-attachment estimated token cost in the
+  composer** (P3, leftover from the shipped vision-budget item above): the
+  resize math is ~15 lines client-side (gemma bucket snap / qwen pixel
+  formula, mirroring the server's own duck-typed mapping). Not required --
+  the budget itself is already a first-class request/config/UI knob.
 - [x] **Gemma-4 canonical template refresh (2026-07-09 "less laziness" fix)**
   -- DONE 2026-07-20: verified upstream state (template-ONLY fix -- no IT
   weight re-uploads; commits 07-15 "null handling, reasoning preservation,
