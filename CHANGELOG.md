@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.62]
+
+### Fixed
+
+- **Gemma-4 canonical template was rejected by the stop-token gate**, which
+  silently disabled thinking parsing + capability sniffing (template_info
+  emptied -> PassThroughParser -> thinking leaked inline as plain text with
+  the channel markers stripped -- the "thought" first-line leak). Cause:
+  `_read_eos_tokens` resolved eos ids only via tokenizer_config.json's
+  `added_tokens_decoder`, which gemma-4 fast tokenizers don't have; the
+  `<turn|>` terminator (eos id 106) lives in tokenizer.json's
+  `added_tokens`. The id map now unions both files (same dual-source rule
+  as `_read_special_tokens`). Generation itself was never affected
+  (transformers loads the jinja directly); only the sniffing layer was
+  blind. The existing v3 collapsible thinking block now receives the
+  split thinking as designed.
+
 ## [1.34.61]
 
 ### Changed

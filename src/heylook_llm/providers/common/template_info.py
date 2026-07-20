@@ -373,7 +373,10 @@ def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
     if eos_str:
         out.add(eos_str)
 
-    # id -> string map from added_tokens_decoder (id-keyed dict)
+    # id -> string map from BOTH tokenizer files (same dual-source rule as
+    # _read_special_tokens: gemma-4-style fast tokenizers have no
+    # added_tokens_decoder in tokenizer_config.json at all -- their eos ids,
+    # incl. the <turn|> turn terminator, resolve only via tokenizer.json).
     id_to_str: dict[str, str] = {}
     decoder = tcfg.get("added_tokens_decoder")
     if isinstance(decoder, dict):
@@ -381,6 +384,11 @@ def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
             s = _tok_str(spec)
             if s:
                 id_to_str[str(tid)] = s
+    tokenizer_json = _read_json(model_dir / "tokenizer.json")
+    if isinstance(tokenizer_json, dict):
+        for spec in tokenizer_json.get("added_tokens") or []:
+            if isinstance(spec, dict) and isinstance(spec.get("content"), str) and "id" in spec:
+                id_to_str.setdefault(str(spec["id"]), spec["content"])
 
     for src in (tcfg.get("eos_token_id"), gcfg.get("eos_token_id")):
         ids = src if isinstance(src, list) else ([src] if src is not None else [])

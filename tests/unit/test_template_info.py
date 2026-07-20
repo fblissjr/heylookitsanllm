@@ -612,3 +612,29 @@ class TestStopTokenValidation:
         _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config={})
         info = read_template_info(tmp_path, source="jinja")
         assert "<|turn>model" in info.chat_template
+
+    def test_eos_ids_resolve_via_tokenizer_json(self, tmp_path):
+        # gemma-4 shape: tokenizer_config has NO added_tokens_decoder; the
+        # generation_config eos ids (incl. the <turn|> turn terminator the
+        # canonical template renders) resolve only via tokenizer.json's
+        # added_tokens. Before this resolution the canonical template was
+        # wrongly rejected as stopless -> template_info emptied -> thinking
+        # parser + capability sniffing silently disabled.
+        from heylook_llm.providers.common.template_info import read_template_info
+        _write_model_dir(
+            tmp_path,
+            jinja="{{ '<|turn>model\\n' }}{{ '<turn|>' }}",
+            tokenizer_config={"eos_token": "<eos>"},
+        )
+        (tmp_path / "generation_config.json").write_text(
+            json.dumps({"eos_token_id": [1, 106]})
+        )
+        (tmp_path / "tokenizer.json").write_text(json.dumps({
+            "added_tokens": [
+                {"id": 1, "content": "<eos>", "special": True},
+                {"id": 106, "content": "<turn|>", "special": True},
+            ],
+        }))
+        info = read_template_info(tmp_path, source="jinja")
+        assert "<turn|>" in info.chat_template
+        assert info.template_source == "jinja"
