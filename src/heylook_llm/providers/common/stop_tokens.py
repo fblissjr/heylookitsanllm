@@ -24,7 +24,15 @@ def extend_eos_from_generation_config(tokenizer, model_path) -> None:
         ids = set(ids) if isinstance(ids, list) else ({ids} if isinstance(ids, int) else set())
         if not ids:
             return
-        tokenizer.eos_token_ids = resolve_stop_tokens(tokenizer) | ids
+        # Stored under a private name, NOT tokenizer.eos_token_ids:
+        # transformers 5.x SpecialTokensMixin.__setattr__ intercepts
+        # special-token attr assignment and raises on non-string values
+        # ("Cannot set a non-string value as the eos_token"), which silently
+        # dropped <turn|> from gemma-4's stop set. resolve_stop_tokens reads
+        # this attr first, so every consumer sees the union.
+        object.__setattr__(
+            tokenizer, "_heylook_eos_ids", resolve_stop_tokens(tokenizer) | ids
+        )
     except Exception as e:
         logging.warning("eos extension from generation_config failed: %s", e)
 
@@ -32,9 +40,14 @@ def extend_eos_from_generation_config(tokenizer, model_path) -> None:
 def resolve_stop_tokens(tokenizer) -> set[int]:
     """Resolve EOS token IDs from a tokenizer, handling None and missing attrs.
 
-    Checks eos_token_ids (plural, set by some tokenizers) first, then falls
-    back to eos_token_id (singular). Returns an empty set if neither exists.
+    Checks _heylook_eos_ids (our generation_config union, see
+    extend_eos_from_generation_config) first, then eos_token_ids (plural,
+    set by some tokenizers), then eos_token_id (singular). Returns an empty
+    set if none exists.
     """
+    own = getattr(tokenizer, "_heylook_eos_ids", None)
+    if isinstance(own, (set, frozenset, list, tuple)) and own:
+        return set(own)
     ids = getattr(tokenizer, "eos_token_ids", None)
     if isinstance(ids, int):        # some tokenizers expose it as a scalar int
         return {ids}

@@ -49,6 +49,33 @@ class TestExtendEosFromGenerationConfig:
         extend_eos_from_generation_config(tok, tmp_path)
         assert resolve_stop_tokens(tok) == {1}
 
+    def test_transformers5_setattr_interception(self, tmp_path):
+        """transformers 5.x SpecialTokensMixin.__setattr__ intercepts
+        special-token attr assignment and rejects non-string values
+        ('Cannot set a non-string value as the eos_token'). The extension
+        must not depend on being able to assign eos_token_ids on the
+        tokenizer -- the live gemma-4 regression: <turn|> silently dropped
+        from the stop set, every response ran to the token cap."""
+        (tmp_path / "generation_config.json").write_text(
+            json.dumps({"eos_token_id": [1, 106, 50]})
+        )
+        tok = _SetattrGuardedTokenizer()
+        extend_eos_from_generation_config(tok, tmp_path)
+        assert resolve_stop_tokens(tok) == {1, 106, 50}
+
+
+class _SetattrGuardedTokenizer:
+    """Mimics transformers 5.x SpecialTokensMixin: special-token attribute
+    assignment routes through validation that rejects non-string values."""
+
+    def __init__(self):
+        object.__setattr__(self, "eos_token_id", 1)
+
+    def __setattr__(self, name, value):
+        if name.startswith("eos_token") and not isinstance(value, str):
+            raise ValueError("Cannot set a non-string value as the eos_token")
+        object.__setattr__(self, name, value)
+
 
 class _FakeHfTokenizer:
     """Minimal raw-HF-tokenizer stand-in for TokenizerWrapper construction."""

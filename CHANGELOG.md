@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.1]
+
+### Fixed
+
+- **gemma-4 stop-set regression under transformers 5.x**:
+  `extend_eos_from_generation_config` assigned `tokenizer.eos_token_ids`,
+  which transformers 5.x `SpecialTokensMixin.__setattr__` intercepts and
+  rejects ("Cannot set a non-string value as the eos_token") -- the
+  `<turn|>` terminator silently dropped out of the stop set and gemma-4
+  responses ran past end-of-turn to the token cap (channel-block loops).
+  The union is now stored under a private attr that `resolve_stop_tokens`
+  reads first, out of reach of the special-token machinery.
+- **Behavioral eval bank request hygiene**: every task is now explicit
+  about `enable_thinking` with budgets sized for what is enabled
+  (thinking tasks 1536, thinking-off tasks keep tight budgets honestly);
+  the near-greedy `temperature=0.1` stop task now uses server sampling
+  defaults; thinking-on runaway is caught by a budget-exhaustion check on
+  `thinking_requested_split` instead of under-budgeted stop tasks.
+
 ## [1.36.0]
 
 ### Added

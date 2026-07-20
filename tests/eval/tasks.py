@@ -106,7 +106,7 @@ TASK_VISION_SINGLE_COLOR_LETTER = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="One generated solid-color image with a letter overlay; checks color mention, no leak markers, no runaway repetition. (Letter-mention is not separately judged -- color_mention alone is the property check; see README.)",
-    build_request=lambda: _vision_body([_RED], "What color is this image? Also name any letter you see on it.", max_tokens=60),
+    build_request=lambda: _vision_body([_RED], "What color is this image? Also name any letter you see on it.", max_tokens=60, enable_thinking=False),
     judge=_judge_single_color,
     timeout=300,
 )
@@ -125,7 +125,7 @@ TASK_VISION_TWO_IMAGE_DISCRIMINATION = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="Two distinct-color images, one prompt; requires BOTH colors mentioned. Ordering is recorded as a soft signal, never hard-failed.",
-    build_request=lambda: _vision_body([_GREEN, _YELLOW], "Describe each image in one short sentence.", max_tokens=100),
+    build_request=lambda: _vision_body([_GREEN, _YELLOW], "Describe each image in one short sentence.", max_tokens=100, enable_thinking=False),
     judge=_judge_two_image,
     timeout=300,
 )
@@ -140,7 +140,7 @@ TASK_VISION_LARGE_HEATMAP_SANITY = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="~1400x900 random-noise image; sanity only (non-empty, non-gibberish, no leak) -- no ground truth to judge color-accuracy against.",
-    build_request=lambda: _vision_body([_HEATMAP], "Describe this image.", max_tokens=150),
+    build_request=lambda: _vision_body([_HEATMAP], "Describe this image.", max_tokens=150, enable_thinking=False),
     judge=_judge_heatmap,
     timeout=600,
 )
@@ -158,7 +158,7 @@ TASK_VISION_BUDGET_LOW_TOKENS = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="Same fixture as the single-color task but with vision_tokens=70 (low budget); paired with vision_budget_high_tokens -- see README for why these are two tasks, not one.",
-    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=70),
+    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=70, enable_thinking=False),
     judge=_judge_budget("red", 70),
     timeout=300,
 )
@@ -168,7 +168,7 @@ TASK_VISION_BUDGET_HIGH_TOKENS = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="Same fixture as vision_budget_low_tokens but with vision_tokens=1120 (high budget); both must pass independently, differences are recorded not hard-failed.",
-    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=1120),
+    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=1120, enable_thinking=False),
     judge=_judge_budget("red", 1120),
     timeout=300,
 )
@@ -196,7 +196,14 @@ TASK_VISION_THINKING_OFF_PURITY = EvalTask(
 def _judge_thinking_split(ctx: dict) -> Verdict:
     has_thinking = bool((ctx["thinking"] or "").strip())
     thinking_v = Verdict(passed=has_thinking, evidence=f"thinking field {'present' if has_thinking else 'MISSING'}")
-    return combine_verdicts(thinking_v, marker_leak(ctx["content"]))
+    # Budget is sized for a real thought channel + answer (768), so exhausting
+    # it is a genuine no-stop signal -- this is where thinking-ON runaway is
+    # caught (the stop_discipline tasks run thinking-off on purpose).
+    return combine_verdicts(
+        thinking_v,
+        marker_leak(ctx["content"]),
+        token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"]),
+    )
 
 
 TASK_THINKING_REQUESTED_SPLIT = EvalTask(
@@ -204,7 +211,7 @@ TASK_THINKING_REQUESTED_SPLIT = EvalTask(
     category="thinking",
     required_capabilities=("thinking",),
     description="enable_thinking=True on a plain prompt; requires a non-empty `thinking` field AND content free of leak markers (<think>, <|channel>, 'thought'-prefix).",
-    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=200, enable_thinking=True),
+    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=1536, enable_thinking=True),
     judge=_judge_thinking_split,
     timeout=600,
 )
@@ -240,7 +247,7 @@ TASK_THINKING_MULTI_IMAGE_COMBINED = EvalTask(
     category="thinking",  # judged category is thinking-split behavior under vision load, not color accuracy -- see README
     required_capabilities=("vision", "thinking"),
     description="enable_thinking=True with two distinct-color images; requires thinking present, no leak, and both colors mentioned across content+thinking combined (mirrors full_matrix.py's judge).",
-    build_request=lambda: _vision_body([_RED, _BLUE], "Describe each image in one short sentence.", max_tokens=300, enable_thinking=True),
+    build_request=lambda: _vision_body([_RED, _BLUE], "Describe each image in one short sentence.", max_tokens=768, enable_thinking=True),
     judge=_judge_thinking_multi_image,
     timeout=900,
 )
@@ -262,7 +269,7 @@ TASK_STOP_DISCIPLINE_SHORT_ANSWER = EvalTask(
     category="stop",
     required_capabilities=(),
     description="Short-answer prompt with a generous max_tokens; fails on runaway sentence repetition or on hitting the token cap exactly (proxy for never finding a stopping point).",
-    build_request=lambda: _text_body("What is 2+2? Answer in one short sentence.", max_tokens=200, temperature=0.1),
+    build_request=lambda: _text_body("What is 2+2? Answer in one short sentence.", max_tokens=200, enable_thinking=False),
     judge=_judge_stop,
     timeout=300,
 )
@@ -272,7 +279,7 @@ TASK_STOP_DISCIPLINE_LONG_FORM = EvalTask(
     category="stop",
     required_capabilities=(),
     description="Zero-image, thinking-off creative prompt with more room to ramble; same repetition + token-budget-exhaustion checks as stop_discipline_short_answer on a longer generation.",
-    build_request=lambda: _text_body("Write a short paragraph describing the ocean at sunset.", max_tokens=150, enable_thinking=False),
+    build_request=lambda: _text_body("Write a short paragraph describing the ocean at sunset.", max_tokens=400, enable_thinking=False),
     judge=_judge_stop,
     timeout=300,
 )
@@ -287,7 +294,7 @@ TASK_TEXT_FACTUAL_QA_CAPITAL = EvalTask(
     category="text",
     required_capabilities=(),
     description="'What is the capital of France?' -- checks 'paris' appears (case-insensitive). The one task allowed an exact-ish string check: it's ground truth, not phrasing.",
-    build_request=lambda: _text_body("What is the capital of France?", max_tokens=30),
+    build_request=lambda: _text_body("What is the capital of France?", max_tokens=30, enable_thinking=False),
     judge=lambda ctx: substring_present(ctx["content"], "paris"),
     timeout=120,
 )
@@ -305,7 +312,7 @@ TASK_TEXT_SINGLE_WORD_INSTRUCTION = EvalTask(
     category="text",
     required_capabilities=(),
     description="'Respond with exactly one word: the color of the sky.' -- checks content is exactly one whitespace-separated token; does not hard-require the word be 'blue' (content-brittleness).",
-    build_request=lambda: _text_body("Respond with exactly one word: the color of the sky.", max_tokens=10),
+    build_request=lambda: _text_body("Respond with exactly one word: the color of the sky.", max_tokens=10, enable_thinking=False),
     judge=_judge_single_word,
     timeout=120,
 )
