@@ -244,6 +244,62 @@ class TestGemmaChannelParser:
         assert thinking == "half a plan"
 
 
+class TestImplicitThinkOpen:
+    """Qwen3.5-style templates PRE-FILL `<think>\\n` into the generation
+    prompt when thinking is enabled -- the model's output starts INSIDE the
+    think block and never emits the opening tag. The parser must start in
+    thinking state or everything routes to content and `</think>` leaks."""
+
+    def _chunks(self):
+        return ["I should ", "plan this.", "</think>", "The answer", " is 4."]
+
+    def test_initial_thinking_splits_implicit_open(self):
+        from heylook_llm.thinking_parser import HybridThinkingParser
+
+        content, thinking = _collect(
+            HybridThinkingParser(initial_thinking=True), self._chunks()
+        )
+        assert thinking == "I should plan this."
+        assert content == "The answer is 4."
+
+    def test_default_explicit_mode_unchanged(self):
+        from heylook_llm.thinking_parser import HybridThinkingParser
+
+        content, thinking = _collect(
+            HybridThinkingParser(),
+            ["<think>", "plan", "</think>", "answer"],
+        )
+        assert thinking == "plan"
+        assert content == "answer"
+
+    def test_reset_restores_initial_state(self):
+        from heylook_llm.thinking_parser import HybridThinkingParser
+
+        p = HybridThinkingParser(initial_thinking=True)
+        _collect(p, self._chunks())
+        p.reset()
+        content, thinking = _collect(p, self._chunks())
+        assert thinking == "I should plan this."
+        assert content == "The answer is 4."
+
+    def test_factory_arms_initial_thinking_from_template_and_request(self):
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = ModelTemplateInfo(
+            has_thinking_markers=True, prefills_thinking=True,
+        )
+        armed = select_reasoning_parser(info, thinking_enabled=True)
+        content, thinking = _collect(armed, self._chunks())
+        assert thinking == "I should plan this."
+
+        # thinking off (or unknown): classic explicit mode
+        off = select_reasoning_parser(info, thinking_enabled=False)
+        content, thinking = _collect(off, ["plain answer"])
+        assert content == "plain answer"
+        assert thinking == ""
+
+
 class TestReasoningParserFactory:
     def _info(self, *, has_harmony=False, has_thinking=False, has_gemma=False, specials=()):
         from heylook_llm.providers.common.template_info import ModelTemplateInfo

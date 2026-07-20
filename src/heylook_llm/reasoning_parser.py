@@ -388,9 +388,28 @@ class GemmaChannelParser:
         return ("content", text)
 
 
-def select_reasoning_parser(template_info: Any = None) -> ReasoningParser:
+def effective_thinking_flag(request_enable_thinking, provider) -> bool:
+    """The request's thinking value, else the model-config default -- the
+    same resolution the template application uses, so parser state matches
+    what the prompt actually contained."""
+    if request_enable_thinking is not None:
+        return bool(request_enable_thinking)
+    cfg = getattr(provider, "config", None)
+    return bool(cfg.get("enable_thinking", False)) if isinstance(cfg, dict) else False
+
+
+def select_reasoning_parser(
+    template_info: Any = None, *, thinking_enabled: bool | None = None
+) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
-    pass-through so shutdown paths + unit tests don't need a full load."""
+    pass-through so shutdown paths + unit tests don't need a full load.
+
+    ``thinking_enabled`` is the request's EFFECTIVE thinking flag (request
+    value falling back to the model-config default). It matters for
+    templates that pre-fill an unclosed ``<think>`` into the generation
+    prompt (``prefills_thinking``): the model's output then starts inside
+    the block, so the parser must start in thinking state.
+    """
     if template_info is None:
         return PassThroughParser()
 
@@ -404,7 +423,10 @@ def select_reasoning_parser(template_info: Any = None) -> ReasoningParser:
 
     if getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
-        return HybridThinkingParser()
+        return HybridThinkingParser(
+            initial_thinking=bool(thinking_enabled)
+            and getattr(template_info, "prefills_thinking", False)
+        )
 
     return PassThroughParser(strip_tokens=strip_tokens)
 

@@ -156,7 +156,9 @@ backend):**
   per-param null-branching + full-panel-rebuild-on-reset.
 - Params: temperature, max_tokens, top_p, top_k (core); min_p, repetition_penalty, repetition_context_size,
   presence_penalty, seed (advanced); enable_thinking (advanced checkbox, shown only if model caps include
-  `thinking`; unchecking sets `null` not `false`).
+  `thinking`; unchecking sets `null` not `false`); vision_tokens (advanced number, shown only if model caps
+  include `vision`; target visual tokens per image, backend snaps to the model's own processor support —
+  gemma-4 buckets 70/140/280/560/1120, qwen continuous pixel budget; null = processor default).
 
 ### 3f. utils / markdown — keep
 - `utils.js`: `createEl`, `beforeUnloadGuard`, `throttleToFrame`, `statCard`, `formatBytes`. (v3 folds

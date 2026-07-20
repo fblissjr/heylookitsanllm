@@ -52,6 +52,10 @@ class ChatRequest(BaseModel):
     # Thinking mode control (Qwen3 models)
     enable_thinking: Optional[bool] = Field(None, description="Enable thinking mode for Qwen3 models")
 
+    # Visual token budget per image (model-agnostic; mapped onto the loaded
+    # model's own processor knob -- gemma-4 buckets / qwen pixel budget)
+    vision_tokens: Optional[int] = Field(None, ge=16, le=16384, description="Target visual tokens per image; snapped to what the model's processor supports")
+
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
@@ -187,6 +191,10 @@ class MLXModelConfig(BaseModel):
     )
     # Thinking mode (Qwen3 models with <think> blocks)
     enable_thinking: bool = False
+    # Per-model default visual token budget per image (request vision_tokens
+    # overrides; None = the processor's own default). Mapped per family by
+    # providers/common/vision_budget.py.
+    vision_tokens: Optional[int] = Field(None, ge=16, le=16384)
     # Hidden states defaults (for /v1/hidden_states endpoint)
     default_hidden_layer: int = -2  # Z-Image uses penultimate layer
     default_max_length: int = 512

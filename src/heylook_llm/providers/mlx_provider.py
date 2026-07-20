@@ -414,6 +414,16 @@ class VLMVisionStrategy:
         model_type = getattr(model.config, 'model_type', 'unknown')
         logging.info(f"[VLM VISION] Processing {num_images} image(s) | Model: {model_type}")
 
+        # Model-agnostic visual token budget: mapped onto the processor's own
+        # knob (gemma buckets / qwen pixel budget) as call-time kwargs; {}
+        # when unset or the family exposes no budget parameter.
+        from .common.vision_budget import vision_budget_kwargs
+        budget_kwargs = vision_budget_kwargs(
+            processor, effective_request.get('vision_tokens')
+        )
+        if budget_kwargs:
+            logging.info(f"[VLM VISION] vision_tokens={effective_request.get('vision_tokens')} -> {budget_kwargs}")
+
         # Tokenize and prepare pixel values via mlx_vlm.utils.prepare_inputs.
         # This handles image_grid_thw for Qwen models automatically.
         image_token_index = getattr(model.config, 'image_token_index', None)
@@ -422,6 +432,7 @@ class VLMVisionStrategy:
             images=images if images else None,
             prompts=formatted_prompt,
             image_token_index=image_token_index,
+            **budget_kwargs,
         )
 
         input_ids = inputs["input_ids"]
@@ -450,6 +461,12 @@ class VLMVisionStrategy:
         #   get_input_embeddings() method
         has_encode_image = hasattr(model, 'encode_image')
         cache_key = image_urls if image_urls else None
+        if cache_key and budget_kwargs:
+            # Feature shapes differ per budget: a URL-keyed entry cached at
+            # one budget must not serve another. (Pixel-hash keys are safe
+            # by construction -- the pixels themselves change.)
+            budget_tag = ",".join(f"{k}={v}" for k, v in sorted(budget_kwargs.items()))
+            cache_key = [f"vision_budget[{budget_tag}]", *cache_key]
         if has_encode_image and pixel_values is not None:
             # Try URL-based key first; fall back to pixel content hash for
             # base64/PIL images that don't have a stable URL.
@@ -853,7 +870,8 @@ class MLXProvider(BaseProvider):
                 })
 
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                       'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking']
+                       'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking',
+                       'vision_tokens']
         merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
 
         # Cache + speculative-decoding fields tagged with
@@ -884,7 +902,8 @@ class MLXProvider(BaseProvider):
 
         # Layer 5: request explicit fields.
         request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                          'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking', 'seed']
+                          'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking', 'seed',
+                          'vision_tokens']
         for field in request_fields:
             val = getattr(request, field, None)
             if val is not None:

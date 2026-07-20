@@ -18,6 +18,9 @@ export const PARAM_META = {
   presence_penalty:        { label: 'Presence penalty', type: 'number', min: 0, max: 2, step: 0.01, section: 'advanced' },
   seed:                    { label: 'Seed', type: 'number', min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, section: 'advanced' },
   enable_thinking:         { label: 'Enable thinking', type: 'checkbox', section: 'advanced', requiresCap: 'thinking' },
+  // Target visual tokens per image; the backend snaps to what the model's
+  // processor supports (gemma-4 buckets 70..1120, qwen continuous).
+  vision_tokens:           { label: 'Vision tokens / image', type: 'number', min: 16, max: 16384, step: 1, section: 'advanced', requiresCap: 'vision' },
 };
 
 function emptySettings() {

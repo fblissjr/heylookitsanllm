@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.64]
+
+### Added
+
+- **Model-agnostic vision token budget** (`vision_tokens` on chat requests +
+  per-model default in models.toml; v3 drawer control, cap-gated on
+  `vision`): one wire knob mapped by duck-typing the loaded model's image
+  processor -- gemma-4 discrete buckets (snapped: 70/140/280/560/1120 soft
+  tokens ~ 0.16-2.58MP), qwen2/3-VL continuous pixel budget
+  (tokens x (patch x merge)^2 -> max_pixels), unknown families degrade to
+  processor defaults. Vision-feature cache key carries the budget (feature
+  shapes differ per bucket). Verified live on gemma-4-31b + Qwen3.5-27B
+  (pixel patches 630/2520/10080 at 70/280/1120; full think x images x
+  budget matrix clean on both).
+
+### Fixed
+
+- **Qwen3.5 thinking never split into the thinking field**: its template
+  PRE-FILLS `<think>\n` into the generation prompt when thinking is on, so
+  the model output starts inside the block without an opening tag; the
+  parser routed everything to content. New `prefills_thinking` template
+  detection + `initial_thinking` parser state, armed per request from the
+  effective thinking flag.
+- **Removed hardcoded Qwen3 vocab ids from the thinking parser**
+  (151667/151668): the token-level mode keyed on them silently failed to
+  split for any other `<think>`-family vocabulary whenever token ids were
+  present. Parser is text-based only now, same as the harmony/gemma
+  channel parsers (tag strings are format grammar; token ids are
+  per-model vocabulary).
+
 ## [1.34.63]
 
 ### Fixed

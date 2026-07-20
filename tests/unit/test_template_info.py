@@ -209,6 +209,34 @@ class TestReadTemplateInfoGemmaChannelFormat:
         assert read_template_info(tmp_path, source=None).supports_enable_thinking is False
 
 
+class TestPrefillsThinking:
+    _QWEN35_STYLE = (
+        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
+        "{% if add_generation_prompt %}<|im_start|>assistant\n"
+        "{% if enable_thinking is defined and enable_thinking is false %}"
+        "{{ '<think>\\n\\n</think>\\n\\n' }}{% else %}{{ '<think>\\n' }}{% endif %}{% endif %}"
+    )
+    _QWEN3_CLASSIC = (
+        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
+        "{% if add_generation_prompt %}<|im_start|>assistant\n"
+        "{% if enable_thinking is false %}{{ '<think>\\n\\n</think>\\n\\n' }}{% endif %}{% endif %}"
+    )
+
+    def test_qwen35_prefill_detected(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        _write_model_dir(tmp_path, jinja=self._QWEN35_STYLE)
+        info = read_template_info(tmp_path, source=None)
+        assert info.has_thinking_markers is True
+        assert info.prefills_thinking is True
+
+    def test_classic_empty_block_not_prefill(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        _write_model_dir(tmp_path, jinja=self._QWEN3_CLASSIC)
+        info = read_template_info(tmp_path, source=None)
+        assert info.has_thinking_markers is True
+        assert info.prefills_thinking is False
+
+
 class TestReadTemplateInfoFallbacks:
     def test_falls_back_to_embedded_template_when_jinja_missing(self, tmp_path):
         from heylook_llm.providers.common.template_info import read_template_info

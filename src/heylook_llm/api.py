@@ -35,6 +35,7 @@ from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
 from heylook_llm.presets import PresetNotFound
 from heylook_llm.reasoning_parser import (
+    effective_thinking_flag,
     parse_reasoning,
     select_reasoning_parser,
 )
@@ -936,7 +937,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Mistral-sized special-token sets -- the compiled strip pattern is cached
     # and shared; only the buffers are per-instance.
     thinking_parser = select_reasoning_parser(
-        getattr(provider, "_template_info", None) if provider else None
+        getattr(provider, "_template_info", None) if provider else None,
+        thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
     )
 
     # Initialize logprobs collector if requested
@@ -1324,7 +1326,10 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     # race with concurrent streams; see stream_response_generator_async).
     content, thinking = parse_reasoning(
         full_text,
-        select_reasoning_parser(getattr(provider, "_template_info", None) if provider else None),
+        select_reasoning_parser(
+            getattr(provider, "_template_info", None) if provider else None,
+            thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
+        ),
     )
 
     message = {"role": "assistant", "content": content}

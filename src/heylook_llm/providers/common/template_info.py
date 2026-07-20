@@ -68,6 +68,10 @@ class ModelTemplateInfo:
     has_thinking_markers: bool = False
     has_gemma_channel_structure: bool = False
     supports_enable_thinking: bool = False
+    # Template PRE-FILLS an unclosed <think> into the generation prompt when
+    # thinking is enabled (Qwen3.5 style) -- the model output then starts
+    # inside the block, so the parser must start in thinking state.
+    prefills_thinking: bool = False
 
 
 # Signal patterns learned from real model templates (not hardcoded
@@ -86,6 +90,11 @@ _GEMMA_CHANNEL_CLOSE_PATTERN = re.compile(r"<channel\|>")
 # `enable_thinking` (Qwen3 renders <think> blocks, Gemma-4 renders thought
 # channels) supports the toggle; models without it ignore the kwarg.
 _ENABLE_THINKING_PATTERN = re.compile(r"\benable_thinking\b")
+# An UNCLOSED <think> emission (no </think> within the same short literal):
+# templates that pre-fill the open tag into the generation prompt. The
+# thinking-DISABLED empty block ('<think>\n\n</think>') closes within a few
+# chars and is excluded by the lookahead window.
+_PREFILL_THINK_PATTERN = re.compile(r"<think>(?![\s\S]{0,24}</think>)")
 
 
 def read_template_info(
@@ -145,6 +154,9 @@ def read_template_info(
         and _GEMMA_CHANNEL_CLOSE_PATTERN.search(template)
     )
     supports_enable_thinking = bool(_ENABLE_THINKING_PATTERN.search(template))
+    prefills_thinking = bool(
+        has_thinking and _PREFILL_THINK_PATTERN.search(template)
+    )
 
     return ModelTemplateInfo(
         chat_template=template,
@@ -154,6 +166,7 @@ def read_template_info(
         has_thinking_markers=has_thinking,
         has_gemma_channel_structure=has_gemma_channel,
         supports_enable_thinking=supports_enable_thinking,
+        prefills_thinking=prefills_thinking,
     )
 
 

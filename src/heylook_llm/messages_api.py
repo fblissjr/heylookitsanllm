@@ -34,7 +34,11 @@ from heylook_llm.perf_collector import (
     net_ttft_ms,
 )
 from heylook_llm.schema.content_blocks import ImageBlock
-from heylook_llm.reasoning_parser import parse_reasoning, select_reasoning_parser
+from heylook_llm.reasoning_parser import (
+    effective_thinking_flag,
+    parse_reasoning,
+    select_reasoning_parser,
+)
 from heylook_llm.thinking_parser import HybridThinkingParser
 
 messages_router = APIRouter(
@@ -346,7 +350,10 @@ async def _non_stream_messages(
     # gemma channels, or <think> markers -- same selection as chat/completions)
     content_text, thinking = parse_reasoning(
         full_text,
-        select_reasoning_parser(getattr(provider, "_template_info", None)),
+        select_reasoning_parser(
+            getattr(provider, "_template_info", None),
+            thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
+        ),
     )
 
     # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict
@@ -432,7 +439,10 @@ async def _stream_messages(
     model = msg_request.model or "unknown"
     translator = StreamingEventTranslator(
         message_id, model,
-        thinking_parser=select_reasoning_parser(getattr(provider, "_template_info", None)),
+        thinking_parser=select_reasoning_parser(
+            getattr(provider, "_template_info", None),
+            thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
+        ),
     )
 
     # Resolve abort event from provider (if MLX provider with abort support)
