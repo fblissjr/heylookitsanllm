@@ -55,7 +55,20 @@ ordering and the sole-user/minimal-custom-code posture.
   `image_processor.max_soft_tokens: 280` (default bucket, token-efficient);
   Google documents bumping to 1120 for sharp OCR / 2.51MP detail. Server-owned
   preprocessing (Q8) should know this knob: per-model or per-request override
-  when detail matters. Note: 2026-07-20 upstream also added
+  when detail matters. VERIFIED 2026-07-20: transformers' gemma-4 image
+  processor takes `max_soft_tokens` as instance default AND per-call param,
+  validated against buckets {70,140,280,560,1120}; expansion count flows from
+  processor output (no template/tokenizer change). Reference implementation =
+  Google's own visualizer, local copy at `coderef/` (gemma4 vision-token-budget
+  HF space): patch 16 / pool 3 / 48px macro blocks; budget->MP: 280~0.65,
+  560~1.29, 1120~2.58; images are scaled INTO the budget both directions
+  (small images upscale -- cost is always ~the bucket). Plan: per-MODEL
+  `vision_token_budget` in models.toml applied at load (~30 lines); a
+  per-REQUEST version must add the budget to the VisionFeatureCache key
+  (feature shapes differ per bucket) -- do not ship per-request without it.
+  Optional v3 nano-feature: per-attachment estimated token cost in the
+  composer (the resize math is ~15 lines client-side).
+  Note: 2026-07-20 upstream also added
   `response_template` to tokenizer_config.json batch-wide -- training-time
   field, inference-irrelevant, no local action.
 - [x] **Gemma-4 canonical template refresh (2026-07-09 "less laziness" fix)**
