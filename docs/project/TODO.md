@@ -50,6 +50,29 @@ ordering and the sole-user/minimal-custom-code posture.
   memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
   pinned mlx-lm before adopting. The QAT assistant head also pairs with the
   MTP item above.
+- [ ] **LLM behavior-eval harness follow-ups** (P2, owner-directed 2026-07-20):
+  `tests/eval/` (opt-in, seed bank generalized from the 2026-07-20 live
+  verification scripts) is the base. Direction the owner wants explored:
+  (a) eval as an API surface (trigger runs / read results server-side) and
+  (b) an eval page in frontend v3 (run the bank against loaded models,
+  compare results -- fits the introspection identity). Design with the
+  Phase 6 admin surface + observability pages, not a bolt-on; results
+  storage could ride the observability JSONL + DuckDB-over-files pattern.
+  Also queue: run the eval bank as the optional gate for changes touching
+  templates/parsers/stop-tokens/vision (the 4 bug classes it was built on).
+- [ ] **Pyright noise triage + pyrightconfig** (P3, dev-ergonomics): edits to
+  api.py/mlx_provider.py resurface ~10 standing complaints each (dynamic
+  patterns pyright can't follow + pydantic Field inference); at least one
+  looks like a REAL stale reference (`LogprobsCollector.add_token_and_get_delta`).
+  One triage pass: fix real ones, then a tuned pyrightconfig.json for the
+  documented dynamic idioms so new-code signal is readable.
+- [x] **Vision token budget knob -- SHIPPED GENERALIZED 2026-07-20**
+  (v1.34.64, ahead of the Q8 spike): model-agnostic `vision_tokens`
+  (request + models.toml per-model default + v3 drawer control) mapped by
+  duck-typing the processor (gemma buckets / qwen pixel budget); cache key
+  carries the budget; live-verified on gemma-4-31b + Qwen3.5-27B. The Q8
+  ACCURACY question (does 1120 improve detail QA?) remains open -- the
+  eval harness vision tasks are the vehicle. Original notes below.
 - [ ] **Vision token budget knob (max_soft_tokens 280 -> 1120)** (P3, feeds
   the Q8 preprocessing spike): gemma-4's `processor_config.json` sets
   `image_processor.max_soft_tokens: 280` (default bucket, token-efficient);
