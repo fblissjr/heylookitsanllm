@@ -26,6 +26,12 @@ class ReasoningParser(Protocol):
     def reset(self) -> None: ...
 
 
+# NB: declared-specials stripping is currently implemented THREE ways across
+# the parsers here + thinking_parser.py (only HybridThinkingParser's rolling
+# holdback is fully boundary-safe). A planned unification -- one shared
+# strip/holdback wrapper all parsers compose -- is specced in
+# internal/research/parser_strip_unification.md (local-only); read it before
+# refactoring this machinery piecemeal.
 @lru_cache(maxsize=16)
 def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]:
     """Alternation regex over the declared specials, sorted longest-first so
