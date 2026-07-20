@@ -16,22 +16,20 @@ from pathlib import Path
 from typing import Any, Optional
 
 from heylook_llm.model_service import (
-    ModelProfile,
-    get_available_profiles,
+    available_sampler_presets,
     get_hf_cache_paths,
     get_smart_defaults,
-    load_profiles,
+    load_sampler_presets,
 )
 from heylook_llm.providers.common.template_info import detect_chat_template_source
 
 __all__ = [
     "ModelImporter",
-    "ModelProfile",
-    "get_available_profiles",
+    "available_sampler_presets",
     "get_hf_cache_paths",
     "get_smart_defaults",
     "import_models",
-    "load_profiles",
+    "load_sampler_presets",
 ]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
@@ -42,21 +40,21 @@ class ModelImporter:
 
     def __init__(
         self,
-        profile: Optional[str] = None,
+        preset: Optional[str] = None,
         overrides: Optional[dict[str, Any]] = None,
         chat_template_override: Optional[str] = None,
     ):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
         self.preset_name: Optional[str] = None
-        if profile:
+        if preset:
             from heylook_llm.presets import get_preset_registry
             registry = get_preset_registry()
-            if profile not in registry:
+            if preset not in registry:
                 raise ValueError(
-                    f"Unknown preset: {profile}. Available: {registry.list_names()}"
+                    f"Unknown preset: {preset}. Available: {registry.list_names()}"
                 )
-            self.preset_name = profile
+            self.preset_name = preset
         self.overrides = overrides or {}
         # CLI `--chat-template` override. When set, recorded on every
         # imported model regardless of what's in its folder. Users point at
@@ -455,7 +453,7 @@ def import_models(args: Any) -> None:
             overrides[key] = value
 
     importer = ModelImporter(
-        profile=getattr(args, 'profile', None),
+        preset=getattr(args, 'preset', None),
         overrides=overrides,
         chat_template_override=getattr(args, 'chat_template', None),
     )
@@ -535,11 +533,11 @@ def import_models(args: Any) -> None:
             model['config'] = config
 
     # Print preset details before writing
-    if hasattr(args, 'profile') and args.profile:
-        profile = load_profiles().get(args.profile)
-        if profile:
-            print(f"\nPreset: {profile.name}")
-            for key, value in profile.defaults.items():
+    if getattr(args, 'preset', None):
+        preset = load_sampler_presets().get(args.preset)
+        if preset:
+            print(f"\nPreset: {preset.name}")
+            for key, value in preset.defaults.items():
                 print(f"  {key:<25} = {value}")
 
     output_file = args.output or "models.toml"
@@ -549,8 +547,8 @@ def import_models(args: Any) -> None:
     for model in models:
         print(f"  - {model['id']} ({model['provider']})")
 
-    if hasattr(args, 'profile') and args.profile:
-        print(f"\nApplied profile: {args.profile}")
+    if getattr(args, 'preset', None):
+        print(f"\nApplied preset (recorded as default_preset): {args.preset}")
     if overrides:
         print(f"\nApplied overrides: {overrides}")
 
@@ -561,7 +559,7 @@ def import_models(args: Any) -> None:
     else:
         print("\nTo use this configuration, rename to models.toml or copy desired entries.")
 
-    if not hasattr(args, 'profile') or not args.profile:
-        print("\nAvailable presets:")
-        for name, profile in sorted(load_profiles().items()):
-            print(f"  --profile {name:<20} {profile.description}")
+    if not getattr(args, 'preset', None):
+        print("\nAvailable sampler presets:")
+        for name, preset in sorted(load_sampler_presets().items()):
+            print(f"  --preset {name:<20} {preset.description}")

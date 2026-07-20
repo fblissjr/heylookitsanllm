@@ -1,6 +1,6 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-20 (chat composer image/thinking UI, §5)
+Last updated: 2026-07-20 (sampler-preset terminology + capabilities discovery, §4)
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
@@ -246,8 +246,10 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 `POST /{id}/load` → `{status:"loaded",model_id}` (500 on failure); `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description}], total}`;
-`POST /import` `{models:[{id,path,provider}], profile?}` → `{imported:[...], total, warning?}`.
-(Backend also exposes toggle/status/validate/profiles/bulk-profile/discovered — out of scope unless a
+`POST /import` `{models:[{id,path,provider}], default_preset?}` → `{imported:[...], total, warning?}`
+(field renamed from `profile` 2026-07-20).
+(Backend also exposes toggle/status/validate/sampler-presets/bulk-default-preset/discovered — the
+sampler-preset routes were renamed from profiles/bulk-profile 2026-07-20; out of scope unless a
 trimmed feature needs them.)
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
@@ -258,7 +260,10 @@ requests_queued}}}` (30s server cache).
 count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests}], resource_timeline,
 bottlenecks}` (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
-**Capabilities** `GET /v1/capabilities`.
+**Capabilities** `GET /v1/capabilities`. Includes `sampler_presets` (2026-07-20):
+`{available:[{name,description}], request_field:"preset", model_default_field:"default_preset"}` —
+the bundled sampler-preset registry, for scripted clients; distinct from `/v1/presets`
+(saved user prompt+sampler bundles), which is what v3's preset bar uses.
 **J-space** `GET /v1/jspace/models` → `{models:[id], meta:{[id]:{provisional,fit_date,fit_source,
 n_prompts}}, base_dir}` (models with a fitted lens; `meta` added v1.34.37 — `provisional` means the
 lens sidecar has no own-fit provenance stamp and drives the UI's "provisional lens" badge);

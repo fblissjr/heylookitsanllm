@@ -86,7 +86,7 @@ Unknown keys are rejected (catches typos). `--system-prompt`,
 | `--vision-tokens N` | `vision_tokens` | Visual token budget per image (16-16384), snapped to the model's processor grid |
 | `--resize-max N` | `resize_max` | Server-side downscale before encoding; big win on phone-camera originals |
 | `--image-quality Q` | `image_quality` | JPEG quality for the resize path |
-| `--preset NAME` | `preset` | Server sampler preset; overrides the task's default |
+| `--preset NAME` | `preset` | Server sampler preset; overrides the task's default. Names are discoverable via `GET /v1/capabilities` (`sampler_presets.available`) |
 | `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat preset and task defaults (server-side cascade) |
 
 ## Run options

@@ -89,13 +89,13 @@ def main():
         default="models.toml",
         help="Output file for generated configuration (default: models.toml)",
     )
-    from heylook_llm.model_service import get_available_profiles
+    from heylook_llm.model_service import available_sampler_presets
 
-    preset_names = get_available_profiles()
+    preset_names = available_sampler_presets()
     import_parser.add_argument(
         "--preset",
         "--profile",
-        dest="profile",
+        dest="preset",
         choices=preset_names,
         help="Record a preset name as the model's default_preset "
              "(applied at request time). --profile is accepted as an alias "

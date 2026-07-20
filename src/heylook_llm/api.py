@@ -1864,6 +1864,7 @@ Clients should query this endpoint on startup to discover:
 async def get_capabilities(request: Request):
     """Get server capabilities and optimization options."""
     from heylook_llm.optimizations.status import get_optimization_summary
+    from heylook_llm.presets import get_preset_registry
 
     # Get optimization status
     optimizations = get_optimization_summary()
@@ -1888,6 +1889,16 @@ async def get_capabilities(request: Request):
         "server_version": "1.0.1",
         "optimizations": optimizations,
         "metal": metal_info,
+        # Sampler-preset discovery (2026-07-20): the bundled PresetRegistry
+        # names, resolvable per-request via ChatRequest.preset or per-model
+        # via models.toml default_preset. Distinct from /v1/presets (saved
+        # user prompt+sampler bundles in the app DB).
+        "sampler_presets": {
+            "available": get_preset_registry().list_info(),
+            "request_field": "preset",
+            "model_default_field": "default_preset",
+            "distinct_from": "/v1/presets (saved user prompt+sampler bundles)",
+        },
         "endpoints": {
             "fast_vision": {
                 "available": True,

@@ -3,11 +3,11 @@
 Service layer for model discovery, validation, and configuration management.
 
 Provides CRUD operations on models.toml, filesystem scanning for importable models,
-smart defaults, profile definitions, and profile application. Thread-safe for
+smart defaults, and sampler-preset stamping (default_preset). Thread-safe for
 concurrent API access.
 
 This module is the single source of truth for:
-- Model profiles (load_profiles, PROFILES, ModelProfile) -- loaded from profiles/*.toml
+- Sampler presets (load_sampler_presets, SAMPLER_PRESETS, SamplerPreset) -- views over the PresetRegistry
 - Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
 - Config CRUD, scanning, import, validation
@@ -58,13 +58,14 @@ def get_hf_cache_paths() -> list[str]:
 
 
 # =============================================================================
-# Model profiles
+# Sampler presets (terminology note: the import/admin paths called these
+# "profiles" until 2026-07-20; same registry as ChatRequest.preset)
 # =============================================================================
 
 
 @dataclass
-class ModelProfile:
-    """Thin adapter over a named preset from the runtime ``PresetRegistry``.
+class SamplerPreset:
+    """View over a named preset from the runtime ``PresetRegistry``.
 
     Historically this dataclass carried a sampler-field ``defaults`` dict that
     ``apply()`` baked into ``models.toml`` at import time. After C4, sampler
@@ -95,22 +96,22 @@ class ModelProfile:
         return result
 
 
-def load_profiles(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
-    """Return a profile-dataclass view over the runtime preset registry.
+def load_sampler_presets(presets_dir: Path | None = None) -> dict[str, SamplerPreset]:
+    """Return a preset-dataclass view over the runtime preset registry.
 
-    The ``profiles_dir`` override exists for tests that want to load from a
+    The ``presets_dir`` override exists for tests that want to load from a
     custom directory; production paths use the bundled presets via the
     process-wide ``PresetRegistry``.
     """
     from heylook_llm.presets import PresetRegistry, get_preset_registry
 
-    if profiles_dir is not None:
-        registry = PresetRegistry.from_directory(profiles_dir)
+    if presets_dir is not None:
+        registry = PresetRegistry.from_directory(presets_dir)
     else:
         registry = get_preset_registry()
 
     return {
-        name: ModelProfile(
+        name: SamplerPreset(
             name=name,
             description=registry.describe(name),
             defaults=registry.get(name),
@@ -119,22 +120,22 @@ def load_profiles(profiles_dir: Path | None = None) -> dict[str, ModelProfile]:
     }
 
 
-def get_available_profiles() -> list[str]:
+def available_sampler_presets() -> list[str]:
     """Return sorted list of available preset names (for argparse choices)."""
     from heylook_llm.presets import get_preset_registry
 
     return get_preset_registry().list_names()
 
 
-def _profiles_view() -> dict[str, ModelProfile]:
-    """Accessor used by functions that previously read the ``PROFILES`` dict.
+def _presets_view() -> dict[str, SamplerPreset]:
+    """Accessor used by functions that previously read the module dict.
     Returns a fresh view each call -- cheap (registry is memoized)."""
-    return load_profiles()
+    return load_sampler_presets()
 
 
-# Back-compat module attribute. Reads do ``dict(PROFILES)`` in a few places;
-# ``_profiles_view()`` gives them a fresh snapshot backed by the registry.
-PROFILES = _profiles_view()
+# Module-level snapshot; ``_presets_view()`` gives a fresh snapshot backed by
+# the registry when needed.
+SAMPLER_PRESETS = _presets_view()
 
 
 # =============================================================================
@@ -473,24 +474,24 @@ class ModelService:
         """Generate smart defaults based on model characteristics."""
         return get_smart_defaults(model_info)
 
-    def get_profiles(self) -> dict[str, dict]:
-        """Get available preset profiles with descriptions."""
+    def get_sampler_presets(self) -> dict[str, dict]:
+        """Get available sampler presets with descriptions."""
         return {
             name: {
-                "name": profile.name,
-                "description": profile.description,
+                "name": preset.name,
+                "description": preset.description,
             }
-            for name, profile in PROFILES.items()
+            for name, preset in SAMPLER_PRESETS.items()
         }
 
-    def apply_profile(self, config: dict, profile_name: str, model_info: dict) -> dict:
-        """Apply a named profile to config."""
-        profile = PROFILES.get(profile_name)
-        if not profile:
+    def apply_sampler_preset(self, config: dict, preset_name: str, model_info: dict) -> dict:
+        """Record a named sampler preset as the config's default_preset."""
+        preset = SAMPLER_PRESETS.get(preset_name)
+        if not preset:
             raise ValueError(
-                f"Unknown profile: {profile_name}. Available: {list(PROFILES.keys())}"
+                f"Unknown preset: {preset_name}. Available: {list(SAMPLER_PRESETS.keys())}"
             )
-        return profile.apply(config, model_info)
+        return preset.apply(config, model_info)
 
     # --- Config CRUD ---
 
@@ -650,20 +651,19 @@ class ModelService:
 
             raise ValueError(f"Model '{model_id}' not found")
 
-    def bulk_apply_profile(
-        self, model_ids: list[str], profile_name: str
+    def bulk_set_default_preset(
+        self, model_ids: list[str], preset_name: str
     ) -> list[ModelConfig]:
         """Set ``default_preset`` on multiple models at once.
 
-        Post-C4, 'profile' and 'preset' name the same concept -- this method
-        just records the name on each target model's config so the request-time
+        Records the name on each target model's config so the request-time
         cascade picks it up. No sampler-field baking.
         """
         from heylook_llm.presets import get_preset_registry
         registry = get_preset_registry()
-        if profile_name not in registry:
+        if preset_name not in registry:
             raise ValueError(
-                f"Unknown preset: {profile_name}. Available: {registry.list_names()}"
+                f"Unknown preset: {preset_name}. Available: {registry.list_names()}"
             )
 
         with self._lock:
@@ -675,7 +675,7 @@ class ModelService:
                 if model.get("id") in model_ids:
                     config = model.get("config", {}) or {}
                     if model.get("provider") == "mlx":
-                        config["default_preset"] = profile_name
+                        config["default_preset"] = preset_name
                         model["config"] = config
                     updated.append(ModelConfig(**model))
 
@@ -688,9 +688,9 @@ class ModelService:
     def import_models(
         self,
         models_to_import: list[dict],
-        profile_name: str | None = "balanced",
+        default_preset: str | None = "balanced",
     ) -> list[ModelConfig]:
-        """Import scanned models into config with optional profile."""
+        """Import scanned models into config with an optional default sampler preset."""
         with self._lock:
             data = self._read_toml()
             existing_models = data.get("models", [])
@@ -716,7 +716,7 @@ class ModelService:
                 }
 
                 if provider == "mlx_embedding":
-                    # Embedding models: no vision, no generation params, no profiles
+                    # Embedding models: no vision, no generation params, no sampler presets
                     entry_config = {
                         "model_path": model_path,
                         "max_length": 2048,
@@ -732,11 +732,11 @@ class ModelService:
                     smart = get_smart_defaults(model_info)
                     entry_config.update(smart)
 
-                    # Apply profile if specified
-                    if profile_name:
-                        profile = PROFILES.get(profile_name)
-                        if profile:
-                            entry_config = profile.apply(entry_config, model_info)
+                    # Stamp default_preset if specified
+                    if default_preset:
+                        preset = SAMPLER_PRESETS.get(default_preset)
+                        if preset:
+                            entry_config = preset.apply(entry_config, model_info)
 
                     # Same detection as the CLI import wizard (shared helper --
                     # the two paths drifted once): record the explicit template

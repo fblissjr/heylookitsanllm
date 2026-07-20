@@ -351,6 +351,26 @@ consumer anywhere in the stack (the v3 frontend's user-preset system owns
 interactive sampler preferences), and their only references were tests
 asserting their own existence. The registry keeps only presets that encode
 mechanism (model-family or library knowledge) or are wired as defaults.
+`test_preset_registry.py` pins the exact roster -- adding a preset means
+naming its consumer there.
+
+**Discovery** (2026-07-20): `GET /v1/capabilities` advertises the registry
+(`sampler_presets: {available, request_field, model_default_field}`) so
+scripted clients can enumerate names without admin access. The admin list
+lives at `GET /v1/admin/models/sampler-presets`.
+
+**Terminology** (unified 2026-07-20): "sampler preset" is the single term;
+the import/admin paths historically said "profile" for the same registry.
+Renames: routes `/v1/admin/models/profiles` -> `/sampler-presets` and
+`/bulk-profile` -> `/bulk-default-preset` (body field `profile` ->
+`preset`); `ModelImportRequest.profile` -> `default_preset`;
+`model_service.py` symbols (`ModelProfile` -> `SamplerPreset`,
+`load_profiles` -> `load_sampler_presets`, `get_profiles` ->
+`get_sampler_presets`, `bulk_apply_profile` -> `bulk_set_default_preset`,
+`get_available_profiles` -> `available_sampler_presets`). The import CLI's
+`--profile` survives only as an alias for `--preset`. Do not reintroduce
+"profile" for this concept -- it collides with `/v1/performance/profile`
+(perf) and invites confusion with `/v1/presets` (user presets, DuckDB).
 
 Each preset has `[meta]` and `[defaults]` tables:
 

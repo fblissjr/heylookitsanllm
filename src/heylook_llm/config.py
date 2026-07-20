@@ -545,7 +545,7 @@ class ModelScanRequest(BaseModel):
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models."""
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    profile: Optional[str] = Field(default="balanced", description="Profile to apply to all imported models")
+    default_preset: Optional[str] = Field(default="balanced", description="Sampler preset recorded as default_preset on all imported models")
 
 
 class ModelUpdateRequest(BaseModel):
@@ -574,10 +574,10 @@ class AdminValidationResult(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
-class BulkProfileRequest(BaseModel):
-    """Apply a profile to multiple models."""
-    model_ids: List[str] = Field(..., description="Model IDs to apply profile to")
-    profile: str = Field(..., description="Profile name to apply")
+class BulkDefaultPresetRequest(BaseModel):
+    """Set default_preset (a sampler-preset name) on multiple models."""
+    model_ids: List[str] = Field(..., description="Model IDs to update")
+    preset: str = Field(..., description="Sampler preset name to record as default_preset")
 
 
 class ModelStatusResponse(BaseModel):
@@ -607,14 +607,14 @@ class AdminModelListResponse(BaseModel):
     total: int = 0
 
 
-class ProfileInfo(BaseModel):
-    """Profile metadata."""
+class SamplerPresetInfo(BaseModel):
+    """Sampler-preset metadata (bundled registry entry)."""
     name: str
     description: str
 
 
-class ProfileListResponse(BaseModel):
-    """Response for listing available profiles."""
-    profiles: List[ProfileInfo] = Field(default_factory=list)
+class SamplerPresetListResponse(BaseModel):
+    """Response for listing available sampler presets."""
+    presets: List[SamplerPresetInfo] = Field(default_factory=list)
 
 

@@ -3,13 +3,13 @@
 Historical context: the v1.19.0 profile system baked sampler fields into
 ``models.toml`` at import time. C4 deleted that behavior -- sampler fields
 now live in the runtime preset registry and are applied at request time
-via the cascade. ``ModelProfile.apply()`` now just records
+via the cascade. ``SamplerPreset.apply()`` now just records
 ``default_preset`` on the model's config; ``get_smart_defaults()`` emits
 only load-time fields (cache type, KV quantization, draft tokens).
 
 Preset-registry semantics are covered by ``test_preset_registry.py``.
 This file focuses on:
-  - The thin ``ModelProfile`` adapter's new set-``default_preset`` behavior
+  - The thin ``SamplerPreset`` adapter's new set-``default_preset`` behavior
   - ``get_smart_defaults`` returning only load-time fields
   - ``ModelImporter`` model-size regex and embedding detection (unchanged)
 """
@@ -20,25 +20,25 @@ from pathlib import Path
 import pytest
 
 from heylook_llm.model_service import (
-    ModelProfile,
+    SamplerPreset,
     get_smart_defaults,
-    load_profiles,
+    load_sampler_presets,
 )
 from heylook_llm.model_importer import ModelImporter
 
 
-class TestModelProfileAdapter:
-    """``ModelProfile.apply`` now sets ``default_preset`` only."""
+class TestSamplerPresetAdapter:
+    """``SamplerPreset.apply`` now sets ``default_preset`` only."""
 
-    def _make_profile(self, name="balanced", defaults=None):
-        return ModelProfile(
+    def _make_preset(self, name="balanced", defaults=None):
+        return SamplerPreset(
             name=name,
             description="test",
             defaults=defaults or {},
         )
 
     def test_apply_sets_default_preset_on_mlx(self):
-        profile = self._make_profile(name="thinking")
+        profile = self._make_preset(name="thinking")
         config = {"model_path": "/p", "vision": False, "cache_type": "standard"}
 
         result = profile.apply(config, {"provider": "mlx"})
@@ -53,7 +53,7 @@ class TestModelProfileAdapter:
 
     def test_apply_skips_non_mlx_provider(self):
         """Embedding provider doesn't use sampler presets; no default_preset."""
-        profile = self._make_profile(name="embedding")
+        profile = self._make_preset(name="embedding")
         config = {"model_path": "/p", "max_length": 2048}
 
         result = profile.apply(config, {"provider": "mlx_embedding"})
@@ -62,7 +62,7 @@ class TestModelProfileAdapter:
         assert result["max_length"] == 2048
 
     def test_apply_does_not_mutate_input(self):
-        profile = self._make_profile(name="thinking")
+        profile = self._make_preset(name="thinking")
         config = {"model_path": "/p"}
 
         profile.apply(config, {"provider": "mlx"})
@@ -70,11 +70,11 @@ class TestModelProfileAdapter:
         assert "default_preset" not in config
 
 
-class TestLoadProfilesAdapter:
-    """``load_profiles`` is now a thin adapter over ``PresetRegistry``."""
+class TestLoadSamplerPresetsAdapter:
+    """``load_sampler_presets`` is a thin adapter over ``PresetRegistry``."""
 
     def test_returns_adapter_for_each_bundled_preset(self):
-        profiles = load_profiles()
+        profiles = load_sampler_presets()
         assert "balanced" in profiles
         assert "thinking" in profiles
         for name, profile in profiles.items():

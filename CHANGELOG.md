@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0]
+
+### Added
+
+- **Sampler-preset discovery on `GET /v1/capabilities`**: new
+  `sampler_presets` block (`available` name+description list straight from
+  the PresetRegistry, plus `request_field`/`model_default_field` pointers)
+  so scripted clients (batch-labeler etc.) can enumerate preset names
+  without admin access. Previously names only leaked via the admin route
+  or the text of an unknown-preset 400. Contract tests assert the block
+  mirrors the registry exactly.
+
+### Changed
+
+- **"Profile" terminology retired for sampler presets** (it was the same
+  registry as `ChatRequest.preset` wearing a second name in the
+  import/admin paths, and collided with `/v1/performance/profile`).
+  Renames -- admin API: `GET /v1/admin/models/profiles` ->
+  `/sampler-presets` (response field `profiles` -> `presets`),
+  `POST /bulk-profile` -> `/bulk-default-preset` (body `profile` ->
+  `preset`), import body field `profile` -> `default_preset`; code:
+  `ModelProfile` -> `SamplerPreset`, `load_profiles` ->
+  `load_sampler_presets`, `get_profiles` -> `get_sampler_presets`,
+  `bulk_apply_profile` -> `bulk_set_default_preset`,
+  `get_available_profiles` -> `available_sampler_presets`. The import
+  CLI keeps `--profile` as an alias for `--preset`. CLAUDE.md now carries
+  the two-preset-systems note; full rename map in
+  `docs/architecture/config.md`.
+
 ## [1.35.1]
 
 ### Removed
