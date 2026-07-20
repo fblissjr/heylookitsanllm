@@ -236,6 +236,158 @@ class HarmonyChannelParser:
         return ("content", text)
 
 
+# Gemma-4 canonical channel format: `<|channel>NAME\n BODY <channel|>` emitted
+# inline in the model turn. Single-token delimiters (no <|message|>); the
+# `thought` channel is reasoning, text outside channels is content.
+_GEMMA_CONTROL_TOKENS = ("<|channel>", "<channel|>")
+_GEMMA_MAX_TOKEN_LEN = max(len(t) for t in _GEMMA_CONTROL_TOKENS)
+_GEMMA_CONTROL_PATTERN = re.compile(
+    "|".join(re.escape(t) for t in _GEMMA_CONTROL_TOKENS)
+)
+_GEMMA_THINKING_CHANNELS = frozenset({"thought"})
+
+
+class GemmaChannelParser:
+    """Gemma-4 channel parser.
+
+    Simpler state machine than harmony: content is the default state (the
+    model turn starts as visible text unless the model opens a channel), the
+    channel name runs from ``<|channel>`` to the first newline, and
+    ``<channel|>`` returns to content. Unknown channel bodies route to
+    content, ``thought`` routes to thinking.
+    """
+
+    def __init__(self, strip_tokens: frozenset[str] = frozenset()):
+        self._strip_pattern = _compile_strip_pattern(strip_tokens)
+        self._buffer = ""
+        self._state = "content"
+        self._channel_name_buf = ""
+        self._current_channel: Optional[str] = None
+
+    def process_chunk(
+        self, text: str, token_id: Optional[int] = None
+    ) -> List[ParserDelta]:
+        if not text:
+            return []
+        self._buffer += text
+        return self._drain(final=False)
+
+    def flush(self) -> List[ParserDelta]:
+        return self._drain(final=True)
+
+    def reset(self) -> None:
+        self._buffer = ""
+        self._state = "content"
+        self._channel_name_buf = ""
+        self._current_channel = None
+
+    def _drain(self, final: bool) -> List[ParserDelta]:
+        out: List[ParserDelta] = []
+        progress = True
+        while progress:
+            progress = False
+
+            if self._state == "content":
+                m = _GEMMA_CONTROL_PATTERN.search(self._buffer)
+                if m is not None:
+                    if m.start() > 0:
+                        out.append(("content", self._buffer[:m.start()]))
+                    token = m.group()
+                    self._buffer = self._buffer[m.end():]
+                    if token == "<|channel>":
+                        self._channel_name_buf = ""
+                        self._state = "in_name"
+                    # a stray <channel|> in content is dropped (structural noise)
+                    progress = True
+                else:
+                    safe_len = self._safe_prefix_len(final)
+                    if safe_len > 0:
+                        out.append(("content", self._buffer[:safe_len]))
+                        self._buffer = self._buffer[safe_len:]
+                        progress = True
+
+            elif self._state == "in_name":
+                nl = self._buffer.find("\n")
+                m = _GEMMA_CONTROL_PATTERN.search(self._buffer)
+                if nl != -1 and (m is None or nl < m.start()):
+                    self._channel_name_buf += self._buffer[:nl]
+                    self._current_channel = self._channel_name_buf.strip()
+                    self._buffer = self._buffer[nl + 1:]
+                    self._state = "in_body"
+                    progress = True
+                elif m is not None:
+                    # channel closed (or reopened) before any newline: empty body
+                    self._channel_name_buf += self._buffer[:m.start()]
+                    self._current_channel = self._channel_name_buf.strip()
+                    token = m.group()
+                    self._buffer = self._buffer[m.end():]
+                    if token == "<|channel>":
+                        self._channel_name_buf = ""
+                    else:
+                        self._state = "content"
+                        self._current_channel = None
+                    progress = True
+                else:
+                    safe_len = self._safe_prefix_len(final)
+                    if safe_len > 0:
+                        self._channel_name_buf += self._buffer[:safe_len]
+                        self._buffer = self._buffer[safe_len:]
+                        progress = True
+
+            elif self._state == "in_body":
+                m = _GEMMA_CONTROL_PATTERN.search(self._buffer)
+                if m is not None:
+                    if m.start() > 0:
+                        out.append(self._route_text(self._buffer[:m.start()]))
+                    token = m.group()
+                    self._buffer = self._buffer[m.end():]
+                    if token == "<channel|>":
+                        self._state = "content"
+                        self._current_channel = None
+                    else:
+                        self._channel_name_buf = ""
+                        self._state = "in_name"
+                    progress = True
+                else:
+                    safe_len = self._safe_prefix_len(final)
+                    if safe_len > 0:
+                        out.append(self._route_text(self._buffer[:safe_len]))
+                        self._buffer = self._buffer[safe_len:]
+                        progress = True
+
+        if final and self._buffer:
+            leftover = HarmonyChannelParser._strip_partial_control(self._buffer)
+            if leftover:
+                if self._state == "content":
+                    out.append(("content", leftover))
+                elif self._state == "in_body":
+                    out.append(self._route_text(leftover))
+                # in_name leftovers are structural -- dropped
+            self._buffer = ""
+
+        return [
+            (kind, cleaned)
+            for (kind, text) in out
+            for cleaned in [_strip_specials(text, self._strip_pattern)]
+            if cleaned
+        ]
+
+    def _safe_prefix_len(self, final: bool) -> int:
+        if final:
+            return len(self._buffer)
+        limit = _GEMMA_MAX_TOKEN_LEN - 1
+        scan_start = max(0, len(self._buffer) - limit)
+        for i in range(scan_start, len(self._buffer)):
+            if self._buffer[i] == "<":
+                return i
+        return len(self._buffer)
+
+    def _route_text(self, text: str) -> ParserDelta:
+        if self._current_channel in _GEMMA_THINKING_CHANNELS:
+            return ("thinking", text)
+        return ("content", text)
+
+
 def select_reasoning_parser(template_info: Any = None) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
     pass-through so shutdown paths + unit tests don't need a full load."""
@@ -246,6 +398,9 @@ def select_reasoning_parser(template_info: Any = None) -> ReasoningParser:
 
     if getattr(template_info, "has_harmony_structure", False):
         return HarmonyChannelParser(strip_tokens=strip_tokens)
+
+    if getattr(template_info, "has_gemma_channel_structure", False):
+        return GemmaChannelParser(strip_tokens=strip_tokens)
 
     if getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser

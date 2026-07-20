@@ -670,6 +670,8 @@ async function deleteMessage(ctx, msg) {
 // image attachments
 // ---------------------------------------------------------------------------
 
+const MAX_ATTACH_IMAGES = 8;
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -687,8 +689,15 @@ async function addImages(ctx, files) {
       .then((dataUrl) => ({ dataUrl, mediaType: f.type }))
       .catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) return;
-  s.pendingImages.push(...reads.filter(Boolean));
+  const usable = reads.filter(Boolean);
+  const room = Math.max(MAX_ATTACH_IMAGES - s.pendingImages.length, 0);
+  s.pendingImages.push(...usable.slice(0, room));
   renderAttachStrip(ctx);
+  // aria-live: chat__status is role="status" -- this announces the cap to
+  // screen readers, not just the sighted strip.
+  if (usable.length > room) {
+    showStatus(ctx, `${MAX_ATTACH_IMAGES} image max -- ${usable.length - room} not attached.`);
+  }
 }
 
 function clearPendingImages(ctx) {
@@ -700,7 +709,10 @@ function renderAttachStrip(ctx) {
   const s = ctx.state;
   s.attachStrip.hidden = !s.pendingImages.length;
   s.attachStrip.replaceChildren(...s.pendingImages.map((img, i) => {
-    const remove = createEl('button', { class: 'attach-thumb__remove', title: 'Remove' }, ['×']);
+    // Real <button> + aria-label naming the target image: keyboard-reachable
+    // and announced correctly even though the strip has no per-thumb text.
+    const label = `Remove image ${i + 1}`;
+    const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
     remove.addEventListener('click', () => {
       s.pendingImages.splice(i, 1);
       renderAttachStrip(ctx);

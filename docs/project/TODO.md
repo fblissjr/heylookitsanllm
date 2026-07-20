@@ -42,6 +42,30 @@ ordering and the sole-user/minimal-custom-code posture.
   ratio matters -- needs a gemma-3-4b download first); (b) n-gram
   prompt-lookup prototype (mlx-lm has no equivalent; zero draft cost, wins on
   repetitive/structured output, greedy-only).
+- [ ] **Gemma-4 QAT q4_0 swap candidate** (P3, owner download decision):
+  Google's QAT collection (2026-07 blog) ships `*-qat-q4_0-unquantized`
+  checkpoints for ALL sizes incl. 26B-A4B + matched QAT ASSISTANT drafter
+  heads. MLX conversions exist (mlx-community OptiQ 4-bit for 26B/31B,
+  template-synced 2026-07-20; lmstudio-community 26B QAT-MLX-4bit). Halves
+  memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
+  pinned mlx-lm before adopting. The QAT assistant head also pairs with the
+  MTP item above.
+- [ ] **Vision token budget knob (max_soft_tokens 280 -> 1120)** (P3, feeds
+  the Q8 preprocessing spike): gemma-4's `processor_config.json` sets
+  `image_processor.max_soft_tokens: 280` (default bucket, token-efficient);
+  Google documents bumping to 1120 for sharp OCR / 2.51MP detail. Server-owned
+  preprocessing (Q8) should know this knob: per-model or per-request override
+  when detail matters. Note: 2026-07-20 upstream also added
+  `response_template` to tokenizer_config.json batch-wide -- training-time
+  field, inference-irrelevant, no local action.
+- [x] **Gemma-4 canonical template refresh (2026-07-09 "less laziness" fix)**
+  -- DONE 2026-07-20: verified upstream state (template-ONLY fix -- no IT
+  weight re-uploads; commits 07-15 "null handling, reasoning preservation,
+  turn-tag balance"); owner refreshed 26B/31B jinja, E4B fetched + installed
+  from upstream (E-series variant of the canonical). mlx-community 8-bit
+  conversions are stale (07-05) -- local chat_template.jinja files are the
+  fix, auto-picked-up at load (verified: transformers prefers the jinja
+  file; no embedded template in these checkpoints).
 - [x] **`mlx_cache_limit_gb` operational setting** -- DONE 2026-07-20
   (v1.34.59): opt-in MLX buffer-cache cap via /v1/admin/config (bounds idle
   RSS at the cost of realloc on the next spike; MLX default restored on

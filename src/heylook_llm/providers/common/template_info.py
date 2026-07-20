@@ -66,6 +66,8 @@ class ModelTemplateInfo:
     template_source: str = AUTO
     has_harmony_structure: bool = False
     has_thinking_markers: bool = False
+    has_gemma_channel_structure: bool = False
+    supports_enable_thinking: bool = False
 
 
 # Signal patterns learned from real model templates (not hardcoded
@@ -74,6 +76,16 @@ _HARMONY_CHANNEL_PATTERN = re.compile(r"<\|channel\|>")
 _HARMONY_MESSAGE_PATTERN = re.compile(r"<\|message\|>")
 _THINK_OPEN_PATTERN = re.compile(r"<think>")
 _THINK_CLOSE_PATTERN = re.compile(r"</think>")
+# Gemma-4 canonical channel format: single-token delimiters, no <|message|>.
+# `<\|channel>` requires a literal `>` after "channel", so harmony's
+# `<|channel|>` does NOT match it.
+_GEMMA_CHANNEL_OPEN_PATTERN = re.compile(r"<\|channel>")
+_GEMMA_CHANNEL_CLOSE_PATTERN = re.compile(r"<channel\|>")
+# Cross-model thinking toggle: transformers passes extra apply_chat_template
+# kwargs through as template variables, so a template that references
+# `enable_thinking` (Qwen3 renders <think> blocks, Gemma-4 renders thought
+# channels) supports the toggle; models without it ignore the kwarg.
+_ENABLE_THINKING_PATTERN = re.compile(r"\benable_thinking\b")
 
 
 def read_template_info(
@@ -128,6 +140,11 @@ def read_template_info(
         _THINK_OPEN_PATTERN.search(template)
         and _THINK_CLOSE_PATTERN.search(template)
     )
+    has_gemma_channel = bool(
+        _GEMMA_CHANNEL_OPEN_PATTERN.search(template)
+        and _GEMMA_CHANNEL_CLOSE_PATTERN.search(template)
+    )
+    supports_enable_thinking = bool(_ENABLE_THINKING_PATTERN.search(template))
 
     return ModelTemplateInfo(
         chat_template=template,
@@ -135,6 +152,8 @@ def read_template_info(
         template_source=template_source,
         has_harmony_structure=has_harmony,
         has_thinking_markers=has_thinking,
+        has_gemma_channel_structure=has_gemma_channel,
+        supports_enable_thinking=supports_enable_thinking,
     )
 
 

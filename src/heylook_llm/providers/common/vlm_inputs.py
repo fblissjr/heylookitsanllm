@@ -37,6 +37,7 @@ def prepare_vlm_inputs_parallel(
     batch_vision_processor,
     vlm_apply_chat_template_fn,
     model=None,
+    enable_thinking=None,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
@@ -47,6 +48,8 @@ def prepare_vlm_inputs_parallel(
         batch_vision_processor: BatchVisionProcessor for parallel image loading
         vlm_apply_chat_template_fn: Function to apply VLM chat template
         model: Optional model instance (unused currently, reserved for future)
+        enable_thinking: Template thinking toggle forwarded to the template
+            function (None = leave the template to its default)
 
     Returns:
         Tuple of (images, formatted_prompt, has_images, image_urls)
@@ -113,9 +116,11 @@ def prepare_vlm_inputs_parallel(
         for msg in text_messages
     ]
 
+    template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
     try:
         formatted_prompt = vlm_apply_chat_template_fn(
-            processor, config, safe_messages, num_images=len(images)
+            processor, config, safe_messages, num_images=len(images),
+            **template_kwargs,
         )
     except Exception as e:
         logging.error(f"Chat template error: {e}")
@@ -124,7 +129,8 @@ def prepare_vlm_inputs_parallel(
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         try:
             formatted_prompt = tokenizer.apply_chat_template(
-                safe_messages, tokenize=False, add_generation_prompt=True
+                safe_messages, tokenize=False, add_generation_prompt=True,
+                **template_kwargs,
             )
         except Exception as fallback_error:
             logging.error(f"Fallback template error: {fallback_error}")

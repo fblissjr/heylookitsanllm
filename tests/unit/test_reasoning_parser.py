@@ -193,8 +193,59 @@ class TestThinkingMarkersViaFactory:
         assert thinking == "internal reasoning"
 
 
+class TestGemmaChannelParser:
+    """Gemma-4 canonical format: ``<|channel>NAME\\n BODY <channel|>`` inline in
+    the model turn; the ``thought`` channel is reasoning, text outside channels
+    is content."""
+
+    _REPRODUCER = (
+        "<|channel>thought\nTopic: sky color. Constraint: two sentences.\n"
+        "<channel|>The sky appears blue because of Rayleigh scattering."
+    )
+    _EXPECTED_THINKING = "Topic: sky color. Constraint: two sentences.\n"
+    _EXPECTED_CONTENT = "The sky appears blue because of Rayleigh scattering."
+
+    def _parser(self):
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+        return GemmaChannelParser()
+
+    def test_reproducer_whole_input(self):
+        content, thinking = _collect(self._parser(), [self._REPRODUCER])
+        assert content == self._EXPECTED_CONTENT
+        assert thinking == self._EXPECTED_THINKING
+
+    def test_reproducer_split_per_character(self):
+        content, thinking = _collect(self._parser(), list(self._REPRODUCER))
+        assert content == self._EXPECTED_CONTENT
+        assert thinking == self._EXPECTED_THINKING
+
+    def test_split_mid_control_token(self):
+        chunks = ["<|chan", "nel>thought\nplan", "ning\n<chan", "nel|>Answer."]
+        content, thinking = _collect(self._parser(), chunks)
+        assert content == "Answer."
+        assert thinking == "planning\n"
+
+    def test_unknown_channel_routes_to_content(self):
+        content, thinking = _collect(
+            self._parser(), ["<|channel>notes\nremember this<channel|>done"]
+        )
+        assert content == "remember thisdone"
+        assert thinking == ""
+
+    def test_plain_text_is_content(self):
+        content, thinking = _collect(self._parser(), ["Just a plain answer."])
+        assert content == "Just a plain answer."
+        assert thinking == ""
+
+    def test_unclosed_thought_flushes_to_thinking(self):
+        # aborted stream mid-thought: flush routes the partial body to thinking
+        content, thinking = _collect(self._parser(), ["<|channel>thought\nhalf a plan"])
+        assert content == ""
+        assert thinking == "half a plan"
+
+
 class TestReasoningParserFactory:
-    def _info(self, *, has_harmony=False, has_thinking=False, specials=()):
+    def _info(self, *, has_harmony=False, has_thinking=False, has_gemma=False, specials=()):
         from heylook_llm.providers.common.template_info import ModelTemplateInfo
 
         return ModelTemplateInfo(
@@ -203,7 +254,24 @@ class TestReasoningParserFactory:
             template_source="jinja",
             has_harmony_structure=has_harmony,
             has_thinking_markers=has_thinking,
+            has_gemma_channel_structure=has_gemma,
         )
+
+    def test_gemma_selected_when_template_has_channel_structure(self):
+        from heylook_llm.reasoning_parser import (
+            GemmaChannelParser, select_reasoning_parser,
+        )
+
+        parser = select_reasoning_parser(self._info(has_gemma=True))
+        assert isinstance(parser, GemmaChannelParser)
+
+    def test_harmony_wins_over_gemma_structure(self):
+        from heylook_llm.reasoning_parser import (
+            HarmonyChannelParser, select_reasoning_parser,
+        )
+
+        parser = select_reasoning_parser(self._info(has_harmony=True, has_gemma=True))
+        assert isinstance(parser, HarmonyChannelParser)
 
     def test_harmony_selected_when_template_has_harmony_structure(self):
         from heylook_llm.reasoning_parser import (

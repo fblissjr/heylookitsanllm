@@ -4,6 +4,8 @@ import logging
 import time
 import uuid
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Body, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -340,6 +342,25 @@ async def list_models(request: Request):
     return {"object": "list", "data": models_data}
 
 
+@lru_cache(maxsize=64)
+def _template_supports_thinking(model_path: str) -> bool:
+    """Whether the model's own chat template references ``enable_thinking``.
+
+    The template kwarg is the cross-model thinking mechanism (Qwen3 renders
+    <think> blocks, gemma-4 renders thought channels; transformers forwards
+    extra apply_chat_template kwargs as template variables), so the template
+    referencing the variable IS the capability signal -- no manual
+    models.toml flag needed. Cached per path: file reads on every
+    /v1/models call would add up, and templates only change with a restart
+    in practice.
+    """
+    try:
+        from heylook_llm.providers.common.template_info import read_template_info
+        return read_template_info(Path(model_path), None).supports_enable_thinking
+    except Exception:
+        return False
+
+
 def _infer_model_capabilities(model_config) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
@@ -354,10 +375,15 @@ def _infer_model_capabilities(model_config) -> list[str]:
         if hasattr(config, "vision") and config.vision:
             capabilities.append("vision")
 
-        # Check for thinking capability
+        # Check for thinking capability: explicit config flags first, then
+        # the model's own chat template (enable_thinking reference).
         if hasattr(config, "enable_thinking") and config.enable_thinking:
             capabilities.append("thinking")
         elif hasattr(config, "supports_thinking") and config.supports_thinking:
+            capabilities.append("thinking")
+        elif getattr(config, "model_path", None) and _template_supports_thinking(
+            str(config.model_path)
+        ):
             capabilities.append("thinking")
 
         # MLX models support hidden states extraction

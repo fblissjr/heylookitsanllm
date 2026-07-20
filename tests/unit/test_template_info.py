@@ -164,6 +164,51 @@ class TestReadTemplateInfoThinkingMarkers:
         assert "</think>" in info.special_tokens
 
 
+class TestReadTemplateInfoGemmaChannelFormat:
+    _GEMMA_JINJA = (
+        "{{ bos_token }}{% if enable_thinking %}<|think|>\n{% endif %}"
+        "{% for m in messages %}<|turn>{{ m['role'] }}\n{{ m['content'] }}<turn|>\n{% endfor %}"
+        "{% if add_generation_prompt %}<|turn>model\n"
+        "{% if not enable_thinking %}<|channel>thought\n<channel|>{% endif %}{% endif %}"
+    )
+
+    def test_detects_gemma_channel_structure(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(tmp_path, jinja=self._GEMMA_JINJA)
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.has_gemma_channel_structure is True
+        assert info.has_harmony_structure is False
+        assert info.has_thinking_markers is False
+
+    def test_harmony_template_is_not_gemma_structure(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(
+            tmp_path, jinja=_HARMONY_JINJA,
+            tokenizer_config=_HARMONY_TOKENIZER_CONFIG,
+        )
+        info = read_template_info(tmp_path, source=None)
+
+        assert info.has_gemma_channel_structure is False
+
+    def test_detects_enable_thinking_toggle(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(tmp_path, jinja=self._GEMMA_JINJA)
+        assert read_template_info(tmp_path, source=None).supports_enable_thinking is True
+
+    def test_no_enable_thinking_reference_means_no_toggle(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        _write_model_dir(
+            tmp_path,
+            jinja="{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}",
+        )
+        assert read_template_info(tmp_path, source=None).supports_enable_thinking is False
+
+
 class TestReadTemplateInfoFallbacks:
     def test_falls_back_to_embedded_template_when_jinja_missing(self, tmp_path):
         from heylook_llm.providers.common.template_info import read_template_info

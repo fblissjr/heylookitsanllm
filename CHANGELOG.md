@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.60]
+
+### Added
+
+- **Gemma-4 thinking support, end to end.** The canonical gemma-4 template's
+  `<|channel>thought ... <channel|>` reasoning format is now recognized:
+  new `GemmaChannelParser` (streaming-safe state machine, `thought` channel
+  -> `thinking` field, unknown channels -> content) selected via template
+  sniffing (`has_gemma_channel_structure`); previously gemma thinking leaked
+  inline into `content` on every path.
+- **Thinking capability auto-detected from the template.** A chat template
+  referencing `enable_thinking` (Qwen3 <think> blocks, gemma-4 thought
+  channels -- transformers forwards extra template kwargs as variables) now
+  reports the `thinking` capability on /v1/models without a manual
+  models.toml flag -- the v3 thinking checkbox appears for these models.
+- v3 chat: multi-image attach hardening -- cap at 8 with an aria-live
+  announcement when exceeded, per-image accessible remove labels ("Remove
+  image N"). (The strip, picker `multiple`, paste-append, N-block store/wire
+  shipped in v1.34.20; this closes the cap + a11y gaps.)
+
+### Fixed
+
+- **VLM template path dropped `enable_thinking` entirely** (both the
+  text-only-request leg and the image leg via `prepare_vlm_inputs_parallel`):
+  the flag never reached `apply_chat_template`, so thinking was
+  uncontrollable on VLM-loaded models (mlx-lm's TokenizerWrapper silently
+  injects `true` when absent). Both legs now forward the resolved bool
+  (request > model config default).
+- **Messages API used a hardcoded `<think>`-only parser** in streaming AND
+  non-streaming; both now route through `select_reasoning_parser` like
+  chat/completions (harmony/gemma/think formats all split correctly).
+
 ## [1.34.59]
 
 ### Added

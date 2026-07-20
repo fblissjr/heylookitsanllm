@@ -34,7 +34,8 @@ from heylook_llm.perf_collector import (
     net_ttft_ms,
 )
 from heylook_llm.schema.content_blocks import ImageBlock
-from heylook_llm.thinking_parser import HybridThinkingParser, parse_thinking_content
+from heylook_llm.reasoning_parser import parse_reasoning, select_reasoning_parser
+from heylook_llm.thinking_parser import HybridThinkingParser
 
 messages_router = APIRouter(
     prefix="/v1",
@@ -59,12 +60,14 @@ class StreamingEventTranslator:
                     -> message_delta -> message_stop
     """
 
-    def __init__(self, message_id: str, model: str):
+    def __init__(self, message_id: str, model: str, thinking_parser=None):
         self.message_id = message_id
         self.model = model
         self.block_index = -1
         self.current_block_type: str | None = None
-        self.thinking_parser = HybridThinkingParser()
+        # Format-aware parser injected per model (select_reasoning_parser);
+        # the <think>-marker parser stays the default for direct constructions.
+        self.thinking_parser = thinking_parser if thinking_parser is not None else HybridThinkingParser()
 
         # Counters
         self.thinking_tokens = 0
@@ -300,7 +303,8 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         )
     else:
         return await _non_stream_messages(
-            generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx
+            generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
+            provider=provider,
         )
 
 
@@ -314,6 +318,7 @@ async def _non_stream_messages(
     request_id: str,
     request_start_time: float,
     perf_ctx: dict | None = None,
+    provider=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -337,8 +342,12 @@ async def _non_stream_messages(
     except GenerationFailed as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Parse thinking
-    content_text, thinking = parse_thinking_content(full_text)
+    # Parse thinking with the model's format-aware parser (harmony channels,
+    # gemma channels, or <think> markers -- same selection as chat/completions)
+    content_text, thinking = parse_reasoning(
+        full_text,
+        select_reasoning_parser(getattr(provider, "_template_info", None)),
+    )
 
     # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict
     finish_reason = "stop"
@@ -421,7 +430,10 @@ async def _stream_messages(
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     model = msg_request.model or "unknown"
-    translator = StreamingEventTranslator(message_id, model)
+    translator = StreamingEventTranslator(
+        message_id, model,
+        thinking_parser=select_reasoning_parser(getattr(provider, "_template_info", None)),
+    )
 
     # Resolve abort event from provider (if MLX provider with abort support)
     # abort_event is the per-request signal passed in by the route.

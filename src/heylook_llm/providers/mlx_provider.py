@@ -112,7 +112,19 @@ def _get_generation_gate(max_waiting: int) -> "GenerationGate":
         return _GENERATION_GATE
 
 
-def vlm_apply_chat_template(processor, config, messages, num_images=None):
+def _resolve_enable_thinking(effective_request: dict, model_config: dict):
+    """Request value wins; else the model-config default. Always returns an
+    explicit bool on the router path (model_dump gives enable_thinking=False
+    by default) -- an ABSENT kwarg is uncontrollable: mlx-lm's
+    TokenizerWrapper silently injects enable_thinking=True and raw
+    transformers falls back to template defaults."""
+    enable_thinking = effective_request.get("enable_thinking")
+    if enable_thinking is None:
+        enable_thinking = model_config.get('enable_thinking', True)
+    return enable_thinking
+
+
+def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None):
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
@@ -126,6 +138,10 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
         config: Model config (contains model_type for proper formatting)
         messages: List of message dicts with 'role' and 'content'
         num_images: Number of images to add tokens for
+        enable_thinking: Template thinking toggle. None = don't pass the kwarg
+            (template default applies); a bool is forwarded to the template.
+            Transformers passes extra kwargs through as template variables, so
+            models without the variable ignore it.
 
     Returns:
         str: Formatted prompt string with proper image tokens
@@ -161,9 +177,11 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None):
             msg["content"] = " ".join(parts).strip() if parts else ""
 
     # Step 3: apply the tokenizer's own chat template
+    template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
     try:
         return tokenizer.apply_chat_template(
-            formatted_messages, tokenize=False, add_generation_prompt=True
+            formatted_messages, tokenize=False, add_generation_prompt=True,
+            **template_kwargs,
         )
     except TypeError:
         # Tokenizer template still can't handle the messages -- manual fallback
@@ -245,16 +263,15 @@ class UnifiedTextStrategy:
         Text-only: tokenizer.apply_chat_template with enable_thinking support.
         VLM text: vlm_apply_chat_template (uses processor + model config).
         """
+        enable_thinking = _resolve_enable_thinking(effective_request, self.model_config)
+
         if self.is_vlm:
             prompt = vlm_apply_chat_template(
-                processor, model.config, messages, num_images=0
+                processor, model.config, messages, num_images=0,
+                enable_thinking=enable_thinking,
             )
         else:
             add_gen_prompt = resolve_add_generation_prompt(messages)
-
-            enable_thinking = effective_request.get("enable_thinking")
-            if enable_thinking is None:
-                enable_thinking = self.model_config.get('enable_thinking', True)
 
             try:
                 try:
@@ -373,7 +390,8 @@ class VLMVisionStrategy:
     MLX generation.
     """
 
-    def __init__(self):
+    def __init__(self, model_config=None):
+        self.model_config = model_config or {}
         self._batch_vision_processor = None
         self._cached_wrapper = None
         self._vision_cache = VisionFeatureCache(max_entries=20)
@@ -388,7 +406,8 @@ class VLMVisionStrategy:
 
         # Prepare VLM inputs: extract images, format prompt with chat template
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
-            request.messages, processor, model.config, model
+            request.messages, processor, model.config, model,
+            enable_thinking=_resolve_enable_thinking(effective_request, self.model_config),
         )
 
         num_images = len(images) if images else 0
@@ -502,12 +521,12 @@ class VLMVisionStrategy:
             pre_filled_cache=request_cache,
         )
 
-    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
+    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None, enable_thinking=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
-            vlm_apply_chat_template, model=model,
+            vlm_apply_chat_template, model=model, enable_thinking=enable_thinking,
         )
 
 
@@ -773,7 +792,7 @@ class MLXProvider(BaseProvider):
             is_vlm=self.is_vlm,
         )
         if self.is_vlm:
-            self._strategies['vision'] = VLMVisionStrategy()
+            self._strategies['vision'] = VLMVisionStrategy(model_config=self.config)
 
     def _detect_images_optimized(self, messages: List) -> bool:
         """Single-pass scan for images with early termination."""
