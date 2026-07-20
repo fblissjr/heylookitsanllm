@@ -93,8 +93,10 @@ ordering and the sole-user/minimal-custom-code posture.
   storage could ride the observability JSONL + DuckDB-over-files pattern.
   Also queue: run the eval bank as the optional gate for changes touching
   templates/parsers/stop-tokens/vision (the 4 bug classes it was built on).
-- [ ] **Eval-gate reminder hook + /eval-ab skill -- SCOPED DESIGN, owner
-  sign-off pending** (P3, 2026-07-20): owner's constraints: no over-testing,
+- [x] **Eval-gate reminder hook + /eval-ab skill -- APPROVED + BUILT
+  2026-07-20** (local `.claude/` config, not committable by design; the
+  tracked piece is `scripts/dev_server.sh`, the isolated live-server harness
+  both lean on). Scoping that was approved: owner's constraints: no over-testing,
   no auto-spawning heavy servers, no 3-hour runs on small changes, no
   one-model-one-prompt tunnel vision. Scoped design that satisfies them:
   (1) the hook is INERT TEXT ONLY (hookify context injection on edits to
