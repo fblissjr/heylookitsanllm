@@ -48,6 +48,14 @@ ordering and the sole-user/minimal-custom-code posture.
   memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
   pinned mlx-lm before adopting. The QAT assistant head also pairs with the
   MTP item above.
+- [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
+  review's coverage table -- all four currently have ZERO e2e coverage):
+  (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
+  toggle visible on capable model, aria-pressed true/false round-trip,
+  unchecked sends null not false; (3) drawer `#set-vision_tokens` present
+  (min 16 max 16384) + localStorage round-trip; (4) thinking `<details>`
+  block appears with non-empty body on a thinking generation, summary
+  toggles open. Also update tests/e2e/README.md suite descriptions.
 - [ ] **LLM behavior-eval harness follow-ups** (P2, owner-directed 2026-07-20):
   `tests/eval/` (opt-in, seed bank generalized from the 2026-07-20 live
   verification scripts) is the base. Direction the owner wants explored:

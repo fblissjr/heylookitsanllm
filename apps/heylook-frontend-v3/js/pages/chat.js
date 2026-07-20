@@ -129,7 +129,12 @@ function buildSkeleton(ctx) {
 
   s.statusEl = createEl('div', { class: 'chat__status', role: 'status' });
 
-  s.textarea = createEl('textarea', { rows: 1, placeholder: 'Message… (Enter to send)' });
+  // Touch devices send via the button and the long placeholder wraps + clips
+  // in the single-row textarea at phone widths -- keep the Enter hint desktop-only.
+  s.textarea = createEl('textarea', {
+    rows: 1,
+    placeholder: matchMedia('(hover: none)').matches ? 'Message…' : 'Message… (Enter to send)',
+  });
   s.textarea.addEventListener('input', () => autoGrow(s.textarea));
   s.textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

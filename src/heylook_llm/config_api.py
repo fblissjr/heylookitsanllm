@@ -1,9 +1,10 @@
 # src/heylook_llm/config_api.py
 """Operational settings admin API (/v1/admin/config).
 
-CRUD over runtime-mutable operational settings (obs level/retention, ...),
-persisted in the App DB ``settings`` table (db.py) and resolved
-env > DB > default (settings.py). Distinct from the model registry
+CRUD over runtime-mutable operational settings (obs level/retention, MLX
+cache cap, ...), persisted in the App DB ``settings`` table (db.py) and
+resolved DB > default (settings.py -- deliberately NO env-var override
+layer for operational settings). Distinct from the model registry
 (``models.toml``, Phase 6) and from user presets (``/v1/presets``). This is the
 backend for the v3 admin/settings config panel. Wire contract:
 docs/frontend_v3_spec.md §4.
@@ -75,7 +76,7 @@ async def apply_runtime_settings(conn) -> SettingsSchema:
 
 
 async def _snapshot(conn) -> dict:
-    """Effective settings + what's stored + what env is forcing (precedence made visible)."""
+    """Effective settings (DB > default) + the raw stored overrides."""
     stored = await db.get_all_settings(conn)
     effective, err = resolve_settings_safe(stored)
     snap = {
@@ -90,8 +91,8 @@ async def _snapshot(conn) -> dict:
 @config_router.get(
     "",
     summary="Get Config",
-    description="Effective operational settings (env > DB > default), the raw stored "
-                "overrides, and which fields are currently forced by an env var.",
+    description="Effective operational settings (DB > default; operational settings "
+                "have no env-var override layer by design) and the raw stored overrides.",
 )
 async def get_config(request: Request):
     conn = _get_db(request)
@@ -131,8 +132,8 @@ async def update_config(request: Request, updates: dict = Body(...)):
 @config_router.delete(
     "/{key}",
     summary="Reset Config Key",
-    description="Delete a stored override so the setting falls back to its default "
-                "(or env, if set). 404 for an unknown setting key.",
+    description="Delete a stored override so the setting falls back to its built-in "
+                "default. 404 for an unknown setting key.",
 )
 async def reset_config(key: str, request: Request):
     if key not in SettingsSchema.model_fields:

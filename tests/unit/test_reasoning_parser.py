@@ -243,6 +243,21 @@ class TestGemmaChannelParser:
         assert content == ""
         assert thinking == "half a plan"
 
+    def test_abort_mid_close_token_drops_partial(self):
+        # gemma's close token starts "<c", which harmony's partial-strip
+        # doesn't know -- an abort landing mid-<channel|> must not flush
+        # literal garbage like "<chan"
+        content, thinking = _collect(
+            self._parser(), ["<|channel>thought\nplan text\n<chan"]
+        )
+        assert thinking == "plan text\n"
+        assert content == ""
+
+    def test_abort_mid_open_token_drops_partial(self):
+        content, thinking = _collect(self._parser(), ["Answer text<|chann"])
+        assert content == "Answer text"
+        assert thinking == ""
+
 
 class TestImplicitThinkOpen:
     """Qwen3.5-style templates PRE-FILL `<think>\\n` into the generation
@@ -420,9 +435,37 @@ class TestParseFullText:
 
 
 class TestStripTokensDefense:
-    """Both Harmony and PassThrough get a ``strip_tokens`` set so any
-    special token the fast detokenizer leaks (or the model emits mid-
-    payload) gets cleaned out before the delta reaches the user."""
+    """EVERY selectable parser gets a ``strip_tokens`` set so any special
+    token the detokenizer leaks (or the model emits mid-payload) gets
+    cleaned out before the delta reaches the user."""
+
+    def test_hybrid_thinking_strips_declared_specials(self):
+        from heylook_llm.thinking_parser import HybridThinkingParser
+
+        parser = HybridThinkingParser(
+            strip_tokens=frozenset(["<|reserved_200000|>"])
+        )
+        out = []
+        for ch in ["<think>", "plan <|reserved_200000|> here", "</think>", "answer <|reserved_200000|>"]:
+            out += parser.process_chunk(ch)
+        out += parser.flush()
+        thinking = "".join(t for k, t in out if k == "thinking")
+        content = "".join(t for k, t in out if k == "content")
+        assert "<|reserved_200000|>" not in thinking
+        assert "<|reserved_200000|>" not in content
+        assert "plan" in thinking and "answer" in content
+
+    def test_factory_threads_strip_tokens_to_hybrid(self):
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = ModelTemplateInfo(
+            has_thinking_markers=True,
+            special_tokens=frozenset(["<|im_end|>"]),
+        )
+        parser = select_reasoning_parser(info)
+        out = parser.process_chunk("hello <|im_end|>") + parser.flush()
+        assert all("<|im_end|>" not in t for _, t in out)
 
     def test_pass_through_strips_declared_specials(self):
         from heylook_llm.reasoning_parser import PassThroughParser

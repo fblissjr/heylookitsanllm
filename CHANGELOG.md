@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.66]
+
+### Fixed
+
+- **Review-pass fixes** (xhigh multi-agent review over the day's 13-commit
+  range; findings adversarially verified before fixing):
+  - `<think>`-family parser (HybridThinkingParser) now strips declared
+    special tokens from routed text like every other parser -- with the
+    decode-level hygiene gone, non-think control tokens could render
+    literally for Qwen-family models; implemented with a rolling per-kind
+    holdback because the inner parser's buffering can split a special
+    across deltas.
+  - Gemma channel parser: an abort landing mid-`<channel|>` no longer
+    flushes literal partial-token garbage (final drain strips trailing
+    partials of BOTH gemma control-token shapes; harmony's helper only
+    knew `<|`-prefixed ones).
+  - `effective_thinking_flag`'s absent-key fallback now mirrors the
+    template-side resolution (True) so a raw un-normalized config dict
+    can't produce a prefilled-thinking prompt with a content-state parser.
+  - config API docstrings/OpenAPI descriptions no longer claim an
+    env-override layer that settings.py deliberately abolished.
+- **v3 touch/mobile fixes from the impeccable audit** (desktop + iPhone 17
+  Pro Safari): attach-strip remove buttons get a 44px hit area (glyph
+  stays 24px); composer icon buttons meet the 44px floor on touch
+  devices; the composer placeholder no longer wraps and clips on phones
+  (Enter hint is desktop-only).
+
 ## [1.34.65]
 
 ### Added

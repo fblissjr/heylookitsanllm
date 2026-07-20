@@ -282,6 +282,12 @@ class GemmaChannelParser:
         self._current_channel = None
 
     def _drain(self, final: bool) -> List[ParserDelta]:
+        if final:
+            # the loop below emits the WHOLE buffer when final -- drop a
+            # trailing partial control token first or an abort landing
+            # mid-token flushes literal garbage (harmony's strip only knows
+            # its own "<|" shapes; gemma's close token starts "<c")
+            self._buffer = self._strip_partial_gemma_control(self._buffer)
         out: List[ParserDelta] = []
         progress = True
         while progress:
@@ -356,13 +362,12 @@ class GemmaChannelParser:
                         progress = True
 
         if final and self._buffer:
-            leftover = HarmonyChannelParser._strip_partial_control(self._buffer)
-            if leftover:
-                if self._state == "content":
-                    out.append(("content", leftover))
-                elif self._state == "in_body":
-                    out.append(self._route_text(leftover))
-                # in_name leftovers are structural -- dropped
+            # buffer already partial-stripped above
+            if self._state == "content":
+                out.append(("content", self._buffer))
+            elif self._state == "in_body":
+                out.append(self._route_text(self._buffer))
+            # in_name leftovers are structural -- dropped
             self._buffer = ""
 
         return [
@@ -382,6 +387,24 @@ class GemmaChannelParser:
                 return i
         return len(self._buffer)
 
+    @staticmethod
+    def _strip_partial_gemma_control(text: str) -> str:
+        """Drop a trailing PARTIAL gemma control token on final flush.
+
+        Harmony's version only knows ``<|``-prefixed shapes; gemma's close
+        token ``<channel|>`` starts ``<c``, so an abort landing mid-close
+        would otherwise flush literal garbage like ``<chan``.
+        """
+        idx = text.rfind("<")
+        if idx == -1:
+            return text
+        tail = text[idx:]
+        if tail in _GEMMA_CONTROL_TOKENS:
+            return text  # complete token; the drain loop handles it
+        if any(t.startswith(tail) for t in _GEMMA_CONTROL_TOKENS):
+            return text[:idx]
+        return text
+
     def _route_text(self, text: str) -> ParserDelta:
         if self._current_channel in _GEMMA_THINKING_CHANNELS:
             return ("thinking", text)
@@ -391,11 +414,15 @@ class GemmaChannelParser:
 def effective_thinking_flag(request_enable_thinking, provider) -> bool:
     """The request's thinking value, else the model-config default -- the
     same resolution the template application uses, so parser state matches
-    what the prompt actually contained."""
+    what the prompt actually contained. The absent-key fallback (True)
+    deliberately mirrors ``_resolve_enable_thinking`` in mlx_provider: a raw
+    un-normalized config dict (live in provider unit tests per CLAUDE.md)
+    must resolve identically on both sides or a prefilled-<think> prompt
+    gets a content-state parser."""
     if request_enable_thinking is not None:
         return bool(request_enable_thinking)
     cfg = getattr(provider, "config", None)
-    return bool(cfg.get("enable_thinking", False)) if isinstance(cfg, dict) else False
+    return bool(cfg.get("enable_thinking", True)) if isinstance(cfg, dict) else False
 
 
 def select_reasoning_parser(
@@ -425,7 +452,8 @@ def select_reasoning_parser(
         from heylook_llm.thinking_parser import HybridThinkingParser
         return HybridThinkingParser(
             initial_thinking=bool(thinking_enabled)
-            and getattr(template_info, "prefills_thinking", False)
+            and getattr(template_info, "prefills_thinking", False),
+            strip_tokens=strip_tokens,
         )
 
     return PassThroughParser(strip_tokens=strip_tokens)

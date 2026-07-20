@@ -217,6 +217,10 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   color: var(--ink-muted);
 }
 .btn--icon:hover { color: var(--ink); }
+@media (hover: none) {
+  /* iOS 44pt touch floor; desktop keeps the tighter 40px */
+  .btn--icon { min-width: 44px; min-height: 44px; }
+}
 .btn--icon[aria-pressed="true"] {
   background: var(--brand-tint);
   border-color: var(--accent);
@@ -584,6 +588,13 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
+}
+/* 44px hit area without growing the 24px glyph (WCAG 2.5.8 / HIG floor);
+   remove zones of adjacent thumbs stay disjoint (centers ~62px apart). */
+.attach-thumb__remove::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
 }
 .message-images {
   display: flex;
