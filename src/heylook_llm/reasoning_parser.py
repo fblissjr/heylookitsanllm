@@ -411,18 +411,23 @@ class GemmaChannelParser:
         return ("content", text)
 
 
+def resolve_enable_thinking(request_value, config) -> bool:
+    """THE single request-vs-config resolution for the thinking flag, used
+    by BOTH template application (mlx_provider) and parser arming (below).
+    One implementation on purpose: a prompt built thinking-ON with a
+    content-state parser (or vice versa) misroutes the whole reasoning
+    trace, so the two sides may never drift."""
+    if request_value is not None:
+        return bool(request_value)
+    return bool(config.get("enable_thinking", True)) if isinstance(config, dict) else False
+
+
 def effective_thinking_flag(request_enable_thinking, provider) -> bool:
-    """The request's thinking value, else the model-config default -- the
-    same resolution the template application uses, so parser state matches
-    what the prompt actually contained. The absent-key fallback (True)
-    deliberately mirrors ``_resolve_enable_thinking`` in mlx_provider: a raw
-    un-normalized config dict (live in provider unit tests per CLAUDE.md)
-    must resolve identically on both sides or a prefilled-<think> prompt
-    gets a content-state parser."""
-    if request_enable_thinking is not None:
-        return bool(request_enable_thinking)
-    cfg = getattr(provider, "config", None)
-    return bool(cfg.get("enable_thinking", True)) if isinstance(cfg, dict) else False
+    """Provider-object adapter over ``resolve_enable_thinking`` for the API
+    layers (provider may be None on shutdown paths)."""
+    return resolve_enable_thinking(
+        request_enable_thinking, getattr(provider, "config", None)
+    )
 
 
 def select_reasoning_parser(
@@ -464,8 +469,8 @@ def parse_reasoning(
 ) -> Tuple[str, Optional[str]]:
     """Non-streaming wrapper: returns ``(content, thinking_or_None)``.
     ``thinking`` stays ``None`` when the parser emitted nothing to that
-    channel -- preserves the ``parse_thinking_content`` contract callers
-    (non-streaming API handler) rely on."""
+    channel -- the non-streaming API handlers rely on thinking staying
+    ``None`` when absent."""
     parser.reset()
     content_parts: List[str] = []
     thinking_parts: List[str] = []

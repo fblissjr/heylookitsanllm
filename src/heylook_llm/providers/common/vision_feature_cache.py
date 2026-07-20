@@ -71,14 +71,25 @@ class VisionFeatureCache:
         self._misses = 0
 
     @staticmethod
-    def _make_key(image_source: Any, pixel_values: mx.array | None = None) -> str:
+    def _make_key(image_source: Any, pixel_values: mx.array | None = None,
+                  variant: str | None = None) -> str:
         """Derive a cache key from an image source.
 
         For str: use directly (URL or file path).
         For list of str: join with | separator.
         Fallback: if image_source yields no key but pixel_values is
         provided, hash the pixel data for content-based keying.
+        ``variant`` namespaces the key for request knobs that change the
+        FEATURES for identical pixels (e.g. the vision token budget --
+        feature shapes differ per budget, so entries must never cross).
         """
+        base = VisionFeatureCache._base_key(image_source, pixel_values)
+        if not base:
+            return ""
+        return f"{variant}::{base}" if variant else base
+
+    @staticmethod
+    def _base_key(image_source: Any, pixel_values: mx.array | None = None) -> str:
         if isinstance(image_source, str):
             return image_source
         if isinstance(image_source, list):
@@ -102,9 +113,10 @@ class VisionFeatureCache:
 
         return ""
 
-    def get(self, image_source: Any, pixel_values: mx.array | None = None) -> mx.array | None:
+    def get(self, image_source: Any, pixel_values: mx.array | None = None,
+            variant: str | None = None) -> mx.array | None:
         """Look up cached features. Returns None on miss or uncacheable source."""
-        key = self._make_key(image_source, pixel_values)
+        key = self._make_key(image_source, pixel_values, variant)
         if not key:
             return None
 
@@ -118,9 +130,9 @@ class VisionFeatureCache:
             return None
 
     def put(self, image_source: Any, features: mx.array,
-            pixel_values: mx.array | None = None) -> None:
+            pixel_values: mx.array | None = None, variant: str | None = None) -> None:
         """Store computed features, evicting LRU entries until both caps hold."""
-        key = self._make_key(image_source, pixel_values)
+        key = self._make_key(image_source, pixel_values, variant)
         if not key:
             return
 

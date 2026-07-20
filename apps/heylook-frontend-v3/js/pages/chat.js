@@ -14,7 +14,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange } from '../settings.js';
+import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 
 export default createPage({
@@ -223,7 +223,9 @@ function fillModelSelect(ctx) {
 // hydrate, and any settings change.
 function refreshThinkBtn(ctx) {
   const s = ctx.state;
-  s.thinkBtn.hidden = !currentCaps(ctx).includes('thinking');
+  // same gate as the drawer checkbox -- read the cap from PARAM_META so
+  // the two can never disagree on the capability name
+  s.thinkBtn.hidden = !currentCaps(ctx).includes(PARAM_META.enable_thinking.requiresCap);
   const on = getSetting('enable_thinking') === true;
   s.thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
 }

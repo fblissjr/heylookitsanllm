@@ -113,15 +113,15 @@ def _get_generation_gate(max_waiting: int) -> "GenerationGate":
 
 
 def _resolve_enable_thinking(effective_request: dict, model_config: dict):
-    """Request value wins; else the model-config default. Always returns an
-    explicit bool on the router path (model_dump gives enable_thinking=False
-    by default) -- an ABSENT kwarg is uncontrollable: mlx-lm's
-    TokenizerWrapper silently injects enable_thinking=True and raw
-    transformers falls back to template defaults."""
-    enable_thinking = effective_request.get("enable_thinking")
-    if enable_thinking is None:
-        enable_thinking = model_config.get('enable_thinking', True)
-    return enable_thinking
+    """Request value wins; else the model-config default. An ABSENT kwarg is
+    uncontrollable (mlx-lm's TokenizerWrapper silently injects
+    enable_thinking=True), so this always returns an explicit bool.
+    Delegates to the SINGLE shared resolver so template application and
+    parser arming can never drift."""
+    from heylook_llm.reasoning_parser import resolve_enable_thinking
+    return resolve_enable_thinking(
+        effective_request.get("enable_thinking"), model_config
+    )
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None):
@@ -461,16 +461,16 @@ class VLMVisionStrategy:
         #   get_input_embeddings() method
         has_encode_image = hasattr(model, 'encode_image')
         cache_key = image_urls if image_urls else None
-        if cache_key and budget_kwargs:
-            # Feature shapes differ per budget: a URL-keyed entry cached at
-            # one budget must not serve another. (Pixel-hash keys are safe
-            # by construction -- the pixels themselves change.)
-            budget_tag = ",".join(f"{k}={v}" for k, v in sorted(budget_kwargs.items()))
-            cache_key = [f"vision_budget[{budget_tag}]", *cache_key]
+        # budget_kwargs is 0-or-1 entries by construction (vision_budget.py);
+        # the variant namespaces URL-keyed entries per budget (feature shapes
+        # differ; pixel-hash keys change with the pixels anyway).
+        budget_variant = (
+            "=".join(map(str, next(iter(budget_kwargs.items())))) if budget_kwargs else None
+        )
         if has_encode_image and pixel_values is not None:
             # Try URL-based key first; fall back to pixel content hash for
             # base64/PIL images that don't have a stable URL.
-            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values)
+            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values, variant=budget_variant)
             if cached_features is not None:
                 vlm_kwargs["cached_image_features"] = cached_features
                 logging.info("[VLM VISION] Using cached vision features (skipping vision encoder)")
@@ -479,7 +479,7 @@ class VLMVisionStrategy:
                 with wired_limit(model, [generation_stream]):
                     features = model.encode_image(pixel_values)
                     mx.async_eval(features)
-                self._vision_cache.put(cache_key, features, pixel_values=pixel_values)
+                self._vision_cache.put(cache_key, features, pixel_values=pixel_values, variant=budget_variant)
                 vlm_kwargs["cached_image_features"] = features
                 logging.info("[VLM VISION] Computed and cached vision features")
 

@@ -47,7 +47,16 @@ def ensure_gen_tokenizer(tokenizer):
     """
     if isinstance(tokenizer, TokenizerWrapper):
         return tokenizer
-    return TokenizerWrapper(tokenizer, eos_token_ids=resolve_stop_tokens(tokenizer))
+    # Cache the wrapper ON the raw tokenizer: TokenizerWrapper.__init__ runs a
+    # full-vocab get_vocab() scan (_infer_thinking), pure waste to repeat per
+    # request. The attribute dies with the tokenizer/model, so a reload
+    # naturally invalidates it.
+    cached = getattr(tokenizer, "_heylook_gen_wrapper", None)
+    if cached is not None:
+        return cached
+    wrapped = TokenizerWrapper(tokenizer, eos_token_ids=resolve_stop_tokens(tokenizer))
+    tokenizer._heylook_gen_wrapper = wrapped
+    return wrapped
 
 
 def _reset_vlm_positions(model) -> None:

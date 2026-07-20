@@ -116,11 +116,11 @@ def prepare_vlm_inputs_parallel(
         for msg in text_messages
     ]
 
-    template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
     try:
+        # vlm_apply_chat_template performs the enable_thinking None-guard itself
         formatted_prompt = vlm_apply_chat_template_fn(
             processor, config, safe_messages, num_images=len(images),
-            **template_kwargs,
+            enable_thinking=enable_thinking,
         )
     except Exception as e:
         logging.error(f"Chat template error: {e}")
@@ -128,6 +128,7 @@ def prepare_vlm_inputs_parallel(
         # Fallback: apply the tokenizer's own chat template with string content
         tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
         try:
+            template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
             formatted_prompt = tokenizer.apply_chat_template(
                 safe_messages, tokenize=False, add_generation_prompt=True,
                 **template_kwargs,

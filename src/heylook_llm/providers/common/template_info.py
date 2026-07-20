@@ -114,8 +114,12 @@ def read_template_info(
     strings, so model load survives a broken config file.
     """
     model_dir = Path(model_dir)
-    special_tokens = _read_special_tokens(model_dir)
-    eos_tokens = _read_eos_tokens(model_dir)
+    # Parse each tokenizer file ONCE; both readers below consume the parsed
+    # dicts (tokenizer.json can be multi-MB -- don't read it twice).
+    tokenizer_json = _read_json(model_dir / "tokenizer.json")
+    tokenizer_config = _read_json(model_dir / "tokenizer_config.json")
+    special_tokens = _read_special_tokens(model_dir, tokenizer_json, tokenizer_config)
+    eos_tokens = _read_eos_tokens(model_dir, tokenizer_json, tokenizer_config)
     template, template_source = _read_template(model_dir, source)
 
     # Robustness: reject a template that renders none of the model's OWN stop
@@ -357,7 +361,7 @@ def _read_json(path: Path):
         return None
 
 
-def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
+def _read_eos_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=None) -> frozenset[str]:
     """The model's OWN declared stop tokens as strings -- NOT hardcoded.
 
     Unions ``eos_token`` (string) and every id in ``eos_token_id`` (from
@@ -368,7 +372,7 @@ def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
     Empty when we can't determine them (callers then don't reject -- see
     ``_template_can_stop``).
     """
-    tcfg = _read_json(model_dir / "tokenizer_config.json")
+    tcfg = tokenizer_config if tokenizer_config is not None else _read_json(model_dir / "tokenizer_config.json")
     gcfg = _read_json(model_dir / "generation_config.json")
     tcfg = tcfg if isinstance(tcfg, dict) else {}
     gcfg = gcfg if isinstance(gcfg, dict) else {}
@@ -397,7 +401,8 @@ def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
             s = _tok_str(spec)
             if s:
                 id_to_str[str(tid)] = s
-    tokenizer_json = _read_json(model_dir / "tokenizer.json")
+    if tokenizer_json is None:
+        tokenizer_json = _read_json(model_dir / "tokenizer.json")
     if isinstance(tokenizer_json, dict):
         for spec in tokenizer_json.get("added_tokens") or []:
             if isinstance(spec, dict) and isinstance(spec.get("content"), str) and "id" in spec:
@@ -413,7 +418,7 @@ def _read_eos_tokens(model_dir: Path) -> frozenset[str]:
     return frozenset(out)
 
 
-def _read_special_tokens(model_dir: Path) -> frozenset[str]:
+def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=None) -> frozenset[str]:
     """Union the special-token sets from both tokenizer files.
 
     - ``tokenizer.json`` (the fast-tokenizer's own state) has an
@@ -428,7 +433,7 @@ def _read_special_tokens(model_dir: Path) -> frozenset[str]:
     specials: set[str] = set()
 
     # tokenizer.json's added_tokens array
-    tok_json = _read_json(model_dir / "tokenizer.json")
+    tok_json = tokenizer_json if tokenizer_json is not None else _read_json(model_dir / "tokenizer.json")
     if isinstance(tok_json, dict):
         added = tok_json.get("added_tokens")
         if isinstance(added, list):
@@ -442,7 +447,7 @@ def _read_special_tokens(model_dir: Path) -> frozenset[str]:
                     specials.add(content)
 
     # tokenizer_config.json's added_tokens_decoder (id-keyed dict)
-    config = _read_json(model_dir / "tokenizer_config.json")
+    config = tokenizer_config if tokenizer_config is not None else _read_json(model_dir / "tokenizer_config.json")
     if isinstance(config, dict):
         decoder = config.get("added_tokens_decoder")
         if isinstance(decoder, dict):

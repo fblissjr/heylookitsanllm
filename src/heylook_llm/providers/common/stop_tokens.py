@@ -2,7 +2,6 @@
 """Shared stop-token resolution for all MLX generation paths."""
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -17,14 +16,15 @@ def extend_eos_from_generation_config(tokenizer, model_path) -> None:
     past end-of-turn until <eos> or the token cap. Best-effort: never raises.
     """
     try:
-        cfg = json.loads((Path(model_path) / "generation_config.json").read_text())
+        from .template_info import _read_json
+        cfg = _read_json(Path(model_path) / "generation_config.json")
+        if not isinstance(cfg, dict):
+            return
         ids = cfg.get("eos_token_id")
         ids = set(ids) if isinstance(ids, list) else ({ids} if isinstance(ids, int) else set())
         if not ids:
             return
         tokenizer.eos_token_ids = resolve_stop_tokens(tokenizer) | ids
-    except FileNotFoundError:
-        pass
     except Exception as e:
         logging.warning("eos extension from generation_config failed: %s", e)
 

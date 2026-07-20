@@ -147,3 +147,45 @@ class TestChatCompletionsStreaming:
                 chunk = json.loads(line[6:])
                 assert chunk["object"] == "chat.completion.chunk"
                 assert "choices" in chunk
+
+
+class TestIncludePerformance:
+    """include_performance=true populates the response's `performance` block
+    from native mlx-lm telemetry; omitted/false leaves it null."""
+
+    def test_performance_null_by_default(self, client):
+        resp = client.post("/v1/chat/completions", json={
+            "model": "test-mlx-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+        })
+        assert resp.status_code == 200
+        assert resp.json().get("performance") is None
+
+    def test_performance_populated_when_requested(self, client, mock_router):
+        from helpers.mlx_mock import FakeChunk
+
+        provider = mock_router.get_provider("test-mlx-model")
+        orig = provider.create_chat_completion
+
+        def gen(request, abort_event=None):
+            chunk = FakeChunk("Hello", token_id=1)
+            chunk.prompt_tps = 100.5
+            chunk.generation_tps = 42.5
+            chunk.peak_memory = 1.5
+            yield chunk
+
+        provider.create_chat_completion = gen
+        try:
+            resp = client.post("/v1/chat/completions", json={
+                "model": "test-mlx-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "include_performance": True,
+            })
+        finally:
+            provider.create_chat_completion = orig
+
+        assert resp.status_code == 200
+        perf = resp.json()["performance"]
+        assert perf["prompt_tps"] == 100.5
+        assert perf["generation_tps"] == 42.5
+        assert perf["peak_memory_gb"] == 1.5

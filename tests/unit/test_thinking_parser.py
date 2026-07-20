@@ -1,106 +1,13 @@
 # tests/unit/test_thinking_parser.py
 """
-Unit tests for the Qwen3 thinking token parser.
-
-Tests the non-streaming parse_thinking_content function,
-the StreamingThinkingParser class, and the token-level parsers.
+Unit tests for the <think>-block thinking parser
+(StreamingThinkingParser + the HybridThinkingParser wrapper).
 """
 import pytest
 from heylook_llm.thinking_parser import (
-    parse_thinking_content,
     StreamingThinkingParser,
     HybridThinkingParser,
 )
-
-
-class TestParseThinkingContent:
-    """Tests for the non-streaming parse_thinking_content function."""
-
-    def test_no_thinking_block(self):
-        """Text without thinking block should return as-is."""
-        text = "This is a response without thinking."
-        content, thinking = parse_thinking_content(text)
-        assert content == text
-        assert thinking is None
-
-    def test_single_thinking_block(self):
-        """Single thinking block should be extracted."""
-        text = "<think>Let me reason about this.</think>The answer is 42."
-        content, thinking = parse_thinking_content(text)
-        assert content == "The answer is 42."
-        assert thinking == "Let me reason about this."
-
-    def test_thinking_block_with_whitespace(self):
-        """Whitespace around content should be stripped."""
-        text = "<think>  \n\nThinking with spaces  \n</think>  \n\nContent here"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Content here"
-        assert thinking == "Thinking with spaces"
-
-    def test_multiple_thinking_blocks(self):
-        """Multiple thinking blocks should be concatenated."""
-        text = "<think>First thought.</think>Response<think>Second thought.</think>More response"
-        content, thinking = parse_thinking_content(text)
-        assert content == "ResponseMore response"
-        assert thinking == "First thought.\n---\nSecond thought."
-
-    def test_empty_thinking_block(self):
-        """Empty thinking block should result in None thinking."""
-        text = "<think></think>Just content"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Just content"
-        assert thinking is None
-
-    def test_whitespace_only_thinking_block(self):
-        """Whitespace-only thinking block should result in None thinking."""
-        text = "<think>   \n\n   </think>Just content"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Just content"
-        assert thinking is None
-
-    def test_empty_input(self):
-        """Empty input should return empty content and None thinking."""
-        content, thinking = parse_thinking_content("")
-        assert content == ""
-        assert thinking is None
-
-    def test_none_input_like(self):
-        """Empty string input should be handled."""
-        content, thinking = parse_thinking_content("")
-        assert content == ""
-        assert thinking is None
-
-    def test_thinking_at_end(self):
-        """Thinking block at end of text."""
-        text = "Some content<think>Thinking at end</think>"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Some content"
-        assert thinking == "Thinking at end"
-
-    def test_only_thinking(self):
-        """Only thinking block, no content."""
-        text = "<think>Just thinking, no response</think>"
-        content, thinking = parse_thinking_content(text)
-        assert content == ""
-        assert thinking == "Just thinking, no response"
-
-    def test_multiline_thinking(self):
-        """Multiline thinking content should be preserved."""
-        text = "<think>Line 1\nLine 2\nLine 3</think>Final answer"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Final answer"
-        assert "Line 1" in thinking
-        assert "Line 2" in thinking
-        assert "Line 3" in thinking
-
-    def test_special_characters_in_thinking(self):
-        """Special characters in thinking should be preserved."""
-        text = "<think>2+2=4, x<y, a&b</think>Result"
-        content, thinking = parse_thinking_content(text)
-        assert content == "Result"
-        assert "2+2=4" in thinking
-        assert "x<y" in thinking
-        assert "a&b" in thinking
 
 
 class TestStreamingThinkingParser:
@@ -208,38 +115,42 @@ class TestStreamingThinkingParser:
 
 
 class TestEdgeCases:
-    """Edge case tests."""
+    """Edge cases through the streaming parser (the production path)."""
+
+    def _run(self, chunks):
+        p = StreamingThinkingParser()
+        out = []
+        for ch in chunks:
+            out += p.process_chunk(ch)
+        out += p.flush()
+        content = "".join(x for k, x in out if k == "content")
+        thinking = "".join(x for k, x in out if k == "thinking")
+        return content, thinking
 
     def test_nested_angle_brackets(self):
-        """Content with angle brackets but not think tags."""
         text = "Compare x<y and y>z in the expression"
-        content, thinking = parse_thinking_content(text)
+        content, thinking = self._run([text])
         assert content == text
-        assert thinking is None
+        assert thinking == ""
 
-    def test_partial_think_tag(self):
-        """Partial think tag should not be matched."""
+    def test_partial_think_tag_is_content(self):
         text = "<thin some random text with angle brackets"
-        content, thinking = parse_thinking_content(text)
+        content, thinking = self._run([text])
         assert content == text
-        assert thinking is None
+        assert thinking == ""
 
-    def test_unclosed_think_tag(self):
-        """Unclosed think tag should not match."""
-        text = "<think>This is never closed and the response continues"
-        content, thinking = parse_thinking_content(text)
-        # Unclosed tag means no match
-        assert content == text
-        assert thinking is None
+    def test_unclosed_think_tag_flushes_to_thinking(self):
+        # streaming semantics: an opened-never-closed block is thinking at
+        # flush (abort mid-thought), unlike the old regex extractor
+        content, thinking = self._run(["<think>never closed, stream aborts"])
+        assert content == ""
+        assert thinking == "never closed, stream aborts"
 
     def test_very_long_thinking(self):
-        """Very long thinking content should be handled."""
         long_thinking = "A" * 10000
-        text = f"<think>{long_thinking}</think>Short answer"
-        content, thinking = parse_thinking_content(text)
+        content, thinking = self._run([f"<think>{long_thinking}</think>Short answer"])
         assert content == "Short answer"
         assert thinking == long_thinking
-        assert len(thinking) == 10000
 
 
 class TestHybridThinkingParser:

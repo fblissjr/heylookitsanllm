@@ -14,47 +14,7 @@ model's output then starts inside the block and never emits the opening
 tag itself. Selection is driven by ``ModelTemplateInfo.prefills_thinking``
 + the request's effective thinking flag (see select_reasoning_parser).
 """
-import re
 from typing import Tuple, Optional, List
-
-
-def parse_thinking_content(text: str) -> Tuple[str, Optional[str]]:
-    """
-    Parse <think>...</think> blocks from generated text.
-
-    Handles multiple thinking blocks by concatenating them with separators.
-    Removes all thinking blocks from the content.
-
-    Args:
-        text: Raw generated text that may contain <think>...</think> blocks
-
-    Returns:
-        Tuple of (content_without_thinking, thinking_content_or_none)
-        - content: The response text with all <think> blocks removed
-        - thinking: Concatenated thinking content, or None if no blocks found
-    """
-    if not text:
-        return "", None
-
-    pattern = r'<think>\s*(.*?)\s*</think>'
-    matches = re.findall(pattern, text, re.DOTALL)
-
-    if not matches:
-        return text.strip(), None
-
-    # Concatenate all thinking blocks (rare to have multiple, but handle it)
-    non_empty_matches = [m.strip() for m in matches if m.strip()]
-    if not non_empty_matches:
-        # Had think tags but they were empty
-        content = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
-        return content, None
-
-    thinking = '\n---\n'.join(non_empty_matches)
-
-    # Remove all think blocks from content
-    content = re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
-
-    return content, thinking
 
 
 class StreamingThinkingParser:
