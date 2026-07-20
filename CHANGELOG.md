@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.61]
+
+### Changed
+
+- v3 chat composer: attach button is now an icon (was "+ Img"), and a
+  thinking-toggle icon sits next to it for thinking-capable models (same
+  capability gate + true/unset semantics as the drawer checkbox, kept in
+  sync via onSettingsChange; pressed state styled off aria-pressed). New
+  `.btn--icon` style (40px touch-target floor, currentColor SVGs).
+
 ## [1.34.60]
 
 ### Added

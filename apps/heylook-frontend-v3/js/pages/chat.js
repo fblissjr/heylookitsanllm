@@ -14,7 +14,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
+import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 
 export default createPage({
@@ -77,6 +77,7 @@ export default createPage({
     s.models = models.data ?? [];
     s.conversations = convList.conversations ?? [];
     fillModelSelect(ctx);
+    refreshThinkBtn(ctx);
     renderConvList(ctx);
 
     if (s.conversations.length) {
@@ -117,6 +118,7 @@ function buildSkeleton(ctx) {
     // Capability-gated controls (enable_thinking) must track the model: force
     // an open drawer to rebuild here, not only on its next open.
     drawer.requestRebuild({ force: true });
+    refreshThinkBtn(ctx);
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
@@ -142,8 +144,25 @@ function buildSkeleton(ctx) {
     addImages(ctx, s.fileInput.files);
     s.fileInput.value = '';
   });
-  s.attachBtn = createEl('button', { class: 'btn', title: 'Attach images' }, ['+ Img']);
+  s.attachBtn = createEl('button', {
+    class: 'btn btn--icon', title: 'Attach images', 'aria-label': 'Attach images',
+  });
+  s.attachBtn.innerHTML = ICON_IMAGE;
   s.attachBtn.addEventListener('click', () => s.fileInput.click());
+
+  // Composer thinking toggle: same cap gate + true/null semantics as the
+  // drawer checkbox (unset follows the backend's per-model default). The
+  // drawer is modal, so the two controls can't be edited concurrently --
+  // onSettingsChange keeps this button honest after drawer edits.
+  s.thinkBtn = createEl('button', {
+    class: 'btn btn--icon', title: 'Thinking', 'aria-label': 'Toggle thinking',
+    'aria-pressed': 'false', hidden: true,
+  });
+  s.thinkBtn.innerHTML = ICON_THINK;
+  s.thinkBtn.addEventListener('click', () => {
+    setSetting('enable_thinking', getSetting('enable_thinking') === true ? null : true);
+  });
+  ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
   s.textarea.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.items ?? [])]
       .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
@@ -167,7 +186,7 @@ function buildSkeleton(ctx) {
     s.messagesEl,
     s.statusEl,
     s.attachStrip,
-    createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.fileInput, s.textarea, s.sendBtn]),
+    createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.thinkBtn, s.fileInput, s.textarea, s.sendBtn]),
   ]);
 
   s.rootEl = createEl('div', { class: 'chat' }, [convPane, thread]);
@@ -177,9 +196,31 @@ function buildSkeleton(ctx) {
   ctx.el.append(s.rootEl);
 }
 
+// Static, trusted SVG markup (icons inherit currentColor from the button).
+const ICON_IMAGE =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>'
+  + '<path d="m21 15-5-5L5 21"/></svg>';
+const ICON_THINK =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M9 18h6"/><path d="M10 22h4"/>'
+  + '<path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>';
+
 function fillModelSelect(ctx) {
   const s = ctx.state;
   fillOptions(s.modelSelect, s.models.map((m) => m.id));
+}
+
+// Visible only for thinking-capable models (mirrors the drawer's requiresCap
+// gate); pressed = explicit true. Re-run on model switch, conversation
+// hydrate, and any settings change.
+function refreshThinkBtn(ctx) {
+  const s = ctx.state;
+  s.thinkBtn.hidden = !currentCaps(ctx).includes('thinking');
+  const on = getSetting('enable_thinking') === true;
+  s.thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
 
 function currentCaps(ctx) {
@@ -479,6 +520,7 @@ async function selectConversation(ctx, convId) {
     s.messages = conv.messages ?? [];
     s.systemPrompt = conv.system_prompt ?? null;
     hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
+    refreshThinkBtn(ctx);    // silent hydrate skips onSettingsChange -- sync directly
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
