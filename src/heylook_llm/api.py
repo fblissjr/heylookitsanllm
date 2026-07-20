@@ -128,7 +128,7 @@ async def lifespan(app: FastAPI):
     _obs = await apply_runtime_settings(app.state.db)
     logging.info(
         "Observability: level=%s · %s (JSONL) · %dd retention · nothing transmitted "
-        "· configure/disable: docs/observability_guide.md",
+        "· configure/disable: /v1/admin/config",
         _obs.observability_level, observability_log_dir(), _obs.observability_retention_days,
     )
 

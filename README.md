@@ -29,7 +29,7 @@ Built on Apple MLX for text and vision.
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
-- **Observability**: Disk-backed JSONL telemetry under `logs/` -- per-request metrics (tokens, tok/s, TTFT, peak memory, cache, engine path), errors (type + stage + cause chain), model load/unload, and periodic resource snapshots. **Never prompt or response text; everything is written to local files only -- nothing is transmitted anywhere.** One control knob: `observability_level` (`off`/`minimal`/`standard`/`debug`, default `minimal`), settable via `POST /v1/admin/config` -- `off` disables all of it. See [docs/observability_guide.md](docs/observability_guide.md) for streams, levels, and monitoring/optimization recipes ([disabling](#monitoring-and-optimization)).
+- **Observability**: Disk-backed JSONL telemetry under `logs/` -- per-request metrics (tokens, tok/s, TTFT, peak memory, cache, engine path), errors (type + stage + cause chain), model load/unload, and periodic resource snapshots. **Never prompt or response text; everything is written to local files only -- nothing is transmitted anywhere.** One control knob: `observability_level` (`off`/`minimal`/`standard`/`debug`, default `minimal`), settable via `POST /v1/admin/config` -- `off` disables all of it. Streams and levels are self-describing: read logs/*.jsonl and GET /v1/admin/config.
 
 ## Web UI
 
@@ -131,7 +131,7 @@ curl -X POST http://localhost:8080/v1/admin/reload
 
 Interactive docs at `http://localhost:8080/docs` when the server is running.
 
-Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`, `/v1/jspace/analyze`. See [docs/architecture/api.md](docs/architecture/api.md) for full reference.
+Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`, `/v1/jspace/analyze`. Full live reference: `/docs` (Swagger) and `/openapi.json` on a running server.
 
 ## Batch Vision Labeling
 
@@ -159,7 +159,7 @@ Point `tail -f` at `logs/metrics.jsonl` (per-request metrics) or
 telemetry lives under `logs/`, not `internal/log/`). For aggregate questions,
 point DuckDB at the files: `duckdb -c "SELECT model, quantile_cont(generation_tps,0.95)
 FROM read_json_auto('logs/metrics.jsonl') GROUP BY model"`. Recipes for finding
-leaks and usage patterns are in [docs/observability_guide.md](docs/observability_guide.md).
+leaks and usage patterns are visible in the logs/*.jsonl streams directly.
 
 Everything is stored in **local files only -- nothing leaves your machine.** The
 single control is `observability_level`; set it to `off` to disable all telemetry:
@@ -173,7 +173,7 @@ curl -X PUT http://localhost:8080/v1/admin/config \
 `HEYLOOK_REQUEST_LOG_ENABLED` / `HEYLOOK_MODEL_EVENT_LOG_ENABLED` /
 `HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS` for granular control; these are being
 folded under `observability_level`.) See
-[docs/observability_guide.md](docs/observability_guide.md) for the full rundown.
+the `logs/*.jsonl` streams and `/v1/admin/config` for the full picture.
 
 ## Troubleshooting
 

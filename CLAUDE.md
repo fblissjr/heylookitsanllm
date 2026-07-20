@@ -34,7 +34,7 @@ or truncating any DuckDB store or config on a schema change is fine and preferre
 Use additive `CREATE TABLE IF NOT EXISTS` only when you just need to ADD a table
 (cheap, non-destructive); for an actual schema CHANGE, bump `_SCHEMA_VERSION` /
 drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
-- [docs/architecture/](./docs/architecture/) (overview, api, router, config, mlx_provider, mlx_embedding, ecosystem_strategy) · [docs/rlm_guide.md](./docs/rlm_guide.md) · [docs/observability_guide.md](./docs/observability_guide.md)
+- [docs/architecture/](./docs/architecture/) (overview, router, config, mlx_provider, mlx_embedding, ecosystem_strategy) · [docs/rlm_guide.md](./docs/rlm_guide.md) · converting checkpoints to MLX: [docs/mlx_conversion_guide.md](./docs/mlx_conversion_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
 JS, no build, served at `/v3`. 6 pages (chat, notebook, models, perf, explore, jspace);

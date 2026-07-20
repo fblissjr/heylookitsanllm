@@ -10,7 +10,6 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 | Doc | Covers |
 |-----|--------|
 | [overview.md](./overview.md) | Backend architecture overview -- providers, request flow, module map |
-| [api.md](./api.md) | Full API / endpoint reference (routers, request/response shapes) |
 | [router.md](./router.md) | Model router: caching, LRU eviction, pinning, idle-unload, the FIFO generation gate |
 | [config.md](./config.md) | `models.toml` config system + the sampler cascade |
 | [mlx_provider.md](./mlx_provider.md) | MLXProvider deep-dive (text + vision); the pre-filled-cache VLM path |

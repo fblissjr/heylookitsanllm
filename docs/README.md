@@ -28,7 +28,6 @@ config, providers, and the MLX ecosystem posture). Start at its
 
 ## Guides
 - [rlm_guide.md](./rlm_guide.md) / [rlm_advanced.md](./rlm_advanced.md) -- recursive inference (RLM)
-- [observability_guide.md](./observability_guide.md) -- perf / telemetry streams
 - [optimization_log.md](./optimization_log.md) -- cross-session performance findings
 - [optloop_guide.md](./optloop_guide.md) -- optloop-lib benchmark harness
 - [mlx_optimization_plan.md](./mlx_optimization_plan.md) -- MLX engine optimization plan (historical)

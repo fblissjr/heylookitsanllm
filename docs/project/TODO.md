@@ -48,14 +48,6 @@ ordering and the sole-user/minimal-custom-code posture.
   memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
   pinned mlx-lm before adopting. The QAT assistant head also pairs with the
   MTP item above.
-- [ ] **docs/architecture/api.md fiction pass** (P3, pre-existing debt
-  resurfaced by the 2026-07-20 docs audit): the doc still lists phantom
-  endpoints (`/v1/admin/restart`, `/v1/eval/*`) and pseudocode referencing
-  functions that don't exist (`router.generate()`,
-  `format_completion_response()`) -- from a 2026-04 audit era. One pass:
-  regenerate the endpoint inventory from the live routers, delete the
-  fictional Implementation blocks (the live schema at /openapi.json is the
-  reference; the doc should carry mechanisms, not imagined code).
 - [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
   review's coverage table -- all four currently have ZERO e2e coverage):
   (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
@@ -459,9 +451,9 @@ Full design + status: `internal/research/observability_and_config_redesign.md`
   or as a `None`->1.0 backend fallback -- decide where.
 
 **Docs / rot:**
-- [ ] `docs/observability_guide.md` has a redesign banner + corrected paths but
-  its body still describes the legacy `internal/log/` 4-stream layout -- full
-  rewrite pending (P3).
+- [x] `docs/observability_guide.md` -- rewritten 2026-07-20, then DELETED
+  same day under the owner's docs philosophy (code-inferable; the streams are
+  self-describing JSONL + /v1/admin/config is the knob).
 
 ## Recently Completed (Phase 2 -- 2026-03-13)
 
