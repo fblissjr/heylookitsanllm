@@ -93,6 +93,23 @@ ordering and the sole-user/minimal-custom-code posture.
   storage could ride the observability JSONL + DuckDB-over-files pattern.
   Also queue: run the eval bank as the optional gate for changes touching
   templates/parsers/stop-tokens/vision (the 4 bug classes it was built on).
+- [ ] **Eval-gate reminder hook + /eval-ab skill -- SCOPED DESIGN, owner
+  sign-off pending** (P3, 2026-07-20): owner's constraints: no over-testing,
+  no auto-spawning heavy servers, no 3-hour runs on small changes, no
+  one-model-one-prompt tunnel vision. Scoped design that satisfies them:
+  (1) the hook is INERT TEXT ONLY (hookify context injection on edits to
+  reasoning_parser/thinking_parser/template_info/stop_tokens/vision_budget/
+  generation_core) -- it never runs anything; (2) it names the MINIMAL
+  category for the touched subsystem via `run.py --tasks` (parsers/template
+  -> thinking,stop; vision_budget/vlm -> vision; stop_tokens/generation_core
+  -> stop) -- a smoke tier of 2-4 tasks x 1 fast model, ~1-2 min, not the
+  13-task bank; (3) it only suggests running against an ALREADY-RUNNING
+  server (dev-server skill's reuse-first rule) -- if none is up, the
+  suggestion is "queue it", never "spawn one"; (4) full bank x multiple
+  models stays explicit-ask-only (pin bumps, QAT A/B, releases). /eval-ab
+  is the explicit-ask wrapper: baseline JSONL storage + diff + the
+  rerun-flapped-tasks-before-concluding discipline from the 07-20 pin bump.
+  Build neither until the owner approves this scoping.
 - [x] **Pyright noise triage -- DONE 2026-07-20** (0e236e4): real fixes
   (deprecated `datetime.utcnow`, untyped `= None` defaults, a latent bug where
   batch responses could hand pydantic `model=None` -> runtime 500 now
