@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Body, Depends
@@ -547,7 +547,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     try:
         # Add start time for processing time calculation
-        chat_request._start_time = request_start_time
+        chat_request._start_time = request_start_time  # type: ignore[attr-defined]
     except Exception as e:
         logging.warning(f"Request validation failed: {e}")
         raise HTTPException(status_code=422, detail=str(e))
@@ -606,7 +606,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     image_resize_ms = (time.time() - image_resize_start) * 1000
 
     # Start real-time logging
-    log_request_start(request_id, chat_request.model)
+    log_request_start(request_id, chat_request.model or "unknown")
 
     # Analyze request for image metadata
     request_dict = chat_request.model_dump()
@@ -627,7 +627,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
     # Log enhanced request summary
     log_request_summary(
         request_id,
-        chat_request.model,
+        chat_request.model or "unknown",
         has_images=image_stats['count'] > 0,
         image_count=image_stats['count'],
         total_image_size=image_stats['total_size']
@@ -892,7 +892,7 @@ def _record_error_event(model: str, request_start_time: float, provider_get_ms: 
     )
 
 
-async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request = None, provider=None, perf_ctx: dict | None = None, abort_event=None):
+async def stream_response_generator_async(generator, chat_request: ChatRequest, router, request_id, http_request: Request | None = None, provider=None, perf_ctx: dict | None = None, abort_event=None):
     """Async streaming response generator that runs generation in thread pool.
 
     Reasoning-aware: a factory-selected ``ReasoningParser`` routes the model
@@ -1005,7 +1005,9 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             if logprobs_collector:
                 chunk_logprobs = getattr(chunk, 'logprobs', None)
                 if token_id is not None and chunk_logprobs is not None:
-                    logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)
+                    # streaming path always constructs StreamingLogprobsCollector
+                    # (which owns this method); the factory's union hides it
+                    logprobs_delta = logprobs_collector.add_token_and_get_delta(token_id, chunk_logprobs)  # type: ignore[attr-defined]
                 elif token_count == 1:
                     # Log once on first token if logprobs data is missing
                     diag_event("logprobs_missing_data", request_id=request_id, level="debug",
@@ -1138,7 +1140,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         final_completion_tokens = telemetry.completion_tokens or token_count
 
         # Build enhanced usage object
-        usage_data = {
+        usage_data: dict = {
             "prompt_tokens": final_prompt_tokens,
             "completion_tokens": final_completion_tokens,
             "total_tokens": final_prompt_tokens + final_completion_tokens
@@ -1310,7 +1312,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         perf_ctx["peak_memory_gb"] = telemetry.peak_memory_gb
         perf_ctx["kv_cache_bytes"] = telemetry.kv_cache_bytes
 
-    usage_dict = {
+    usage_dict: dict = {
         "prompt_tokens": telemetry.prompt_tokens,
         "completion_tokens": telemetry.completion_tokens or token_count,  # Fallback to our count
         "total_tokens": (telemetry.prompt_tokens or 0) + (telemetry.completion_tokens or token_count)
@@ -1494,7 +1496,7 @@ async def create_batch_chat_completion(request: Request, batch_request: BatchCha
                 id=f"chatcmpl-batch-{uuid.uuid4()}",
                 object="chat.completion",
                 created=int(time.time()),
-                model=model_id,
+                model=model_id or "unknown",
                 choices=[{
                     "index": i,
                     "message": {
@@ -1986,7 +1988,7 @@ List all prompt caches currently in memory.
     response_description="List of cached prompts",
     tags=["Monitoring"]
 )
-async def list_caches(request: Request, model: str = None):
+async def list_caches(request: Request, model: str | None = None):
     """List all prompt caches, optionally filtered by model."""
     cache_manager = get_global_cache_manager()
     cache_info = cache_manager.get_cache_info()
@@ -2003,7 +2005,7 @@ async def list_caches(request: Request, model: str = None):
             description="In-memory prompt cache",
             tokens_cached=info.get("tokens_cached", 0),
             size_mb=0.0,  # Unknown for in-memory
-            created_at=datetime.utcnow().isoformat()
+            created_at=datetime.now(timezone.utc).isoformat()
         ))
 
     return CacheListResponse(caches=caches)
@@ -2123,13 +2125,14 @@ def _get_api_endpoints():
     """Dynamically discover all /v1/ endpoints from registered routes."""
     endpoints = {}
     for route in app.routes:
-        if hasattr(route, 'path') and route.path.startswith('/v1/'):
+        path = getattr(route, 'path', '')
+        if path.startswith('/v1/'):
             # Get methods (GET, POST, etc.)
             methods = getattr(route, 'methods', {'GET'})
             method = next(iter(methods)) if methods else 'GET'
             # Create endpoint name from path
-            name = route.path.replace('/v1/', '').replace('/', '_')
-            endpoints[name] = {"method": method, "path": route.path}
+            name = path.replace('/v1/', '').replace('/', '_')
+            endpoints[name] = {"method": method, "path": path}
     return endpoints
 
 

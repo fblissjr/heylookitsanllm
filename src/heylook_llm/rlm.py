@@ -65,14 +65,14 @@ class RLMRequest(BaseModel):
     context: str
     query: str
     system: str | None = None
-    max_iterations: int = Field(10, ge=1, le=50)
-    max_tokens: int = Field(2048, gt=0)
+    max_iterations: int = Field(default=10, ge=1, le=50)
+    max_tokens: int = Field(default=2048, gt=0)
     temperature: float | None = None
     top_p: float | None = None
     stream: bool = False
     sandbox: bool = True
-    timeout: int = Field(30, ge=1, le=120)
-    max_output_chars: int = Field(10_000, ge=100)
+    timeout: int = Field(default=30, ge=1, le=120)
+    max_output_chars: int = Field(default=10_000, ge=100)
     sub_model: str | None = None
     sub_max_tokens: int | None = None
     sub_temperature: float | None = None
@@ -80,11 +80,11 @@ class RLMRequest(BaseModel):
     enable_thinking: bool | None = None
     include_trace_detail: bool = False
     compaction: bool = False
-    compaction_threshold: float = Field(0.8, ge=0.5, le=0.95)
-    max_context_tokens: int = Field(8192, ge=512)
-    max_depth: int = Field(1, ge=1, le=5)
-    max_errors: int | None = Field(None, ge=1, le=20)
-    max_timeout: float | None = Field(None, ge=1.0)
+    compaction_threshold: float = Field(default=0.8, ge=0.5, le=0.95)
+    max_context_tokens: int = Field(default=8192, ge=512)
+    max_depth: int = Field(default=1, ge=1, le=5)
+    max_errors: int | None = Field(default=None, ge=1, le=20)
+    max_timeout: float | None = Field(default=None, ge=1.0)
 
 
 class RLMTraceEntry(BaseModel):
@@ -656,7 +656,7 @@ class RLMEngine:
                         )
                         for p in prompts
                     ]
-                    results = provider.create_batch_chat_completion(chat_reqs)
+                    results = provider.create_batch_chat_completion(chat_reqs)  # type: ignore[attr-defined]
                     return [r["text"] for r in results]
                 except (ValueError, RuntimeError):
                     pass  # Fall through to sequential

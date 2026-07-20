@@ -7,9 +7,9 @@ import numpy as np
 class EmbeddingRequest(BaseModel):
     input: Union[str, List[str]] = Field(..., description="Text(s) to embed")
     model: str = Field(..., description="Model ID to use for embeddings")
-    encoding_format: str = Field("float", description="Format of the embedding (float or base64)")
-    dimensions: Optional[int] = Field(None, description="Optional number of dimensions to truncate to")
-    user: Optional[str] = Field(None, description="Optional user identifier")
+    encoding_format: str = Field(default="float", description="Format of the embedding (float or base64)")
+    dimensions: Optional[int] = Field(default=None, description="Optional number of dimensions to truncate to")
+    user: Optional[str] = Field(default=None, description="Optional user identifier")
 
 class EmbeddingData(BaseModel):
     object: str = "embedding"

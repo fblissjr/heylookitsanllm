@@ -39,25 +39,25 @@ class BatchChatRequest(BaseModel):
     messages: List[ChatMessage]
     
     # Standard OpenAI parameters
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    top_k: Optional[int] = Field(None, ge=0)
-    min_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    repetition_penalty: Optional[float] = Field(None, ge=0.1, le=2.0)
-    repetition_context_size: Optional[int] = Field(None, ge=1)
-    max_tokens: Optional[int] = Field(None, gt=0)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=0)
+    min_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    repetition_penalty: Optional[float] = Field(default=None, ge=0.1, le=2.0)
+    repetition_context_size: Optional[int] = Field(default=None, ge=1)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
     stream: bool = False
     seed: Optional[int] = None
     
     # Batch processing extensions
     processing_mode: ProcessingMode = ProcessingMode.CONVERSATION
-    batch_size: Optional[int] = Field(1, ge=1, le=10, description="Number of messages to process together")
-    include_context: bool = Field(True, description="Include previous messages as context in sequential mode")
-    max_context_messages: Optional[int] = Field(None, ge=0, description="Limit context to N previous messages")
-    
+    batch_size: Optional[int] = Field(default=1, ge=1, le=10, description="Number of messages to process together")
+    include_context: bool = Field(default=True, description="Include previous messages as context in sequential mode")
+    max_context_messages: Optional[int] = Field(default=None, ge=0, description="Limit context to N previous messages")
+
     # Response options
-    return_individual: bool = Field(False, description="Return individual responses vs combined")
-    include_timing: bool = Field(False, description="Include timing information in response")
+    return_individual: bool = Field(default=False, description="Return individual responses vs combined")
+    include_timing: bool = Field(default=False, description="Include timing information in response")
 
 
 class BatchResponse(BaseModel):
@@ -155,7 +155,7 @@ class BatchProcessor:
         
         # Create standard ChatRequest
         chat_request = ChatRequest(
-            model=batch_request.model,
+            model=batch_request.model or "unknown",
             messages=batch_request.messages,
             temperature=batch_request.temperature,
             top_p=batch_request.top_p,
@@ -187,7 +187,7 @@ class BatchProcessor:
         response = BatchResponse(
             id=f"chatcmpl-batch-{uuid.uuid4()}",
             created=int(time.time()),
-            model=batch_request.model,
+            model=batch_request.model or "unknown",
             processing_mode=ProcessingMode.CONVERSATION,
             choices=[{"message": {"role": "assistant", "content": full_text}}],
             usage={
@@ -236,7 +236,7 @@ class BatchProcessor:
             
             # Create ChatRequest for this group
             chat_request = ChatRequest(
-                model=batch_request.model,
+                model=batch_request.model or "unknown",
                 messages=messages_for_request,
                 temperature=batch_request.temperature,
                 top_p=batch_request.top_p,
@@ -274,7 +274,7 @@ class BatchProcessor:
                     id=f"chatcmpl-{uuid.uuid4()}",
                     object="chat.completion",
                     created=int(time.time()),
-                    model=batch_request.model,
+                    model=batch_request.model or "unknown",
                     choices=[{"message": {"role": "assistant", "content": full_text}}],
                     usage={
                         "prompt_tokens": prompt_tokens,
@@ -309,7 +309,7 @@ class BatchProcessor:
         response = BatchResponse(
             id=f"chatcmpl-batch-{uuid.uuid4()}",
             created=int(time.time()),
-            model=batch_request.model,
+            model=batch_request.model or "unknown",
             processing_mode=ProcessingMode.SEQUENTIAL
         )
         
@@ -376,7 +376,7 @@ class BatchProcessor:
                     
                     # Create ChatRequest
                     chat_request = ChatRequest(
-                        model=batch_request.model,
+                        model=batch_request.model or "unknown",
                         messages=messages_for_request,
                         temperature=batch_request.temperature,
                         top_p=batch_request.top_p,
@@ -457,7 +457,7 @@ class BatchProcessor:
         response = BatchResponse(
             id=f"chatcmpl-batch-{uuid.uuid4()}",
             created=int(time.time()),
-            model=batch_request.model,
+            model=batch_request.model or "unknown",
             processing_mode=ProcessingMode.PARALLEL if not with_context else ProcessingMode.PARALLEL_WITH_CONTEXT
         )
         
@@ -515,7 +515,7 @@ class BatchProcessor:
             id=f"chatcmpl-{uuid.uuid4()}",
             object="chat.completion",
             created=int(time.time()),
-            model=chat_request.model,
+            model=chat_request.model or "unknown",
             choices=[{"message": {"role": "assistant", "content": full_text}}],
             usage={
                 "prompt_tokens": prompt_tokens,

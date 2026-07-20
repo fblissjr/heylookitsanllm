@@ -28,14 +28,14 @@ class HiddenStatesRequest(BaseModel):
     )
     model: str = Field(..., description="Model ID to use for extraction")
     layer: int = Field(
-        -2, description="Which layer to extract from (-2 for second-to-last)"
+        default=-2, description="Which layer to extract from (-2 for second-to-last)"
     )
-    max_length: int = Field(512, description="Maximum sequence length")
+    max_length: int = Field(default=512, description="Maximum sequence length")
     return_attention_mask: bool = Field(
-        False, description="Whether to return the attention mask"
+        default=False, description="Whether to return the attention mask"
     )
     encoding_format: str = Field(
-        "float", description="Output format: 'float' (nested list) or 'base64'"
+        default="float", description="Output format: 'float' (nested list) or 'base64'"
     )
 
 
@@ -50,10 +50,10 @@ class HiddenStatesResponse(BaseModel):
     layer: int = Field(..., description="Layer extracted from")
     dtype: str = Field(..., description="Data type of the hidden states")
     encoding_format: Optional[str] = Field(
-        None, description="Encoding format used (only present for base64)"
+        default=None, description="Encoding format used (only present for base64)"
     )
     attention_mask: Optional[List[int]] = Field(
-        None, description="Attention mask if requested"
+        default=None, description="Attention mask if requested"
     )
 
 
@@ -65,28 +65,28 @@ class StructuredHiddenStatesRequest(BaseModel):
 
     model: str = Field(..., description="Model ID to use for extraction")
     user_prompt: str = Field(..., description="User message content")
-    system_prompt: Optional[str] = Field(None, description="System prompt content")
+    system_prompt: Optional[str] = Field(default=None, description="System prompt content")
     thinking_content: Optional[str] = Field(
-        None, description="Pre-filled thinking block content"
+        default=None, description="Pre-filled thinking block content"
     )
     assistant_content: Optional[str] = Field(
-        None, description="Pre-filled assistant response content"
+        default=None, description="Pre-filled assistant response content"
     )
     enable_thinking: bool = Field(
-        True, description="Control chat template thinking mode (Qwen3)"
+        default=True, description="Control chat template thinking mode (Qwen3)"
     )
     layer: int = Field(
-        -2, description="Which layer to extract from (-2 for second-to-last)"
+        default=-2, description="Which layer to extract from (-2 for second-to-last)"
     )
-    max_length: int = Field(512, description="Maximum sequence length")
+    max_length: int = Field(default=512, description="Maximum sequence length")
     encoding_format: str = Field(
-        "float", description="Output format: 'float' (nested list) or 'base64'"
+        default="float", description="Output format: 'float' (nested list) or 'base64'"
     )
     return_token_boundaries: bool = Field(
-        False, description="Return token indices for each section"
+        default=False, description="Return token indices for each section"
     )
     return_formatted_prompt: bool = Field(
-        False, description="Return the formatted prompt string (for debugging)"
+        default=False, description="Return the formatted prompt string (for debugging)"
     )
 
 
@@ -115,14 +115,14 @@ class StructuredHiddenStatesResponse(BaseModel):
 
     # Token boundary fields
     token_boundaries: Optional[Dict[str, TokenBoundary]] = Field(
-        None,
+        default=None,
         description="Token boundaries for each section: system, user, think, assistant",
     )
     token_counts: Optional[Dict[str, int]] = Field(
-        None, description="Token count for each section"
+        default=None, description="Token count for each section"
     )
     formatted_prompt: Optional[str] = Field(
-        None, description="The formatted prompt string (for debugging)"
+        default=None, description="The formatted prompt string (for debugging)"
     )
 
 

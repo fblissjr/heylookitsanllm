@@ -43,7 +43,7 @@ class AnalyzeRequest(BaseModel):
     # band_layers x positions x k decoded tokens, computed on the pinned MLX
     # executor thread under the process-global generation gate -- an unbounded k
     # (clamped only to vocab downstream) would let one request wedge all inference.
-    heatmap_top_k: int = Field(0, ge=0, le=64)
+    heatmap_top_k: int = Field(default=0, ge=0, le=64)
     chat: bool = False   # False = raw completion (crisp viz); True = chat template (risk)
 
 

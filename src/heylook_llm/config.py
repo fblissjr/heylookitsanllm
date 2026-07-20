@@ -26,45 +26,45 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     model: Optional[str] = None
     messages: List[ChatMessage]
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    top_k: Optional[int] = Field(None, ge=0)
-    min_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    repetition_penalty: Optional[float] = Field(None, ge=0.1, le=2.0)
-    repetition_context_size: Optional[int] = Field(None, ge=1)
-    max_tokens: Optional[int] = Field(None, gt=0)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=0)
+    min_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    repetition_penalty: Optional[float] = Field(default=None, ge=0.1, le=2.0)
+    repetition_context_size: Optional[int] = Field(default=None, ge=1)
+    max_tokens: Optional[int] = Field(default=None, gt=0)
     stream: bool = False
     include_performance: bool = False
     seed: Optional[int] = None
     
     # Batch processing extensions
-    processing_mode: Optional[str] = Field(None, description="conversation|sequential|sequential_with_context")
-    return_individual: Optional[bool] = Field(None, description="Return individual responses vs combined")
-    include_timing: Optional[bool] = Field(None, description="Include timing information")
+    processing_mode: Optional[str] = Field(default=None, description="conversation|sequential|sequential_with_context")
+    return_individual: Optional[bool] = Field(default=None, description="Return individual responses vs combined")
+    include_timing: Optional[bool] = Field(default=None, description="Include timing information")
     
     # Image resizing parameters (from multipart endpoint)
-    resize_max: Optional[int] = Field(None, description="Resize images to max dimension (e.g., 512, 768, 1024)")
-    resize_width: Optional[int] = Field(None, description="Resize images to specific width")
-    resize_height: Optional[int] = Field(None, description="Resize images to specific height")
-    image_quality: Optional[int] = Field(None, ge=1, le=100, description="JPEG quality for resized images")
-    preserve_alpha: Optional[bool] = Field(None, description="Preserve alpha channel (outputs PNG)")
+    resize_max: Optional[int] = Field(default=None, description="Resize images to max dimension (e.g., 512, 768, 1024)")
+    resize_width: Optional[int] = Field(default=None, description="Resize images to specific width")
+    resize_height: Optional[int] = Field(default=None, description="Resize images to specific height")
+    image_quality: Optional[int] = Field(default=None, ge=1, le=100, description="JPEG quality for resized images")
+    preserve_alpha: Optional[bool] = Field(default=None, description="Preserve alpha channel (outputs PNG)")
 
     # Thinking mode control (Qwen3 models)
-    enable_thinking: Optional[bool] = Field(None, description="Enable thinking mode for Qwen3 models")
+    enable_thinking: Optional[bool] = Field(default=None, description="Enable thinking mode for Qwen3 models")
 
     # Visual token budget per image (model-agnostic; mapped onto the loaded
     # model's own processor knob -- gemma-4 buckets / qwen pixel budget)
-    vision_tokens: Optional[int] = Field(None, ge=16, le=16384, description="Target visual tokens per image; snapped to what the model's processor supports")
+    vision_tokens: Optional[int] = Field(default=None, ge=16, le=16384, description="Target visual tokens per image; snapped to what the model's processor supports")
 
     # Additional sampler parameters
-    presence_penalty: Optional[float] = Field(None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
+    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
     # Logprobs support (OpenAI-compatible)
-    logprobs: Optional[bool] = Field(None, description="Return log probabilities for output tokens")
-    top_logprobs: Optional[int] = Field(None, ge=0, le=20, description="Number of top tokens with log probabilities (0-20)")
+    logprobs: Optional[bool] = Field(default=None, description="Return log probabilities for output tokens")
+    top_logprobs: Optional[int] = Field(default=None, ge=0, le=20, description="Number of top tokens with log probabilities (0-20)")
 
     # Streaming options (OpenAI-compatible)
-    stream_options: Optional[Dict] = Field(None, description="Options for streaming: {include_usage: true} to get usage stats")
+    stream_options: Optional[Dict] = Field(default=None, description="Options for streaming: {include_usage: true} to get usage stats")
 
     # Runtime sampler preset (resolved against the PresetRegistry at generation
     # time). Overlays preset fields on top of model-level defaults; explicit
@@ -104,9 +104,9 @@ class BatchChatRequest(BaseModel):
     processing_mode: str = "batch"
 
     # Batch-specific parameters
-    completion_batch_size: Optional[int] = Field(32, description="Max concurrent generations")
-    prefill_batch_size: Optional[int] = Field(8, description="Max prefill parallelism")
-    prefill_step_size: Optional[int] = Field(2048, description="Chunk size for prefill")
+    completion_batch_size: Optional[int] = Field(default=32, description="Max concurrent generations")
+    prefill_batch_size: Optional[int] = Field(default=8, description="Max prefill parallelism")
+    prefill_step_size: Optional[int] = Field(default=2048, description="Chunk size for prefill")
 
     @field_validator('requests', mode='before')
     @classmethod
@@ -148,7 +148,7 @@ class MLXModelConfig(BaseModel):
 
     model_path: str
     draft_model_path: Optional[str] = None
-    num_draft_tokens: Optional[int] = Field(3, json_schema_extra={"is_runtime_default": True})
+    num_draft_tokens: Optional[int] = Field(default=3, json_schema_extra={"is_runtime_default": True})
     # DESCRIPTION vs ROUTING split (Phase 6 refinement 2026-07-11). ``vision``
     # historically did both jobs; it is now a derived mirror of
     # ``"vision" in modalities`` (kept for back-compat with readers of
@@ -174,15 +174,15 @@ class MLXModelConfig(BaseModel):
     cache_type: Literal["standard", "rotating", "quantized"] = Field(
         "standard", json_schema_extra={"is_runtime_default": True}
     )
-    max_kv_size: Optional[int] = Field(None, json_schema_extra={"is_runtime_default": True})
+    max_kv_size: Optional[int] = Field(default=None, json_schema_extra={"is_runtime_default": True})
     # MLX QuantizedKVCache supports exactly 2/4/8 bits and group sizes that
     # divide the head dim; anything else fails at first generation, so reject
     # it at config-load time instead.
-    kv_bits: Optional[Literal[2, 4, 8]] = Field(None, json_schema_extra={"is_runtime_default": True})
-    kv_group_size: Literal[32, 64, 128] = Field(64, json_schema_extra={"is_runtime_default": True})
+    kv_bits: Optional[Literal[2, 4, 8]] = Field(default=None, json_schema_extra={"is_runtime_default": True})
+    kv_group_size: Literal[32, 64, 128] = Field(default=64, json_schema_extra={"is_runtime_default": True})
     # In-flight + queued requests admitted before 503 backpressure. Consumed
     # by the generation gate (process-wide; the first provider created wins).
-    max_queue_depth: int = Field(8, ge=1)
+    max_queue_depth: int = Field(default=8, ge=1)
     # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
@@ -194,7 +194,7 @@ class MLXModelConfig(BaseModel):
     # Per-model default visual token budget per image (request vision_tokens
     # overrides; None = the processor's own default). Mapped per family by
     # providers/common/vision_budget.py.
-    vision_tokens: Optional[int] = Field(None, ge=16, le=16384)
+    vision_tokens: Optional[int] = Field(default=None, ge=16, le=16384)
     # Hidden states defaults (for /v1/hidden_states endpoint)
     default_hidden_layer: int = -2  # Z-Image uses penultimate layer
     default_max_length: int = 512
@@ -203,7 +203,7 @@ class MLXModelConfig(BaseModel):
     # Idle-unload override (C2). ``None`` = use ``AppConfig.idle_unload_seconds``
     # global default. ``0`` = never idle-unload this model. Positive = per-model
     # threshold in seconds. Pinned models are exempt regardless of this value.
-    unload_after_idle_seconds: Optional[int] = Field(None, ge=0)
+    unload_after_idle_seconds: Optional[int] = Field(default=None, ge=0)
     # Default preset applied when a request doesn't specify ``preset`` (C4).
     # Resolved against the PresetRegistry at request time; an unknown name
     # falls back to "skip this layer" rather than raising -- the model config
@@ -318,7 +318,7 @@ class AppConfig(BaseModel):
     # Default is 1 (single-model) -- Apple Silicon is memory-bandwidth-bound,
     # so a second loaded-but-idle model doesn't help throughput. Field stays
     # configurable for setups that truly need hot-swap without reload.
-    max_loaded_models: int = Field(1, ge=1)
+    max_loaded_models: int = Field(default=1, ge=1)
 
     # Idle unload (C2). Global default applied when a model has no per-model
     # ``unload_after_idle_seconds`` override. ``0`` disables idle unload
@@ -369,8 +369,8 @@ class ModelMetrics(BaseModel):
     context_capacity: int = Field(..., description="Maximum context window size")
     context_percent: float = Field(..., description="Context usage percentage")
     memory_mb: float = Field(..., description="Model memory usage in MB")
-    requests_active: int = Field(0, description="Active requests for this model")
-    requests_queued: int = Field(0, description="Requests waiting in the FIFO generation queue behind the active one")
+    requests_active: int = Field(default=0, description="Active requests for this model")
+    requests_queued: int = Field(default=0, description="Requests waiting in the FIFO generation queue behind the active one")
 
 
 class SystemMetricsResponse(BaseModel):
@@ -389,7 +389,7 @@ class CacheInfo(BaseModel):
     cache_id: str = Field(..., description="Unique cache identifier")
     model: str = Field(..., description="Model ID this cache belongs to")
     name: str = Field(..., description="User-friendly cache name")
-    description: Optional[str] = Field(None, description="Optional description")
+    description: Optional[str] = Field(default=None, description="Optional description")
     tokens_cached: int = Field(..., description="Number of tokens in cache")
     size_mb: float = Field(..., description="Cache file size in MB")
     created_at: str = Field(..., description="ISO timestamp of creation")
@@ -402,7 +402,7 @@ class CacheListResponse(BaseModel):
 
 class CacheClearRequest(BaseModel):
     """Request to clear caches."""
-    model: Optional[str] = Field(None, description="Model ID to clear caches for (all if omitted)")
+    model: Optional[str] = Field(default=None, description="Model ID to clear caches for (all if omitted)")
 
 
 class CacheClearResponse(BaseModel):
@@ -420,15 +420,15 @@ class EnhancedUsage(BaseModel):
     """Extended usage statistics including thinking tokens."""
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    thinking_tokens: Optional[int] = Field(None, description="Tokens used in thinking blocks")
-    content_tokens: Optional[int] = Field(None, description="Tokens in actual content")
+    thinking_tokens: Optional[int] = Field(default=None, description="Tokens used in thinking blocks")
+    content_tokens: Optional[int] = Field(default=None, description="Tokens in actual content")
     total_tokens: int = 0
 
 
 class GenerationTiming(BaseModel):
     """Timing breakdown for generation phases."""
-    thinking_duration_ms: Optional[int] = Field(None, description="Time spent in thinking phase")
-    content_duration_ms: Optional[int] = Field(None, description="Time spent generating content")
+    thinking_duration_ms: Optional[int] = Field(default=None, description="Time spent in thinking phase")
+    content_duration_ms: Optional[int] = Field(default=None, description="Time spent generating content")
     total_duration_ms: int = Field(..., description="Total generation time")
     peak_memory_gb: Optional[float] = Field(
         None,
@@ -480,9 +480,9 @@ class StreamLogprobs(BaseModel):
 
 class StreamDelta(BaseModel):
     """Delta content in a streaming chunk."""
-    role: Optional[str] = Field(None, description="Role (only in first chunk)")
-    content: Optional[str] = Field(None, description="Text content delta")
-    thinking: Optional[str] = Field(None, description="Thinking content delta")
+    role: Optional[str] = Field(default=None, description="Role (only in first chunk)")
+    content: Optional[str] = Field(default=None, description="Text content delta")
+    thinking: Optional[str] = Field(default=None, description="Thinking content delta")
 
 class StreamChoice(BaseModel):
     """Single choice in a streaming chunk."""
@@ -529,9 +529,9 @@ class ScannedModelResponse(BaseModel):
     path: str = Field(..., description="Filesystem path to model")
     provider: Literal["mlx"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
-    vision: bool = Field(False, description="Whether model supports vision")
-    quantization: Optional[str] = Field(None, description="Quantization level (4bit, 8bit, etc)")
-    already_configured: bool = Field(False, description="True if ID already exists in models.toml")
+    vision: bool = Field(default=False, description="Whether model supports vision")
+    quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")
+    already_configured: bool = Field(default=False, description="True if ID already exists in models.toml")
     tags: List[str] = Field(default_factory=list)
     description: str = ""
 
@@ -539,13 +539,13 @@ class ScannedModelResponse(BaseModel):
 class ModelScanRequest(BaseModel):
     """Request to scan for importable models."""
     paths: List[str] = Field(default_factory=list, description="Custom paths to scan")
-    scan_hf_cache: bool = Field(True, description="Also scan HuggingFace cache directories")
+    scan_hf_cache: bool = Field(default=True, description="Also scan HuggingFace cache directories")
 
 
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models."""
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    profile: Optional[str] = Field("balanced", description="Profile to apply to all imported models")
+    profile: Optional[str] = Field(default="balanced", description="Profile to apply to all imported models")
 
 
 class ModelUpdateRequest(BaseModel):
@@ -554,7 +554,7 @@ class ModelUpdateRequest(BaseModel):
     tags: Optional[List[str]] = None
     enabled: Optional[bool] = None
     capabilities: Optional[List[str]] = None
-    config: Optional[Dict] = Field(None, description="Provider-specific config updates")
+    config: Optional[Dict] = Field(default=None, description="Provider-specific config updates")
 
 
 class ModelValidateRequest(BaseModel):
@@ -583,10 +583,10 @@ class BulkProfileRequest(BaseModel):
 class ModelStatusResponse(BaseModel):
     """Runtime status of a model."""
     loaded: bool = Field(..., description="Whether model is currently in LRU cache")
-    memory_mb: Optional[float] = Field(None, description="Memory usage in MB (if loaded)")
-    context_used: Optional[int] = Field(None, description="Tokens currently in context")
-    context_capacity: Optional[int] = Field(None, description="Maximum context window")
-    requests_active: Optional[int] = Field(None, description="Active requests for this model")
+    memory_mb: Optional[float] = Field(default=None, description="Memory usage in MB (if loaded)")
+    context_used: Optional[int] = Field(default=None, description="Tokens currently in context")
+    context_capacity: Optional[int] = Field(default=None, description="Maximum context window")
+    requests_active: Optional[int] = Field(default=None, description="Active requests for this model")
 
 
 class AdminModelResponse(BaseModel):

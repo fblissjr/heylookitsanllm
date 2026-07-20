@@ -155,7 +155,7 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
 
     # Step 2: flatten any list content to strings so all tokenizer
     # Jinja templates can handle them
-    tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+    tokenizer = getattr(processor, "tokenizer", processor)
     image_token = getattr(processor, "image_token",
                           getattr(tokenizer, "image_token", "<image>"))
 
@@ -219,7 +219,7 @@ class UnifiedTextStrategy:
         self.cache_manager = get_global_cache_manager()
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        tokenizer = getattr(processor, "tokenizer", processor)
 
         messages_for_template = self._prepare_messages(request.messages)
         prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
@@ -397,7 +397,7 @@ class VLMVisionStrategy:
         self._vision_cache = VisionFeatureCache(max_entries=20)
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
+        tokenizer = getattr(processor, "tokenizer", processor)
         sampler, processors = build_sampler(tokenizer, effective_request)
 
         # Initialize batch vision processor for parallel image loading
@@ -916,7 +916,7 @@ class MLXProvider(BaseProvider):
         if self._batch_processor is None:
             from .mlx_batch_text import TextBatchProcessor
 
-            tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+            tokenizer = getattr(self.processor, "tokenizer", self.processor)
 
             # Get batch configuration from model config
             batch_config = self.config.get('batch', {})
@@ -965,7 +965,7 @@ class MLXProvider(BaseProvider):
         prompts = []
         max_tokens_list = []
 
-        tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+        tokenizer = getattr(self.processor, "tokenizer", self.processor)
 
         for req in requests:
             # Apply chat template

@@ -18,10 +18,10 @@ class Usage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     thinking_tokens: Optional[int] = Field(
-        None, description="Tokens used in thinking blocks (Qwen3)"
+        default=None, description="Tokens used in thinking blocks (Qwen3)"
     )
     content_tokens: Optional[int] = Field(
-        None, description="Tokens in non-thinking content"
+        default=None, description="Tokens in non-thinking content"
     )
 
     @property
@@ -36,7 +36,7 @@ class PerformanceInfo(BaseModel):
     """
     prompt_tps: float = Field(..., description="Prompt processing tokens per second")
     generation_tps: float = Field(..., description="Generation tokens per second")
-    peak_memory_gb: Optional[float] = Field(None, description="Peak memory usage in GB")
+    peak_memory_gb: Optional[float] = Field(default=None, description="Peak memory usage in GB")
     thinking_duration_ms: Optional[int] = Field(
         None, description="Time spent in thinking phase"
     )

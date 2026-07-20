@@ -53,42 +53,42 @@ class MessageCreateRequest(BaseModel):
     )
     messages: List[Message]
     system: Optional[str] = Field(
-        None, description="System prompt. Kept out of messages array for clarity."
+        default=None, description="System prompt. Kept out of messages array for clarity."
     )
-    max_tokens: int = Field(1024, gt=0)
-    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
-    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    top_k: Optional[int] = Field(None, ge=0)
-    min_p: Optional[float] = Field(None, ge=0.0, le=1.0)
-    repetition_penalty: Optional[float] = Field(None, ge=0.1, le=2.0)
-    repetition_context_size: Optional[int] = Field(None, ge=1)
-    presence_penalty: Optional[float] = Field(None, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=1024, gt=0)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=0)
+    min_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    repetition_penalty: Optional[float] = Field(default=None, ge=0.1, le=2.0)
+    repetition_context_size: Optional[int] = Field(default=None, ge=1)
+    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     seed: Optional[int] = None
     stream: bool = False
     stream_options: Optional[StreamOptions] = None
 
     # Thinking mode (Qwen3 models)
     thinking: Optional[bool] = Field(
-        None, description="Enable thinking mode for models that support it (e.g. Qwen3)"
+        default=None, description="Enable thinking mode for models that support it (e.g. Qwen3)"
     )
 
     # Logprobs
     logprobs: Optional[bool] = Field(
-        None, description="Return log probabilities for output tokens"
+        default=None, description="Return log probabilities for output tokens"
     )
     top_logprobs: Optional[int] = Field(
-        None, ge=0, le=20,
+        default=None, ge=0, le=20,
         description="Number of top token alternatives with log probabilities (0-20)",
     )
 
     # Performance
     include_performance: bool = Field(
-        False, description="Include performance metrics (tps, memory) in response"
+        default=False, description="Include performance metrics (tps, memory) in response"
     )
 
     # Metadata passthrough
     metadata: Optional[Dict[str, str]] = Field(
-        None, description="Arbitrary metadata passed through to the response"
+        default=None, description="Arbitrary metadata passed through to the response"
     )
 
     @field_validator("messages")

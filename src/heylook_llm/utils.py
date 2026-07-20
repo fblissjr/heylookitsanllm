@@ -182,7 +182,7 @@ def _truncate_image_url(url: str, max_chars: int = 100) -> str:
     # For non-base64 URLs, just truncate if too long
     return url[:max_chars + 20] + "..." if len(url) > max_chars + 20 else url
 
-def _format_bytes(bytes_count: int) -> str:
+def _format_bytes(bytes_count: float) -> str:
     """Convert bytes to human readable format."""
     for unit in ['B', 'KB', 'MB']:
         if bytes_count < 1024:
@@ -318,10 +318,10 @@ class RealTimeLogger:
 
         try:
             if self._process is None:
-                self._process = psutil.Process(os.getpid())
+                self._process = psutil.Process(os.getpid())  # type: ignore[union-attr]
 
             memory_info = self._process.memory_info()
-            virtual_memory = psutil.virtual_memory()
+            virtual_memory = psutil.virtual_memory()  # type: ignore[union-attr]
 
             return {
                 'used_gb': memory_info.rss / (1024**3),
@@ -351,7 +351,7 @@ def log_request_complete(request_id: str, success: bool = True, error_msg: Optio
     """Log request completion."""
     rt_logger.complete_request(request_id, success, error_msg)
 
-def log_full_request_details(request_id: str, chat_request, response_text: str = None):
+def log_full_request_details(request_id: str, chat_request, response_text: "str | None" = None):
     """
     Log complete request and response details for full visibility.
     Includes sanitized request structure and response preview.

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.65]
+
+### Added
+
+- **`tests/eval/` -- opt-in LLM behavior-eval harness** (13-task seed bank,
+  7 programmatic judges), generalized from the 2026-07-20 live-verification
+  scripts. Covers the four bug classes found that day: thinking split/leak,
+  stop discipline, vision single/multi-image correctness, vision_tokens
+  budgets. Needs a running server (never spawns one); not wired into
+  /test-suite -- run it when touching templates, parsers, stop tokens, or
+  the vision pipeline.
+
+### Changed
+
+- **Pyright noise triage.** Real fixes: deprecated `datetime.utcnow`;
+  untyped `= None` defaults; batch responses could hand pydantic
+  `model=None` (runtime 500) -- now coalesced; float re-binding in
+  `_format_bytes`; route discovery duck-typed via getattr. Systemic:
+  all 96 positional Pydantic `Field(default, ...)` calls converted to
+  explicit `default=` (this pyright build only recognizes keyword form --
+  the source of every false "arguments missing" constructor error).
+  Idioms annotated per repo convention (`# type: ignore[...]`): request
+  attr-attach, streaming-logprobs union, psutil optional import, RLM's
+  provider-specific batch fast path. hasattr-ternary tokenizer access
+  swapped for `getattr(x, "tokenizer", x)` (same runtime, narrows).
+
 ## [1.34.64]
 
 ### Added
