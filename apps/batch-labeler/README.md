@@ -62,15 +62,15 @@ Write a TOML file and pass `--task-file`:
 
 ```toml
 [task]
-name = "damage-assessment"
-description = "Insurance photo triage"
+name = "bird-id"
+description = "Backyard bird photo identification"
 system_prompt = """
-You assess property damage photos. Respond with EXACTLY one JSON object:
-{"damage_type": string, "severity": "none|minor|moderate|severe", "notes": string}
+You identify birds in photos. Respond with EXACTLY one JSON object:
+{"species": string, "common_name": string, "count": integer, "behavior": string, "id_confidence": "low|medium|high"}
 """
-user_prompt = "Assess this photo."
+user_prompt = "Identify the birds in this photo."
 expects_json = true
-required_keys = ["damage_type", "severity"]
+required_keys = ["common_name", "id_confidence"]
 preset = "vlm-extract"
 max_tokens = 512
 ```
