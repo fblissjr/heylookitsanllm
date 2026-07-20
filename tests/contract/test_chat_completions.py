@@ -94,6 +94,22 @@ class TestChatCompletionsNonStreaming:
         })
         assert resp.status_code == 422
 
+    def test_unknown_sampler_returns_400(self, client):
+        """Unknown sampler name fails at the route boundary with a 400 that
+        names the known samplers -- NOT a bare 500. Regression: the deep
+        SamplerNotFound raise happens on first generator advance, past the
+        route's guarded stage, so without early validation it escaped to
+        Starlette's default 500 handler."""
+        resp = client.post("/v1/chat/completions", json={
+            "model": "test-mlx-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "sampler": "definitely-not-a-sampler",
+        })
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "definitely-not-a-sampler" in detail
+        assert "balanced" in detail  # names the known samplers
+
     def test_unknown_model_returns_500(self, client):
         """Request for a model not in config returns 500."""
         resp = client.post("/v1/chat/completions", json={

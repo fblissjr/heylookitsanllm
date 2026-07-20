@@ -18,10 +18,9 @@ import io
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from judges import Verdict, color_mention, combine_verdicts, exact_word_count, marker_leak, non_empty_non_gibberish, repetition, substring_present, token_budget_exhausted
+from judges import Verdict, color_mention, combine_verdicts, exact_word_count, marker_leak, non_empty_non_gibberish, not_refusal, repetition, substring_present, token_budget_exhausted
 
 
 @dataclass
@@ -56,12 +55,21 @@ def _color_letter_png(rgb: tuple[int, int, int], letter: str, size: int = 256) -
 
 
 def _heatmap_png(width: int = 1400, height: int = 900) -> bytes:
-    # Random noise, not a real heatmap -- big + content-free so the "sanity"
-    # task has no ground-truth colors to hallucinate about. Seeded so the
-    # fixture (and therefore the vision-feature-cache key) is stable run to run.
-    rng = np.random.default_rng(seed=42)
-    arr = rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
-    img = Image.fromarray(arr, mode="RGB")
+    # Four flat color quadrants: still big (exercises large-image token
+    # budgets) but DESCRIBABLE, so the judge can demand actual perception.
+    # The earlier pure-noise version let a refusal ("I cannot describe this
+    # image") score as a prose-pass -- there was nothing to check against.
+    # Deterministic drawing keeps the fixture (and the vision-feature-cache
+    # key) stable run to run.
+    img = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img)
+    for box, rgb in (
+        ((0, 0, width // 2, height // 2), (230, 30, 30)),        # red
+        ((width // 2, 0, width, height // 2), (30, 60, 220)),    # blue
+        ((0, height // 2, width // 2, height), (30, 150, 60)),   # green
+        ((width // 2, height // 2, width, height), (240, 150, 20)),  # orange
+    ):
+        draw.rectangle(box, fill=rgb)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -132,14 +140,25 @@ TASK_VISION_TWO_IMAGE_DISCRIMINATION = EvalTask(
 
 
 def _judge_heatmap(ctx: dict) -> Verdict:
-    return combine_verdicts(non_empty_non_gibberish(ctx["content"]), marker_leak(ctx["content"]))
+    content = (ctx["content"] or "").lower()
+    hits = [c for c in ("red", "blue", "green", "orange") if c in content]
+    colors_v = Verdict(
+        passed=len(hits) >= 2,
+        evidence=f"quadrant colors {len(hits)}/4: {', '.join(hits) or 'none'}",
+    )
+    return combine_verdicts(
+        colors_v,
+        not_refusal(ctx["content"]),
+        non_empty_non_gibberish(ctx["content"]),
+        marker_leak(ctx["content"]),
+    )
 
 
 TASK_VISION_LARGE_HEATMAP_SANITY = EvalTask(
     name="vision_large_heatmap_sanity",
     category="vision",
     required_capabilities=("vision",),
-    description="~1400x900 random-noise image; sanity only (non-empty, non-gibberish, no leak) -- no ground truth to judge color-accuracy against.",
+    description="~1400x900 four-quadrant color-block image; requires >=2 quadrant colors named, non-refusal, non-gibberish, no leak markers -- large-image budget sanity WITH ground truth.",
     build_request=lambda: _vision_body([_HEATMAP], "Describe this image.", max_tokens=150, enable_thinking=False),
     judge=_judge_heatmap,
     timeout=600,

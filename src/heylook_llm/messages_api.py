@@ -248,6 +248,11 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # Convert to internal ChatRequest
     chat_request = to_chat_request(msg_request)
 
+    # Same route-boundary guard as /v1/chat/completions: the deep
+    # SamplerNotFound fires on first generator advance and escapes as a 500.
+    from heylook_llm.api import validate_request_sampler
+    validate_request_sampler(getattr(chat_request, "sampler", None))
+
     provider_get_ms = 0.0
     provider = None
     # Per-request cooperative abort signal: shared with the streaming layer so a

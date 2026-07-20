@@ -95,6 +95,26 @@ def exact_word_count(content: str, expected_words: int = 1) -> Verdict:
     return Verdict(passed=passed, evidence=f"word count {len(tokens)} (want {expected_words}): {tokens!r}")
 
 
+_REFUSAL_RE = re.compile(
+    r"(?:i[’']?m sorry|i am sorry|i can[’']?t\b|i cannot\b|"
+    r"i[’']?m unable|i am unable|unable to (?:process|describe|view|see))",
+    re.IGNORECASE,
+)
+
+
+def not_refusal(content: str) -> Verdict:
+    """Fail refusal-shaped responses. Without this, prose-sanity judges score
+    'I'm sorry, but I cannot describe this image' as a PASS -- the live case
+    that motivated it: a 4-bit QAT model refusing synthetic images while the
+    judge only checked 'looks like prose, no leaks'. Scans the opening of the
+    response only: a legitimate description that later hedges is not a refusal."""
+    head = (content or "")[:160]
+    m = _REFUSAL_RE.search(head)
+    if m:
+        return Verdict(passed=False, evidence=f"refusal-shaped response: {head[:80]!r}")
+    return Verdict(passed=True, evidence="not a refusal")
+
+
 def non_empty_non_gibberish(content: str) -> Verdict:
     """Generalizes repro_multiimage.py's
     `content.count(":") > 15 or len(set(content.strip())) < 8` heuristic --

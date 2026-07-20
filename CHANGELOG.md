@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.1]
+
+### Fixed
+
+- **Unknown `sampler` name returned a bare 500**: the deep `SamplerNotFound`
+  raise happens inside the provider's `_apply_model_defaults`, which runs
+  lazily on first generator advance -- past the chat route's guarded stage --
+  so it escaped to Starlette's default handler as `Internal Server Error`.
+  Both `/v1/chat/completions` and `/v1/messages` now validate the sampler
+  name at the route boundary: immediate 400 naming the known samplers, no
+  model load spent on a typo. Contract test added.
+- **Eval bank: refusals could score as passes**: the large-image "sanity"
+  task judged only prose-shape, so "I'm sorry, but I cannot describe this
+  image" PASSED (live case: the 26B QAT 4-bit refusing synthetic images).
+  New `not_refusal` judge (refusal-shaped openers fail), and the noise
+  image is replaced by a four-quadrant color-block PNG (same size, now
+  describable) with a >=2-colors-named requirement.
+
 ## [1.38.0]
 
 ### Added
