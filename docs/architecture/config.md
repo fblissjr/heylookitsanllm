@@ -9,7 +9,7 @@ This document explains the configuration system, `models.toml` structure, Pydant
 and reloaded via `POST /v1/admin/reload`. Runtime-mutable server behavior
 (observability verbosity, the MLX buffer-cache cap) is a separate system,
 `settings.py` / `SettingsSchema`, resolved DB-over-default and edited via
-`/v1/admin/config` -- see [api.md](./api.md#operational-config-v1adminconfig).
+`/v1/admin/config` -- schema + resolution in `src/heylook_llm/settings.py`.
 The two are unrelated: a `models.toml` edit needs a reload; a
 `/v1/admin/config` change applies immediately with no reload.
 
@@ -297,7 +297,7 @@ enabled = true
 | `model_path` | string | required | HuggingFace model ID or local path |
 | `max_length` | int | `2048` | Maximum tokenization length |
 
-The embedding provider uses dynamic backbone loading -- it supports any architecture that mlx-lm's `_get_classes()` can resolve, not just Gemma3. See [mlx_embedding.md](./mlx_embedding.md) for architecture details.
+The embedding provider uses dynamic backbone loading -- it supports any architecture that mlx-lm's `_get_classes()` can resolve, not just Gemma3. Design notes live in `src/heylook_llm/models/embedding_model.py`'s docstring.
 
 ---
 
@@ -455,8 +455,4 @@ Check that `model_path` points to a valid local path or valid HuggingFace model 
 
 ## Related Documentation
 
-- [router.md](./router.md) -- model routing and LRU cache
-- [api.md](./api.md) -- API endpoints
 - [mlx_provider.md](./mlx_provider.md) -- MLXProvider details
-- [mlx_embedding.md](./mlx_embedding.md) -- MLXEmbeddingProvider details
-- [overview.md](./overview.md) -- backend architecture overview

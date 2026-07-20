@@ -7,9 +7,9 @@ and research live local-only in `internal/` (gitignored) and are not part of thi
 tree. The project's nav hub for agents is the root [CLAUDE.md](../CLAUDE.md).
 
 ## Architecture reference
-[architecture/](./architecture/) -- how the backend works (overview, api, router,
-config, providers, and the MLX ecosystem posture). Start at its
-[README](./architecture/README.md).
+[architecture/](./architecture/) -- backend design records + invariants (config
+history, provider mechanisms, MLX ecosystem posture, crash postmortems).
+Start at its [README](./architecture/README.md).
 
 ## Project -- roadmap / status / backlog
 - [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-5)

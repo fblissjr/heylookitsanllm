@@ -12,6 +12,19 @@ Architecture:
     -> pooling(hidden_states, attention_mask)
     -> Dense chain (optional)
     -> L2 normalize
+
+Design notes (the why, not derivable from the code):
+- NO causal mask: embeddings need every token to attend to every other
+  token; a causal model cannot fold tokens N+1..end into token N's
+  representation.
+- The additive padding mask exists so identical content with different
+  padding yields IDENTICAL embeddings -- without it, pad positions
+  contaminate content representations through self-attention.
+- The backbone is used directly (not mlx-lm's Model wrapper) because the
+  lm_head is dead weight here; Dense layers are activation-less nn.Linear
+  (HF "Identity activation").
+- float32 recommended: some embedding models lose precision in float16
+  activations; bfloat16 is acceptable.
 """
 
 from typing import Dict, List, Literal, Optional
