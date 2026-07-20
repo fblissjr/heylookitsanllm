@@ -71,7 +71,10 @@ ordering and the sole-user/minimal-custom-code posture.
   epilogues + the duplicated _safe_prefix_len/_strip_partial free-function
   pair; chunk-boundary behavior is pinned by test_reasoning_parser.py +
   test_thinking_parser.py. Do as ONE refactor (piecemeal extraction now
-  would churn twice).
+  would churn twice). FULL design note (line-level inventory, the harmony
+  dead final-flush defect to fix alongside, wrapper sketch, failing-first
+  test list, acceptance criteria):
+  internal/research/parser_strip_unification.md.
 - [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
   review's coverage table -- all four currently have ZERO e2e coverage):
   (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
