@@ -344,6 +344,8 @@ page exposing logprobs — see trim question §6.
 ## 6. Feature scope (DECIDED)
 
 v3 ships **5 pages**: chat, models, notebook, perf (simplified), token explorer. **Batch is dropped.**
+(Historical build-time decision, kept as the record. A 6th page — j-space — was added post-build,
+~v1.34.31; the live page list is in `docs/frontend_v3.md`.)
 
 | Page | v2 lines | Verdict | Notes |
 |------|---------|---------|-------|
