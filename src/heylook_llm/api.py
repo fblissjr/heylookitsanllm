@@ -121,8 +121,8 @@ async def lifespan(app: FastAPI):
 
     # Wire the observability spine from the settings layer (env > DB > default)
     # and disclose what's being written (open-source: user must see it's local).
-    from heylook_llm.config_api import apply_observability_settings, observability_log_dir
-    _obs = await apply_observability_settings(app.state.db)
+    from heylook_llm.config_api import apply_runtime_settings, observability_log_dir
+    _obs = await apply_runtime_settings(app.state.db)
     logging.info(
         "Observability: level=%s · %s (JSONL) · %dd retention · nothing transmitted "
         "· configure/disable: docs/observability_guide.md",

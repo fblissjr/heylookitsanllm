@@ -30,8 +30,32 @@ def observability_log_dir() -> Path:
     return Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
 
 
-async def apply_observability_settings(conn) -> SettingsSchema:
-    """Resolve effective settings and push obs level + log dir into the spine cache.
+# Captured on the first cap so clearing the override can restore MLX's own
+# default (mx.set_cache_limit returns the previous limit). None = never capped.
+_mlx_default_cache_limit: int | None = None
+
+
+def _apply_mlx_cache_limit(gb: float | None) -> None:
+    """Best-effort apply of the MLX buffer-cache cap. Never raises."""
+    global _mlx_default_cache_limit
+    try:
+        import mlx.core as mx
+        if gb is None:
+            if _mlx_default_cache_limit is not None:
+                mx.set_cache_limit(_mlx_default_cache_limit)
+                _mlx_default_cache_limit = None
+            return
+        prev = mx.set_cache_limit(int(gb * 1024**3))
+        if _mlx_default_cache_limit is None:
+            _mlx_default_cache_limit = prev
+    except Exception as e:
+        logger.warning("MLX cache limit not applied: %s", e)
+
+
+async def apply_runtime_settings(conn) -> SettingsSchema:
+    """Resolve effective settings and push them into the in-process consumers:
+    the observability spine cache (level/log dir/retention) and the MLX
+    buffer-cache cap.
 
     Called at startup and after every settings change so the (sync, hot-path)
     ``record_event`` cache stays current without a DB hit. Never raises -- a bad
@@ -40,12 +64,13 @@ async def apply_observability_settings(conn) -> SettingsSchema:
     stored = await db.get_all_settings(conn)
     settings, err = resolve_settings_safe(stored)
     if err:
-        logger.warning("Observability settings invalid, using defaults: %s", err)
+        logger.warning("Stored settings invalid, using defaults: %s", err)
     observability.configure(
         level=settings.observability_level,
         log_dir=observability_log_dir(),
         retention_days=settings.observability_retention_days,
     )
+    _apply_mlx_cache_limit(settings.mlx_cache_limit_gb)
     return settings
 
 
@@ -97,9 +122,9 @@ async def update_config(request: Request, updates: dict = Body(...)):
             await db.set_setting(conn, key, getattr(validated, key))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
-    # Refresh the in-process spine cache so an observability level/retention
-    # change takes effect immediately (no restart, no per-event DB hit).
-    await apply_observability_settings(conn)
+    # Refresh the in-process consumers so a settings change takes effect
+    # immediately (no restart, no per-event DB hit).
+    await apply_runtime_settings(conn)
     return await _snapshot(conn)
 
 
@@ -114,4 +139,7 @@ async def reset_config(key: str, request: Request):
         raise HTTPException(status_code=404, detail=f"Unknown setting: {key}")
     conn = _get_db(request)
     await db.delete_setting(conn, key)
+    # Re-apply like PUT does -- otherwise the reset only takes effect after a
+    # restart while GET already reports the default as effective.
+    await apply_runtime_settings(conn)
     return await _snapshot(conn)

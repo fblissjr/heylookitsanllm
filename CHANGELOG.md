@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.59]
+
+### Added
+
+- **`mlx_cache_limit_gb` operational setting** (`/v1/admin/config`, default
+  unset): opt-in cap on MLX's buffer cache. The allocator keeps freed buffers
+  for reuse and never returns them to the OS, so server RSS pins at the
+  prompt-spike high-water mark; the cap bounds idle RSS (useful when other
+  memory-hungry jobs, e.g. lens fitting, share the box). Clearing the override
+  restores MLX's own default, captured from the first apply.
+
+### Fixed
+
+- `DELETE /v1/admin/config/{key}` now re-applies settings immediately like PUT
+  does; previously a reset only took effect after a restart while GET already
+  reported the default as effective.
+
 ## [1.34.58]
 
 ### Changed

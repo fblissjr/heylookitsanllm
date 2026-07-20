@@ -7,6 +7,8 @@ in test_settings_resolver.py; these pin the wire shapes and status-code mapping
 (422 unknown key / bad value, 404 unknown reset key).
 """
 
+from unittest.mock import call, patch
+
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
@@ -78,9 +80,59 @@ class TestConfigEndpoints:
     @pytest.mark.asyncio
     async def test_put_refreshes_spine_level_immediately(self, client):
         # a level change must take effect in the in-process spine cache without
-        # a restart (config_api calls apply_observability_settings after persist)
+        # a restart (config_api calls apply_runtime_settings after persist)
         await client.put("/v1/admin/config", json={"observability_level": "debug"})
         assert observability.current_level() == "debug"
         await client.put("/v1/admin/config", json={"observability_level": "off"})
         assert observability.current_level() == "off"
+
+    @pytest.mark.asyncio
+    async def test_reset_reapplies_settings_immediately(self, client):
+        # DELETE must re-apply like PUT does -- a reset that only takes effect
+        # after restart silently diverges from what GET reports as effective
+        await client.put("/v1/admin/config", json={"observability_level": "debug"})
+        assert observability.current_level() == "debug"
+        await client.delete("/v1/admin/config/observability_level")
+        assert observability.current_level() == "minimal"
+
+
+@pytest.mark.unit
+class TestMlxCacheLimit:
+    @pytest.mark.asyncio
+    async def test_default_is_none(self, client):
+        body = (await client.get("/v1/admin/config")).json()
+        assert body["effective"]["mlx_cache_limit_gb"] is None
+
+    @pytest.mark.asyncio
+    async def test_nonpositive_rejected(self, client):
+        for bad in (0, -2):
+            res = await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": bad})
+            assert res.status_code == 422
+        assert (await client.get("/v1/admin/config")).json()["stored"] == {}
+
+    @pytest.mark.asyncio
+    async def test_put_applies_limit_in_bytes(self, client):
+        with patch("mlx.core.set_cache_limit", return_value=999) as set_limit:
+            res = await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 1.5})
+        assert res.status_code == 200
+        assert res.json()["effective"]["mlx_cache_limit_gb"] == 1.5
+        set_limit.assert_called_once_with(int(1.5 * 1024**3))
+
+    @pytest.mark.asyncio
+    async def test_reset_restores_captured_mlx_default(self, client):
+        # first cap captures MLX's previous (default) limit from the return
+        # value; clearing the override restores exactly that value
+        with patch("mlx.core.set_cache_limit", return_value=999) as set_limit:
+            await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 2})
+            await client.delete("/v1/admin/config/mlx_cache_limit_gb")
+        assert set_limit.call_args_list[-1] == call(999)
+
+    @pytest.mark.asyncio
+    async def test_mlx_failure_does_not_break_config_api(self, client):
+        # best-effort like observability.configure: an MLX error must never
+        # fail the settings write itself
+        with patch("mlx.core.set_cache_limit", side_effect=RuntimeError("no metal")):
+            res = await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 4})
+        assert res.status_code == 200
+        assert res.json()["stored"] == {"mlx_cache_limit_gb": 4.0}
 

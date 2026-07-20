@@ -38,7 +38,13 @@ class SettingsSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     observability_level: Literal["off", "minimal", "standard", "debug"] = "minimal"
-    observability_retention_days: int = Field(30, ge=0)
+    observability_retention_days: int = Field(default=30, ge=0)
+    # Cap on MLX's buffer cache (GB). The allocator keeps freed buffers for
+    # reuse and never returns them to the OS, so server RSS pins at the
+    # prompt-spike high-water mark; a cap bounds idle RSS at the cost of
+    # re-allocation on the next spike. None = MLX's own default (uncapped in
+    # practice). Matters when other memory-hungry jobs share the box.
+    mlx_cache_limit_gb: float | None = Field(default=None, gt=0)
 
 
 def resolve_settings(db_values: Mapping[str, Any]) -> SettingsSchema:
