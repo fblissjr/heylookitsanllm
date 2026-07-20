@@ -2,7 +2,52 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-12*
+*Last reviewed: 2026-07-20*
+
+## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
+
+From the coderef/vllm-metal optimization scan + mlx-lm/mlx-vlm delta review
+(session log 2026-07-20). Verdicts validated against the plan's Phase 5
+ordering and the sole-user/minimal-custom-code posture.
+
+- [ ] **Gemma-4 MTP self-speculation** (P2, the live lead): mlx-lm PR **#1276**
+  (open, "Add Gemma 4 assistant (MTP drafter) model class") is the adoption
+  vehicle -- model class only, no generation wiring yet. PROBED LIVE 2026-07-20
+  (`internal/research/mtp_probe/`): the zoo's 26B-A4B assistant head drafting
+  for the daily MoE measures **50.8% greedy acceptance** (lower bound; scaled
+  embeddings are the trained convention), drafter ~1ms vs ~11ms/step ->
+  projected ~1.4x decode ceiling at n_predict=1. Matches vllm-metal's published
+  draft-model wins. Build list + caveats in the probe README. Watch #1276;
+  when it merges (or from the fork), build the verify loop provider-internal
+  behind `run_generation`. Greedy-only; fingerprint gate invalid (doctrine).
+  OWNER ACTION (optional, with data): comment on #1276 -- `AssistantAttention`
+  uses `num_key_value_heads` for both layer types; the 26B assistant needs
+  `num_global_key_value_heads=2` on full-attention layers or SDPA mis-shapes
+  (their network test uses the E4B where counts coincide). Acceptance numbers
+  are shareable.
+- [ ] **mlx-vlm pin bump as a planned migration** (P2, not a routine bump):
+  8e2638b..0.6.6 (53 commits) is signature-stable on our consumed surface
+  (prepare_inputs / load / apply_chat_template / LanguageModelOutput untouched)
+  but raises floors to transformers>=5.14 (we lock 5.5.4 + carry 4 transformers
+  compat patches) and mlx>=0.32 (already satisfied). Worth having: gemma-4 bf16
+  dtype-leak fix (94e06ec3, fp32 upcast of language weights = real memory),
+  prepare_inputs attention-mask preservation (26220e71, our direct path),
+  qwen3-vl PIL video-frame normalization (84025353). Checklist: transformers
+  uplift first, re-validate `_apply_transformers_patches`, run
+  tests/contract/test_mlxvlm_surface.py, check nothing imports moved per-model
+  MLP/VisionAttention/swiglu symbols (0942a56e refactor), then bump.
+- [ ] **optloop experiments** (P3, both gated on prerequisites): (a) re-test
+  classic draft spec-decode with a ~4B gemma draft (the closed negative result
+  used a 1B draft; vllm-metal's 1.36-1.48x with a favorable pairing says the
+  ratio matters -- needs a gemma-3-4b download first); (b) n-gram
+  prompt-lookup prototype (mlx-lm has no equivalent; zero draft cost, wins on
+  repetitive/structured output, greedy-only).
+- [x] **`mlx_cache_limit_gb` operational setting** -- DONE 2026-07-20
+  (v1.34.59): opt-in MLX buffer-cache cap via /v1/admin/config (bounds idle
+  RSS at the cost of realloc on the next spike; MLX default restored on
+  reset). Plus fix: DELETE on config keys now re-applies immediately.
+  Borrowed shape from vllm-metal's measured-overhead cache cap; ours is a
+  manual knob, their auto-measurement is overkill for one box.
 
 ## J-space / jlens-mlx (from jspace_integration_plan.md Part 2)
 
