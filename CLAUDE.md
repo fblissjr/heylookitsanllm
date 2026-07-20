@@ -22,7 +22,7 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 **Backend `src/heylook_llm/`** -- Two providers (`Literal["mlx", "mlx_embedding"]`):
 MLXProvider (text+vision), MLXEmbeddingProvider. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
-config in `models.toml`. 9 API routers: messages, rlm, conversation, notebook,
+config in `models.toml`. API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
 settings), telemetry (frontend ingestion). DuckDB store (`db.py`: conversations +
 notebooks + presets + `settings`, single serialized writer thread, transactional ops;
@@ -105,4 +105,4 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - Root venv: sync with `uv sync --all-extras` -- plain `uv sync` strips the performance/test extras (pyturbojpeg = the multipart JPEG decoder, uvloop, pytest plugins) and the loss is silent until an image request or test run fails.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`).
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).
-- Sandbox traps: `ENV=x uv run ...` does NOT match the uv exemption (env-var prefix changes the command match -> sandboxed, no Metal); sandboxed `curl` can't reach localhost (probe via `uv run python` + urllib); never launch the server piped to `head` (SIGPIPE wedges it -- redirect to a file). The OpenAPI pre-commit check silently skips under sandbox; to truly verify schema-neutrality, export `app.openapi()` from a HEAD~1 worktree and byte-compare. Sandboxed `find` can silently return nothing traversing `modelzoo/` (files present per `ls`) -- enumerate model dirs with `ls` or `uv run python` glob/`os.walk` instead.
+- Sandbox traps: `ENV=x uv run ...` does NOT match the uv exemption (env-var prefix changes the command match -> sandboxed, no Metal); sandboxed `curl` can't reach localhost (probe via `uv run python` + urllib); never launch the server piped to `head` (SIGPIPE wedges it -- redirect to a file). To verify schema-neutrality of a change (no committed OpenAPI artifact exists -- deliberate), export `app.openapi()` from a HEAD~1 worktree and byte-compare. Sandboxed `find` can silently return nothing traversing `modelzoo/` (files present per `ls`) -- enumerate model dirs with `ls` or `uv run python` glob/`os.walk` instead.
