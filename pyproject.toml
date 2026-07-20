@@ -97,8 +97,13 @@ version = {attr = "heylook_llm.__version__"}
 override-dependencies = ["transformers>=5.3.0"]
 
 [tool.uv.sources]
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git", rev = "a790972f0f844d81067ed45c28b524220a10c019" }
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git", rev = "8e2638b71f1834f3aead54acac5118e333d2175d" }
+# Bumped 2026-07-20: mlx-lm +1 commit (XTC server fix, N/A to us); mlx-vlm
+# +53 commits to 0.6.6 (gemma-4 bf16 dtype-leak fix, prepare_inputs mask
+# preservation, qwen3-vl PIL video normalization; consumed surface verified
+# signature-stable). NB mlx-vlm HEAD declares transformers>=5.14 -- the
+# override below deliberately decouples us; contract tests are the gate.
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm.git", rev = "15b522f593b7ca5fbc0cac6f7572d40859d2d8fe" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm.git", rev = "c9e27b08311f9c1f38690c46034b04c7598d73ee" }
 
 [dependency-groups]
 dev = [
