@@ -87,17 +87,17 @@ class TestResolveOptions:
         args = parse(["run", "imgs"])
         task = get_task("label")
         opts = _resolve_options(args, task)
-        assert opts.preset == task.preset
+        assert opts.sampler == task.sampler
         assert opts.max_tokens == task.max_tokens
         assert opts.temperature is None
 
     def test_cli_overrides_task(self):
         args = parse([
-            "run", "imgs", "--preset", "thinking", "--max-tokens", "99",
+            "run", "imgs", "--sampler", "thinking", "--max-tokens", "99",
             "--temperature", "0.5",
         ])
         opts = _resolve_options(args, get_task("label"))
-        assert opts.preset == "thinking"
+        assert opts.sampler == "thinking"
         assert opts.max_tokens == 99
         assert opts.temperature == 0.5
 

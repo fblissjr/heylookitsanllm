@@ -33,7 +33,7 @@ from heylook_llm.perf_collector import (
 from heylook_llm.utils import log_request_start, log_request_stage, log_request_complete, log_full_request_details, log_request_summary, log_response_summary
 from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
-from heylook_llm.presets import PresetNotFound
+from heylook_llm.samplers import SamplerNotFound
 from heylook_llm.reasoning_parser import (
     effective_thinking_flag,
     parse_reasoning,
@@ -721,7 +721,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
             raise HTTPException(status_code=500, detail=str(e))
 
-    except PresetNotFound as e:
+    except SamplerNotFound as e:
         # Bad request: client named a preset the server doesn't have. 400, not 500.
         log_request_complete(request_id, success=False, error_msg=str(e))
         diag_event("request_error", request_id=request_id, level="warn",
@@ -1863,8 +1863,9 @@ Clients should query this endpoint on startup to discover:
 )
 async def get_capabilities(request: Request):
     """Get server capabilities and optimization options."""
+    from heylook_llm import __version__ as server_version
     from heylook_llm.optimizations.status import get_optimization_summary
-    from heylook_llm.presets import get_preset_registry
+    from heylook_llm.samplers import get_sampler_registry
 
     # Get optimization status
     optimizations = get_optimization_summary()
@@ -1886,17 +1887,17 @@ async def get_capabilities(request: Request):
         metal_info = {"available": False}
 
     capabilities = {
-        "server_version": "1.0.1",
+        "server_version": server_version,
         "optimizations": optimizations,
         "metal": metal_info,
-        # Sampler-preset discovery (2026-07-20): the bundled PresetRegistry
-        # names, resolvable per-request via ChatRequest.preset or per-model
-        # via models.toml default_preset. Distinct from /v1/presets (saved
+        # Named-sampler discovery (2026-07-20): the bundled SamplerRegistry
+        # names, resolvable per-request via ChatRequest.sampler or per-model
+        # via models.toml default_sampler. Distinct from /v1/presets (saved
         # user prompt+sampler bundles in the app DB).
-        "sampler_presets": {
-            "available": get_preset_registry().list_info(),
-            "request_field": "preset",
-            "model_default_field": "default_preset",
+        "samplers": {
+            "available": get_sampler_registry().list_info(),
+            "request_field": "sampler",
+            "model_default_field": "default_sampler",
             "distinct_from": "/v1/presets (saved user prompt+sampler bundles)",
         },
         "endpoints": {

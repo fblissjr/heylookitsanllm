@@ -17,7 +17,7 @@ from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
-from ..presets import get_preset_registry
+from ..samplers import get_sampler_registry
 from .abort import AbortEvent
 from .base import BaseProvider, GenerationFailed, InvalidGenerationRequest
 from .common.samplers import build as build_sampler
@@ -550,7 +550,7 @@ class VLMVisionStrategy:
 
 # Layer-1 sampler floor: what a request gets when neither the request, a
 # preset, nor the model config says anything. Chat-sane values -- this is the
-# de-facto default for freshly imported models with no default_preset (the
+# de-facto default for freshly imported models with no default_sampler (the
 # old 0.1/512 floor made every such model near-greedy and truncated long
 # answers mid-sentence).
 GLOBAL_SAMPLER_FLOOR = {
@@ -833,20 +833,20 @@ class MLXProvider(BaseProvider):
         """Six-layer cascade producing the effective request config.
 
         Each layer overrides the previous for fields it sets; unset fields
-        pass through. Request explicit > request preset > model default_preset
+        pass through. Request explicit > request sampler > model default_sampler
         > model sampler fields > thinking-mode flag > global floor.
 
         Layers:
             1. Global hardcoded floor.
             2. Thinking-mode defaults (when MODEL config sets
-               ``enable_thinking=true``). Sourced from the 'thinking' preset.
+               ``enable_thinking=true``). Sourced from the 'thinking' sampler.
             3. Model sampler fields from ``models.toml`` (per-model defaults).
-            3b. Model ``default_preset`` (C4): applied only when the request
-                has NO explicit preset. Unknown name logs-and-skips -- models
+            3b. Model ``default_sampler`` (C4): applied only when the request
+                has NO explicit sampler. Unknown name logs-and-skips -- models
                 are validated at startup, so a miss here means the registry
                 changed post-startup and inference shouldn't die for it.
-            4. Request preset (``ChatRequest.preset``). Overrides the model's
-               default_preset. Unknown name propagates PresetNotFound ->
+            4. Request sampler (``ChatRequest.sampler``). Overrides the model's
+               default_sampler. Unknown name propagates SamplerNotFound ->
                translated to HTTP 400 by the route handler.
             5. Request-level explicit field values.
         """
@@ -854,15 +854,15 @@ class MLXProvider(BaseProvider):
 
         merged_config = global_defaults.copy()
 
-        registry = get_preset_registry()
+        registry = get_sampler_registry()
 
         # Layer 2: when model declares itself thinking-capable, apply the
-        # 'thinking' preset automatically. Registry is canonical source;
+        # 'thinking' sampler automatically. Registry is canonical source;
         # hardcoded fallback mirrors thinking.toml so inference keeps working
         # if the file is removed.
         if self.config.get('enable_thinking', False):
             if 'thinking' in registry:
-                registry.apply_preset(merged_config, 'thinking')
+                registry.apply_sampler(merged_config, 'thinking')
             else:
                 merged_config.update({
                     'temperature': 0.6, 'top_p': 0.95, 'top_k': 20,
@@ -881,24 +881,24 @@ class MLXProvider(BaseProvider):
             if key not in merged_config and key in self.config:
                 merged_config[key] = self.config[key]
 
-        request_preset = getattr(request, 'preset', None)
+        request_sampler = getattr(request, 'sampler', None)
 
-        # Layer 3b: model default_preset applies only when the request didn't
+        # Layer 3b: model default_sampler applies only when the request didn't
         # pick one. Log-and-skip on unknown name (registry drift, not fatal).
-        if not request_preset:
-            model_default_preset = self.config.get('default_preset')
-            if model_default_preset:
-                if model_default_preset in registry:
-                    registry.apply_preset(merged_config, model_default_preset)
+        if not request_sampler:
+            model_default_sampler = self.config.get('default_sampler')
+            if model_default_sampler:
+                if model_default_sampler in registry:
+                    registry.apply_sampler(merged_config, model_default_sampler)
                 else:
                     logging.warning(
-                        "model default_preset %r not in registry; skipping layer",
-                        model_default_preset,
+                        "model default_sampler %r not in registry; skipping layer",
+                        model_default_sampler,
                     )
 
-        # Layer 4: request preset. PresetNotFound propagates; route handlers
+        # Layer 4: request sampler. SamplerNotFound propagates; route handlers
         # translate to HTTP 400. Keeping the provider transport-agnostic.
-        registry.apply_preset(merged_config, request_preset)
+        registry.apply_sampler(merged_config, request_sampler)
 
         # Layer 5: request explicit fields.
         request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',

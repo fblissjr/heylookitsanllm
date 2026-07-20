@@ -236,11 +236,11 @@ class TestApplyModelDefaultsPresetCascade:
     """
 
     def test_preset_overrides_model_defaults(self, mock_mlx, monkeypatch):  # noqa: ARG002
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({"hot": {"temperature": 1.0, "top_p": 0.9}})
-        reset_preset_registry_for_test(registry)
+        registry = SamplerRegistry({"hot": {"temperature": 1.0, "top_p": 0.9}})
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
@@ -249,20 +249,20 @@ class TestApplyModelDefaultsPresetCascade:
             )
             req = ChatRequest(
                 messages=[ChatMessage(role="user", content="hi")],
-                preset="hot",
+                sampler="hot",
             )
             effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 1.0  # preset beat model default
             assert effective["top_p"] == 0.9
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
     def test_request_field_beats_preset(self, mock_mlx, monkeypatch):  # noqa: ARG002
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({"hot": {"temperature": 1.0}})
-        reset_preset_registry_for_test(registry)
+        registry = SamplerRegistry({"hot": {"temperature": 1.0}})
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
@@ -271,22 +271,22 @@ class TestApplyModelDefaultsPresetCascade:
             )
             req = ChatRequest(
                 messages=[ChatMessage(role="user", content="hi")],
-                preset="hot",
+                sampler="hot",
                 temperature=0.4,
             )
             effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 0.4  # request explicit beat preset
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
     def test_preset_unset_fields_pass_through(self, mock_mlx):  # noqa: ARG002
         """A preset that only sets `temperature` must NOT clear other model
         defaults. Unset keys fall through."""
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({"temp_only": {"temperature": 0.8}})
-        reset_preset_registry_for_test(registry)
+        registry = SamplerRegistry({"temp_only": {"temperature": 0.8}})
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
@@ -295,26 +295,26 @@ class TestApplyModelDefaultsPresetCascade:
             )
             req = ChatRequest(
                 messages=[ChatMessage(role="user", content="hi")],
-                preset="temp_only",
+                sampler="temp_only",
             )
             effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 0.8
             assert effective["max_tokens"] == 777
             assert effective["top_k"] == 15
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
     def test_unknown_preset_raises_preset_not_found(self, mock_mlx):  # noqa: ARG002
         """Provider raises a domain exception, not an HTTP one. Route handlers
         translate to 400 -- the provider stays transport-agnostic."""
-        from heylook_llm.presets import (
-            PresetNotFound,
-            PresetRegistry,
-            reset_preset_registry_for_test,
+        from heylook_llm.samplers import (
+            SamplerNotFound,
+            SamplerRegistry,
+            reset_sampler_registry_for_test,
         )
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        reset_preset_registry_for_test(PresetRegistry({}))
+        reset_sampler_registry_for_test(SamplerRegistry({}))
         try:
             provider = MLXProvider(
                 model_id="m",
@@ -323,12 +323,12 @@ class TestApplyModelDefaultsPresetCascade:
             )
             req = ChatRequest(
                 messages=[ChatMessage(role="user", content="hi")],
-                preset="does-not-exist",
+                sampler="does-not-exist",
             )
-            with pytest.raises(PresetNotFound):
+            with pytest.raises(SamplerNotFound):
                 provider._apply_model_defaults(req)
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
     def test_no_preset_cascade_unchanged(self, mock_mlx):  # noqa: ARG002
         """If ChatRequest.preset is None, cascade behaves exactly like before
@@ -347,20 +347,20 @@ class TestApplyModelDefaultsPresetCascade:
 
 @pytest.mark.unit
 class TestApplyModelDefaultsDefaultPreset:
-    """Model's ``default_preset`` applies as layer 3b, only when the request
+    """Model's ``default_sampler`` applies as layer 3b, only when the request
     didn't pick one. Explicit request preset beats it. Request explicit fields
     beat both."""
 
-    def test_default_preset_applies_without_request_preset(self, mock_mlx):  # noqa: ARG002
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+    def test_default_sampler_applies_without_request_preset(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({"snappy": {"temperature": 0.3, "top_p": 0.8}})
-        reset_preset_registry_for_test(registry)
+        registry = SamplerRegistry({"snappy": {"temperature": 0.3, "top_p": 0.8}})
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
-                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                config={"model_path": "/fake", "vision": False, "default_sampler": "snappy"},
                 verbose=False,
             )
             req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
@@ -368,42 +368,42 @@ class TestApplyModelDefaultsDefaultPreset:
             assert effective["temperature"] == 0.3
             assert effective["top_p"] == 0.8
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
-    def test_request_preset_wins_over_default_preset(self, mock_mlx):  # noqa: ARG002
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+    def test_request_preset_wins_over_default_sampler(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({
+        registry = SamplerRegistry({
             "snappy": {"temperature": 0.3},
             "wild": {"temperature": 1.1},
         })
-        reset_preset_registry_for_test(registry)
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
-                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                config={"model_path": "/fake", "vision": False, "default_sampler": "snappy"},
                 verbose=False,
             )
             req = ChatRequest(
                 messages=[ChatMessage(role="user", content="hi")],
-                preset="wild",
+                sampler="wild",
             )
             effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 1.1
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
-    def test_request_explicit_field_wins_over_default_preset(self, mock_mlx):  # noqa: ARG002
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+    def test_request_explicit_field_wins_over_default_sampler(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        registry = PresetRegistry({"snappy": {"temperature": 0.3}})
-        reset_preset_registry_for_test(registry)
+        registry = SamplerRegistry({"snappy": {"temperature": 0.3}})
+        reset_sampler_registry_for_test(registry)
         try:
             provider = MLXProvider(
                 model_id="m",
-                config={"model_path": "/fake", "vision": False, "default_preset": "snappy"},
+                config={"model_path": "/fake", "vision": False, "default_sampler": "snappy"},
                 verbose=False,
             )
             req = ChatRequest(
@@ -413,25 +413,25 @@ class TestApplyModelDefaultsDefaultPreset:
             effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 0.9
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
-    def test_unknown_default_preset_logs_and_skips(self, mock_mlx, caplog):  # noqa: ARG002
-        """Unknown ``default_preset`` name is non-fatal -- log a warning and
+    def test_unknown_default_sampler_logs_and_skips(self, mock_mlx, caplog):  # noqa: ARG002
+        """Unknown ``default_sampler`` name is non-fatal -- log a warning and
         fall through to the rest of the cascade. Models are validated at
         startup, so a miss here indicates registry drift, not a user typo."""
         import logging
 
-        from heylook_llm.presets import PresetRegistry, reset_preset_registry_for_test
+        from heylook_llm.samplers import SamplerRegistry, reset_sampler_registry_for_test
         from heylook_llm.providers.mlx_provider import MLXProvider
 
-        reset_preset_registry_for_test(PresetRegistry({}))
+        reset_sampler_registry_for_test(SamplerRegistry({}))
         try:
             provider = MLXProvider(
                 model_id="m",
                 config={
                     "model_path": "/fake",
                     "vision": False,
-                    "default_preset": "ghost",
+                    "default_sampler": "ghost",
                     "temperature": 0.44,
                 },
                 verbose=False,
@@ -440,9 +440,9 @@ class TestApplyModelDefaultsDefaultPreset:
             with caplog.at_level(logging.WARNING):
                 effective = provider._apply_model_defaults(req)
             assert effective["temperature"] == 0.44  # model field layer still applied
-            assert any("default_preset" in r.message for r in caplog.records)
+            assert any("default_sampler" in r.message for r in caplog.records)
         finally:
-            reset_preset_registry_for_test(None)
+            reset_sampler_registry_for_test(None)
 
 
 @pytest.mark.unit

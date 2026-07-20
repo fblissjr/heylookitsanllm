@@ -66,15 +66,29 @@ class ChatRequest(BaseModel):
     # Streaming options (OpenAI-compatible)
     stream_options: Optional[Dict] = Field(default=None, description="Options for streaming: {include_usage: true} to get usage stats")
 
-    # Runtime sampler preset (resolved against the PresetRegistry at generation
-    # time). Overlays preset fields on top of model-level defaults; explicit
-    # request fields still win. Unknown name -> 400.
-    preset: Optional[str] = Field(
-        None,
-        description="Named sampler preset (e.g. 'balanced', 'thinking', 'vlm-extract'). "
-                    "Fields from the preset overlay model defaults; explicit request "
-                    "fields override both."
+    # Named sampler (resolved against the SamplerRegistry at generation
+    # time). Overlays the sampler's fields on top of model-level defaults;
+    # explicit request fields still win. Unknown name -> 400.
+    # NOT the /v1/presets user presets (v3's saved prompt+sampler bundles).
+    sampler: Optional[str] = Field(
+        default=None,
+        description="Named sampler (e.g. 'balanced', 'thinking', 'vlm-extract'). "
+                    "Fields from the sampler overlay model defaults; explicit request "
+                    "fields override both. Distinct from /v1/presets user presets."
     )
+
+    @model_validator(mode='before')
+    @classmethod
+    def reject_renamed_preset_field(cls, data):
+        # 2026-07-20 rename: 'preset' -> 'sampler'. ChatRequest ignores
+        # unknown keys, so without this guard an old client's preset would
+        # be silently dropped -- fail loudly with the migration hint instead.
+        if isinstance(data, dict) and 'preset' in data:
+            raise ValueError(
+                "'preset' was renamed to 'sampler' (named sampler configs); "
+                "/v1/presets user presets are a separate system"
+            )
+        return data
 
     @field_validator('messages', mode='before')
     @classmethod
@@ -204,13 +218,13 @@ class MLXModelConfig(BaseModel):
     # global default. ``0`` = never idle-unload this model. Positive = per-model
     # threshold in seconds. Pinned models are exempt regardless of this value.
     unload_after_idle_seconds: Optional[int] = Field(default=None, ge=0)
-    # Default preset applied when a request doesn't specify ``preset`` (C4).
-    # Resolved against the PresetRegistry at request time; an unknown name
+    # Default sampler applied when a request doesn't specify ``sampler`` (C4).
+    # Resolved against the SamplerRegistry at request time; an unknown name
     # falls back to "skip this layer" rather than raising -- the model config
     # is validated at server startup, so an unknown name here indicates a
     # post-startup registry rebuild drift and should log at the layer, not
     # kill inference.
-    default_preset: Optional[str] = None
+    default_sampler: Optional[str] = None
     # Chat-template source policy (C4.5):
     # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present);
     #   if the tokenizer ends up template-less, the provider installs whatever
@@ -543,9 +557,17 @@ class ModelScanRequest(BaseModel):
 
 
 class ModelImportRequest(BaseModel):
-    """Import one or more scanned models."""
+    """Import one or more scanned models.
+
+    extra="forbid": the 2026-07-20 rename (profile -> default_sampler) must
+    fail loudly for old clients -- with Pydantic's default extra=ignore, a
+    stale {"profile": ...} body would be silently dropped and every import
+    stamped with the "balanced" default.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    default_preset: Optional[str] = Field(default="balanced", description="Sampler preset recorded as default_preset on all imported models")
+    default_sampler: Optional[str] = Field(default="balanced", description="Named sampler recorded as default_sampler on all imported models")
 
 
 class ModelUpdateRequest(BaseModel):
@@ -574,10 +596,10 @@ class AdminValidationResult(BaseModel):
     warnings: List[str] = Field(default_factory=list)
 
 
-class BulkDefaultPresetRequest(BaseModel):
-    """Set default_preset (a sampler-preset name) on multiple models."""
+class BulkDefaultSamplerRequest(BaseModel):
+    """Set default_sampler (a named-sampler name) on multiple models."""
     model_ids: List[str] = Field(..., description="Model IDs to update")
-    preset: str = Field(..., description="Sampler preset name to record as default_preset")
+    sampler: str = Field(..., description="Named sampler to record as default_sampler")
 
 
 class ModelStatusResponse(BaseModel):
@@ -607,14 +629,14 @@ class AdminModelListResponse(BaseModel):
     total: int = 0
 
 
-class SamplerPresetInfo(BaseModel):
-    """Sampler-preset metadata (bundled registry entry)."""
+class SamplerInfo(BaseModel):
+    """Named-sampler metadata (bundled registry entry)."""
     name: str
     description: str
 
 
-class SamplerPresetListResponse(BaseModel):
-    """Response for listing available sampler presets."""
-    presets: List[SamplerPresetInfo] = Field(default_factory=list)
+class SamplerListResponse(BaseModel):
+    """Response for listing available named samplers."""
+    samplers: List[SamplerInfo] = Field(default_factory=list)
 
 

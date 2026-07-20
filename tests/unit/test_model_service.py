@@ -3,13 +3,15 @@
 Historical context: the v1.19.0 profile system baked sampler fields into
 ``models.toml`` at import time. C4 deleted that behavior -- sampler fields
 now live in the runtime preset registry and are applied at request time
-via the cascade. ``SamplerPreset.apply()`` now just records
-``default_preset`` on the model's config; ``get_smart_defaults()`` emits
-only load-time fields (cache type, KV quantization, draft tokens).
+via the cascade. ``stamp_default_sampler()`` just records ``default_sampler``
+on the model's config; ``get_smart_defaults()`` emits only load-time
+fields (cache type, KV quantization, draft tokens). (The intermediate
+``SamplerPreset``/``load_sampler_presets`` adapter layer was collapsed
+onto ``SamplerRegistry`` 2026-07-20 -- code-review finding.)
 
 Preset-registry semantics are covered by ``test_preset_registry.py``.
 This file focuses on:
-  - The thin ``SamplerPreset`` adapter's new set-``default_preset`` behavior
+  - ``stamp_default_sampler`` set-``default_sampler`` behavior
   - ``get_smart_defaults`` returning only load-time fields
   - ``ModelImporter`` model-size regex and embedding detection (unchanged)
 """
@@ -20,30 +22,21 @@ from pathlib import Path
 import pytest
 
 from heylook_llm.model_service import (
-    SamplerPreset,
     get_smart_defaults,
-    load_sampler_presets,
+    stamp_default_sampler,
 )
 from heylook_llm.model_importer import ModelImporter
 
 
-class TestSamplerPresetAdapter:
-    """``SamplerPreset.apply`` now sets ``default_preset`` only."""
+class TestStampDefaultPreset:
+    """``stamp_default_sampler`` sets ``default_sampler`` only -- no baking."""
 
-    def _make_preset(self, name="balanced", defaults=None):
-        return SamplerPreset(
-            name=name,
-            description="test",
-            defaults=defaults or {},
-        )
-
-    def test_apply_sets_default_preset_on_mlx(self):
-        profile = self._make_preset(name="thinking")
+    def test_stamps_on_mlx(self):
         config = {"model_path": "/p", "vision": False, "cache_type": "standard"}
 
-        result = profile.apply(config, {"provider": "mlx"})
+        result = stamp_default_sampler(config, "thinking", "mlx")
 
-        assert result["default_preset"] == "thinking"
+        assert result["default_sampler"] == "thinking"
         # Load-time fields preserved.
         assert result["model_path"] == "/p"
         assert result["cache_type"] == "standard"
@@ -51,35 +44,21 @@ class TestSamplerPresetAdapter:
         assert "temperature" not in result
         assert "top_k" not in result
 
-    def test_apply_skips_non_mlx_provider(self):
-        """Embedding provider doesn't use sampler presets; no default_preset."""
-        profile = self._make_preset(name="embedding")
+    def test_skips_non_mlx_provider(self):
+        """Embedding provider doesn't use sampler presets; no default_sampler."""
         config = {"model_path": "/p", "max_length": 2048}
 
-        result = profile.apply(config, {"provider": "mlx_embedding"})
+        result = stamp_default_sampler(config, "balanced", "mlx_embedding")
 
-        assert "default_preset" not in result
+        assert "default_sampler" not in result
         assert result["max_length"] == 2048
 
-    def test_apply_does_not_mutate_input(self):
-        profile = self._make_preset(name="thinking")
+    def test_does_not_mutate_input(self):
         config = {"model_path": "/p"}
 
-        profile.apply(config, {"provider": "mlx"})
+        stamp_default_sampler(config, "thinking", "mlx")
 
-        assert "default_preset" not in config
-
-
-class TestLoadSamplerPresetsAdapter:
-    """``load_sampler_presets`` is a thin adapter over ``PresetRegistry``."""
-
-    def test_returns_adapter_for_each_bundled_preset(self):
-        profiles = load_sampler_presets()
-        assert "balanced" in profiles
-        assert "thinking" in profiles
-        for name, profile in profiles.items():
-            assert profile.name == name
-            assert isinstance(profile.defaults, dict)
+        assert "default_sampler" not in config
 
 
 class TestSmartDefaultsLoadTimeOnly:

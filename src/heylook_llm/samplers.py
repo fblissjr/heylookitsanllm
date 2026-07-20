@@ -1,4 +1,9 @@
-"""Runtime preset registry (C1 of S1.2b).
+"""Named sampler registry ("samplers": bundled sampler-setting configs).
+
+Terminology (2026-07-20): these were called "presets" until the name collided
+with the /v1/presets user-preset system (v3's saved prompt+sampler bundles,
+DuckDB-backed, client-expanded). A "sampler" here is a named, versioned
+sampler-settings bundle shipped with the server.
 
 Presets are bundles of sampler knobs (``temperature``, ``top_p``, ``top_k``,
 ``min_p``, ``max_tokens``, ``repetition_penalty``, ``repetition_context_size``,
@@ -6,7 +11,7 @@ Presets are bundles of sampler knobs (``temperature``, ``top_p``, ``top_k``,
 request time, not baked into ``models.toml`` at import time.
 
 Each preset lives as its own TOML file under
-``src/heylook_llm/data/presets/`` with the shape::
+``src/heylook_llm/data/samplers/`` with the shape::
 
     [meta]
     name = "balanced"
@@ -22,13 +27,13 @@ Each preset lives as its own TOML file under
 The registry loads every ``.toml`` under the presets directory on startup
 (malformed files are logged and skipped, never fatal). Callers look up a
 preset by name and overlay its fields onto a cascade dict via
-``apply_preset`` — unset keys pass through from previous layers.
+``apply_sampler`` — unset keys pass through from previous layers.
 
 Cascade order in ``MLXProvider._apply_model_defaults``::
 
     1. Global hardcoded floor
     2. Model sampler fields (``models.toml`` per-model overrides)
-    3. Request's preset (if ``ChatRequest.preset`` is set)  <- this module
+    3. Request's sampler (if ``ChatRequest.sampler`` is set)  <- this module
     4. Request-level explicit field values
 
 Keeping per-model sampler fields in the cascade (layer 2) is intentional --
@@ -47,17 +52,17 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-_BUNDLED_DIR = Path(__file__).resolve().parent / "data" / "presets"
+_BUNDLED_DIR = Path(__file__).resolve().parent / "data" / "samplers"
 
 
-class PresetNotFound(KeyError):
+class SamplerNotFound(KeyError):
     """Raised when a preset name is not registered."""
 
 
-class PresetRegistry:
+class SamplerRegistry:
     """In-memory map of preset name -> defaults dict + descriptions.
 
-    Instances are cheap; the module-level ``get_preset_registry()`` returns
+    Instances are cheap; the module-level ``get_sampler_registry()`` returns
     a memoized singleton that loads the bundled presets directory once.
     """
 
@@ -72,7 +77,7 @@ class PresetRegistry:
     # ---- constructors ----
 
     @classmethod
-    def from_directory(cls, directory: Path | str) -> "PresetRegistry":
+    def from_directory(cls, directory: Path | str) -> "SamplerRegistry":
         """Load every ``*.toml`` under ``directory``. Malformed files are
         logged and skipped."""
         path = Path(directory)
@@ -100,7 +105,7 @@ class PresetRegistry:
         return cls(presets, descriptions)
 
     @classmethod
-    def from_bundled(cls) -> "PresetRegistry":
+    def from_bundled(cls) -> "SamplerRegistry":
         """Load the presets shipped with the package."""
         return cls.from_directory(_BUNDLED_DIR)
 
@@ -125,26 +130,26 @@ class PresetRegistry:
 
     def get(self, name: str) -> dict[str, Any]:
         if name not in self._presets:
-            raise PresetNotFound(
+            raise SamplerNotFound(
                 f"preset {name!r} not found; known: {self.list_names()}"
             )
         return dict(self._presets[name])
 
     # ---- cascade helper ----
 
-    def apply_preset(
+    def apply_sampler(
         self, merged_config: dict[str, Any], name: str | None
     ) -> None:
         """Overlay preset fields onto ``merged_config`` in place.
 
         ``name=None`` is a no-op so the cascade can call this unconditionally
         without an if/else at every call site. An unknown preset name raises
-        ``PresetNotFound`` -- silent fallback would mask typos.
+        ``SamplerNotFound`` -- silent fallback would mask typos.
         """
         if name is None:
             return
         if name not in self._presets:
-            raise PresetNotFound(
+            raise SamplerNotFound(
                 f"preset {name!r} not found; known: {self.list_names()}"
             )
         merged_config.update(self._presets[name])
@@ -178,10 +183,10 @@ class PresetRegistry:
 
 
 _LOCK = threading.Lock()
-_SINGLETON: PresetRegistry | None = None
+_SINGLETON: SamplerRegistry | None = None
 
 
-def get_preset_registry() -> PresetRegistry:
+def get_sampler_registry() -> SamplerRegistry:
     """Memoized accessor for the process-wide preset registry.
 
     First call loads the bundled presets directory. Subsequent calls return
@@ -193,11 +198,11 @@ def get_preset_registry() -> PresetRegistry:
         return _SINGLETON
     with _LOCK:
         if _SINGLETON is None:
-            _SINGLETON = PresetRegistry.from_bundled()
+            _SINGLETON = SamplerRegistry.from_bundled()
     return _SINGLETON
 
 
-def reset_preset_registry_for_test(replacement: PresetRegistry | None = None) -> None:
+def reset_sampler_registry_for_test(replacement: SamplerRegistry | None = None) -> None:
     """Test hook: replace or clear the memoized singleton.
 
     Production code should never call this; it exists so tests can swap in
@@ -210,4 +215,4 @@ def reset_preset_registry_for_test(replacement: PresetRegistry | None = None) ->
 
 def known_preset_names() -> Iterable[str]:
     """Convenience for diagnostics / API surfaces that want the list."""
-    return get_preset_registry().list_names()
+    return get_sampler_registry().list_names()

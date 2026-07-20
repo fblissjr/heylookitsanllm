@@ -141,7 +141,7 @@ Do not put it in `models.toml`.)
 | `enable_thinking` | bool | `false` | Thinking-mode default for this model (any thinking-capable template, not Qwen3-specific -- see "Sampler Defaults" below for the request-time cascade) |
 | `vision_tokens` | int | none | Per-model default visual token budget per image (16-16384). A request's own `vision_tokens` overrides; `none` leaves the image processor's own default. Mapped per model family by `providers/common/vision_budget.py` (gemma-4: discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels`) |
 | `supports_thinking` | bool | `false` | Capability metadata flag |
-| `default_preset` | string | none | Preset name applied when a request doesn't specify one -- see "Sampler Defaults and the Effective-Request Cascade" below |
+| `default_sampler` | string | none | Named-sampler name applied when a request doesn't specify one -- see "Sampler Defaults and the Effective-Request Cascade" below |
 | `draft_model_path` | string | none | Path to draft model for speculative decoding |
 | `num_draft_tokens` | int | `3` | Draft tokens for speculative decoding. The importer no longer stamps this on every import (v1.32.0) -- it's inert without `draft_model_path`, so writing it on every model was dead config. The field and its default of 3 remain; only the automatic import-time write was removed. |
 | `default_hidden_layer` | int | `-2` | Layer for hidden state extraction |
@@ -178,35 +178,34 @@ fields it sets:
    `max_tokens 4096`, `repetition_penalty 1.0`, `presence_penalty 0.0`.
    This is what a request gets when nothing else in the cascade says
    anything -- the de-facto behavior for a freshly imported model with no
-   `default_preset`.
+   `default_sampler`.
 2. **Thinking-mode defaults**, applied only when the model config sets
-   `enable_thinking = true` (sourced from the `thinking` preset).
+   `enable_thinking = true` (sourced from the `thinking` sampler).
 3. **Model sampler fields** from `models.toml` (per-model overrides in the
    table above).
-   1. **Model `default_preset`** -- applied only when the request has no
-      explicit preset. Unknown preset name logs and skips the layer
+   1. **Model `default_sampler`** -- applied only when the request has no
+      explicit sampler. Unknown sampler name logs and skips the layer
       rather than failing (models are validated at server startup; an
-      unknown name here means the preset registry changed post-startup).
-4. **Request preset** (`ChatRequest.preset`). Overrides the model's
-   `default_preset`. Unknown name raises `PresetNotFound`, translated to
+      unknown name here means the sampler registry changed post-startup).
+4. **Request sampler** (`ChatRequest.sampler`). Overrides the model's
+   `default_sampler`. Unknown name raises `SamplerNotFound`, translated to
    HTTP 400 by the route handler.
 5. **Request-level explicit field values** -- always win.
 
 Before v1.32.0, the global floor was `temperature 0.1, max_tokens 512` --
 near-greedy sampling and 512-token truncation for every model with no
-`default_preset` set, which in practice meant every CLI-imported model
+default sampler set, which in practice meant every CLI-imported model
 (the 512 cap also existed independently in `moderate.toml` and the batch
 processor's fallback). This was silently truncating and flattening output
 for models the user had never explicitly tuned. `GLOBAL_SAMPLER_FLOOR` is
 now `0.7 / 4096`, and the batch fallback paths (`mlx_provider.py` lines
 854, 919) reference the same constant instead of a third hardcoded `512`.
 
-Admin/CLI import also used to stamp `default_preset = "moderate"` --
+Admin/CLI import also used to stamp the "moderate" name at import --
 `moderate.toml` (removed 2026-07-20) described itself as "the deprecated
 back-compat alias for the pre-preset-split default; new users should
-prefer 'balanced'." Admin import (`ModelService.import_models`,
-`src/heylook_llm/model_service.py`, line 642) now defaults to
-`profile_name = "balanced"` instead.
+prefer 'balanced'." `ModelService.import_models` now takes
+`default_sampler: str | None = "balanced"` instead.
 
 ### Smart Defaults at Import
 
@@ -335,44 +334,50 @@ The `config` field is discriminated on `provider`: `"mlx"` parses as `MLXModelCo
 > 2026-07-05/06 work in this document's other sections -- noted here
 > because it was found while verifying this file against the code.
 
-Presets are named sampler-field bundles resolved at **request time**, not
-baked into `models.toml` at import. They live under
-`src/heylook_llm/data/presets/` as TOML files, loaded by the
-`PresetRegistry` (`src/heylook_llm/presets.py`). Current presets:
-`balanced` (import-default profile), `deterministic` (repro/eval),
-`thinking` (auto-applied by the cascade for `enable_thinking` models),
+**Samplers** are named sampler-setting bundles resolved at **request
+time**, not baked into `models.toml` at import. They live under
+`src/heylook_llm/data/samplers/` as TOML files, loaded by the
+`SamplerRegistry` (`src/heylook_llm/samplers.py`). Current samplers:
+`balanced` (import default), `deterministic` (repro/eval), `thinking`
+(auto-applied by the cascade for `enable_thinking` models),
 `vlm-describe` / `vlm-extract` (VLM-safe field subsets -- mlx-vlm's
 `stream_generate` ignores top_k/min_p/repetition_penalty; used by
 batch-labeler's tasks).
 
-The flavor presets `moderate` (back-compat alias for the pre-preset-split
+The flavor entries `moderate` (back-compat alias for the pre-registry
 default), `code`, and `creative` were removed 2026-07-20: they had no
 consumer anywhere in the stack (the v3 frontend's user-preset system owns
 interactive sampler preferences), and their only references were tests
-asserting their own existence. The registry keeps only presets that encode
+asserting their own existence. The registry keeps only entries that encode
 mechanism (model-family or library knowledge) or are wired as defaults.
-`test_preset_registry.py` pins the exact roster -- adding a preset means
+`test_sampler_registry.py` pins the exact roster -- adding one means
 naming its consumer there.
 
 **Discovery** (2026-07-20): `GET /v1/capabilities` advertises the registry
-(`sampler_presets: {available, request_field, model_default_field}`) so
-scripted clients can enumerate names without admin access. The admin list
-lives at `GET /v1/admin/models/sampler-presets`.
+(`samplers: {available, request_field, model_default_field}`) so scripted
+clients can enumerate names without admin access. The admin list lives at
+`GET /v1/admin/models/samplers`.
 
-**Terminology** (unified 2026-07-20): "sampler preset" is the single term;
-the import/admin paths historically said "profile" for the same registry.
-Renames: routes `/v1/admin/models/profiles` -> `/sampler-presets` and
-`/bulk-profile` -> `/bulk-default-preset` (body field `profile` ->
-`preset`); `ModelImportRequest.profile` -> `default_preset`;
-`model_service.py` symbols (`ModelProfile` -> `SamplerPreset`,
-`load_profiles` -> `load_sampler_presets`, `get_profiles` ->
-`get_sampler_presets`, `bulk_apply_profile` -> `bulk_set_default_preset`,
-`get_available_profiles` -> `available_sampler_presets`). The import CLI's
-`--profile` survives only as an alias for `--preset`. Do not reintroduce
-"profile" for this concept -- it collides with `/v1/performance/profile`
-(perf) and invites confusion with `/v1/presets` (user presets, DuckDB).
+**Naming** (settled 2026-07-20, two steps in one day): this registry was
+"presets" (and "profiles" on the import/admin side) until both names
+proved traps -- "profile" collides with `/v1/performance/profile`, and
+"preset" collides with `/v1/presets`, the DuckDB **user presets** (v3's
+saved prompt+sampler bundles, client-expanded; `preset_api.py`; a fully
+separate system this registry never touches). Final vocabulary: this
+registry is **samplers** everywhere -- `ChatRequest.sampler` (a request
+sending the old `preset` key gets an explicit 400 with a migration hint,
+not a silent drop), models.toml `default_sampler`, admin routes
+`/v1/admin/models/samplers` + `/bulk-default-sampler`,
+`ModelImportRequest.default_sampler` (extra="forbid" so the old field
+name fails loudly), module `samplers.py` (`SamplerRegistry`,
+`SamplerNotFound`, `get_sampler_registry`), `model_service.py`
+(`stamp_default_sampler`, `get_samplers`, `bulk_set_default_sampler`,
+`available_samplers`). The import CLI accepts `--sampler` with
+`--preset`/`--profile` as legacy aliases. Do not reintroduce "preset" or
+"profile" for this concept; "preset" now means ONLY the v3 user-preset
+system.
 
-Each preset has `[meta]` and `[defaults]` tables:
+Each sampler has `[meta]` and `[defaults]` tables:
 
 ```toml
 [meta]
@@ -388,17 +393,17 @@ max_tokens = 1024
 repetition_penalty = 1.05
 ```
 
-`ModelService.import_models` (or `heylookllm import --preset NAME`)
-records the preset name on the model as `default_preset` -- it does not
-copy the preset's fields into `models.toml`. See "Sampler Defaults and
-the Effective-Request Cascade" above for where `default_preset` sits in
+`ModelService.import_models` (or `heylookllm import --sampler NAME`)
+records the sampler name on the model as `default_sampler` -- it does not
+copy the sampler's fields into `models.toml`. See "Sampler Defaults and
+the Effective-Request Cascade" above for where `default_sampler` sits in
 the resolution order, and how it interacts with a request's own
-`ChatRequest.preset`.
+`ChatRequest.sampler`.
 
-Apply a preset at import via CLI (`--profile` is accepted as an alias for
-`--preset`):
+Apply a sampler at import via CLI (`--preset`/`--profile` are accepted as
+legacy aliases):
 ```bash
-heylookllm import --hf-cache --preset balanced
+heylookllm import --hf-cache --sampler balanced
 ```
 
 ---
@@ -426,7 +431,7 @@ Reloads `models.toml` without restarting the server. Currently loaded models sta
 
 ```bash
 # Scan HuggingFace cache and generate models.toml
-heylookllm import --hf-cache --preset balanced
+heylookllm import --hf-cache --sampler balanced
 
 # Scan a directory
 heylookllm import --folder ~/models --output models.toml

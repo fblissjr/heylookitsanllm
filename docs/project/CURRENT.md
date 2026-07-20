@@ -262,8 +262,8 @@ this. New router `preset_api.py`: `/v1/presets` GET/POST,
 409 name collision, 400 bad/empty fields, 404 unknown id. These are
 UI-authored bundles (`{name, system_prompt, params}`) expanded
 CLIENT-side into explicit request fields when applied -- deliberately
-distinct from the server-side TOML sampler preset registry (`presets.py`
-/ `ChatRequest.preset`); no wire relationship. Frontend v3: chat settings
+distinct from the server-side TOML sampler registry (now `samplers.py`
+/ `ChatRequest.sampler`, renamed from "presets" 2026-07-20); no wire relationship. Frontend v3: chat settings
 panel gained a per-conversation system-prompt editor (details/textarea,
 PUTs `system_prompt` to the conversation on blur; a prompt typed before
 the first send rides along on the implicit conversation create) and a

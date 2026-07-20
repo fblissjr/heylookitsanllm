@@ -21,9 +21,9 @@ class Task:
     user_prompt: str = DEFAULT_USER_PROMPT
     expects_json: bool = True
     required_keys: tuple[str, ...] = ()
-    # Generation defaults (overridable from the CLI). preset refers to the
-    # server's sampler preset registry (see /v1/capabilities or docs).
-    preset: str | None = None
+    # Generation defaults (overridable from the CLI). sampler refers to the
+    # server's named-sampler registry (discoverable via /v1/capabilities).
+    sampler: str | None = None
     max_tokens: int | None = None
 
 
@@ -126,7 +126,7 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Label this image following the schema.",
         expects_json=True,
         required_keys=("category", "subcategory", "description", "objects", "confidence"),
-        preset="vlm-extract",
+        sampler="vlm-extract",
         max_tokens=1024,
     ),
     "caption": Task(
@@ -135,7 +135,7 @@ BUILTIN_TASKS: dict[str, Task] = {
         system_prompt=_CAPTION_SYSTEM_PROMPT,
         user_prompt="Caption this image.",
         expects_json=False,
-        preset="vlm-describe",
+        sampler="vlm-describe",
         max_tokens=512,
     ),
     "tags": Task(
@@ -145,7 +145,7 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Tag this image.",
         expects_json=True,
         required_keys=("tags",),
-        preset="vlm-extract",
+        sampler="vlm-extract",
         max_tokens=512,
     ),
     "ocr": Task(
@@ -155,7 +155,7 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Extract all text from this image.",
         expects_json=True,
         required_keys=("text", "legibility"),
-        preset="vlm-extract",
+        sampler="vlm-extract",
         max_tokens=2048,
     ),
 }

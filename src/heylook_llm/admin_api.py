@@ -15,14 +15,14 @@ from heylook_llm.config import (
     AdminModelListResponse,
     AdminModelResponse,
     AdminValidationResult,
-    BulkDefaultPresetRequest,
+    BulkDefaultSamplerRequest,
     ModelImportRequest,
     ModelScanRequest,
     ModelStatusResponse,
     ModelUpdateRequest,
     ModelValidateRequest,
-    SamplerPresetInfo,
-    SamplerPresetListResponse,
+    SamplerInfo,
+    SamplerListResponse,
 )
 from heylook_llm.model_service import ModelService
 
@@ -295,7 +295,7 @@ async def _import_models(request: Request, import_request: ModelImportRequest):
     try:
         imported = service.import_models(
             models_to_import=import_request.models,
-            default_preset=import_request.default_preset,
+            default_sampler=import_request.default_sampler,
         )
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
@@ -323,21 +323,22 @@ async def _validate_config(request: Request, validate_request: ModelValidateRequ
     )
 
 
-# --- Sampler presets (called "profiles" here until 2026-07-20) ---
+# --- Samplers (named sampler configs; called "profiles", then briefly
+# "sampler presets", until the 2026-07-20 naming unification) ---
 
-async def _list_sampler_presets(request: Request):
-    """List available sampler presets (the bundled PresetRegistry)."""
+async def _list_samplers(request: Request):
+    """List available named samplers (the bundled SamplerRegistry)."""
     service = _get_service(request)
-    presets_dict = service.get_sampler_presets()
-    presets = [SamplerPresetInfo(name=k, description=v["description"]) for k, v in presets_dict.items()]
-    return SamplerPresetListResponse(presets=presets)
+    samplers_dict = service.get_samplers()
+    samplers = [SamplerInfo(name=k, description=v["description"]) for k, v in samplers_dict.items()]
+    return SamplerListResponse(samplers=samplers)
 
 
-async def _bulk_set_default_preset(request: Request, body: BulkDefaultPresetRequest):
-    """Record a sampler preset as default_preset on multiple models."""
+async def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest):
+    """Record a named sampler as default_sampler on multiple models."""
     service = _get_service(request)
     try:
-        updated = service.bulk_set_default_preset(body.model_ids, body.preset)
+        updated = service.bulk_set_default_sampler(body.model_ids, body.sampler)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
         result: dict = {
@@ -400,24 +401,24 @@ scan_import_router.add_api_route(
 )
 
 scan_import_router.add_api_route(
-    "/sampler-presets",
-    _list_sampler_presets,
+    "/samplers",
+    _list_samplers,
     methods=["GET"],
-    summary="List Sampler Presets",
+    summary="List Samplers",
     description=(
-        "List available sampler presets (bundled PresetRegistry -- same names "
-        "ChatRequest.preset accepts). Distinct from /v1/presets, the saved "
+        "List available named samplers (bundled SamplerRegistry -- same names "
+        "ChatRequest.sampler accepts). Distinct from /v1/presets, the saved "
         "user prompt+sampler bundles. Renamed from /profiles 2026-07-20."
     ),
 )
 
 scan_import_router.add_api_route(
-    "/bulk-default-preset",
-    _bulk_set_default_preset,
+    "/bulk-default-sampler",
+    _bulk_set_default_sampler,
     methods=["POST"],
-    summary="Bulk Set Default Preset",
+    summary="Bulk Set Default Sampler",
     description=(
-        "Record a sampler preset as default_preset on multiple models at once. "
+        "Record a named sampler as default_sampler on multiple models at once. "
         "Renamed from /bulk-profile 2026-07-20."
     ),
 )

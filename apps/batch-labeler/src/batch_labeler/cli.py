@@ -73,7 +73,10 @@ def _add_generation_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--user-prompt", help="Override the task's per-image user prompt")
 
     s = p.add_argument_group("generation")
-    s.add_argument("--preset", help="Server sampler preset (overrides the task's)")
+    s.add_argument(
+        "--sampler", "--preset", dest="sampler",
+        help="Server named sampler (overrides the task's; --preset is an alias)",
+    )
     s.add_argument("--max-tokens", type=int, help="Max tokens per response")
     s.add_argument("--temperature", type=float, help="Sampling temperature")
     s.add_argument("--top-p", type=float, help="Nucleus sampling threshold")
@@ -187,7 +190,7 @@ def _resolve_options(args, task: Task) -> GenerationOptions:
         temperature=args.temperature,
         top_p=args.top_p,
         seed=args.seed,
-        preset=args.preset if args.preset is not None else task.preset,
+        sampler=args.sampler if args.sampler is not None else task.sampler,
         enable_thinking=args.enable_thinking,
         vision_tokens=args.vision_tokens,
         resize_max=args.resize_max,
@@ -233,7 +236,7 @@ def _settings_echo(model_id: str, task: Task, options: GenerationOptions) -> dic
     """Compact non-None settings dict stored with each record for reproducibility."""
     settings = {"model": model_id, "task": task.name}
     for key in (
-        "preset", "max_tokens", "temperature", "top_p", "seed",
+        "sampler", "max_tokens", "temperature", "top_p", "seed",
         "enable_thinking", "vision_tokens", "resize_max", "image_quality",
     ):
         value = getattr(options, key)
@@ -296,8 +299,8 @@ def cmd_tasks(args, console: Console) -> int:
         meta = f"expects_json={task.expects_json}"
         if task.required_keys:
             meta += f"  required_keys={list(task.required_keys)}"
-        if task.preset:
-            meta += f"  preset={task.preset}"
+        if task.sampler:
+            meta += f"  sampler={task.sampler}"
         if task.max_tokens:
             meta += f"  max_tokens={task.max_tokens}"
         console.print(meta)
@@ -306,13 +309,13 @@ def cmd_tasks(args, console: Console) -> int:
     table = Table(box=None, pad_edge=False)
     table.add_column("task")
     table.add_column("output")
-    table.add_column("preset")
+    table.add_column("sampler")
     table.add_column("description")
     for task in BUILTIN_TASKS.values():
         table.add_row(
             task.name,
             "json" if task.expects_json else "text",
-            task.preset or "-",
+            task.sampler or "-",
             task.description,
         )
     console.print(table)

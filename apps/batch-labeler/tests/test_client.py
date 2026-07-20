@@ -34,7 +34,7 @@ class TestBuildPayload:
         assert types == ["image_url", "text"]
         assert user["content"][1]["text"] == "usr"
         # No None-valued optional fields leak into the payload
-        for key in ("temperature", "preset", "enable_thinking", "vision_tokens",
+        for key in ("temperature", "sampler", "enable_thinking", "vision_tokens",
                     "resize_max", "image_quality", "seed", "top_p"):
             assert key not in payload
 
@@ -44,7 +44,7 @@ class TestBuildPayload:
             temperature=0.3,
             top_p=0.9,
             seed=42,
-            preset="vlm-extract",
+            sampler="vlm-extract",
             enable_thinking=True,
             vision_tokens=1024,
             resize_max=1024,
@@ -58,7 +58,7 @@ class TestBuildPayload:
         assert payload["temperature"] == 0.3
         assert payload["top_p"] == 0.9
         assert payload["seed"] == 42
-        assert payload["preset"] == "vlm-extract"
+        assert payload["sampler"] == "vlm-extract"
         assert payload["enable_thinking"] is True
         assert payload["vision_tokens"] == 1024
         assert payload["resize_max"] == 1024

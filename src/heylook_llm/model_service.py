@@ -3,11 +3,11 @@
 Service layer for model discovery, validation, and configuration management.
 
 Provides CRUD operations on models.toml, filesystem scanning for importable models,
-smart defaults, and sampler-preset stamping (default_preset). Thread-safe for
+smart defaults, and sampler-preset stamping (default_sampler). Thread-safe for
 concurrent API access.
 
 This module is the single source of truth for:
-- Sampler presets (load_sampler_presets, SAMPLER_PRESETS, SamplerPreset) -- views over the PresetRegistry
+- Sampler-preset stamping (stamp_default_sampler, available_samplers) over the SamplerRegistry
 - Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
 - Config CRUD, scanning, import, validation
@@ -63,79 +63,27 @@ def get_hf_cache_paths() -> list[str]:
 # =============================================================================
 
 
-@dataclass
-class SamplerPreset:
-    """View over a named preset from the runtime ``PresetRegistry``.
+def stamp_default_sampler(
+    config: dict[str, Any], preset_name: str, provider: str
+) -> dict[str, Any]:
+    """Record a sampler-preset name as ``default_sampler`` on a model config.
 
-    Historically this dataclass carried a sampler-field ``defaults`` dict that
-    ``apply()`` baked into ``models.toml`` at import time. After C4, sampler
-    fields live in ``src/heylook_llm/data/presets/*.toml`` and are resolved
-    at REQUEST time via the registry cascade. ``apply()`` now just records
-    the preset name on the model's config as ``default_preset`` -- callers
-    keep the same method signature during the transition; internal
-    semantics differ.
+    The request-time cascade (``MLXProvider._apply_model_defaults``) picks up
+    ``default_sampler`` and applies the preset fields when no per-request
+    preset is specified -- no sampler-field baking. Non-mlx providers
+    (embeddings) don't sample, so the stamp is skipped.
     """
-
-    name: str
-    description: str
-    defaults: dict[str, Any] = field(default_factory=dict)
-
-    def apply(
-        self, config: dict[str, Any], model_info: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Record the preset name on the model's config.
-
-        The request-time cascade (see ``MLXProvider._apply_model_defaults``)
-        picks up ``default_preset`` and applies the preset fields when no
-        per-request preset is specified. No baking.
-        """
-        provider = model_info.get("provider", "mlx")
-        result = dict(config)
-        if provider == "mlx":
-            result["default_preset"] = self.name
-        return result
+    result = dict(config)
+    if provider == "mlx":
+        result["default_sampler"] = preset_name
+    return result
 
 
-def load_sampler_presets(presets_dir: Path | None = None) -> dict[str, SamplerPreset]:
-    """Return a preset-dataclass view over the runtime preset registry.
-
-    The ``presets_dir`` override exists for tests that want to load from a
-    custom directory; production paths use the bundled presets via the
-    process-wide ``PresetRegistry``.
-    """
-    from heylook_llm.presets import PresetRegistry, get_preset_registry
-
-    if presets_dir is not None:
-        registry = PresetRegistry.from_directory(presets_dir)
-    else:
-        registry = get_preset_registry()
-
-    return {
-        name: SamplerPreset(
-            name=name,
-            description=registry.describe(name),
-            defaults=registry.get(name),
-        )
-        for name in registry.list_names()
-    }
-
-
-def available_sampler_presets() -> list[str]:
+def available_samplers() -> list[str]:
     """Return sorted list of available preset names (for argparse choices)."""
-    from heylook_llm.presets import get_preset_registry
+    from heylook_llm.samplers import get_sampler_registry
 
-    return get_preset_registry().list_names()
-
-
-def _presets_view() -> dict[str, SamplerPreset]:
-    """Accessor used by functions that previously read the module dict.
-    Returns a fresh view each call -- cheap (registry is memoized)."""
-    return load_sampler_presets()
-
-
-# Module-level snapshot; ``_presets_view()`` gives a fresh snapshot backed by
-# the registry when needed.
-SAMPLER_PRESETS = _presets_view()
+    return get_sampler_registry().list_names()
 
 
 # =============================================================================
@@ -162,7 +110,7 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     KV quantization knobs, draft-token count.
 
     Users pick a sampler preset via ``--preset NAME`` on import (records
-    ``default_preset``) or per-request via ``ChatRequest.preset``.
+    ``default_sampler``) or per-request via ``ChatRequest.preset``.
     """
     provider = model_info.get("provider", "mlx")
     if provider == "mlx_embedding":
@@ -474,24 +422,11 @@ class ModelService:
         """Generate smart defaults based on model characteristics."""
         return get_smart_defaults(model_info)
 
-    def get_sampler_presets(self) -> dict[str, dict]:
-        """Get available sampler presets with descriptions."""
-        return {
-            name: {
-                "name": preset.name,
-                "description": preset.description,
-            }
-            for name, preset in SAMPLER_PRESETS.items()
-        }
+    def get_samplers(self) -> dict[str, dict]:
+        """Get available sampler presets with descriptions (registry view)."""
+        from heylook_llm.samplers import get_sampler_registry
 
-    def apply_sampler_preset(self, config: dict, preset_name: str, model_info: dict) -> dict:
-        """Record a named sampler preset as the config's default_preset."""
-        preset = SAMPLER_PRESETS.get(preset_name)
-        if not preset:
-            raise ValueError(
-                f"Unknown preset: {preset_name}. Available: {list(SAMPLER_PRESETS.keys())}"
-            )
-        return preset.apply(config, model_info)
+        return {info["name"]: info for info in get_sampler_registry().list_info()}
 
     # --- Config CRUD ---
 
@@ -651,16 +586,16 @@ class ModelService:
 
             raise ValueError(f"Model '{model_id}' not found")
 
-    def bulk_set_default_preset(
+    def bulk_set_default_sampler(
         self, model_ids: list[str], preset_name: str
     ) -> list[ModelConfig]:
-        """Set ``default_preset`` on multiple models at once.
+        """Set ``default_sampler`` on multiple models at once.
 
         Records the name on each target model's config so the request-time
         cascade picks it up. No sampler-field baking.
         """
-        from heylook_llm.presets import get_preset_registry
-        registry = get_preset_registry()
+        from heylook_llm.samplers import get_sampler_registry
+        registry = get_sampler_registry()
         if preset_name not in registry:
             raise ValueError(
                 f"Unknown preset: {preset_name}. Available: {registry.list_names()}"
@@ -675,7 +610,7 @@ class ModelService:
                 if model.get("id") in model_ids:
                     config = model.get("config", {}) or {}
                     if model.get("provider") == "mlx":
-                        config["default_preset"] = preset_name
+                        config["default_sampler"] = preset_name
                         model["config"] = config
                     updated.append(ModelConfig(**model))
 
@@ -688,7 +623,7 @@ class ModelService:
     def import_models(
         self,
         models_to_import: list[dict],
-        default_preset: str | None = "balanced",
+        default_sampler: str | None = "balanced",
     ) -> list[ModelConfig]:
         """Import scanned models into config with an optional default sampler preset."""
         with self._lock:
@@ -732,11 +667,13 @@ class ModelService:
                     smart = get_smart_defaults(model_info)
                     entry_config.update(smart)
 
-                    # Stamp default_preset if specified
-                    if default_preset:
-                        preset = SAMPLER_PRESETS.get(default_preset)
-                        if preset:
-                            entry_config = preset.apply(entry_config, model_info)
+                    # Stamp default_sampler if specified and known
+                    if default_sampler:
+                        from heylook_llm.samplers import get_sampler_registry
+                        if default_sampler in get_sampler_registry():
+                            entry_config = stamp_default_sampler(
+                                entry_config, default_sampler, provider
+                            )
 
                     # Same detection as the CLI import wizard (shared helper --
                     # the two paths drifted once): record the explicit template

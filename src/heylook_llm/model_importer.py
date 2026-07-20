@@ -16,20 +16,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 from heylook_llm.model_service import (
-    available_sampler_presets,
+    available_samplers,
     get_hf_cache_paths,
     get_smart_defaults,
-    load_sampler_presets,
 )
 from heylook_llm.providers.common.template_info import detect_chat_template_source
 
 __all__ = [
     "ModelImporter",
-    "available_sampler_presets",
+    "available_samplers",
     "get_hf_cache_paths",
     "get_smart_defaults",
     "import_models",
-    "load_sampler_presets",
 ]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
@@ -40,21 +38,21 @@ class ModelImporter:
 
     def __init__(
         self,
-        preset: Optional[str] = None,
+        sampler: Optional[str] = None,
         overrides: Optional[dict[str, Any]] = None,
         chat_template_override: Optional[str] = None,
     ):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
-        self.preset_name: Optional[str] = None
-        if preset:
-            from heylook_llm.presets import get_preset_registry
-            registry = get_preset_registry()
-            if preset not in registry:
+        self.sampler_name: Optional[str] = None
+        if sampler:
+            from heylook_llm.samplers import get_sampler_registry
+            registry = get_sampler_registry()
+            if sampler not in registry:
                 raise ValueError(
-                    f"Unknown preset: {preset}. Available: {registry.list_names()}"
+                    f"Unknown sampler: {sampler}. Available: {registry.list_names()}"
                 )
-            self.preset_name = preset
+            self.sampler_name = sampler
         self.overrides = overrides or {}
         # CLI `--chat-template` override. When set, recorded on every
         # imported model regardless of what's in its folder. Users point at
@@ -341,8 +339,8 @@ class ModelImporter:
             if detected:
                 config["chat_template_source"] = detected
 
-        if self.preset_name:
-            config["default_preset"] = self.preset_name
+        if self.sampler_name:
+            config["default_sampler"] = self.sampler_name
         config.update(self.overrides)
 
         if size_gb and size_gb < 1 and not is_vision:
@@ -453,7 +451,7 @@ def import_models(args: Any) -> None:
             overrides[key] = value
 
     importer = ModelImporter(
-        preset=getattr(args, 'preset', None),
+        sampler=getattr(args, 'sampler', None),
         overrides=overrides,
         chat_template_override=getattr(args, 'chat_template', None),
     )
@@ -532,12 +530,13 @@ def import_models(args: Any) -> None:
 
             model['config'] = config
 
-    # Print preset details before writing
-    if getattr(args, 'preset', None):
-        preset = load_sampler_presets().get(args.preset)
-        if preset:
-            print(f"\nPreset: {preset.name}")
-            for key, value in preset.defaults.items():
+    # Print sampler details before writing
+    if getattr(args, 'sampler', None):
+        from heylook_llm.samplers import get_sampler_registry
+        registry = get_sampler_registry()
+        if args.sampler in registry:
+            print(f"\nSampler: {args.sampler}")
+            for key, value in registry.get(args.sampler).items():
                 print(f"  {key:<25} = {value}")
 
     output_file = args.output or "models.toml"
@@ -547,8 +546,8 @@ def import_models(args: Any) -> None:
     for model in models:
         print(f"  - {model['id']} ({model['provider']})")
 
-    if getattr(args, 'preset', None):
-        print(f"\nApplied preset (recorded as default_preset): {args.preset}")
+    if getattr(args, 'sampler', None):
+        print(f"\nApplied sampler (recorded as default_sampler): {args.sampler}")
     if overrides:
         print(f"\nApplied overrides: {overrides}")
 
@@ -559,7 +558,8 @@ def import_models(args: Any) -> None:
     else:
         print("\nTo use this configuration, rename to models.toml or copy desired entries.")
 
-    if not getattr(args, 'preset', None):
-        print("\nAvailable sampler presets:")
-        for name, preset in sorted(load_sampler_presets().items()):
-            print(f"  --preset {name:<20} {preset.description}")
+    if not getattr(args, 'sampler', None):
+        from heylook_llm.samplers import get_sampler_registry
+        print("\nAvailable samplers:")
+        for info in get_sampler_registry().list_info():
+            print(f"  --sampler {info['name']:<20} {info['description']}")

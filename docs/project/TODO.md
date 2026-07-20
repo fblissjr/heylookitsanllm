@@ -309,7 +309,7 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   one-click entry point into it. Needs a caps-aware settings design (drop or
   grey cap-gated keys when unsupported), not a preset-side patch.
 - [ ] **Presets vs TOML registry: dual-source by name** (P3, design decision):
-  user presets are client-expanded only; `ChatRequest.preset` resolves just
+  user presets are client-expanded only; `ChatRequest.sampler` resolves just
   the bundled TOML registry. If saved presets should ever work by name from
   the raw API/CLI, make the registry dual-source (TOML + DB rows, name-unique
   across both) instead of growing a second wire path. Deliberately NOT done

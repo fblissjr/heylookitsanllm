@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0]
+
+### Changed
+
+- **The sampler registry is now "samplers" -- "preset" belongs exclusively
+  to the v3 user-preset system** (`/v1/presets`, DuckDB prompt+sampler
+  bundles). The registry had worn three names (profiles on import/admin,
+  presets on the request API, colliding with user presets); final
+  vocabulary: module `samplers.py` (`SamplerRegistry`, `SamplerNotFound`,
+  `get_sampler_registry`), data dir `data/samplers/`, request field
+  `ChatRequest.sampler` (a request still sending `preset` gets an explicit
+  400 with a migration hint -- ChatRequest ignores unknown keys, so a
+  silent drop was the alternative), models.toml `default_sampler`, admin
+  routes `/v1/admin/models/samplers` + `/bulk-default-sampler` (body
+  `sampler`), `ModelImportRequest.default_sampler`, capabilities block
+  `samplers` (`request_field: "sampler"`), model_service
+  `stamp_default_sampler`/`get_samplers`/`bulk_set_default_sampler`/
+  `available_samplers`. Import CLI: `--sampler` canonical,
+  `--preset`/`--profile` kept as aliases. batch-labeler follows
+  (`--sampler` flag, task TOML `sampler` key). Explicit per-request
+  sampler fields (temperature/top_p/...) continue to override everything,
+  named sampler or not -- the cascade is unchanged.
+
+### Fixed
+
+- **Code-review findings** (10/10 confirmed by adversarial verify,
+  all fixed):
+  - `scripts/dev_server.sh` (6): readiness now waits for HTTP-up then
+    exact-id membership (was substring/regex grep against the configured
+    list -- prefix ids false-READYed and dots were metachars), fails FAST
+    on an id the server doesn't list instead of spinning the full
+    deadline; failed starts kill the spawned pid + clear state (was: exit
+    1 with a multi-GB orphan and a retry that reported false success);
+    warm-request failure is a warning, not a `set -e` abort right after
+    READY (timeout raised to 600s for big cold loads); `probe()` cd's to
+    the repo root so the foreign-server port guard works from any cwd;
+    `status` no longer lists the script's own spawned pids under "NOT
+    ours -- never kill these"; port-guard branch probes once, not twice.
+  - `ModelImportRequest` gets `extra="forbid"` -- an old client's renamed
+    body field now 422s instead of being silently dropped and stamped
+    with the default.
+  - `/v1/capabilities` `server_version` reads the real package version
+    (`heylook_llm.__version__`, bumped to match this release) -- was
+    hardcoded "1.0.1".
+  - model_service's vestigial adapter tower (dead `apply_sampler_preset`
+    + its test mock, single-caller `_presets_view`, import-time snapshot,
+    stale "during the transition" docstring, duplicate listing pipeline)
+    collapsed onto the registry: `stamp_default_sampler()` helper +
+    registry-direct reads.
+  - `ChatRequest.sampler` Field uses keyword-form default (repo rule;
+    the last positional `Field(None, ...)` in config.py).
+  - Stale docs: config.md's `profile_name` reference and roster wording;
+    packaging: `[tool.setuptools.package-data]` pointed at a nonexistent
+    `data.profiles` and never shipped the sampler TOMLs in a wheel build.
+
 ## [1.36.1]
 
 ### Fixed

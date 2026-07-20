@@ -12,7 +12,6 @@ from starlette.testclient import TestClient
 
 from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks
 from heylook_llm.config import AppConfig
-from heylook_llm.model_service import load_sampler_presets
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +121,6 @@ class MockModelService:
 
     def __init__(self):
         self.app_config = AppConfig(**TEST_MODELS_DATA)
-        self._presets = load_sampler_presets()
 
     def list_configs(self):
         return list(self.app_config.models)
@@ -130,20 +128,13 @@ class MockModelService:
     def get_config(self, model_id):
         return self.app_config.get_model_config(model_id)
 
-    def get_sampler_presets(self):
-        return {
-            name: {"name": p.name, "description": p.description}
-            for name, p in self._presets.items()
-        }
+    def get_samplers(self):
+        from heylook_llm.samplers import get_sampler_registry
+
+        return {info["name"]: info for info in get_sampler_registry().list_info()}
 
     def scan_paths(self, paths=None, scan_hf=True):
         return []  # No real scanning in tests
-
-    def apply_sampler_preset(self, config, preset_name, model_info):
-        preset = self._presets.get(preset_name)
-        if not preset:
-            raise ValueError(f"Unknown preset: {preset_name}")
-        return preset.apply(config, model_info)
 
 
 # ---------------------------------------------------------------------------

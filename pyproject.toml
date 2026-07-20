@@ -84,7 +84,7 @@ heylookllm = "heylook_llm.server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"heylook_llm.data.profiles" = ["*.toml"]
+"heylook_llm.data.samplers" = ["*.toml"]
 "heylook_llm.data.services" = ["*.template"]
 
 [tool.setuptools.dynamic]

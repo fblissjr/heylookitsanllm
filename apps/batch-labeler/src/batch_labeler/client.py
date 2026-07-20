@@ -1,7 +1,7 @@
 """HTTP client for VLM image labeling via the heylookitsanllm OpenAI-compatible API.
 
 Also works against any OpenAI-compatible server; the heylook-specific fields
-(preset, enable_thinking, vision_tokens, resize_max, image_quality,
+(sampler, enable_thinking, vision_tokens, resize_max, image_quality,
 include_performance) are simply ignored elsewhere.
 """
 
@@ -24,7 +24,7 @@ class GenerationOptions:
     temperature: float | None = None
     top_p: float | None = None
     seed: int | None = None
-    preset: str | None = None
+    sampler: str | None = None
     enable_thinking: bool | None = None
     vision_tokens: int | None = None
     resize_max: int | None = None
@@ -82,7 +82,7 @@ def build_payload(
         "include_performance": True,
     }
     for key in (
-        "max_tokens", "temperature", "top_p", "seed", "preset",
+        "max_tokens", "temperature", "top_p", "seed", "sampler",
         "enable_thinking", "vision_tokens", "resize_max", "image_quality",
     ):
         value = getattr(options, key)

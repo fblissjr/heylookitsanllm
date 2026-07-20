@@ -5,7 +5,7 @@ Last updated: 2026-07-20
 Standalone CLI for batch VLM image labeling against heylookitsanllm (or any
 OpenAI-compatible `/v1/chat/completions` server). Ships rich built-in task
 templates (structured labels, captions, tags, OCR), supports the server's
-thinking mode, visual token budget, server-side resizing, and sampler presets,
+thinking mode, visual token budget, server-side resizing, and named samplers,
 and stores resumable results in JSONL.
 
 ## Why a rebuild (v0.2.0)
@@ -14,7 +14,7 @@ The v0.1 tool was a bare client: one hardcoded user prompt, no thinking
 control, no vision budget, no retries, and it required hand-writing a system
 prompt every run. v0.2 bundles curated prompts as tasks and exposes the
 server capabilities that landed after v0.1 (enable_thinking, vision_tokens,
-presets, performance telemetry).
+named samplers, performance telemetry).
 
 ## Install
 
@@ -52,8 +52,8 @@ If exactly one vision model is loaded on the server, `--model` can be omitted.
 | `tags` | JSON | 5-20 flat keyword tags for search/filtering |
 | `ocr` | JSON | Verbatim text extraction with language + legibility |
 
-Each task carries its own system prompt, per-image user prompt, sampler preset
-(`vlm-extract` / `vlm-describe` from the server's preset registry), max_tokens,
+Each task carries its own system prompt, per-image user prompt, named sampler
+(`vlm-extract` / `vlm-describe` from the server's sampler registry), max_tokens,
 and -- for JSON tasks -- required keys that are validated per record.
 
 ### Custom tasks
@@ -71,7 +71,7 @@ You identify birds in photos. Respond with EXACTLY one JSON object:
 user_prompt = "Identify the birds in this photo."
 expects_json = true
 required_keys = ["common_name", "id_confidence"]
-preset = "vlm-extract"
+sampler = "vlm-extract"
 max_tokens = 512
 ```
 
@@ -86,8 +86,8 @@ Unknown keys are rejected (catches typos). `--system-prompt`,
 | `--vision-tokens N` | `vision_tokens` | Visual token budget per image (16-16384), snapped to the model's processor grid |
 | `--resize-max N` | `resize_max` | Server-side downscale before encoding; big win on phone-camera originals |
 | `--image-quality Q` | `image_quality` | JPEG quality for the resize path |
-| `--preset NAME` | `preset` | Server sampler preset; overrides the task's default. Names are discoverable via `GET /v1/capabilities` (`sampler_presets.available`) |
-| `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat preset and task defaults (server-side cascade) |
+| `--sampler NAME` | `sampler` | Server named sampler; overrides the task's default (`--preset` accepted as alias). Names are discoverable via `GET /v1/capabilities` (`samplers.available`) |
+| `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat sampler and task defaults (server-side cascade) |
 
 ## Run options
 
@@ -124,7 +124,7 @@ One JSON object per line:
   "performance": {"prompt_tps": 21.9, "generation_tps": 56.3, "peak_memory_gb": 28.5},
   "generation_time_ms": 13323,
   "timestamp": "2026-07-20T12:00:00",
-  "settings": {"model": "...", "task": "label", "preset": "vlm-extract", "max_tokens": 1024}
+  "settings": {"model": "...", "task": "label", "sampler": "vlm-extract", "max_tokens": 1024}
 }
 ```
 
