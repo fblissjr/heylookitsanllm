@@ -17,7 +17,7 @@ from heylook_llm.router import ModelRouter
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.config import (
-    ChatRequest, ChatCompletionResponse,
+    ChatRequest, ChatCompletionResponse, PerformanceMetrics,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse,
 )
@@ -1343,13 +1343,22 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     if logprobs_collector and logprobs_collector.content:
         choice["logprobs"] = logprobs_collector.to_dict()
 
+    performance = None
+    if chat_request.include_performance:
+        performance = PerformanceMetrics(
+            prompt_tps=telemetry.prompt_tps,
+            generation_tps=telemetry.generation_tps,
+            peak_memory_gb=telemetry.peak_memory_gb,
+        )
+
     response = ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4()}",
         object="chat.completion",
         created=int(time.time()),
         model=chat_request.model or "unknown",
         choices=[choice],
-        usage=usage_dict
+        usage=usage_dict,
+        performance=performance
     )
 
     # Calculate processing time
