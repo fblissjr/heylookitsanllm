@@ -48,6 +48,17 @@ ordering and the sole-user/minimal-custom-code posture.
   memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
   pinned mlx-lm before adopting. The QAT assistant head also pairs with the
   MTP item above.
+- [ ] **Trim the two surviving architecture KEEPs** (P3, from the 07-20
+  architecture audit; exact section lists in the session log): config.md
+  (drop the field tables / TOML examples / schema dump / troubleshooting;
+  keep the three design-reversal records + validation rationale) and
+  mlx_provider.md (drop 1.4-1.6 key-file/function inventories + 2.1 + 5;
+  keep all of section 4 -- the invariants). Philosophy: design records
+  only, mirrors die.
+- [ ] **frontend_v3_spec.md post-cutover slimming** (P3, gated on Phase 3
+  v2 retirement): the spec is a historical BUILD contract; once v2 dies,
+  slim it to section 4 (the living API contract) + the decision records,
+  and let frontend_v3.md carry the map.
 - [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
   review's coverage table -- all four currently have ZERO e2e coverage):
   (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
