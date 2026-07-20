@@ -74,7 +74,7 @@ ordering and the sole-user/minimal-custom-code posture.
   would churn twice). FULL design note (line-level inventory, the harmony
   dead final-flush defect to fix alongside, wrapper sketch, failing-first
   test list, acceptance criteria):
-  internal/research/parser_strip_unification.md.
+  docs/parser_strip_unification.md.
 - [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
   review's coverage table -- all four currently have ZERO e2e coverage):
   (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
