@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.63]
+
+### Fixed
+
+- **Gemma-4 on the mlx-vlm path generated past end-of-turn** (visible as
+  answers that "keep going", thought-babble tails, repeated `<turn|>`):
+  two stop-set gaps, both fixed data-driven from the model's own files.
+  (1) Raw HF tokenizers don't absorb generation_config.json's eos list
+  (gemma-4 declares [1, 106, 50] incl. `<turn|>`; the tokenizer said 1) --
+  `extend_eos_from_generation_config` now unions it at load. (2) mlx-lm's
+  `stream_generate` auto-wraps raw tokenizers with only the single
+  `eos_token_id` -- `run_generation` now wraps raw tokenizers itself
+  (`ensure_gen_tokenizer`) with the full resolved stop set.
+- **Removed the decode-path special-token hygiene patch** (v1.34.5x
+  `tokenizer_hygiene.py`): defaulting every `decode()` to
+  `skip_special_tokens=True` stripped structural channel markers before
+  the reasoning parser could see them (gemma-4 thinking could never split
+  on the VLM path). The parsers themselves strip declared specials from
+  ROUTED text (`strip_tokens`), which is the correct layer. The vision
+  first-token decode also yields raw now (a leading `<|channel>` must
+  reach the parser).
+- Live-verified on gemma-4-31b (vision + text, think on/off, 1/2/large
+  images): thinking splits into the thinking field everywhere, turns
+  terminate, multi-image + thinking works. The previously reported
+  multi-image + thinking gibberish did not reproduce on the fixed stack.
+
 ## [1.34.62]
 
 ### Fixed

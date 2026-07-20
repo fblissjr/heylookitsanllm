@@ -498,10 +498,11 @@ class VLMVisionStrategy:
             logging.info("Generation aborted during vision encoding")
             return
 
-        # Yield the first token. skip_special_tokens=True matches the C4.5
-        # decode-path hygiene applied at load; defensive here for paths that
-        # instantiate a tokenizer independently.
-        first_text = tokenizer.decode([first_token_id], skip_special_tokens=True)
+        # Yield the first token RAW (skip_special_tokens=False): the first
+        # sampled token after a vision prefill can be a structural marker
+        # (gemma-4 opens thinking with <|channel>) that the reasoning parser
+        # must see; parsers strip non-structural specials from routed text.
+        first_text = tokenizer.decode([first_token_id], skip_special_tokens=False)
         yield _VisionTokenResponse(
             text=first_text,
             token=first_token_id,
@@ -605,11 +606,16 @@ class MLXProvider(BaseProvider):
                 logging.info("Loading text-only model using MLX LM")
                 self.model, self.processor = lm_load(model_path)
 
-            # Decode-path special-token hygiene (C4.5): patch decode()
-            # default to skip_special_tokens=True for paths that go through
-            # the naive detokenizer or our own code's decode() calls.
-            from .common.tokenizer_hygiene import apply_special_token_hygiene
-            apply_special_token_hygiene(self.get_tokenizer())
+            # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
+            # don't absorb generation_config's eos list (gemma-4: <turn|>
+            # missing -> generation runs past end-of-turn). mlx-lm loads
+            # already carry the full set; the union is a no-op there.
+            # NB the old decode()-level special-token hygiene patch is GONE
+            # on purpose: it stripped the structural channel markers before
+            # the reasoning parser could see them -- the parsers strip
+            # declared specials from ROUTED text themselves (strip_tokens).
+            from .common.stop_tokens import extend_eos_from_generation_config
+            extend_eos_from_generation_config(self.get_tokenizer(), model_path)
 
             # Read the model's chat template + tokenizer config (C4.5). The
             # resulting ModelTemplateInfo is the single source of truth for

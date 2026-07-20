@@ -28,8 +28,26 @@ from typing import Any, Generator
 
 import mlx.core as mx
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
+from .stop_tokens import resolve_stop_tokens
+
+
+def ensure_gen_tokenizer(tokenizer):
+    """Wrap a raw HF tokenizer for generation with the FULL stop set.
+
+    mlx-lm's ``stream_generate`` auto-wraps raw tokenizers as
+    ``TokenizerWrapper(tokenizer)``, whose eos set defaults to the single
+    ``eos_token_id`` -- dropping any extra terminators resolved from
+    generation_config (gemma-4 via mlx-vlm: <turn|> and <|tool_response|>
+    would be lost, and generation runs past end-of-turn). Wrapping here with
+    ``resolve_stop_tokens`` preserves them. Already-wrapped tokenizers
+    (mlx-lm loads) pass through untouched.
+    """
+    if isinstance(tokenizer, TokenizerWrapper):
+        return tokenizer
+    return TokenizerWrapper(tokenizer, eos_token_ids=resolve_stop_tokens(tokenizer))
 
 
 def _reset_vlm_positions(model) -> None:
@@ -272,6 +290,8 @@ def run_generation(
     # correct position state that must be preserved.
     if pre_filled_cache is None:
         _reset_vlm_positions(model)
+
+    tokenizer = ensure_gen_tokenizer(tokenizer)
 
     if pre_filled_cache is not None:
         # Vision path: cache already populated by VLM forward pass.
