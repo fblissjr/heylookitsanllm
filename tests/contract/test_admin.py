@@ -100,3 +100,31 @@ class TestAdminModelStatus:
         data = resp.json()
         assert "loaded" in data
         assert isinstance(data["loaded"], bool)
+
+
+class TestAdminLoadWarm:
+    """POST /v1/admin/models/{id}/load?warm=true -- server-side load + warm.
+
+    The server owns readiness semantics: spawn harnesses (scripts/
+    dev_server.sh, tests/e2e/lib/server.mjs) call this one endpoint instead
+    of inventing poll-the-model-list + hand-rolled warm generations.
+    """
+
+    def test_load_without_warm_unchanged(self, client):
+        resp = client.post("/v1/admin/models/test-mlx-model/load")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "loaded"
+        assert "warmed" not in data
+
+    def test_load_with_warm_runs_generation(self, client):
+        resp = client.post("/v1/admin/models/test-mlx-model/load?warm=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "loaded"
+        assert data["warmed"] is True
+        assert isinstance(data["warm_ms"], int)
+
+    def test_load_warm_unknown_model_400(self, client):
+        resp = client.post("/v1/admin/models/nope/load?warm=true")
+        assert resp.status_code == 400

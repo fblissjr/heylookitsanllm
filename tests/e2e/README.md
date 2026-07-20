@@ -57,7 +57,8 @@ change, re-run before diagnosing a delivery regression.
 - `run.mjs` — orchestrator: spawn server (isolated DB) → launch Chrome → run
   suites → tear down → exit non-zero on failure.
 - `lib/server.mjs` — spawn/readiness/stop for `heylookllm`. Readiness = model
-  listed AND a warm generation completes.
+  listed, then the canonical server-side `POST /v1/admin/models/{id}/load?warm=true`
+  (loads weights + 1-token warm generation; same contract as scripts/dev_server.sh).
 - `lib/browser.mjs` — Chrome launch + per-suite page context (localStorage
   settings seed, hash-router navigation, page-error capture).
 - `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, summary printer.

@@ -243,7 +243,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`;
-`POST /{id}/load` → `{status:"loaded",model_id}` (500 on failure); `POST /{id}/unload` →
+`POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20); `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description}], total}`;
 `POST /import` `{models:[{id,path,provider}], default_sampler?}` → `{imported:[...], total, warning?}`

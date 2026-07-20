@@ -7,6 +7,9 @@
 # Guarantees:
 #   - Isolated DB (HEYLOOK_DB_PATH under the state dir) -- never touches real data.
 #   - Logs to a file, never a pipe (piping to head SIGPIPE-wedges the server).
+#   - Readiness is SERVER-OWNED: POST /v1/admin/models/{id}/load?warm=true is
+#     the one canonical load+warm call (tests/e2e/lib/server.mjs uses the same
+#     contract) -- this script never re-invents poll/warm semantics.
 #   - RAM pre-flight: refuses to start if the model + headroom exceeds what the
 #     machine has AVAILABLE RIGHT NOW (so a model already resident in another
 #     server/agent's process is automatically accounted for).
@@ -174,25 +177,30 @@ case "$CMD" in
     if ! has_model "$LISTED" "$MODEL"; then
       abort_start "model '$MODEL' is not in the server's enabled model list (check the exact id in models.toml; got: $LISTED)"
     fi
-    echo "READY: $BASE (model $MODEL configured; first request loads it)"
 
-    if [ "$WARM" = 1 ]; then
-      # Warm failure is a warning, not a failed start: the server is up and
-      # healthy either way, and set -e must not abort right after READY.
-      if ! uv run python - "$BASE" "$MODEL" <<'PY'
-import sys, json, urllib.request
-req = urllib.request.Request(
-    sys.argv[1] + "/v1/chat/completions",
-    data=json.dumps({"model": sys.argv[2], "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8, "stream": False}).encode(),
-    headers={"Content-Type": "application/json"})
-with urllib.request.urlopen(req, timeout=600) as r:
-    json.load(r)
-print("warm generation OK (Metal kernels JIT'd)")
+    # Load (+ optionally warm) via the ONE canonical server-side call --
+    # POST /v1/admin/models/{id}/load?warm= owns readiness semantics (weights
+    # in LRU + first-forward-pass Metal JIT through the real generation
+    # path). tests/e2e/lib/server.mjs is the node client of the same
+    # contract; keep the two in sync only via that endpoint, never by
+    # re-inventing poll/warm logic here.
+    echo "loading model $MODEL (server-side load$([ "$WARM" = 1 ] && echo '+warm')) ..."
+    if ! ( cd "$REPO_ROOT" && uv run python - "$BASE" "$MODEL" "$WARM" <<'PY' )
+import json, sys, urllib.parse, urllib.request
+base, model, warm = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+url = f"{base}/v1/admin/models/{urllib.parse.quote(model, safe='')}/load?warm={'true' if warm else 'false'}"
+with urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=900) as r:
+    data = json.load(r)
+if warm and data.get("warmed"):
+    print(f"warm generation OK ({data.get('warm_ms', '?')} ms, Metal kernels JIT'd)")
+elif warm:
+    # Loaded but warm failed: server is usable; surface as a warning.
+    print(f"WARNING: warm failed: {data.get('warm_error')}", file=sys.stderr)
 PY
-      then
-        echo "WARNING: warm request failed or timed out -- server is still RUNNING (pid $(cat "$PIDFILE")); check $LOG, or stop it with: $0 stop --port $PORT" >&2
-      fi
+    then
+      abort_start "load request failed for '$MODEL'"
     fi
+    echo "READY: $BASE ($MODEL loaded)"
     ;;
 
   stop)

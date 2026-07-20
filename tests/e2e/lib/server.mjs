@@ -1,7 +1,10 @@
 // Spawn heylookllm with an ISOLATED conversation DB (HEYLOOK_DB_PATH) so the
 // suites -- which create and clear conversations/notebooks -- never touch real
-// data. Readiness = /v1/models responds AND a warm generation completes (which
-// forces the preloaded model through its first real forward pass).
+// data. Readiness = /v1/models responds, then ONE canonical server-side call:
+// POST /v1/admin/models/{id}/load?warm=true (loads weights + runs a 1-token
+// generation through the real generation path, paying the Metal-kernel JIT).
+// The server owns load/warm semantics; scripts/dev_server.sh is the bash
+// client of the same contract -- never re-invent poll/warm logic here.
 
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
@@ -55,22 +58,14 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
     throw new Error(`server /v1/models never listed ${modelId}; see ${logPath}`);
   })();
 
-  // Phase 2: warm generation -- proves the preloaded model can actually decode
-  // before the browser suites start (first forward pass JITs Metal kernels).
+  // Phase 2: canonical server-side load+warm. Blocks until weights are in the
+  // LRU and a 1-token generation has run (Metal kernels JIT'd).
   await (async () => {
-    while (Date.now() < deadline) {
-      if (exited) throw new Error(`server exited during warmup (code=${exited.code}); see ${logPath}`);
-      try {
-        const { status, body } = await fetchJson(`${base}/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1, stream: false }),
-        }, 240000);
-        if (status === 200 && body?.choices) return;
-      } catch { /* model still loading */ }
-      await sleep(1000);
-    }
-    throw new Error(`warm generation never succeeded for ${modelId}; see ${logPath}`);
+    const url = `${base}/v1/admin/models/${encodeURIComponent(modelId)}/load?warm=true`;
+    const { status, body } = await fetchJson(url, { method: 'POST' }, deadline - Date.now());
+    if (exited) throw new Error(`server exited during load/warm (code=${exited.code}); see ${logPath}`);
+    if (status !== 200) throw new Error(`load?warm=true returned ${status} for ${modelId}: ${JSON.stringify(body)}; see ${logPath}`);
+    if (!body?.warmed) throw new Error(`load succeeded but warm failed for ${modelId}: ${body?.warm_error}; see ${logPath}`);
   })();
 
   return {

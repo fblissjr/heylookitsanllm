@@ -6,6 +6,7 @@ All endpoints under /v1/admin/models/ -- separated from the OpenAI-compatible
 """
 
 import logging
+import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -160,16 +161,55 @@ async def toggle_model(model_id: str, request: Request):
     summary="Load Model",
     description="Explicitly load a model into the LRU cache.",
 )
-async def load_model(model_id: str, request: Request):
+async def load_model(model_id: str, request: Request, warm: bool = False):
+    """Load a model; with ``warm=true`` also run a 1-token generation.
+
+    ``warm`` exists so spawn harnesses (scripts/dev_server.sh,
+    tests/e2e/lib/server.mjs) have ONE canonical readiness call instead of
+    each inventing poll-the-model-list + hand-rolled warm requests: load
+    puts weights in the LRU; the warm generation additionally pays the
+    first-forward-pass cost (Metal kernel JIT) through the normal
+    generation path (FIFO gate, sampler cascade). Returns 200 with
+    ``warmed: false`` + ``warm_error`` if the warm generation fails --
+    the model is loaded and the server usable either way.
+    """
     router = request.app.state.router_instance
     try:
         import asyncio
-        await asyncio.to_thread(router.get_provider, model_id)
-        return {"status": "loaded", "model_id": model_id}
+        provider = await asyncio.to_thread(router.get_provider, model_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
+
+    result: dict = {"status": "loaded", "model_id": model_id}
+    if warm:
+        from heylook_llm.config import ChatMessage, ChatRequest
+
+        warm_request = ChatRequest(
+            model=model_id,
+            messages=[ChatMessage(role="user", content="hi")],
+            max_tokens=1,
+            stream=False,
+        )
+
+        def _consume() -> None:
+            gen = provider.create_chat_completion(warm_request)
+            try:
+                for _ in gen:
+                    pass
+            finally:
+                gen.close()
+
+        start = time.time()
+        try:
+            await asyncio.to_thread(_consume)
+            result["warmed"] = True
+            result["warm_ms"] = int((time.time() - start) * 1000)
+        except Exception as e:
+            result["warmed"] = False
+            result["warm_error"] = str(e)[:500]
+    return result
 
 
 @admin_router.post(

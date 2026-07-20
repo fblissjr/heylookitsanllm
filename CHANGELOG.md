@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0]
+
+### Added
+
+- **Server-owned load+warm readiness**: `POST /v1/admin/models/{id}/load`
+  accepts `?warm=true` -- after loading, runs a 1-token generation through
+  the normal generation path (FIFO gate, sampler cascade), paying the
+  first-forward-pass Metal-kernel JIT. Returns `warmed`/`warm_ms`, or
+  `warmed: false` + `warm_error` with 200 (model loaded, server usable).
+  This is the fix for the code-review finding that `scripts/dev_server.sh`
+  and `tests/e2e/lib/server.mjs` each hand-rolled poll-the-model-list +
+  warm-generation heuristics (and drifted): both harnesses are now thin
+  clients of this one endpoint -- spawn, wait for HTTP-up, call
+  `load?warm=true`, done. Cross-references added in both harness headers,
+  the dev-server skill, CLAUDE.md, and spec section 4. Live-verified on
+  Metal (0.8B: warm 164ms; unknown-id start fails fast with no orphan;
+  foreign server on another port untouched).
+
 ## [1.37.0]
 
 ### Changed
