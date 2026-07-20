@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0]
+
+### Added
+
+- **batch-labeler rebuilt as a task-based CLI (app v0.2.0)**: subcommands
+  `run` / `try` / `models` / `tasks` replace the single flag-soup invocation.
+  Built-in task templates with curated system prompts (`label` structured
+  taxonomy, `caption` training-style captions, `tags` keyword tags, `ocr`
+  verbatim extraction), each carrying its own sampler preset
+  (`vlm-extract`/`vlm-describe`), max_tokens, and required-key validation;
+  custom tasks via `--task-file` TOML (unknown keys rejected). Now exposes
+  the server capabilities the old client ignored: `--think/--no-think`
+  (enable_thinking; thinking stored in its own record field), `--vision-tokens`
+  (visual token budget), `--resize-max`/`--image-quality` (server-side
+  resize), `--preset`, `--seed`. Model auto-pick when the server has exactly
+  one vision model; transient-failure retries with backoff; `--limit` for
+  sampling; `--dry-run` prints fully-resolved settings; records carry
+  parse_ok/missing_keys, usage, performance, and a settings echo. Live tok/s
+  in the progress bar. 37 new tests (62 total in the app suite).
+
+### Fixed
+
+- **`include_performance` on `/v1/chat/completions` was dead**: declared on
+  ChatRequest but never read; `ChatCompletionResponse.performance` was never
+  populated. Non-streaming responses now fill it from native mlx-lm telemetry
+  (prompt_tps, generation_tps, peak_memory_gb) when requested. Contract test
+  added; schema unchanged (field already existed as Optional).
+
 ## [1.34.66]
 
 ### Fixed

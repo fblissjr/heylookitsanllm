@@ -1,12 +1,20 @@
 # batch-labeler
 
-Standalone client for batch VLM image labeling. Sends images to any OpenAI-compatible `/v1/chat/completions` endpoint and stores structured results in JSONL.
+Last updated: 2026-07-20
 
-## Prerequisites
+Standalone CLI for batch VLM image labeling against heylookitsanllm (or any
+OpenAI-compatible `/v1/chat/completions` server). Ships rich built-in task
+templates (structured labels, captions, tags, OCR), supports the server's
+thinking mode, visual token budget, server-side resizing, and sampler presets,
+and stores resumable results in JSONL.
 
-- Python 3.12+ managed by uv
-- A running server with a VLM model loaded (heylookitsanllm backend, or any OpenAI-compatible server)
-- A directory of images to label
+## Why a rebuild (v0.2.0)
+
+The v0.1 tool was a bare client: one hardcoded user prompt, no thinking
+control, no vision budget, no retries, and it required hand-writing a system
+prompt every run. v0.2 bundles curated prompts as tasks and exposes the
+server capabilities that landed after v0.1 (enable_thinking, vision_tokens,
+presets, performance telemetry).
 
 ## Install
 
@@ -15,123 +23,120 @@ cd apps/batch-labeler
 uv sync
 ```
 
-## End-to-End Tutorial
-
-### 1. Start the backend with a VLM model
-
-In a separate terminal, start heylookitsanllm and load a VLM:
+## Quick start
 
 ```bash
-uv run uvicorn heylook_llm.api:app --host 0.0.0.0 --port 8000
+# 1. Start the server (repo root, separate terminal)
+uv run heylookllm --port 8080
+
+# 2. See what's available
+uv run batch-labeler models          # vision-capable models highlighted
+uv run batch-labeler tasks           # built-in task templates
+uv run batch-labeler tasks label     # show a task's full prompts
+
+# 3. Test-drive one image before committing to a batch
+uv run batch-labeler try photo.jpg -m gemma-4-26b-a4b-it-8bit-mlx
+
+# 4. Run the batch
+uv run batch-labeler run path/to/dataset -m gemma-4-26b-a4b-it-8bit-mlx -o results.jsonl
 ```
 
-Then load a model via the API or frontend. Any VLM works -- Qwen2.5-VL, Gemma-3, etc.
+If exactly one vision model is loaded on the server, `--model` can be omitted.
 
-### 2. Prepare your images
+## Built-in tasks
 
-Put images in a directory. The labeler scans recursively by default and handles jpg, png, webp, and other PIL-supported formats.
+| Task | Output | Description |
+|------|--------|-------------|
+| `label` (default) | JSON | Taxonomy labels: category, objects, colors, style, setting, lighting, mood, quality issues, confidence |
+| `caption` | text | Dense single-paragraph caption, training-data style |
+| `tags` | JSON | 5-20 flat keyword tags for search/filtering |
+| `ocr` | JSON | Verbatim text extraction with language + legibility |
 
-```
-my-images/
-  photo1.jpg
-  photo2.png
-  subdir/
-    photo3.webp
-```
+Each task carries its own system prompt, per-image user prompt, sampler preset
+(`vlm-extract` / `vlm-describe` from the server's preset registry), max_tokens,
+and -- for JSON tasks -- required keys that are validated per record.
 
-### 3. Write a system prompt
+### Custom tasks
 
-Create a text file with labeling instructions:
+Write a TOML file and pass `--task-file`:
 
-```bash
-cat > instructions.txt << 'EOF'
-You are an image labeling assistant. Analyze each image carefully and respond with a single JSON object on one line. Do not include any other text.
-
-Schema:
-{"category": "<string>", "subcategory": "<string>", "description": "<string>", "objects": ["<string>", ...], "dominant_colors": ["<string>", ...], "mood": "<string>", "confidence": <float 0.0-1.0>}
-
-Categories and subcategories:
-- landscape: natural, urban, aerial, underwater
-- portrait: human, animal, group
-- object: food, vehicle, electronics, furniture, clothing, tool
-- text: document, sign, screenshot, handwritten
-- diagram: flowchart, graph, schematic, map
-- art: painting, illustration, sculpture, digital
-- other: abstract, unclear
-
-Rules:
-- "objects" lists the 1-5 most prominent items visible in the image.
-- "dominant_colors" lists 1-3 primary colors (use simple color names like "blue", "dark green", "off-white").
-- "mood" is a single word: neutral, cheerful, somber, dramatic, calm, chaotic, clinical, nostalgic.
-- Set "confidence" below 0.5 if the image is blurry, ambiguous, or doesn't fit any category well.
-- If the image contains text, include a brief summary of the text content in "description".
-EOF
+```toml
+[task]
+name = "damage-assessment"
+description = "Insurance photo triage"
+system_prompt = """
+You assess property damage photos. Respond with EXACTLY one JSON object:
+{"damage_type": string, "severity": "none|minor|moderate|severe", "notes": string}
+"""
+user_prompt = "Assess this photo."
+expects_json = true
+required_keys = ["damage_type", "severity"]
+preset = "vlm-extract"
+max_tokens = 512
 ```
 
-Or pass the prompt inline with `--system-prompt "..."`.
+Unknown keys are rejected (catches typos). `--system-prompt`,
+`--system-prompt-file`, and `--user-prompt` override any task's prompts.
 
-### 4. Run the labeler
+## Server-feature flags
 
-```bash
-cd apps/batch-labeler
-uv run batch-labeler \
-  --image-dir /path/to/my-images \
-  --model "mlx-community/Qwen3.5-27B-mxfp8-mlx" \
-  --system-prompt-file instructions.txt \
-  --output results.jsonl \
-  --server http://localhost:8080
+| Flag | Maps to | Notes |
+|------|---------|-------|
+| `--think` / `--no-think` | `enable_thinking` | Thinking-capable models (see `models` output); thinking text is stored in its own `thinking` field, never polluting the label |
+| `--vision-tokens N` | `vision_tokens` | Visual token budget per image (16-16384), snapped to the model's processor grid |
+| `--resize-max N` | `resize_max` | Server-side downscale before encoding; big win on phone-camera originals |
+| `--image-quality Q` | `image_quality` | JPEG quality for the resize path |
+| `--preset NAME` | `preset` | Server sampler preset; overrides the task's default |
+| `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat preset and task defaults (server-side cascade) |
+
+## Run options
+
+```
+batch-labeler run IMAGE_DIR [-o results.jsonl] [--limit N] [--no-recursive]
+                 [--dry-run] [--retries 2] [--timeout 300] [--server URL]
 ```
 
-Progress is printed to stderr. Each completed image appends a line to the output JSONL.
+- `--dry-run` scans, reports counts, and prints the fully-resolved settings.
+- `--limit N` processes only the first N pending images -- sample a batch,
+  inspect, then run the rest.
+- Server URL default is `http://localhost:8080`, overridable via the
+  `BATCH_LABELER_SERVER` env var.
+- Transient failures (timeout, connection, 5xx) retry with backoff; 4xx fail
+  the image immediately. Failed images are NOT written, so a re-run retries
+  exactly those.
 
-### 5. Review results
+## Output format
 
-Each line in `results.jsonl` is a JSON object:
+One JSON object per line:
 
 ```json
 {
-  "file_path": "/path/to/my-images/photo1.jpg",
+  "file_path": "path/to/dataset/photo1.jpg",
   "file_hash": "abc123...",
   "file_name": "photo1.jpg",
-  "model_id": "mlx-community/Qwen3.5-27B-mxfp8-mlx",
-  "label": {"category": "landscape", "subcategory": "natural", "description": "Mountain scene with snow-capped peaks and alpine lake", "objects": ["mountain", "lake", "trees"], "dominant_colors": ["blue", "white", "dark green"], "mood": "calm", "confidence": 0.95},
+  "model_id": "gemma-4-26b-a4b-it-8bit-mlx",
+  "task": "label",
+  "label": {"category": "portrait", "...": "..."},
+  "parse_ok": true,
   "raw_output": "...",
-  "generation_time_ms": 1234,
-  "timestamp": "2026-03-10T12:00:00"
+  "thinking": "only present when the model produced thinking",
+  "usage": {"prompt_tokens": 1, "completion_tokens": 236, "total_tokens": 237},
+  "performance": {"prompt_tps": 21.9, "generation_tps": 56.3, "peak_memory_gb": 28.5},
+  "generation_time_ms": 13323,
+  "timestamp": "2026-07-20T12:00:00",
+  "settings": {"model": "...", "task": "label", "preset": "vlm-extract", "max_tokens": 1024}
 }
 ```
 
-Parse with standard tools:
+- JSON tasks: `label` is the parsed object (`parse_ok: false` + `label: null`
+  when the model's output wasn't valid JSON; `missing_keys` lists absent
+  required keys). Text tasks: `label` is the raw string.
+- `settings` echoes every non-default knob for reproducibility.
 
-```bash
-# Count by category
-cat results.jsonl | uv run python -c "
-import sys, orjson
-for line in sys.stdin:
-    obj = orjson.loads(line)
-    print(obj.get('label', {}).get('category', 'unknown'))
-" | sort | uniq -c | sort -rn
-```
+## Resume
 
-### 6. Resume interrupted runs
-
-Re-running the same command skips already-processed images (matched by `file_hash` in the output JSONL). Safe to ctrl-c and resume.
-
-## Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--image-dir` | required | Directory containing images |
-| `--model` | required | VLM model ID |
-| `--system-prompt` | -- | Inline system prompt |
-| `--system-prompt-file` | -- | Read prompt from file |
-| `--output` | `results.jsonl` | Output JSONL path |
-| `--server` | `http://localhost:8000` | Server base URL |
-| `--max-tokens` | 1024 | Max tokens per response |
-| `--temperature` | 0.1 | Sampling temperature |
-| `--recursive` / `--no-recursive` | recursive | Scan subdirectories |
-| `--dry-run` | false | Scan only, don't process |
-| `--timeout` | 120 | Per-request timeout (seconds) |
+Re-running the same command skips images whose `file_hash` already appears in
+the output file. Safe to ctrl-c anytime; partial results are flushed per image.
 
 ## Tests
 
