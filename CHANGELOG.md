@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.1]
+
+### Removed
+
+- **Unused flavor sampler presets** `moderate`, `code`, `creative` (audit
+  finding: zero consumers anywhere -- the v3 frontend's user-preset system
+  owns interactive sampler preferences, and their only references were
+  tests asserting their own existence). Bundled roster is now mechanism +
+  wired defaults only: `thinking` (auto-applied for enable_thinking
+  models), `vlm-extract`/`vlm-describe` (VLM-safe subsets, used by
+  batch-labeler tasks), `balanced` (import-default profile),
+  `deterministic` (repro/eval). Registry test now pins the exact roster so
+  additions must name a consumer. No API change; a request naming a
+  removed preset gets the existing unknown-preset 400.
+
 ## [1.35.0]
 
 ### Added

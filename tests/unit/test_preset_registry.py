@@ -31,11 +31,17 @@ from heylook_llm.presets import (
 
 class TestPresetRegistry:
     def test_load_bundled_presets(self):
-        """The bundled presets directory should contain at least the 'moderate' preset."""
+        """The bundled roster: mechanism presets + the import-default 'balanced'.
+
+        Exact-set assertion on purpose -- flavor presets with no consumer
+        (moderate/code/creative) were removed 2026-07-20; a preset added here
+        should come with a consumer.
+        """
         registry = PresetRegistry.from_bundled()
-        assert "moderate" in registry
-        moderate = registry.get("moderate")
-        assert moderate["temperature"] == pytest.approx(0.7)
+        assert set(registry.list_names()) == {
+            "balanced", "deterministic", "thinking", "vlm-describe", "vlm-extract",
+        }
+        assert registry.get("balanced")["temperature"] == pytest.approx(0.7)
 
     def test_list_names_is_sorted(self):
         registry = PresetRegistry.from_bundled()
@@ -52,7 +58,7 @@ class TestPresetRegistry:
         """A registry pointed at an empty dir should produce no presets."""
         registry = PresetRegistry.from_directory(tmp_path)
         assert registry.list_names() == []
-        assert "moderate" not in registry
+        assert "balanced" not in registry
 
     def test_custom_preset_loaded(self, tmp_path):
         """A TOML with [meta] + [defaults] produces a loadable preset."""

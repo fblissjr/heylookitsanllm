@@ -30,7 +30,7 @@ from heylook_llm.model_importer import ModelImporter
 class TestModelProfileAdapter:
     """``ModelProfile.apply`` now sets ``default_preset`` only."""
 
-    def _make_profile(self, name="moderate", defaults=None):
+    def _make_profile(self, name="balanced", defaults=None):
         return ModelProfile(
             name=name,
             description="test",
@@ -38,12 +38,12 @@ class TestModelProfileAdapter:
         )
 
     def test_apply_sets_default_preset_on_mlx(self):
-        profile = self._make_profile(name="creative")
+        profile = self._make_profile(name="thinking")
         config = {"model_path": "/p", "vision": False, "cache_type": "standard"}
 
         result = profile.apply(config, {"provider": "mlx"})
 
-        assert result["default_preset"] == "creative"
+        assert result["default_preset"] == "thinking"
         # Load-time fields preserved.
         assert result["model_path"] == "/p"
         assert result["cache_type"] == "standard"
@@ -62,7 +62,7 @@ class TestModelProfileAdapter:
         assert result["max_length"] == 2048
 
     def test_apply_does_not_mutate_input(self):
-        profile = self._make_profile(name="creative")
+        profile = self._make_profile(name="thinking")
         config = {"model_path": "/p"}
 
         profile.apply(config, {"provider": "mlx"})
@@ -75,8 +75,8 @@ class TestLoadProfilesAdapter:
 
     def test_returns_adapter_for_each_bundled_preset(self):
         profiles = load_profiles()
-        assert "moderate" in profiles
-        assert "creative" in profiles
+        assert "balanced" in profiles
+        assert "thinking" in profiles
         for name, profile in profiles.items():
             assert profile.name == name
             assert isinstance(profile.defaults, dict)

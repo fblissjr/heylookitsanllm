@@ -71,7 +71,7 @@ class ChatRequest(BaseModel):
     # request fields still win. Unknown name -> 400.
     preset: Optional[str] = Field(
         None,
-        description="Named sampler preset (e.g. 'balanced', 'creative', 'thinking'). "
+        description="Named sampler preset (e.g. 'balanced', 'thinking', 'vlm-extract'). "
                     "Fields from the preset overlay model defaults; explicit request "
                     "fields override both."
     )

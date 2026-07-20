@@ -202,9 +202,9 @@ now `0.7 / 4096`, and the batch fallback paths (`mlx_provider.py` lines
 854, 919) reference the same constant instead of a third hardcoded `512`.
 
 Admin/CLI import also used to stamp `default_preset = "moderate"` --
-`moderate.toml`'s own description says it is "the deprecated back-compat
-alias for the pre-preset-split default; new users should prefer
-'balanced'." Admin import (`ModelService.import_models`,
+`moderate.toml` (removed 2026-07-20) described itself as "the deprecated
+back-compat alias for the pre-preset-split default; new users should
+prefer 'balanced'." Admin import (`ModelService.import_models`,
 `src/heylook_llm/model_service.py`, line 642) now defaults to
 `profile_name = "balanced"` instead.
 
@@ -339,9 +339,18 @@ Presets are named sampler-field bundles resolved at **request time**, not
 baked into `models.toml` at import. They live under
 `src/heylook_llm/data/presets/` as TOML files, loaded by the
 `PresetRegistry` (`src/heylook_llm/presets.py`). Current presets:
-`balanced`, `creative`, `deterministic`, `code`, `thinking`,
-`vlm-describe`, `vlm-extract`, `moderate` (back-compat alias for the
-pre-preset-split default; new configs should prefer `balanced`).
+`balanced` (import-default profile), `deterministic` (repro/eval),
+`thinking` (auto-applied by the cascade for `enable_thinking` models),
+`vlm-describe` / `vlm-extract` (VLM-safe field subsets -- mlx-vlm's
+`stream_generate` ignores top_k/min_p/repetition_penalty; used by
+batch-labeler's tasks).
+
+The flavor presets `moderate` (back-compat alias for the pre-preset-split
+default), `code`, and `creative` were removed 2026-07-20: they had no
+consumer anywhere in the stack (the v3 frontend's user-preset system owns
+interactive sampler preferences), and their only references were tests
+asserting their own existence. The registry keeps only presets that encode
+mechanism (model-family or library knowledge) or are wired as defaults.
 
 Each preset has `[meta]` and `[defaults]` tables:
 
