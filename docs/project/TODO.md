@@ -40,14 +40,30 @@ ordering and the sole-user/minimal-custom-code posture.
   ratio matters -- needs a gemma-3-4b download first); (b) n-gram
   prompt-lookup prototype (mlx-lm has no equivalent; zero draft cost, wins on
   repetitive/structured output, greedy-only).
-- [ ] **Gemma-4 QAT q4_0 swap candidate** (P3, owner download decision):
-  Google's QAT collection (2026-07 blog) ships `*-qat-q4_0-unquantized`
-  checkpoints for ALL sizes incl. 26B-A4B + matched QAT ASSISTANT drafter
-  heads. MLX conversions exist (mlx-community OptiQ 4-bit for 26B/31B,
-  template-synced 2026-07-20; lmstudio-community 26B QAT-MLX-4bit). Halves
-  memory vs the daily 8-bit with QAT-held quality; verify OptiQ loads on the
-  pinned mlx-lm before adopting. The QAT assistant head also pairs with the
-  MTP item above.
+- [x] **Gemma-4 QAT q4_0 swap -- CONVERTED + A/B DONE 2026-07-20, swap is
+  the owner's call**: own conversions from the owner-downloaded unquantized
+  QAT checkpoints (own-convert beat adopting OptiQ), 4-bit affine group-32
+  matching the q4_0 32-block lattice per docs/mlx_conversion_guide.md:
+  `modelzoo/google/gemma-4-{26B-A4B,31B}-it-qat-4bit-g32-mlx` (16G / 19G,
+  ~5.2 bits/weight avg, vision towers bf16 via auto-skip), registered with
+  Google-recommended sampler defaults (temp 1.0, top_k 64, top_p 0.95 --
+  also added to the two 8-bit dailies). VERDICT: on the fixed v1.38.1 stack
+  the full eval bank is **13/13 for all four models** (both QAT vs both
+  8-bit dailies) -- parity. Every deficit seen mid-A/B (synthetic-image
+  refusals, two-image failures, 31B thinking-skip, CJK degeneration on long
+  thinking) traced to the server, not the quants: the transformers-5
+  stop-set regression (fixed v1.36.1) let generation run past `<turn|>` far
+  out of distribution, compounded by the pre-refactor sampler cascade. RAM
+  halves (26B: 16G vs ~28G; 31B: 19G vs ~33G). Caveat before making QAT the
+  daily: the bank's images are synthetic; run a real-photo spot-check.
+  The QAT assistant heads (downloaded, unconverted) pair with the MTP item.
+- [ ] **finish_reason reports "stop" on budget-exhausted responses** (P3,
+  found during the 07-20 QAT A/B): completion_tokens == max_tokens cases
+  return finish_reason="stop" instead of "length" on the non-streaming chat
+  path (observed repeatedly on live probes). Clients cannot distinguish
+  natural stops from truncation; the eval bank works around it by comparing
+  token counts. Find where the reason is mapped in the response builders
+  and thread the cap-hit signal through.
 - [ ] **Trim the two surviving architecture KEEPs** (P3, from the 07-20
   architecture audit; exact section lists in the session log): config.md
   (drop the field tables / TOML examples / schema dump / troubleshooting;
