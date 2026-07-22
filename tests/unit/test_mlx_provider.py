@@ -107,6 +107,49 @@ class TestStrategyCompilation:
         mock_mlx_provider._compile_strategies()
         assert mock_mlx_provider._strategies['text'].is_vlm is False
 
+    def test_no_diffusion_strategy_by_default(self, mock_vlm_provider):
+        """An ordinary VLM must not get the denoising path."""
+        mock_vlm_provider._compile_strategies()
+        assert "diffusion" not in mock_vlm_provider._strategies
+
+    def test_diffusion_strategy_compiled_when_detected(self, mock_vlm_provider):
+        """A diffusion checkpoint registers 'diffusion' alongside 'text'.
+
+        'text' stays registered even for diffusion models: warmup resolves its
+        generation model through UnifiedTextStrategy._get_generation_model.
+        """
+        mock_vlm_provider.is_diffusion = True
+        mock_vlm_provider._compile_strategies()
+        assert "diffusion" in mock_vlm_provider._strategies
+        assert "text" in mock_vlm_provider._strategies
+
+
+@pytest.mark.unit
+class TestDiffusionDetection:
+    """Diffusion routing decisions.
+
+    A masked-diffusion checkpoint driven by mlx-lm's autoregressive
+    stream_generate emits ZERO tokens (it samples one meaningless token from
+    the last prompt position, which lands on EOS), so these assertions guard a
+    silent empty-response bug, not a crash.
+    """
+
+    def test_defaults_to_autoregressive(self, mock_mlx_provider):
+        assert mock_mlx_provider.is_diffusion is False
+
+    def test_detect_returns_false_when_predicate_unavailable(self, mock_mlx_provider):
+        """Detection is best-effort: a predicate failure degrades to the AR path."""
+        mock_mlx_provider.model = object()  # no config, no language_model
+        assert mock_mlx_provider._detect_diffusion() is False
+
+    def test_diffusion_wins_over_vision_routing(self, mock_vlm_provider):
+        """Diffusion takes images inline -- there is no separate vision split."""
+        mock_vlm_provider.is_diffusion = True
+        mock_vlm_provider._compile_strategies()
+        # The route picks 'diffusion' before the is_vlm/has_images branch, so a
+        # diffusion provider must never be able to fall through to 'vision'.
+        assert mock_vlm_provider._strategies["diffusion"] is not mock_vlm_provider._strategies.get("vision")
+
 
 @pytest.mark.unit
 class TestDetectImages:

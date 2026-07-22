@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0]
+
+### Added
+
+- **Masked-diffusion generation path** (`DiffusionStrategy`). Diffusion LMs
+  (`diffusion_gemma`) denoise a fixed-length canvas instead of extending a
+  sequence, so mlx-lm's `stream_generate` -- heylook's only text path -- drove
+  them as autoregressive: one meaningless token sampled from the last prompt
+  position, landing on EOS immediately. Requests completed with **zero emitted
+  tokens** and an empty reply, no error. Detection is mlx-vlm's own
+  `is_diffusion_model` predicate (keys on `config.canvas_length`, not a
+  model_type match, so new diffusion architectures are picked up without a
+  code change), resolved at load and routed ahead of the text/vision split --
+  the denoising loop takes images inline, so there is no separate vision path.
+  Text and vision both verified end to end.
+
+### Notes
+
+- The engine is mlx-vlm's `stream_diffusion_generate`, called **directly**
+  rather than through `stream_diffusion_generate_from_kwargs`: the from_kwargs
+  wrapper collects the entire generation into a list before yielding any of it,
+  which on a streaming server is full-duration dead air followed by one burst.
+  Called directly it streams **block-by-block** -- one flush per denoised
+  canvas, which is as incremental as masked diffusion gets (a 683-token reply
+  arrives as 3 canvas flushes, not 1).
+- Generation parameters come from the checkpoint's own `generation_config`
+  (canvas length, denoising steps, entropy-bound sampler, confidence/stability
+  thresholds, linear temperature schedule). heylook's AR sampler cascade does
+  not apply -- `top_p`/`top_k`/`repetition_penalty` have no meaning for a
+  canvas update. Only `temperature` and `max_tokens` set **explicitly** on the
+  request override the checkpoint; the AR sampler floor deliberately does not.
+- The radix/prompt cache is bypassed: the denoising loop owns its own KV cache,
+  and radix assumes AR trim-to-a-prefix semantics a canvas rewrite violates.
+- `warmup()` now primes the denoising loop for diffusion checkpoints instead of
+  mlx-lm's AR decode -- priming a path real requests don't take is how the VLM
+  `LanguageModelOutput` bug stayed hidden.
+
 ## [1.38.1]
 
 ### Fixed

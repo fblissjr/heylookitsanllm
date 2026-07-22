@@ -548,6 +548,143 @@ class VLMVisionStrategy:
         )
 
 
+class DiffusionStrategy:
+    """Strategy for masked-diffusion LMs (diffusion_gemma and friends).
+
+    Diffusion models are NOT autoregressive. They denoise a fixed-length
+    canvas (``config.canvas_length``) over N steps instead of extending a
+    sequence one token at a time. mlx-lm's ``stream_generate`` -- which
+    generation_core calls, and which is heylook's only other text path --
+    drives a model as AR: it forwards the prompt, samples the last position,
+    and repeats. Handed a diffusion checkpoint that samples one meaningless
+    token which lands on an EOS almost immediately, so the request completes
+    with zero emitted tokens and the client renders an empty reply. That is
+    the bug this strategy exists to fix.
+
+    Three things differ from the AR strategies:
+
+    1. The engine is mlx-vlm's ``stream_diffusion_generate``, called DIRECTLY
+       rather than via ``stream_diffusion_generate_from_kwargs``. The
+       from_kwargs wrapper routes through ``_stream_model_diffusion_generate``,
+       which collects the ENTIRE generation into a list (``on_result=emit``)
+       before yielding any of it -- correct for a CLI, but on a streaming
+       server it turns every request into full-duration dead air followed by
+       a burst. The underlying generator streams token-by-token.
+    2. The radix/prompt cache is bypassed entirely -- this strategy never
+       touches the global cache manager. The denoising loop owns its own KV
+       cache (``diffusion_prefill_cache`` / ``model.make_cache``), and
+       heylook's radix cache assumes AR trim-to-a-prefix semantics that a
+       canvas rewrite violates.
+    3. Generation parameters come from the checkpoint's own
+       ``config.generation_config`` -- canvas length, denoising steps, the
+       entropy-bound sampler, confidence/stability thresholds and the linear
+       temperature schedule are all resolved inside the engine. heylook's AR
+       sampler cascade (GLOBAL_SAMPLER_FLOOR, samplers, presets) deliberately
+       does NOT apply: top_p/top_k/repetition_penalty have no meaning for a
+       canvas update. Only the two knobs a caller set EXPLICITLY on the
+       request -- temperature and max_tokens -- override the checkpoint.
+
+    Text is yielded RAW (``skip_special_token_ids=[]``) for the same reason
+    VLMVisionStrategy yields its first token raw: gemma-4 opens reasoning with
+    the structural marker ``<|channel>thought``, and the reasoning parser must
+    see it. Parsers strip non-structural specials from routed text themselves.
+    """
+
+    def __init__(self, model_config=None):
+        self.model_config = model_config or {}
+        self._batch_vision_processor = None
+
+    def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
+        # Imported lazily and from the defining module: `is_diffusion_model`
+        # and `stream_diffusion_generate` are not in mlx_vlm.generate.__all__
+        # (only the buffering from_kwargs wrapper is reachable there).
+        from mlx_vlm.generate.diffusion import stream_diffusion_generate
+        from mlx_vlm.generate import (
+            generation_stream as vlm_generation_stream,
+            wired_limit as vlm_wired_limit,
+        )
+
+        tokenizer = getattr(processor, "tokenizer", processor)
+
+        if self._batch_vision_processor is None:
+            self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
+
+        # Same prompt construction as the VLM paths -- diffusion_gemma is a
+        # VLM, so images ride the ordinary mlx-vlm input pipeline and the
+        # denoising loop takes pixel_values/mm_token_type_ids directly.
+        from .common.vlm_inputs import prepare_vlm_inputs_parallel
+        images, formatted_prompt, has_images, _ = prepare_vlm_inputs_parallel(
+            request.messages, processor, model.config, self._batch_vision_processor,
+            vlm_apply_chat_template, model=model,
+            enable_thinking=_resolve_enable_thinking(effective_request, self.model_config),
+        )
+
+        inputs = vlm_prepare_inputs(
+            processor,
+            images=images if images else None,
+            prompts=formatted_prompt,
+            image_token_index=getattr(model.config, 'image_token_index', None),
+        )
+        input_ids = inputs["input_ids"]
+        if input_ids.ndim == 1:
+            input_ids = input_ids[None, :]
+
+        # Checkpoint defaults unless the CALLER set the knob. effective_request
+        # carries the AR sampler floor (temperature 0.7, max_tokens 4096),
+        # which would silently override the checkpoint's own schedule and
+        # 256-token canvas -- so read the raw request instead. max_tokens=0
+        # makes the engine fall back to generation_config.max_new_tokens.
+        temperature = request.temperature if request.temperature is not None else 0.0
+        max_tokens = request.max_tokens if request.max_tokens is not None else 0
+
+        logging.info(
+            "[MLX DIFFUSION] canvas=%s images=%d temp=%s max_tokens=%s | Model: %s",
+            getattr(model.config, 'canvas_length', '?'),
+            len(images) if images else 0,
+            temperature,
+            max_tokens or "checkpoint",
+            getattr(model.config, 'model_type', 'unknown'),
+        )
+
+        # Per-request peak-memory scoping (same contract as run_generation);
+        # the engine reports mx.get_peak_memory() on every chunk.
+        mx.reset_peak_memory()
+
+        stream = stream_diffusion_generate(
+            model,
+            processor,
+            tokenizer,
+            input_ids,
+            inputs.get("pixel_values"),
+            inputs.get("attention_mask"),
+            max_tokens=max_tokens,
+            # Raw text: the reasoning parser needs the structural markers.
+            skip_special_token_ids=[],
+            temperature=temperature,
+            mm_token_type_ids=inputs.get("mm_token_type_ids"),
+        )
+
+        # stream_diffusion_generate manages mx.stream() itself but NOT the
+        # wired limit -- from_kwargs owned that. Use mlx-vlm's stream here, not
+        # heylook's: wired_limit synchronizes the stream it is handed on exit,
+        # and the denoising loop ran on mlx-vlm's.
+        try:
+            with vlm_wired_limit(model, [vlm_generation_stream]):
+                for chunk in stream:
+                    if abort_event and abort_event.is_set():
+                        logging.info("Generation aborted during diffusion denoising")
+                        return
+                    # Draft chunks are the in-progress canvas for terminal
+                    # redraw (text="", canvas in draft_text). Never content.
+                    # Not requested (diffusion_show_unmasking defaults off), so
+                    # this is belt-and-braces.
+                    if chunk.is_draft:
+                        continue
+                    yield chunk
+        finally:
+            stream.close()
+
+
 # Layer-1 sampler floor: what a request gets when neither the request, a
 # preset, nor the model config says anything. Chat-sane values -- this is the
 # de-facto default for freshly imported models with no default_sampler (the
@@ -587,6 +724,9 @@ class MLXProvider(BaseProvider):
         self.effective_loader = resolve_effective_loader(
             self.config, lambda: read_model_type(self.config.get("model_path", "")))
         self.is_vlm = self.effective_loader == "mlx-vlm"
+        # Masked-diffusion checkpoint (canvas denoising, not AR). Decided at
+        # load time from the loaded model -- see _detect_diffusion.
+        self.is_diffusion = False
 
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
@@ -684,6 +824,19 @@ class MLXProvider(BaseProvider):
                     self.model_id,
                 )
 
+            # Diffusion detection must happen after load: the trait lives on
+            # the loaded model's config, and the predicate is mlx-vlm's own so
+            # heylook's routing can't drift from the engine's.
+            self.is_diffusion = self._detect_diffusion()
+            if self.is_diffusion:
+                logging.info(
+                    "diffusion: %s is a masked-diffusion checkpoint "
+                    "(canvas_length=%s) -- routing to the denoising engine, "
+                    "not mlx-lm autoregressive generation",
+                    self.model_id,
+                    getattr(self.model.config, "canvas_length", "?"),
+                )
+
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 
             # Debug model structure for KV cache optimization
@@ -734,6 +887,27 @@ class MLXProvider(BaseProvider):
 
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
+
+    def _detect_diffusion(self) -> bool:
+        """Whether the loaded model needs the diffusion denoising engine.
+
+        Delegates to mlx-vlm's own predicate rather than matching model_type,
+        so a new diffusion architecture is picked up without a heylook change.
+        It keys on the engine-driven trait (``config.canvas_length``, or a
+        ``mask_token_id``) plus a callable ``language_model.generate``.
+
+        Best-effort: a predicate failure must degrade to the AR path (today's
+        behaviour) rather than fail the load.
+        """
+        try:
+            from mlx_vlm.generate.diffusion import is_diffusion_model
+            return bool(is_diffusion_model(self.model))
+        except Exception:
+            logging.debug(
+                f"diffusion detection failed for {self.model_id}; assuming autoregressive",
+                exc_info=True,
+            )
+            return False
 
     def _load_vlm_with_fallback(self, model_path):
         """Load VLM model with fallback strategies for common issues."""
@@ -816,6 +990,12 @@ class MLXProvider(BaseProvider):
         )
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy(model_config=self.config)
+        # Diffusion handles BOTH its text and vision requests -- the denoising
+        # loop takes pixel_values directly, so there is no separate vision
+        # split. 'text' stays registered regardless: warmup resolves its
+        # generation model through UnifiedTextStrategy._get_generation_model.
+        if self.is_diffusion:
+            self._strategies['diffusion'] = DiffusionStrategy(model_config=self.config)
 
     def _detect_images_optimized(self, messages: List) -> bool:
         """Single-pass scan for images with early termination."""
@@ -1095,7 +1275,12 @@ class MLXProvider(BaseProvider):
                             f"Please use a vision model for image inputs."
                         )
 
-                    if self.is_vlm and has_images:
+                    # Diffusion first: the AR text/vision split does not apply
+                    # to a denoising engine, which takes images inline.
+                    if self.is_diffusion:
+                        strategy = self._strategies['diffusion']
+                        logging.info(f"[MLX STRATEGY] Diffusion path (images={has_images}) | Model: {self.model_id}")
+                    elif self.is_vlm and has_images:
                         strategy = self._strategies['vision']
                         logging.info(f"[MLX STRATEGY] Vision path | Model: {self.model_id}")
                     else:
@@ -1188,6 +1373,13 @@ class MLXProvider(BaseProvider):
         if not prompt_tokens:
             return
 
+        # Diffusion checkpoints must prime the denoising loop, not mlx-lm's AR
+        # decode -- priming the path real requests DON'T take is how the VLM
+        # LanguageModelOutput bug stayed hidden (see this docstring's warning).
+        if self.is_diffusion:
+            self._warmup_diffusion(prompt_tokens)
+            return
+
         from .common.generation_core import generate_text
         # Resolve the generation model through the SAME method real requests use
         # (UnifiedTextStrategy._get_generation_model) rather than re-deriving it
@@ -1226,6 +1418,49 @@ class MLXProvider(BaseProvider):
             )
             return
         logging.info(f"warmup: {self.model_id} primed in {(time.time() - t0) * 1000:.0f}ms")
+
+    def _warmup_diffusion(self, prompt_tokens: list) -> None:
+        """JIT-prime the denoising engine. Best-effort, same contract as warmup().
+
+        Deliberately mirrors DiffusionStrategy's engine call rather than going
+        through the strategy: no ChatRequest to synthesize, and warmup tokens
+        must not touch conversation state. One short canvas is enough to
+        compile the decoder forward, the softcap, and the canvas sampler.
+        """
+        from mlx_vlm.generate.diffusion import stream_diffusion_generate
+        from mlx_vlm.generate import (
+            generation_stream as vlm_generation_stream,
+            wired_limit as vlm_wired_limit,
+        )
+
+        t0 = time.time()
+        try:
+            input_ids = mx.array([prompt_tokens])
+            stream = stream_diffusion_generate(
+                self.model,
+                self.processor,
+                self.get_tokenizer(),
+                input_ids,
+                None,
+                None,
+                max_tokens=4,
+                skip_special_token_ids=[],
+                temperature=0.0,
+            )
+            try:
+                with vlm_wired_limit(self.model, [vlm_generation_stream]):
+                    for _ in stream:
+                        pass
+            finally:
+                stream.close()
+        except Exception:
+            logging.warning(
+                f"warmup: {self.model_id} failed to prime the diffusion engine; "
+                f"first request will pay JIT compilation cost. Continuing without warmup.",
+                exc_info=True,
+            )
+            return
+        logging.info(f"warmup: {self.model_id} primed (diffusion) in {(time.time() - t0) * 1000:.0f}ms")
 
     def get_metrics(self) -> ModelMetrics:
         """Get current metrics for this model (context usage, memory, etc.)."""
