@@ -120,73 +120,30 @@ class StreamingThinkingParser:
 
 
 class HybridThinkingParser:
-    """Streaming <think>-block parser (text-based; see module docstring).
+    """ReasoningParser adapter over StreamingThinkingParser (text-based;
+    see module docstring).
 
     The name and the ``token_id`` parameter survive from the retired
     token-level mode so existing call sites and the ReasoningParser
     protocol stay stable; ``token_id`` is ignored.
 
-    ``strip_tokens``: declared specials removed from ROUTED text, same
-    defense as the harmony/gemma/pass-through parsers -- without it,
-    non-think control tokens leak literally into user-visible output on
-    detokenizer paths that emit specials as text.
+    Declared-specials stripping is NOT here: its rolling holdback -- born in
+    this class, because the inner parser's tag-holdback splits specials
+    across deltas -- now serves all four parsers as
+    ``reasoning_parser.StripSpecials``, which the factory composes over this
+    one (docs/parser_strip_unification.md).
     """
 
-    def __init__(self, initial_thinking: bool = False,
-                 strip_tokens: "frozenset[str]" = frozenset()):
-        from heylook_llm.reasoning_parser import _compile_strip_pattern, _strip_specials
+    def __init__(self, initial_thinking: bool = False):
         self._parser = StreamingThinkingParser(initial_thinking=initial_thinking)
-        self._strip_pattern = _compile_strip_pattern(strip_tokens)
-        self._strip = _strip_specials
-        # The inner parser's own buffer holdback can SPLIT a special token
-        # across deltas, so per-delta sub() would miss it. Keep a per-kind
-        # rolling pending buffer and hold back any tail that could be a
-        # partial special (from its last '<' within max-token-length).
-        self._max_special_len = max((len(t) for t in strip_tokens), default=0)
-        self._pend_kind: Optional[str] = None
-        self._pend = ""
-
-    def _flush_pend(self, out: List[Tuple[str, str]]) -> None:
-        if self._pend and self._pend_kind is not None:
-            cleaned = self._strip(self._pend, self._strip_pattern)
-            if cleaned:
-                out.append((self._pend_kind, cleaned))
-        self._pend = ""
-        self._pend_kind = None
-
-    def _cleaned(self, deltas: List[Tuple[str, str]], final: bool = False) -> List[Tuple[str, str]]:
-        if self._strip_pattern is None:
-            return [d for d in deltas if d[1]]
-        out: List[Tuple[str, str]] = []
-        for kind, text in deltas:
-            if self._pend_kind is not None and kind != self._pend_kind:
-                self._flush_pend(out)
-            self._pend_kind = kind
-            # strip removes only COMPLETE tokens, so carrying stripped text
-            # forward is safe; partials survive into the held tail below
-            buf = self._strip(self._pend + text, self._strip_pattern)
-            keep = 0
-            scan_from = max(0, len(buf) - (self._max_special_len - 1))
-            lt = buf.rfind("<")
-            if lt >= scan_from:
-                keep = len(buf) - lt
-            self._pend = buf[len(buf) - keep:] if keep else ""
-            emit = buf[: len(buf) - keep] if keep else buf
-            if emit:
-                out.append((kind, emit))
-        if final:
-            self._flush_pend(out)
-        return out
 
     def process_chunk(
         self, text: str, token_id: Optional[int] = None
     ) -> List[Tuple[str, str]]:
-        return self._cleaned(self._parser.process_chunk(text))
+        return [d for d in self._parser.process_chunk(text) if d[1]]
 
     def flush(self) -> List[Tuple[str, str]]:
-        return self._cleaned(self._parser.flush(), final=True)
+        return [d for d in self._parser.flush() if d[1]]
 
     def reset(self):
         self._parser.reset()
-        self._pend = ""
-        self._pend_kind = None

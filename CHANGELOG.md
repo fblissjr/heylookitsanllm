@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.12]
+
+### Fixed
+
+- **Declared special tokens can no longer leak across a chunk boundary**
+  (the P2 parser strip/holdback unification). Stripping was implemented
+  three ways across four streaming parsers: harmony and gemma sized their
+  partial-token holdback to their OWN structural control tokens (<= 10
+  chars), so a longer declared special -- `<|reserved_200000|>` and
+  friends -- straddling an emit boundary leaked both halves into
+  user-visible text, and PassThrough had no holdback at all. There is now
+  ONE implementation, `reasoning_parser.StripSpecials`, composed by the
+  factory over whichever routing parser it selected (and only when the
+  model declares specials); its rolling per-kind holdback is sized by the
+  STRIP SET, not by any parser's structural grammar. The holdback also no
+  longer assumes specials start with `<`, so Mistral-family `[INST]`-shaped
+  tokens are held correctly too.
+- **Abort landing mid-control-token no longer flushes garbage on harmony
+  models.** The final drain emits the whole buffer, so harmony's trailing
+  partial-token strip ran against an already-empty buffer and never fired
+  (dead since it was written); an abort inside `<|channel|>` flushed
+  literal `<|chan`. Gemma's 2026-07-20 fix -- pre-strip at the TOP of the
+  final drain -- is now a shared `_strip_partial_token` used by both, and
+  both parsers' consequently-unreachable leftover blocks are gone.
+
+### Changed
+
+- Parsers no longer take `strip_tokens`; `HybridThinkingParser` is a thin
+  protocol adapter again, `_safe_prefix_len` is one free function taking
+  the caller's own token-length constant, and the design note
+  (docs/parser_strip_unification.md) is now an implemented record. Eight
+  failing-first tests pin the boundary behavior that regressed silently
+  before.
+
 ## [1.39.11]
 
 ### Fixed

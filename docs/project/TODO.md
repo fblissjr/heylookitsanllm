@@ -75,21 +75,21 @@ ordering and the sole-user/minimal-custom-code posture.
   v2 retirement): the spec is a historical BUILD contract; once v2 dies,
   slim it to section 4 (the living API contract) + the decision records,
   and let frontend_v3.md carry the map.
-- [ ] **Unify the parser strip/holdback layer** (P2, from /simplify
-  2026-07-20 -- flagged prominently because it hides a correctness gap):
-  four parsers implement declared-specials stripping THREE different ways.
-  Only HybridThinkingParser's rolling per-kind holdback is fully correct;
-  Harmony/Gemma size their holdback to their own STRUCTURAL token lengths
-  (not the strip set), so a declared special longer than the control tokens
-  can straddle an emit boundary and leak; PassThrough has no holdback at
-  all. Fix shape: lift Hybrid's holdback into a shared post-routing wrapper
-  (strip_tokens-keyed) that all four compose; delete the per-parser
-  epilogues + the duplicated _safe_prefix_len/_strip_partial free-function
-  pair; chunk-boundary behavior is pinned by test_reasoning_parser.py +
-  test_thinking_parser.py. Do as ONE refactor (piecemeal extraction now
-  would churn twice). FULL design note (line-level inventory, the harmony
-  dead final-flush defect to fix alongside, wrapper sketch, failing-first
-  test list, acceptance criteria):
+- [x] **Unify the parser strip/holdback layer -- DONE v1.39.12** (P2, from
+  /simplify 2026-07-20): declared-specials stripping is now ONE
+  implementation -- `reasoning_parser.StripSpecials`, composed by the
+  factory over whichever routing parser it picked (and only when the model
+  declares specials). Its rolling per-kind holdback is sized by the STRIP
+  SET (longest tail that is still a proper prefix of some declared
+  special), so the harmony/gemma boundary leak and PassThrough's total
+  absence of holdback are both closed, and the holdback now covers
+  non-`<`-shaped specials (Mistral's `[INST]` family) that the old
+  `rfind("<")` scan could never hold. Fixed alongside: harmony's dead
+  final-flush partial-strip (the abort-mid-token garbage flush, gemma's
+  2026-07-20 fix ported to a shared `_strip_partial_token`), and the
+  duplicated `_safe_prefix_len` bodies collapsed to one free function.
+  Eight failing-first tests (harmony abort pair, cross-parser boundary
+  straddles, non-`<` specials); suites green. Design record:
   docs/parser_strip_unification.md.
 - [x] **E2E checks for the 2026-07-20 v3 features -- DONE v1.39.9** (all
   four landed in chat.mjs's capability/thinking/image section, live-green

@@ -7,8 +7,10 @@ Covers the parser implementations + factory:
                            <|start|>ROLE<|channel|>NAME<|message|>CONTENT<|end|>
                            analysis/commentary -> thinking; final -> content;
                            control tokens stripped.
-  HybridThinkingParser  -- <think>...</think> markers (from thinking_parser.py;
-                           factory returns directly, no wrapper).
+  GemmaChannelParser    -- gemma-4 inline channels: <|channel>NAME\\n BODY <channel|>
+  HybridThinkingParser  -- <think>...</think> markers (from thinking_parser.py).
+  StripSpecials         -- the ONE declared-specials filter + holdback, composed
+                           over whichever of the above the factory picks.
 
 Factory selects based on ``ModelTemplateInfo`` flags derived from the
 model's chat template + tokenizer config.
@@ -51,6 +53,31 @@ _HARMONY_EXPECTED_THINKING = (
     "shirt color to red. Provide concise instruction 30-80 words, likely "
     "around 30-40."
 )
+
+
+def _template(*, harmony=False, gemma=False, thinking=False, specials=()):
+    """ModelTemplateInfo stand-in for factory-driven tests."""
+    from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+    return ModelTemplateInfo(
+        chat_template="",
+        special_tokens=frozenset(specials),
+        template_source="jinja",
+        has_harmony_structure=harmony,
+        has_gemma_channel_structure=gemma,
+        has_thinking_markers=thinking,
+    )
+
+
+def _core(parser):
+    """The routing parser under the shared declared-specials filter.
+
+    ``select_reasoning_parser`` composes ``StripSpecials(inner, ...)`` when
+    the model declares specials; structural assertions target the inner
+    parser, behavioral ones target the composed object."""
+    from heylook_llm.reasoning_parser import StripSpecials
+
+    return parser.inner if isinstance(parser, StripSpecials) else parser
 
 
 def _collect(parser, text_chunks):
@@ -173,6 +200,28 @@ class TestHarmonyChannelParser:
         text = "oops no tokens here"
         content, thinking = _collect(parser, [text])
         assert content == "oops no tokens here"
+        assert thinking == ""
+
+    def test_abort_mid_control_token_drops_partial(self):
+        """Mirror of the gemma abort pair: the final flush emits the WHOLE
+        buffer, so a trailing partial control token must be dropped BEFORE
+        the drain -- an abort landing inside <|end|> would otherwise flush
+        literal garbage like ``<|en``."""
+        from heylook_llm.reasoning_parser import HarmonyChannelParser
+
+        parser = HarmonyChannelParser()
+        content, thinking = _collect(
+            parser, ["<|channel|>final<|message|>answer text<|en"]
+        )
+        assert content == "answer text"
+        assert thinking == ""
+
+    def test_abort_mid_control_token_in_preamble_drops_partial(self):
+        from heylook_llm.reasoning_parser import HarmonyChannelParser
+
+        parser = HarmonyChannelParser()
+        content, thinking = _collect(parser, ["free text<|st"])
+        assert content == "free text"
         assert thinking == ""
 
 
@@ -351,7 +400,7 @@ class TestReasoningParserFactory:
 
         info = self._info(has_harmony=True, specials=["<|channel|>", "<|message|>"])
         parser = select_reasoning_parser(info)
-        assert isinstance(parser, HarmonyChannelParser)
+        assert isinstance(_core(parser), HarmonyChannelParser)
 
     def test_qwen3_selected_when_template_has_thinking_markers(self):
         from heylook_llm.reasoning_parser import select_reasoning_parser
@@ -359,7 +408,7 @@ class TestReasoningParserFactory:
 
         info = self._info(has_thinking=True, specials=["<think>", "</think>"])
         parser = select_reasoning_parser(info)
-        assert isinstance(parser, HybridThinkingParser)
+        assert isinstance(_core(parser), HybridThinkingParser)
 
     def test_pass_through_when_nothing_matches(self):
         from heylook_llm.reasoning_parser import (
@@ -403,7 +452,7 @@ class TestReasoningParserFactory:
                     "<|return|>", "<|call|>", "<|reserved_200000|>"]
         info = self._info(has_harmony=True, specials=specials)
         parser = select_reasoning_parser(info)
-        assert isinstance(parser, HarmonyChannelParser)
+        assert isinstance(_core(parser), HarmonyChannelParser)
 
         text = "<|channel|>final<|message|>hello <|reserved_200000|> world<|return|>"
         content, _ = _collect(parser, [text])
@@ -435,15 +484,17 @@ class TestParseFullText:
 
 
 class TestStripTokensDefense:
-    """EVERY selectable parser gets a ``strip_tokens`` set so any special
-    token the detokenizer leaks (or the model emits mid-payload) gets
-    cleaned out before the delta reaches the user."""
+    """EVERY selectable parser is composed under ``StripSpecials`` when the
+    model declares specials, so any special token the detokenizer leaks (or
+    the model emits mid-payload) is cleaned out before the delta reaches the
+    user."""
 
     def test_hybrid_thinking_strips_declared_specials(self):
+        from heylook_llm.reasoning_parser import StripSpecials
         from heylook_llm.thinking_parser import HybridThinkingParser
 
-        parser = HybridThinkingParser(
-            strip_tokens=frozenset(["<|reserved_200000|>"])
+        parser = StripSpecials(
+            HybridThinkingParser(), frozenset(["<|reserved_200000|>"])
         )
         out = []
         for ch in ["<think>", "plan <|reserved_200000|> here", "</think>", "answer <|reserved_200000|>"]:
@@ -468,21 +519,37 @@ class TestStripTokensDefense:
         assert all("<|im_end|>" not in t for _, t in out)
 
     def test_pass_through_strips_declared_specials(self):
-        from heylook_llm.reasoning_parser import PassThroughParser
+        from heylook_llm.reasoning_parser import PassThroughParser, StripSpecials
 
-        parser = PassThroughParser(
-            strip_tokens=frozenset(["<|endoftext|>", "<|reserved_200000|>"])
+        parser = StripSpecials(
+            PassThroughParser(),
+            frozenset(["<|endoftext|>", "<|reserved_200000|>"]),
         )
         out, _ = _collect(parser, ["hello <|endoftext|> world <|reserved_200000|>"])
         assert out == "hello  world "
 
+    def test_hybrid_holdback_survives_split_special(self):
+        """The reference case the shared holdback generalizes: the inner
+        parser's own buffering splits a declared special across deltas, so
+        a per-delta sub() would miss both halves."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(
+            _template(thinking=True, specials=["<|reserved_200000|>"])
+        )
+        content, thinking = _collect(
+            parser, ["<think>plan</think>done <|reserved_2", "00000|> now"]
+        )
+        assert content == "done  now"
+        assert thinking == "plan"
+
     def test_harmony_strips_non_structural_specials_in_message_body(self):
         """A reserved token that sneaks into message payload gets stripped;
         the structural tokens are consumed by the state machine."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
+        from heylook_llm.reasoning_parser import HarmonyChannelParser, StripSpecials
 
-        parser = HarmonyChannelParser(
-            strip_tokens=frozenset(["<|reserved_200000|>"])
+        parser = StripSpecials(
+            HarmonyChannelParser(), frozenset(["<|reserved_200000|>"])
         )
         text = (
             "<|channel|>final<|message|>"
@@ -492,3 +559,107 @@ class TestStripTokensDefense:
         content, _ = _collect(parser, [text])
         assert content == "hello  world"
         assert "<|reserved_200000|>" not in content
+
+
+class TestSharedStripHoldback:
+    """One holdback for all four parsers, sized by the STRIP SET.
+
+    Before the unification each parser sized (or skipped) its own holdback:
+    harmony/gemma held back only enough for their own STRUCTURAL tokens
+    (<= 10 chars), so a longer declared special straddling an emit boundary
+    leaked; pass-through had no holdback at all. The shared filter holds
+    back the longest tail that could still grow into a declared special.
+    """
+
+    def test_harmony_long_special_straddling_emit_boundary(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(
+            _template(harmony=True, specials=["<|reserved_200000|>"])
+        )
+        content, _ = _collect(parser, [
+            "<|channel|>final<|message|>",
+            "hello world padding<|reserved_2",
+            "00000|> tail",
+        ])
+        assert content == "hello world padding tail"
+
+    def test_gemma_long_special_straddling_emit_boundary(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(
+            _template(gemma=True, specials=["<|reserved_200000|>"])
+        )
+        content, _ = _collect(
+            parser, ["padding text here<|reserved_2", "00000|> tail"]
+        )
+        assert content == "padding text here tail"
+
+    def test_gemma_long_special_straddling_boundary_in_thought(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(
+            _template(gemma=True, specials=["<|reserved_200000|>"])
+        )
+        content, thinking = _collect(parser, [
+            "<|channel>thought\npadding text here<|reserved_2",
+            "00000|> more\n<channel|>Answer.",
+        ])
+        assert thinking == "padding text here more\n"
+        assert content == "Answer."
+
+    def test_pass_through_holds_back_split_special(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
+        content, _ = _collect(parser, ["bye <|end", "oftext|> now"])
+        assert content == "bye  now"
+
+    def test_holdback_covers_non_angle_bracket_specials(self):
+        """Mistral-family specials are ``[INST]``-shaped -- a holdback that
+        only scans for ``<`` leaks them across a chunk boundary."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(_template(specials=["[INST]"]))
+        content, _ = _collect(parser, ["hi [IN", "ST] there"])
+        assert content == "hi  there"
+
+    def test_held_tail_that_never_completes_is_emitted(self):
+        """Holdback must not swallow text: a tail that looked like a partial
+        special but never completes comes out at flush."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
+        content, _ = _collect(parser, ["price < ", "x <|end"])
+        assert content == "price < x <|end"
+
+    def test_reset_clears_held_tail(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
+        parser.process_chunk("stale <|end")
+        parser.reset()
+        content, _ = _collect(parser, ["fresh"])
+        assert content == "fresh"
+
+    def test_kind_change_flushes_held_tail_in_order(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        parser = select_reasoning_parser(
+            _template(thinking=True, specials=["<|endoftext|>"])
+        )
+        content, thinking = _collect(
+            parser, ["<think>plan <|end", "</think>", "answer"]
+        )
+        assert thinking == "plan <|end"
+        assert content == "answer"
+
+    def test_no_declared_specials_leaves_parser_uncomposed(self):
+        """No strip set -> no wrapper: the filter exists only for stripping."""
+        from heylook_llm.reasoning_parser import (
+            HarmonyChannelParser, StripSpecials, select_reasoning_parser,
+        )
+
+        parser = select_reasoning_parser(_template(harmony=True))
+        assert isinstance(parser, HarmonyChannelParser)
+        assert not isinstance(parser, StripSpecials)

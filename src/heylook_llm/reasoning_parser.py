@@ -26,12 +26,9 @@ class ReasoningParser(Protocol):
     def reset(self) -> None: ...
 
 
-# NB: declared-specials stripping is currently implemented THREE ways across
-# the parsers here + thinking_parser.py (only HybridThinkingParser's rolling
-# holdback is fully boundary-safe). A planned unification -- one shared
-# strip/holdback wrapper all parsers compose -- is specced in
-# docs/parser_strip_unification.md; read it before
-# refactoring this machinery piecemeal.
+# Declared-specials stripping is ONE implementation for all four parsers:
+# they route text, ``StripSpecials`` filters it (composed by
+# ``select_reasoning_parser``). Design + history: docs/parser_strip_unification.md.
 @lru_cache(maxsize=16)
 def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]:
     """Alternation regex over the declared specials, sorted longest-first so
@@ -48,26 +45,144 @@ def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]
     return re.compile("|".join(re.escape(t) for t in ordered))
 
 
+@lru_cache(maxsize=16)
+def _partial_prefixes(strip_tokens: frozenset[str]) -> Tuple[frozenset[str], int]:
+    """Every PROPER prefix of every declared special, plus the longest
+    special's length -- the holdback's lookup table.
+
+    A text tail that is a proper prefix of some special may still grow into
+    that special on the next delta, so it must be held back rather than
+    emitted. Membership in a precomputed set keeps the per-delta cost at
+    ``O(max_token_len)`` lookups even for Mistral-sized token sets; cached
+    for the same reason as the strip pattern (both are stateless)."""
+    prefixes = {t[:i] for t in strip_tokens for i in range(1, len(t))}
+    return frozenset(prefixes), max((len(t) for t in strip_tokens), default=0)
+
+
 def _strip_specials(text: str, pattern: Optional[re.Pattern]) -> str:
     if pattern is None or not text:
         return text
     return pattern.sub("", text)
 
 
-class PassThroughParser:
-    """No reasoning structure. Text -> content. Strips declared specials
-    as a defense against fast-detokenizer leaks."""
+class StripSpecials:
+    """Declared-specials filter every routing parser composes.
 
-    def __init__(self, strip_tokens: frozenset[str] = frozenset()):
-        self._strip_pattern = _compile_strip_pattern(strip_tokens)
+    Wraps a ``ReasoningParser`` and removes ``strip_tokens`` from the text it
+    routes -- the defense against fast-detokenizer leaks of control tokens
+    into user-visible output. Stripping happens AFTER routing, so the inner
+    parser sees the raw stream its state machine was written for.
+
+    The rolling per-kind holdback is the reason this is a wrapper and not a
+    per-parser ``sub()``: an inner parser's own buffering can emit
+    ``<|reserved_2`` and ``00000|>`` in separate deltas, and a per-delta
+    sub() misses both halves. The held-back tail is the longest suffix that
+    is still a proper prefix of some declared special -- sized by the STRIP
+    SET, so it is correct no matter how long a special is relative to the
+    inner parser's own structural tokens.
+    """
+
+    def __init__(self, inner: ReasoningParser, strip_tokens: frozenset[str]):
+        self.inner = inner
+        self._pattern = _compile_strip_pattern(strip_tokens)
+        self._prefixes, self._max_len = _partial_prefixes(strip_tokens)
+        self._pend_kind: Optional[str] = None
+        self._pend = ""
 
     def process_chunk(
         self, text: str, token_id: Optional[int] = None
     ) -> List[ParserDelta]:
-        if not text:
-            return []
-        cleaned = _strip_specials(text, self._strip_pattern)
-        return [("content", cleaned)] if cleaned else []
+        return self._clean(self.inner.process_chunk(text, token_id))
+
+    def flush(self) -> List[ParserDelta]:
+        return self._clean(self.inner.flush(), final=True)
+
+    def reset(self) -> None:
+        self.inner.reset()
+        self._pend = ""
+        self._pend_kind = None
+
+    def _holdback_len(self, buf: str) -> int:
+        """Length of the trailing run of ``buf`` that could still grow into a
+        declared special (longest such suffix, 0 if none)."""
+        for i in range(max(0, len(buf) - (self._max_len - 1)), len(buf)):
+            if buf[i:] in self._prefixes:
+                return len(buf) - i
+        return 0
+
+    def _flush_pend(self, out: List[ParserDelta]) -> None:
+        if self._pend and self._pend_kind is not None:
+            cleaned = _strip_specials(self._pend, self._pattern)
+            if cleaned:
+                out.append((self._pend_kind, cleaned))
+        self._pend = ""
+        self._pend_kind = None
+
+    def _clean(
+        self, deltas: List[ParserDelta], final: bool = False
+    ) -> List[ParserDelta]:
+        if self._pattern is None:
+            return [d for d in deltas if d[1]]
+        out: List[ParserDelta] = []
+        for kind, text in deltas:
+            # a pending tail belongs to the kind it was routed under: flush it
+            # before the stream switches channels so ordering is preserved
+            if self._pend_kind is not None and kind != self._pend_kind:
+                self._flush_pend(out)
+            self._pend_kind = kind
+            # sub() removes only COMPLETE tokens, so carrying stripped text
+            # forward is safe; partials survive into the held tail below
+            buf = _strip_specials(self._pend + text, self._pattern)
+            keep = self._holdback_len(buf)
+            self._pend = buf[len(buf) - keep:] if keep else ""
+            emit = buf[: len(buf) - keep] if keep else buf
+            if emit:
+                out.append((kind, emit))
+        if final:
+            self._flush_pend(out)
+        return out
+
+
+def _safe_prefix_len(buffer: str, max_token_len: int, final: bool) -> int:
+    """How much of ``buffer`` can be emitted without splitting a STRUCTURAL
+    control token (a different concern from declared-specials stripping:
+    these tokens drive the state machine, so they may never be handed to a
+    routing branch half-formed). Everything is safe on the final drain."""
+    if final:
+        return len(buffer)
+    scan_start = max(0, len(buffer) - (max_token_len - 1))
+    for i in range(scan_start, len(buffer)):
+        if buffer[i] == "<":
+            return i
+    return len(buffer)
+
+
+def _strip_partial_token(text: str, control_tokens: Tuple[str, ...]) -> str:
+    """Drop a trailing PARTIAL structural control token before a final drain.
+
+    The final drain emits the whole buffer, so an abort landing mid-token
+    would otherwise flush literal garbage (``<|chan`` for harmony, ``<chan``
+    for gemma's close token). Membership-based rather than shape-based so it
+    generalizes to any control-token set; a COMPLETE trailing token is left
+    alone for the drain loop to consume."""
+    idx = text.rfind("<")
+    if idx == -1:
+        return text
+    tail = text[idx:]
+    if tail in control_tokens:
+        return text
+    if any(t.startswith(tail) for t in control_tokens):
+        return text[:idx]
+    return text
+
+
+class PassThroughParser:
+    """No reasoning structure. Text -> content."""
+
+    def process_chunk(
+        self, text: str, token_id: Optional[int] = None
+    ) -> List[ParserDelta]:
+        return [("content", text)] if text else []
 
     def flush(self) -> List[ParserDelta]:
         return []
@@ -100,12 +215,11 @@ class HarmonyChannelParser:
     State machine over a rolling buffer. ``preamble`` exists separately from
     ``outside`` as a safety net for models that emit free text before the
     first ``<|start|>`` -- that text routes to content rather than being
-    discarded. ``strip_tokens`` covers fast-detokenizer leaks of
-    non-structural specials that slip into a message payload.
+    discarded. Non-structural specials leaking into a message payload are
+    handled by ``StripSpecials``, not here.
     """
 
-    def __init__(self, strip_tokens: frozenset[str] = frozenset()):
-        self._strip_pattern = _compile_strip_pattern(strip_tokens)
+    def __init__(self):
         self._buffer = ""
         self._state = "preamble"
         self._channel_name_buf = ""
@@ -129,6 +243,11 @@ class HarmonyChannelParser:
         self._current_channel = None
 
     def _drain(self, final: bool) -> List[ParserDelta]:
+        if final:
+            # the loop below emits the WHOLE buffer when final -- drop a
+            # trailing partial control token first, or an abort landing
+            # mid-token flushes literal garbage like "<|chan"
+            self._buffer = _strip_partial_token(self._buffer, _HARMONY_CONTROL_TOKENS)
         out: List[ParserDelta] = []
         progress = True
         while progress:
@@ -143,7 +262,8 @@ class HarmonyChannelParser:
                     self._consume_control_token(token)
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _HARMONY_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         if self._state == "preamble":
                             out.append(("content", self._buffer[:safe_len]))
@@ -160,7 +280,8 @@ class HarmonyChannelParser:
                     self._state = "in_message"
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _HARMONY_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         self._channel_name_buf += self._buffer[:safe_len]
                         self._buffer = self._buffer[safe_len:]
@@ -175,27 +296,16 @@ class HarmonyChannelParser:
                     self._consume_control_token(token)
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _HARMONY_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         out.append(self._route_text(self._buffer[:safe_len]))
                         self._buffer = self._buffer[safe_len:]
                         progress = True
 
-        if final and self._buffer:
-            leftover = self._strip_partial_control(self._buffer)
-            if leftover:
-                if self._state == "preamble":
-                    out.append(("content", leftover))
-                elif self._state == "in_message":
-                    out.append(self._route_text(leftover))
-            self._buffer = ""
-
-        return [
-            (kind, cleaned)
-            for (kind, text) in out
-            for cleaned in [_strip_specials(text, self._strip_pattern)]
-            if cleaned
-        ]
+        # no leftover branch: a final drain always empties the buffer (every
+        # state's else-branch consumes buffer[:len(buffer)] when final)
+        return [d for d in out if d[1]]
 
     def _find_next_control_token(self) -> Tuple[Optional[int], Optional[str]]:
         m = _HARMONY_CONTROL_PATTERN.search(self._buffer)
@@ -213,28 +323,6 @@ class HarmonyChannelParser:
             self._state = "in_message"
         else:  # <|start|>, <|end|>, <|return|>, <|call|>
             self._state = "outside"
-
-    def _safe_prefix_len(self, final: bool) -> int:
-        if final:
-            return len(self._buffer)
-        limit = _HARMONY_MAX_TOKEN_LEN - 1
-        scan_start = max(0, len(self._buffer) - limit)
-        for i in range(scan_start, len(self._buffer)):
-            if self._buffer[i] == "<":
-                return i
-        return len(self._buffer)
-
-    @staticmethod
-    def _strip_partial_control(text: str) -> str:
-        idx = text.rfind("<")
-        if idx == -1:
-            return text
-        tail = text[idx:]
-        if tail.startswith("<|") and not tail.endswith("|>"):
-            return text[:idx]
-        if tail == "<":
-            return text[:idx]
-        return text
 
     def _route_text(self, text: str) -> ParserDelta:
         if self._current_channel in _HARMONY_ANALYSIS_CHANNELS:
@@ -263,8 +351,7 @@ class GemmaChannelParser:
     content, ``thought`` routes to thinking.
     """
 
-    def __init__(self, strip_tokens: frozenset[str] = frozenset()):
-        self._strip_pattern = _compile_strip_pattern(strip_tokens)
+    def __init__(self):
         self._buffer = ""
         self._state = "content"
         self._channel_name_buf = ""
@@ -289,11 +376,10 @@ class GemmaChannelParser:
 
     def _drain(self, final: bool) -> List[ParserDelta]:
         if final:
-            # the loop below emits the WHOLE buffer when final -- drop a
-            # trailing partial control token first or an abort landing
-            # mid-token flushes literal garbage (harmony's strip only knows
-            # its own "<|" shapes; gemma's close token starts "<c")
-            self._buffer = self._strip_partial_gemma_control(self._buffer)
+            # same reason as harmony: the loop below emits the WHOLE buffer
+            # when final, so a trailing partial (gemma's close token starts
+            # "<c") has to go before the drain, not after it
+            self._buffer = _strip_partial_token(self._buffer, _GEMMA_CONTROL_TOKENS)
         out: List[ParserDelta] = []
         progress = True
         while progress:
@@ -312,7 +398,8 @@ class GemmaChannelParser:
                     # a stray <channel|> in content is dropped (structural noise)
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _GEMMA_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         out.append(("content", self._buffer[:safe_len]))
                         self._buffer = self._buffer[safe_len:]
@@ -340,7 +427,8 @@ class GemmaChannelParser:
                         self._current_channel = None
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _GEMMA_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         self._channel_name_buf += self._buffer[:safe_len]
                         self._buffer = self._buffer[safe_len:]
@@ -361,55 +449,16 @@ class GemmaChannelParser:
                         self._state = "in_name"
                     progress = True
                 else:
-                    safe_len = self._safe_prefix_len(final)
+                    safe_len = _safe_prefix_len(
+                        self._buffer, _GEMMA_MAX_TOKEN_LEN, final)
                     if safe_len > 0:
                         out.append(self._route_text(self._buffer[:safe_len]))
                         self._buffer = self._buffer[safe_len:]
                         progress = True
 
-        if final and self._buffer:
-            # buffer already partial-stripped above
-            if self._state == "content":
-                out.append(("content", self._buffer))
-            elif self._state == "in_body":
-                out.append(self._route_text(self._buffer))
-            # in_name leftovers are structural -- dropped
-            self._buffer = ""
-
-        return [
-            (kind, cleaned)
-            for (kind, text) in out
-            for cleaned in [_strip_specials(text, self._strip_pattern)]
-            if cleaned
-        ]
-
-    def _safe_prefix_len(self, final: bool) -> int:
-        if final:
-            return len(self._buffer)
-        limit = _GEMMA_MAX_TOKEN_LEN - 1
-        scan_start = max(0, len(self._buffer) - limit)
-        for i in range(scan_start, len(self._buffer)):
-            if self._buffer[i] == "<":
-                return i
-        return len(self._buffer)
-
-    @staticmethod
-    def _strip_partial_gemma_control(text: str) -> str:
-        """Drop a trailing PARTIAL gemma control token on final flush.
-
-        Harmony's version only knows ``<|``-prefixed shapes; gemma's close
-        token ``<channel|>`` starts ``<c``, so an abort landing mid-close
-        would otherwise flush literal garbage like ``<chan``.
-        """
-        idx = text.rfind("<")
-        if idx == -1:
-            return text
-        tail = text[idx:]
-        if tail in _GEMMA_CONTROL_TOKENS:
-            return text  # complete token; the drain loop handles it
-        if any(t.startswith(tail) for t in _GEMMA_CONTROL_TOKENS):
-            return text[:idx]
-        return text
+        # no leftover branch: a final drain always empties the buffer (in_name
+        # leftovers are structural and consumed into the channel-name buffer)
+        return [d for d in out if d[1]]
 
     def _route_text(self, text: str) -> ParserDelta:
         if self._current_channel in _GEMMA_THINKING_CHANNELS:
@@ -447,27 +496,33 @@ def select_reasoning_parser(
     templates that pre-fill an unclosed ``<think>`` into the generation
     prompt (``prefills_thinking``): the model's output then starts inside
     the block, so the parser must start in thinking state.
+
+    Declared specials are stripped by ONE wrapper (``StripSpecials``) that
+    every routing parser composes -- a model that declares none gets the
+    bare parser, since the wrapper exists only to strip.
     """
     if template_info is None:
         return PassThroughParser()
 
-    strip_tokens = getattr(template_info, "special_tokens", frozenset()) or frozenset()
+    strip_tokens = frozenset(
+        getattr(template_info, "special_tokens", frozenset()) or frozenset()
+    )
 
+    parser: ReasoningParser
     if getattr(template_info, "has_harmony_structure", False):
-        return HarmonyChannelParser(strip_tokens=strip_tokens)
-
-    if getattr(template_info, "has_gemma_channel_structure", False):
-        return GemmaChannelParser(strip_tokens=strip_tokens)
-
-    if getattr(template_info, "has_thinking_markers", False):
+        parser = HarmonyChannelParser()
+    elif getattr(template_info, "has_gemma_channel_structure", False):
+        parser = GemmaChannelParser()
+    elif getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
-        return HybridThinkingParser(
+        parser = HybridThinkingParser(
             initial_thinking=bool(thinking_enabled)
             and getattr(template_info, "prefills_thinking", False),
-            strip_tokens=strip_tokens,
         )
+    else:
+        parser = PassThroughParser()
 
-    return PassThroughParser(strip_tokens=strip_tokens)
+    return StripSpecials(parser, strip_tokens) if strip_tokens else parser
 
 
 def parse_reasoning(
