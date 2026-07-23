@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.7]
+
+### Fixed
+
+- **Applied-preset chip can no longer bind stale state to the wrong
+  document** (/code-review finding on v1.39.6). The chip's exact-match
+  seeding wrote an inferred association into the per-document map; a failed
+  conversation/notebook load (id flipped, old state lingering) could stamp
+  the new document with the old one's preset and persist a false "(edited)"
+  claim. Inference is now read-only -- the map holds explicit Apply/Save
+  stamps exclusively -- and both pages resync the chip on load-failure paths
+  and on deleting the last notebook (chat parity). Notebook builds its
+  skeleton before the preset bar (chat parity), dropping a defensive guard
+  for an unreachable ordering.
+- **E2E: regenerate check de-raced.** It required observing the transient
+  Stop label, but a one-word regeneration on the fast MoE starts and
+  finishes inside a single poll interval (deterministic timeout on a warm
+  machine). The check now waits for the outcome -- the regenerated reply
+  persisted under a NEW message id -- instead of the transient UI state.
+  Chat suite live-verified 31/31.
+
 ## [1.39.6]
 
 ### Added
@@ -15,10 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opens the settings drawer on click. The shared preset bar tracks the
   association per document (Apply/Save stamp it, delete clears it) and feeds
   the chip through a new adapter callback; provenance is session-local by
-  design -- after a reload the chip re-seeds only when a document's state
-  exactly matches a preset (the server stores no preset association). E2E:
-  chip visibility/(edited)/clears-on-delete checks; chat suite 31 checks,
-  live-verified 31/31.
+  design -- only explicit Apply/Save stamps are stored; a document whose
+  state exactly matches a preset is labeled by live inference, never stored
+  (the server keeps no preset association, and a stored inference could bind
+  stale state to the wrong document). E2E: chip
+  visibility/(edited)/clears-on-delete checks in the chat suite (31 checks,
+  live-verified 31/31; the notebook chip has no dedicated E2E check yet).
 
 ## [1.39.5]
 

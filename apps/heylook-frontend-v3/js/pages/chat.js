@@ -492,6 +492,9 @@ async function selectConversation(ctx, convId) {
   } catch (err) {
     if (ctx.alive && s.activeId === convId) {
       showStatus(ctx, `Could not load conversation: ${err.message}`, true);
+      // activeId flipped but the doc never loaded -- resync so the chip
+      // doesn't keep claiming the previous conversation's preset for it
+      s.presetBar.syncIndicator();
     }
   }
 }

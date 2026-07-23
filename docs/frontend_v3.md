@@ -98,7 +98,8 @@ auto-appear from template detection, no `models.toml` flag needed).
   close for every commit-on-change field, not just the sysprompt textarea.
   v1.39.6 added the applied-preset chip beside each page's model select --
   name + "(edited)" once drifted, click opens the drawer; provenance is
-  session-local, re-seeded after reload by exact state match.)
+  session-local: explicit apply/save stamps only, with an exact state match
+  labeled by live inference, never stored.)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 

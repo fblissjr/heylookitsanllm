@@ -20,8 +20,12 @@
 // Presets are global (one /v1/presets store); the prompt side is the page's
 // document, adapted via getPrompt/setPrompt. The bar subscribes to sampler
 // changes itself (onSettingsChange, torn down with the mount); the page owns
-// only what the bar can't see -- calling updateDrift() from its prompt-input
-// handler -- plus wiring onDrawerOpen into its drawer contribution.
+// what the bar can't see: calling updateDrift() from its prompt-input
+// handler, wiring onDrawerOpen into its drawer contribution, and -- when it
+// renders the applied-preset chip -- supplying docId/onIndicator, calling
+// refresh() eagerly at mount (the chip needs preset names before the
+// drawer's first lazy fetch), and calling syncIndicator() at EVERY point the
+// active document changes (select/create/delete, including failure paths).
 
 import { createEl, armedConfirm } from './utils.js';
 import { api } from './api.js';
@@ -41,10 +45,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   let presets = [];
   let presetId = null;   // select-box state only -- applying copies, not binds
   let driftEl = null;    // latest built section's line; detached writes are harmless
-  // Which preset each document last had stamped on it (apply/save set it,
-  // delete clears it). Session-local by design: the server stores no
-  // provenance, so a reload re-seeds below from "state exactly matches a
-  // preset" -- honest, just blind to an edited-away association.
+  // Which preset each document last had EXPLICITLY stamped on it (apply/save
+  // set it, delete clears it) -- nothing else ever writes here. A document
+  // whose state merely equals a preset is reported live by indicatorInfo()
+  // but never stored: a stored inference could bind the WRONG doc's state to
+  // a doc id (mid-switch, failed load) and then persist as a false
+  // "(edited)" claim. Session-local by design: the server stores no
+  // provenance, so after a reload only the live-match inference survives.
   const appliedByDoc = new Map();
 
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
@@ -98,19 +105,18 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     return Boolean(preset && prompt && (preset.system_prompt ?? null) !== prompt);
   }
 
-  // The applied-preset info for the active document: the remembered stamp,
-  // else seeded by exact match (state IS some preset). `edited` = the doc
-  // has since drifted from it.
+  // The applied-preset info for the active document. An explicit stamp
+  // (apply/save) tracks drift ("edited"); without one, an exact state match
+  // is reported live -- true in effect under copy semantics -- but NOT
+  // stored, so a coincidental or stale-state match can never turn into a
+  // persistent false claim (it disappears the moment state diverges).
   function indicatorInfo() {
     const doc = docId?.();
     if (!doc) return null;
-    let preset = presets.find((p) => p.id === appliedByDoc.get(doc));
-    if (!preset) {
-      preset = presets.find((p) => matchesState(p));
-      if (!preset) return null;
-      appliedByDoc.set(doc, preset.id);
-    }
-    return { name: preset.name, edited: !matchesState(preset) };
+    const stamped = presets.find((p) => p.id === appliedByDoc.get(doc));
+    if (stamped) return { name: stamped.name, edited: !matchesState(stamped) };
+    const match = presets.find((p) => matchesState(p));
+    return match ? { name: match.name, edited: false } : null;
   }
 
   // Feed the page's chip. Public: pages call it on document switch/create --

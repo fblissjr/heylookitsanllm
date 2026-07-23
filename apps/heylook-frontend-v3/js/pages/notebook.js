@@ -31,10 +31,16 @@ export default createPage({
     s.dirty = false;
     s.gen = null; // { controller, targetId, head, tail, content }
 
+    buildSkeleton(ctx);
+    s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
+    ctx.onTeardown(() => s.scheduleSave.flush());
+
     // Shared preset bar (preset-bar.js), adapted to the active notebook.
     // Apply DOES write the notebook's system prompt -- a preset is a
     // prompt+sampler bundle everywhere, and the armed confirm guards the
     // overwrite. Notebook state uses '' for "no prompt"; the bar speaks null.
+    // Created AFTER buildSkeleton (chat parity) so the chip exists before
+    // any indicator callback can fire.
     s.presetBar = createPresetBar(ctx, {
       getPrompt: () => s.systemPrompt || null,
       setPrompt: (v) => {
@@ -47,10 +53,6 @@ export default createPage({
       docId: () => s.activeId,
       onIndicator: (info) => paintPresetChip(ctx, info),
     });
-
-    buildSkeleton(ctx);
-    s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
-    ctx.onTeardown(() => s.scheduleSave.flush());
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
 
@@ -233,7 +235,6 @@ function syncSysPromptWidgets(ctx) {
 // The bar chip's one renderer (fed by the preset bar's onIndicator).
 function paintPresetChip(ctx, info) {
   const chip = ctx.state.presetChip;
-  if (!chip) return; // indicator can fire before the skeleton exists
   chip.hidden = !info;
   chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
 }
@@ -318,7 +319,10 @@ async function deleteNotebook(ctx, id) {
     s.systemPrompt = '';
     s.modelId = '';
     if (s.notebooks.length) await selectNotebook(ctx, s.notebooks[0].id);
-    else renderEditor(ctx);
+    else {
+      s.presetBar.syncIndicator(); // no active doc -> chip clears (chat parity)
+      renderEditor(ctx);
+    }
   }
   if (ctx.alive) renderList(ctx);
 }
@@ -346,6 +350,9 @@ async function selectNotebook(ctx, id) {
   } catch (err) {
     if (ctx.alive && s.activeId === id) {
       showStatus(ctx, `Could not load notebook: ${err.message}`, true);
+      // activeId flipped but the doc never loaded -- resync so the chip
+      // doesn't keep claiming the previous notebook's preset for it
+      s.presetBar.syncIndicator();
     }
   }
 }

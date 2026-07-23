@@ -228,14 +228,31 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(a === 1, `expected 1 assistant msg, got ${a}`);
   });
 
+  // One reader for "the persisted last assistant message id of the (single)
+  // conversation" -- lets outcome-based checks avoid racing transient UI.
+  const lastAssistantIdServerSide = () => page.evaluate(async () => {
+    const { conversations } = await (await fetch('/v1/conversations')).json();
+    const conv = await (await fetch(`/v1/conversations/${conversations[0].id}`)).json();
+    return conv.messages.filter((m) => m.role === 'assistant').at(-1)?.id ?? null;
+  });
+
   await suite.check('regenerate on an assistant message replaces it', async () => {
-    const before = await lastAssistantText(page);
+    const before = await lastAssistantIdServerSide();
+    assert(before !== null, 'had a persisted assistant message');
     await clickByText(page, '.message--assistant .message__actions button', 'Regenerate');
-    await waitFor(async () => (await sendBtnLabel(page)) === 'Stop', { message: 'regen did not start' });
+    // Don't wait to OBSERVE the transient Stop label: this one-word reply on
+    // the fast MoE can start AND finish inside a single poll interval (seen
+    // live 2026-07-23 -- deterministic timeout once the machine warms up).
+    // The outcome is what matters: the regenerated reply persists under a
+    // NEW message id, and the thread settles back to one assistant message.
+    await waitFor(async () => {
+      const id = await lastAssistantIdServerSide();
+      return id !== null && id !== before;
+    }, { message: 'regenerated reply not persisted under a new id' });
     await waitIdle(page);
-    assert((await assistantCount(page)) === 1, 'still one assistant message');
+    await waitFor(async () => (await assistantCount(page)) === 1,
+      { message: 'thread did not settle to one assistant message' });
     assert((await userCount(page)) === 1, 'user message preserved');
-    assert(typeof before === 'string', 'had prior text');
   });
 
   await suite.check('delete (armed) removes a message via truncation', async () => {

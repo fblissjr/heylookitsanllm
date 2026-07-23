@@ -323,9 +323,11 @@ differing non-empty prompt; a live drift line (`role="status"`) reports whether
 the selected preset matches the current prompt + sampler state. An
 applied-preset chip (v1.39.6, `.preset-chip`) sits beside each page's model
 select naming the preset the active document is running -- "(edited)" once it
-drifts -- and opens the drawer on click. Provenance is session-local (apply/save
-stamp it; delete clears it; a reload re-seeds only by exact state match --
-the server stores no preset association).
+drifts -- and opens the drawer on click. Provenance is session-local: only
+explicit Apply/Save stamp it (delete clears it); a document whose state merely
+equals a preset is labeled by live inference and never stored, so a stale or
+coincidental match cannot persist as a false "(edited)" claim. The server
+stores no preset association.
 
 ### notebook (v2: 341 lines) — plain-text, no pretext, no markdown render
 Multi-doc: sidebar list (new/select/delete-confirm) + editor (title input, model select, collapsible system-
