@@ -1,6 +1,6 @@
 # v3 frontend E2E harness
 
-Last updated: 2026-07-11
+Last updated: 2026-07-23
 
 Browser end-to-end tests for the `/v3` frontend. Drives a **real** running server
 with a real model through **system Chrome** (puppeteer-core). `claude-in-chrome`
@@ -62,24 +62,30 @@ change, re-run before diagnosing a delivery regression.
 - `lib/browser.mjs` — Chrome launch + per-suite page context (localStorage
   settings seed, hash-router navigation, page-error capture).
 - `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, summary printer.
-- `lib/dom.mjs` — shared DOM helpers (`clickByText`, `armedClick` two-tap
-  confirm, overflow check, `settingsInputValue`/`setSettingsInput`, and
+- `lib/dom.mjs` — shared DOM helpers (`clickByText`/`handleByText`, `driftText`
+  (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
+  overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — ~30 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — 30 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
-  stop=partial-saved, post-abort health, settings + seed, conversation CRUD,
-  390px mobile.
-- `suites/pages.mjs` — ~36 checks: notebook autosave + generate-at-cursor tail
-  preservation, explore logprob chips + keyboard nav, perf no-polling proof +
-  ranges, models list/load/unload + HF scan, jspace Jacobian-lens workspace
-  (lens-gated), danger-zone clear.
+  stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
+  opening the same drawer, system-prompt persistence (no-blur commit +
+  Escape-close survival), preset save/apply round-trip (inert selection,
+  explicit Apply, drift states), conversation CRUD, 390px mobile.
+- `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
+  preservation, notebook preset bar (save/drift/armed apply), explore logprob
+  chips + keyboard nav, perf no-polling proof + ranges, models list/load/unload
+  + HF scan, jspace Jacobian-lens workspace (lens-gated), danger-zone clear.
 
 ## Settings drawer (interaction gotcha)
 
 Sampler params, presets, the per-document system-prompt editor, and jspace's
 heatmap/chat toggles all live in the **app-shell settings drawer**
 (`js/settings-drawer.js`), not inline on the page. The suites reach them via
-`openDrawer(page)` / `closeDrawer(page)` (`lib/dom.mjs`). The drawer is a MODAL:
+`openDrawer(page, gear?)` / `closeDrawer(page)` (`lib/dom.mjs`) — `gear`
+defaults to the sidebar opener (`.drawer-gear`) but takes any opener selector,
+e.g. chat's in-context `.chat__settings-btn`, so the same helper can exercise
+multiple entry points into one shared drawer. The drawer is a MODAL:
 while open it makes `#app` `inert` and its backdrop covers the page, so those
 helpers are deliberately defensive — they reset any leaked-open drawer, fire the
 gear's handler via `evaluate` (a real click can be intercepted by the fading
@@ -109,3 +115,9 @@ after a close will flake on the transition windows.
   spawns decodes far slower (200–300ms gaps observed), which false-flags this one
   check even though delivery isn't regressed. If it's the *only* failure, re-run
   on an idle machine before treating it as real.
+- **`post-abort health: a new send completes normally`** is model-behavior
+  flaky (~observed 2026-07-23, 65/66 run): right after an aborted partial
+  assistant turn, the model can emit EOS immediately — an empty reply saves
+  nothing, so the assistant count doesn't grow and the check flags. The UI path
+  is fine (finishStream deliberately drops empty completions). If it's the
+  *only* failure, re-run the chat suite before digging.

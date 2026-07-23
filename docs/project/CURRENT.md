@@ -1,9 +1,52 @@
 # Current Work
 
-Last updated: 2026-07-20 (v1.34.59-.65 + dep bump 0bfe60b -- gemma-4/Qwen3.5
-thinking rework, model-agnostic vision token budget, v3 composer polish, eval
-harness, mlx-lm/mlx-vlm dep bump; jlens-mlx side-track below unchanged since
-2026-07-13)
+Last updated: 2026-07-23 (v1.39.1-.5 -- v3 preset/sysprompt data-loss fix +
+shared preset bar + drift indicator + full E2E rebuild; jlens-mlx side-track
+below unchanged since 2026-07-13)
+
+UPDATE 2026-07-23 (v1.39.1-.5, frontend v3 + E2E, all heylook code):
+
+- **Chat system-prompt data loss FIXED (v1.39.1) -- SOLID, live-verified.**
+  The editor committed only on `change` (blur); closing the settings drawer
+  with Escape or a route change removed the focused textarea before `change`
+  could fire, discarding the typed prompt from both state and the server (a
+  preset saved in that window captured `system_prompt: null` and would later
+  erase the conversation's prompt on apply). Editor now commits state on
+  every keystroke (notebook parity) and debounces the PUT (400ms, flushed on
+  blur) -- no close path can outrun the save. Same session: chat top-bar gear
+  added (in-context opener for the shared drawer, alongside the existing
+  sidebar-foot/bottom-nav gears), sysprompt section now always expanded
+  (was collapsed-when-empty), editor grew 3 rows -> 9rem-min auto-growing,
+  drawer widened 22rem -> 26rem.
+- **v1.39.2-.4: the drawer-close data-loss class fixed at its root, not just
+  for sysprompt.** v1.39.4 found the v1.39.1 fix was a point patch: ANY
+  commit-on-`change` field (sampler number inputs included) loses an
+  unblurred edit when `close()` removes it while focused. `close()` now
+  blurs the focused field before clearing the drawer body -- one fix at the
+  convergence point all close paths share, not per-field patches.
+- **Preset apply made explicit + legible (v1.39.2).** Preset select is now
+  INERT (no apply-on-`change`); a dedicated Apply button, armed-confirmed
+  ("Replace prompt?") only when it would overwrite a differing non-empty
+  prompt. A live drift line ("Matches current settings." / "Differs from
+  current settings...") updates in place on prompt keystrokes and sampler
+  edits, `role="status"` (v1.39.5) so the flip reaches screen readers.
+- **Shared preset bar (v1.39.3) -- notebook is no longer chat-only.** The
+  preset section was extracted to `apps/heylook-frontend-v3/js/preset-bar.js`
+  (`createPresetBar` + a `getPrompt`/`setPrompt`/`onStatus` adapter); the
+  notebook page now contributes the same bar ahead of its sysprompt section,
+  identical grammar to chat. Decision: apply writes the notebook's system
+  prompt too (a preset is a prompt+sampler bundle everywhere).
+- **`tests/e2e/` full suite run live 2026-07-23 -- 65/66 on the full run,
+  every check green across runs (chat re-run 30/30); all new
+  preset/sysprompt/gear checks passed first try.** The one failure is a
+  model-behavior flake, now documented (`tests/e2e/README.md`): post-abort,
+  the model can emit EOS immediately on the next turn, so an empty reply
+  saves nothing and the "new send completes normally" check flags -- not a
+  UI bug (`finishStream` deliberately drops empty completions).
+- Both prior "REMAINING" follow-ups from the 2026-07-09 preset entry below
+  are now closed: notebook reuses the preset bar (this session), and the
+  "panel drifted from selected preset" indicator shipped as the drift line
+  (v1.39.2).
 
 UPDATE 2026-07-20 (v1.34.59-.65 + dep bump 0bfe60b -- all heylook code; jlens-mlx
 entries below are unchanged from 2026-07-13):
@@ -276,10 +319,12 @@ Del). `settings.js` gained `snapshotSettings()`/`applySettings()` and a
 (`tests/unit/test_preset_api.py` -- the repo's first HTTP-level unit test
 for a storage router, minimal FastAPI app + httpx ASGITransport); suites
 880 green. E2E chat suite +3 checks (system-prompt persist, preset
-save/apply round-trip, armed delete): 55/55 live. Follow-ups: notebook
-page could reuse the preset bar (the `lead` hook makes it cheap; chat-first
-was deliberate); a "panel drifted from selected preset" indicator was
-deferred.
+save/apply round-trip, armed delete): 55/55 live. Follow-ups at the time:
+notebook page could reuse the preset bar (the `lead` hook makes it cheap;
+chat-first was deliberate); a "panel drifted from selected preset"
+indicator was deferred. BOTH CLOSED 2026-07-23 (v1.39.2-.3, see the update
+above): notebook now contributes the shared preset bar, and the drift line
+is the drifted-panel indicator.
 
 Phase: **PHASE 1 COMPLETE + E2E rebuilt (51 checks live-green) + mlx 0.32.0
 upgrade DONE** (v1.34.11): v0.32.0 ships the real CompilerCache-teardown fix

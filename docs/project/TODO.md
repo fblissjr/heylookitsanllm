@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-20*
+*Last reviewed: 2026-07-23*
 
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
 

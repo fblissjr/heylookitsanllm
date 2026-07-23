@@ -1,7 +1,9 @@
 # v3 design language
 
 Last updated: 2026-07-23 (§7 settings entry points: pages may add an in-context
-opener — chat's top-bar gear — alongside the two shell gears)
+opener — chat's top-bar gear — alongside the two shell gears; §6 settings
+taxonomy now names the drawer's page-owned lead sections — the shared preset
+bar + system-prompt editor — as a fourth kind alongside samplers/display/extras)
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. It formalizes what v3 does so that new UI — starting with the j-space
@@ -169,10 +171,15 @@ invariants:
   means *not stripping them from the decoded text*. Same switch, two code paths —
   don't ship it as if it were uniform.
 
-The shared settings drawer therefore holds three kinds of thing, and the Phase-2
-extraction should model them distinctly: **generation params** (samplers — the
-existing `settings.js` store), **global display prefs** (show-special-tokens),
-and **per-page extras** (jspace's heatmap/chat toggles, explore's logprobs).
+The shared settings drawer therefore holds four kinds of thing, and the drawer's
+`registerSettings(contribution)` contract (`settings-drawer.js`) models them
+distinctly: **page-owned lead sections** (`sections()` — chat and notebook each
+contribute the shared preset bar, `preset-bar.js`, plus their own system-prompt
+editor), **generation params** (samplers — the existing `settings.js` store),
+**global display prefs** (show-special-tokens), and **per-page extras**
+(`extras()` — jspace's heatmap/chat toggles, explore's logprobs note). Sections
+render first, extras last; both are page-owned, but a section composes the
+document (prompt/preset), while an extra is a toggle or note that doesn't.
 
 **Editing is raw-token-honest (a hard rule, not subject to the toggle).** Any
 surface that lets the user *edit* a message — editing a chat turn, prefilling or
@@ -225,10 +232,11 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   moves focus to Close, and on close restores focus to the opener. Escape and a
   backdrop click both close.
 - **Honest states are announced, not just shown.** Status lines carry
-  `role="status"` (polite: streaming, "server busy — retrying", token counts);
-  error surfaces (`.error-note`, router mount-failure) carry `role="alert"`
-  (assertive). `setStatus` writing `textContent` into a live region is what
-  makes streaming/error legible to a screen reader.
+  `role="status"` (polite: streaming, "server busy — retrying", token counts,
+  the preset bar's drift line `.preset-drift`); error surfaces (`.error-note`,
+  router mount-failure) carry `role="alert"` (assertive). `setStatus` writing
+  `textContent` into a live region is what makes streaming/error legible to a
+  screen reader.
 - **Form controls are programmatically labeled.** Sampler + display inputs use
   `<label for>`/`id` (the drawer renders one panel at a time, so ids are safe).
   A visible label beside an unassociated input is not a label.

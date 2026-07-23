@@ -1,6 +1,7 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-20 (samplers naming + capabilities discovery, §4)
+Last updated: 2026-07-23 (§5 chat/notebook: settings entry points + shared
+preset bar reconciled with the drawer/preset-bar work; §4 API contract unchanged)
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
@@ -306,13 +307,30 @@ the `thinking` capability (see §4 Models list -- auto-detected from the chat
 template, no `models.toml` flag required) and mirrors the drawer checkbox's
 true/unset semantics 1:1 via `onSettingsChange`.
 
+**Settings entry points + presets (added post-spec -- 2026-07-11 shared-drawer
+extraction, presets client-side bundle v1.34.22, explicit Apply + drift v1.39.2,
+shared `preset-bar.js` v1.39.3 -- documented here for the current build):**
+sampler + system-prompt controls live in the app-shell shared settings drawer
+(`settings-drawer.js`), not an inline per-page panel; chat additionally exposes
+an in-context opener (`.chat__settings-btn` in the top bar, via
+`drawer.openSettings(btn)`) onto the same singleton drawer. The system-prompt
+textarea commits state per keystroke with a 400ms debounced PUT (flushed
+immediately on blur) -- not save-on-blur only, which lost text when the drawer
+closed under focus. The preset `<select>` is inert (records the selection and
+prefills the save-as name, never writes the document); Apply is an explicit
+button, armed-confirmed ("Replace prompt?") only when it would replace a
+differing non-empty prompt; a live drift line (`role="status"`) reports whether
+the selected preset matches the current prompt + sampler state.
+
 ### notebook (v2: 341 lines) — plain-text, no pretext, no markdown render
 Multi-doc: sidebar list (new/select/delete-confirm) + editor (title input, model select, collapsible system-
 prompt textarea, large auto-grow content textarea, Generate/Stop). Debounced auto-save 500ms (reads fields
 live from DOM in v2 → v3 should hold them in state and drop the querySelectors). Generate: split content at
 cursor, messages = optional system + user(text-before-cursor or "Continue writing."), stream tokens inserted
 **at cursor** preserving text after + caret, auto-resize. flushSave on select/teardown (don't lose edits).
-Content is `textarea.value` only — never innerHTML (XSS-safe by construction).
+Content is `textarea.value` only — never innerHTML (XSS-safe by construction). The system-prompt textarea and
+the preset bar above it (same shared `preset-bar.js` grammar as chat, added v1.39.3) live in the shared
+settings drawer as registered sections, not inline in the editor form.
 
 ### models (v2: 250 lines) — admin
 List model cards (Loaded/Idle badge, provider/capability/disabled tags, description). Per-model Load/Unload

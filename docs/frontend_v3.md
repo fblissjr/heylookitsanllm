@@ -1,7 +1,8 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-20 (thinking + vision-budget backend work landed;
-composer polish)
+Last updated: 2026-07-23 (preset bar extracted to shared `preset-bar.js`,
+notebook gets the same section; files list + drawer contribution kinds
+reconciled)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -32,14 +33,15 @@ Read `js/page.js` (the `createPage` lifecycle) before touching any page.
 
 ```
 index.html
-css/app.css                 # all design tokens + rationale live in comments here (no DESIGN.md yet)
+css/app.css                 # design tokens + rationale live in comments here; DESIGN.md is the written form
 js/
   app.js                    # bootstrap + hash router + crash-guard error panel
   page.js                   # createPage lifecycle (READ FIRST)
   api.js                    # table-generated endpoint wrappers
   streaming.js              # SSE over /v1/chat/completions (keepalive, reader.cancel, abort-as-completion, 503 retry, mid-stream {"error"})
   settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/onDisplayChange); null = backend-cascade; snapshotSettings()/applySettings()
-  settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sampling/display/extras)
+  settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
+  preset-bar.js             # shared drawer section (createPresetBar): select is inert, Apply is an explicit armed-confirmed copy, live drift line; used by chat + notebook
   markdown.js, utils.js
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
   pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js
@@ -90,7 +92,10 @@ auto-appear from template detection, no `models.toml` flag needed).
   (TODO.md) (The "panel drifted from preset" indicator shipped in v1.39.2 --
   live drift line + explicit armed Apply, selection inert, apply a copy -- and
   v1.39.3 extracted the bar to the shared `preset-bar.js` and gave notebook
-  the same section.)
+  the same section. v1.39.1 fixed a data-loss bug where the old blur-only
+  commit lost the chat system prompt when the drawer closed under focus
+  -- v1.39.4 generalized the fix, blurring the focused field on drawer
+  close for every commit-on-change field, not just the sysprompt textarea.)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 
