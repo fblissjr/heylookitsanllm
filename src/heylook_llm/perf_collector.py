@@ -60,6 +60,7 @@ class ChunkTelemetry:
     queue_wait_ms: float = 0.0  # FIFO generation-queue wait
     prompt_tps: float = 0.0  # mlx-lm's own prefill rate
     generation_tps: float = 0.0  # mlx-lm's own decode rate
+    finish_reason: Optional[str] = None  # "stop" | "length" | None (mlx-lm's)
 
     def absorb(self, chunk) -> None:
         self.prompt_tokens = getattr(chunk, "prompt_tokens", self.prompt_tokens)
@@ -70,6 +71,9 @@ class ChunkTelemetry:
         self.queue_wait_ms = getattr(chunk, "queue_wait_ms", self.queue_wait_ms)
         self.prompt_tps = getattr(chunk, "prompt_tps", self.prompt_tps)
         self.generation_tps = getattr(chunk, "generation_tps", self.generation_tps)
+        # arrives on the FINAL chunk only -- a later chunk without one must
+        # not erase it, so this latches rather than overwrites
+        self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason
 
 
 def net_ttft_ms(raw_ttft_ms: float, queue_wait_ms: float) -> float:

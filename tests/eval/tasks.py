@@ -221,7 +221,8 @@ def _judge_thinking_split(ctx: dict) -> Verdict:
     return combine_verdicts(
         thinking_v,
         marker_leak(ctx["content"]),
-        token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"]),
+        token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"],
+                               ctx.get("finish_reason")),
     )
 
 
@@ -279,7 +280,8 @@ TASK_THINKING_MULTI_IMAGE_COMBINED = EvalTask(
 def _judge_stop(ctx: dict) -> Verdict:
     return combine_verdicts(
         repetition(ctx["content"]),
-        token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"]),
+        token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"],
+                               ctx.get("finish_reason")),
     )
 
 

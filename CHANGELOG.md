@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.14]
+
+### Fixed
+
+- **`finish_reason` no longer reports `"stop"` on truncated responses.**
+  Both non-streaming paths (`/v1/chat/completions` and `/v1/messages`)
+  hardcoded it, so a response cut off by `max_tokens` was indistinguishable
+  from one the model chose to end -- clients could not tell a complete
+  answer from a truncated one. mlx-lm reports the real reason on the final
+  chunk (the streaming path already forwarded it); it is now scraped in
+  `ChunkTelemetry.absorb` -- one place, so the four consume loops cannot
+  drift -- and latched, since a trailing empty chunk carries no reason. The
+  Messages converter already mapped `length` to `stop_reason`; it was simply
+  never fed one. Live-verified on both paths: `max_tokens=12` -> `"length"`,
+  natural completion -> `"stop"`.
+
+### Changed
+
+- `tests/eval` judges the budget check on the server's own `finish_reason`
+  instead of inferring truncation from `completion_tokens == max_tokens`.
+  The inference stays as a fallback for servers that report no reason (it
+  was the only signal while the field was hardcoded).
+
 ## [1.39.13]
 
 ### Fixed

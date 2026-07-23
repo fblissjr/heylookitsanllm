@@ -76,16 +76,28 @@ def repetition(content: str, min_len: int = 12, max_repeats: int = 2) -> Verdict
     return Verdict(passed=False, evidence=f"chunk repeated {n}x: {chunk[:60]!r}")
 
 
-def token_budget_exhausted(completion_tokens: int, max_tokens: int) -> Verdict:
+def token_budget_exhausted(
+    completion_tokens: int, max_tokens: int, finish_reason: str | None = None
+) -> Verdict:
     """passed=True means generation stopped BEFORE the cap (clean stop);
-    passed=False means it hit max_tokens exactly, a proxy for "never found a
-    stopping point" / runaway generation that got truncated rather than
-    terminated.
+    passed=False means it was truncated -- "never found a stopping point".
+
+    The server's own finish_reason is authoritative (v1.39.14+). The
+    completion_tokens == max_tokens comparison remains as the fallback for
+    servers that report no reason: it was the ONLY signal available while
+    both non-streaming paths hardcoded "stop", and it stays useful when this
+    harness is pointed at an older build.
     """
-    exhausted = completion_tokens == max_tokens
-    evidence = f"completion_tokens={completion_tokens} max_tokens={max_tokens}"
+    if finish_reason:
+        exhausted = finish_reason == "length"
+        evidence = (f"finish_reason={finish_reason!r} "
+                    f"completion_tokens={completion_tokens} max_tokens={max_tokens}")
+    else:
+        exhausted = completion_tokens == max_tokens
+        evidence = (f"completion_tokens={completion_tokens} max_tokens={max_tokens} "
+                    f"(inferred -- server reported no finish_reason)")
     if exhausted:
-        evidence += " (exhausted budget, likely truncated)"
+        evidence += " (exhausted budget, truncated)"
     return Verdict(passed=not exhausted, evidence=evidence)
 
 

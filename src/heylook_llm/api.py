@@ -1359,8 +1359,11 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     if thinking is not None:
         message["thinking"] = thinking
 
-    # Build choice with optional logprobs
-    choice = {"message": message, "index": 0, "finish_reason": "stop"}
+    # Build choice with optional logprobs. finish_reason is mlx-lm's own
+    # (the streaming path forwards the same field): "length" here is the only
+    # way a client can tell a max_tokens truncation from a natural stop.
+    choice = {"message": message, "index": 0,
+              "finish_reason": telemetry.finish_reason or "stop"}
     if logprobs_collector and logprobs_collector.content:
         choice["logprobs"] = logprobs_collector.to_dict()
 

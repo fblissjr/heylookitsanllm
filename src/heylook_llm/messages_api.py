@@ -361,8 +361,10 @@ async def _non_stream_messages(
         ),
     )
 
-    # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict
-    finish_reason = "stop"
+    # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict.
+    # mlx-lm's own reason: "length" (budget exhausted) must not read as "stop"
+    # -- from_openai_response_dict maps it to the Messages stop_reason.
+    finish_reason = telemetry.finish_reason or "stop"
     message: dict = {"role": "assistant", "content": content_text}
     if thinking is not None:
         message["thinking"] = thinking

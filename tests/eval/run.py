@@ -69,6 +69,7 @@ def run_task(server: str, model: str, task) -> dict:
             "thinking": message.get("thinking"),
             "completion_tokens": usage.get("completion_tokens"),
             "max_tokens": body.get("max_tokens"),
+            "finish_reason": r["choices"][0].get("finish_reason"),
         }
         verdict = task.judge(ctx)
         elapsed_ms = (time.monotonic() - start) * 1000
