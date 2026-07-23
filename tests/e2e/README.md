@@ -116,9 +116,15 @@ after a close will flake on the transition windows.
   spawns decodes far slower (200–300ms gaps observed), which false-flags this one
   check even though delivery isn't regressed. If it's the *only* failure, re-run
   on an idle machine before treating it as real.
-- **`post-abort health: a new send completes normally`** is model-behavior
-  flaky (~observed 2026-07-23, 65/66 run): right after an aborted partial
-  assistant turn, the model can emit EOS immediately — an empty reply saves
-  nothing, so the assistant count doesn't grow and the check flags. The UI path
-  is fine (finishStream deliberately drops empty completions). If it's the
-  *only* failure, re-run the chat suite before digging.
+- **Suite-wide hardening principle (2026-07-23 audit):** never wait to
+  *observe* a transient UI state (Stop/Generate labels, streaming
+  placeholders) — a short completion on the fast MoE can start AND finish
+  inside one 100ms poll interval, so such waits time out deterministically
+  once the machine is warm. Wait on **persisted outcomes** instead
+  (server-side message ids/counts via in-page fetch, final DOM). Likewise,
+  an immediate empty-EOS reply is a **legal model output** that persists
+  nothing (`finishStream` drops empty completions): checks whose claim is
+  pipeline health must not assert reply presence unconditionally (the
+  post-abort and generate-at-cursor checks branch on it; stop-mid-generation
+  handles the generation finishing before Stop is clickable). Both suites
+  were audited to this standard on 2026-07-23 — hold new checks to it.

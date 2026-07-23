@@ -50,6 +50,27 @@ async function lastAssistantText(page) {
   return t;
 }
 
+// One reader for the persisted server-side shape of the (single) conversation
+// in this suite: message counts + the last assistant message id. Lets
+// outcome-based checks avoid racing the transient Stop-button label -- a
+// one-word reply on the fast MoE can start AND finish inside a single poll
+// interval (seen live 2026-07-23 -- deterministic timeout once the machine
+// warms up), so waiting to OBSERVE "Stop" is unsound; waiting for the
+// server-persisted outcome is not.
+async function conversationStateServerSide(page) {
+  return page.evaluate(async () => {
+    const { conversations } = await (await fetch('/v1/conversations')).json();
+    if (!conversations.length) return { userCount: 0, assistantCount: 0, lastAssistantId: null };
+    const conv = await (await fetch(`/v1/conversations/${conversations[0].id}`)).json();
+    const msgs = conv.messages ?? [];
+    return {
+      userCount: msgs.filter((m) => m.role === 'user').length,
+      assistantCount: msgs.filter((m) => m.role === 'assistant').length,
+      lastAssistantId: msgs.filter((m) => m.role === 'assistant').at(-1)?.id ?? null,
+    };
+  });
+}
+
 // Client-observed streaming cadence, measured INSIDE the page against the same
 // /v1/chat/completions path the app uses. The Phase 1 fix (asyncio.wait instead
 // of a 0.1s poll in async_generator_with_abort) is invisible to server-side
@@ -203,13 +224,22 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('edit opens an inline editor on a user message', async () => {
-    const firstUser = (await page.$$('.message--user'))[0];
+    // Was: captured a handle to the first .message--user and asserted it
+    // truthy -- true regardless of whether Edit/Cancel did anything (the
+    // handle exists before either is clicked). Assert what the check's name
+    // claims instead: the editor prefills with the message's own text, and
+    // Cancel restores that exact text (a Cancel that silently cleared it
+    // would have passed the old version).
+    const originalText = await page.$eval('.message--user .message-content', (e) => e.textContent);
     await clickByText(page, '.message--user .message__actions button', 'Edit');
     await page.waitForSelector('.message-edit textarea', { timeout: 5000 });
+    const editorValue = await page.$eval('.message-edit textarea', (e) => e.value);
+    assert(editorValue === originalText, `editor prefilled "${editorValue}", expected "${originalText}"`);
     // Cancel to restore
     await clickByText(page, '.message-edit__buttons button', 'Cancel');
     await waitFor(async () => (await count(page, '.message-edit')) === 0, { message: 'editor did not close' });
-    assert(firstUser, 'had a user message');
+    const restoredText = await page.$eval('.message--user .message-content', (e) => e.textContent);
+    assert(restoredText === originalText, 'Cancel did not restore the original text');
   });
 
   await suite.check('save & regenerate truncates then regenerates', async () => {
@@ -218,9 +248,21 @@ export async function runChatSuite({ suite, ctx, config }) {
     await clickByText(page, '.message--user .message__actions button', 'Edit');
     await page.waitForSelector('.message-edit textarea');
     await page.click('.message-edit textarea', { clickCount: 3 });
-    await page.type('.message-edit textarea', 'Reply with the single word: ready.');
+    // "one short sentence" (not "single word"): terse prompts raise the
+    // empty-EOS odds, and this check + the regenerate check below strictly
+    // assert a persisted reply -- an empty completion legally persists
+    // nothing (finishStream). Sentence-shaped asks have been reliably
+    // non-empty; the max_tokens seed keeps the run fast regardless.
+    await page.type('.message-edit textarea', 'Reply with one short sentence.');
     await clickByText(page, '.message-edit__buttons button', 'Save & Regenerate');
-    await waitFor(async () => (await sendBtnLabel(page)) === 'Stop', { message: 'regenerate did not start' });
+    // Outcome-based, not the transient Stop label: a short reply on the
+    // fast MoE can start AND finish inside a single poll interval (the same
+    // class of flake fixed on the regenerate check below). The click handler
+    // awaits the truncation DELETE and only THEN unconditionally calls
+    // startStream, so a server-confirmed truncation is a safe proxy for
+    // "generation began" without racing the button label.
+    await waitFor(async () => (await conversationStateServerSide(page)).userCount === 1,
+      { message: 'truncation to 1 user message never landed server-side' });
     await waitIdle(page);
     const u = await userCount(page);
     const a = await assistantCount(page);
@@ -228,25 +270,17 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(a === 1, `expected 1 assistant msg, got ${a}`);
   });
 
-  // One reader for "the persisted last assistant message id of the (single)
-  // conversation" -- lets outcome-based checks avoid racing transient UI.
-  const lastAssistantIdServerSide = () => page.evaluate(async () => {
-    const { conversations } = await (await fetch('/v1/conversations')).json();
-    const conv = await (await fetch(`/v1/conversations/${conversations[0].id}`)).json();
-    return conv.messages.filter((m) => m.role === 'assistant').at(-1)?.id ?? null;
-  });
-
   await suite.check('regenerate on an assistant message replaces it', async () => {
-    const before = await lastAssistantIdServerSide();
+    const before = (await conversationStateServerSide(page)).lastAssistantId;
     assert(before !== null, 'had a persisted assistant message');
     await clickByText(page, '.message--assistant .message__actions button', 'Regenerate');
-    // Don't wait to OBSERVE the transient Stop label: this one-word reply on
-    // the fast MoE can start AND finish inside a single poll interval (seen
+    // Don't wait to OBSERVE the transient Stop label: a short reply on the
+    // fast MoE can start AND finish inside a single poll interval (seen
     // live 2026-07-23 -- deterministic timeout once the machine warms up).
     // The outcome is what matters: the regenerated reply persists under a
     // NEW message id, and the thread settles back to one assistant message.
     await waitFor(async () => {
-      const id = await lastAssistantIdServerSide();
+      const id = (await conversationStateServerSide(page)).lastAssistantId;
       return id !== null && id !== before;
     }, { message: 'regenerated reply not persisted under a new id' });
     await waitIdle(page);
@@ -303,17 +337,39 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('post-abort health: a new send completes normally', async () => {
+    // Was: asserted assistantCount grows by exactly 1. But finishStream()
+    // only calls addMessage when content || thinking is non-empty (chat.js)
+    // -- an immediate empty-EOS reply is a legal model output (documented
+    // model-flake, terse prompts especially) and legitimately saves nothing.
+    // The actual claim ("a new send completes normally" after a prior abort)
+    // is about pipeline health, not reply length: the stream must reach
+    // completion without error and return the composer to idle; IF content
+    // was produced, THAT must persist.
     await ctx.open('#/chat'); // back to small max_tokens
     await page.select(MODEL_SELECT, config.model);
     // conversations load async after mount -- wait for the list before clicking.
     await waitFor(async () => (await count(page, '.conv-item')) >= 1, { message: 'conv list' });
     await page.click('.conv-item');
     await waitFor(async () => (await userCount(page)) >= 1, { message: 'messages loaded' });
-    const before = await assistantCount(page);
+    const beforeUsers = await userCount(page);
+    const beforeAssistants = await assistantCount(page);
     await sendText(page, 'Reply with one short word.');
-    await waitFor(async () => (await sendBtnLabel(page)) === 'Stop', { message: 'did not start' });
-    await waitIdle(page);
-    assert((await assistantCount(page)) === before + 1, 'new reply not added after prior abort');
+    // Outcome-based, not the transient Stop label: wait for the new user
+    // bubble (renderMessages runs, then startStream sets Stop synchronously
+    // in the same tick right after -- by the time this resolves, streaming
+    // has already begun, so there is no window where it can be missed).
+    await waitFor(async () => (await userCount(page)) === beforeUsers + 1,
+      { message: 'new message not sent after prior abort' });
+    await waitIdle(page); // proves the stream reached completion, not stuck from the prior abort
+    const status = await textOf(page, '.chat__status');
+    assert(!/failed/i.test(status || ''), `generation failed after prior abort: "${status}"`);
+    const afterAssistants = await assistantCount(page);
+    assert(afterAssistants === beforeAssistants || afterAssistants === beforeAssistants + 1,
+      `assistant count changed unexpectedly after prior abort: ${beforeAssistants} -> ${afterAssistants}`);
+    if (afterAssistants === beforeAssistants + 1) {
+      const reply = await lastAssistantText(page);
+      assert(reply.length > 0, 'persisted assistant reply is empty');
+    }
   });
 
   // ---- settings (in the app-shell drawer) --------------------------------
@@ -349,6 +405,13 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   // ---- system prompt + presets --------------------------------------------
+  // ORDER COUPLING: this and the next check stamp 'Answer in exactly one
+  // word. Be terse.' onto the suite's one conversation, and nothing resets
+  // it. That's safe ONLY because every check below this point is settings/
+  // preset/conversation-CRUD -- none of them send a message. If a future
+  // check after this point needs to generate again, seed a fresh
+  // conversation or reset system_prompt first, or the terse instruction will
+  // silently degrade that generation.
   const SYS_PROMPT = 'Answer in exactly one word.';
 
   // One owner for the "find a preset <option> by its label" lookup.

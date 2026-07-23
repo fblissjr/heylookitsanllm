@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.8]
+
+### Changed
+
+- **E2E suites audited and hardened end-to-end** (both suites, 67 checks,
+  live-verified 67/67 in one run). Every check now verifies its stated claim
+  via persisted outcomes rather than transient UI states: notebook autosave
+  checks wait for the debounced PUT to land server-side instead of sleeping
+  past the debounce; save-and-regenerate waits on server-confirmed
+  truncation instead of the Stop label; stop-mid-generation branches on the
+  observed state (a generation legally finishing before Stop is clickable is
+  logged, not flaked); post-abort health asserts pipeline health and only
+  checks persistence when content was produced (empty-EOS replies legally
+  persist nothing); generate-at-cursor asserts head/tail preservation
+  unconditionally but no longer fails on an empty completion; a vacuous
+  edit/cancel check now verifies prefill + exact restore; a perf-profile
+  vacuous pass (Loading placeholder sharing the empty-state class) is
+  closed; regenerate prompts reworded away from "single word" framing to
+  reduce the empty-EOS rate; hidden order couplings (terse sysprompt
+  persisting on the suite conversation, preset-bar prompt dependency,
+  jspace session continuity) are now explicit comments. The audit principle
+  is recorded in tests/e2e/README.md.
+
 ## [1.39.7]
 
 ### Fixed
