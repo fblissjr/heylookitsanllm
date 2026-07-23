@@ -4,7 +4,8 @@
 // + HF scan + danger-zone clear). Data is cleared by the orchestrator before
 // this runs; the danger-zone clear check runs LAST.
 
-import { assert, waitFor, sleep } from '../lib/harness.mjs';
+import { assert, waitFor, sleep, proveQuiet } from '../lib/harness.mjs';
+import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer, driftText, handleByText } from '../lib/dom.mjs';
 
 // Record requests whose URL matches `regex` from the moment this is called until
@@ -21,18 +22,12 @@ function watchRequests(page, regex) {
 // window (the list view omits `content` for efficiency; use notebookFull for
 // that). Assumes a single active notebook (true throughout this suite).
 async function notebookListRow(page) {
-  return page.evaluate(async () => {
-    const res = await fetch('/v1/notebooks');
-    const { notebooks } = await res.json();
-    return notebooks[0] ?? null;
-  });
+  const body = await serverGet(page, '/v1/notebooks');
+  return body?.notebooks?.[0] ?? null;
 }
 
 async function notebookFull(page, id) {
-  return page.evaluate(async (nbId) => {
-    const res = await fetch(`/v1/notebooks/${nbId}`);
-    return res.ok ? res.json() : null;
-  }, id);
+  return serverGet(page, `/v1/notebooks/${id}`);
 }
 
 // Stop-check reopens with a large cap so there's a window to click Stop before
@@ -120,9 +115,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // Set value + fire the input event directly (the sysprompt autosaves on
     // 'input'); avoids depending on the field's clickability inside the drawer.
     await page.evaluate((val) => {
-      const d = document.querySelector('.notebook__sysprompt');
-      d.open = true;
-      const ta = d.querySelector('.notebook__sysprompt-input');
+      const ta = document.querySelector('.sysprompt .sysprompt-input');
       ta.value = val;
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     }, 'You are a marine biologist.');
@@ -134,10 +127,14 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await ctx.open('#/notebook');  // reload closes the drawer
     await page.waitForSelector('.notebook__content'); // notebook re-selected + editor ready
     await openDrawer(page);         // reopen to reach the contributed sysprompt section
-    await page.waitForSelector('.notebook__sysprompt-input');
-    await waitFor(async () => (await page.$eval('.notebook__sysprompt-input', (e) => e.value)).includes('marine biologist'),
+    await page.waitForSelector('.sysprompt-input');
+    await waitFor(async () => (await page.$eval('.sysprompt-input', (e) => e.value)).includes('marine biologist'),
       { message: 'system prompt not persisted' });
-    const open = await page.$eval('.notebook__sysprompt', (e) => e.open);
+    // The shared prompt section (prompt-section.js) is ALWAYS open by design --
+    // a collapsed-when-empty field read as "my prompt disappeared". Asserted
+    // deliberately so a regression to collapse-on-reopen is caught here, not
+    // as a vacuous pass.
+    const open = await page.$eval('.sysprompt', (e) => e.open);
     assert(open, 'system prompt details did not reopen expanded');
     await closeDrawer(page);
   });
@@ -163,7 +160,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
       { message: 'notebook chip did not show the saved preset' });
     // drift the prompt -- the line must flip live, without a rebuild
     await page.evaluate(() => {
-      const ta = document.querySelector('.notebook__sysprompt-input');
+      const ta = document.querySelector('.sysprompt-input');
       ta.value = 'You are a physicist.';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
@@ -175,7 +172,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     const applyBtn = await handleByText(page, '.preset-section button', 'Apply');
     await armedClick(applyBtn);
     await applyBtn.dispose();
-    await waitFor(async () => (await page.$eval('.notebook__sysprompt-input', (e) => e.value)).includes('marine biologist'),
+    await waitFor(async () => (await page.$eval('.sysprompt-input', (e) => e.value)).includes('marine biologist'),
       { message: 'apply did not restore the preset prompt' });
     // cleanup so the preset doesn't leak (presets are excluded from /v1/data/clear)
     await armedClick(await page.$('.preset-section .btn--ghost'));
@@ -321,23 +318,16 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // let the mount fetches settle first
     await sleep(500);
     const watch = watchRequests(page, /\/v1\/(system\/metrics|performance\/profile)/);
-    await sleep(2500);
-    watch.stop();
-    assert(watch.urls.length === 0, `expected 0 background requests, saw ${watch.urls.length}: ${watch.urls.join(', ')}`);
+    await proveQuiet(watch, { quiet: 2500, message: 'perf page background requests while idle' });
   });
 
   await suite.check('Refresh triggers exactly one metrics fetch', async () => {
     const watch = watchRequests(page, /\/v1\/system\/metrics/);
     await clickByText(page, '.perf__header-actions button', 'Refresh');
-    // Condition-wait for the fetch to fire (F: don't sleep for something
-    // observable), then a short quiet window to prove no SECOND fetch
-    // follows -- that absence is the actual claim, and there's no DOM
-    // condition to wait on for "nothing happened", so a bounded sleep here
-    // is correct (same technique as the load-bearing no-polling check below).
-    await waitFor(async () => watch.urls.length >= 1, { message: 'Refresh never triggered a metrics fetch' });
-    await sleep(800);
-    watch.stop();
-    assert(watch.urls.length === 1, `expected 1 metrics fetch on Refresh, saw ${watch.urls.length}`);
+    // Condition-wait for the fetch to fire, then a quiet window to prove no
+    // SECOND fetch follows -- that absence is the actual claim (proveQuiet
+    // carries the rationale for the bounded sleep).
+    await proveQuiet(watch, { atLeast: 1, quiet: 800, message: 'metrics fetches on Refresh' });
   });
 
   await suite.check('switching time range loads a new profile', async () => {

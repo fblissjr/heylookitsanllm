@@ -61,7 +61,15 @@ change, re-run before diagnosing a delivery regression.
   (loads weights + 1-token warm generation; same contract as scripts/dev_server.sh).
 - `lib/browser.mjs` — Chrome launch + per-suite page context (localStorage
   settings seed, hash-router navigation, page-error capture).
-- `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, summary printer.
+- `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, `proveQuiet`, summary
+  printer. `proveQuiet(watch, {atLeast, quiet, expect})` is the ONE sanctioned
+  bounded sleep: claims of absence ("no second fetch follows", "the perf page
+  does not poll") have no condition to wait on, and holding that exception in
+  one place keeps it from being re-argued per site.
+- `lib/server-state.mjs` — `serverGet(page, path)`: the server's own view of a
+  document, fetched from inside the page so it shares the app's origin and
+  session. The suites' state readers (message counts, notebook rows) compose on
+  it instead of each re-implementing evaluate + fetch + json.
 - `lib/dom.mjs` — shared DOM helpers (`clickByText`/`handleByText`, `driftText`
   (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
   overflow check, `settingsInputValue`/`setSettingsInput`, and

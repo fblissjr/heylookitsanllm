@@ -10,13 +10,14 @@
 // - Abort (Stop button) is normal completion: partial content is saved.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick, debounce } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
+import { createPromptSection } from '../prompt-section.js';
 
 export default createPage({
   async setup(ctx) {
@@ -56,7 +57,7 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => currentCaps(ctx),
       samplers: 'enabled',
-      sections: () => [s.presetBar.buildSection(), buildSystemPromptSection(ctx)],
+      sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
     });
     ctx.onTeardown(unregisterSettings);
@@ -281,8 +282,9 @@ function currentCaps(ctx) {
 // The preset-apply write path (the bar's setPrompt adapter): state now, PUT
 // if a conversation exists (explicit null clears server-side). With no active
 // conversation the value rides along until a create gives it a home. The
-// textarea has its own path -- per-keystroke state + debounced PUT in
-// buildSystemPromptSection; both converge on putSystemPrompt.
+// textarea has its own path -- per-keystroke state + debounced PUT via the
+// shared prompt-section factory (buildPromptSection below); both converge on
+// putSystemPrompt.
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
   const changed = value !== s.systemPrompt;
@@ -303,46 +305,19 @@ function putSystemPrompt(ctx, convId, value) {
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
-function buildSystemPromptSection(ctx) {
+// Chat builds a NEW section per drawer build (the drawer forces a rebuild on
+// every conversation switch), so the shared factory's construction-time
+// owner capture already gives per-conversation isolation for free -- no
+// setValue call needed here.
+function buildPromptSection(ctx) {
   const s = ctx.state;
-  const builtFor = s.activeId; // the conversation this textarea belongs to
-  const input = createEl('textarea', {
-    class: 'chat__sysprompt-input', rows: 6,
-    placeholder: 'Optional system prompt for this conversation…',
-    value: s.systemPrompt ?? '',
+  return createPromptSection(ctx, {
+    owner: () => s.activeId,
+    get: () => s.systemPrompt,
+    set: (v) => { s.systemPrompt = v; },
+    persist: (v, id) => putSystemPrompt(ctx, id, v),
+    onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
   });
-  // Commit state per keystroke, debounce only the PUT (notebook parity). The
-  // old save-on-blur commit lost the text whenever the drawer closed under
-  // focus: Escape/hashchange remove the textarea and a removed field never
-  // fires `change` -- and a preset saved in that window captured
-  // system_prompt=null, so applying it later erased the prompt outright.
-  // A stale textarea (conversation changed under an unrebuilt panel) must not
-  // write onto the NEW conversation -- the edit still belongs to the one it
-  // was typed for (builtFor), so the PUT targets that id, captured per call.
-  const put = debounce((value) => {
-    if (builtFor) putSystemPrompt(ctx, builtFor, value);
-    // builtFor null: a pre-create draft -- state rides along until a
-    // create (send/New) gives it a home.
-  }, 400);
-  const currentValue = () => input.value.trim() || null;
-  input.addEventListener('input', () => {
-    autoGrow(input, 480);
-    const value = currentValue();
-    if (s.activeId === builtFor) s.systemPrompt = value;
-    put(value);
-    s.presetBar.updateDrift(); // prompt edits drift the selected preset live
-  });
-  // blur still flushes immediately so a follow-up action (preset save/apply)
-  // never races the debounce timer
-  input.addEventListener('change', () => put.flush(currentValue()));
-  // grow to fit existing content once the drawer has appended it
-  queueMicrotask(() => autoGrow(input, 480));
-  // Always expanded: a collapsed-when-empty details hid the field behind an
-  // extra click and read as "my prompt disappeared".
-  return createEl('details', { class: 'chat__sysprompt', open: true }, [
-    createEl('summary', {}, ['System prompt']),
-    input,
-  ]);
 }
 
 

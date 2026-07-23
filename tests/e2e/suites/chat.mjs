@@ -4,6 +4,7 @@
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor } from '../lib/harness.mjs';
+import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
@@ -58,17 +59,15 @@ async function lastAssistantText(page) {
 // warms up), so waiting to OBSERVE "Stop" is unsound; waiting for the
 // server-persisted outcome is not.
 async function conversationStateServerSide(page) {
-  return page.evaluate(async () => {
-    const { conversations } = await (await fetch('/v1/conversations')).json();
-    if (!conversations.length) return { userCount: 0, assistantCount: 0, lastAssistantId: null };
-    const conv = await (await fetch(`/v1/conversations/${conversations[0].id}`)).json();
-    const msgs = conv.messages ?? [];
-    return {
-      userCount: msgs.filter((m) => m.role === 'user').length,
-      assistantCount: msgs.filter((m) => m.role === 'assistant').length,
-      lastAssistantId: msgs.filter((m) => m.role === 'assistant').at(-1)?.id ?? null,
-    };
-  });
+  const list = await serverGet(page, '/v1/conversations');
+  const first = list?.conversations?.[0];
+  if (!first) return { userCount: 0, assistantCount: 0, lastAssistantId: null };
+  const msgs = (await serverGet(page, `/v1/conversations/${first.id}`))?.messages ?? [];
+  return {
+    userCount: msgs.filter((m) => m.role === 'user').length,
+    assistantCount: msgs.filter((m) => m.role === 'assistant').length,
+    lastAssistantId: msgs.filter((m) => m.role === 'assistant').at(-1)?.id ?? null,
+  };
 }
 
 // By-id reader for the capability/thinking/image section below, where several
@@ -76,16 +75,13 @@ async function conversationStateServerSide(page) {
 // "conversations[0] is the one conversation this suite has" assumption no
 // longer holds once more than one exists, so reads there target an explicit id.
 async function conversationStateById(page, id) {
-  return page.evaluate(async (convId) => {
-    const conv = await (await fetch(`/v1/conversations/${convId}`)).json();
-    const msgs = conv.messages ?? [];
-    return {
-      userCount: msgs.filter((m) => m.role === 'user').length,
-      assistantCount: msgs.filter((m) => m.role === 'assistant').length,
-      lastUser: msgs.filter((m) => m.role === 'user').at(-1) ?? null,
-      lastAssistant: msgs.filter((m) => m.role === 'assistant').at(-1) ?? null,
-    };
-  }, id);
+  const msgs = (await serverGet(page, `/v1/conversations/${id}`))?.messages ?? [];
+  return {
+    userCount: msgs.filter((m) => m.role === 'user').length,
+    assistantCount: msgs.filter((m) => m.role === 'assistant').length,
+    lastUser: msgs.filter((m) => m.role === 'user').at(-1) ?? null,
+    lastAssistant: msgs.filter((m) => m.role === 'assistant').at(-1) ?? null,
+  };
 }
 
 // Click New and resolve the fresh conversation's id server-side -- by MAX
@@ -468,8 +464,8 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('system prompt edit persists without blur', async () => {
     // drawer is open from the checks above; the sysprompt editor is one of chat's
     // contributed sections inside it (its details is always expanded now).
-    await page.click('.chat__sysprompt-input');
-    await page.type('.chat__sysprompt-input', SYS_PROMPT);
+    await page.click('.sysprompt-input');
+    await page.type('.sysprompt-input', SYS_PROMPT);
     // Deliberately NO blur: state commits per keystroke and the PUT is
     // debounced -- the old blur-only commit is the bug this regression guards.
     await waitFor(async () => page.evaluate(async (sys) => {
@@ -482,8 +478,8 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('sysprompt typed text survives Escape-close', async () => {
     // Escape with focus still in the textarea removes the field before any
     // change event can fire -- the exact path that used to lose the prompt.
-    await page.click('.chat__sysprompt-input');
-    await page.type('.chat__sysprompt-input', ' Be terse.');
+    await page.click('.sysprompt-input');
+    await page.type('.sysprompt-input', ' Be terse.');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.drawer--open'), { timeout: 5000 });
     await waitFor(async () => page.evaluate(async () => {
@@ -492,7 +488,7 @@ export async function runChatSuite({ suite, ctx, config }) {
       return conversations.some((c) => (c.system_prompt ?? '').includes('Be terse.'));
     }), { message: 'text typed before Escape-close never reached the server' });
     await openDrawer(page);  // leave the drawer open for the preset checks
-    const val = await page.$eval('.chat__sysprompt-input', (el) => el.value);
+    const val = await page.$eval('.sysprompt-input', (el) => el.value);
     assert(val.includes('Be terse.'), 'reopened drawer lost the typed text');
   });
 

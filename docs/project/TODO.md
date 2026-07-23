@@ -57,13 +57,15 @@ ordering and the sole-user/minimal-custom-code posture.
   halves (26B: 16G vs ~28G; 31B: 19G vs ~33G). Caveat before making QAT the
   daily: the bank's images are synthetic; run a real-photo spot-check.
   The QAT assistant heads (downloaded, unconverted) pair with the MTP item.
-- [ ] **finish_reason reports "stop" on budget-exhausted responses** (P3,
-  found during the 07-20 QAT A/B): completion_tokens == max_tokens cases
-  return finish_reason="stop" instead of "length" on the non-streaming chat
-  path (observed repeatedly on live probes). Clients cannot distinguish
-  natural stops from truncation; the eval bank works around it by comparing
-  token counts. Find where the reason is mapped in the response builders
-  and thread the cap-hit signal through.
+- [x] **finish_reason reports "stop" on budget-exhausted responses -- DONE
+  v1.39.14** (P3, found during the 07-20 QAT A/B). Both non-streaming
+  builders hardcoded "stop"; mlx-lm's own reason is now scraped in
+  `ChunkTelemetry.absorb` (the one-scrape rule) and latched, so a trailing
+  empty chunk cannot erase it, and both `/v1/chat/completions` and
+  `/v1/messages` report it. The Messages converter already mapped length ->
+  stop_reason -- it was never fed one. The eval bank's token-count
+  workaround is retired (kept only as a fallback for servers that report no
+  reason). Live-verified: max_tokens=12 -> "length", natural -> "stop".
 - [ ] **Trim the two surviving architecture KEEPs** (P3, from the 07-20
   architecture audit; exact section lists in the session log): config.md
   (drop the field tables / TOML examples / schema dump / troubleshooting;

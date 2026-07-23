@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.15]
+
+### Changed
+
+- **The per-document system-prompt editor is one shared factory**
+  (`js/prompt-section.js`), used by chat and notebook. The two pages had
+  divergent copies of the same grammar, and the hard-won lessons lived in
+  ONE copy each -- chat's per-keystroke commit (a save-on-blur commit lost
+  the text whenever the drawer closed under focus, and a preset saved in
+  that window captured `system_prompt=null`), its stale-editor guard, and
+  its blur flush. A page can no longer drift from that by copy-paste. Both
+  editors now live in the same settings drawer, so the incidental
+  differences (rows, CSS class, collapsed-when-empty) are unified rather
+  than parameterised: one `.sysprompt` / `.sysprompt-input` rule set, always
+  expanded. The factory FLUSHES a pending write on teardown rather than
+  cancelling it -- navigating away inside the debounce window is the same
+  data-loss shape the module exists to prevent.
+- **The notebook's system prompt has its own field-scoped PUT** instead of
+  riding the whole-document autosave, matching chat. A preset apply used to
+  re-upload title + full content + prompt + model; it now writes just
+  `system_prompt`, serialized through a per-mount chain (chat's ordering
+  guard). `doSave` no longer sends the field at all, so a slow document save
+  cannot clobber a newer prompt write. Deleting the last notebook also
+  resyncs the widget -- it outlives any single document now.
+- The shared prompt input keeps its focus ring. The notebook's old copy
+  suppressed it, borrowing the distraction-free-editor exemption that
+  belongs to the writing surface; DESIGN.md section 7 scopes that exemption
+  to the surface, not to every borderless field.
+
+### Added
+
+- E2E lib consolidation: `serverGet(page, path)` (lib/server-state.mjs) --
+  the server's own view of a document, fetched inside the page so it shares
+  the app's origin and session; the suites' four state readers compose on it
+  instead of re-implementing evaluate + fetch + json. `proveQuiet(watch,
+  ...)` (lib/harness.mjs) holds the ONE sanctioned bounded sleep: claims of
+  absence ("no second fetch follows") have no condition to wait on, and
+  keeping the exception in one place stops it being re-argued per site.
+  A third proposed helper (`raceState`) was deliberately NOT added -- the
+  two "observed-state branching" sites make genuinely different decisions,
+  and one abstraction over them would obscure more than it shares.
+
 ## [1.39.14]
 
 ### Fixed

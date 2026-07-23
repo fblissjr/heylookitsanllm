@@ -295,18 +295,41 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
 
-/* chat-owned lead sections: preset bar + per-conversation system prompt */
+/* drawer lead sections shared by chat + notebook: preset bar + the
+   per-document system prompt (prompt-section.js's createPromptSection) */
 .preset-section { display: flex; flex-direction: column; gap: 0.4rem; }
 .preset-row { display: flex; gap: 0.4rem; }
 .preset-row select,
 .preset-row .input { flex: 1; min-width: 0; text-align: left; }
-.chat__sysprompt-input {
+.sysprompt {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+}
+.sysprompt summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  user-select: none;
+}
+.sysprompt-input {
   width: 100%;
+  border: none;
+  background: none;
+  resize: vertical;
   min-height: 9rem;
   margin-top: 0.5rem;
-  resize: vertical;
+  padding: 0;
+  font-size: var(--text-ui);
   line-height: 1.5;
 }
+/* NB: no focus-visible reset here. The notebook's old copy of this input
+   suppressed the ring, borrowing the distraction-free-editor exemption that
+   belongs to the WRITING SURFACE (.notebook__content) -- but this is a
+   discrete control in the settings drawer, and chat's copy always had the
+   ring. Unifying on the ring keeps DESIGN.md section 7's rule intact:
+   the exemption is for the writing surface, not for every borderless field. */
 
 /* a muted footnote inside a settings panel (e.g. the greedy/logprobs note) */
 .settings-note { margin-top: 0.25rem; }
@@ -888,30 +911,6 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   padding: 0.25rem 0;
 }
 
-.notebook__sysprompt {
-  border: 1px solid var(--line);
-  border-radius: var(--r-card);
-  background: var(--surface);
-  padding: 0.5rem 0.75rem;
-}
-.notebook__sysprompt summary {
-  cursor: pointer;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  user-select: none;
-}
-.notebook__sysprompt-input {
-  width: 100%;
-  border: none;
-  background: none;
-  resize: vertical;
-  min-height: 9rem;
-  margin-top: 0.5rem;
-  padding: 0;
-  font-size: var(--text-ui);
-  line-height: 1.5;
-}
-
 .notebook__content-wrap { flex: 1; display: flex; }
 .notebook__content {
   flex: 1;
@@ -926,9 +925,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 /* the writing surface dominates the pane -- omit the focus ring here the
    way a distraction-free editor would, while keeping it on every discrete
-   control (title, model select, buttons) via the shared global rule. */
-.notebook__content:focus-visible,
-.notebook__sysprompt-input:focus-visible {
+   control (title, model select, buttons, .sysprompt-input) via the shared
+   global rule -- see the NB above .sysprompt-input for why that field no
+   longer borrows this exemption. */
+.notebook__content:focus-visible {
   outline: none;
 }
 .notebook__content::placeholder { color: var(--ink-faint); }

@@ -17,6 +17,7 @@ import { streamChat } from '../streaming.js';
 import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
+import { createPromptSection } from '../prompt-section.js';
 
 export default createPage({
   async setup(ctx) {
@@ -43,12 +44,7 @@ export default createPage({
     // any indicator callback can fire.
     s.presetBar = createPresetBar(ctx, {
       getPrompt: () => s.systemPrompt || null,
-      setPrompt: (v) => {
-        s.systemPrompt = v ?? '';
-        syncSysPromptWidgets(ctx);
-        s.dirty = true;
-        s.scheduleSave();
-      },
+      setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
       onIndicator: (info) => paintPresetChip(ctx, info),
@@ -56,13 +52,27 @@ export default createPage({
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
 
+    // Shared prompt-section factory (prompt-section.js), ONE instance for the
+    // page's lifetime -- unlike chat, which rebuilds one per drawer build,
+    // the notebook's widget is reused across notebook switches: owner() is a
+    // live read (s.activeId), and every switch calls setValue() (in
+    // populateFields) to resync the field AND re-anchor which notebook new
+    // edits target. Created after the preset bar so onEdit can reach it.
+    s.promptSection = createPromptSection(ctx, {
+      owner: () => s.activeId,
+      get: () => s.systemPrompt,
+      set: (v) => { s.systemPrompt = v ?? ''; },
+      persist: (v, id) => putSystemPrompt(ctx, id, v),
+      onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
+    });
+
     // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
     // sampler controls; the preset bar + per-notebook system-prompt editor
     // lead the panel.
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
       samplers: 'enabled',
-      sections: () => [s.presetBar.buildSection(), s.sysPromptDetails],
+      sections: () => [s.presetBar.buildSection(), s.promptSection.element],
       onOpen: s.presetBar.onDrawerOpen,
     });
     ctx.onTeardown(unregisterSettings);
@@ -152,23 +162,6 @@ function buildSkeleton(ctx) {
 
   const row = createEl('div', { class: 'notebook__row' }, [s.titleInput, s.modelSelect, s.presetChip]);
 
-  s.sysPromptInput = createEl('textarea', {
-    class: 'notebook__sysprompt-input', rows: 3,
-    placeholder: 'Optional system prompt for generation…',
-  });
-  s.sysPromptInput.addEventListener('input', () => {
-    s.systemPrompt = s.sysPromptInput.value;
-    s.dirty = true;
-    s.scheduleSave();
-    s.presetBar.updateDrift(); // prompt edits drift the selected preset live
-  });
-  // Lives in the shared settings drawer (registered as a section), not inline
-  // in the form -- but state (value/open) is still driven by populateFields.
-  s.sysPromptDetails = createEl('details', { class: 'notebook__sysprompt' }, [
-    createEl('summary', {}, ['System prompt']),
-    s.sysPromptInput,
-  ]);
-
   s.contentTextarea = createEl('textarea', {
     class: 'notebook__content', placeholder: 'Start writing…',
   });
@@ -224,12 +217,32 @@ function renderEditor(ctx) {
   s.editorBody.replaceChildren(s.activeId ? s.formEl : s.emptyEl);
 }
 
-// The one place state reaches the sysprompt widgets (populateFields on
-// select/create, the preset bar's setPrompt on apply).
-function syncSysPromptWidgets(ctx) {
+// The preset-apply write path (the bar's setPrompt adapter): state + widget
+// sync now, then an immediate field-scoped PUT if a notebook is active --
+// chat.js's setSystemPrompt has the same shape. The textarea has its own
+// path -- per-keystroke state + debounced PUT via the shared prompt-section
+// factory; both converge on putSystemPrompt.
+function setSystemPrompt(ctx, value) {
   const s = ctx.state;
-  s.sysPromptInput.value = s.systemPrompt;
-  s.sysPromptDetails.open = Boolean(s.systemPrompt);
+  const next = value ?? '';
+  const changed = next !== s.systemPrompt;
+  s.systemPrompt = next;
+  s.promptSection.setValue(next);
+  if (!s.activeId || !changed) return; // no-op PUTs skipped (preset re-apply)
+  putSystemPrompt(ctx, s.activeId, next);
+}
+
+// All system-prompt PUTs serialize through one per-mount chain -- same
+// ordering guard as chat.js's putSystemPrompt (see its comment): the
+// textarea's blur-flush and a preset-apply's write are separate fetches
+// issued milliseconds apart, and without ordering the stale one could land
+// last server-side. Field-scoped: only system_prompt moves here, never the
+// rest of the document (doSave owns title/content/model_id).
+function putSystemPrompt(ctx, notebookId, value) {
+  const s = ctx.state;
+  s.promptPutChain = (s.promptPutChain ?? Promise.resolve())
+    .then(() => api.updateNotebook(notebookId, { system_prompt: value }))
+    .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
 // The bar chip's one renderer (fed by the preset bar's onIndicator).
@@ -242,7 +255,7 @@ function paintPresetChip(ctx, info) {
 function populateFields(ctx) {
   const s = ctx.state;
   s.titleInput.value = s.title;
-  syncSysPromptWidgets(ctx);
+  s.promptSection.setValue(s.systemPrompt);
   s.contentTextarea.value = s.content;
   autoGrow(s.contentTextarea, Infinity);
   if (s.modelId && s.models.some((m) => m.id === s.modelId)) s.modelSelect.value = s.modelId;
@@ -321,6 +334,10 @@ async function deleteNotebook(ctx, id) {
     if (s.notebooks.length) await selectNotebook(ctx, s.notebooks[0].id);
     else {
       s.presetBar.syncIndicator(); // no active doc -> chip clears (chat parity)
+      // The prompt widget outlives any single notebook (one instance per
+      // mount), so clearing state is not enough -- resync it too, or the
+      // deleted notebook's prompt is still sitting in the drawer.
+      s.promptSection.setValue('');
       renderEditor(ctx);
     }
   }
@@ -332,6 +349,7 @@ async function selectNotebook(ctx, id) {
   if (s.activeId === id) return;
   if (s.gen) stopGenerate(ctx); // partial still persists to its own notebook
   s.scheduleSave.flush();
+  s.promptSection.flush(); // pending prompt write lands against the OLD notebook first
   s.activeId = id;
   showStatus(ctx, '');
   renderList(ctx);
@@ -374,10 +392,12 @@ async function doSave(ctx) {
   if (!id || !s.dirty) return;
   s.dirty = false;
   try {
+    // system_prompt has its own field-scoped writer (putSystemPrompt, via the
+    // shared prompt-section factory) -- omitted here, not just null-guarded,
+    // so a slow whole-document save can never clobber a newer prompt PUT.
     await api.updateNotebook(id, {
       title: s.title,
       content: s.content,
-      system_prompt: s.systemPrompt || null,
       model_id: s.modelId || null,
     });
   } catch (err) {
