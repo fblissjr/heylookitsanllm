@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.13]
+
+### Fixed
+
+- **A spurious channel-open no longer swallows the whole reply** (the
+  "post-abort immediate-EOS" investigation, root-caused live). gemma-4
+  sometimes emits a stray `<|channel>` mid-answer and simply keeps
+  answering; because the header was never terminated by a newline, both
+  channel parsers accumulated every following token into the channel-NAME
+  buffer and dropped it as structural at flush. The user saw an EMPTY
+  reply while the server reported a normal `stop` -- captured raw tokens
+  `['<|channel>', ' to', ' the', ' movies', '!', '<turn|>']` produced ''.
+  At end of turn, unrouted model text now goes to content (both gemma and
+  harmony). Trade-off recorded in the code: an abort inside a legitimate
+  header now surfaces a short fragment instead of vanishing, which is the
+  lesser failure.
+
+  Measurement notes, since this had a standing (wrong) explanation: the
+  memo's template/history theory was falsified first -- 0/64 empty replies
+  across four history shapes (complete / truncated / empty-content /
+  omitted assistant turn), and 0/6 vs 0/6 with REAL mid-stream client
+  disconnects, so aborts were never the variable. The empty replies came
+  from the parser, not the model, and not from v1.39.12: an A/B against a
+  v1.39.11 worktree on the exact captured token sequence swallowed it
+  identically.
+
+### Changed
+
+- tests/e2e/README.md's "empty-EOS is legal model output" principle carries
+  a caveat: tolerating empty replies stays correct, but a rising rate is a
+  bug signal -- this class of them was real text loss.
+
 ## [1.39.12]
 
 ### Fixed

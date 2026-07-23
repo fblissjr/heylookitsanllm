@@ -663,3 +663,74 @@ class TestSharedStripHoldback:
         parser = select_reasoning_parser(_template(harmony=True))
         assert isinstance(parser, HarmonyChannelParser)
         assert not isinstance(parser, StripSpecials)
+
+
+class TestUnterminatedChannelHeaderIsNotSwallowed:
+    """A channel opened but never named/closed must not eat the turn.
+
+    Live find (2026-07-23): gemma-4 sometimes emits a spurious `<|channel>`
+    mid-answer and then just keeps answering -- raw tokens
+    ``['<|channel>', ' to', ' the', ' movies', '!', '<turn|>']``. Both channel
+    parsers accumulated everything after the open token into the channel-NAME
+    buffer and dropped it as structural at flush, so the user got an empty
+    reply while the server reported a normal 6-token `stop`. That is the
+    "immediate empty-EOS" long attributed to model behavior; it is text loss.
+
+    Rule: at end of turn, unrouted model text goes to content. Never drop it.
+    """
+
+    def test_gemma_spurious_channel_open_keeps_the_answer(self):
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+
+        content, thinking = _collect(
+            GemmaChannelParser(), ["<|channel> to the movies!"]
+        )
+        assert content == " to the movies!"
+        assert thinking == ""
+
+    def test_gemma_spurious_channel_open_streamed_per_character(self):
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+
+        content, _ = _collect(
+            GemmaChannelParser(), list("Hi<|channel> to the movies!")
+        )
+        assert content == "Hi to the movies!"
+
+    def test_gemma_abort_mid_channel_name_surfaces_the_fragment(self):
+        """The trade-off, stated explicitly: an abort inside a LEGIT header
+        now surfaces a short fragment instead of vanishing. Losing a whole
+        answer is the worse failure."""
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+
+        content, _ = _collect(GemmaChannelParser(), ["<|channel>thou"])
+        assert content == "thou"
+
+    def test_gemma_named_channel_header_still_consumed(self):
+        """A well-formed header is structural and must NOT leak as content."""
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+
+        content, thinking = _collect(
+            GemmaChannelParser(), ["<|channel>thought\nplanning<channel|>Answer."]
+        )
+        assert content == "Answer."
+        assert thinking == "planning"
+
+    def test_harmony_unterminated_channel_header_keeps_the_text(self):
+        from heylook_llm.reasoning_parser import HarmonyChannelParser
+
+        content, thinking = _collect(
+            HarmonyChannelParser(), ["<|channel|>analysis and then some answer"]
+        )
+        assert content == "analysis and then some answer"
+        assert thinking == ""
+
+    def test_harmony_named_channel_header_still_consumed(self):
+        from heylook_llm.reasoning_parser import HarmonyChannelParser
+
+        content, thinking = _collect(
+            HarmonyChannelParser(),
+            ["<|channel|>analysis<|message|>reasoning<|end|>"
+             "<|channel|>final<|message|>answer"],
+        )
+        assert content == "answer"
+        assert thinking == "reasoning"

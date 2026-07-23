@@ -139,6 +139,14 @@ after a close will flake on the transition windows.
   post-abort and generate-at-cursor checks branch on it; stop-mid-generation
   handles the generation finishing before Stop is clickable). Both suites
   were audited to this standard on 2026-07-23 — hold new checks to it.
+  **Caveat added v1.39.13:** one cause of those empty replies was NOT legal
+  model output but a parser bug — gemma-4 occasionally emits a spurious
+  `<|channel>` mid-answer, and the channel parser swallowed the entire rest
+  of the turn as an unterminated channel name (raw tokens
+  `['<|channel>', ' to', ' the', ' movies', '!', '<turn|>']` → empty content
+  on a normal `stop`). Unrouted text now goes to content. Tolerating empty
+  replies stays right (a model really can EOS immediately), but treat a
+  *rising* rate as a bug signal, not as model noise.
 - **Per-document params beat the localStorage seed after any reload.** Setup
   auto-selects the newest conversation and `hydrateDocParams` replaces the
   seeded settings cache with that conversation's stored `params` — so

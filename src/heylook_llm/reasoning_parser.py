@@ -303,8 +303,15 @@ class HarmonyChannelParser:
                         self._buffer = self._buffer[safe_len:]
                         progress = True
 
-        # no leftover branch: a final drain always empties the buffer (every
-        # state's else-branch consumes buffer[:len(buffer)] when final)
+        # The buffer itself is always empty after a final drain (every state's
+        # else-branch consumes buffer[:len(buffer)] when final). The channel
+        # NAME buffer is not: a turn that ended between <|channel|> and
+        # <|message|> left model text in it, and dropping that is text loss --
+        # see GemmaChannelParser._drain for the live case that proved it.
+        if final and self._state == "in_channel" and self._channel_name_buf:
+            out.append(("content", self._channel_name_buf))
+            self._channel_name_buf = ""
+
         return [d for d in out if d[1]]
 
     def _find_next_control_token(self) -> Tuple[Optional[int], Optional[str]]:
@@ -456,8 +463,20 @@ class GemmaChannelParser:
                         self._buffer = self._buffer[safe_len:]
                         progress = True
 
-        # no leftover branch: a final drain always empties the buffer (in_name
-        # leftovers are structural and consumed into the channel-name buffer)
+        # The buffer is always empty after a final drain, but the channel-NAME
+        # buffer may not be, and it is NOT safe to treat as structural: gemma-4
+        # sometimes emits a spurious `<|channel>` mid-answer and then just keeps
+        # answering (live 2026-07-23: `['<|channel>', ' to', ' the', ' movies',
+        # '!', '<turn|>']`). Everything after the open token landed here and was
+        # dropped, so the user got an EMPTY reply on a normal 6-token stop --
+        # the "immediate empty-EOS" long blamed on model behavior. At end of
+        # turn, unrouted model text goes to content. The cost is that an abort
+        # inside a LEGIT header surfaces a fragment ("thou"); losing a whole
+        # answer is the worse failure.
+        if final and self._state == "in_name" and self._channel_name_buf:
+            out.append(("content", self._channel_name_buf))
+            self._channel_name_buf = ""
+
         return [d for d in out if d[1]]
 
     def _route_text(self, text: str) -> ParserDelta:
