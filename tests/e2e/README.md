@@ -66,13 +66,20 @@ change, re-run before diagnosing a delivery regression.
   (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
   overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — 31 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — 37 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
   opening the same drawer, system-prompt persistence (no-blur commit +
   Escape-close survival), preset save/apply round-trip (inert selection,
   explicit Apply, drift states), the applied-preset chip (shows/(edited)/
-  clears-on-delete), conversation CRUD, 390px mobile.
+  clears-on-delete), conversation CRUD, 390px mobile, and a capability/
+  thinking/image section: gating (thinking toggle + vision_tokens track the
+  selected model's capabilities, negative model discovered from /v1/models
+  and never loaded), vision_tokens localStorage round-trip, the thinking
+  toggle's wire contract (enable_thinking absent when off -- never false --
+  true when on), the thinking block UI on a real thinking generation,
+  attach-cap (9 files -> 8 thumbs + aria-live message), and an image
+  message round-trip (content_blocks persist, render, survive reload).
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
   preservation, notebook preset bar (save/drift/armed apply), explore logprob
   chips + keyboard nav, perf no-polling proof + ranges, models list/load/unload
@@ -128,3 +135,12 @@ after a close will flake on the transition windows.
   post-abort and generate-at-cursor checks branch on it; stop-mid-generation
   handles the generation finishing before Stop is clickable). Both suites
   were audited to this standard on 2026-07-23 — hold new checks to it.
+- **Per-document params beat the localStorage seed after any reload.** Setup
+  auto-selects the newest conversation and `hydrateDocParams` replaces the
+  seeded settings cache with that conversation's stored `params` — so
+  `ctx.open('#/chat', { max_tokens: N })` does NOT control generations on
+  existing conversations, and a debounced params PUT killed by a reload can
+  resurrect stale settings (both seen live 2026-07-23). To control settings
+  for a generation: seed a fresh conversation, then set values through the
+  drawer panel (which PUTs to that conversation), and end checks by waiting
+  for the params PUT to land server-side, not just for localStorage.

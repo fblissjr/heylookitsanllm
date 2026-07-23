@@ -91,14 +91,18 @@ ordering and the sole-user/minimal-custom-code posture.
   dead final-flush defect to fix alongside, wrapper sketch, failing-first
   test list, acceptance criteria):
   docs/parser_strip_unification.md.
-- [ ] **E2E checks for the 2026-07-20 v3 features** (P2, from the xhigh
-  review's coverage table -- all four currently have ZERO e2e coverage):
-  (1) attach 9 files -> 8 thumbs + aria-live cap message; (2) thinking
-  toggle visible on capable model, aria-pressed true/false round-trip,
-  unchecked sends null not false; (3) drawer `#set-vision_tokens` present
-  (min 16 max 16384) + localStorage round-trip; (4) thinking `<details>`
-  block appears with non-empty body on a thinking generation, summary
-  toggles open. Also update tests/e2e/README.md suite descriptions.
+- [x] **E2E checks for the 2026-07-20 v3 features -- DONE v1.39.9** (all
+  four landed in chat.mjs's capability/thinking/image section, live-green
+  73/73): (1) attach 9 -> 8 thumbs + aria-live cap message; (2) thinking
+  toggle aria-pressed round-trip + wire contract (enable_thinking absent
+  when off -- never false -- true when on, asserted on captured request
+  bodies); (3) `#set-vision_tokens` present with min 16 / max 16384 +
+  localStorage round-trip, absent on a non-vision model (negative model
+  discovered from /v1/models, never loaded); (4) thinking `<details>` block
+  renders with non-empty body on a real thinking generation (branch-on-
+  empty per the suite hardening principle). Plus an image-message
+  round-trip (content_blocks persist + render + survive reload) beyond the
+  original list. README descriptions updated.
 - [ ] **LLM behavior-eval harness follow-ups** (P2, owner-directed 2026-07-20):
   `tests/eval/` (opt-in, seed bank generalized from the 2026-07-20 live
   verification scripts) is the base. Direction the owner wants explored:

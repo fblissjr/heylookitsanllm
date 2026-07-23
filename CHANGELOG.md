@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.9]
+
+### Added
+
+- **E2E coverage for thinking, images, and capability gating** (chat suite
+  31 -> 37 checks, 73 total, live-verified 73/73). New section: thinking
+  toggle + `vision_tokens` gate on the selected model's capabilities, with
+  the negative model discovered from `/v1/models` and never loaded (gating
+  is pure metadata); `vision_tokens` localStorage round-trip; the thinking
+  wire contract asserted on captured request bodies (`enable_thinking`
+  absent when off -- never false -- `true` when on); the thinking block UI
+  on a real thinking generation; attach cap (9 canvas-generated PNGs -> 8
+  thumbs + the aria-live message); and an image-message round-trip (2
+  image content_blocks persist server-side, render as `.message-image`,
+  survive reload). Building these surfaced two more harness truths, now in
+  the README: per-document params beat the localStorage seed after any
+  reload (hydration replaces the seeded cache), and a reload can kill a
+  debounced params PUT and resurrect stale settings -- so checks control
+  settings through the drawer panel on a fresh conversation and end by
+  waiting for the params PUT to land server-side.
+
 ## [1.39.8]
 
 ### Changed
