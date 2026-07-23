@@ -156,6 +156,11 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await clickByText(page, '.preset-section button', 'Save');
     await waitFor(async () => (await driftText(page))?.includes('Matches'),
       { message: 'drift line not "Matches" right after save' });
+    // NOTEBOOK CHIP: saving stamps the association -- the chip in the editor
+    // row (behind the drawer backdrop, but readable) must name the preset.
+    const chipText = () => page.$eval('.notebook__row .preset-chip', (el) => (el.hidden ? null : el.textContent));
+    await waitFor(async () => (await chipText()) === 'nb-preset',
+      { message: 'notebook chip did not show the saved preset' });
     // drift the prompt -- the line must flip live, without a rebuild
     await page.evaluate(() => {
       const ta = document.querySelector('.notebook__sysprompt-input');
@@ -164,6 +169,8 @@ export async function runPagesSuite({ suite, ctx, config }) {
     });
     await waitFor(async () => (await driftText(page))?.includes('Differs'),
       { message: 'drift line did not flip after a prompt edit' });
+    await waitFor(async () => (await chipText())?.includes('(edited)'),
+      { message: 'notebook chip did not gain (edited) after the prompt drift' });
     // Apply arms first here: it would replace a differing non-empty prompt
     const applyBtn = await handleByText(page, '.preset-section button', 'Apply');
     await armedClick(applyBtn);
@@ -175,6 +182,8 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await waitFor(async () => page.$eval('.preset-row select',
       (s) => ![...s.options].some((o) => o.textContent === 'nb-preset')),
       { message: 'preset not deleted' });
+    await waitFor(async () => (await chipText()) === null,
+      { message: 'notebook chip did not clear after preset delete' });
     await closeDrawer(page);
   });
 

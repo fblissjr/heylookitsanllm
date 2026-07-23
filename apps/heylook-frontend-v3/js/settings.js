@@ -104,11 +104,22 @@ export function applySettings(params, { silent = false } = {}) {
 }
 
 // Request-body params: the snapshot minus the knobs that are only
-// meaningful when > 0 (backend treats 0 as unset).
-export function samplerParams() {
+// meaningful when > 0 (backend treats 0 as unset). Pass the CURRENT model's
+// `caps` to also drop capability-gated keys the model doesn't support --
+// the panel hides those controls (requiresCap) but the cache keeps their
+// values, and without this filter a value set on a capable model rides
+// every request to an incapable one invisibly ("pinned") until Reset.
+// The cache itself is untouched: switch back to a capable model and the
+// value (and its control) return.
+export function samplerParams(caps = null) {
   const out = snapshotSettings();
   if (!(out.top_k > 0)) delete out.top_k;
   if (!(out.presence_penalty > 0)) delete out.presence_penalty;
+  if (caps) {
+    for (const [key, meta] of Object.entries(PARAM_META)) {
+      if (meta.requiresCap && !caps.includes(meta.requiresCap)) delete out[key];
+    }
+  }
   return out;
 }
 
@@ -249,7 +260,7 @@ export function buildSettingsPanel({ caps = [] } = {}) {
   const resetBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Reset to defaults']);
   resetBtn.addEventListener('click', () => {
     resetSettings();
-    for (const { key, meta, control } of controls) {
+    for (const { meta, control } of controls) {
       if (meta.type === 'checkbox') control.checked = false;
       else control.value = '';
     }

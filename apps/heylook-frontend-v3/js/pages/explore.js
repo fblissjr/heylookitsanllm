@@ -250,7 +250,7 @@ function buildRequestBody(ctx) {
     messages: [{ role: 'user', content: s.textarea.value.trim() }],
     logprobs: true,
     top_logprobs: 5,
-    ...samplerParams(),
+    ...samplerParams(exploreCaps(ctx)),
   };
 }
 

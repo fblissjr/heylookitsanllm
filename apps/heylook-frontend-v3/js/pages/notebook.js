@@ -412,7 +412,7 @@ function startGenerate(ctx) {
   s.contentTextarea.readOnly = true;
   showStatus(ctx, '');
 
-  streamChat({ model: s.modelSelect.value, messages, ...samplerParams() }, {
+  streamChat({ model: s.modelSelect.value, messages, ...samplerParams(notebookCaps(ctx)) }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },
     onRetryWait: (wait) => {

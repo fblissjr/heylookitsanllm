@@ -88,10 +88,14 @@ async function conversationStateById(page, id) {
   }, id);
 }
 
-// Click New and resolve the fresh conversation's id server-side. Ordering is
-// `updated_at DESC` (db.py), so the just-created conversation is index 0 --
-// true as long as nothing else is touched between creation and this read,
-// which every caller below honors.
+// Click New and resolve the fresh conversation's id server-side -- by MAX
+// created_at, never by list position: the list orders by updated_at, and a
+// PRIOR check's trailing debounced params PUT (bindDocumentParams, 400ms)
+// can bump its old conversation past the fresh one inside this window,
+// silently handing back the wrong id (reproduced live 2026-07-23: the image
+// round-trip check read an old text conversation and found 0 image blocks).
+// created_at is immutable, so the newest-created conversation is always the
+// one New just made.
 async function newFreshConversation(page) {
   await clickByText(page, '.chat__convs-head button', 'New');
   // The conv-item paints at the START of selectConversation; its async
@@ -105,7 +109,8 @@ async function newFreshConversation(page) {
   { message: 'new conversation not fully selected (composer never focused)' });
   const id = await page.evaluate(async () => {
     const { conversations } = await (await fetch('/v1/conversations')).json();
-    return conversations[0]?.id ?? null;
+    return conversations.reduce(
+      (a, b) => (a && a.created_at > b.created_at ? a : b), null)?.id ?? null;
   });
   assert(id, 'could not resolve the fresh conversation id server-side');
   return id;
@@ -724,6 +729,76 @@ export async function runChatSuite({ suite, ctx, config }) {
     }, convId), { message: 'off-toggle params PUT never landed server-side' });
   });
 
+  await suite.check('cap-gated params are dropped for a model lacking the capability', async () => {
+    // The settings cache legitimately KEEPS enable_thinking/vision_tokens
+    // when the panel hides their controls (switch back and they return);
+    // what must not happen is those values riding a request to a model
+    // that lacks the cap (samplerParams(caps) filter, v1.39.10).
+    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const negative = models.find((m) => m.id !== config.model && !(m.capabilities ?? []).includes('thinking'));
+    if (!negative) {
+      console.log('      no non-thinking model registered -- skipping the cap-filter wire check');
+      return;
+    }
+
+    // arm the pin: thinking ON while the capable model is selected
+    await page.select(MODEL_SELECT, config.model);
+    await newFreshConversation(page);
+    await waitFor(async () => page.evaluate(() =>
+      document.querySelector('.chat__composer button[aria-label="Toggle thinking"]')?.hidden === false),
+    { message: 'thinking toggle never visible on the capable model' });
+    if ((await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) !== 'true') {
+      await page.click(THINK_BTN);
+    }
+    await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true',
+      { message: 'thinking toggle did not arm' });
+
+    await page.select(MODEL_SELECT, negative.id);
+    // Intercept + ABORT the completion request: only the request SHAPE is
+    // under test -- the (unloaded) negative model must never actually load.
+    await page.setRequestInterception(true);
+    const bodies = [];
+    const intercept = (req) => {
+      if (req.method() === 'POST' && req.url().includes('/v1/chat/completions')) {
+        bodies.push(req.postData());
+        req.abort();
+      } else {
+        req.continue();
+      }
+    };
+    page.on('request', intercept);
+    try {
+      await sendText(page, 'Hello.');
+      await waitFor(async () => bodies.length > 0, { message: 'no completion request captured' });
+    } finally {
+      page.off('request', intercept);
+      await page.setRequestInterception(false);
+    }
+    const body = JSON.parse(bodies.at(-1));
+    assert(!('enable_thinking' in body),
+      `enable_thinking rode a request to non-thinking ${negative.id}: ${JSON.stringify(body.enable_thinking)}`);
+    if (!(negative.capabilities ?? []).includes('vision')) {
+      assert(!('vision_tokens' in body), `vision_tokens rode a request to non-vision ${negative.id}`);
+    }
+    // the aborted stream surfaces as a failed generation on this throwaway
+    // conversation -- expected; wait for the composer to release
+    await waitIdle(page);
+
+    // restore: capable model + toggle off (the cache still holds true --
+    // that persistence is the FEATURE half of this behavior)
+    await page.select(MODEL_SELECT, config.model);
+    await waitFor(async () => page.evaluate(() =>
+      document.querySelector('.chat__composer button[aria-label="Toggle thinking"]')?.hidden === false),
+    { message: 'toggle did not return on the capable model' });
+    if ((await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true') {
+      await page.click(THINK_BTN);
+    }
+    await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'false',
+      { message: 'thinking toggle did not disarm' });
+    await waitFor(async () => (await ctx.readSettings()).enable_thinking !== true,
+      { message: 'enable_thinking still true in localStorage after restore' });
+  });
+
   await suite.check('thinking block renders in the UI when the model produces thinking content', async () => {
     // NO reload for the token budget: a reload's localStorage seed is dead on
     // arrival -- setup auto-selects the newest conversation and
@@ -813,6 +888,31 @@ export async function runChatSuite({ suite, ctx, config }) {
         { message: `attach-thumb count did not drop to ${remaining} after a remove click` });
     }
     assert(await page.$eval('.chat__attach', (el) => el.hidden), 'attach strip did not hide once all images were removed');
+  });
+
+  await suite.check('pasting an image into the composer stages it', async () => {
+    // The paste path is a distinct entry point from the picker (chat.js
+    // paste listener filters clipboard items to image files) -- exercise it
+    // with a synthetic ClipboardEvent carrying a real File.
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 8;
+      canvas.height = 8;
+      const c2d = canvas.getContext('2d');
+      c2d.fillStyle = 'rgb(30,180,90)';
+      c2d.fillRect(0, 0, 8, 8);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'pasted.png', { type: 'image/png' }));
+      const ta = document.querySelector('.chat__composer textarea');
+      ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await waitFor(async () => (await count(page, '.attach-thumb')) === 1,
+      { message: 'pasted image never staged as a thumbnail' });
+    // clear so the round-trip check below stages exactly its own images
+    await page.click('.attach-thumb__remove');
+    await waitFor(async () => (await count(page, '.attach-thumb')) === 0,
+      { message: 'staged pasted image did not clear' });
   });
 
   await suite.check('an attached image round-trips: send, persist, render, survive reload', async () => {

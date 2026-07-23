@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.10]
+
+### Fixed
+
+- **Cap-gated sampler keys no longer ride requests to incapable models**
+  (frontend v3; the P2 "pinned invisibly" TODO item). `enable_thinking` /
+  `vision_tokens` set on a capable model stayed in the settings cache when
+  the panel hid their controls on a model lacking the cap, and
+  `samplerParams()` kept emitting them on every request until Reset.
+  `samplerParams(caps)` now drops capability-gated keys at request-build
+  time; chat/notebook/explore pass their page's current caps. The cache
+  deliberately keeps the value -- switching back restores the control and
+  its setting; only the wire is filtered.
+- **E2E `newFreshConversation` resolves the fresh conversation by max
+  `created_at`, not list position** -- the conversations list orders by
+  `updated_at`, and a prior check's trailing debounced params PUT could
+  bump its old conversation past the fresh one, handing back the wrong id
+  (the intermittent image-check failure, finally reproduced with its
+  message and fixed).
+
+### Added
+
+- E2E: composer paste-path check (synthetic ClipboardEvent with a real
+  File); notebook applied-preset chip assertions (shows on save, gains
+  "(edited)" on drift, clears on delete); the cap-filter wire check
+  (request intercepted + aborted -- the negative model never loads).
+  75 checks total (chat 39 + pages 36), live-verified 75/75.
+
 ## [1.39.9]
 
 ### Added

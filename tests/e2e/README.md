@@ -66,7 +66,7 @@ change, re-run before diagnosing a delivery regression.
   (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
   overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — 37 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — 39 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
   opening the same drawer, system-prompt persistence (no-blur commit +
@@ -78,10 +78,14 @@ change, re-run before diagnosing a delivery regression.
   and never loaded), vision_tokens localStorage round-trip, the thinking
   toggle's wire contract (enable_thinking absent when off -- never false --
   true when on), the thinking block UI on a real thinking generation,
-  attach-cap (9 files -> 8 thumbs + aria-live message), and an image
-  message round-trip (content_blocks persist, render, survive reload).
+  attach-cap (9 files -> 8 thumbs + aria-live message), the paste path,
+  an image message round-trip (content_blocks persist, render, survive
+  reload), and the cap-filter wire check (a value set on a capable model
+  must not ride a request to a model lacking the cap -- request
+  intercepted + aborted so the negative model never loads).
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
-  preservation, notebook preset bar (save/drift/armed apply), explore logprob
+  preservation, notebook preset bar (save/drift/armed apply + the
+  applied-preset chip), explore logprob
   chips + keyboard nav, perf no-polling proof + ranges, models list/load/unload
   + HF scan, jspace Jacobian-lens workspace (lens-gated), danger-zone clear.
 

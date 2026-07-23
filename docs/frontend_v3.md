@@ -60,7 +60,7 @@ the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
 extracted into an app-shell global slide-over shared by all 6 pages --
 sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
-code-reviewed); browser E2E in `tests/e2e/` (73 checks, drawer-driven; green bar
+code-reviewed); browser E2E in `tests/e2e/` (75 checks, drawer-driven; green bar
 the load-sensitive streaming-cadence guard); **composer icons + multi-image
 hardening** (2026-07-20, v1.34.60-.61: attach + thinking-toggle are now
 `.btn--icon` buttons styled off `aria-pressed`, multi-image attach capped at 8

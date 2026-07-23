@@ -842,7 +842,9 @@ function buildRequestBody(ctx) {
   const messages = [];
   if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
   for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m) });
-  return { model: s.modelSelect.value, messages, ...samplerParams() };
+  // caps filter: cap-gated keys (enable_thinking, vision_tokens) set on a
+  // capable model must not ride requests to a model that lacks the cap
+  return { model: s.modelSelect.value, messages, ...samplerParams(currentCaps(ctx)) };
 }
 
 function startStream(ctx) {

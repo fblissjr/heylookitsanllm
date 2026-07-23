@@ -321,13 +321,14 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 
 ## Presets/system-prompt follow-ups (from the v1.34.22-.24 review passes)
 
-- [ ] **Cap-gated `enable_thinking` can be pinned invisibly** (P2): the global
-  settings cache keeps cap-gated keys when the current model can't display
-  the control (`requiresCap` hides the checkbox but `samplerParams()` still
-  emits the flag on every chat/notebook/explore request until Reset). Predates
-  presets -- switching models always had this gap -- but preset apply is a
-  one-click entry point into it. Needs a caps-aware settings design (drop or
-  grey cap-gated keys when unsupported), not a preset-side patch.
+- [x] **Cap-gated `enable_thinking` can be pinned invisibly -- FIXED
+  v1.39.10**: `samplerParams(caps)` drops capability-gated keys
+  (enable_thinking, vision_tokens) at request-build time when the current
+  model lacks the cap; chat/notebook/explore each pass their page's caps.
+  The cache deliberately KEEPS the value (switch back to a capable model
+  and the control + value return) -- only the wire is filtered. E2E: the
+  cap-filter wire check asserts on an intercepted+aborted request to a
+  never-loaded negative model.
 - [ ] **Presets vs TOML registry: dual-source by name** (P3, design decision):
   user presets are client-expanded only; `ChatRequest.sampler` resolves just
   the bundled TOML registry. If saved presets should ever work by name from
