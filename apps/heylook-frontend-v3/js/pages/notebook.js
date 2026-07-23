@@ -350,8 +350,15 @@ async function selectNotebook(ctx, id) {
   } catch (err) {
     if (ctx.alive && s.activeId === id) {
       showStatus(ctx, `Could not load notebook: ${err.message}`, true);
-      // activeId flipped but the doc never loaded -- resync so the chip
-      // doesn't keep claiming the previous notebook's preset for it
+      // The doc never loaded: drop back to "no active notebook" so the
+      // stale editor state can't be edited/saved under the wrong id, and so
+      // re-clicking this notebook retries -- the select guard
+      // (activeId === id) would otherwise no-op forever.
+      s.activeId = null;
+      renderEditor(ctx);
+      renderList(ctx);
+      // resync so the chip doesn't keep claiming the previous notebook's
+      // preset for the one that failed to load
       s.presetBar.syncIndicator();
     }
   }

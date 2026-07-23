@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.11]
+
+### Fixed
+
+- **Failed document loads are now recoverable** (frontend v3; /code-review
+  finding). After a failed conversation fetch, the previous conversation's
+  messages/prompt lingered under the new id and the select guard's
+  `messages.length` condition made re-clicking the same conversation a
+  permanent no-op; the failure path now clears the stale state, renders the
+  empty thread, and re-clicking retries. Notebook had the same class via
+  its `activeId === id` guard -- a failed load now drops back to "no active
+  notebook" so re-clicking retries.
+- **System-prompt PUTs are serialized** (chat). The textarea's blur-flush
+  and a preset-apply's write were independent fetches with no ordering
+  guarantee; all prompt writes now chain through one per-mount promise so a
+  stale flush can never land after an apply (pre-existing class, near
+  unobservable on localhost, closed outright).
+
 ## [1.39.10]
 
 ### Fixed

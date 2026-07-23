@@ -291,8 +291,15 @@ function setSystemPrompt(ctx, value) {
   putSystemPrompt(ctx, s.activeId, value);
 }
 
+// All system-prompt PUTs serialize through one per-mount chain: the
+// textarea's blur-flush and a preset-apply's write are separate fetches
+// issued milliseconds apart, and without ordering the stale one could land
+// last server-side (pre-existing class, /code-review 2026-07-23; localhost
+// keep-alive makes it near-unobservable, but the chain closes it outright).
 function putSystemPrompt(ctx, convId, value) {
-  api.updateConversation(convId, { system_prompt: value })
+  const s = ctx.state;
+  s.promptPutChain = (s.promptPutChain ?? Promise.resolve())
+    .then(() => api.updateConversation(convId, { system_prompt: value }))
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
@@ -492,8 +499,16 @@ async function selectConversation(ctx, convId) {
   } catch (err) {
     if (ctx.alive && s.activeId === convId) {
       showStatus(ctx, `Could not load conversation: ${err.message}`, true);
-      // activeId flipped but the doc never loaded -- resync so the chip
-      // doesn't keep claiming the previous conversation's preset for it
+      // The doc never loaded: clear the PREVIOUS conversation's leftovers so
+      // (a) nothing renders/writes under the wrong id, and (b) re-clicking
+      // this conversation retries -- the select guard's messages.length
+      // condition would otherwise no-op on the stale array forever.
+      s.messages = [];
+      s.systemPrompt = null;
+      renderMessages(ctx);
+      drawer.requestRebuild({ force: true });
+      // resync so the chip doesn't keep claiming the previous conversation's
+      // preset for the one that failed to load
       s.presetBar.syncIndicator();
     }
   }
