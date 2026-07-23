@@ -330,9 +330,11 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   the raw API/CLI, make the registry dual-source (TOML + DB rows, name-unique
   across both) instead of growing a second wire path. Deliberately NOT done
   in v1.34.22 -- client-side copy semantics (LM Studio) was the owner's ask.
-- [ ] **Notebook page preset bar** (P3): chat-first was deliberate; the
-  sections prepend cleanly onto notebook's settings panel. Notebook already
-  has its own sysprompt input -- decide whether preset apply writes it.
+- [x] **Notebook page preset bar** -- DONE v1.39.3: the bar was extracted to
+  the shared `preset-bar.js` (createPresetBar + getPrompt/setPrompt/onStatus
+  adapter) and notebook contributes it ahead of its sysprompt section.
+  Decision: apply DOES write the notebook's system prompt (a preset is a
+  prompt+sampler bundle everywhere; the armed confirm guards the overwrite).
 - [x] **"Panel drifted from selected preset" indicator** -- DONE v1.39.2: live
   drift line under the preset select ("Matches/Differs from current settings"),
   updated in place on prompt keystrokes + sampler edits; apply became an

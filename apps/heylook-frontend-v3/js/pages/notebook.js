@@ -14,8 +14,9 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, onSettingsChange } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
+import { createPresetBar } from '../preset-bar.js';
 
 export default createPage({
   async setup(ctx) {
@@ -34,12 +35,37 @@ export default createPage({
     s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
     ctx.onTeardown(() => s.scheduleSave.flush());
 
+    // Shared preset bar (preset-bar.js), adapted to the active notebook.
+    // Apply DOES write the notebook's system prompt -- a preset is a
+    // prompt+sampler bundle everywhere, and the armed confirm guards the
+    // overwrite. Notebook state uses '' for "no prompt"; the bar speaks null.
+    s.presetBar = createPresetBar(ctx, {
+      getPrompt: () => s.systemPrompt || null,
+      setPrompt: (v) => {
+        s.systemPrompt = v ?? '';
+        s.sysPromptInput.value = s.systemPrompt;
+        s.sysPromptDetails.open = Boolean(s.systemPrompt);
+        s.dirty = true;
+        s.scheduleSave();
+      },
+      onStatus: (text, isError) => showStatus(ctx, text, isError),
+    });
+    // sampler edits drift the selected preset live (prompt edits update from
+    // the sysprompt input handler)
+    ctx.onTeardown(onSettingsChange(ctx.guard(() => s.presetBar.updateDrift())));
+
     // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
-    // sampler controls; its per-notebook system-prompt editor leads the panel.
+    // sampler controls; the preset bar + per-notebook system-prompt editor
+    // lead the panel. onOpen lazily refreshes presets (fingerprint-diffed).
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
       samplers: 'enabled',
-      sections: () => [s.sysPromptDetails],
+      sections: () => [s.presetBar.buildSection(), s.sysPromptDetails],
+      onOpen: () => {
+        s.presetBar.refresh().then((changed) => {
+          if (ctx.alive && changed) drawer.requestRebuild();
+        });
+      },
     });
     ctx.onTeardown(unregisterSettings);
     // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --
@@ -129,6 +155,7 @@ function buildSkeleton(ctx) {
     s.systemPrompt = s.sysPromptInput.value;
     s.dirty = true;
     s.scheduleSave();
+    s.presetBar?.updateDrift(); // prompt edits drift the selected preset live
   });
   // Lives in the shared settings drawer (registered as a section), not inline
   // in the form -- but state (value/open) is still driven by populateFields.

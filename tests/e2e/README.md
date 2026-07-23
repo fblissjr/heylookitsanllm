@@ -69,7 +69,7 @@ change, re-run before diagnosing a delivery regression.
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, conversation CRUD,
   390px mobile.
-- `suites/pages.mjs` — ~35 checks: notebook autosave + generate-at-cursor tail
+- `suites/pages.mjs` — ~36 checks: notebook autosave + generate-at-cursor tail
   preservation, explore logprob chips + keyboard nav, perf no-polling proof +
   ranges, models list/load/unload + HF scan, jspace Jacobian-lens workspace
   (lens-gated), danger-zone clear.

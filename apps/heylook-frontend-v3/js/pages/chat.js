@@ -14,8 +14,9 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, applySettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
+import { createPresetBar } from '../preset-bar.js';
 
 export default createPage({
   async setup(ctx) {
@@ -27,10 +28,14 @@ export default createPage({
     s.systemPrompt = null;
     s.stream = null;      // { controller, targetConvId, content, thinking, els, retries }
     s.editingId = null;
-    s.presets = [];       // saved system-prompt + sampler bundles (server-side)
-    s.presetId = null;    // select-box state only -- applying copies, not binds
 
     buildSkeleton(ctx);
+    // Shared preset bar (preset-bar.js), adapted to the active conversation.
+    s.presetBar = createPresetBar(ctx, {
+      getPrompt: () => s.systemPrompt,
+      setPrompt: (v) => setSystemPrompt(ctx, v),
+      onStatus: (text, isError) => showStatus(ctx, text, isError),
+    });
     // One throttle for the whole mount (it reads s.stream), not one per
     // stream -- per-stream throttles would pin each stream's closure in the
     // page's cleanup list for the mount lifetime.
@@ -46,9 +51,9 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => currentCaps(ctx),
       samplers: 'enabled',
-      sections: () => [buildPresetSection(ctx), buildSystemPromptSection(ctx)],
+      sections: () => [s.presetBar.buildSection(), buildSystemPromptSection(ctx)],
       onOpen: () => {
-        refreshPresets(ctx).then((changed) => {
+        s.presetBar.refresh().then((changed) => {
           if (ctx.alive && changed) drawer.requestRebuild();
         });
       },
@@ -169,7 +174,7 @@ function buildSkeleton(ctx) {
   });
   ctx.onTeardown(onSettingsChange(ctx.guard(() => {
     refreshThinkBtn(ctx);
-    updatePresetDrift(ctx); // sampler edits drift the selected preset live
+    ctx.state.presetBar?.updateDrift(); // sampler edits drift the selected preset live
   })));
   s.textarea.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.items ?? [])]
@@ -307,7 +312,7 @@ function buildSystemPromptSection(ctx) {
     const value = input.value.trim() || null;
     if (s.activeId === builtFor) s.systemPrompt = value;
     put(value);
-    updatePresetDrift(ctx); // prompt edits drift the selected preset live
+    s.presetBar.updateDrift(); // prompt edits drift the selected preset live
   });
   // blur still flushes immediately so a follow-up action (preset save/apply)
   // never races the debounce timer
@@ -322,191 +327,9 @@ function buildSystemPromptSection(ctx) {
   ]);
 }
 
-// Resolves true when the list (or the selection's validity) actually
-// changed, so cosmetic repaints can be skipped.
-async function refreshPresets(ctx) {
-  const s = ctx.state;
-  const fingerprint = () => JSON.stringify(s.presets.map((p) => [p.id, p.name, p.updated_at]));
-  const before = fingerprint();
-  try {
-    const res = await api.listPresets({ signal: ctx.signal });
-    s.presets = res.presets ?? [];
-  } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Could not load presets: ${err.message}`, true);
-  }
-  let changed = fingerprint() !== before;
-  if (!s.presets.some((p) => p.id === s.presetId)) {
-    changed ||= s.presetId !== null;
-    s.presetId = null;
-  }
-  return changed;
-}
-
-async function refreshPresetsAndRepaint(ctx) {
-  await refreshPresets(ctx);
-  if (ctx.alive) drawer.requestRebuild({ force: true });
-}
-
-// Applying a preset COPIES its fields (LM Studio semantics): params become
-// the whole sampler panel state, system_prompt lands on the conversation.
-// There is no live binding -- later edits don't touch the preset until Save.
-// Apply is an explicit button (selection alone never overwrites anything),
-// armed-confirmed only when it would replace a differing non-empty prompt.
-function applyPreset(ctx, presetId) {
-  const s = ctx.state;
-  s.presetId = presetId || null;
-  const preset = s.presets.find((p) => p.id === presetId);
-  if (preset) {
-    applySettings(preset.params ?? {});
-    setSystemPrompt(ctx, preset.system_prompt ?? null);
-    showStatus(ctx, `Preset "${preset.name}" applied.`);
-  }
-  // Force: the Apply button that triggered this lives in the drawer, so the
-  // focus guard would otherwise skip the repaint that shows the applied values.
-  drawer.requestRebuild({ force: true });
-}
-
-// Would applying this preset overwrite a non-empty conversation prompt with
-// something different? (The one destructive thing Apply can do -- sampler
-// knobs are trivially recoverable, the prompt is typed work.)
-function applyWouldReplacePrompt(ctx, presetId) {
-  const s = ctx.state;
-  const preset = s.presets.find((p) => p.id === presetId);
-  return Boolean(preset && s.systemPrompt
-    && (preset.system_prompt ?? null) !== s.systemPrompt);
-}
-
-// Does the selected preset match the live state (conversation prompt + the
-// whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
-// key order round-trips through the server and can't be trusted.
-function presetMatchesState(ctx, preset) {
-  if ((preset.system_prompt ?? null) !== (ctx.state.systemPrompt ?? null)) return false;
-  const now = snapshotSettings();
-  const saved = preset.params ?? {};
-  return Object.keys(PARAM_META).every((k) => (now[k] ?? null) === (saved[k] ?? null));
-}
-
-// Drift line under the preset select: says what Apply/Save would DO to the
-// selected preset, live. Updated in place (no rebuild) from the sysprompt
-// input handler, the mount-level onSettingsChange listener, and select
-// changes -- the drawer's focus guard means a rebuild can't be relied on
-// while the user is typing in a field.
-function updatePresetDrift(ctx) {
-  const s = ctx.state;
-  // s.presetDriftEl always points at the LATEST built section's line; after a
-  // drawer close it's detached and writes are harmless, so no liveness check.
-  const el = s.presetDriftEl;
-  if (!el) return;
-  const preset = s.presets.find((p) => p.id === s.presetId);
-  if (!preset) {
-    el.hidden = true;
-    el.textContent = '';
-    return;
-  }
-  el.hidden = false;
-  el.textContent = presetMatchesState(ctx, preset)
-    ? 'Matches current settings.'
-    : 'Differs from current settings -- Apply copies it here, Save overwrites it.';
-}
-
-async function savePreset(ctx, name) {
-  const s = ctx.state;
-  name = name.trim();
-  if (!name) return;
-  const body = { name, system_prompt: s.systemPrompt, params: snapshotSettings() };
-  try {
-    // Decide create-vs-overwrite against a FRESH list -- the local cache can
-    // hide a name the server has (-> 409) or list one it no longer has
-    // (-> 404); both break the save-by-name-upserts promise.
-    await refreshPresets(ctx);
-    if (!ctx.alive) return;
-    const existing = s.presets.find((p) => p.name === name);
-    const saved = existing
-      ? await api.updatePreset(existing.id, body)
-      : await api.createPreset(body);
-    if (!ctx.alive) return;
-    s.presetId = saved.id;
-    await refreshPresetsAndRepaint(ctx);
-    if (ctx.alive) showStatus(ctx, `Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
-  } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Preset save failed: ${err.message}`, true);
-  }
-}
-
-async function deletePreset(ctx) {
-  const s = ctx.state;
-  if (!s.presetId) return;
-  try {
-    await api.deletePreset(s.presetId);
-  } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Preset delete failed: ${err.message}`, true);
-    return;
-  }
-  if (!ctx.alive) return;
-  s.presetId = null;
-  await refreshPresetsAndRepaint(ctx);
-}
-
-function buildPresetSection(ctx) {
-  const s = ctx.state;
-  const selected = s.presets.find((p) => p.id === s.presetId);
-
-  // Selection is inert: it records s.presetId, prefills the save name, and
-  // drives the drift line -- it never touches the conversation. Only Apply does.
-  const select = createEl('select', { title: 'Select a saved preset' }, [
-    createEl('option', { value: '' }, ['Presets…']),
-    ...s.presets.map((p) => createEl('option', { value: p.id }, [p.name])),
-  ]);
-  select.value = s.presetId ?? '';
-
-  const applyBtn = armedConfirm(
-    createEl('button', {
-      class: 'btn btn--sm', disabled: !selected,
-      title: 'Copy this preset onto the conversation (prompt + sampler settings)',
-    }, ['Apply']),
-    () => applyPreset(ctx, select.value),
-    'Replace prompt?',
-    () => applyWouldReplacePrompt(ctx, select.value),
-  );
-  const delBtn = armedConfirm(
-    createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !selected }, ['Del']),
-    () => deletePreset(ctx),
-  );
-
-  // Save under the typed name: matches an existing preset -> overwrite it,
-  // new name -> create. Picking a preset pre-fills its name for overwrite.
-  const nameInput = createEl('input', {
-    class: 'input', placeholder: 'Save as…', value: selected?.name ?? '',
-  });
-  const saveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save']);
-  saveBtn.addEventListener('click', () => savePreset(ctx, nameInput.value));
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') savePreset(ctx, nameInput.value);
-  });
-
-  select.addEventListener('change', () => {
-    s.presetId = select.value || null;
-    const p = s.presets.find((x) => x.id === s.presetId);
-    nameInput.value = p?.name ?? '';
-    applyBtn.disabled = delBtn.disabled = !p;
-    updatePresetDrift(ctx);
-  });
-
-  const driftEl = createEl('div', {
-    class: 'preset-drift muted small', hidden: true,
-    title: 'Presets are copies: Apply stamps the preset onto this conversation; '
-      + 'later edits here never change the preset until you Save it again.',
-  });
-  s.presetDriftEl = driftEl;
-  updatePresetDrift(ctx);
-
-  return createEl('div', { class: 'preset-section' }, [
-    createEl('h3', {}, ['Preset']),
-    createEl('div', { class: 'preset-row' }, [select, applyBtn, delBtn]),
-    driftEl,
-    createEl('div', { class: 'preset-row' }, [nameInput, saveBtn]),
-  ]);
-}
+// Preset bar itself is the shared module (preset-bar.js) -- chat adapts it
+// to the active conversation: getPrompt reads live state, setPrompt routes
+// through the one conversation-prompt writer (state + guarded PUT).
 
 function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);

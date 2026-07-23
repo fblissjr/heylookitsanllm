@@ -100,6 +100,45 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await closeDrawer(page);
   });
 
+  await suite.check('notebook preset bar: save, drift, armed apply', async () => {
+    // Shared preset bar (preset-bar.js) contributed by notebook too; same
+    // grammar as chat: inert select, live drift line, explicit armed Apply.
+    await openDrawer(page);
+    await page.waitForSelector('.preset-section');
+    const driftText = () => page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
+    const presetBtn = async (label) => {
+      for (const h of await page.$$('.preset-section button')) {
+        if ((await h.evaluate((el) => el.textContent.trim())) === label) return h;
+        await h.dispose();
+      }
+      throw new Error(`no "${label}" button in the preset section`);
+    };
+    // save the current notebook state (marine-biologist prompt) as a preset
+    await page.click('.preset-section .input');
+    await page.type('.preset-section .input', 'nb-preset');
+    await (await presetBtn('Save')).click();
+    await waitFor(async () => (await driftText())?.includes('Matches'),
+      { message: 'drift line not "Matches" right after save' });
+    // drift the prompt -- the line must flip live, without a rebuild
+    await page.evaluate(() => {
+      const ta = document.querySelector('.notebook__sysprompt-input');
+      ta.value = 'You are a physicist.';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitFor(async () => (await driftText())?.includes('Differs'),
+      { message: 'drift line did not flip after a prompt edit' });
+    // Apply arms first here: it would replace a differing non-empty prompt
+    await armedClick(await presetBtn('Apply'));
+    await waitFor(async () => (await page.$eval('.notebook__sysprompt-input', (e) => e.value)).includes('marine biologist'),
+      { message: 'apply did not restore the preset prompt' });
+    // cleanup so the preset doesn't leak (presets are excluded from /v1/data/clear)
+    await armedClick(await page.$('.preset-section .btn--ghost'));
+    await waitFor(async () => page.$eval('.preset-row select',
+      (s) => ![...s.options].some((o) => o.textContent === 'nb-preset')),
+      { message: 'preset not deleted' });
+    await closeDrawer(page);
+  });
+
   await suite.check('stop mid-generation keeps partial text', async () => {
     await ctx.open('#/notebook', { max_tokens: 400 });
     await page.waitForSelector('.notebook__content');

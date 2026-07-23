@@ -58,7 +58,7 @@ the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
 extracted into an app-shell global slide-over shared by all 6 pages --
 sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
-code-reviewed); browser E2E in `tests/e2e/` (65 checks, drawer-driven; green bar
+code-reviewed); browser E2E in `tests/e2e/` (66 checks, drawer-driven; green bar
 the load-sensitive streaming-cadence guard); **composer icons + multi-image
 hardening** (2026-07-20, v1.34.60-.61: attach + thinking-toggle are now
 `.btn--icon` buttons styled off `aria-pressed`, multi-image attach capped at 8
@@ -86,10 +86,11 @@ auto-appear from template detection, no `models.toml` flag needed).
   the owner has lived in `/v3` daily. Nothing blocks it. (plan Phase 3; the older
   legacy React app was already deleted in v1.34.25)
 - Small backlog: `show_special_tokens` render-consumer wiring (pref exists but
-  gated `wired:false` until a surface honors it); notebook preset bar (now a
-  drawer-section add); `enable_thinking` tri-state. (TODO.md) (The
-  "panel drifted from preset" indicator shipped in v1.39.2: live drift line +
-  explicit armed Apply -- selection is inert, apply is a copy.)
+  gated `wired:false` until a surface honors it); `enable_thinking` tri-state.
+  (TODO.md) (The "panel drifted from preset" indicator shipped in v1.39.2 --
+  live drift line + explicit armed Apply, selection inert, apply a copy -- and
+  v1.39.3 extracted the bar to the shared `preset-bar.js` and gave notebook
+  the same section.)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 

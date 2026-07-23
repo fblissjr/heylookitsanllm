@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.3]
+
+### Added
+
+- **Notebook preset bar** (frontend v3). The preset section was extracted
+  from chat into a shared `preset-bar.js` module (`createPresetBar` with a
+  `getPrompt`/`setPrompt`/`onStatus` adapter) and the notebook page now
+  contributes it to the settings drawer ahead of its system-prompt editor --
+  identical grammar to chat: inert select, live drift line, explicit Apply
+  armed only when it would replace a differing non-empty prompt, save-by-name
+  upsert. Applying a preset writes the notebook's system prompt and sampler
+  params (a preset is a prompt+sampler bundle everywhere). Chat now consumes
+  the same module (no behavior change). E2E: new notebook preset check
+  (save, live drift flip, armed apply, delete).
+
 ## [1.39.2]
 
 ### Changed
