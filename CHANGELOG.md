@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.2]
+
+### Changed
+
+- **Preset apply is explicit and legible** (frontend v3 chat). Selecting a
+  preset in the drawer no longer applies it as a side effect of the `change`
+  event -- selection only records the choice, prefills the save-as name, and
+  drives a new live drift line ("Matches current settings." / "Differs from
+  current settings -- Apply copies it here, Save overwrites it."), updated in
+  place on prompt keystrokes and sampler edits. Applying is a dedicated Apply
+  button, armed-confirmed ("Replace prompt?") only when it would overwrite a
+  non-empty conversation prompt with something different -- the copy-on-apply
+  semantics are unchanged, but the copy now happens on a deliberate click and
+  announces what it will do. `armedConfirm` gained an optional `when`
+  predicate for sometimes-destructive buttons. E2E: preset round-trip check
+  now asserts inert selection, explicit apply, and both drift states.
+
 ## [1.39.1]
 
 ### Fixed

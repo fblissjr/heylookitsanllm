@@ -109,14 +109,17 @@ export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
 }
 
 // Two-tap destructive confirm: first click arms the button for 3s,
-// second click within that window runs the action.
-export function armedConfirm(btn, action, armedLabel = 'Confirm?') {
+// second click within that window runs the action. Optional `when` predicate:
+// arming only happens while it returns true -- otherwise the action runs on
+// the first click (for buttons that are only sometimes destructive, e.g.
+// preset Apply, which only overwrites a prompt when one would change).
+export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null) {
   const original = btn.textContent;
   let armed = false;
   let timer = null;
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (armed) {
+    if (armed || (when && !when())) {
       clearTimeout(timer);
       armed = false;
       btn.classList.remove('btn--armed');

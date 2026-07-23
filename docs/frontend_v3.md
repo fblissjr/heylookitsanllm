@@ -87,8 +87,9 @@ auto-appear from template detection, no `models.toml` flag needed).
   legacy React app was already deleted in v1.34.25)
 - Small backlog: `show_special_tokens` render-consumer wiring (pref exists but
   gated `wired:false` until a surface honors it); notebook preset bar (now a
-  drawer-section add); "panel drifted from preset" indicator; `enable_thinking`
-  tri-state. (TODO.md)
+  drawer-section add); `enable_thinking` tri-state. (TODO.md) (The
+  "panel drifted from preset" indicator shipped in v1.39.2: live drift line +
+  explicit armed Apply -- selection is inert, apply is a copy.)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 

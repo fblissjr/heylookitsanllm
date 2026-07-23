@@ -372,6 +372,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(val.includes('Be terse.'), 'reopened drawer lost the typed text');
   });
 
+  const driftText = () => page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
+
   await suite.check('preset save + apply round-trips sampler state', async () => {
     await setSettingsInput(page, 'Temperature', '0.31');
     await page.click('.preset-section .input');
@@ -379,11 +381,23 @@ export async function runChatSuite({ suite, ctx, config }) {
     await clickByText(page, '.preset-row button', 'Save');
     await waitFor(async () => (await presetOptionValue('e2e-preset')) !== null,
       { message: 'saved preset not listed in the select' });
-    // drift the panel, then re-apply the preset and expect the pin back
+    // fresh save selects the preset and matches by construction
+    await waitFor(async () => (await driftText())?.includes('Matches'),
+      { message: 'drift line not "Matches" right after save' });
+    // drift the panel: the line must flip live, and selection alone must NOT
+    // have touched the panel (apply is an explicit button now)
     await setSettingsInput(page, 'Temperature', '1.9');
+    await waitFor(async () => (await driftText())?.includes('Differs'),
+      { message: 'drift line did not flip to "Differs" after a sampler edit' });
     await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+    assert((await settingsInputValue(page, 'Temperature')) === '1.9',
+      'selecting a preset applied it (selection must be inert)');
+    // explicit Apply restores the pin (no arming: the prompt is unchanged)
+    await clickByText(page, '.preset-row button', 'Apply');
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 'applying the preset did not restore temperature' });
+    await waitFor(async () => (await driftText())?.includes('Matches'),
+      { message: 'drift line not back to "Matches" after apply' });
     // back to cascade so nothing leaks into later generations
     await setSettingsInput(page, 'Temperature', '');
   });

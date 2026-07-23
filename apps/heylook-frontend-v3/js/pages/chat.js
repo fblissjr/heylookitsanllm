@@ -167,7 +167,10 @@ function buildSkeleton(ctx) {
   s.thinkBtn.addEventListener('click', () => {
     setSetting('enable_thinking', getSetting('enable_thinking') === true ? null : true);
   });
-  ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
+  ctx.onTeardown(onSettingsChange(ctx.guard(() => {
+    refreshThinkBtn(ctx);
+    updatePresetDrift(ctx); // sampler edits drift the selected preset live
+  })));
   s.textarea.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.items ?? [])]
       .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
@@ -304,6 +307,7 @@ function buildSystemPromptSection(ctx) {
     const value = input.value.trim() || null;
     if (s.activeId === builtFor) s.systemPrompt = value;
     put(value);
+    updatePresetDrift(ctx); // prompt edits drift the selected preset live
   });
   // blur still flushes immediately so a follow-up action (preset save/apply)
   // never races the debounce timer
@@ -346,6 +350,8 @@ async function refreshPresetsAndRepaint(ctx) {
 // Applying a preset COPIES its fields (LM Studio semantics): params become
 // the whole sampler panel state, system_prompt lands on the conversation.
 // There is no live binding -- later edits don't touch the preset until Save.
+// Apply is an explicit button (selection alone never overwrites anything),
+// armed-confirmed only when it would replace a differing non-empty prompt.
 function applyPreset(ctx, presetId) {
   const s = ctx.state;
   s.presetId = presetId || null;
@@ -355,9 +361,52 @@ function applyPreset(ctx, presetId) {
     setSystemPrompt(ctx, preset.system_prompt ?? null);
     showStatus(ctx, `Preset "${preset.name}" applied.`);
   }
-  // Force: the preset <select> that triggered this lives in the drawer, so the
+  // Force: the Apply button that triggered this lives in the drawer, so the
   // focus guard would otherwise skip the repaint that shows the applied values.
   drawer.requestRebuild({ force: true });
+}
+
+// Would applying this preset overwrite a non-empty conversation prompt with
+// something different? (The one destructive thing Apply can do -- sampler
+// knobs are trivially recoverable, the prompt is typed work.)
+function applyWouldReplacePrompt(ctx, presetId) {
+  const s = ctx.state;
+  const preset = s.presets.find((p) => p.id === presetId);
+  return Boolean(preset && s.systemPrompt
+    && (preset.system_prompt ?? null) !== s.systemPrompt);
+}
+
+// Does the selected preset match the live state (conversation prompt + the
+// whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
+// key order round-trips through the server and can't be trusted.
+function presetMatchesState(ctx, preset) {
+  if ((preset.system_prompt ?? null) !== (ctx.state.systemPrompt ?? null)) return false;
+  const now = snapshotSettings();
+  const saved = preset.params ?? {};
+  return Object.keys(PARAM_META).every((k) => (now[k] ?? null) === (saved[k] ?? null));
+}
+
+// Drift line under the preset select: says what Apply/Save would DO to the
+// selected preset, live. Updated in place (no rebuild) from the sysprompt
+// input handler, the mount-level onSettingsChange listener, and select
+// changes -- the drawer's focus guard means a rebuild can't be relied on
+// while the user is typing in a field.
+function updatePresetDrift(ctx) {
+  const s = ctx.state;
+  // s.presetDriftEl always points at the LATEST built section's line; after a
+  // drawer close it's detached and writes are harmless, so no liveness check.
+  const el = s.presetDriftEl;
+  if (!el) return;
+  const preset = s.presets.find((p) => p.id === s.presetId);
+  if (!preset) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = presetMatchesState(ctx, preset)
+    ? 'Matches current settings.'
+    : 'Differs from current settings -- Apply copies it here, Save overwrites it.';
 }
 
 async function savePreset(ctx, name) {
@@ -402,13 +451,23 @@ function buildPresetSection(ctx) {
   const s = ctx.state;
   const selected = s.presets.find((p) => p.id === s.presetId);
 
-  const select = createEl('select', { title: 'Apply a saved preset' }, [
+  // Selection is inert: it records s.presetId, prefills the save name, and
+  // drives the drift line -- it never touches the conversation. Only Apply does.
+  const select = createEl('select', { title: 'Select a saved preset' }, [
     createEl('option', { value: '' }, ['Presets…']),
     ...s.presets.map((p) => createEl('option', { value: p.id }, [p.name])),
   ]);
   select.value = s.presetId ?? '';
-  select.addEventListener('change', () => applyPreset(ctx, select.value));
 
+  const applyBtn = armedConfirm(
+    createEl('button', {
+      class: 'btn btn--sm', disabled: !selected,
+      title: 'Copy this preset onto the conversation (prompt + sampler settings)',
+    }, ['Apply']),
+    () => applyPreset(ctx, select.value),
+    'Replace prompt?',
+    () => applyWouldReplacePrompt(ctx, select.value),
+  );
   const delBtn = armedConfirm(
     createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !selected }, ['Del']),
     () => deletePreset(ctx),
@@ -425,9 +484,26 @@ function buildPresetSection(ctx) {
     if (e.key === 'Enter') savePreset(ctx, nameInput.value);
   });
 
+  select.addEventListener('change', () => {
+    s.presetId = select.value || null;
+    const p = s.presets.find((x) => x.id === s.presetId);
+    nameInput.value = p?.name ?? '';
+    applyBtn.disabled = delBtn.disabled = !p;
+    updatePresetDrift(ctx);
+  });
+
+  const driftEl = createEl('div', {
+    class: 'preset-drift muted small', hidden: true,
+    title: 'Presets are copies: Apply stamps the preset onto this conversation; '
+      + 'later edits here never change the preset until you Save it again.',
+  });
+  s.presetDriftEl = driftEl;
+  updatePresetDrift(ctx);
+
   return createEl('div', { class: 'preset-section' }, [
     createEl('h3', {}, ['Preset']),
-    createEl('div', { class: 'preset-row' }, [select, delBtn]),
+    createEl('div', { class: 'preset-row' }, [select, applyBtn, delBtn]),
+    driftEl,
     createEl('div', { class: 'preset-row' }, [nameInput, saveBtn]),
   ]);
 }

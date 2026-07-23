@@ -333,9 +333,11 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
 - [ ] **Notebook page preset bar** (P3): chat-first was deliberate; the
   sections prepend cleanly onto notebook's settings panel. Notebook already
   has its own sysprompt input -- decide whether preset apply writes it.
-- [ ] **"Panel drifted from selected preset" indicator** (P3): applying copies
-  with no live binding; after edits the select still shows the preset name.
-  LM Studio shows a modified-dot. Cosmetic, deferred.
+- [x] **"Panel drifted from selected preset" indicator** -- DONE v1.39.2: live
+  drift line under the preset select ("Matches/Differs from current settings"),
+  updated in place on prompt keystrokes + sampler edits; apply became an
+  explicit button (selection is inert), armed-confirmed only when it would
+  replace a differing non-empty prompt.
 - [ ] **Unknown `params` keys stripped on apply-then-save** (P3, edge): a
   preset authored via the API with keys outside `PARAM_META` loses them if
   the UI applies then re-saves it (panel state is the source of truth).
