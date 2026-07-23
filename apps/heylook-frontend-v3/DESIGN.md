@@ -1,7 +1,7 @@
 # v3 design language
 
-Last updated: 2026-07-20 (added the aria-pressed toggle-button pattern to §7,
-introduced by the composer icon buttons)
+Last updated: 2026-07-23 (§7 settings entry points: pages may add an in-context
+opener — chat's top-bar gear — alongside the two shell gears)
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. It formalizes what v3 does so that new UI — starting with the j-space
@@ -215,6 +215,11 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   *bottom* composer (chat) leaves no bottom-right corner free, so a FAB collides
   with Send. The bottom-nav gear rides `#bottom-nav`'s own `<=767px` show/hide
   and, being inside `#app`, is sealed by the drawer's focus-trap for free.
+  A page whose drawer contribution is a primary workflow (chat: system prompt +
+  presets) may additionally mount an **in-context opener in its own toolbar**
+  (chat's `.chat__settings-btn` gear, via `drawer.openSettings(btn)`) — same
+  singleton drawer, focus restored to the opener on close. In-context openers
+  live in a bar, never floating.
 - **The drawer is a real modal dialog.** `role="dialog"` + `aria-modal`,
   `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
   moves focus to Close, and on close restores focus to the opener. Escape and a

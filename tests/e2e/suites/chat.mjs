@@ -3,7 +3,7 @@
 // settings + the localStorage sampler seed, conversation CRUD, and a 390px
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
-import { assert, waitFor, sleep } from '../lib/harness.mjs';
+import { assert, waitFor } from '../lib/harness.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
@@ -311,6 +311,13 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(labels.includes('Max tokens'), 'no Max tokens control');
   });
 
+  await suite.check('chat bar gear opens the same drawer', async () => {
+    await closeDrawer(page);
+    // evaluate().click(): the backdrop may still be fading out (see openDrawer)
+    await page.evaluate(() => document.querySelector('.chat__settings-btn')?.click());
+    await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
+  });
+
   await suite.check('seeded max_tokens is reflected in the settings panel', async () => {
     const val = await settingsInputValue(page, 'Max tokens');
     assert(val === String(config.maxTokens), `max_tokens input="${val}", expected ${config.maxTokens}`);
@@ -334,20 +341,35 @@ export async function runChatSuite({ suite, ctx, config }) {
     [...document.querySelectorAll('.preset-row select option')]
       .find((o) => o.textContent === n)?.value ?? null, name);
 
-  await suite.check('system prompt edit persists to the conversation', async () => {
+  await suite.check('system prompt edit persists without blur', async () => {
     // drawer is open from the checks above; the sysprompt editor is one of chat's
-    // contributed sections inside it.
-    await page.evaluate(() => { document.querySelector('.chat__sysprompt').open = true; });
+    // contributed sections inside it (its details is always expanded now).
     await page.click('.chat__sysprompt-input');
     await page.type('.chat__sysprompt-input', SYS_PROMPT);
-    // Commit via blur (change -> PUT). The composer lives in #app, which is inert
-    // while the drawer is open, so blur the field directly instead of clicking it.
-    await page.$eval('.chat__sysprompt-input', (el) => el.blur());
+    // Deliberately NO blur: state commits per keystroke and the PUT is
+    // debounced -- the old blur-only commit is the bug this regression guards.
     await waitFor(async () => page.evaluate(async (sys) => {
       const res = await fetch('/v1/conversations');
       const { conversations } = await res.json();
       return conversations.some((c) => c.system_prompt === sys);
     }, SYS_PROMPT), { message: 'system prompt not saved server-side' });
+  });
+
+  await suite.check('sysprompt typed text survives Escape-close', async () => {
+    // Escape with focus still in the textarea removes the field before any
+    // change event can fire -- the exact path that used to lose the prompt.
+    await page.click('.chat__sysprompt-input');
+    await page.type('.chat__sysprompt-input', ' Be terse.');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.drawer--open'), { timeout: 5000 });
+    await waitFor(async () => page.evaluate(async () => {
+      const res = await fetch('/v1/conversations');
+      const { conversations } = await res.json();
+      return conversations.some((c) => (c.system_prompt ?? '').includes('Be terse.'));
+    }), { message: 'text typed before Escape-close never reached the server' });
+    await openDrawer(page);  // leave the drawer open for the preset checks
+    const val = await page.$eval('.chat__sysprompt-input', (el) => el.value);
+    assert(val.includes('Be terse.'), 'reopened drawer lost the typed text');
   });
 
   await suite.check('preset save + apply round-trips sampler state', async () => {

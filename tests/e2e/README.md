@@ -65,7 +65,7 @@ change, re-run before diagnosing a delivery regression.
 - `lib/dom.mjs` — shared DOM helpers (`clickByText`, `armedClick` two-tap
   confirm, overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — ~28 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — ~30 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, conversation CRUD,
   390px mobile.

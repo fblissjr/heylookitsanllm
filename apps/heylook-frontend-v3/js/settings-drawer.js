@@ -125,6 +125,12 @@ export function registerSettings(contribution) {
   };
 }
 
+// Page-level entry points (e.g. chat's top-bar gear) open the same singleton
+// drawer. Pass the triggering button so close() restores focus to it.
+export function openSettings(opener) {
+  open(opener);
+}
+
 // Ask the drawer to re-render. No-op while closed (matches the old
 // rebuildSettingsPanel, which no-op'd while hidden). Honors the focus guard
 // unless force -- see the module header.

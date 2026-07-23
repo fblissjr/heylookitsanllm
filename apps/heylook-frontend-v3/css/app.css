@@ -302,9 +302,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .preset-row .input { flex: 1; min-width: 0; text-align: left; }
 .chat__sysprompt-input {
   width: 100%;
-  min-height: 3.5rem;
+  min-height: 9rem;
   margin-top: 0.5rem;
   resize: vertical;
+  line-height: 1.5;
 }
 
 /* a muted footnote inside a settings panel (e.g. the greedy/logprobs note) */
@@ -328,7 +329,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .drawer {
   position: fixed;
   top: 0; right: 0; bottom: 0;
-  width: min(22rem, 100vw);
+  width: min(26rem, 100vw);
   background: var(--surface);
   border-left: 1px solid var(--line-strong);
   box-shadow: -4px 0 24px oklch(0.28 0.02 78 / 0.12);
@@ -890,7 +891,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   border: none;
   background: none;
   resize: vertical;
-  min-height: 3.5rem;
+  min-height: 9rem;
   margin-top: 0.5rem;
   padding: 0;
   font-size: var(--text-ui);

@@ -10,7 +10,7 @@
 // - Abort (Stop button) is normal completion: partial content is saved.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick, debounce } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -182,11 +182,21 @@ function buildSkeleton(ctx) {
   s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
   s.sendBtn.addEventListener('click', () => (s.stream ? stopStream(ctx) : send(ctx)));
 
+  // In-context settings entry: the sidebar-foot / bottom-nav gears are far
+  // from the conversation, and the drawer holds chat's most-edited controls
+  // (system prompt, presets). Same singleton drawer; focus returns here.
+  const settingsBtn = createEl('button', {
+    class: 'btn btn--icon chat__settings-btn', title: 'Settings', 'aria-label': 'Open settings',
+  });
+  settingsBtn.innerHTML = ICON_GEAR;
+  settingsBtn.addEventListener('click', () => drawer.openSettings(settingsBtn));
+
   const thread = createEl('section', { class: 'chat__thread' }, [
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
       createEl('div', { class: 'chat__bar-spacer' }),
+      settingsBtn,
     ]),
     s.messagesEl,
     s.statusEl,
@@ -207,6 +217,19 @@ const ICON_IMAGE =
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>'
   + '<path d="m21 15-5-5L5 21"/></svg>';
+const ICON_GEAR =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<circle cx="12" cy="12" r="3"/>'
+  + '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06'
+  + 'a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09'
+  + 'a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06'
+  + 'a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09'
+  + 'a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06'
+  + 'a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09'
+  + 'a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06'
+  + 'a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09'
+  + 'a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 const ICON_THINK =
   '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -259,22 +282,37 @@ function buildSystemPromptSection(ctx) {
   const s = ctx.state;
   const builtFor = s.activeId; // the conversation this textarea belongs to
   const input = createEl('textarea', {
-    class: 'chat__sysprompt-input', rows: 3,
+    class: 'chat__sysprompt-input', rows: 6,
     placeholder: 'Optional system prompt for this conversation…',
     value: s.systemPrompt ?? '',
   });
-  // Save on blur/commit, not per keystroke -- one PUT per edit session. A
-  // stale textarea (conversation changed under an unrebuilt panel) must not
+  // Commit state per keystroke, debounce only the PUT (notebook parity). The
+  // old save-on-blur commit lost the text whenever the drawer closed under
+  // focus: Escape/hashchange remove the textarea and a removed field never
+  // fires `change` -- and a preset saved in that window captured
+  // system_prompt=null, so applying it later erased the prompt outright.
+  // A stale textarea (conversation changed under an unrebuilt panel) must not
   // write onto the NEW conversation -- the edit still belongs to the one it
-  // was typed for, so deliver it there instead of dropping it.
-  input.addEventListener('change', () => {
+  // was typed for (builtFor), so the PUT targets that id, captured per call.
+  const put = debounce((value) => {
+    if (builtFor) putSystemPrompt(ctx, builtFor, value);
+    // builtFor null: a pre-create draft -- state rides along until a
+    // create (send/New) gives it a home.
+  }, 400);
+  input.addEventListener('input', () => {
+    autoGrow(input, 480);
     const value = input.value.trim() || null;
-    if (s.activeId === builtFor) setSystemPrompt(ctx, value);
-    else if (builtFor) putSystemPrompt(ctx, builtFor, value);
-    // builtFor null while a conversation is active: a pre-create draft with
-    // no home -- nothing safe to write.
+    if (s.activeId === builtFor) s.systemPrompt = value;
+    put(value);
   });
-  return createEl('details', { class: 'chat__sysprompt', open: Boolean(s.systemPrompt) }, [
+  // blur still flushes immediately so a follow-up action (preset save/apply)
+  // never races the debounce timer
+  input.addEventListener('change', () => put.flush(input.value.trim() || null));
+  // grow to fit existing content once the drawer has appended it
+  queueMicrotask(() => autoGrow(input, 480));
+  // Always expanded: a collapsed-when-empty details hid the field behind an
+  // extra click and read as "my prompt disappeared".
+  return createEl('details', { class: 'chat__sysprompt', open: true }, [
     createEl('summary', {}, ['System prompt']),
     input,
   ]);

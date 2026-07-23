@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.1]
+
+### Fixed
+
+- **Chat system prompt silently lost on drawer close** (frontend v3). The
+  editor committed only on `change` (blur); closing the settings drawer with
+  Escape or a route change removed the focused textarea before `change` could
+  fire, discarding the typed prompt from both state and the server. A preset
+  saved in that window captured `system_prompt: null`, so applying it later
+  actively erased the conversation's prompt. The editor now commits state on
+  every keystroke (notebook parity) and debounces the PUT (400 ms, flushed on
+  blur), so no close path can outrun the save.
+
+### Changed
+
+- Chat settings reachability + system-prompt legibility (frontend v3): a gear
+  in the chat top bar opens the shared settings drawer in context (desktop and
+  mobile; the sidebar-foot and bottom-nav gears remain); the system-prompt
+  section is always expanded instead of collapsed-when-empty; the editor grew
+  from 3 rows to a 9rem-minimum auto-growing textarea; the drawer widened from
+  22rem to 26rem. E2E: 2 new chat checks (in-context gear; Escape-close
+  persistence regression).
+
 ## [1.39.0]
 
 ### Added
