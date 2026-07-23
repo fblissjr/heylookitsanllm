@@ -18,13 +18,14 @@
 //     relied on while the user is typing in a field
 //
 // Presets are global (one /v1/presets store); the prompt side is the page's
-// document, adapted via getPrompt/setPrompt. The page owns calling
-// updateDrift() from its prompt-input handler and its onSettingsChange
-// listener, and refresh() from its drawer onOpen.
+// document, adapted via getPrompt/setPrompt. The bar subscribes to sampler
+// changes itself (onSettingsChange, torn down with the mount); the page owns
+// only what the bar can't see -- calling updateDrift() from its prompt-input
+// handler -- plus wiring onDrawerOpen into its drawer contribution.
 
 import { createEl, armedConfirm } from './utils.js';
 import { api } from './api.js';
-import { applySettings, snapshotSettings, PARAM_META } from './settings.js';
+import { applySettings, snapshotSettings, PARAM_META, onSettingsChange } from './settings.js';
 import * as drawer from './settings-drawer.js';
 
 // adapter = {
@@ -63,6 +64,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
     if (ctx.alive) drawer.requestRebuild({ force: true });
   }
 
+  // Drawer onOpen hook: lazily refresh the list, repaint only if it changed.
+  function onDrawerOpen() {
+    refresh().then((changed) => {
+      if (ctx.alive && changed) drawer.requestRebuild();
+    });
+  }
+
   // Does the selected preset match the live state (document prompt + the
   // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
   // key order round-trips through the server and can't be trusted.
@@ -84,16 +92,26 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
   function updateDrift() {
     if (!driftEl) return;
     const preset = selected();
-    if (!preset) {
-      driftEl.hidden = true;
-      driftEl.textContent = '';
+    const next = !preset ? ''
+      : matchesState(preset)
+        ? 'Matches current settings.'
+        : 'Differs from current settings -- Apply copies it here, Save overwrites it.';
+    // write-on-change: this runs per keystroke in the prompt editors
+    if (driftEl.textContent !== next) driftEl.textContent = next;
+    if (driftEl.hidden !== !preset) driftEl.hidden = !preset;
+  }
+
+  // The bar owns the sampler half of drift-tracking (settings.js is global,
+  // no page mediation needed); a consumer can't forget it and go stale.
+  // After a drawer close the last section is detached -- drop the reference
+  // so the dead subtree can be collected and later changes cost one check.
+  ctx.onTeardown(onSettingsChange(ctx.guard(() => {
+    if (driftEl && !driftEl.isConnected) {
+      driftEl = null;
       return;
     }
-    driftEl.hidden = false;
-    driftEl.textContent = matchesState(preset)
-      ? 'Matches current settings.'
-      : 'Differs from current settings -- Apply copies it here, Save overwrites it.';
-  }
+    updateDrift();
+  })));
 
   function apply() {
     const preset = selected();
@@ -119,9 +137,14 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
         ? await api.updatePreset(existing.id, body)
         : await api.createPreset(body);
       if (!ctx.alive) return;
+      // the server just returned the row -- patch the (just-refreshed) local
+      // list instead of fetching it a second time
+      const idx = presets.findIndex((p) => p.id === saved.id);
+      if (idx >= 0) presets[idx] = saved;
+      else presets.unshift(saved);
       presetId = saved.id;
-      await refreshAndRepaint();
-      if (ctx.alive) onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
+      drawer.requestRebuild({ force: true });
+      onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
     } catch (err) {
       if (ctx.alive) onStatus(`Preset save failed: ${err.message}`, true);
     }
@@ -182,8 +205,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
       updateDrift();
     });
 
+    // .preset-drift is the E2E hook; styling rides the shared settings-note
     driftEl = createEl('div', {
-      class: 'preset-drift muted small', hidden: true,
+      class: 'preset-drift settings-note muted small', hidden: true,
       title: 'Presets are copies: Apply stamps the preset onto this document; '
         + 'later edits here never change the preset until you Save it again.',
     });
@@ -197,5 +221,5 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
     ]);
   }
 
-  return { buildSection, refresh, updateDrift };
+  return { buildSection, onDrawerOpen, updateDrift };
 }

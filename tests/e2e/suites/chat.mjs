@@ -4,7 +4,7 @@
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
 const SEND_BTN = '.chat__composer .btn--primary';
@@ -312,9 +312,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('chat bar gear opens the same drawer', async () => {
-    await closeDrawer(page);
-    // evaluate().click(): the backdrop may still be fading out (see openDrawer)
-    await page.evaluate(() => document.querySelector('.chat__settings-btn')?.click());
+    await openDrawer(page, '.chat__settings-btn');
     await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
   });
 
@@ -372,8 +370,6 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(val.includes('Be terse.'), 'reopened drawer lost the typed text');
   });
 
-  const driftText = () => page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
-
   await suite.check('preset save + apply round-trips sampler state', async () => {
     await setSettingsInput(page, 'Temperature', '0.31');
     await page.click('.preset-section .input');
@@ -382,12 +378,12 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await presetOptionValue('e2e-preset')) !== null,
       { message: 'saved preset not listed in the select' });
     // fresh save selects the preset and matches by construction
-    await waitFor(async () => (await driftText())?.includes('Matches'),
+    await waitFor(async () => (await driftText(page))?.includes('Matches'),
       { message: 'drift line not "Matches" right after save' });
     // drift the panel: the line must flip live, and selection alone must NOT
     // have touched the panel (apply is an explicit button now)
     await setSettingsInput(page, 'Temperature', '1.9');
-    await waitFor(async () => (await driftText())?.includes('Differs'),
+    await waitFor(async () => (await driftText(page))?.includes('Differs'),
       { message: 'drift line did not flip to "Differs" after a sampler edit' });
     await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
     assert((await settingsInputValue(page, 'Temperature')) === '1.9',
@@ -396,7 +392,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     await clickByText(page, '.preset-row button', 'Apply');
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 'applying the preset did not restore temperature' });
-    await waitFor(async () => (await driftText())?.includes('Matches'),
+    await waitFor(async () => (await driftText(page))?.includes('Matches'),
       { message: 'drift line not back to "Matches" after apply' });
     // back to cascade so nothing leaks into later generations
     await setSettingsInput(page, 'Temperature', '');

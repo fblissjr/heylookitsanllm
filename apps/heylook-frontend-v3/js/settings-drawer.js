@@ -127,9 +127,7 @@ export function registerSettings(contribution) {
 
 // Page-level entry points (e.g. chat's top-bar gear) open the same singleton
 // drawer. Pass the triggering button so close() restores focus to it.
-export function openSettings(opener) {
-  open(opener);
-}
+export { open as openSettings };
 
 // Ask the drawer to re-render. No-op while closed (matches the old
 // rebuildSettingsPanel, which no-op'd while hidden). Honors the focus guard
@@ -165,6 +163,13 @@ function open(opener) {
 
 function close() {
   if (!isOpen) return;
+  // Flush before teardown: a field the user is still focused in commits on
+  // `change`, which never fires once replaceChildren removes the element --
+  // an Escape/hashchange close would silently discard the typed value (the
+  // bug that ate chat's system prompt). Blurring here fires it for EVERY
+  // commit-on-change field (sampler numbers included), at the one place all
+  // close paths converge.
+  if (bodyEl.contains(document.activeElement)) document.activeElement.blur();
   isOpen = false;
   panelEl.classList.remove('drawer--open');
   backdropEl.classList.remove('drawer-backdrop--open');

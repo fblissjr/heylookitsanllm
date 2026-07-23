@@ -3,8 +3,9 @@
 
 import { waitFor } from './harness.mjs';
 
-// Click the first element matching `selector` whose trimmed text === `text`.
-export async function clickByText(page, selector, text) {
+// First element matching `selector` whose trimmed text === `text`, as an
+// ElementHandle (for armedClick etc.). Throws if absent; caller disposes.
+export async function handleByText(page, selector, text) {
   const handle = await page.evaluateHandle((sel, txt) => {
     return [...document.querySelectorAll(sel)].find((e) => e.textContent.trim() === txt) || null;
   }, selector, text);
@@ -13,8 +14,19 @@ export async function clickByText(page, selector, text) {
     await handle.dispose();
     throw new Error(`no <${selector}> with text "${text}"`);
   }
+  return el;
+}
+
+// Click the first element matching `selector` whose trimmed text === `text`.
+export async function clickByText(page, selector, text) {
+  const el = await handleByText(page, selector, text);
   await el.click();
-  await handle.dispose();
+  await el.dispose();
+}
+
+// The shared preset bar's drift line: its text while visible, null while hidden.
+export async function driftText(page) {
+  return page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
 }
 
 // Two-tap destructive confirm (utils.armedConfirm): first click arms the button
@@ -126,9 +138,11 @@ export async function closeDrawer(page) {
 // on it and re-close; dispatching the handler directly is immune to that. Then
 // wait for the panel to finish sliding in -- a click on drawer content mid-slide
 // misses (the element is still off-screen right).
-export async function openDrawer(page) {
+// `gear` picks the opener (default: the sidebar gear; pass e.g. chat's
+// in-context '.chat__settings-btn' to exercise that entry point).
+export async function openDrawer(page, gear = '.drawer-gear') {
   await closeDrawer(page);
-  await page.evaluate(() => document.querySelector('.drawer-gear')?.click());
+  await page.evaluate((sel) => document.querySelector(sel)?.click(), gear);
   await page.waitForSelector('.drawer--open .drawer__body', { timeout: 5000 });
   await page.waitForFunction(() => {
     const p = document.querySelector('.drawer--open');

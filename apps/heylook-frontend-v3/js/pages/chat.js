@@ -52,11 +52,7 @@ export default createPage({
       caps: () => currentCaps(ctx),
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), buildSystemPromptSection(ctx)],
-      onOpen: () => {
-        s.presetBar.refresh().then((changed) => {
-          if (ctx.alive && changed) drawer.requestRebuild();
-        });
-      },
+      onOpen: s.presetBar.onDrawerOpen,
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -172,10 +168,7 @@ function buildSkeleton(ctx) {
   s.thinkBtn.addEventListener('click', () => {
     setSetting('enable_thinking', getSetting('enable_thinking') === true ? null : true);
   });
-  ctx.onTeardown(onSettingsChange(ctx.guard(() => {
-    refreshThinkBtn(ctx);
-    ctx.state.presetBar?.updateDrift(); // sampler edits drift the selected preset live
-  })));
+  ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
   s.textarea.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.items ?? [])]
       .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
@@ -307,16 +300,17 @@ function buildSystemPromptSection(ctx) {
     // builtFor null: a pre-create draft -- state rides along until a
     // create (send/New) gives it a home.
   }, 400);
+  const currentValue = () => input.value.trim() || null;
   input.addEventListener('input', () => {
     autoGrow(input, 480);
-    const value = input.value.trim() || null;
+    const value = currentValue();
     if (s.activeId === builtFor) s.systemPrompt = value;
     put(value);
     s.presetBar.updateDrift(); // prompt edits drift the selected preset live
   });
   // blur still flushes immediately so a follow-up action (preset save/apply)
   // never races the debounce timer
-  input.addEventListener('change', () => put.flush(input.value.trim() || null));
+  input.addEventListener('change', () => put.flush(currentValue()));
   // grow to fit existing content once the drawer has appended it
   queueMicrotask(() => autoGrow(input, 480));
   // Always expanded: a collapsed-when-empty details hid the field behind an
@@ -327,9 +321,6 @@ function buildSystemPromptSection(ctx) {
   ]);
 }
 
-// Preset bar itself is the shared module (preset-bar.js) -- chat adapts it
-// to the active conversation: getPrompt reads live state, setPrompt routes
-// through the one conversation-prompt writer (state + guarded PUT).
 
 function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);

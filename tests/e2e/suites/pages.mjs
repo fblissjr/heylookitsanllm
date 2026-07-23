@@ -5,7 +5,7 @@
 // this runs; the danger-zone clear check runs LAST.
 
 import { assert, waitFor, sleep } from '../lib/harness.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer, driftText, handleByText } from '../lib/dom.mjs';
 
 // Record requests whose URL matches `regex` from the moment this is called until
 // stop(). Used to prove the perf page does NOT poll.
@@ -105,19 +105,11 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // grammar as chat: inert select, live drift line, explicit armed Apply.
     await openDrawer(page);
     await page.waitForSelector('.preset-section');
-    const driftText = () => page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
-    const presetBtn = async (label) => {
-      for (const h of await page.$$('.preset-section button')) {
-        if ((await h.evaluate((el) => el.textContent.trim())) === label) return h;
-        await h.dispose();
-      }
-      throw new Error(`no "${label}" button in the preset section`);
-    };
     // save the current notebook state (marine-biologist prompt) as a preset
     await page.click('.preset-section .input');
     await page.type('.preset-section .input', 'nb-preset');
-    await (await presetBtn('Save')).click();
-    await waitFor(async () => (await driftText())?.includes('Matches'),
+    await clickByText(page, '.preset-section button', 'Save');
+    await waitFor(async () => (await driftText(page))?.includes('Matches'),
       { message: 'drift line not "Matches" right after save' });
     // drift the prompt -- the line must flip live, without a rebuild
     await page.evaluate(() => {
@@ -125,10 +117,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
       ta.value = 'You are a physicist.';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await waitFor(async () => (await driftText())?.includes('Differs'),
+    await waitFor(async () => (await driftText(page))?.includes('Differs'),
       { message: 'drift line did not flip after a prompt edit' });
     // Apply arms first here: it would replace a differing non-empty prompt
-    await armedClick(await presetBtn('Apply'));
+    const applyBtn = await handleByText(page, '.preset-section button', 'Apply');
+    await armedClick(applyBtn);
+    await applyBtn.dispose();
     await waitFor(async () => (await page.$eval('.notebook__sysprompt-input', (e) => e.value)).includes('marine biologist'),
       { message: 'apply did not restore the preset prompt' });
     // cleanup so the preset doesn't leak (presets are excluded from /v1/data/clear)

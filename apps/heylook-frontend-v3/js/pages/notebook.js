@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, onSettingsChange } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 
@@ -31,10 +31,6 @@ export default createPage({
     s.dirty = false;
     s.gen = null; // { controller, targetId, head, tail, content }
 
-    buildSkeleton(ctx);
-    s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
-    ctx.onTeardown(() => s.scheduleSave.flush());
-
     // Shared preset bar (preset-bar.js), adapted to the active notebook.
     // Apply DOES write the notebook's system prompt -- a preset is a
     // prompt+sampler bundle everywhere, and the armed confirm guards the
@@ -43,29 +39,25 @@ export default createPage({
       getPrompt: () => s.systemPrompt || null,
       setPrompt: (v) => {
         s.systemPrompt = v ?? '';
-        s.sysPromptInput.value = s.systemPrompt;
-        s.sysPromptDetails.open = Boolean(s.systemPrompt);
+        syncSysPromptWidgets(ctx);
         s.dirty = true;
         s.scheduleSave();
       },
       onStatus: (text, isError) => showStatus(ctx, text, isError),
     });
-    // sampler edits drift the selected preset live (prompt edits update from
-    // the sysprompt input handler)
-    ctx.onTeardown(onSettingsChange(ctx.guard(() => s.presetBar.updateDrift())));
+
+    buildSkeleton(ctx);
+    s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
+    ctx.onTeardown(() => s.scheduleSave.flush());
 
     // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
     // sampler controls; the preset bar + per-notebook system-prompt editor
-    // lead the panel. onOpen lazily refreshes presets (fingerprint-diffed).
+    // lead the panel.
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), s.sysPromptDetails],
-      onOpen: () => {
-        s.presetBar.refresh().then((changed) => {
-          if (ctx.alive && changed) drawer.requestRebuild();
-        });
-      },
+      onOpen: s.presetBar.onDrawerOpen,
     });
     ctx.onTeardown(unregisterSettings);
     // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --
@@ -155,7 +147,7 @@ function buildSkeleton(ctx) {
     s.systemPrompt = s.sysPromptInput.value;
     s.dirty = true;
     s.scheduleSave();
-    s.presetBar?.updateDrift(); // prompt edits drift the selected preset live
+    s.presetBar.updateDrift(); // prompt edits drift the selected preset live
   });
   // Lives in the shared settings drawer (registered as a section), not inline
   // in the form -- but state (value/open) is still driven by populateFields.
@@ -219,11 +211,18 @@ function renderEditor(ctx) {
   s.editorBody.replaceChildren(s.activeId ? s.formEl : s.emptyEl);
 }
 
+// The one place state reaches the sysprompt widgets (populateFields on
+// select/create, the preset bar's setPrompt on apply).
+function syncSysPromptWidgets(ctx) {
+  const s = ctx.state;
+  s.sysPromptInput.value = s.systemPrompt;
+  s.sysPromptDetails.open = Boolean(s.systemPrompt);
+}
+
 function populateFields(ctx) {
   const s = ctx.state;
   s.titleInput.value = s.title;
-  s.sysPromptInput.value = s.systemPrompt;
-  s.sysPromptDetails.open = Boolean(s.systemPrompt);
+  syncSysPromptWidgets(ctx);
   s.contentTextarea.value = s.content;
   autoGrow(s.contentTextarea, Infinity);
   if (s.modelId && s.models.some((m) => m.id === s.modelId)) s.modelSelect.value = s.modelId;

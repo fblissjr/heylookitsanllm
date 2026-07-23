@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.4]
+
+### Fixed
+
+- **Sampler inputs no longer lose a typed-but-unblurred edit on drawer close**
+  (frontend v3). The v1.39.1 fix protected the chat system prompt but the
+  data-loss class lived in the drawer: any commit-on-`change` field loses its
+  value when `close()` removes it while focused (Escape/hashchange). The
+  drawer now blurs the focused field before clearing its body, flushing every
+  such field (sampler numbers included) at the one place all close paths
+  converge.
+
+### Changed
+
+- Quality pass over the v1.39.1-.3 diff (4-agent /simplify): the preset bar
+  owns its sampler-side drift subscription (consumers can no longer forget it
+  and show a stale line) and exposes `onDrawerOpen` (both pages' hand-rolled
+  refresh wiring folded in); drift writes are change-gated and the detached
+  section subtree is released after drawer close; preset save no longer
+  refetches the list it just wrote (patches from the server's response);
+  notebook's sysprompt widget sync is one helper shared by populateFields and
+  the preset adapter; the drift line rides the shared `.settings-note` style.
+  E2E lib gained `handleByText` (clickByText rebased on it) + `driftText`,
+  and `openDrawer` takes an opener selector -- the suites' hand-rolled
+  copies are gone.
+
 ## [1.39.3]
 
 ### Added
