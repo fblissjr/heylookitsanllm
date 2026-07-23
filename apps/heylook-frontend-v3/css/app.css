@@ -127,7 +127,12 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   font-size: var(--text-ui);
   transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.nav-item:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
+/* Hover is wrapped in :where() so it carries ZERO specificity: a selected /
+   active state (.nav-item--active, .conv-item--active, .preset-chip) is
+   declared after it and therefore wins, instead of a hovered selected item
+   flickering back to the unselected look. Fix the pattern here, not per
+   component -- every state tint in this file depends on it. */
+.nav-item:where(:hover) { background: var(--surface-2); color: var(--ink); text-decoration: none; }
 .nav-item--active { background: var(--brand-tint); color: var(--ink); font-weight: 550; }
 
 /* nav-sep pushes admin links (models/perf) to the quiet end of the rail */
@@ -184,7 +189,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
   min-height: 32px;
 }
-.btn:hover { background: var(--surface); }
+.btn:where(:hover) { background: var(--surface); }
 .btn:active { background: var(--surface-2); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:hover { background: var(--bg); }
@@ -454,7 +459,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-size: var(--text-ui);
   color: var(--ink-muted);
 }
-.conv-item:hover { background: var(--surface-2); }
+.conv-item:where(:hover) { background: var(--surface-2); }
 .conv-item--active { background: var(--brand-tint); color: var(--ink); }
 .conv-item__title {
   flex: 1;

@@ -205,10 +205,10 @@ must be identical (else 400), none may set `stream` (else 400). Response `{ data
 batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_peak_mb, ...} }`.
 
 **Conversations** (prefix `/v1/conversations`, no auth):
-- `GET /` → `{conversations:[{id,title,model_id,system_prompt,created_at,updated_at}], total}` — **no messages**.
+- `GET /` → `{conversations:[{id,title,model_id,system_prompt,params,applied_preset_id,created_at,updated_at}], total}` — **no messages**.
 - `POST /` (201) `{title,model_id?,system_prompt?}` → full conv incl `messages:[]`.
 - `GET /{id}` → conv **with** `messages:[{id,role,content,thinking,position,...}]` ordered by position.
-- `PUT /{id}` `{title?,model_id?,system_prompt?}` (only set fields patched; empty→400) → updated conv
+- `PUT /{id}` `{title?,model_id?,system_prompt?,params?,applied_preset_id?}` (only set fields patched; empty→400) → updated conv
   **without messages** (asymmetric — keep your in-memory messages, don't trust PUT to return them).
 - `DELETE /{id}` → `{status:"deleted",id}`.
 - `POST /{id}/messages` (201) `{role,content,thinking?}` → message.
@@ -226,7 +226,8 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   regenerate/edit-regenerate/delete-cascade).
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
-`POST /` `{title,content,system_prompt?,model_id?}`; `PUT /{id}` partial (incl content); `DELETE /{id}`.
+`POST /` `{title,content,system_prompt?,model_id?}`; `PUT /{id}` partial (incl content, `params`,
+`applied_preset_id`); `DELETE /{id}`.
 
 **Presets** (prefix `/v1/presets`, no auth; added v1.34.22): saved bundles of system prompt + sampler
 params, LM-Studio-style. UI-authored and expanded **client-side** (apply = copy `system_prompt` onto the
@@ -237,6 +238,17 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 - `PUT /{id}` `{name?,system_prompt?,params?}` (only set fields patched; `system_prompt:null` clears;
   empty→400; rename collision→409) → updated preset.
 - `DELETE /{id}` → `{status:"deleted",id}`.
+- **`applied_preset_id` (schema v6, added v1.39.16)** — on conversations AND
+  notebooks, the preset a document is running. Written on EXPLICIT actions
+  only: Apply and Save stamp it, Del clears it for the active document.
+  A document whose state merely *matches* a preset is labelled by live
+  client-side inference and is NEVER stamped — storing an inference could
+  bind stale state to the wrong document after a failed load (the v1.39.7
+  lesson). A stamp naming a deleted preset is self-healing: the client
+  resolves stamps against the live preset list, so a dangling id simply
+  reads as "no stamp". Note this is deliberately NOT carried inside
+  `params`: that object is the sampler bag and everything in it reaches the
+  model, so non-sampler state may never live there.
 - `params` is an open sampler-knob object; the authoritative key vocabulary is `PARAM_META` in the v3
   settings panel (`apps/heylook-frontend-v3/js/settings.js`) — do not re-enumerate it here. A preset
   stores only the knobs it pins — absent keys stay on the null-means-cascade contract when applied.

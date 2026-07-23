@@ -164,14 +164,21 @@ def _strip_partial_token(text: str, control_tokens: Tuple[str, ...]) -> str:
     would otherwise flush literal garbage (``<|chan`` for harmony, ``<chan``
     for gemma's close token). Membership-based rather than shape-based so it
     generalizes to any control-token set; a COMPLETE trailing token is left
-    alone for the drain loop to consume."""
+    alone for the drain loop to consume.
+
+    This is a GUESS about text the model never finished, so it is kept as
+    narrow as possible: a bare trailing ``<`` is real output far more often
+    than a control token truncated at exactly one character (comparisons,
+    code, math), while ``<|`` and longer are essentially never natural text
+    for these models. That two-character floor is what makes "text carrying
+    no structural tokens survives intact" hold -- see TestParserInvariants."""
     idx = text.rfind("<")
     if idx == -1:
         return text
     tail = text[idx:]
     if tail in control_tokens:
         return text
-    if any(t.startswith(tail) for t in control_tokens):
+    if len(tail) >= 2 and any(t.startswith(tail) for t in control_tokens):
         return text[:idx]
     return text
 

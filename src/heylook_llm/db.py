@@ -36,10 +36,12 @@ logger = logging.getLogger(__name__)
 # deleting a parent even when its children are deleted in the same
 # transaction -- a documented DuckDB limitation. Referential integrity is
 # enforced in code: single writer, explicit cascade in delete_conversation).
-_SCHEMA_VERSION = 5  # v5: notebooks.params (v4 added conversations.params) -- per-document sampler settings
+_SCHEMA_VERSION = 6  # v6: applied_preset_id on conversations + notebooks -- which preset a document is running
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
-_UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset({"title", "content", "system_prompt", "model_id", "params"})
+_UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset(
+    {"title", "content", "system_prompt", "model_id", "params", "applied_preset_id"}
+)
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS conversations (
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     model_id    TEXT,
     system_prompt TEXT,
     params        TEXT NOT NULL DEFAULT '{}',
+    applied_preset_id TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -74,6 +77,7 @@ CREATE TABLE IF NOT EXISTS notebooks (
     system_prompt TEXT,
     model_id      TEXT,
     params        TEXT NOT NULL DEFAULT '{}',
+    applied_preset_id TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
@@ -303,7 +307,7 @@ async def clear_all_data(db: Store) -> dict:
 
 # Single source of truth per table: the SELECT string derives from the names
 # list, so the two can never drift (zip would silently mispair otherwise).
-_CONV_NAMES = ["id", "title", "model_id", "system_prompt", "params", "created_at", "updated_at"]
+_CONV_NAMES = ["id", "title", "model_id", "system_prompt", "params", "applied_preset_id", "created_at", "updated_at"]
 _MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
 _CONV_COLS = ", ".join(_CONV_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
@@ -394,6 +398,7 @@ async def create_conversation(
         "model_id": model_id,
         "system_prompt": system_prompt,
         "params": params,
+        "applied_preset_id": None,
         "created_at": now,
         "updated_at": now,
         "messages": [],
@@ -409,9 +414,11 @@ async def update_conversation(
 
     Pass only the fields to change. Supports explicit ``None`` to clear nullable
     columns (model_id, system_prompt). Allowed fields: title, model_id,
-    system_prompt, params (a JSON object of per-conversation sampler settings).
+    system_prompt, params (a JSON object of per-conversation sampler settings),
+    applied_preset_id (which preset this conversation is running; explicit
+    stamp only -- see the preset-bar provenance note in the v3 spec).
     """
-    allowed = {"title", "model_id", "system_prompt", "params"}
+    allowed = {"title", "model_id", "system_prompt", "params", "applied_preset_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return None
@@ -572,8 +579,8 @@ async def truncate_messages_after(
 # Notebook CRUD
 # ---------------------------------------------------------------------------
 
-_NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "params", "created_at", "updated_at"]
-_NB_LIST_NAMES = ["id", "title", "system_prompt", "model_id", "created_at", "updated_at"]
+_NB_NAMES = ["id", "title", "content", "system_prompt", "model_id", "params", "applied_preset_id", "created_at", "updated_at"]
+_NB_LIST_NAMES = ["id", "title", "system_prompt", "model_id", "applied_preset_id", "created_at", "updated_at"]
 _NB_COLS = ", ".join(_NB_NAMES)
 _NB_LIST_COLS = ", ".join(_NB_LIST_NAMES)
 
@@ -622,7 +629,7 @@ async def create_notebook(
     return {
         "id": nb_id, "title": title, "content": content,
         "system_prompt": system_prompt, "model_id": model_id, "params": params,
-        "created_at": now, "updated_at": now,
+        "applied_preset_id": None, "created_at": now, "updated_at": now,
     }
 
 

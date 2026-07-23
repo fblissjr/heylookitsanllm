@@ -38,6 +38,12 @@ class ConversationUpdate(BaseModel):
     model_id: str | None = None
     system_prompt: str | None = None
     params: dict | None = None
+    # Which preset this conversation is running. EXPLICIT stamps only (an
+    # Apply or a Save writes it); a document whose state merely happens to
+    # match a preset is labelled by live client-side inference and never
+    # stamped -- storing an inference could bind stale state to the wrong
+    # document (the v1.39.7 lesson). null clears the association.
+    applied_preset_id: str | None = None
 
 
 # content accepts a plain string OR a content-block list (Messages-style,
@@ -105,7 +111,7 @@ async def get_conversation(conv_id: str, request: Request):
 )
 async def update_conversation(conv_id: str, request: Request, body: ConversationUpdate):
     conn = _get_db(request)
-    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "model_id", "system_prompt", "params"}}
+    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "model_id", "system_prompt", "params", "applied_preset_id"}}
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
     conv = await db.update_conversation(conn, conv_id, **kwargs)

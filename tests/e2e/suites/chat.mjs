@@ -528,6 +528,24 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(txt.includes('(edited)'), `chip should be marked (edited), got "${txt}"`);
   });
 
+  await suite.check('applied-preset chip provenance survives a reload', async () => {
+    // The stamp lives on the CONVERSATION (applied_preset_id), so "(edited)"
+    // has to come back after a reload. Before that field existed this check
+    // could not pass at all: the panel is drifted, so exact-match inference
+    // finds nothing and the chip would simply be hidden.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat');
+    await waitFor(async () => {
+      const t = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
+      return Boolean(t?.includes('e2e-preset') && t.includes('(edited)'));
+    }, { message: 'chip lost its preset provenance across a reload' });
+    // Restore what the next check needs: the reload closed the drawer and
+    // cleared the select-box selection (that IS session state -- only the
+    // stamp is durable), and Del is disabled without a selected preset.
+    await openDrawer(page);
+    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+  });
+
   await suite.check('preset delete (armed) removes it from the select', async () => {
     const delBtn = await page.$('.preset-section .btn--ghost');
     await armedClick(delBtn);

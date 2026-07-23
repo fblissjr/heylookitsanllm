@@ -27,6 +27,7 @@ export default createPage({
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
+    s.appliedPresetId = null;  // which preset this conversation is running
     s.stream = null;      // { controller, targetConvId, content, thinking, els, retries }
     s.editingId = null;
 
@@ -39,6 +40,8 @@ export default createPage({
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
       onIndicator: (info) => paintPresetChip(ctx, info),
+      getStamp: () => s.appliedPresetId,
+      setStamp: (id) => setAppliedPreset(ctx, id),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -309,6 +312,17 @@ function putSystemPrompt(ctx, convId, value) {
 // every conversation switch), so the shared factory's construction-time
 // owner capture already gives per-conversation isolation for free -- no
 // setValue call needed here.
+// Persist the applied-preset stamp onto the active conversation. Explicit
+// stamps only (the preset bar calls this from apply/save/delete) -- see the
+// provenance note in preset-bar.js.
+function setAppliedPreset(ctx, presetId) {
+  const s = ctx.state;
+  s.appliedPresetId = presetId;
+  if (!s.activeId) return; // pre-create draft: the stamp rides in state only
+  api.updateConversation(s.activeId, { applied_preset_id: presetId })
+    .catch((err) => showStatus(ctx, `Preset stamp save failed: ${err.message}`, true));
+}
+
 function buildPromptSection(ctx) {
   const s = ctx.state;
   return createPromptSection(ctx, {
@@ -461,6 +475,7 @@ async function selectConversation(ctx, convId) {
     if (!ctx.alive || s.activeId !== convId) return;
     s.messages = conv.messages ?? [];
     s.systemPrompt = conv.system_prompt ?? null;
+    s.appliedPresetId = conv.applied_preset_id ?? null;
     hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
     refreshThinkBtn(ctx);    // silent hydrate skips onSettingsChange -- sync directly
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
@@ -480,6 +495,7 @@ async function selectConversation(ctx, convId) {
       // condition would otherwise no-op on the stale array forever.
       s.messages = [];
       s.systemPrompt = null;
+      s.appliedPresetId = null;
       renderMessages(ctx);
       drawer.requestRebuild({ force: true });
       // resync so the chip doesn't keep claiming the previous conversation's

@@ -28,6 +28,7 @@ export default createPage({
     s.title = '';
     s.content = '';
     s.systemPrompt = '';
+    s.appliedPresetId = null;
     s.modelId = '';
     s.dirty = false;
     s.gen = null; // { controller, targetId, head, tail, content }
@@ -48,6 +49,8 @@ export default createPage({
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
       onIndicator: (info) => paintPresetChip(ctx, info),
+      getStamp: () => s.appliedPresetId,
+      setStamp: (id) => setAppliedPreset(ctx, id),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -238,6 +241,16 @@ function setSystemPrompt(ctx, value) {
 // issued milliseconds apart, and without ordering the stale one could land
 // last server-side. Field-scoped: only system_prompt moves here, never the
 // rest of the document (doSave owns title/content/model_id).
+// Explicit preset stamp for the active notebook -- chat parity (see
+// chat.js's setAppliedPreset and the provenance note in preset-bar.js).
+function setAppliedPreset(ctx, presetId) {
+  const s = ctx.state;
+  s.appliedPresetId = presetId;
+  if (!s.activeId) return;
+  api.updateNotebook(s.activeId, { applied_preset_id: presetId })
+    .catch((err) => showStatus(ctx, `Preset stamp save failed: ${err.message}`, true));
+}
+
 function putSystemPrompt(ctx, notebookId, value) {
   const s = ctx.state;
   s.promptPutChain = (s.promptPutChain ?? Promise.resolve())
@@ -359,6 +372,7 @@ async function selectNotebook(ctx, id) {
     s.title = nb.title ?? '';
     s.content = nb.content ?? '';
     s.systemPrompt = nb.system_prompt ?? '';
+    s.appliedPresetId = nb.applied_preset_id ?? null;
     s.modelId = nb.model_id ?? '';
     hydrateDocParams(nb);  // sampler panel <- this notebook (silent, no re-PUT)
     s.dirty = false;
@@ -373,6 +387,7 @@ async function selectNotebook(ctx, id) {
       // re-clicking this notebook retries -- the select guard
       // (activeId === id) would otherwise no-op forever.
       s.activeId = null;
+      s.appliedPresetId = null;
       renderEditor(ctx);
       renderList(ctx);
       // resync so the chip doesn't keep claiming the previous notebook's

@@ -40,19 +40,25 @@ import * as drawer from './settings-drawer.js';
 //                                       notebook) id; enables the indicator
 //   onIndicator?(info): void         -- applied-preset chip feed: null, or
 //                                       { name, edited } for the active doc
+//   getStamp?():        string|null  -- the active document's stored
+//                                       applied_preset_id
+//   setStamp?(id|null): void         -- persist it (the page owns the write,
+//                                       same division as setPrompt)
 // }
-export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator }) {
+export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator, getStamp, setStamp }) {
   let presets = [];
   let presetId = null;   // select-box state only -- applying copies, not binds
   let driftEl = null;    // latest built section's line; detached writes are harmless
-  // Which preset each document last had EXPLICITLY stamped on it (apply/save
-  // set it, delete clears it) -- nothing else ever writes here. A document
-  // whose state merely equals a preset is reported live by indicatorInfo()
-  // but never stored: a stored inference could bind the WRONG doc's state to
-  // a doc id (mid-switch, failed load) and then persist as a false
-  // "(edited)" claim. Session-local by design: the server stores no
-  // provenance, so after a reload only the live-match inference survives.
-  const appliedByDoc = new Map();
+  // The stamp -- which preset a document EXPLICITLY had applied/saved onto
+  // it -- lives on the DOCUMENT (getStamp/setStamp -> applied_preset_id), so
+  // provenance survives a reload and is the same on every device, like every
+  // other piece of per-document state in v3. What is stored stays strictly
+  // explicit: apply/save write it, delete clears it, and NOTHING else. A
+  // document whose state merely equals a preset is reported live by
+  // indicatorInfo() and never written -- a stored inference could bind the
+  // WRONG doc's state to a doc id (mid-switch, failed load) and then persist
+  // as a false "(edited)" claim. A stamp naming a preset that no longer
+  // exists is self-healing: it simply falls through to inference below.
 
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
   const selected = () => presets.find((p) => p.id === presetId);
@@ -113,7 +119,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   function indicatorInfo() {
     const doc = docId?.();
     if (!doc) return null;
-    const stamped = presets.find((p) => p.id === appliedByDoc.get(doc));
+    const stamped = presets.find((p) => p.id === getStamp?.());
     if (stamped) return { name: stamped.name, edited: !matchesState(stamped) };
     const match = presets.find((p) => matchesState(p));
     return match ? { name: match.name, edited: false } : null;
@@ -154,8 +160,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (preset) {
       applySettings(preset.params ?? {});
       setPrompt(preset.system_prompt ?? null);
-      const doc = docId?.();
-      if (doc) appliedByDoc.set(doc, preset.id);
+      if (docId?.()) setStamp?.(preset.id);
       onStatus(`Preset "${preset.name}" applied.`);
     }
     // Force: the Apply button lives in the drawer, so the focus guard would
@@ -182,8 +187,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       else presets.unshift(saved);
       presetId = saved.id;
       // saving snapshots the current doc state -- the doc IS this preset now
-      const doc = docId?.();
-      if (doc) appliedByDoc.set(doc, saved.id);
+      if (docId?.()) setStamp?.(saved.id);
       drawer.requestRebuild({ force: true });
       onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
     } catch (err) {
@@ -202,9 +206,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     }
     if (!ctx.alive) return;
     presetId = null;
-    for (const [doc, pid] of appliedByDoc) {
-      if (pid === removedId) appliedByDoc.delete(doc);
-    }
+    // Only the ACTIVE document is cleared. Other documents may still name the
+    // deleted preset, which is harmless -- indicatorInfo resolves stamps
+    // against the live preset list, so a dangling id reads as "no stamp".
+    if (getStamp?.() === removedId) setStamp?.(null);
     await refreshAndRepaint();
     syncIndicator(); // rebuild no-ops while the drawer is closed -- sync anyway
   }
@@ -212,7 +217,12 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   function buildSection() {
     const current = selected();
 
-    const select = createEl('select', { title: 'Select a saved preset' }, [
+    // aria-label, not just title: `title` is a tooltip whose exposure as an
+    // accessible name is inconsistent, and neither control has a visible
+    // label to associate (the bar is deliberately one compact row).
+    const select = createEl('select', {
+      title: 'Select a saved preset', 'aria-label': 'Select a saved preset',
+    }, [
       createEl('option', { value: '' }, ['Presets…']),
       ...presets.map((p) => createEl('option', { value: p.id }, [p.name])),
     ]);
@@ -236,6 +246,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     // new name -> create. Picking a preset pre-fills its name for overwrite.
     const nameInput = createEl('input', {
       class: 'input', placeholder: 'Save as…', value: current?.name ?? '',
+      'aria-label': 'Preset name to save as',
     });
     const saveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save']);
     saveBtn.addEventListener('click', () => save(nameInput.value));

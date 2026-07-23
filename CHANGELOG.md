@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.16]
+
+### Added
+
+- **Applied-preset provenance is durable** (`applied_preset_id`, schema v6 on
+  conversations AND notebooks). The chip's "(edited)" label used to die with
+  the session -- a reload could only re-infer a preset by exact state match,
+  so a document you had applied a preset to and then tweaked came back
+  unlabelled. The stamp now lives on the document, like every other piece of
+  per-document state in v3 (`params`, `system_prompt`), so it survives a
+  reload and reads the same on every device. What is stored stays strictly
+  EXPLICIT: Apply and Save stamp it, Del clears it for the active document,
+  and a match that is merely coincidental is still reported by live
+  client-side matching and never written -- storing a derived association
+  could bind stale state to the wrong document after a failed load (the
+  v1.39.7 lesson). The field holds a preset id or null; never any prompt,
+  message, or model output. A stamp naming a deleted preset is self-healing
+  (stamps resolve against the live preset list, so a dangling id reads as
+  "no stamp"). Deliberately NOT carried inside `params`: that object is the
+  sampler bag and everything in it reaches the model, so non-sampler state
+  may never live there. E2E: chip provenance asserted across a reload -- a
+  check that could not have passed before this field existed. Contract:
+  `docs/frontend_v3_spec.md` section 4.
+- **Parser invariants are now properties, not examples**
+  (`TestParserInvariants`). Both 2026-07-23 parser bugs were failures of an
+  unstated invariant rather than of a missing case, so two are stated and
+  checked over randomised chunkings of a representative corpus: output is
+  invariant to how the stream was chopped (the property finding #1 violated),
+  and text carrying no structural tokens survives intact (the property
+  finding #2 violated). Seeded, so a failure reproduces.
+
+### Fixed
+
+- A bare trailing `<` is no longer swallowed at end of turn. The
+  partial-control-token guess now requires at least two characters: `<|` and
+  longer are essentially never natural model output, while a lone `<` is
+  ordinary text (comparisons, code, generics). This is what makes the
+  no-silent-loss property hold, and it retires the proposed `in_name`
+  streaming bail-out -- the invariant covers that case without a heuristic.
+- **Selected items no longer lose their tint on hover.** `.btn:hover`,
+  `.nav-item:hover` and `.conv-item:hover` outranked the state classes
+  declared right after them, so hovering an active nav item, selected
+  conversation, or the preset chip made it look unselected. The hover
+  pseudo-class is now wrapped in `:where()` (zero specificity), so state wins
+  by source order -- the pattern is fixed once rather than per component.
+- The preset bar's select and save-as input carry `aria-label`s. `title` is a
+  tooltip whose exposure as an accessible name is inconsistent, and neither
+  control has a visible label to associate.
+
 ## [1.39.15]
 
 ### Changed

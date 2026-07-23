@@ -18,9 +18,12 @@ model's chat template + tokenizer config.
 
 from __future__ import annotations
 
+import random
 from unittest.mock import MagicMock
 
 import pytest
+
+from heylook_llm.reasoning_parser import select_reasoning_parser
 
 
 # Reference fixture representing an analysis-then-final harmony response.
@@ -734,3 +737,105 @@ class TestUnterminatedChannelHeaderIsNotSwallowed:
         )
         assert content == "answer"
         assert thinking == "reasoning"
+
+
+class TestParserInvariants:
+    """Two properties that hold for EVERY parser, checked over random inputs.
+
+    These exist because both 2026-07-23 parser bugs were failures of an
+    unstated invariant, not of a missing case. Example-based tests can only
+    pin the boundaries someone thought to write down; a property says what
+    must be true everywhere, and randomised splits explore the chunk
+    boundaries that are exactly where streaming parsers break.
+    """
+
+    CORPUS = {
+        "harmony": [
+            "<|channel|>analysis<|message|>reasoning<|end|>"
+            "<|start|>assistant<|channel|>final<|message|>the answer",
+            "<|channel|>final<|message|>hi <|reserved_200000|> there<|return|>",
+            "free preamble text with no tokens",
+            "<|channel|>final<|message|>answer text<|en",
+            "<|channel|>analysis and then it just keeps going",
+        ],
+        "gemma": [
+            "<|channel>thought\nplanning\n<channel|>The answer.",
+            "padding text<|reserved_200000|> tail",
+            "<|channel> to the movies!",
+            "Answer text<|chann",
+            "<|channel>thought\nhalf a plan",
+        ],
+        "think": [
+            "<think>plan</think>answer",
+            "<think>plan <|endoftext|> more</think>done [INST] x",
+            "no markers at all",
+        ],
+        "plain": [
+            "just some text",
+            "text with <|endoftext|> a special",
+            "mistral style [INST] marker",
+        ],
+    }
+
+    # Text a model can legitimately produce that contains NO structural token
+    # of any parser -- including the shapes that tempt a partial-token guess.
+    TOKEN_FREE = [
+        "The quick brown fox jumps over the lazy dog.",
+        "5 < 3 is false, and 3 > 1 is true.",
+        "A line\nwith newlines\nand   spacing.",
+        "Trailing angle bracket <",
+        "brackets [like these] and <these>",
+        "generic<T> in code",
+    ]
+
+    def _parser(self, kind):
+        specials = ["<|reserved_200000|>", "<|endoftext|>", "[INST]", "<turn|>"]
+        flags = {
+            "harmony": dict(harmony=True), "gemma": dict(gemma=True),
+            "think": dict(thinking=True), "plain": {},
+        }[kind]
+        return select_reasoning_parser(_template(specials=specials, **flags))
+
+    def _splits(self, text, rng):
+        """A random chopping of `text` into consecutive chunks."""
+        cuts = sorted(rng.sample(range(1, len(text)), min(rng.randint(1, 6), len(text) - 1)))
+        parts, prev = [], 0
+        for cut in cuts:
+            parts.append(text[prev:cut])
+            prev = cut
+        parts.append(text[prev:])
+        return [p for p in parts if p]
+
+    def test_output_is_invariant_to_chunking(self):
+        """How the stream was chopped must not change what the user sees.
+
+        This is the property finding #1 violated: harmony/gemma sized their
+        holdback to their own structural tokens, so a longer declared special
+        landing across an emit boundary leaked. Seeded, so a failure is
+        reproducible rather than a heisenbug.
+        """
+        rng = random.Random(20260723)
+        for kind, texts in self.CORPUS.items():
+            for text in texts:
+                whole = _collect(self._parser(kind), [text])
+                for _ in range(40):
+                    chunks = self._splits(text, rng)
+                    assert _collect(self._parser(kind), chunks) == whole, (
+                        f"[{kind}] chunking changed the output for {text!r}: "
+                        f"whole={whole} chunks={chunks}"
+                    )
+
+    def test_text_with_no_structural_tokens_survives_intact(self):
+        """No silent loss: if the model emitted no structure, every character
+        it produced reaches content.
+
+        This is the property finding #2 violated (a spurious channel-open ate
+        the turn), and the one that keeps `_strip_partial_token`'s guess
+        honest -- a bare trailing '<' is content, not a truncated token.
+        """
+        rng = random.Random(20260724)
+        for kind in self.CORPUS:
+            for text in self.TOKEN_FREE:
+                content, thinking = _collect(self._parser(kind), self._splits(text, rng))
+                assert content == text, f"[{kind}] lost text: {text!r} -> {content!r}"
+                assert thinking == ""
