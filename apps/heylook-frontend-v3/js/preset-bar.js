@@ -205,9 +205,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
       updateDrift();
     });
 
-    // .preset-drift is the E2E hook; styling rides the shared settings-note
+    // .preset-drift is the E2E hook; styling rides the shared settings-note.
+    // role=status: the line flips live (Matches/Differs) -- announced, not
+    // just shown (DESIGN.md §7).
     driftEl = createEl('div', {
-      class: 'preset-drift settings-note muted small', hidden: true,
+      class: 'preset-drift settings-note muted small', hidden: true, role: 'status',
       title: 'Presets are copies: Apply stamps the preset onto this document; '
         + 'later edits here never change the preset until you Save it again.',
     });

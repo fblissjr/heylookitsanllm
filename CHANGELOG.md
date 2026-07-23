@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.5]
+
+### Fixed
+
+- Preset drift line carries `role="status"` so its Matches/Differs flips are
+  announced to screen readers, not just shown (DESIGN.md §7 rule; /code-review
+  finding). Stale comments from the preset rework corrected (drawer header
+  still described the retired apply-on-select; chat's `setSystemPrompt` still
+  claimed to be the only prompt writer).
+
 ## [1.39.4]
 
 ### Fixed

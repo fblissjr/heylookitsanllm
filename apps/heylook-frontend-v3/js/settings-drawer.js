@@ -6,8 +6,9 @@
 // correct: each page registers what it wants in the drawer during setup() and
 // unregisters on teardown. The drawer composes, top to bottom:
 //
-//   ...contribution.sections()   -- page-owned lead sections (chat's preset bar
-//                                   + system-prompt editor; notebook's sysprompt)
+//   ...contribution.sections()   -- page-owned lead sections (chat and
+//                                   notebook: the shared preset bar + their
+//                                   system-prompt editor)
 //   Sampling panel               -- buildSettingsPanel({caps}); 'disabled' renders
 //                                   it read-only + greedy note; 'hidden' omits it
 //   Display panel                -- buildDisplayPanel() (global, model-agnostic)
@@ -17,8 +18,8 @@
 // Focus guard (migrated from chat's old inline panel): a background/async
 // repaint must never destroy uncommitted text in a field the user is editing.
 // requestRebuild() honors it -- it skips while focus is inside the render
-// target. Discrete, user-initiated actions that must repaint (applying a preset
-// from the in-drawer select, etc.) pass { force: true } -- the exact analog of
+// target. Discrete, user-initiated actions that must repaint (the preset bar's
+// Apply button, etc.) pass { force: true } -- the exact analog of
 // the old rebuildSettingsPanel(), which was always unguarded.
 
 import { createEl } from './utils.js';

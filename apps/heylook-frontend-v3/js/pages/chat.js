@@ -263,9 +263,11 @@ function currentCaps(ctx) {
 // system prompt (per-conversation) + presets (saved prompt/sampler bundles)
 // ---------------------------------------------------------------------------
 
-// One writer for the conversation's system prompt: state now, PUT if a
-// conversation exists (explicit null clears server-side). With no active
-// conversation the value rides along until a create gives it a home.
+// The preset-apply write path (the bar's setPrompt adapter): state now, PUT
+// if a conversation exists (explicit null clears server-side). With no active
+// conversation the value rides along until a create gives it a home. The
+// textarea has its own path -- per-keystroke state + debounced PUT in
+// buildSystemPromptSection; both converge on putSystemPrompt.
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
   const changed = value !== s.systemPrompt;
