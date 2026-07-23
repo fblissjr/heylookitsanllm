@@ -60,7 +60,7 @@ the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
 extracted into an app-shell global slide-over shared by all 6 pages --
 sampling / global display prefs / per-page extras; `js/settings-drawer.js`;
-code-reviewed); browser E2E in `tests/e2e/` (66 checks, drawer-driven; green bar
+code-reviewed); browser E2E in `tests/e2e/` (67 checks, drawer-driven; green bar
 the load-sensitive streaming-cadence guard); **composer icons + multi-image
 hardening** (2026-07-20, v1.34.60-.61: attach + thinking-toggle are now
 `.btn--icon` buttons styled off `aria-pressed`, multi-image attach capped at 8
@@ -95,7 +95,10 @@ auto-appear from template detection, no `models.toml` flag needed).
   the same section. v1.39.1 fixed a data-loss bug where the old blur-only
   commit lost the chat system prompt when the drawer closed under focus
   -- v1.39.4 generalized the fix, blurring the focused field on drawer
-  close for every commit-on-change field, not just the sysprompt textarea.)
+  close for every commit-on-change field, not just the sysprompt textarea.
+  v1.39.6 added the applied-preset chip beside each page's model select --
+  name + "(edited)" once drifted, click opens the drawer; provenance is
+  session-local, re-seeded after reload by exact state match.)
 
 ## Backend <-> v3 coupling (the "tightly coupled" part)
 

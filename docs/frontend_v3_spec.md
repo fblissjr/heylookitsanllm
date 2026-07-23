@@ -320,7 +320,12 @@ closed under focus. The preset `<select>` is inert (records the selection and
 prefills the save-as name, never writes the document); Apply is an explicit
 button, armed-confirmed ("Replace prompt?") only when it would replace a
 differing non-empty prompt; a live drift line (`role="status"`) reports whether
-the selected preset matches the current prompt + sampler state.
+the selected preset matches the current prompt + sampler state. An
+applied-preset chip (v1.39.6, `.preset-chip`) sits beside each page's model
+select naming the preset the active document is running -- "(edited)" once it
+drifts -- and opens the drawer on click. Provenance is session-local (apply/save
+stamp it; delete clears it; a reload re-seeds only by exact state match --
+the server stores no preset association).
 
 ### notebook (v2: 341 lines) — plain-text, no pretext, no markdown render
 Multi-doc: sidebar list (new/select/delete-confirm) + editor (title input, model select, collapsible system-

@@ -31,11 +31,16 @@ export default createPage({
 
     buildSkeleton(ctx);
     // Shared preset bar (preset-bar.js), adapted to the active conversation.
+    // The indicator feed drives the chat-bar chip (built in buildSkeleton).
     s.presetBar = createPresetBar(ctx, {
       getPrompt: () => s.systemPrompt,
       setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
+      docId: () => s.activeId,
+      onIndicator: (info) => paintPresetChip(ctx, info),
     });
+    // The chip needs preset names before the drawer's first lazy fetch.
+    s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
     // One throttle for the whole mount (it reads s.stream), not one per
     // stream -- per-stream throttles would pin each stream's closure in the
     // page's cleanup list for the mount lifetime.
@@ -192,10 +197,20 @@ function buildSkeleton(ctx) {
   settingsBtn.innerHTML = ICON_GEAR;
   settingsBtn.addEventListener('click', () => drawer.openSettings(settingsBtn));
 
+  // Applied-preset chip: which preset this conversation is running (with an
+  // "(edited)" suffix once it drifts). Fed by the preset bar's onIndicator;
+  // clicking it opens the drawer at the preset controls.
+  s.presetChip = createEl('button', {
+    class: 'btn preset-chip chat__preset-chip', hidden: true,
+    title: 'Preset applied to this conversation -- open settings',
+  });
+  s.presetChip.addEventListener('click', () => drawer.openSettings(s.presetChip));
+
   const thread = createEl('section', { class: 'chat__thread' }, [
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
+      s.presetChip,
       createEl('div', { class: 'chat__bar-spacer' }),
       settingsBtn,
     ]),
@@ -328,6 +343,13 @@ function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);
 }
 
+// The bar chip's one renderer (fed by the preset bar's onIndicator).
+function paintPresetChip(ctx, info) {
+  const chip = ctx.state.presetChip;
+  chip.hidden = !info;
+  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
+}
+
 // ---------------------------------------------------------------------------
 // conversations sidebar
 // ---------------------------------------------------------------------------
@@ -436,6 +458,7 @@ async function deleteConversation(ctx, convId) {
     if (s.conversations.length) await selectConversation(ctx, s.conversations[0].id);
     else {
       drawer.requestRebuild({ force: true });
+      s.presetBar.syncIndicator(); // no active doc -> chip clears
       renderMessages(ctx);
     }
   }
@@ -463,6 +486,7 @@ async function selectConversation(ctx, convId) {
     }
     // an open drawer shows the previous conversation's system prompt otherwise
     drawer.requestRebuild({ force: true });
+    s.presetBar.syncIndicator(); // rebuild no-ops while the drawer is closed
     renderMessages(ctx);
     scrollMessages(ctx, true);
   } catch (err) {
@@ -775,6 +799,7 @@ async function send(ctx) {
       // an open drawer's sysprompt textarea was built for activeId=null --
       // rebind it to the conversation that now owns the prompt
       drawer.requestRebuild({ force: true });
+      s.presetBar.syncIndicator(); // the new conversation may match a preset
       renderConvList(ctx);
     } else {
       const conv = s.conversations.find((c) => c.id === s.activeId);

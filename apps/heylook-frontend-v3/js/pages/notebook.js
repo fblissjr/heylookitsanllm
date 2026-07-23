@@ -44,11 +44,15 @@ export default createPage({
         s.scheduleSave();
       },
       onStatus: (text, isError) => showStatus(ctx, text, isError),
+      docId: () => s.activeId,
+      onIndicator: (info) => paintPresetChip(ctx, info),
     });
 
     buildSkeleton(ctx);
     s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
     ctx.onTeardown(() => s.scheduleSave.flush());
+    // The chip needs preset names before the drawer's first lazy fetch.
+    s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
 
     // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
     // sampler controls; the preset bar + per-notebook system-prompt editor
@@ -137,7 +141,14 @@ function buildSkeleton(ctx) {
     drawer.requestRebuild({ force: true });
   });
 
-  const row = createEl('div', { class: 'notebook__row' }, [s.titleInput, s.modelSelect]);
+  // Applied-preset chip beside the model select -- same grammar as chat's.
+  s.presetChip = createEl('button', {
+    class: 'btn preset-chip', hidden: true,
+    title: 'Preset applied to this notebook -- open settings',
+  });
+  s.presetChip.addEventListener('click', () => drawer.openSettings(s.presetChip));
+
+  const row = createEl('div', { class: 'notebook__row' }, [s.titleInput, s.modelSelect, s.presetChip]);
 
   s.sysPromptInput = createEl('textarea', {
     class: 'notebook__sysprompt-input', rows: 3,
@@ -219,6 +230,14 @@ function syncSysPromptWidgets(ctx) {
   s.sysPromptDetails.open = Boolean(s.systemPrompt);
 }
 
+// The bar chip's one renderer (fed by the preset bar's onIndicator).
+function paintPresetChip(ctx, info) {
+  const chip = ctx.state.presetChip;
+  if (!chip) return; // indicator can fire before the skeleton exists
+  chip.hidden = !info;
+  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
+}
+
 function populateFields(ctx) {
   const s = ctx.state;
   s.titleInput.value = s.title;
@@ -227,6 +246,7 @@ function populateFields(ctx) {
   autoGrow(s.contentTextarea, Infinity);
   if (s.modelId && s.models.some((m) => m.id === s.modelId)) s.modelSelect.value = s.modelId;
   s.modelId = s.modelSelect.value; // reflect whatever the widget actually landed on
+  s.presetBar.syncIndicator(); // chip follows the (possibly new) active notebook
   renderEditor(ctx);
   renderList(ctx);
 }

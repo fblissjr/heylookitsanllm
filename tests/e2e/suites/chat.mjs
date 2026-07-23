@@ -398,12 +398,22 @@ export async function runChatSuite({ suite, ctx, config }) {
     await setSettingsInput(page, 'Temperature', '');
   });
 
+  await suite.check('applied-preset chip shows in the chat bar', async () => {
+    // The prior check saved+applied e2e-preset, then reset Temperature to
+    // cascade -- the panel is drifted, so the chip must carry "(edited)".
+    const txt = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
+    assert(txt?.includes('e2e-preset'), `chip="${txt}"`);
+    assert(txt.includes('(edited)'), `chip should be marked (edited), got "${txt}"`);
+  });
+
   await suite.check('preset delete (armed) removes it from the select', async () => {
     const delBtn = await page.$('.preset-section .btn--ghost');
     await armedClick(delBtn);
     await delBtn.dispose();
     await waitFor(async () => (await presetOptionValue('e2e-preset')) === null,
       { message: 'deleted preset still listed' });
+    await waitFor(async () => page.$eval('.chat__preset-chip', (el) => el.hidden),
+      { message: 'applied-preset chip did not clear after delete' });
     // done with the drawer -- close it so #app is interactable again.
     await closeDrawer(page);
   });

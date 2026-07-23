@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.6]
+
+### Added
+
+- **Applied-preset chip** (frontend v3, chat + notebook). A chip beside the
+  model select names the preset the active conversation/notebook is running,
+  gains "(edited)" the moment the prompt or sampler panel drifts from it, and
+  opens the settings drawer on click. The shared preset bar tracks the
+  association per document (Apply/Save stamp it, delete clears it) and feeds
+  the chip through a new adapter callback; provenance is session-local by
+  design -- after a reload the chip re-seeds only when a document's state
+  exactly matches a preset (the server stores no preset association). E2E:
+  chip visibility/(edited)/clears-on-delete checks; chat suite 31 checks,
+  live-verified 31/31.
+
 ## [1.39.5]
 
 ### Fixed

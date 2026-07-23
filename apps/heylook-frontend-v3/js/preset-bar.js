@@ -32,11 +32,20 @@ import * as drawer from './settings-drawer.js';
 //   getPrompt():        string|null  -- the document's current system prompt
 //   setPrompt(v|null):  void         -- apply copies the preset's prompt here
 //   onStatus(text, isError?): void   -- the page's status line
+//   docId?():           string|null  -- the active document (conversation/
+//                                       notebook) id; enables the indicator
+//   onIndicator?(info): void         -- applied-preset chip feed: null, or
+//                                       { name, edited } for the active doc
 // }
-export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
+export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator }) {
   let presets = [];
   let presetId = null;   // select-box state only -- applying copies, not binds
   let driftEl = null;    // latest built section's line; detached writes are harmless
+  // Which preset each document last had stamped on it (apply/save set it,
+  // delete clears it). Session-local by design: the server stores no
+  // provenance, so a reload re-seeds below from "state exactly matches a
+  // preset" -- honest, just blind to an edited-away association.
+  const appliedByDoc = new Map();
 
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
   const selected = () => presets.find((p) => p.id === presetId);
@@ -89,7 +98,29 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
     return Boolean(preset && prompt && (preset.system_prompt ?? null) !== prompt);
   }
 
+  // The applied-preset info for the active document: the remembered stamp,
+  // else seeded by exact match (state IS some preset). `edited` = the doc
+  // has since drifted from it.
+  function indicatorInfo() {
+    const doc = docId?.();
+    if (!doc) return null;
+    let preset = presets.find((p) => p.id === appliedByDoc.get(doc));
+    if (!preset) {
+      preset = presets.find((p) => matchesState(p));
+      if (!preset) return null;
+      appliedByDoc.set(doc, preset.id);
+    }
+    return { name: preset.name, edited: !matchesState(preset) };
+  }
+
+  // Feed the page's chip. Public: pages call it on document switch/create --
+  // the drawer may be closed then, so the drift-line path can't be relied on.
+  function syncIndicator() {
+    onIndicator?.(indicatorInfo());
+  }
+
   function updateDrift() {
+    syncIndicator(); // chip tracks the same edits the drift line does
     if (!driftEl) return;
     const preset = selected();
     const next = !preset ? ''
@@ -106,10 +137,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
   // After a drawer close the last section is detached -- drop the reference
   // so the dead subtree can be collected and later changes cost one check.
   ctx.onTeardown(onSettingsChange(ctx.guard(() => {
-    if (driftEl && !driftEl.isConnected) {
-      driftEl = null;
-      return;
-    }
+    // No early return: with the drawer closed the drift line is gone, but
+    // the applied-preset chip still needs the sampler-edit sync.
+    if (driftEl && !driftEl.isConnected) driftEl = null;
     updateDrift();
   })));
 
@@ -118,6 +148,8 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
     if (preset) {
       applySettings(preset.params ?? {});
       setPrompt(preset.system_prompt ?? null);
+      const doc = docId?.();
+      if (doc) appliedByDoc.set(doc, preset.id);
       onStatus(`Preset "${preset.name}" applied.`);
     }
     // Force: the Apply button lives in the drawer, so the focus guard would
@@ -143,6 +175,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
       if (idx >= 0) presets[idx] = saved;
       else presets.unshift(saved);
       presetId = saved.id;
+      // saving snapshots the current doc state -- the doc IS this preset now
+      const doc = docId?.();
+      if (doc) appliedByDoc.set(doc, saved.id);
       drawer.requestRebuild({ force: true });
       onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
     } catch (err) {
@@ -152,15 +187,20 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
 
   async function remove() {
     if (!presetId) return;
+    const removedId = presetId;
     try {
-      await api.deletePreset(presetId);
+      await api.deletePreset(removedId);
     } catch (err) {
       if (ctx.alive) onStatus(`Preset delete failed: ${err.message}`, true);
       return;
     }
     if (!ctx.alive) return;
     presetId = null;
+    for (const [doc, pid] of appliedByDoc) {
+      if (pid === removedId) appliedByDoc.delete(doc);
+    }
     await refreshAndRepaint();
+    syncIndicator(); // rebuild no-ops while the drawer is closed -- sync anyway
   }
 
   function buildSection() {
@@ -223,5 +263,5 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus }) {
     ]);
   }
 
-  return { buildSection, onDrawerOpen, updateDrift };
+  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator };
 }

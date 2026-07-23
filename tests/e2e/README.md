@@ -66,12 +66,13 @@ change, re-run before diagnosing a delivery regression.
   (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
   overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — 30 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — 31 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
   opening the same drawer, system-prompt persistence (no-blur commit +
   Escape-close survival), preset save/apply round-trip (inert selection,
-  explicit Apply, drift states), conversation CRUD, 390px mobile.
+  explicit Apply, drift states), the applied-preset chip (shows/(edited)/
+  clears-on-delete), conversation CRUD, 390px mobile.
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
   preservation, notebook preset bar (save/drift/armed apply), explore logprob
   chips + keyboard nav, perf no-polling proof + ranges, models list/load/unload
