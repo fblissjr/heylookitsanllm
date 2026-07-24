@@ -1,8 +1,8 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-23 (preset bar extracted to shared `preset-bar.js`,
-notebook gets the same section; files list + drawer contribution kinds
-reconciled)
+Last updated: 2026-07-23 (system-prompt editor extracted to shared
+`prompt-section.js`; preset provenance persisted as `applied_preset_id`;
+preset bar shared via `preset-bar.js`, notebook gets the same sections)
 
 The single map for the **current** frontend. The older React-frontend docs that
 used to sit beside this file (architecture, applet catalog, migration plan,
@@ -42,6 +42,7 @@ js/
   settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/onDisplayChange); null = backend-cascade; snapshotSettings()/applySettings()
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
   preset-bar.js             # shared drawer section (createPresetBar): select is inert, Apply is an explicit armed-confirmed copy, live drift line; used by chat + notebook
+  prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook
   markdown.js, utils.js
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
   pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js

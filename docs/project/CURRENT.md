@@ -1,8 +1,44 @@
 # Current Work
 
-Last updated: 2026-07-23 (v1.39.1-.5 -- v3 preset/sysprompt data-loss fix +
-shared preset bar + drift indicator + full E2E rebuild; jlens-mlx side-track
+Last updated: 2026-07-23 (v1.39.1-.16 -- v3 preset/sysprompt data-loss fix,
+shared preset bar + prompt section, full E2E rebuild, then the parser
+strip/holdback unification + the empty-reply root-cause; jlens-mlx side-track
 below unchanged since 2026-07-13)
+
+UPDATE 2026-07-23 late (v1.39.12-.16, all eight handoff-memo findings closed;
+memo + reasoning in `internal/handoff_findings_2026-07-23.md`):
+
+- **Parser strip/holdback unified (v1.39.12).** One `StripSpecials` wrapper
+  composed by `select_reasoning_parser`; the holdback is sized by the strip
+  set and prefix-set based (declared specials are not all `<`-shaped). Also
+  fixed harmony's dead final-flush partial strip. Design record:
+  `docs/parser_strip_unification.md`.
+- **The "post-abort immediate-EOS" was a PARSER BUG, not model behavior
+  (v1.39.13).** Measured first: 0/64 empty replies across four history
+  shapes, 0/6 vs 0/6 with real mid-stream disconnects -- aborts were never
+  the variable. gemma-4 sometimes emits a spurious `<|channel>` mid-answer;
+  with no newline terminating the header both channel parsers swallowed the
+  rest of the turn as a channel name. Unrouted text now goes to content at
+  end of turn. `tests/e2e/README.md`'s "empty-EOS is legal" principle is
+  qualified accordingly: a RISING rate is a bug signal.
+- **finish_reason=length (v1.39.14)** on both non-streaming paths, scraped
+  once in `ChunkTelemetry.absorb` and latched. The eval bank's token-count
+  workaround is retired to a fallback.
+- **One shared prompt-section factory + notebook field-scoped prompt PUT
+  (v1.39.15)**, plus E2E `serverGet`/`proveQuiet`. `raceState` deliberately
+  not added (its two sites make different decisions).
+- **Durable preset provenance + parser invariants as properties (v1.39.16).**
+  `applied_preset_id` (schema v6) on conversations + notebooks -- explicit
+  Apply/Save stamps only, holds a preset id or null and never any prompt or
+  model output; NOT stashed in `params` (that bag reaches the model).
+  `TestParserInvariants` states the two properties today's bugs violated
+  (chunking invariance; no silent loss) and checks them over randomised
+  chunkings -- which retired both parked parser ideas (the `in_name`
+  streaming bail-out and moving the streaming probe into the eval bank).
+  Hover wrapped in `:where()` so selected state wins by source order.
+- Bars now: **1115** unit/contract, **76/76** E2E (chat 40 + pages 36).
+- OPERATIONAL: schema v6 means the next server start DROPS existing
+  conversations and notebooks (owner approved starting fresh).
 
 UPDATE 2026-07-23 (v1.39.1-.5, frontend v3 + E2E, all heylook code):
 

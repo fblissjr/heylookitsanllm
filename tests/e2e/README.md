@@ -74,10 +74,12 @@ change, re-run before diagnosing a delivery regression.
   (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
   overflow check, `settingsInputValue`/`setSettingsInput`, and
   `openDrawer`/`closeDrawer` — see the drawer note below).
-- `suites/chat.mjs` — 39 checks: streaming, a client-side streaming-cadence
+- `suites/chat.mjs` — 40 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
-  opening the same drawer, system-prompt persistence (no-blur commit +
+  opening the same drawer, applied-preset chip provenance across a reload (proves
+  `applied_preset_id`, not inference, is doing the work),
+  system-prompt persistence (no-blur commit +
   Escape-close survival), preset save/apply round-trip (inert selection,
   explicit Apply, drift states), the applied-preset chip (shows/(edited)/
   clears-on-delete), conversation CRUD, 390px mobile, and a capability/
