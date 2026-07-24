@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-07-20
+Last updated: 2026-07-24
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -60,13 +60,9 @@ The React frontend `apps/heylook-frontend-v2/` (served at `/v2`) is retiring aft
 git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 
-# Base install (MLX on macOS)
+# One step. Installs the full runtime (MLX stack, fast image/JSON/async
+# path, CLI) plus dev tooling. There are no extras to remember.
 uv sync
-
-# Optional extras
-uv sync --extra analytics    # DuckDB analytics
-uv sync --extra performance  # xxhash, uvloop, turbojpeg, cachetools
-uv sync --extra all          # Everything
 ```
 
 The v3 frontend needs no install or build -- the backend serves it at `/v3`.

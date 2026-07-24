@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.17]
+
+### Changed
+
+- **`uv sync` now installs everything, no extras.** The seven optional-extras
+  (`performance`, `analytics`, `profile`, `cli`, `scripts`, `test`, `all`) are
+  gone. The performance stack (`xxhash`, `PyTurboJPEG`, `cachetools`, `uvloop`)
+  and the CLI (`questionary`) moved into CORE deps -- they were required for a
+  fully-working server anyway, and gating them behind `--extra all` was a
+  long-standing footgun (a plain `uv sync` silently produced a degraded install
+  that failed on the first image request). Dev tooling (`pytest` + plugins,
+  `httpx`, `build`, `twine`, `rich`, `py-spy`) is now the `dev`
+  dependency-group, which uv installs by default. Net: `uv sync` = full runtime
+  + dev; `uv sync --no-dev` = runtime only; `pip install heylookitsanllm` (from
+  PyPI) = runtime only (groups aren't published). `uvloop` carries a
+  `sys_platform != 'win32'` marker so a base install still resolves on Windows.
+- **De-confused two version constraints.** `torch` is now an exact pin
+  (`==2.13.0`, the version already resolved) instead of an arbitrary `>=` floor
+  -- it's only a transitive/availability dep, so freezing it is honest and
+  reproducible. The `[tool.uv] override-dependencies` for transformers was
+  `>=5.3.0` while core said `>=5.13.1`; they now match (`>=5.13.1`) so they
+  don't appear to contradict, with a comment explaining the override exists to
+  strip mlx-lm/mlx-vlm's upper bounds (still resolves to the latest 5.x, 5.14.1).
+- **Dropped dead/duplicate deps.** Removed the bare unmarked
+  `mlx`/`mlx-lm`/`mlx-vlm` duplicates (the `sys_platform == 'darwin'` copies
+  already cover Apple Silicon; the unmarked ones were what broke non-darwin
+  resolution). Removed `datasets` entirely -- it was declared in the
+  `analytics` extra but imported nowhere in the repo, and dropping it also shed
+  a heavy transitive chain (pandas, pyarrow, dill, multiprocess). Both git
+  sources carry an explicit `rev` again (mlx-lm had drifted to a floating
+  source in the working tree) so the lock stays reproducible.
+- **Fixed stale install instructions in code + docs.** `router.py`/`server.py`
+  told users to run `uv sync --extra mlx` -- an extra that never existed (mlx
+  is a core, darwin-marked dep); now they say `uv sync`. The OpenAPI
+  description's `pip install heylookllm[performance]` block and the README's
+  `--extra analytics/performance/all` recipes are replaced with the single
+  `uv sync`. `CLAUDE.md`'s `--all-extras` gotcha and `setup.sh` (which offered
+  the nonexistent `mlx`/`all` extras and a nonexistent `models.toml.example`)
+  were rewritten to the one-step flow.
+- **`scripts/update_deps.py`** (new, tracked) supersedes the removed
+  `update-packages.sh`. Bumps git-sourced packages to their latest commit and
+  writes the resolved SHA back as a pinned `rev` in `[tool.uv.sources]` -- plain
+  uv can pin HEAD in `uv.lock` but leaves the source floating in pyproject, and
+  this project's policy is an explicit rev in both. Also does `--release` PyPI
+  bumps with an optional `--pin` floor-raise, plus `--dry-run`. PEP 723 header
+  provisions `tomlkit` without touching the project env. Indexed, with the rest
+  of `scripts/`, in the new `scripts/README.md`.
+
 ## [1.39.16]
 
 ### Added

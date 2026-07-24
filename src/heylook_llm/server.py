@@ -355,7 +355,7 @@ def main():
 
     if not HAS_MLX:
         logging.error("No model providers available! Please install MLX:")
-        logging.error("  uv sync --extra mlx")
+        logging.error("  uv sync")
         sys.exit(1)
 
     # Use the app from api.py directly (single source of truth for endpoints)

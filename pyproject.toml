@@ -20,55 +20,59 @@ classifiers = [
     "Development Status :: 4 - Beta",
 ]
 
-# -------------------------------------------------------------------
-# Core runtime deps – array of PEP 508 strings (required by spec)
-# -------------------------------------------------------------------
+# Everything the server + CLI need to fully work. `uv sync` (no flags) installs
+# this plus the `dev` group below -- there are deliberately NO optional extras
+# to remember. The MLX stack is git-sourced (see [tool.uv.sources]) and
+# darwin-only; the `sys_platform` markers keep a base install resolvable on
+# Linux/Windows even though inference itself is Apple-Silicon-only.
 dependencies = [
+    # MLX / model stack (git-sourced; darwin-only)
     "mlx>=0.22.0; sys_platform == 'darwin'",
     "mlx-lm>=0.21.0; sys_platform == 'darwin'",
     "mlx-vlm>=0.3.11; sys_platform == 'darwin'",
-    "transformers>=5.13.1",
+    "transformers>=5.13.1",    # Floor only; the real constraint is the [tool.uv] override below
+    "torch==2.13.0",           # Exact pin (needed transitively by transformers/mlx-vlm; keep it reproducible)
+    # Web framework + server
     "fastapi>=0.104.1",
     "uvicorn[standard]>=0.24.0",
-    "pydantic>=2.5.0",
     "python-multipart>=0.0.6",
+    "pydantic>=2.5.0",
+    # Data + serialization
+    "duckdb>=1.5.2",           # App-DB store: conversations, notebooks, presets, settings
+    "orjson>=3.9.15",          # Fast JSON serialization
     "pyyaml>=6.0.1",
     "tomli-w>=1.0.0",
-    "requests>=2.31.0",
     "numpy>=1.24.0",
+    # Images / IO / system
     "Pillow>=10.0.1",
-    "psutil>=5.9.0",  # System metrics (RAM, CPU)
-    "orjson>=3.9.15",  # Fast JSON serialization
-    "duckdb>=1.5.2",
-    "mlx-lm",
-    "mlx-vlm",
-    "torch>=2.13.0",
-    "mlx",
+    "requests>=2.31.0",
+    "psutil>=5.9.0",           # System metrics (RAM, CPU)
+    # Performance (guarded imports, but the server's fast paths expect them:
+    # turbojpeg = multipart JPEG decode, uvloop = event loop, xxhash/cachetools
+    # = image + cache hashing). Folded into core so `uv sync` gives a fast server.
+    "xxhash>=3.4.1",
+    "PyTurboJPEG>=1.7.5",
+    "cachetools>=5.3.2",
+    "uvloop>=0.19.0; sys_platform != 'win32'",   # Unix-only; excluded on Windows
+    # CLI (the `heylookllm import` wizard + config_tui)
+    "questionary>=2.0.0",
 ]
 
-# ─── Optional groups ────────────────────────────────────────────────────────
-[project.optional-dependencies]
-test = ["pytest>=8", "pytest-mock>=3", "httpx>=0.27", "pytest-asyncio>=0.24"]
-performance = [
-    "xxhash>=3.4.1",       # Fast hashing for caching
-    "PyTurboJPEG>=1.7.5",  # Fast JPEG encoding/decoding
-    "uvloop>=0.19.0",      # Fast async event loop
-    "cachetools>=5.3.2",   # Advanced caching with thread safety
+# Developer tooling. uv installs this group by DEFAULT on `uv sync`, so a plain
+# clone-and-sync gets tests + build + profiling without any extra flags. A PyPI
+# `pip install heylookitsanllm` gets only the runtime deps above (groups are
+# not published), which is exactly right for end users.
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-mock>=3",
+    "pytest-asyncio>=1.3.0",
+    "httpx>=0.27",         # TestClient / API contract tests
+    "build>=1.0.0",        # sdist/wheel builds
+    "twine>=6.0.0",        # PyPI upload
+    "rich>=13.0.0",        # scripts/benchmark.py console output
+    "py-spy>=0.3.14",      # Sampling profiler
 ]
-analytics = [
-    "duckdb>=1.0.0",       # Analytics database
-    "datasets>=2.19.1",    # HuggingFace datasets (data loader)
-]
-profile = [
-    "py-spy>=0.3.14",          # Sampling profiler
-]
-cli = [
-    "questionary>=2.0.0",  # Interactive TUI for config_tui.py and model_importer.py
-]
-scripts = [
-    "rich>=13.0.0",        # Used by scripts/metrics_dashboard.py
-]
-all = ["heylookitsanllm[performance,analytics,profile,cli]"]
 
 [project.urls]
 Homepage = "https://github.com/fblissjr/heylookitsanllm"
@@ -78,6 +82,7 @@ Issues = "https://github.com/fblissjr/heylookitsanllm/issues"
 [project.scripts]
 heylookllm = "heylook_llm.server:main"
 
+# ── Packaging ───────────────────────────────────────────────────────────────
 [tool.setuptools.package-dir]
 "" = "src"
 
@@ -89,27 +94,25 @@ where = ["src"]
 "heylook_llm.data.services" = ["*.template"]
 
 [tool.setuptools.dynamic]
-version = {attr = "heylook_llm.__version__"}
+version = { attr = "heylook_llm.__version__" }
 
+# ── uv resolver config ──────────────────────────────────────────────────────
 [tool.uv]
-# Force latest transformers regardless of what mlx-lm/mlx-vlm pin.
-# transformers 5.x has a bug in video_processing_auto.py (NoneType when
-# torchvision is absent) -- patched in mlx_provider.py.
-override-dependencies = ["transformers>=5.3.0"]
+# An override REPLACES every constraint on transformers across the whole graph,
+# which is the point: it strips the upper bounds mlx-lm/mlx-vlm pin so the
+# resolver always takes the latest 5.x (5.x has a video_processing_auto.py
+# NoneType bug when torchvision is absent -- patched in mlx_provider.py). Kept
+# equal to the [project.dependencies] floor so the two don't appear to disagree.
+override-dependencies = ["transformers>=5.13.1"]
 
+# Git-pinned sources. Both carry an explicit `rev` so the lock is reproducible;
+# bump them to the latest commit with `scripts/update_deps.py` (see scripts/README.md),
+# which re-pins the resolved SHA here -- plain uv has no command that does this.
 [tool.uv.sources]
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "b739dfa4b681951acd4a2d439f343e002e6b3013" }
 mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "cf10f962b7a20e63a6df43dbf0faf06070153d40" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "b739dfa4b681951acd4a2d439f343e002e6b3013" }
 
-[dependency-groups]
-dev = [
-    "pytest>=8.4.2",
-    "build>=1.0.0",
-    "twine>=6.0.0",
-    "pytest-asyncio>=1.3.0",
-]
-
-# ─── Pytest configuration ──────────────────────────────────────────────────────
+# ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

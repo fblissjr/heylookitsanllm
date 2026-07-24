@@ -1,114 +1,32 @@
 #!/bin/bash
-# Automated setup script for heylookitsanllm
+# Automated setup for heylookitsanllm.
+# One install path: `uv sync` pulls the full runtime + dev tooling (no extras).
+set -e
 
-set -e  # Exit on error
-
-echo "Hey Look It's an LLM - Setup Script"
-echo "==================================="
+echo "Hey Look It's an LLM - Setup"
+echo "============================"
 echo ""
 
-# Function to check if command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Function to detect OS
-detect_os() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "macos"
-    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        echo "linux"
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-        echo "windows"
-    else
-        echo "unknown"
-    fi
-}
-
-OS=$(detect_os)
-echo "Detected OS: $OS"
-echo ""
-
-# Require uv
-if ! command_exists uv; then
+if ! command -v uv >/dev/null 2>&1; then
     echo "ERROR: uv is required. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
 fi
-echo "Using uv for package management"
-echo ""
 
-# Function to install with uv sync (uses lockfile, properly resolves dependencies)
-# Usage: uv_sync_install "extra1" "extra2" ...
-uv_sync_install() {
-    echo "Updating lockfile to get latest versions..."
-    uv lock --upgrade-package mlx-lm --upgrade-package mlx-vlm 2>/dev/null || uv lock
-    if [[ $# -eq 0 ]] || [[ -z "$1" ]]; then
-        uv sync
-    else
-        local extra_args=""
-        for extra in "$@"; do
-            extra_args="$extra_args --extra $extra"
-        done
-        uv sync $extra_args
-    fi
-}
-
-# Ask user what to install
-echo "What would you like to install?"
-echo "1) MLX backend (macOS, text + vision models)"
-echo "2) Everything (MLX + performance + analytics + profiling)"
-echo ""
-read -p "Enter your choice (1-2): " choice
-
-# Base installation
-echo ""
-echo "Installing base package..."
-uv_sync_install ""
-
-case $choice in
-    1)
-        echo ""
-        echo "Installing MLX backend..."
-        echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        uv_sync_install "mlx"
-
-        echo ""
-        echo "MLX backend installed successfully!"
-        ;;
-    2)
-        echo ""
-        echo "Installing everything..."
-        echo "Note: This includes mlx-vlm which requires scipy. If you get build errors, run: brew install gcc"
-        uv_sync_install "all"
-
-        echo ""
-        echo "Everything installed successfully!"
-        ;;
-    *)
-        echo "ERROR: Invalid choice"
-        exit 1
-        ;;
+case "$OSTYPE" in
+    darwin*) echo "Detected macOS (Apple Silicon MLX backend supported)." ;;
+    *)       echo "WARNING: non-macOS host -- base install resolves, but MLX inference is Apple-Silicon-only." ;;
 esac
-
-# Check if models.toml exists
 echo ""
-if [[ ! -f "models.toml" ]]; then
-    if [[ -f "models.toml.example" ]]; then
-        echo "Creating models.toml from example..."
-        cp models.toml.example models.toml
-        echo "WARNING:  Please edit models.toml to point to your model files"
-    else
-        echo "WARNING:  No models.toml found. You'll need to create one or use 'heylookllm import'"
-    fi
-else
-    echo "models.toml already exists"
-fi
 
+echo "Installing (full runtime + dev tooling, no extras)..."
+uv sync
 echo ""
-echo "Setup complete!"
+echo "Install complete."
+echo "  (To bump the pinned mlx-lm/mlx-vlm commits later: uv run scripts/update_deps.py)"
 echo ""
 echo "Next steps:"
-echo "1. Edit models.toml to configure your models (or use 'heylookllm import')"
-echo "2. Start the server: heylookllm"
+echo "  1. Add models:   heylookllm import --hf-cache      (or: --folder <dir>)"
+echo "  2. Start server: heylookllm"
+echo "  3. Open the UI:  http://localhost:8080/v3"
 echo ""
-echo "For more options, run: heylookllm --help"
+echo "More options: heylookllm --help"

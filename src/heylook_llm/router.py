@@ -52,9 +52,9 @@ class ModelRouter:
             logging.debug("MLX provider is available")
         else:
             if 'MLX_IMPORT_ERROR' in globals() and 'mlx_vlm' in MLX_IMPORT_ERROR:
-                logging.warning("MLX provider not available: mlx-vlm not installed. Run: uv sync --extra mlx")
+                logging.warning("MLX provider not available: mlx-vlm not installed. Run: uv sync")
             else:
-                logging.debug("MLX provider not available. Install with: uv sync --extra mlx")
+                logging.debug("MLX provider not available. Install with: uv sync")
 
         self.log_level = log_level
 
@@ -276,7 +276,7 @@ class ModelRouter:
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:
                 if model_config.provider == "mlx" and not HAS_MLX:
-                    raise ValueError(f"MLX provider requested but not installed. Run: uv sync --extra mlx")
+                    raise ValueError(f"MLX provider requested but not installed. Run: uv sync")
                 else:
                     raise ValueError(f"Unknown provider: {model_config.provider}")
 

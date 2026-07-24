@@ -2297,13 +2297,9 @@ Models are configured in `models.toml`. The server automatically loads models on
 
 ## 📈 Performance Optimization
 
-Install with performance extras for maximum speed:
-```bash
-pip install heylookllm[performance]
-```
-
-This enables:
-- uvloop for faster async
+The performance stack is part of the base install (`uv sync` / `pip install heylookitsanllm`),
+no extras required:
+- uvloop for faster async (non-Windows)
 - orjson for 10x faster JSON
 - TurboJPEG for fast image processing
 - xxHash for ultra-fast caching
