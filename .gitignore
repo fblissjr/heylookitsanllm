@@ -60,7 +60,35 @@ apps/optloop-lib/results.tsv
 apps/optloop-lib/data/
 apps/optloop-lib/repos/
 apps/optloop-lib/uv.lock
-.claude
+
+# .claude: local-by-default, with the REPO-CONTRACT subset tracked
+# (decided 2026-07-26). Tracked: delegation rule + its two agents, the
+# skills that wrap git-tracked runners (test-suite, dev-server, eval-ab,
+# gguf-probe), and the four hookify rules encoding repo invariants
+# (hookify requires the .local.md name -- its loader glob is hardcoded).
+# Everything else (settings.local.json, agent-memory, worktrees, machine-
+# specific hookify rules, optloop skills for now) stays untracked.
+# Per-FILE negations on purpose: a bare !.claude/skills/ would make any
+# FUTURE file in the tree tracked-by-default (silent publish) -- this list
+# must stay in lockstep with the pre-commit hook's ALLOWED_PATHS.
+.claude/*
+!.claude/rules/
+.claude/rules/*
+!.claude/rules/model-delegation.md
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/fast-executor.md
+!.claude/agents/task-coder.md
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/test-suite/
+!.claude/skills/dev-server/
+!.claude/skills/eval-ab/
+!.claude/skills/gguf-probe/
+!.claude/hookify.version-sync.local.md
+!.claude/hookify.eval-gate.local.md
+!.claude/hookify.models-toml-validate.local.md
+!.claude/hookify.pydantic-positional-field.local.md
 
 # Distribution / packaging
 .Python
