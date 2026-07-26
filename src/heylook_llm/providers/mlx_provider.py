@@ -20,6 +20,9 @@ from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from ..samplers import get_sampler_registry
 from .abort import AbortEvent
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
+# Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
+# (the llama-server provider applies the same floor).
+from ..samplers import GLOBAL_SAMPLER_FLOOR
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import wrap_language_model
@@ -686,10 +689,6 @@ class DiffusionStrategy:
             stream.close()
 
 
-# Layer-1 sampler floor -- now provider-shared, defined in heylook_llm.samplers
-# (the llama-server provider applies the same floor). Re-imported here so the
-# cascade reads the same as before.
-from ..samplers import GLOBAL_SAMPLER_FLOOR
 
 
 class MLXProvider(BaseProvider):

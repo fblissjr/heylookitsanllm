@@ -35,6 +35,7 @@ from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
 from heylook_llm.samplers import SamplerNotFound
 from heylook_llm.reasoning_parser import (
+    merge_presplit_thinking,
     effective_thinking_flag,
     parse_reasoning,
     select_reasoning_parser,
@@ -999,6 +1000,25 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
         }
         return f"data: {json.dumps(response)}\n\n"
 
+    def note_delta(delta_type: str) -> None:
+        """Timing/counter bookkeeping shared by the pre-split thinking branch
+        and the parser-output loop (the same shape messages_api factored into
+        StreamingEventTranslator._emit_delta)."""
+        nonlocal thinking_start_time, thinking_end_time, content_start_time
+        nonlocal first_output_time, thinking_tokens, content_tokens
+        if delta_type == "thinking":
+            if thinking_start_time is None:
+                thinking_start_time = time.time()
+            thinking_tokens += 1
+        else:  # content
+            if thinking_start_time is not None and thinking_end_time is None:
+                thinking_end_time = time.time()
+            if content_start_time is None:
+                content_start_time = time.time()
+            content_tokens += 1
+        if first_output_time is None:
+            first_output_time = time.time()
+
     # Per-request abort event passed in by the route (set on client disconnect
     # to cancel THIS request's generation only).
 
@@ -1036,11 +1056,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             # The text parser below only ever sees chunk.text.
             chunk_thinking = getattr(chunk, 'thinking', None)
             if chunk_thinking:
-                if thinking_start_time is None:
-                    thinking_start_time = time.time()
-                if first_output_time is None:
-                    first_output_time = time.time()
-                thinking_tokens += 1
+                note_delta("thinking")
                 yield make_delta("thinking", chunk_thinking)
 
             if not chunk.text:
@@ -1074,20 +1090,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             deltas = thinking_parser.process_chunk(chunk.text, token_id=token_id)
             for delta_type, text in deltas:
                 if text:
-                    # Track timing and token counts by type
-                    if delta_type == "thinking":
-                        if thinking_start_time is None:
-                            thinking_start_time = time.time()
-                        thinking_tokens += 1
-                    else:  # content
-                        if thinking_start_time is not None and thinking_end_time is None:
-                            thinking_end_time = time.time()
-                        if content_start_time is None:
-                            content_start_time = time.time()
-                        content_tokens += 1
-
-                    if first_output_time is None:
-                        first_output_time = time.time()
+                    note_delta(delta_type)
                     yield make_delta(delta_type, text, logprobs_delta)
                     logprobs_delta = None  # Only include logprobs in first delta for this token
 
@@ -1396,11 +1399,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         ),
     )
 
-    # Pre-split reasoning (chunk.thinking, engines that separate it before
-    # it reaches us) merges AHEAD of anything the text parser extracted --
-    # a provider pre-splits or it doesn't, so in practice one side is empty.
-    if pre_thinking_parts:
-        thinking = "".join(pre_thinking_parts) + (thinking or "")
+    thinking = merge_presplit_thinking(pre_thinking_parts, thinking)
 
     message = {"role": "assistant", "content": content}
     if thinking is not None:

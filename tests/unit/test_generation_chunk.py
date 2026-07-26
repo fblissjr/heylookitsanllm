@@ -47,7 +47,6 @@ class TestGenerationChunkShape:
         assert c.cached_tokens == 0
         assert c.kv_cache_bytes == 0
         assert c.queue_wait_ms == 0.0
-        assert c.from_draft is False
 
     def test_slotted_no_attr_patching(self):
         c = GenerationChunk(text="hi")
@@ -65,7 +64,6 @@ class TestGenerationChunkShape:
             prompt_tps=100.0,
             generation_tps=50.0,
             peak_memory=1.5,
-            from_draft=True,
         )
         c = GenerationChunk.from_engine(engine)
         assert c.text == "tok"
@@ -77,7 +75,6 @@ class TestGenerationChunkShape:
         assert c.prompt_tps == 100.0
         assert c.generation_tps == 50.0
         assert c.peak_memory == 1.5
-        assert c.from_draft is True
 
     def test_from_engine_sparse(self):
         # Diffusion / first-vision-token chunks carry only a subset.

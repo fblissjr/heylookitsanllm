@@ -95,14 +95,14 @@ def sanitize_request_for_debug(chat_request) -> str:
                         'url' in content_part['image_url']):
 
                         url = content_part['image_url']['url']
-                        content_part['image_url']['url'] = _truncate_image_url(url)
+                        content_part['image_url']['url'] = _truncate_b64_field(url)
 
                     # Base64 audio blows up logs exactly like base64 images
                     elif (content_part.get('type') == 'input_audio' and
                           isinstance(content_part.get('input_audio'), dict) and
                           content_part['input_audio'].get('data')):
                         data = content_part['input_audio']['data']
-                        content_part['input_audio']['data'] = _truncate_image_url(data)
+                        content_part['input_audio']['data'] = _truncate_b64_field(data)
 
     # Add image summary to the top of the request for easy visibility
     if image_stats['count'] > 0:
@@ -149,9 +149,10 @@ def _analyze_images_in_request(request_dict: Dict[str, Any]) -> Dict[str, Any]:
     
     return image_stats
 
-def _truncate_image_url(url: str, max_chars: int = 100) -> str:
+def _truncate_b64_field(url: str, max_chars: int = 100) -> str:
     """
-    Truncate a base64 image URL to show beginning and end, keeping it to 1-2 lines.
+    Truncate a base64 payload (image data URL or raw audio base64) to show
+    beginning and end, keeping it to 1-2 lines.
 
     Why: Preserves the actual data structure while making logs readable.
     Shows enough to verify the image is there without massive output.

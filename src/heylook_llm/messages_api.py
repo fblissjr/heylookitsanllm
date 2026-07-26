@@ -35,6 +35,7 @@ from heylook_llm.perf_collector import (
 )
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.reasoning_parser import (
+    merge_presplit_thinking,
     effective_thinking_flag,
     parse_reasoning,
     select_reasoning_parser,
@@ -377,10 +378,7 @@ async def _non_stream_messages(
         ),
     )
 
-    # Pre-split reasoning (chunk.thinking) merges ahead of parser output;
-    # in practice a provider pre-splits or it doesn't, so one side is empty.
-    if pre_thinking_parts:
-        thinking = "".join(pre_thinking_parts) + (thinking or "")
+    thinking = merge_presplit_thinking(pre_thinking_parts, thinking)
 
     # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict.
     # mlx-lm's own reason: "length" (budget exhausted) must not read as "stop"

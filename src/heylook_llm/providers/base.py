@@ -39,7 +39,6 @@ class GenerationChunk:
     cached_tokens: int = 0
     kv_cache_bytes: int = 0
     queue_wait_ms: float = 0.0
-    from_draft: bool = False
     # Spec-decode acceptance, CUMULATIVE running totals for the request
     # (llama-server reports them on the final timings frame; MLX stamps the
     # running counters on every chunk). ChunkTelemetry latches the max.
@@ -60,7 +59,6 @@ class GenerationChunk:
             prompt_tps=getattr(r, "prompt_tps", 0.0) or 0.0,
             generation_tps=getattr(r, "generation_tps", 0.0) or 0.0,
             peak_memory=getattr(r, "peak_memory", 0.0) or 0.0,
-            from_draft=bool(getattr(r, "from_draft", False)),
         )
 
 

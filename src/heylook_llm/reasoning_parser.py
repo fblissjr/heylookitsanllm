@@ -568,3 +568,16 @@ def parse_reasoning(
     content = "".join(content_parts)
     thinking = "".join(thinking_parts) if thinking_parts else None
     return content, thinking
+
+
+def merge_presplit_thinking(
+    pre_parts: List[str], parsed_thinking: Optional[str]
+) -> Optional[str]:
+    """Merge engine-PRE-SPLIT reasoning (GenerationChunk.thinking, e.g.
+    llama-server's reasoning_content) ahead of anything the text parser
+    extracted. In practice a provider pre-splits or it doesn't, so one side
+    is empty -- but the ordering is pinned here, in ONE place, so the two
+    non-streaming consume paths (chat + messages) can never drift."""
+    if not pre_parts:
+        return parsed_thinking
+    return "".join(pre_parts) + (parsed_thinking or "")

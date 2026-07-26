@@ -192,7 +192,7 @@ function buildSkeleton(ctx) {
       .filter(Boolean);
     if (files.length) {
       e.preventDefault();
-      addImages(ctx, files);
+      addPendingFiles(ctx, files, ATTACH_KINDS.image);
     }
   });
   s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
@@ -561,7 +561,7 @@ function buildMessageEl(ctx, msg) {
   else content.textContent = msg.content;
 
   const bubbleChildren = [];
-  if (hasImageBlocks(msg)) {
+  if (hasBlocks(msg, 'image')) {
     bubbleChildren.push(createEl('div', { class: 'message-images' },
       msg.content_blocks
         .filter((b) => b.type === 'image')
@@ -571,7 +571,7 @@ function buildMessageEl(ctx, msg) {
           alt: 'attached image',
         }))));
   }
-  if (hasAudioBlocks(msg)) {
+  if (hasBlocks(msg, 'audio')) {
     bubbleChildren.push(createEl('div', { class: 'message-audio-list' },
       msg.content_blocks
         .filter((b) => b.type === 'audio')
@@ -732,47 +732,42 @@ function fileToDataUrl(file) {
 
 // Picker dispatch: the input's accept list is capability-driven, but a
 // picker can't be trusted (drag/drop, "All files") -- split by MIME here.
+// One staging routine parameterized per kind (the repo's shared-factory
+// discipline: a cap/guard fix lands once, never in a per-kind twin).
+const ATTACH_KINDS = {
+  image: {
+    mime: 'image/', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
+    label: 'image', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type }),
+  },
+  audio: {
+    mime: 'audio/', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
+    label: 'audio clip', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type, name: f.name }),
+  },
+};
+
 function addFiles(ctx, files) {
   const all = [...files];
-  addImages(ctx, all.filter((f) => f.type.startsWith('image/')));
-  addAudio(ctx, all.filter((f) => f.type.startsWith('audio/')));
+  for (const kind of Object.values(ATTACH_KINDS)) {
+    addPendingFiles(ctx, all.filter((f) => f.type.startsWith(kind.mime)), kind);
+  }
 }
 
-async function addImages(ctx, files) {
-  const s = ctx.state;
+async function addPendingFiles(ctx, files, kind) {
+  const pending = ctx.state[kind.stateKey];
   const reads = await Promise.all([...files]
-    .filter((f) => f.type.startsWith('image/'))
     .map((f) => fileToDataUrl(f)
-      .then((dataUrl) => ({ dataUrl, mediaType: f.type }))
+      .then((dataUrl) => kind.toEntry(f, dataUrl))
       .catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) return;
   const usable = reads.filter(Boolean);
   if (!usable.length) return;
-  const room = Math.max(MAX_ATTACH_IMAGES - s.pendingImages.length, 0);
-  s.pendingImages.push(...usable.slice(0, room));
+  const room = Math.max(kind.max - pending.length, 0);
+  pending.push(...usable.slice(0, room));
   renderAttachStrip(ctx);
   // aria-live: chat__status is role="status" -- this announces the cap to
   // screen readers, not just the sighted strip.
   if (usable.length > room) {
-    showStatus(ctx, `${MAX_ATTACH_IMAGES} image max -- ${usable.length - room} not attached.`);
-  }
-}
-
-async function addAudio(ctx, files) {
-  const s = ctx.state;
-  const reads = await Promise.all([...files]
-    .filter((f) => f.type.startsWith('audio/'))
-    .map((f) => fileToDataUrl(f)
-      .then((dataUrl) => ({ dataUrl, mediaType: f.type, name: f.name }))
-      .catch(() => null)));
-  if (!ctx.alive) return;
-  const usable = reads.filter(Boolean);
-  if (!usable.length) return;
-  const room = Math.max(MAX_ATTACH_AUDIO - s.pendingAudio.length, 0);
-  s.pendingAudio.push(...usable.slice(0, room));
-  renderAttachStrip(ctx);
-  if (usable.length > room) {
-    showStatus(ctx, `${MAX_ATTACH_AUDIO} audio clip max -- ${usable.length - room} not attached.`);
+    showStatus(ctx, `${kind.max} ${kind.label} max -- ${usable.length - room} not attached.`);
   }
 }
 
@@ -817,16 +812,12 @@ function renderAttachStrip(ctx) {
 
 // Stored shape is Messages-style content blocks (what the server persists);
 // hasMediaBlocks gates the flows that only make sense for text (edit).
-function hasImageBlocks(msg) {
-  return Boolean(msg.content_blocks?.some((b) => b.type === 'image'));
-}
-
-function hasAudioBlocks(msg) {
-  return Boolean(msg.content_blocks?.some((b) => b.type === 'audio'));
+function hasBlocks(msg, type) {
+  return Boolean(msg.content_blocks?.some((b) => b.type === type));
 }
 
 function hasMediaBlocks(msg) {
-  return hasImageBlocks(msg) || hasAudioBlocks(msg);
+  return hasBlocks(msg, 'image') || hasBlocks(msg, 'audio');
 }
 
 // One place that knows how a media block becomes a data/remote URL.

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.2]
+
+### Changed
+
+- /simplify pass over the day's range (4 cleanup reviewers; 7 fixes
+  applied, 6 deliberate skips recorded):
+  - `merge_presplit_thinking` extracted into `reasoning_parser.py` -- the
+    byte-identical merge at both non-streaming consume sites (chat +
+    messages) now lives once, next to `parse_reasoning`.
+  - api.py streaming grew the same `note_delta` bookkeeping extraction
+    messages_api's translator already had -- the pre-split branch and the
+    parser-delta loop share one timing/counter routine.
+  - chat.js: `addImages`/`addAudio` copy-paste twins collapsed into one
+    `addPendingFiles(ctx, files, kind)` driven by an `ATTACH_KINDS`
+    table; `hasImageBlocks`/`hasAudioBlocks` collapsed into
+    `hasBlocks(msg, type)`.
+  - `GenerationChunk.from_draft` dropped -- dead migration carryover
+    (nothing read it; the spec-decode signal is the cumulative
+    `draft_tokens`/`draft_accepted`).
+  - `_truncate_image_url` renamed `_truncate_b64_field` (it truncates
+    audio too now); mid-file `GLOBAL_SAMPLER_FLOOR` import hoisted.
+  - Skipped on purpose: importer triple-iterdir (explicit-scan-only
+    cost), `absorb()` getattr tolerance (load-bearing for test fakes),
+    capability-inference if/elif + registry sync points + MLX audio-guard
+    placement + truncation table (all judged right-altitude or
+    wait-for-third-case by the altitude reviewer).
+  - Verified: backend 1187 green; E2E chat 40/40 (attach flow was
+    refactored, so the browser suite re-ran).
+
 ## [1.44.1]
 
 ### Fixed
