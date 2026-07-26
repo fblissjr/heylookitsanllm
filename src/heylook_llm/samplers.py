@@ -216,3 +216,19 @@ def reset_sampler_registry_for_test(replacement: SamplerRegistry | None = None) 
 def known_preset_names() -> Iterable[str]:
     """Convenience for diagnostics / API surfaces that want the list."""
     return get_sampler_registry().list_names()
+
+
+# Layer-1 sampler floor: what a request gets when neither the request, a
+# named sampler, nor the model config says anything. Chat-sane values (the
+# old 0.1/512 floor made freshly imported models near-greedy and truncated
+# long answers mid-sentence). Shared by ALL providers -- MLX overlays it in
+# _apply_model_defaults, the llama-server provider in _build_payload.
+GLOBAL_SAMPLER_FLOOR = {
+    'temperature': 0.7,
+    'top_p': 1.0,
+    'top_k': 0,
+    'min_p': 0.0,
+    'max_tokens': 4096,
+    'repetition_penalty': 1.0,
+    'presence_penalty': 0.0,
+}

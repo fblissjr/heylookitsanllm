@@ -669,20 +669,10 @@ class DiffusionStrategy:
             stream.close()
 
 
-# Layer-1 sampler floor: what a request gets when neither the request, a
-# preset, nor the model config says anything. Chat-sane values -- this is the
-# de-facto default for freshly imported models with no default_sampler (the
-# old 0.1/512 floor made every such model near-greedy and truncated long
-# answers mid-sentence).
-GLOBAL_SAMPLER_FLOOR = {
-    'temperature': 0.7,
-    'top_p': 1.0,
-    'top_k': 0,
-    'min_p': 0.0,
-    'max_tokens': 4096,
-    'repetition_penalty': 1.0,
-    'presence_penalty': 0.0,
-}
+# Layer-1 sampler floor -- now provider-shared, defined in heylook_llm.samplers
+# (the llama-server provider applies the same floor). Re-imported here so the
+# cascade reads the same as before.
+from ..samplers import GLOBAL_SAMPLER_FLOOR
 
 
 class MLXProvider(BaseProvider):

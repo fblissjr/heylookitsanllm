@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0]
+
+### Added
+
+- **GGUF provider via llama-server subprocess** (plan Phase 7b,
+  `provider = "gguf"`). One managed llama-server process per loaded model:
+  spawn in its own process group with a free port, poll `/health` until
+  ready (503 = still loading; process exit = load failure), stream the
+  subprocess's OpenAI-compat `/v1/chat/completions` and adapt SSE frames to
+  `GenerationChunk` -- `reasoning_content` deltas become `chunk.thinking`
+  (llama-server pre-splits reasoning; heylook's parser stack stays
+  pass-through via `template_info() = None`), `timings` map to
+  prompt/generation tps and cached-token counts. Unload = SIGTERM the
+  process group (SIGKILL after 10s), so router LRU/idle-unload just work.
+  Pure stdlib -- imports and runs with no MLX present.
+- `GGUFModelConfig` (`models.toml`): model_path, mmproj_path,
+  draft_model_path + spec_type/spec_draft_n_max (MTP/speculative -- sidecar
+  drafters and embedded-MTP GGUFs both expressible as FIELDS on the one
+  entry), ctx_size, n_gpu_layers, server_binary
+  (default `$HEYLOOK_LLAMA_SERVER` or the coderef build), extra_args,
+  default_sampler, supports_thinking/modalities capability description.
+- Sampler cascade for gguf mirrors MLX: `GLOBAL_SAMPLER_FLOOR` (now shared
+  in `samplers.py`) -> model `default_sampler` -> request `sampler` ->
+  explicit request fields; `repetition_penalty` maps to llama.cpp's
+  `repeat_penalty`; `max_tokens` is ALWAYS sent (llama-server's default is
+  unlimited); `enable_thinking` -> `chat_template_kwargs`.
+- `_infer_model_capabilities` gguf branch: chat always; vision from
+  mmproj/modalities; thinking from the explicit flag; never
+  hidden_states/logprobs (MLX-only). Fixes the silent eval-bank
+  under-testing a capability-less provider would cause.
+- Live-verified on gemma-4 E4B UD-Q4_K_XL (Metal build of
+  coderef/llama.cpp): 12s load, text + vision (mmproj) + pre-split
+  thinking (993-char reasoning trace on a multi-step problem;
+  `<|think|>` injection confirmed via /apply-template), prefix-cache
+  hits reported, clean SIGTERM shutdown.
+
 ## [1.40.0]
 
 ### Changed

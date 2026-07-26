@@ -270,11 +270,14 @@ class ModelRouter:
                 available = [m.id for m in self.app_config.get_enabled_models()]
                 raise ValueError(f"Model '{model_id}' not found or disabled. Available: {available}")
 
+            # Keep keys in sync with config.PROVIDER_CONFIG_CLASSES.
             provider_map = {}
             if MLXProvider:
                 provider_map["mlx"] = MLXProvider
             if MLXEmbeddingProvider:
                 provider_map["mlx_embedding"] = MLXEmbeddingProvider
+            from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+            provider_map["gguf"] = LlamaServerProvider
 
             provider_class = provider_map.get(model_config.provider)
             if not provider_class:

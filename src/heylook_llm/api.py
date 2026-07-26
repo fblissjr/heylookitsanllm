@@ -391,6 +391,19 @@ def _infer_model_capabilities(model_config) -> list[str]:
         if provider == "mlx":
             capabilities.append("hidden_states")
 
+    # GGUF via llama-server subprocess. Capabilities come from the entry's
+    # own description (mmproj sidecar / modalities / explicit thinking flag)
+    # -- no template probing (the template lives inside GGUF metadata), and
+    # NEVER hidden_states/logprobs (MLX-only surfaces). The explicit
+    # ModelConfig.capabilities override short-circuits this entirely.
+    elif provider == "gguf":
+        capabilities.append("chat")
+        modalities = getattr(config, "modalities", None) or []
+        if getattr(config, "mmproj_path", None) or "vision" in modalities:
+            capabilities.append("vision")
+        if getattr(config, "supports_thinking", None):
+            capabilities.append("thinking")
+
     return capabilities
 
 

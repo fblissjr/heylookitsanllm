@@ -281,6 +281,38 @@ class MLXEmbeddingModelConfig(BaseModel):
     max_length: int = 2048
     pooling: Literal["mean", "cls", "none"] = "mean"
 
+class GGUFModelConfig(BaseModel):
+    """A GGUF model served by a llama-server SUBPROCESS (plan Phase 7).
+
+    One entry = one servable model; MTP/draft artifacts are FIELDS here,
+    never their own entries (embedded MTP -> just ``spec_type``; a sidecar
+    drafter -> ``draft_model_path``; the same field the MLX config uses).
+    llama-server owns tokenization, chat templating (GGUF-embedded jinja),
+    and reasoning splitting -- the provider surfaces pre-split thinking via
+    GenerationChunk.thinking and reports template_info() = None.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: str  # path to the .gguf file
+    mmproj_path: Optional[str] = None  # multimodal projector sidecar
+    draft_model_path: Optional[str] = None  # sidecar drafter (e.g. gemma mtp-*.gguf)
+    spec_type: Optional[str] = None  # llama-server --spec-type (e.g. "draft-mtp")
+    spec_draft_n_max: Optional[int] = Field(default=None, ge=1, le=16)
+    ctx_size: Optional[int] = Field(default=None, ge=512)
+    n_gpu_layers: int = 999  # -ngl; 999 = everything on GPU
+    server_binary: Optional[str] = None  # default: $HEYLOOK_LLAMA_SERVER or coderef build
+    host: str = "127.0.0.1"
+    port: int = 0  # 0 = pick a free port at load
+    startup_timeout_s: float = 300.0
+    extra_args: List[str] = Field(default_factory=list)  # raw passthrough flags
+    default_sampler: Optional[str] = None  # named sampler (SamplerRegistry)
+    max_tokens: Optional[int] = Field(default=None, gt=0)  # model-level default cap
+    # Capability DESCRIPTION (no cheap GGUF-metadata probe yet; the explicit
+    # ModelConfig.capabilities override also short-circuits inference):
+    supports_thinking: Optional[bool] = None
+    modalities: Optional[List[str]] = None
+
+
 # Single source of truth for which providers exist and which config class
 # validates each one's `config` block. Adding a provider = add an entry here
 # + widen the Literal below + register the provider class in router.py's
@@ -288,13 +320,14 @@ class MLXEmbeddingModelConfig(BaseModel):
 PROVIDER_CONFIG_CLASSES: Dict[str, type] = {
     "mlx": MLXModelConfig,
     "mlx_embedding": MLXEmbeddingModelConfig,
+    "gguf": GGUFModelConfig,
 }
 
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "mlx_embedding"]
-    config: Union[MLXModelConfig, MLXEmbeddingModelConfig]
+    provider: Literal["mlx", "mlx_embedding", "gguf"]
+    config: Union[MLXModelConfig, MLXEmbeddingModelConfig, GGUFModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True

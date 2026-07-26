@@ -179,9 +179,13 @@ class TestProviderSurface:
 
 class TestProviderConfigRegistry:
     def test_registry_keys_match_literal(self):
-        from heylook_llm.config import PROVIDER_CONFIG_CLASSES
+        import typing
 
-        assert set(PROVIDER_CONFIG_CLASSES) == {"mlx", "mlx_embedding"}
+        from heylook_llm.config import PROVIDER_CONFIG_CLASSES, ModelConfig
+
+        # The registry and the ModelConfig.provider Literal must never drift.
+        literal = set(typing.get_args(ModelConfig.model_fields["provider"].annotation))
+        assert set(PROVIDER_CONFIG_CLASSES) == literal
 
     def test_validator_uses_registry(self):
         from heylook_llm.config import ModelConfig, MLXModelConfig
@@ -196,5 +200,5 @@ class TestProviderConfigRegistry:
 
         with pytest.raises(Exception):
             ModelConfig.model_validate(
-                {"id": "m", "provider": "gguf", "config": {"model_path": "/x"}}
+                {"id": "m", "provider": "onnx", "config": {"model_path": "/x"}}
             )
