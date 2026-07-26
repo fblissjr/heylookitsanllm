@@ -584,11 +584,27 @@ None currently.
 - [ ] Add subparser to `server.py`
 - [ ] Integrate into server.py CLI
 
-#### llama-server Provider -- SUPERSEDED 2026-07-26
-Absorbed into `plan_2026-07.md` Phase 7 (gguf provider, stages 7a-7e:
-seam hardening -> provider v1 -> spec decode -> audio -> importer).
-Dossiers: `internal/research/gguf_provider_viability_2026-07.md` +
-`gguf_driving_models_2026-07.md`. Driving models on disk at `modelzoo/gguf/`.
+#### llama-server Provider -- SUPERSEDED 2026-07-26 (and then BUILT same day)
+Absorbed into `plan_2026-07.md` Phase 7 and executed v1.40.0-1.44.2 (7a-7e
+detection all DONE). Dossiers:
+`internal/research/gguf_provider_viability_2026-07.md` +
+`gguf_driving_models_2026-07.md`. Driving models at `modelzoo/gguf/`.
+
+#### gguf follow-ups (post-Phase-7 loose ends, 2026-07-26)
+- [ ] GGUF-metadata reading in the importer: auto-detect audio modality +
+      thinking capability from the file's own metadata (today: audio via
+      manual `modalities`, thinking via `supports_thinking` flag).
+- [ ] gemma-4 12B MTP A/B on Metal (E4B measured net loss, Qwen3.6 +21%;
+      12B unmeasured -- entry has the drafter paired, spec_type set:
+      measure before trusting).
+- [ ] E2E: no browser-suite coverage for the audio attach flow (needs a
+      gguf E2E_MODEL; today's coverage = contract tests + live eval bank).
+- [ ] llama-server binary lifecycle: coderef build is pinned by checkout,
+      not recorded anywhere machine-readable -- consider stamping the
+      build SHA into logs at provider load.
+- [ ] Importer scan currently iterates each gguf dir 3x (pickers) --
+      fold into one listing pass next time that file is open (flagged by
+      /simplify efficiency review; scan-only cost, deliberately deferred).
 
 ### Optimization Plan Doc Refresh
 - [x] Update `docs/mlx_optimization_plan.md` -- phase 5 updated for v1.18.0 pre-filled cache pattern

@@ -1,9 +1,44 @@
 # Current Work
 
-Last updated: 2026-07-23 (v1.39.1-.16 -- v3 preset/sysprompt data-loss fix,
-shared preset bar + prompt section, full E2E rebuild, then the parser
-strip/holdback unification + the empty-reply root-cause; jlens-mlx side-track
-below unchanged since 2026-07-13)
+Last updated: 2026-07-26 (Phase 7 gguf provider arc, v1.40.0-1.44.2; the
+2026-07-23 narrative below is unchanged)
+
+UPDATE 2026-07-26 (PHASE 7, one day, v1.39.17 -> v1.44.2, 14 commits --
+multi-provider is REAL again; full record: the session log + plan Phase 7 +
+`internal/research/gguf_*_2026-07.md` dossiers):
+
+- **SOLID -- provider seam (7a, v1.40.0)**: owned `GenerationChunk`
+  (slotted, thinking channel, no error flag -- errors raise), BaseProvider
+  capability surface (provider_name/template_info()), PROVIDER_CONFIG_CLASSES
+  registry, dead mx.clear_cache gates fixed. OpenAPI byte-identical.
+- **SOLID -- gguf/llama-server provider (7b, v1.41.0)**: subprocess-per-model
+  (spawn/health/SIGTERM = router LRU), SSE->chunk adapter, sampler cascade.
+  Eval bank 13/13 through the server on gemma-4-E4B gguf. Driver fleet in
+  models.toml (E4B/12B/Qwen3.6s, modelzoo/gguf symlink).
+- **SOLID -- spec decode (7c, v1.41.0-.42.0)**: both MTP stints live-verified
+  on Metal (gemma sidecar drafter, qwen embedded); MEASURED model-dependent
+  (+21% Qwen3.6 thinking @ 0.62 acceptance; NET LOSS on E4B) -> per-model
+  opt-in policy; acceptance telemetry chunk->RequestEvent->trends->perf page.
+- **SOLID -- audio input (7d, v1.42.0-.43.0)**: gguf-only `input_audio`
+  parts + Messages AudioBlock + converters; MLX 400s loudly (was
+  silent-drop); v3 capability-gated attach (fixed the never-gated image
+  button) + audio chips/players; 2 audio eval tasks (bank 15/15 live).
+- **SOLID -- gguf importer (7e detection, v1.44.0)**: scan builds gguf
+  entries (mmproj-anywhere-in-name pairing, root mtp- drafter pairing,
+  spec_type never auto-set), REFUSES HF assistant checkpoints, ignores
+  imatrix. Real-fleet verified 6/8 dirs (2 assistants correctly skipped).
+  Registry-substrate half (tomlkit merge, admin CRUD) stays with Phase 6.
+- **Hardening (v1.44.1-.2)**: 5-reviewer /code-review (2 real bugs: dead
+  gguf max_tokens overlay; Messages draft-telemetry omission) + 4-reviewer
+  /simplify (presplit-merge + note_delta extractions, ATTACH_KINDS table,
+  dead from_draft field dropped). Backend 1187 green; E2E chat 40/40.
+- **Standing decisions recorded**: no gguf PIVOT (option purchase; posture
+  doc validated, not amended); spec decode per-model; v3 gates modality UI
+  off `capabilities` (modalities stays server-side description); trust
+  order source > GGUF headers > model cards > docs pages (unsloth's MTP
+  page had embedded/sidecar BACKWARDS).
+- **Next per re-plan 2026-07-26**: Phase 2 (api.py decomposition) -- it
+  grew again today and is formally recommitted ahead of Phase 3b.
 
 UPDATE 2026-07-23 late (v1.39.12-.16, all eight handoff-memo findings closed;
 memo + reasoning in `internal/handoff_findings_2026-07-23.md`):

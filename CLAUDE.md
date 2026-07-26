@@ -9,7 +9,7 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 
 ## Orient first
 
-- **Roadmap** -- the master plan, phased 0-5 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration): [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md).
+- **Roadmap** -- the master plan, phased 0-7 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration; Phase 7 = gguf/llama-server provider, done 2026-07-26 except the Phase-6-coupled registry substrate): [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md).
 - **Status + backlog**: [docs/project/CURRENT.md](./docs/project/CURRENT.md) (graded done/left narrative), [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
 - **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [docs/frontend_v3.md](./docs/frontend_v3.md) (git-tracked). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract).
 - Deep dives: **backend reference** is git-tracked in [docs/architecture/](./docs/architecture/) (config, mlx_provider, ecosystem_strategy -- design records + invariants only, the live surface is code + /openapi.json; see its [README](./docs/architecture/README.md)); crash **postmortems** (read before touching providers) are in [docs/architecture/postmortems/](./docs/architecture/postmortems/). Local-only in [internal/](./internal/): `log/`, `research/`, `thoughts/`, and stale subsystem notes (batch/logprobs/thinking) pending refresh. The old React-frontend docs are in `internal/frontend/archive/`.
@@ -19,8 +19,25 @@ frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, l
 
 ## Architecture
 
-**Backend `src/heylook_llm/`** -- Two providers (`Literal["mlx", "mlx_embedding"]`):
-MLXProvider (text+vision), MLXEmbeddingProvider. Router keeps `max_loaded_models=1`
+**Backend `src/heylook_llm/`** -- Three providers (`Literal["mlx", "mlx_embedding", "gguf"]`,
+single source of truth `config.PROVIDER_CONFIG_CLASSES`; router provider_map must stay
+key-synced): MLXProvider (text+vision), MLXEmbeddingProvider, LlamaServerProvider
+(gguf -- ONE llama-server SUBPROCESS per loaded model; "loaded" == "running process",
+so LRU/idle-unload = spawn/SIGTERM; pure stdlib, no MLX import). Provider OUTPUT is the
+owned `GenerationChunk` (providers/base.py, slotted -- new telemetry = a FIELD there
+absorbed in perf_collector.ChunkTelemetry, never an attr-patch; `thinking` carries
+engine-PRE-SPLIT reasoning, e.g. llama-server's reasoning_content; errors RAISE
+GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-server
+runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
+heylook's parsers to pass-through -- never re-parse another engine's split output);
+always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
+(`spec_type = "draft-mtp"`) is per-model opt-in -- measured +21% on Qwen3.6 thinking,
+NET LOSS on small gemmas; gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
+importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
+local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
+`$HEYLOOK_LLAMA_SERVER` (default coderef/llama.cpp/build/bin/llama-server). Audio input
+(`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
+load) -- the 400 guard lives in MLXProvider.create_chat_completion. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
 config in `models.toml`. API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
