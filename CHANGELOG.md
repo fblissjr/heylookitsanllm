@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.5]
+
+### Fixed
+
+- **Model routing failure is now 400, not 500** (`/v1/chat/completions` and
+  `/v1/messages`). `router.get_provider` raises ValueError for an unknown or
+  disabled model id -- and, now that `default_model` is optional, for a request
+  that names no model with no default configured. Both escaped to the generic
+  handler as a 500. Providers signal their own failures with typed
+  `GenerationFailed`/`InvalidGenerationRequest`, so a bare ValueError from that
+  block is always routing.
+
 ## [1.44.4]
 
 ### Changed

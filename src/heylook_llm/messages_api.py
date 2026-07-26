@@ -300,6 +300,13 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
                 },
             )
         raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as e:
+        # Model ROUTING failed: unknown/disabled id, or no model named and no
+        # `default_model` configured -- the client's pick, so 400 not 500.
+        # Providers raise typed GenerationFailed/InvalidGenerationRequest for
+        # their own errors, so a bare ValueError here is always routing.
+        logging.warning(f"[MESSAGES] Model not resolved: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logging.error(f"[MESSAGES] Provider error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

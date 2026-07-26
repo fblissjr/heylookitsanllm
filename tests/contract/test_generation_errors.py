@@ -128,6 +128,24 @@ def test_non_streaming_client_error_returns_400(client, swap_provider):
     assert "text-only" in resp.json()["detail"]
 
 
+def test_unresolvable_model_returns_400_on_messages(client):
+    """Model routing failure is a 400 on /v1/messages too.
+
+    Claim: both request paths route through `router.get_provider`, which raises
+    ValueError for an unknown id and for "no model named, no default
+    configured". The chat-completions half of this claim lives in
+    test_chat_completions.py; delete this and the Messages path silently keeps
+    reporting the client's typo as a server fault.
+    """
+    resp = client.post("/v1/messages", json={
+        "model": "no-such-model",
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "Hello"}],
+    })
+    assert resp.status_code == 400
+    assert "no-such-model" in resp.json()["detail"]
+
+
 def test_exception_hierarchy():
     # Consumers may catch GenerationFailed alone and still see client errors.
     assert issubclass(InvalidGenerationRequest, GenerationFailed)

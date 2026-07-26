@@ -110,14 +110,22 @@ class TestChatCompletionsNonStreaming:
         assert "definitely-not-a-sampler" in detail
         assert "balanced" in detail  # names the known samplers
 
-    def test_unknown_model_returns_500(self, client):
-        """Request for a model not in config returns 500."""
+    def test_unknown_model_returns_400(self, client):
+        """Request for a model not in config returns 400, not 500.
+
+        Claim: model routing failure is the CLIENT's mistake. `get_provider`
+        raises ValueError both for an unknown/disabled id and (since startup
+        pre-warm went opt-in and `default_model` became optional) for a request
+        naming no model with no default configured. This used to escape to the
+        generic handler as a 500 -- documented as such, but that was the
+        accident, not the contract.
+        """
         resp = client.post("/v1/chat/completions", json={
             "model": "nonexistent-model",
             "messages": [{"role": "user", "content": "Hello"}],
         })
-        # The router raises ValueError which becomes 500
-        assert resp.status_code == 500
+        assert resp.status_code == 400
+        assert "nonexistent-model" in resp.json()["detail"]
 
     def test_generated_content_matches_fake_chunks(self, client):
         """Non-streaming response content matches FakeProvider output."""
