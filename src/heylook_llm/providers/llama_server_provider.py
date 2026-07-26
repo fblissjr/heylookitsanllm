@@ -23,6 +23,7 @@
 # - Pure stdlib (urllib/subprocess/socket): the provider must import and
 #   run on machines with no MLX and no extra deps.
 
+import atexit
 import json
 import logging
 import os
@@ -41,6 +42,38 @@ from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenera
 
 # Default binary location: the in-repo llama.cpp build (gitignored contents).
 DEFAULT_SERVER_BINARY = "coderef/llama.cpp/build/bin/llama-server"
+
+# Every live llama-server we spawned, so no exit path can leak one.
+#
+# We spawn with start_new_session=True (own process group, so unload can kill
+# the whole tree). The cost of that isolation: the terminal's Ctrl-C sends
+# SIGINT to the FOREGROUND process group only, which we are no longer in --
+# so the subprocess survives its parent unless someone explicitly reaps it.
+# The graceful path is lifespan shutdown -> router.unload_all() -> unload();
+# this atexit hook is the backstop for exits that skip it (a crash during
+# startup, a second Ctrl-C forcing uvicorn to quit). SIGKILL of the parent
+# remains uncoverable -- nothing runs in that case.
+_ACTIVE_PROCS: "set" = set()
+
+
+def _kill_orphans() -> None:
+    """Reap any llama-server still registered at interpreter exit.
+
+    Best-effort and silent: this runs during shutdown, where logging handlers
+    may already be torn down and raising would be pointless.
+    """
+    while _ACTIVE_PROCS:
+        proc = _ACTIVE_PROCS.pop()
+        try:
+            if proc.poll() is not None:
+                continue  # already exited; its pid may be recycled by now
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+
+atexit.register(_kill_orphans)
 
 # Read timeout for the SSE response. llama-server emits a keepalive comment
 # every 30s (sse_ping_interval default), so a healthy stream never blocks a
@@ -149,6 +182,7 @@ class LlamaServerProvider(BaseProvider):
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # own process group: unload kills the whole tree
         )
+        self._register_proc(self._proc)
         self._base_url = f"http://{host}:{port}"
 
         timeout_s = float(self.config.get("startup_timeout_s") or 300.0)
@@ -188,10 +222,18 @@ class LlamaServerProvider(BaseProvider):
                 pass
             self._log_handle = None
 
+    @staticmethod
+    def _register_proc(proc) -> None:
+        """Track a spawned llama-server for the exit backstop (see _ACTIVE_PROCS)."""
+        _ACTIVE_PROCS.add(proc)
+
     def unload(self):
         proc = getattr(self, "_proc", None)
         self._proc = None
         self._base_url = None
+        # Deregister FIRST: once we've decided to stop it, the exit hook must
+        # never signal this pid again -- by then it may belong to something else.
+        _ACTIVE_PROCS.discard(proc)
         if proc is None or proc.poll() is not None:
             self._cleanup_handles()
             return

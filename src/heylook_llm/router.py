@@ -479,6 +479,35 @@ class ModelRouter:
 
         return True
 
+    def unload_all(self) -> List[str]:
+        """Unload every loaded provider. For server shutdown.
+
+        Ignores pinning (the process is going away regardless) and never
+        raises: this runs on the way out, and one provider that throws must
+        not strand the ones behind it. Matters most for the gguf provider,
+        where "loaded" IS a running llama-server subprocess in its own
+        process group -- anything left here is a multi-GB orphan that
+        outlives the server.
+
+        Returns the ids it unloaded.
+        """
+        with self.cache_lock:
+            items = list(self.providers.items())
+            self.providers.clear()
+            self._pinned.clear()
+            self._last_used_ts.clear()
+
+        unloaded = []
+        for model_id, provider in items:
+            try:
+                provider.unload()
+                unloaded.append(model_id)
+            except Exception:
+                logging.error(f"Error unloading model {model_id} at shutdown", exc_info=True)
+        if unloaded:
+            logging.info(f"Unloaded {len(unloaded)} model(s) at shutdown: {', '.join(unloaded)}")
+        return unloaded
+
     def get_model_status(self, model_id: str) -> dict:
         """Get load status and basic metrics for a model."""
         with self.cache_lock:

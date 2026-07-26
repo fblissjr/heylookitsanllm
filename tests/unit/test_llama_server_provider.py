@@ -17,8 +17,13 @@
 #   GenerationChunk fields -- telemetry goes dark or thinking is dropped.
 
 import io
+import signal
+import subprocess
+import sys
 
 import pytest
+
+from heylook_llm.providers import llama_server_provider as llama_mod
 
 from heylook_llm.config import ChatRequest, ModelConfig, GGUFModelConfig, PROVIDER_CONFIG_CLASSES
 from heylook_llm.providers.base import GenerationChunk
@@ -88,6 +93,117 @@ class TestProviderSurface:
 
     def test_unload_without_load_is_safe(self):
         make_provider().unload()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Orphan prevention: the process-exit backstop
+# ---------------------------------------------------------------------------
+
+class _FakeProc:
+    """Stands in for Popen: alive until someone signals its group."""
+
+    def __init__(self, pid=4242):
+        self.pid = pid
+        self._rc = None
+
+    def poll(self):
+        return self._rc
+
+    def wait(self, timeout=None):
+        self._rc = -15
+        return self._rc
+
+
+class TestSubprocessRegistry:
+    """llama-server is spawned with start_new_session=True, so it sits in its
+    OWN process group -- the terminal's Ctrl-C (SIGINT to the foreground
+    group) never reaches it. Nothing else reaps it either, so every heylook
+    exit used to leak a multi-GB llama-server that outlived its parent
+    (observed 2026-07-26: two orphans, ~22GB, PPID 1). The registry + the
+    atexit backstop are what close that hole.
+    """
+
+    def setup_method(self):
+        llama_mod._ACTIVE_PROCS.clear()
+
+    teardown_method = setup_method
+
+    def test_spawned_process_is_registered(self, monkeypatch):
+        p = make_provider()
+        proc = _FakeProc()
+        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
+        p._register_proc(proc)
+        assert proc in llama_mod._ACTIVE_PROCS
+
+    def test_unload_deregisters(self, monkeypatch):
+        """Claim: an unloaded model must not be killed again at exit -- its pid
+        may have been recycled by then."""
+        p = make_provider()
+        proc = _FakeProc()
+        killed = []
+        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+        p._register_proc(proc)
+        p._proc = proc
+        p.unload()
+        assert proc not in llama_mod._ACTIVE_PROCS
+        assert killed, "unload should still signal the group"
+
+    def test_backstop_kills_leftover_process_group(self, monkeypatch):
+        """Claim: this is the last line of defense. Delete it and any exit path
+        that skips the lifespan shutdown (startup crash, second Ctrl-C) leaks
+        the subprocess."""
+        proc = _FakeProc()
+        killed = []
+        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+        llama_mod._ACTIVE_PROCS.add(proc)
+
+        llama_mod._kill_orphans()
+
+        assert killed == [(4242, signal.SIGTERM)]
+        assert not llama_mod._ACTIVE_PROCS
+
+    def test_backstop_skips_already_dead_process(self, monkeypatch):
+        """A pid that already exited must not be signalled -- the number may
+        belong to something else by now."""
+        proc = _FakeProc()
+        proc._rc = 0
+        killed = []
+        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+        llama_mod._ACTIVE_PROCS.add(proc)
+
+        llama_mod._kill_orphans()
+
+        assert killed == []
+
+    def test_backstop_actually_runs_on_interpreter_exit(self):
+        """End-to-end: importing the provider must arm the hook.
+
+        Claim: a registry nobody drains is dead code. Asserted by really
+        exiting a Python process rather than introspecting atexit's private
+        registry, so this fails if the registration is dropped OR if atexit
+        never reaches it.
+        """
+        script = (
+            "import os, sys\n"
+            "from heylook_llm.providers import llama_server_provider as m\n"
+            "os.killpg = lambda pgid, sig: print(f'KILLED {pgid} {sig}')\n"
+            "os.getpgid = lambda pid: pid\n"
+            "class P:\n"
+            "    pid = 4242\n"
+            "    def poll(self): return None\n"
+            "    def wait(self, timeout=None): return -15\n"
+            "m._ACTIVE_PROCS.add(P())\n"
+            "sys.exit(0)\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert "KILLED 4242" in out.stdout, (
+            f"atexit backstop did not run. stdout={out.stdout!r} stderr={out.stderr[-500:]!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

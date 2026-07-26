@@ -148,6 +148,40 @@ class TestScanPathsIdentityComputedOnce:
         }
 
 
+class TestImportDoesNotPickADefaultModel:
+    """Import must not decide which model the server routes to by default.
+
+    Claim: import used to stamp `default_model = imported[0].id` whenever the
+    field was unset -- so deliberately clearing it (the way to say "load
+    nothing until asked") was silently undone by the next scan, and the
+    *arbitrary first* model in an import batch became the routing target.
+    Delete this and clearing default_model stops sticking.
+    """
+
+    def test_import_leaves_unset_default_model_unset(self, tmp_path):
+        config = tmp_path / "models.toml"
+        config.write_text("max_loaded_models = 1\nmodels = []\n")
+        service = ModelService(str(config))
+        weights = tmp_path / "weights" / "model-a"
+        weights.mkdir(parents=True)
+
+        service.import_models(
+            [{"id": "model-a", "path": str(weights), "provider": "mlx"}]
+        )
+
+        assert 'default_model' not in config.read_text()
+
+    def test_import_preserves_an_existing_default_model(self, service, tmp_path):
+        new_path = tmp_path / "weights" / "model-c"
+        new_path.mkdir(parents=True)
+
+        service.import_models(
+            [{"id": "model-c", "path": str(new_path), "provider": "mlx"}]
+        )
+
+        assert service._read_toml().get("default_model") == "existing"
+
+
 class TestReimportUpdates:
     def test_reimport_existing_id_updates_entry(self, service, tmp_path):
         new_path = tmp_path / "weights" / "model-a-v2"

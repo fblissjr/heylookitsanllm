@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.7]
+
+### Fixed
+
+- **llama-server subprocesses no longer outlive the server.** The gguf
+  provider spawns with `start_new_session=True` (its own process group, so
+  unload can kill the whole tree) -- which also means the terminal's Ctrl-C,
+  a SIGINT to the FOREGROUND process group, never reached it. Nothing reaped
+  it either: lifespan shutdown closed the DB and left every provider loaded.
+  Every exit leaked a multi-GB llama-server (observed: two orphans, ~22GB,
+  PPID 1). Three layers now: lifespan shutdown calls the new
+  `ModelRouter.unload_all()` (ordered before the DB close and guarded, so no
+  later failure strands a child), `unload_all()` unloads every provider
+  best-effort, and an `atexit` backstop kills any still-registered process
+  group for exits that skip the lifespan. Verified live: SIGINT to a running
+  server with a loaded GGUF leaves zero orphans.
+
+### Changed
+
+- **Import no longer picks a `default_model`.** It used to stamp
+  `imported[0].id` whenever the field was unset, which silently undid a
+  deliberately-cleared default on the next scan and made an arbitrary member
+  of the batch the routing target.
+
 ## [1.44.6]
 
 ### Fixed

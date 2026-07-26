@@ -135,9 +135,22 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Reap child processes FIRST and in its own try: the gguf provider's
+    # "loaded model" is a running llama-server subprocess in its own process
+    # group, which the terminal's Ctrl-C never reaches. Anything still loaded
+    # when we exit becomes a multi-GB orphan (PPID 1). Ordered ahead of the DB
+    # close, and guarded, so no later teardown failure can strand it.
+    try:
+        router.unload_all()
+    except Exception:
+        logging.error("Error unloading models at shutdown", exc_info=True)
+
     # Close database connection
-    if hasattr(app.state, "db") and app.state.db:
-        await app.state.db.close()
+    try:
+        if hasattr(app.state, "db") and app.state.db:
+            await app.state.db.close()
+    except Exception:
+        logging.error("Error closing the database at shutdown", exc_info=True)
 
     task.cancel()
     logging.info("Server shut down.")

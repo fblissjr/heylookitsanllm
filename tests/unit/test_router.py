@@ -224,6 +224,46 @@ class TestModelRouter(unittest.TestCase):
                 config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
             )
 
+    def test_unload_all_unloads_every_provider(self):
+        """Claim: server shutdown must reap every loaded model. The gguf
+        provider's "loaded" IS a running llama-server subprocess, so a
+        provider left in the cache at exit is a multi-GB orphan process.
+        """
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        p1 = router.get_provider('model1-mlx')
+        p2 = router.get_provider('model2-llama')
+
+        router.unload_all()
+
+        p1.unload.assert_called_once()
+        p2.unload.assert_called_once()
+        self.assertEqual(len(router.providers), 0)
+
+    def test_unload_all_continues_after_a_failing_unload(self):
+        """Claim: shutdown is best-effort and must not stop at the first
+        raiser -- one provider that throws would otherwise strand every
+        subprocess behind it in the iteration order.
+        """
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        p1 = router.get_provider('model1-mlx')
+        p2 = router.get_provider('model2-llama')
+        p1.unload.side_effect = RuntimeError("teardown exploded")
+
+        router.unload_all()  # must not raise
+
+        p2.unload.assert_called_once()
+        self.assertEqual(len(router.providers), 0)
+
+    def test_unload_all_on_empty_router_is_safe(self):
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        router.unload_all()  # must not raise
+
     def test_default_model_still_routes_unspecified_requests(self):
         """`default_model` keeps its routing role: a request with no model id
         resolves to it (and only then loads it).

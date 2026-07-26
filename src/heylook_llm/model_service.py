@@ -42,18 +42,18 @@ def get_hf_cache_paths() -> list[str]:
     """Get platform-specific HuggingFace cache paths."""
     if platform.system() == "Windows":
         return [
-            os.path.expanduser("~/.cache/huggingface/hub"),
-            os.path.expanduser("~/AppData/Local/huggingface/hub"),
+            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
+            os.path.expanduser("~/AppData/Local/huggingface/hub"),  # path-privacy: ignore
         ]
     elif platform.system() == "Darwin":
         return [
-            os.path.expanduser("~/.cache/huggingface/hub"),
-            os.path.expanduser("~/Library/Caches/huggingface/hub"),
+            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
+            os.path.expanduser("~/Library/Caches/huggingface/hub"),  # path-privacy: ignore
         ]
     else:
         return [
-            os.path.expanduser("~/.cache/huggingface/hub"),
-            os.path.expanduser("~/.huggingface/hub"),
+            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
+            os.path.expanduser("~/.huggingface/hub"),  # path-privacy: ignore
         ]
 
 
@@ -768,9 +768,11 @@ class ModelService:
 
             if imported:
                 data["models"] = existing_models
-                # Set default model if none exists
-                if data.get("default_model") in (None, "none", ""):
-                    data["default_model"] = imported[0].id
+                # Deliberately does NOT set default_model. Importing models is
+                # not a statement about which one to route to, and the old
+                # auto-set picked an arbitrary imported[0] -- it also silently
+                # undid a deliberately-cleared default (the way to say "route
+                # nowhere until asked") on the next scan.
                 self._write_toml(data)
 
             return imported
