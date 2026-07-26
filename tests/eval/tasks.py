@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import io
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -339,7 +340,99 @@ TASK_TEXT_SINGLE_WORD_INSTRUCTION = EvalTask(
 )
 
 
+# ---------------------------------------------------------------------------
+# Audio tasks (plan Phase 7d; gguf/llama-server models only -- MLX 400s audio)
+# ---------------------------------------------------------------------------
+
+def _wav_base64_from_file() -> str:
+    # The one committed audio fixture: real speech (a "six seven" chant),
+    # survivor of the deleted STT provider. Real speech is deliberate --
+    # gemma-4's audio stack is speech-trained, and the keyword property
+    # below fails when the audio embedding never reaches the model
+    # (a broken pipeline hallucinates a description without the keywords).
+    wav_path = Path(__file__).parent.parent / "input" / "test_15sec.wav"
+    return base64.b64encode(wav_path.read_bytes()).decode()
+
+
+def _sine_wav_base64(freq_hz: int = 440, seconds: float = 2.0, rate: int = 16000) -> str:
+    # Deterministic pure tone, synthesized at import like the PIL vision
+    # fixtures -- no numpy, stdlib wave + math only.
+    import math
+    import struct
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        n = int(rate * seconds)
+        frames = b"".join(
+            struct.pack("<h", int(20000 * math.sin(2 * math.pi * freq_hz * i / rate)))
+            for i in range(n)
+        )
+        w.writeframes(frames)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+_SPEECH_B64 = _wav_base64_from_file()
+_TONE_B64 = _sine_wav_base64()
+
+
+def _audio_body(audio_b64: str, prompt: str, **extra) -> dict:
+    return {"messages": [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "input_audio", "input_audio": {"data": audio_b64, "format": "wav"}},
+    ]}], **extra}
+
+
+def _mentions_any(text: str, words: list[str], label: str) -> Verdict:
+    lower = (text or "").lower()
+    hits = [w for w in words if w in lower]
+    return Verdict(passed=bool(hits),
+                   evidence=f"{label}: {'mentions ' + ', '.join(hits) if hits else 'none of ' + '/'.join(words)}")
+
+
+def _judge_speech_keywords(ctx: dict) -> Verdict:
+    return combine_verdicts(
+        _mentions_any(ctx["content"], ["six", "seven"], "speech keywords"),
+        not_refusal(ctx["content"]),
+        marker_leak(ctx["content"]),
+    )
+
+
+TASK_AUDIO_SPEECH_KEYWORDS = EvalTask(
+    name="audio_speech_keywords",
+    category="audio",
+    required_capabilities=("audio",),
+    description="Real speech clip (committed fixture); the transcription/description must surface a keyword actually said ('six'/'seven'). Property, not exact-transcript: proves the audio embedding reaches the model.",
+    build_request=lambda: _audio_body(_SPEECH_B64, "Briefly, what do you hear in this audio? Quote any words or numbers you can make out.", max_tokens=200, enable_thinking=False),
+    judge=_judge_speech_keywords,
+    timeout=300,
+)
+
+
+def _judge_tone(ctx: dict) -> Verdict:
+    return combine_verdicts(
+        _mentions_any(ctx["content"], ["tone", "beep", "note", "sine", "hum", "buzz", "synth", "pitch"], "tone words"),
+        marker_leak(ctx["content"]),
+    )
+
+
+TASK_AUDIO_TONE_VS_SPEECH = EvalTask(
+    name="audio_tone_vs_speech",
+    category="audio",
+    required_capabilities=("audio",),
+    description="Synthesized 440Hz sine (deterministic, stdlib): asked speech-or-tone, the answer must use tone vocabulary -- discriminates listening from confabulating speech.",
+    build_request=lambda: _audio_body(_TONE_B64, "Is this sound human speech or a simple synthesized tone? Describe it in one sentence.", max_tokens=80, enable_thinking=False),
+    judge=_judge_tone,
+    timeout=300,
+)
+
+
 TASKS: list[EvalTask] = [
+    TASK_AUDIO_SPEECH_KEYWORDS,
+    TASK_AUDIO_TONE_VS_SPEECH,
     TASK_VISION_SINGLE_COLOR_LETTER,
     TASK_VISION_TWO_IMAGE_DISCRIMINATION,
     TASK_VISION_LARGE_HEATMAP_SANITY,
