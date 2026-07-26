@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-23*
+*Last reviewed: 2026-07-26 (llama-server buckets superseded by plan Phase 7)*
 
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
 
@@ -584,12 +584,11 @@ None currently.
 - [ ] Add subparser to `server.py`
 - [ ] Integrate into server.py CLI
 
-#### llama-server Provider (Phase 5)
-- [ ] Create `src/heylook_llm/providers/llama_server_provider.py`
-- [ ] Subprocess management for llama-server binary
-- [ ] HTTP client with SSE streaming
-- [ ] Router integration
-  - Note: LlamaCppProvider was removed in v1.21.0. llama-server provider would re-add GGUF support via subprocess rather than embedded library.
+#### llama-server Provider -- SUPERSEDED 2026-07-26
+Absorbed into `plan_2026-07.md` Phase 7 (gguf provider, stages 7a-7e:
+seam hardening -> provider v1 -> spec decode -> audio -> importer).
+Dossiers: `internal/research/gguf_provider_viability_2026-07.md` +
+`gguf_driving_models_2026-07.md`. Driving models on disk at `modelzoo/gguf/`.
 
 ### Optimization Plan Doc Refresh
 - [x] Update `docs/mlx_optimization_plan.md` -- phase 5 updated for v1.18.0 pre-filled cache pattern
@@ -606,10 +605,9 @@ None currently.
 - [ ] Create `scripts/benchmark.py` (standalone, useful before shape bucketing)
 - [ ] Token throughput, TTFT, memory usage metrics
 
-### Build v1.21.0: llama-server Provider + GGUF + Benchmark
-- [ ] llama-server provider complete
-- [ ] GGUF extra activation (uncomment in `pyproject.toml`, blocked on provider)
-- [ ] Benchmark script validates cross-platform performance
+### ~~Build v1.21.0: llama-server Provider + GGUF + Benchmark~~ RETIRED 2026-07-26
+Stale bucket (predates the v1.21.0 removal; the referenced commented
+pyproject extra no longer exists). Superseded by plan Phase 7.
 
 ## Deferred (blocked on upstream)
 
