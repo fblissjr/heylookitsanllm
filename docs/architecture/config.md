@@ -1,6 +1,6 @@
 # Configuration System
 
-Last updated: 2026-07-20
+Last updated: 2026-07-26
 
 This document explains the configuration system, `models.toml` structure, Pydantic schemas, and how to configure models for each provider.
 
@@ -40,7 +40,9 @@ Supports hot-reloading without server restart via `POST /v1/admin/reload`.
 ### Basic Structure
 
 ```toml
-default_model = "model-id"
+default_model = "model-id"    # ROUTING fallback for requests naming no model.
+                              # Does NOT preload -- startup pre-warm is opt-in
+                              # via `--model-id` only.
 max_loaded_models = 2
 
 [[models]]
@@ -162,8 +164,8 @@ entirely in v1.32.0. If an older `models.toml` still carries this key,
 # HuggingFace model ID
 model_path = "mlx-community/Qwen2.5-3B-Instruct-4bit"
 
-# Local path (tilde expanded)
-model_path = "~/models/qwen-2.5-custom"
+# Local path (relative to the repo, or absolute; tilde expanded)
+model_path = "modelzoo/qwen-2.5-custom"
 ```
 
 ### Sampler Defaults and the Effective-Request Cascade
@@ -434,7 +436,7 @@ Reloads `models.toml` without restarting the server. Currently loaded models sta
 heylookllm import --hf-cache --sampler balanced
 
 # Scan a directory
-heylookllm import --folder ~/models --output models.toml
+heylookllm import --folder modelzoo --output models.toml
 
 # Interactive mode
 heylookllm import --interactive

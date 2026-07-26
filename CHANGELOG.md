@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.4]
+
+### Changed
+
+- **Startup model pre-warm is now opt-in.** `default_model` in `models.toml`
+  no longer loads a model at boot; it stays what its name implies for
+  ROUTING only -- the fallback for a request that names no model, resolved
+  (and loaded) on that first request. Explicit `--model-id` is the one thing
+  that still pre-warms at startup. Opening the server no longer pins a
+  multi-GB model into RAM nobody asked for.
+
 ## [1.44.3]
 
 ### Added

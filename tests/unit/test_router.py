@@ -153,6 +153,44 @@ class TestModelRouter(unittest.TestCase):
         self.assertEqual(len(router.providers), 1)
         provider1.unload.assert_called_once()
 
+    def test_no_startup_preload_without_explicit_request(self):
+        """A configured `default_model` alone must NOT load anything at startup.
+
+        Claim: startup preload is opt-in. Delete this and the server silently
+        goes back to pinning a multi-GB model into RAM on every boot just
+        because models.toml names a routing default.
+        """
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        self.assertEqual(len(router.providers), 0)
+
+    def test_explicit_initial_model_is_preloaded(self):
+        """`--model-id` is the one thing that still pre-warms at startup.
+
+        Claim: opting out of the implicit preload must not remove the explicit
+        one.
+        """
+        router = ModelRouter(
+            config_path=self.config_path,
+            log_level=logging.INFO,
+            initial_model_id='model2-llama',
+        )
+        self.assertIn('model2-llama', router.providers)
+
+    def test_default_model_still_routes_unspecified_requests(self):
+        """`default_model` keeps its routing role: a request with no model id
+        resolves to it (and only then loads it).
+
+        Claim: the preload change must not turn `default_model` into dead
+        config.
+        """
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        provider = router.get_provider('')
+        self.assertEqual(provider.model_id, 'model1-mlx')
+
 
 if __name__ == '__main__':
     unittest.main()

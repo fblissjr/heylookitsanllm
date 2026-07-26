@@ -93,7 +93,11 @@ class ModelRouter:
         # Observability (S1.2). Set by api.py lifespan after construction.
         self.memory_manager: Optional[Any] = None
 
-        initial_model_to_load = initial_model_id or self.app_config.default_model or None
+        # Startup pre-warm is OPT-IN and only ever explicit (`--model-id`).
+        # `default_model` is a ROUTING fallback for requests that name no model
+        # (see get_provider) -- it deliberately does NOT preload, so opening the
+        # server doesn't pin a multi-GB model into RAM nobody asked for.
+        initial_model_to_load = initial_model_id or None
         enabled_models = self.app_config.get_enabled_models()
         if not enabled_models:
             logging.error("No enabled models found in models.toml. Server cannot serve requests.")
@@ -110,7 +114,7 @@ class ModelRouter:
                 initial_model_to_load = None
 
         if not initial_model_to_load:
-            logging.info("No default model configured. Models will be loaded on first request.")
+            logging.info("No startup model requested. Models will be loaded on first request.")
 
         if initial_model_to_load:
             try:
