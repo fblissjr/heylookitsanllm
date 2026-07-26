@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.6]
+
+### Fixed
+
+- **Only model-RESOLUTION failures are 400; load failures stay 500.** v1.44.5
+  caught bare `ValueError` around the whole setup block, but `get_provider`
+  re-raises load failures too (mlx-lm/transformers raise plain `ValueError` for
+  corrupt weights, an unsupported `model_type`, a malformed config.json) -- so a
+  broken model on disk answered 400 `model_not_resolved`, telling clients not to
+  retry, and lost the operator's traceback. The router now raises a dedicated
+  `ModelNotFound(ValueError)` from its two id-resolution sites and the API
+  layers catch only that; everything else keeps its 500 and `exc_info`.
+- **`default_model = "none"` is treated as unset.** The importer and
+  `model_service` write that literal string when a scan finds no models, and it
+  is truthy -- so it was routed to as a real model id and every model-less
+  request failed with `Model 'none' not found` instead of the actionable "no
+  default configured". Coerced to `None` (along with `""`) in `AppConfig`.
+- **A stale `default_model` is reported at startup.** Boot used to validate it
+  implicitly by pre-warming it; with preload now opt-in, the router warns (and
+  still loads nothing) when the default names no enabled model.
+
 ## [1.44.5]
 
 ### Fixed

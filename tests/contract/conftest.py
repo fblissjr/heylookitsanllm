@@ -82,9 +82,16 @@ class MockRouter:
         return [m.id for m in self.app_config.get_enabled_models()]
 
     def get_provider(self, model_id):
+        # Imported lazily: router pulls in the MLX stack, which is only mocked
+        # once the fixtures have run.
+        from heylook_llm.router import ModelNotFound
+
         model_config = self.app_config.get_model_config(model_id)
         if not model_config:
-            raise ValueError(f"Model '{model_id}' not found or not enabled")
+            # ModelNotFound, matching the real router: id-resolution failure is
+            # the client's fault (400), while a bare ValueError from here means
+            # the LOAD failed and must stay a 500.
+            raise ModelNotFound(f"Model '{model_id}' not found or not enabled")
         if model_id not in self.providers:
             self.providers[model_id] = FakeProvider(model_id)
         return self.providers[model_id]

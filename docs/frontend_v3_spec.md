@@ -1,7 +1,7 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-23 (§5 chat/notebook: settings entry points + shared
-preset bar reconciled with the drawer/preset-bar work; §4 API contract unchanged)
+Last updated: 2026-07-26 (§4: model-routing failure is now 400 not 500 on
+chat/completions + messages; startup no longer pre-warms default_model)
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
@@ -197,6 +197,15 @@ are unauthenticated.
   Non-streaming requests get HTTP 500 with the message in `detail`; the Messages API emits `event: error`.
   `streaming.js` converts the payload to a thrown error routed to `onError`. Clients must never render
   `error.message` as assistant content.
+- **Model routing failure = 400 (v1.44.5)**: an unknown/disabled `model`, or omitting `model` when the
+  server has no `default_model` configured, returns HTTP 400 with the reason + the available ids in
+  `detail` — on both `/v1/chat/completions` and `/v1/messages`. It was a 500 through v1.44.4. A failed
+  model *load* (corrupt weights, unsupported architecture) is still a 500: 400 means "pick a different
+  model", 500 means "this model is broken". Note `/v1/hidden_states` and `/v1/embeddings` have not been
+  converted and still answer 500 for an unknown id.
+- **Startup loads nothing (v1.44.4)**: the server no longer pre-warms `default_model` at boot (only an
+  explicit `--model-id` does), so the first request to any model pays the load. v3 must not assume a
+  model is resident — the models page reflects real state.
 - **Server-side defaults (v1.32.0)**: when the request, its preset, and the model config are all silent,
   the effective sampler floor is `temperature 0.7, max_tokens 4096` (was 0.1/512), and imported models
   carry `default_sampler = "balanced"`. The UI's null-means-cascade settings contract is unchanged.

@@ -23,6 +23,7 @@ from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.optimizations import fast_json as json
+from heylook_llm.router import ModelNotFound
 from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
@@ -300,11 +301,11 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
                 },
             )
         raise HTTPException(status_code=500, detail=str(e))
-    except ValueError as e:
+    except ModelNotFound as e:
         # Model ROUTING failed: unknown/disabled id, or no model named and no
         # `default_model` configured -- the client's pick, so 400 not 500.
-        # Providers raise typed GenerationFailed/InvalidGenerationRequest for
-        # their own errors, so a bare ValueError here is always routing.
+        # Deliberately NOT a bare `except ValueError`: get_provider re-raises
+        # load failures too, and those keep their 500 and their traceback.
         logging.warning(f"[MESSAGES] Model not resolved: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

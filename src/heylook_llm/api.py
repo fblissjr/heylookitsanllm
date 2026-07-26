@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager, closing
 from fastapi.openapi.utils import get_openapi
 
 from heylook_llm.optimizations import fast_json as json
-from heylook_llm.router import ModelRouter
+from heylook_llm.router import ModelNotFound, ModelRouter
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.config import (
@@ -769,12 +769,13 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
         raise HTTPException(status_code=400, detail=str(e))
 
-    except ValueError as e:
+    except ModelNotFound as e:
         # Model ROUTING failed: unknown/disabled id, or the request named no
         # model and no `default_model` is configured. The client picked the
-        # model, so this is a 400. Providers signal their own failures with
-        # typed GenerationFailed/InvalidGenerationRequest, never a bare
-        # ValueError -- so nothing else in this block lands here.
+        # model, so this is a 400. Deliberately NOT a bare `except ValueError`:
+        # get_provider re-raises load failures too (mlx-lm raises plain
+        # ValueError for corrupt weights / unsupported model_type), and those
+        # are server faults that must keep their 500 and their traceback.
         log_request_complete(request_id, success=False, error_msg=str(e))
         diag_event("request_error", request_id=request_id, level="warn",
                    error="model_not_resolved", model=chat_request.model, stage=stage)

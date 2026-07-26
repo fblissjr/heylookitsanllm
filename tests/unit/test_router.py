@@ -178,6 +178,52 @@ class TestModelRouter(unittest.TestCase):
         )
         self.assertIn('model2-llama', router.providers)
 
+    def test_literal_none_default_model_is_treated_as_unset(self):
+        """`default_model = "none"` means UNSET, not a model called "none".
+
+        Claim: `model_importer` and `model_service` both write the literal
+        string "none" when a scan finds no models, and it is truthy -- so it
+        sailed past the "no default configured" branch and every model-less
+        request died on `Model 'none' not found`. Delete this and that
+        default-shipped config produces a nonsense error instead of the
+        actionable "no default configured. Available: [...]".
+        """
+        self._rewrite_config(default_model="none")
+        router = ModelRouter(
+            config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+        )
+        self.assertIsNone(router.app_config.default_model)
+        with self.assertRaises(ValueError) as ctx:
+            router.get_provider('')
+        self.assertIn('no default configured', str(ctx.exception))
+
+    def test_stale_default_model_warns_at_startup_without_loading(self):
+        """A `default_model` naming nothing real is reported at boot.
+
+        Claim: startup used to validate the default because it preloaded it.
+        Now that preload is opt-in, the only signal left would be a failed
+        request at runtime -- so validate (warn) without loading. Delete this
+        and a typo'd default is invisible until someone sends a model-less
+        request.
+        """
+        self._rewrite_config(default_model="typo-model")
+        with self.assertLogs(level=logging.WARNING) as logs:
+            router = ModelRouter(
+                config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+            )
+        self.assertEqual(len(router.providers), 0)  # warned, did NOT load
+        self.assertTrue(
+            any('typo-model' in m for m in logs.output),
+            f"expected a warning naming the stale default, got: {logs.output}",
+        )
+
+    def test_valid_default_model_does_not_warn(self):
+        """The happy path stays quiet -- a real default is not a problem."""
+        with self.assertNoLogs(level=logging.WARNING):
+            ModelRouter(
+                config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
+            )
+
     def test_default_model_still_routes_unspecified_requests(self):
         """`default_model` keeps its routing role: a request with no model id
         resolves to it (and only then loads it).

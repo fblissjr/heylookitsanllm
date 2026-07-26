@@ -391,6 +391,20 @@ class ScanConfig(BaseModel):
 class AppConfig(BaseModel):
     models: List[ModelConfig]
     default_model: Optional[str] = None
+
+    @field_validator('default_model', mode='before')
+    @classmethod
+    def _blank_default_model_is_unset(cls, v):
+        """Coerce the placeholder spellings of "no default" to None.
+
+        `model_importer`/`model_service` write the literal string ``"none"``
+        when a scan finds no models, and ``""`` shows up in hand-edited
+        configs. Both are TRUTHY, so without this they sail past every
+        ``if default_model:`` check and get routed to as a real model id.
+        """
+        if isinstance(v, str) and v.strip().lower() in ("", "none"):
+            return None
+        return v
     scan: Optional[ScanConfig] = None
     # Default is 1 (single-model) -- Apple Silicon is memory-bandwidth-bound,
     # so a second loaded-but-idle model doesn't help throughput. Field stays

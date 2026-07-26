@@ -128,6 +128,42 @@ def test_non_streaming_client_error_returns_400(client, swap_provider):
     assert "text-only" in resp.json()["detail"]
 
 
+def test_model_load_failure_is_500_not_400(client, mock_router, monkeypatch):
+    """A failed model LOAD is a server fault, even though it surfaces as a
+    ValueError from the same call that reports a bad model id.
+
+    Claim: `get_provider` re-raises whatever `load_model` threw, and
+    mlx-lm/transformers raise bare ValueError for corrupt weights, an
+    unsupported `model_type`, or a malformed config.json. Only the router's own
+    id-resolution failures (ModelNotFound) are the client's fault. Delete this
+    and a corrupt model on disk reports as a non-retryable 400 with no
+    traceback for the operator.
+    """
+    def _boom(model_id):
+        raise ValueError("Model type qwen9 not supported.")
+
+    monkeypatch.setattr(mock_router, "get_provider", _boom)
+    resp = client.post("/v1/chat/completions", json={
+        "model": "test-mlx-model",
+        "messages": [{"role": "user", "content": "Hello"}],
+    })
+    assert resp.status_code == 500
+
+
+def test_model_load_failure_is_500_on_messages(client, mock_router, monkeypatch):
+    """Same claim on the Messages path."""
+    def _boom(model_id):
+        raise ValueError("Model type qwen9 not supported.")
+
+    monkeypatch.setattr(mock_router, "get_provider", _boom)
+    resp = client.post("/v1/messages", json={
+        "model": "test-mlx-model",
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "Hello"}],
+    })
+    assert resp.status_code == 500
+
+
 def test_unresolvable_model_returns_400_on_messages(client):
     """Model routing failure is a 400 on /v1/messages too.
 

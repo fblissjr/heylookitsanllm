@@ -33,6 +33,19 @@ except ImportError as e:
     HAS_MLX_EMBEDDING = False
 
 
+class ModelNotFound(ValueError):
+    """The requested model could not be RESOLVED to a config entry.
+
+    Distinct from every other ValueError `get_provider` can raise: a failed
+    load (mlx-lm/transformers raise bare ValueError for corrupt weights, an
+    unsupported model_type, a malformed config.json) and operator/config faults
+    (missing provider install, unknown provider) are SERVER errors and must
+    keep surfacing as 500s. Only this one is the caller naming a model that
+    isn't there -- the API layer maps it to 400. Subclasses ValueError so
+    existing `except ValueError` consumers are unaffected.
+    """
+
+
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
@@ -112,6 +125,19 @@ class ModelRouter:
             elif model_config.provider == "mlx" and not HAS_MLX:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires MLX provider which is not installed.")
                 initial_model_to_load = None
+
+        # Validate (never load) the routing default. Startup used to check it
+        # implicitly by pre-warming it; now that preload is opt-in, an
+        # unresolvable default would otherwise stay invisible until some
+        # model-less request failed at runtime.
+        if self.app_config.default_model and not self.app_config.get_model_config(
+            self.app_config.default_model
+        ):
+            logging.warning(
+                f"default_model '{self.app_config.default_model}' is not a known enabled model. "
+                f"Requests that name no model will fail. Available: "
+                f"{[m.id for m in enabled_models]}"
+            )
 
         if not initial_model_to_load:
             logging.info("No startup model requested. Models will be loaded on first request.")
@@ -248,7 +274,7 @@ class ModelRouter:
                 logging.debug(f"No model specified, using default: {model_id}")
             else:
                 available = [m.id for m in self.app_config.get_enabled_models()]
-                raise ValueError(f"No model specified and no default configured. Available: {available}")
+                raise ModelNotFound(f"No model specified and no default configured. Available: {available}")
 
         # Fast path: check cache first
         provider = self._check_cache(model_id)
@@ -272,7 +298,7 @@ class ModelRouter:
             model_config = self.app_config.get_model_config(model_id)
             if not model_config:
                 available = [m.id for m in self.app_config.get_enabled_models()]
-                raise ValueError(f"Model '{model_id}' not found or disabled. Available: {available}")
+                raise ModelNotFound(f"Model '{model_id}' not found or disabled. Available: {available}")
 
             # Keep keys in sync with config.PROVIDER_CONFIG_CLASSES.
             provider_map = {}
