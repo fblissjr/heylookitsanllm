@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0]
+
+### Changed
+
+- **Providers now yield a heylook-owned `GenerationChunk`** (plan Phase 7a
+  seam hardening). The de-facto provider contract was mlx-lm's
+  `GenerationResponse` dataclass, mutated in flight (three runtime-patched
+  attrs) and scraped by getattr across the API layer. `run_generation`, the
+  VLM first-token path, and the diffusion path now convert to a slotted
+  `GenerationChunk` (`providers/base.py`) at the engine boundary --
+  attaching undeclared attributes fails loudly; new telemetry means a new
+  FIELD absorbed in `ChunkTelemetry`, not an attr-patch at a call site.
+  `_VisionTokenResponse` deleted. `ChunkTelemetry.absorb()` latches
+  snapshot fields on truthy values (every field now exists on every chunk,
+  so absence no longer protects first-chunk-only stats).
+- **BaseProvider capability surface**: `provider_name` class attribute
+  (fixes the router's DEAD `mx.clear_cache()` teardown gates, which
+  matched a `provider.provider` attr nobody set, and replaces api.py's
+  class-name sniffing), `template_info()` method (parser selection no
+  longer reads the private `_template_info`), neutral `is_vlm` /
+  `effective_loader` defaults. `MLXEmbeddingProvider.create_chat_completion`
+  and the test mock gained the `abort_event` parameter (signature drift vs
+  the ABC).
+- **Provider config registry**: `PROVIDER_CONFIG_CLASSES` in config.py is
+  the single source for known providers; `validate_config_type` dispatches
+  from it instead of an if/elif chain.
+
+### Added
+
+- **Pre-split thinking passthrough**: `GenerationChunk.thinking` carries
+  reasoning an engine already separated (llama-server's
+  `reasoning_content`); all four consume paths (chat + messages,
+  streaming + non-streaming) route it straight to the thinking channel,
+  bypassing the text parsers. MLX providers never set it -- no behavior
+  change for existing models. Groundwork for the Phase 7 gguf provider.
+- Tests: `tests/unit/test_generation_chunk.py` (chunk shape, telemetry
+  latch semantics, capability surface, registry) +
+  `tests/contract/test_prethought_passthrough.py` (pre-split thinking
+  end-to-end through the HTTP surface). OpenAPI schema verified
+  byte-identical vs the pre-change worktree.
+
 ## [1.39.17]
 
 ### Changed

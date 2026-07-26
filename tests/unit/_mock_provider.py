@@ -26,5 +26,5 @@ class MockProvider(BaseProvider):
     def load_model(self):  # pragma: no cover -- tests use pre-loaded state
         pass
 
-    def create_chat_completion(self, request):  # pragma: no cover
+    def create_chat_completion(self, request, abort_event=None):  # pragma: no cover
         pass

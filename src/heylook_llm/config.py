@@ -281,6 +281,16 @@ class MLXEmbeddingModelConfig(BaseModel):
     max_length: int = 2048
     pooling: Literal["mean", "cls", "none"] = "mean"
 
+# Single source of truth for which providers exist and which config class
+# validates each one's `config` block. Adding a provider = add an entry here
+# + widen the Literal below + register the provider class in router.py's
+# provider_map (which must stay in key-sync with this dict).
+PROVIDER_CONFIG_CLASSES: Dict[str, type] = {
+    "mlx": MLXModelConfig,
+    "mlx_embedding": MLXEmbeddingModelConfig,
+}
+
+
 class ModelConfig(BaseModel):
     id: str
     provider: Literal["mlx", "mlx_embedding"]
@@ -298,12 +308,10 @@ class ModelConfig(BaseModel):
             provider = data.get('provider')
             v = data.get('config')
             if isinstance(v, dict):
-                if provider == 'mlx':
-                    data['config'] = MLXModelConfig(**v)
-                elif provider == 'mlx_embedding':
-                    data['config'] = MLXEmbeddingModelConfig(**v)
-                else:
+                config_cls = PROVIDER_CONFIG_CLASSES.get(provider) if provider else None
+                if config_cls is None:
                     raise ValueError(f"Unknown provider '{provider}' for model config validation")
+                data['config'] = config_cls(**v)
         return data
 
 class ScanConfig(BaseModel):

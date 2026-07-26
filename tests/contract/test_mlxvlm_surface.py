@@ -394,11 +394,14 @@ class TestCacheClasses:
 # ---------------------------------------------------------------------------
 
 class TestGenerationResponse:
-    """Consumed throughout providers/common/generation_core.py (the sole
-    lm_stream_generate call site, ~line 340) and read via getattr in
-    api.py/messages_api.py for telemetry. Fields pinned per plan Phase 1 item 7:
-    text, token, logprobs, from_draft, prompt_tokens, prompt_tps,
-    generation_tokens, generation_tps, peak_memory, finish_reason."""
+    """Since 7a the SOLE consumer of GenerationResponse is
+    GenerationChunk.from_engine (providers/base.py) at the run_generation
+    boundary, plus generation_core's direct reads of response.token /
+    response.from_draft. Fields pinned here are the ones from_engine getattrs
+    -- if upstream renames one, from_engine silently falls to defaults and
+    telemetry goes dark, so this pin must fail first. (The old
+    "must stay non-slotted for runtime attr-patching" pin was deleted with
+    the attr-patch mechanism itself; from_engine only reads.)"""
 
     EXPECTED_FIELDS = {
         "text", "token", "logprobs", "from_draft", "prompt_tokens", "prompt_tps",
@@ -410,34 +413,14 @@ class TestGenerationResponse:
         missing = self.EXPECTED_FIELDS - actual
         assert not missing, f"GenerationResponse dropped fields: {missing}"
 
-    def test_is_nonslotted_dataclass_supporting_runtime_attribute_attachment(self):
-        # generation_core.py:372-376 does
-        # `response.cached_tokens = cached_count  # type: ignore[attr-defined]`
-        # and `response.kv_cache_bytes = ...` on a live GenerationResponse
-        # instance. A __slots__ class would raise AttributeError on that.
-        assert "__slots__" not in GenerationResponse.__dict__
-
-        response = GenerationResponse(
-            text="hi", token=1, logprobs=None, from_draft=False,
-            prompt_tokens=1, prompt_tps=0.0, generation_tokens=1,
-            generation_tps=0.0, peak_memory=0.0, finish_reason=None,
-        )
-        response.cached_tokens = 5  # must not raise
-        response.kv_cache_bytes = 1024  # must not raise
-        assert response.cached_tokens == 5
-        assert response.kv_cache_bytes == 1024
-
     def test_our_consumption_sites_still_read_documented_fields(self):
-        # Source-text pin: generation_core.py's own-code traceability for the
-        # subset it reads directly (response.token/.from_draft/.text); the
-        # getattr-based telemetry fields (prompt_tokens, prompt_tps,
-        # generation_tokens, generation_tps, peak_memory, finish_reason) are
-        # read defensively via getattr(chunk, ..., default) in api.py /
-        # messages_api.py and are covered by the field-set test above.
+        # Source-text pin: generation_core reads response.token /
+        # response.from_draft directly and converts everything else via
+        # GenerationChunk.from_engine at the yield boundary.
         gen_core_src = (
             Path(__file__).parent.parent.parent
             / "src" / "heylook_llm" / "providers" / "common" / "generation_core.py"
         ).read_text()
         assert "response.token" in gen_core_src
         assert "response.from_draft" in gen_core_src
-        assert "response.text" in gen_core_src
+        assert "GenerationChunk.from_engine(response)" in gen_core_src

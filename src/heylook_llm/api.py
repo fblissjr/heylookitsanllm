@@ -798,14 +798,12 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         )
 
 def _provider_type(provider) -> str | None:
-    """Provider TYPE ("mlx" | "mlx_embedding"), derived from the provider CLASS.
-
-    The provider object has no `.provider` attr (that lives on the model config),
-    so `getattr(provider, "provider")` yielded null -- found via live verification.
-    """
+    """Provider TYPE ("mlx" | "mlx_embedding" | ...), from the BaseProvider
+    contract's ``provider_name`` class attribute (7a) -- no class-name
+    sniffing, no mislabeling of future providers."""
     if provider is None:
         return None
-    return "mlx_embedding" if type(provider).__name__ == "MLXEmbeddingProvider" else "mlx"
+    return getattr(provider, "provider_name", "") or None
 
 
 def _maybe_log_request_event(
@@ -958,7 +956,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Mistral-sized special-token sets -- the compiled strip pattern is cached
     # and shared; only the buffers are per-instance.
     thinking_parser = select_reasoning_parser(
-        getattr(provider, "_template_info", None) if provider else None,
+        provider.template_info() if provider else None,
         thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
     )
 
@@ -1012,6 +1010,18 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             # Token counts + memory/queue/rate telemetry (final empty chunk
             # still carries counts and the tightest native rates).
             telemetry.absorb(chunk)
+
+            # Pre-split reasoning (engines that separate it before it reaches
+            # us set chunk.thinking): route straight to the thinking channel.
+            # The text parser below only ever sees chunk.text.
+            chunk_thinking = getattr(chunk, 'thinking', None)
+            if chunk_thinking:
+                if thinking_start_time is None:
+                    thinking_start_time = time.time()
+                if first_output_time is None:
+                    first_output_time = time.time()
+                thinking_tokens += 1
+                yield make_delta("thinking", chunk_thinking)
 
             if not chunk.text:
                 continue
@@ -1271,6 +1281,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None):
     full_text = ""
     token_count = 0
+    pre_thinking_parts: list[str] = []  # chunk.thinking -- engine pre-split reasoning
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
     log_request_stage(request_id, "processing_response")
 
@@ -1285,6 +1296,9 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         # finally) even if consumption raises -- don't wait for GC.
         with closing(generator):
             for chunk in generator:
+                chunk_thinking = getattr(chunk, 'thinking', None)
+                if chunk_thinking:
+                    pre_thinking_parts.append(chunk_thinking)
                 full_text += chunk.text
                 token_count += 1
 
@@ -1350,10 +1364,16 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     content, thinking = parse_reasoning(
         full_text,
         select_reasoning_parser(
-            getattr(provider, "_template_info", None) if provider else None,
+            provider.template_info() if provider else None,
             thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
         ),
     )
+
+    # Pre-split reasoning (chunk.thinking, engines that separate it before
+    # it reaches us) merges AHEAD of anything the text parser extracted --
+    # a provider pre-splits or it doesn't, so in practice one side is empty.
+    if pre_thinking_parts:
+        thinking = "".join(pre_thinking_parts) + (thinking or "")
 
     message = {"role": "assistant", "content": content}
     if thinking is not None:

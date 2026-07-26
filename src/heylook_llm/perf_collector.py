@@ -63,14 +63,22 @@ class ChunkTelemetry:
     finish_reason: Optional[str] = None  # "stop" | "length" | None (mlx-lm's)
 
     def absorb(self, chunk) -> None:
-        self.prompt_tokens = getattr(chunk, "prompt_tokens", self.prompt_tokens)
-        self.completion_tokens = getattr(chunk, "generation_tokens", self.completion_tokens)
-        self.cached_tokens = getattr(chunk, "cached_tokens", self.cached_tokens)
-        self.peak_memory_gb = max(self.peak_memory_gb, getattr(chunk, "peak_memory", 0.0))
-        self.kv_cache_bytes = getattr(chunk, "kv_cache_bytes", self.kv_cache_bytes)
-        self.queue_wait_ms = getattr(chunk, "queue_wait_ms", self.queue_wait_ms)
-        self.prompt_tps = getattr(chunk, "prompt_tps", self.prompt_tps)
-        self.generation_tps = getattr(chunk, "generation_tps", self.generation_tps)
+        # GenerationChunk carries EVERY field on EVERY chunk (slotted, with
+        # zero defaults) -- the old "getattr keeps the last value when the
+        # attr is absent" trick no longer protects first-chunk-only snapshots
+        # (cached_tokens / kv_cache_bytes / queue_wait_ms) or rate fields a
+        # sparse chunk (vision first token) legitimately lacks. So: latch on
+        # truthy, never overwrite with a default. Counts are monotonic from
+        # the engine, rates are per-chunk refinements -- truthy-latch matches
+        # both.
+        self.prompt_tokens = getattr(chunk, "prompt_tokens", 0) or self.prompt_tokens
+        self.completion_tokens = getattr(chunk, "generation_tokens", 0) or self.completion_tokens
+        self.cached_tokens = getattr(chunk, "cached_tokens", 0) or self.cached_tokens
+        self.peak_memory_gb = max(self.peak_memory_gb, getattr(chunk, "peak_memory", 0.0) or 0.0)
+        self.kv_cache_bytes = getattr(chunk, "kv_cache_bytes", 0) or self.kv_cache_bytes
+        self.queue_wait_ms = getattr(chunk, "queue_wait_ms", 0.0) or self.queue_wait_ms
+        self.prompt_tps = getattr(chunk, "prompt_tps", 0.0) or self.prompt_tps
+        self.generation_tps = getattr(chunk, "generation_tps", 0.0) or self.generation_tps
         # arrives on the FINAL chunk only -- a later chunk without one must
         # not erase it, so this latches rather than overwrites
         self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason

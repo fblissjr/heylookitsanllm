@@ -30,6 +30,7 @@ import mlx.core as mx
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
+from ..base import GenerationChunk
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
 from .stop_tokens import resolve_stop_tokens
 
@@ -392,20 +393,22 @@ def run_generation(
                     if response.from_draft:
                         draft_accepted += 1
 
-                # Leading space cleanup (first token only, skip for pre-filled cache
-                # where continuation starts mid-sequence)
+                # Convert to the owned chunk type at the engine boundary --
+                # this is the ONLY place mlx-lm's GenerationResponse shape is
+                # known; everything downstream sees GenerationChunk.
+                chunk = GenerationChunk.from_engine(response)
+
+                # Leading space cleanup (first token only, skip for pre-filled
+                # cache where continuation starts mid-sequence) + cache stats
+                # snapshot (first chunk only; ChunkTelemetry latches them).
                 if first_token:
-                    if pre_filled_cache is None and response.text.startswith(' '):
-                        response.text = response.text.lstrip()
-                    # Attach cache stats for API response reporting.
-                    # GenerationResponse is a non-slotted dataclass; runtime
-                    # attribute addition is intentional and read via getattr
-                    # on the API side.
-                    response.cached_tokens = cached_count  # type: ignore[attr-defined]
-                    response.kv_cache_bytes = kv_cache_bytes_snapshot  # type: ignore[attr-defined]
+                    if pre_filled_cache is None and chunk.text.startswith(' '):
+                        chunk.text = chunk.text.lstrip()
+                    chunk.cached_tokens = cached_count
+                    chunk.kv_cache_bytes = kv_cache_bytes_snapshot
                     first_token = False
 
-                yield response
+                yield chunk
     except Exception:
         generation_failed = True
         raise

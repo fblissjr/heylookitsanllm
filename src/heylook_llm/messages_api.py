@@ -112,33 +112,45 @@ class StreamingEventTranslator:
         deltas = self.thinking_parser.process_chunk(text, token_id=token_id)
 
         for delta_type, delta_text in deltas:
-            if not delta_text:
-                continue
+            events.extend(self._emit_delta(delta_type, delta_text))
 
-            block_type = "thinking" if delta_type == "thinking" else "text"
+        return events
 
-            # Start a new block if type changed
-            if block_type != self.current_block_type:
-                # Close previous block
-                if self.current_block_type is not None:
-                    events.append(self._block_stop())
-                # Open new block
-                events.append(self._block_start(block_type))
+    def process_presplit_thinking(self, text: str) -> list[str]:
+        """Emit pre-split reasoning (GenerationChunk.thinking) straight to the
+        thinking block, bypassing the text parser -- the engine already did
+        the split, re-parsing another engine's output is how markers leak."""
+        return self._emit_delta("thinking", text)
 
-            # Emit delta
-            events.append(self._block_delta(block_type, delta_text))
+    def _emit_delta(self, delta_type: str, delta_text: str) -> list[str]:
+        """Block bookkeeping shared by parser output and pre-split thinking."""
+        if not delta_text:
+            return []
+        events = []
+        block_type = "thinking" if delta_type == "thinking" else "text"
 
-            # Track timing + counts
-            if block_type == "thinking":
-                if self.thinking_start is None:
-                    self.thinking_start = time.time()
-                self.thinking_tokens += 1
-            else:
-                if self.thinking_start is not None and self.thinking_end is None:
-                    self.thinking_end = time.time()
-                if self.content_start is None:
-                    self.content_start = time.time()
-                self.content_tokens += 1
+        # Start a new block if type changed
+        if block_type != self.current_block_type:
+            # Close previous block
+            if self.current_block_type is not None:
+                events.append(self._block_stop())
+            # Open new block
+            events.append(self._block_start(block_type))
+
+        # Emit delta
+        events.append(self._block_delta(block_type, delta_text))
+
+        # Track timing + counts
+        if block_type == "thinking":
+            if self.thinking_start is None:
+                self.thinking_start = time.time()
+            self.thinking_tokens += 1
+        else:
+            if self.thinking_start is not None and self.thinking_end is None:
+                self.thinking_end = time.time()
+            if self.content_start is None:
+                self.content_start = time.time()
+            self.content_tokens += 1
 
         return events
 
@@ -332,6 +344,7 @@ async def _non_stream_messages(
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
     token_count = 0
+    pre_thinking_parts: list = []  # chunk.thinking -- engine pre-split reasoning
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
 
     def consume():
@@ -340,6 +353,9 @@ async def _non_stream_messages(
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
             for chunk in generator:
+                chunk_thinking = getattr(chunk, 'thinking', None)
+                if chunk_thinking:
+                    pre_thinking_parts.append(chunk_thinking)
                 full_text += chunk.text
                 token_count += 1
                 telemetry.absorb(chunk)
@@ -356,10 +372,15 @@ async def _non_stream_messages(
     content_text, thinking = parse_reasoning(
         full_text,
         select_reasoning_parser(
-            getattr(provider, "_template_info", None),
+            provider.template_info() if provider else None,
             thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
         ),
     )
+
+    # Pre-split reasoning (chunk.thinking) merges ahead of parser output;
+    # in practice a provider pre-splits or it doesn't, so one side is empty.
+    if pre_thinking_parts:
+        thinking = "".join(pre_thinking_parts) + (thinking or "")
 
     # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict.
     # mlx-lm's own reason: "length" (budget exhausted) must not read as "stop"
@@ -447,7 +468,7 @@ async def _stream_messages(
     translator = StreamingEventTranslator(
         message_id, model,
         thinking_parser=select_reasoning_parser(
-            getattr(provider, "_template_info", None),
+            provider.template_info() if provider else None,
             thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
         ),
     )
@@ -472,6 +493,13 @@ async def _stream_messages(
             # message_delta/usage events.
             translator.prompt_tokens = telemetry.prompt_tokens
             translator.completion_tokens = telemetry.completion_tokens
+
+            # Pre-split reasoning (chunk.thinking) goes straight to the
+            # thinking block; the parser only ever sees chunk.text.
+            chunk_thinking = getattr(chunk, "thinking", None)
+            if chunk_thinking:
+                for event_str in translator.process_presplit_thinking(chunk_thinking):
+                    yield event_str
 
             if not chunk.text:
                 continue

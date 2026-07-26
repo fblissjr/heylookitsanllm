@@ -170,7 +170,10 @@ class ModelRouter:
         stay in lockstep if teardown gains new steps (e.g. cache persistence
         in S3.1).
         """
-        is_mlx_model = getattr(provider, "provider", "") == "mlx"
+        # provider_name is the BaseProvider class attribute (7a) -- the old
+        # getattr(provider, "provider") gate matched nothing and made this
+        # cache-clear dead code.
+        is_mlx_model = getattr(provider, "provider_name", "") in ("mlx", "mlx_embedding")
         try:
             provider.unload()
         except Exception:
@@ -427,8 +430,10 @@ class ModelRouter:
 
             provider = self.providers.pop(model_id)
 
-        # Unload outside the cache lock to avoid holding it during slow ops
-        is_mlx = hasattr(provider, 'provider') and provider.provider == 'mlx'
+        # Unload outside the cache lock to avoid holding it during slow ops.
+        # provider_name is the BaseProvider class attribute (7a); the old
+        # `provider.provider` gate matched nothing (dead cache-clear).
+        is_mlx = getattr(provider, "provider_name", "") in ("mlx", "mlx_embedding")
         try:
             provider.unload()
             del provider

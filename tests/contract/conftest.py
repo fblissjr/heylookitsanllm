@@ -41,12 +41,18 @@ TEST_MODELS_DATA = {
 class FakeProvider:
     """Minimal provider mock that yields pre-set FakeChunks."""
 
+    provider_name = "mlx"  # BaseProvider contract (telemetry's provider type)
+
     def __init__(self, model_id: str):
         self.model_id = model_id
         self.processor = None
 
     def check_capacity(self):
         """No-op admission check (BaseProvider contract); never busy in tests."""
+
+    def template_info(self):
+        """BaseProvider contract: None -> pass-through reasoning parser."""
+        return None
 
     def create_chat_completion(self, request, abort_event=None):
         """Yield FakeChunks. A real generator (not a list_iterator) so the

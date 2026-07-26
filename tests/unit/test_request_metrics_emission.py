@@ -23,7 +23,10 @@ class _StubMM:
 
 
 class MLXProvider:
-    """Stub named to match the real class -- provider type is derived from the class name."""
+    """Stub carrying provider_name -- provider type comes from the
+    BaseProvider class attribute (7a), not the class name."""
+    provider_name = "mlx"
+
     def __init__(self, effective_loader=None, is_vlm=None):
         if effective_loader is not None:
             self.effective_loader = effective_loader
@@ -32,7 +35,8 @@ class MLXProvider:
 
 
 class MLXEmbeddingProvider:
-    """Stub named to match the real embedding class (no loader/is_vlm attrs)."""
+    """Embedding stub (no loader/is_vlm attrs -- reads must stay null-safe)."""
+    provider_name = "mlx_embedding"
 
 
 def _event(**kw):

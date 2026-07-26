@@ -61,6 +61,8 @@ class MLXEmbeddingProvider(BaseProvider):
     Does NOT support chat completion -- only embedding extraction.
     """
 
+    provider_name = "mlx_embedding"
+
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         super().__init__(model_id, config, verbose)
         self.model = None
@@ -186,7 +188,7 @@ class MLXEmbeddingProvider(BaseProvider):
             pooling,
         )
 
-    def create_chat_completion(self, request: ChatRequest) -> Generator:
+    def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         """Not supported -- this is an embedding-only provider."""
         raise NotImplementedError(
             f"{self.model_id} is an embedding-only provider, "

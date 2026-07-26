@@ -25,6 +25,8 @@ from helpers.mlx_mock import FakeChunk
 class _FailingProvider:
     """Yields one real chunk, then raises -- the mid-stream failure shape."""
 
+    provider_name = "mlx"
+
     def __init__(self, exc):
         self.model_id = "test-mlx-model"
         self.processor = None
@@ -32,6 +34,9 @@ class _FailingProvider:
 
     def check_capacity(self):
         pass
+
+    def template_info(self):
+        return None
 
     def create_chat_completion(self, request, abort_event=None):
         yield FakeChunk("partial", token_id=1)

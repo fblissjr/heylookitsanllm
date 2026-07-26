@@ -19,7 +19,7 @@ from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_templ
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from ..samplers import get_sampler_registry
 from .abort import AbortEvent
-from .base import BaseProvider, GenerationFailed, InvalidGenerationRequest
+from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import wrap_language_model
@@ -354,22 +354,6 @@ class UnifiedTextStrategy:
         return self._cached_wrapper
 
 
-class _VisionTokenResponse:
-    """Lightweight response for the first token from VLM vision encoding.
-
-    Compatible with the GenerationResponse interface that api.py expects
-    (needs .text, optionally .token and .logprobs). ``queue_wait_ms`` is a slot
-    so create_chat_completion can tag this first vision token with the FIFO
-    queue-wait time (a plain GenerationResponse is non-slotted; this isn't).
-    """
-    __slots__ = ('text', 'token', 'logprobs', 'queue_wait_ms')
-
-    def __init__(self, text: str, token: int, logprobs=None):
-        self.text = text
-        self.token = token
-        self.logprobs = logprobs
-
-
 class VLMVisionStrategy:
     """Strategy for VLM requests with images.
 
@@ -520,7 +504,7 @@ class VLMVisionStrategy:
         # (gemma-4 opens thinking with <|channel>) that the reasoning parser
         # must see; parsers strip non-structural specials from routed text.
         first_text = tokenizer.decode([first_token_id], skip_special_tokens=False)
-        yield _VisionTokenResponse(
+        yield GenerationChunk(
             text=first_text,
             token=first_token_id,
             logprobs=first_logprobs.squeeze(0),
@@ -680,7 +664,7 @@ class DiffusionStrategy:
                     # this is belt-and-braces.
                     if chunk.is_draft:
                         continue
-                    yield chunk
+                    yield GenerationChunk.from_engine(chunk)
         finally:
             stream.close()
 
@@ -711,6 +695,8 @@ class MLXProvider(BaseProvider):
     3. LanguageModelLogitsWrapper for mlx-lm compatibility
     4. Single-pass content scanning for path decisions
     """
+
+    provider_name = "mlx"
 
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         super().__init__(model_id, config, verbose)
@@ -1298,11 +1284,8 @@ class MLXProvider(BaseProvider):
                     try:
                         for chunk in inner:
                             if not tagged:
-                                try:
-                                    chunk.queue_wait_ms = queue_wait_ms  # type: ignore[attr-defined]
-                                    tagged = True
-                                except (AttributeError, TypeError):
-                                    pass
+                                chunk.queue_wait_ms = queue_wait_ms
+                                tagged = True
                             yield chunk
                     finally:
                         inner.close()
