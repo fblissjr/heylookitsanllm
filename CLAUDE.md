@@ -35,7 +35,8 @@ always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spe
 NET LOSS on small gemmas; gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
 importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
 local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
-`$HEYLOOK_LLAMA_SERVER` (default coderef/llama.cpp/build/bin/llama-server). Audio input
+`$HEYLOOK_LLAMA_SERVER` (no built-in default -- one of these is REQUIRED, else load fails
+loudly). Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
 load) -- the 400 guard lives in MLXProvider.create_chat_completion. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);

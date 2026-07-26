@@ -322,7 +322,7 @@ class GGUFModelConfig(BaseModel):
     spec_draft_n_max: Optional[int] = Field(default=None, ge=1, le=16)
     ctx_size: Optional[int] = Field(default=None, ge=512)
     n_gpu_layers: int = 999  # -ngl; 999 = everything on GPU
-    server_binary: Optional[str] = None  # default: $HEYLOOK_LLAMA_SERVER or coderef build
+    server_binary: Optional[str] = None  # else required via $HEYLOOK_LLAMA_SERVER
     host: str = "127.0.0.1"
     port: int = 0  # 0 = pick a free port at load
     startup_timeout_s: float = 300.0

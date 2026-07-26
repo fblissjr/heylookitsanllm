@@ -40,9 +40,6 @@ from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, get_sampler_registry
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 
-# Default binary location: the in-repo llama.cpp build (gitignored contents).
-DEFAULT_SERVER_BINARY = "coderef/llama.cpp/build/bin/llama-server"
-
 # Every live llama-server we spawned, so no exit path can leak one.
 #
 # We spawn with start_new_session=True (own process group, so unload can kill
@@ -116,16 +113,17 @@ class LlamaServerProvider(BaseProvider):
     # ------------------------------------------------------------------
 
     def _resolve_binary(self) -> Path:
-        candidate = (
-            self.config.get("server_binary")
-            or os.environ.get("HEYLOOK_LLAMA_SERVER")
-            or DEFAULT_SERVER_BINARY
-        )
+        candidate = self.config.get("server_binary") or os.environ.get("HEYLOOK_LLAMA_SERVER")
+        if not candidate:
+            raise RuntimeError(
+                "No llama-server binary configured. Set server_binary in "
+                "models.toml or the $HEYLOOK_LLAMA_SERVER env var."
+            )
         path = Path(candidate).expanduser()
         if not path.is_file():
             raise RuntimeError(
                 f"llama-server binary not found at '{path}'. Build it "
-                f"(cmake --build ... --target llama-server) or set "
+                f"(cmake --build ... --target llama-server) or fix "
                 f"server_binary / $HEYLOOK_LLAMA_SERVER."
             )
         return path
