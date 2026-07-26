@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.3]
+
+### Added
+
+- `scripts/gguf_probe.py` (+ local `gguf-probe` skill): direct
+  llama-server diagnostics for one GGUF model, the layer below
+  `dev_server.sh` -- /props modalities, thinking-template on/off/unset
+  diff, one-shot generation with tps + draft acceptance, auto-teardown.
+  Sidecar pairing reuses the importer's pickers; llama.cpp flag
+  knowledge stays in the provider.
+- **`.claude/` repo-contract subset now tracked** via a per-FILE
+  gitignore allowlist mirrored by the pre-commit hook's ALLOWED_PATHS:
+  the model-delegation rule + its two agents, four skills wrapping
+  git-tracked runners (test-suite, dev-server, eval-ab, gguf-probe),
+  and four repo-invariant hookify rules. Two-agent review before
+  publish: personal framing redacted, the test-suite skill rewritten
+  (it still described the frontend suite deleted 2026-07-09), and all
+  blanket dir negations tightened (a bare `!.claude/skills/` would
+  silently track future files). commit-msg leak gate installed
+  (path-privacy 0.10.2, chained over the repo's own hook) and
+  verified with leak bait.
+
+### Changed
+
+- CLAUDE.md Tests section corrected: `/test-suite` is backend-only
+  (no frontend unit suite exists); documented the two-place rule for
+  tracking new `.claude` files; `scripts/README.md` indexes gguf_probe.
+
 ## [1.44.2]
 
 ### Changed
