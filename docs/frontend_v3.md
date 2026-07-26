@@ -1,6 +1,14 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-23 (system-prompt editor extracted to shared
+Last updated: 2026-07-26 (attach button now capability-gated like the
+thinking toggle -- vision and/or audio caps drive visibility AND the
+picker's accept list; audio attach/render shipped for `audio`-capable
+models (gguf); perf trends grew a draft-acceptance column. DECIDED:
+v3 keys ALL modality gating off `capabilities` from /v1/models --
+`modalities` stays a server-side description and is deliberately unread
+here (caps are what the server will actually serve; e.g. an MLX gemma
+declares the audio modality but never gets the audio cap). Previously
+2026-07-23: system-prompt editor extracted to shared
 `prompt-section.js`; preset provenance persisted as `applied_preset_id`;
 preset bar shared via `preset-bar.js`, notebook gets the same sections)
 

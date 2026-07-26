@@ -279,11 +279,16 @@ function buildPctCell(fraction) {
 
 function buildTrendsTable(rows) {
   const last = rows.slice(-8);
+  // Spec-decode column only when the range saw any drafting: an all "--"
+  // column is noise for the (common) MLX-only hours.
+  const hasDraft = last.some((r) => r.draft_acceptance != null);
   const body = last.map((r) => createEl('tr', {}, [
     createEl('td', { class: 'perf-table__mono' }, [formatHour(r.hour)]),
     createEl('td', { class: 'perf-table__num' }, [formatMs(r.response_time_ms)]),
     createEl('td', { class: 'perf-table__num' }, [r.tokens_per_second != null ? r.tokens_per_second.toFixed(1) : '--']),
     createEl('td', { class: 'perf-table__num' }, [fmtInt(r.requests)]),
+    ...(hasDraft ? [createEl('td', { class: 'perf-table__num' },
+      [r.draft_acceptance != null ? `${(r.draft_acceptance * 100).toFixed(0)}%` : '--'])] : []),
   ]));
   return createEl('div', { class: 'perf-table-wrap' }, [
     createEl('table', { class: 'perf-table' }, [
@@ -292,6 +297,8 @@ function buildTrendsTable(rows) {
         createEl('th', { scope: 'col' }, ['Resp ms']),
         createEl('th', { scope: 'col' }, ['Tok/s']),
         createEl('th', { scope: 'col' }, ['Requests']),
+        // title: the number is token-weighted acceptance, not a success rate
+        ...(hasDraft ? [createEl('th', { scope: 'col', title: 'Speculative-decode draft acceptance' }, ['Draft acc'])] : []),
       ])]),
       createEl('tbody', {}, body),
     ]),

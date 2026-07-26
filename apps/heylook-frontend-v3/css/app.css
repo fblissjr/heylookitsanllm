@@ -653,6 +653,35 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   display: block;
 }
 
+/* -- audio attachments (chips in the strip, players in bubbles) --------- */
+
+.attach-thumb--audio {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  max-width: 160px;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+}
+.attach-thumb__audio-name {
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-audio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.message-audio {
+  max-width: min(300px, 100%);
+  display: block;
+}
+
 .chat__composer {
   display: flex;
   gap: 0.5rem;

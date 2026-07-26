@@ -88,6 +88,7 @@ export default createPage({
     s.conversations = convList.conversations ?? [];
     fillModelSelect(ctx);
     refreshThinkBtn(ctx);
+    refreshAttachBtn(ctx);
     renderConvList(ctx);
 
     if (s.conversations.length) {
@@ -129,6 +130,7 @@ function buildSkeleton(ctx) {
     // an open drawer to rebuild here, not only on its next open.
     drawer.requestRebuild({ force: true });
     refreshThinkBtn(ctx);
+    refreshAttachBtn(ctx);
   });
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
@@ -152,15 +154,20 @@ function buildSkeleton(ctx) {
       send(ctx);
     }
   });
-  // Images: attach via picker (mobile camera roll comes free) or paste.
+  // Attachments: images and (gguf models) audio, via picker or paste.
+  // The button is capability-gated like the thinking toggle -- hidden until
+  // refreshAttachBtn sees a model with the vision and/or audio cap, and the
+  // picker's accept list mirrors exactly what the model can take.
   s.pendingImages = [];
+  s.pendingAudio = [];
   s.fileInput = createEl('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
   s.fileInput.addEventListener('change', () => {
-    addImages(ctx, s.fileInput.files);
+    addFiles(ctx, s.fileInput.files);
     s.fileInput.value = '';
   });
   s.attachBtn = createEl('button', {
     class: 'btn btn--icon', title: 'Attach images', 'aria-label': 'Attach images',
+    hidden: true,
   });
   s.attachBtn.innerHTML = ICON_IMAGE;
   s.attachBtn.addEventListener('click', () => s.fileInput.click());
@@ -271,6 +278,23 @@ function refreshThinkBtn(ctx) {
   s.thinkBtn.hidden = !currentCaps(ctx).includes(PARAM_META.enable_thinking.requiresCap);
   const on = getSetting('enable_thinking') === true;
   s.thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+// Attach button follows the model's input modalities (capabilities, not the
+// descriptive `modalities` field -- caps are what the server will actually
+// serve). Hidden for text-only models; the picker accepts exactly what the
+// model takes. Runs everywhere refreshThinkBtn runs.
+function refreshAttachBtn(ctx) {
+  const s = ctx.state;
+  const caps = currentCaps(ctx);
+  const vision = caps.includes('vision');
+  const audio = caps.includes('audio');
+  s.attachBtn.hidden = !(vision || audio);
+  s.fileInput.accept = [vision && 'image/*', audio && 'audio/*'].filter(Boolean).join(',');
+  const label = vision && audio ? 'Attach images or audio'
+    : audio ? 'Attach audio' : 'Attach images';
+  s.attachBtn.title = label;
+  s.attachBtn.setAttribute('aria-label', label);
 }
 
 function currentCaps(ctx) {
@@ -414,7 +438,7 @@ function startRename(ctx, conv, titleEl) {
 
 async function newConversation(ctx) {
   const s = ctx.state;
-  clearPendingImages(ctx); // staged images belong to the conv they were picked in
+  clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   try {
     const conv = await api.createConversation({
       title: 'New conversation',
@@ -467,7 +491,7 @@ async function selectConversation(ctx, convId) {
   if (s.stream) stopStream(ctx); // partial still persists to its own conv
   s.activeId = convId;
   s.editingId = null;
-  clearPendingImages(ctx); // staged images belong to the conv they were picked in
+  clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   showStatus(ctx, '');
   renderConvList(ctx);
   try {
@@ -478,6 +502,7 @@ async function selectConversation(ctx, convId) {
     s.appliedPresetId = conv.applied_preset_id ?? null;
     hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
     refreshThinkBtn(ctx);    // silent hydrate skips onSettingsChange -- sync directly
+    refreshAttachBtn(ctx);
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
@@ -542,8 +567,19 @@ function buildMessageEl(ctx, msg) {
         .filter((b) => b.type === 'image')
         .map((b) => createEl('img', {
           class: 'message-image',
-          src: imageBlockUrl(b),
+          src: blockSourceUrl(b),
           alt: 'attached image',
+        }))));
+  }
+  if (hasAudioBlocks(msg)) {
+    bubbleChildren.push(createEl('div', { class: 'message-audio-list' },
+      msg.content_blocks
+        .filter((b) => b.type === 'audio')
+        .map((b) => createEl('audio', {
+          class: 'message-audio',
+          controls: '',
+          src: blockSourceUrl(b),
+          'aria-label': 'attached audio',
         }))));
   }
   bubbleChildren.push(content);
@@ -568,8 +604,8 @@ function buildActions(ctx, msg) {
     actions.push(btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})));
   }
   // Editing is text-only: the editor would replace content and silently drop
-  // the image blocks. Image messages get delete/regenerate, not edit.
-  if (!hasImageBlocks(msg)) {
+  // the media blocks. Image/audio messages get delete/regenerate, not edit.
+  if (!hasMediaBlocks(msg)) {
     actions.push(btn('Edit', () => {
       if (ctx.state.stream) return; // renderMessages would orphan the stream placeholder
       ctx.state.editingId = msg.id;
@@ -683,6 +719,7 @@ async function deleteMessage(ctx, msg) {
 // ---------------------------------------------------------------------------
 
 const MAX_ATTACH_IMAGES = 8;
+const MAX_ATTACH_AUDIO = 2; // server-side gemma cap is 30s/clip; keep the strip sane
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -691,6 +728,14 @@ function fileToDataUrl(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+// Picker dispatch: the input's accept list is capability-driven, but a
+// picker can't be trusted (drag/drop, "All files") -- split by MIME here.
+function addFiles(ctx, files) {
+  const all = [...files];
+  addImages(ctx, all.filter((f) => f.type.startsWith('image/')));
+  addAudio(ctx, all.filter((f) => f.type.startsWith('audio/')));
 }
 
 async function addImages(ctx, files) {
@@ -702,6 +747,7 @@ async function addImages(ctx, files) {
       .catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) return;
   const usable = reads.filter(Boolean);
+  if (!usable.length) return;
   const room = Math.max(MAX_ATTACH_IMAGES - s.pendingImages.length, 0);
   s.pendingImages.push(...usable.slice(0, room));
   renderAttachStrip(ctx);
@@ -712,15 +758,34 @@ async function addImages(ctx, files) {
   }
 }
 
-function clearPendingImages(ctx) {
+async function addAudio(ctx, files) {
+  const s = ctx.state;
+  const reads = await Promise.all([...files]
+    .filter((f) => f.type.startsWith('audio/'))
+    .map((f) => fileToDataUrl(f)
+      .then((dataUrl) => ({ dataUrl, mediaType: f.type, name: f.name }))
+      .catch(() => null)));
+  if (!ctx.alive) return;
+  const usable = reads.filter(Boolean);
+  if (!usable.length) return;
+  const room = Math.max(MAX_ATTACH_AUDIO - s.pendingAudio.length, 0);
+  s.pendingAudio.push(...usable.slice(0, room));
+  renderAttachStrip(ctx);
+  if (usable.length > room) {
+    showStatus(ctx, `${MAX_ATTACH_AUDIO} audio clip max -- ${usable.length - room} not attached.`);
+  }
+}
+
+function clearPendingAttachments(ctx) {
   ctx.state.pendingImages = [];
+  ctx.state.pendingAudio = [];
   renderAttachStrip(ctx);
 }
 
 function renderAttachStrip(ctx) {
   const s = ctx.state;
-  s.attachStrip.hidden = !s.pendingImages.length;
-  s.attachStrip.replaceChildren(...s.pendingImages.map((img, i) => {
+  s.attachStrip.hidden = !s.pendingImages.length && !s.pendingAudio.length;
+  const imageThumbs = s.pendingImages.map((img, i) => {
     // Real <button> + aria-label naming the target image: keyboard-reachable
     // and announced correctly even though the strip has no per-thumb text.
     const label = `Remove image ${i + 1}`;
@@ -733,24 +798,46 @@ function renderAttachStrip(ctx) {
       createEl('img', { src: img.dataUrl, alt: '' }),
       remove,
     ]);
-  }));
+  });
+  const audioChips = s.pendingAudio.map((clip, i) => {
+    const label = `Remove audio ${clip.name || i + 1}`;
+    const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
+    remove.addEventListener('click', () => {
+      s.pendingAudio.splice(i, 1);
+      renderAttachStrip(ctx);
+    });
+    return createEl('div', { class: 'attach-thumb attach-thumb--audio' }, [
+      createEl('span', { class: 'attach-thumb__audio-name', title: clip.name || 'audio' },
+        [clip.name || 'audio']),
+      remove,
+    ]);
+  });
+  s.attachStrip.replaceChildren(...imageThumbs, ...audioChips);
 }
 
 // Stored shape is Messages-style content blocks (what the server persists);
-// hasImageBlocks gates the flows that only make sense for text.
+// hasMediaBlocks gates the flows that only make sense for text (edit).
 function hasImageBlocks(msg) {
   return Boolean(msg.content_blocks?.some((b) => b.type === 'image'));
 }
 
-// One place that knows how an image block becomes a URL (render AND wire use
-// it -- they must never disagree). Handles both stored source types.
-function imageBlockUrl(b) {
+function hasAudioBlocks(msg) {
+  return Boolean(msg.content_blocks?.some((b) => b.type === 'audio'));
+}
+
+function hasMediaBlocks(msg) {
+  return hasImageBlocks(msg) || hasAudioBlocks(msg);
+}
+
+// One place that knows how a media block (image OR audio -- same source
+// shape) becomes a URL; render AND wire use it, they must never disagree.
+function blockSourceUrl(b) {
   return b.source.type === 'url'
     ? b.source.url
     : `data:${b.source.media_type};base64,${b.source.data}`;
 }
 
-function buildContentBlocks(text, images) {
+function buildContentBlocks(text, images, audio) {
   const blocks = images.map((img) => ({
     type: 'image',
     source: {
@@ -759,6 +846,14 @@ function buildContentBlocks(text, images) {
       data: img.dataUrl.slice(img.dataUrl.indexOf(',') + 1),
     },
   }));
+  blocks.push(...audio.map((clip) => ({
+    type: 'audio',
+    source: {
+      type: 'base64',
+      media_type: clip.mediaType,
+      data: clip.dataUrl.slice(clip.dataUrl.indexOf(',') + 1),
+    },
+  })));
   if (text) blocks.push({ type: 'text', text });
   return blocks;
 }
@@ -771,17 +866,31 @@ async function send(ctx) {
   const s = ctx.state;
   const text = s.textarea.value.trim();
   const images = s.pendingImages;
-  if ((!text && !images.length) || s.stream) return;
+  const audio = s.pendingAudio;
+  if ((!text && !images.length && !audio.length) || s.stream) return;
   if (!s.modelSelect.value) {
     showStatus(ctx, 'No models available.', true);
     return;
   }
+  // Attachments staged on a capable model must not ride to a model that
+  // lost the cap on switch -- fail loudly, keep them staged for a re-pick.
+  const caps = currentCaps(ctx);
+  if (images.length && !caps.includes('vision')) {
+    showStatus(ctx, 'This model does not take images -- remove them or switch models.', true);
+    return;
+  }
+  if (audio.length && !caps.includes('audio')) {
+    showStatus(ctx, 'This model does not take audio -- remove it or switch models.', true);
+    return;
+  }
 
-  const content = images.length ? buildContentBlocks(text, images) : text;
-  const title = (text || 'Image message').slice(0, 50);
+  const content = (images.length || audio.length)
+    ? buildContentBlocks(text, images, audio) : text;
+  const title = (text || (audio.length ? 'Audio message' : 'Image message')).slice(0, 50);
   s.textarea.value = '';
   autoGrow(s.textarea);
   s.pendingImages = [];
+  s.pendingAudio = [];
   renderAttachStrip(ctx);
   showStatus(ctx, '');
 
@@ -831,16 +940,27 @@ async function send(ctx) {
 }
 
 // Wire shape for generation: v3 currently speaks the OpenAI chat-completions
-// format, so stored image blocks convert to image_url parts (data URLs).
-// When v3 migrates to /v1/messages (Phase 3b) the stored blocks ARE the wire
-// shape and this conversion disappears.
+// format, so stored image blocks convert to image_url parts (data URLs) and
+// audio blocks to input_audio parts (RAW base64 -- a data URL here is
+// rejected server-side). When v3 migrates to /v1/messages (Phase 3b) the
+// stored blocks ARE the wire shape and this conversion disappears.
 function toWireContent(msg) {
-  if (!hasImageBlocks(msg)) return msg.content;
-  return msg.content_blocks.map((b) => (
-    b.type === 'image'
-      ? { type: 'image_url', image_url: { url: imageBlockUrl(b) } }
-      : { type: 'text', text: b.text ?? '' }
-  ));
+  if (!hasMediaBlocks(msg)) return msg.content;
+  return msg.content_blocks.map((b) => {
+    if (b.type === 'image') {
+      return { type: 'image_url', image_url: { url: blockSourceUrl(b) } };
+    }
+    if (b.type === 'audio') {
+      const input_audio = b.source.type === 'url'
+        ? { url: b.source.url }
+        : {
+          data: b.source.data,
+          format: (b.source.media_type ?? '').split('/')[1] || undefined,
+        };
+      return { type: 'input_audio', input_audio };
+    }
+    return { type: 'text', text: b.text ?? '' };
+  });
 }
 
 function buildRequestBody(ctx) {
@@ -968,6 +1088,7 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
     const parts = [`${usage.completion_tokens ?? '?'} tokens`];
     if (timing?.peak_memory_gb != null) parts.push(`${timing.peak_memory_gb.toFixed(2)} GB peak`);
     if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
+    if (timing?.draft_acceptance != null) parts.push(`draft ${(timing.draft_acceptance * 100).toFixed(0)}%`);
     showStatus(ctx, parts.join(' · '));
   }
 }

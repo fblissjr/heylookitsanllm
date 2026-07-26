@@ -130,6 +130,36 @@ class TestTelemetryLatch:
         t.absorb(GenerationChunk(peak_memory=1.0))
         assert t.peak_memory_gb == 2.0
 
+    def test_trends_aggregate_draft_acceptance(self):
+        # Perf-page trends: hours with spec-decode traffic report an
+        # acceptance rate; hours without report None (not 0 -- the UI must
+        # distinguish "no drafting" from "everything rejected").
+        import time as _time
+
+        from heylook_llm.perf_collector import PerfCollector, RequestEvent
+
+        def event(**kw):
+            base = dict(
+                timestamp=_time.time(), model="m", success=True, total_ms=100.0,
+                queue_ms=0.0, model_load_ms=0.0, image_processing_ms=0.0,
+                token_generation_ms=90.0, first_token_ms=10.0, prompt_tokens=10,
+                completion_tokens=50, tokens_per_second=40.0, had_images=False,
+                was_streaming=True,
+            )
+            base.update(kw)
+            return RequestEvent(**base)
+
+        c = PerfCollector(max_events=16)
+        c.record_request(event(draft_tokens=100, draft_accepted=60))
+        c.record_request(event(draft_tokens=100, draft_accepted=20))
+        (row,) = c.build_profile("1h")["trends"]
+        assert row["draft_acceptance"] == 0.4  # (60+20)/200
+
+        c2 = PerfCollector(max_events=16)
+        c2.record_request(event())
+        (row2,) = c2.build_profile("1h")["trends"]
+        assert row2["draft_acceptance"] is None
+
     def test_draft_acceptance_latches(self):
         # Spec-decode counters are cumulative running totals; the final
         # chunk carries the request's totals and zeros must not reset them.

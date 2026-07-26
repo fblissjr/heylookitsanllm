@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.43.0]
+
+### Added
+
+- **v3 audio attach/render** (plan Phase 7d frontend half, re-plan
+  2026-07-26 v3 mini-workstream). Chat's attach affordance is now
+  CAPABILITY-GATED like the thinking toggle: hidden for text-only models,
+  the picker's `accept` list built from the model's `vision`/`audio` caps
+  (the previously ungated image button rode along to models that would
+  reject it). Audio clips stage as named removable chips (2-clip cap,
+  aria-live overflow message), render as `<audio controls>` in bubbles,
+  store as Messages-style `audio` blocks, and convert to `input_audio`
+  wire parts (raw base64) at send. Send refuses loudly if staged
+  attachments outlive a model switch that removed the cap. Edit stays
+  text-only for any media message.
+- **Draft acceptance on the perf page**: `/v1/performance/profile` trends
+  now carry hourly token-weighted `draft_acceptance` (None when nothing
+  drafted -- distinct from 0); the perf trends table shows a "Draft acc"
+  column only for ranges that drafted; chat's post-stream stats line
+  appends `draft N%`.
+- Decision recorded (docs/frontend_v3.md): v3 gates ALL modality UI off
+  `capabilities`; the descriptive `modalities` field stays deliberately
+  unread by the frontend.
+- `scripts/dev_server.sh` RAM pre-flight now sizes single-FILE model
+  paths (gguf) including mmproj/drafter sidecars.
+- Verified: E2E chat suite 40/40 (attach cap, paste staging, image
+  round-trip all exercise the new gating); backend suite green.
+
 ## [1.42.0]
 
 ### Added

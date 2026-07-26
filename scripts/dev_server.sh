@@ -68,9 +68,19 @@ mid = sys.argv[1]
 cfg = tomllib.loads(pathlib.Path("models.toml").read_text())
 for m in cfg.get("models", []):
     if m.get("id") == mid:
-        p = pathlib.Path(m.get("config", {}).get("model_path", ""))
+        c = m.get("config", {})
+        p = pathlib.Path(c.get("model_path", ""))
         if p.is_dir():
             print(round(sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1e9))
+        elif p.is_file():
+            # gguf entries point at a FILE; count declared sidecars too
+            # (mmproj/drafter load into the same subprocess).
+            total = p.stat().st_size
+            for key in ("mmproj_path", "draft_model_path"):
+                sp = pathlib.Path(c.get(key) or "")
+                if sp.is_file():
+                    total += sp.stat().st_size
+            print(round(total / 1e9))
         break
 PY
 }

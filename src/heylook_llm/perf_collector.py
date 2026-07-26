@@ -321,6 +321,13 @@ class PerfCollector:
             if prev_tps is not None and prev_tps > 0:
                 tps_change = round((avg_tps - prev_tps) / prev_tps, 4)
 
+            # Spec-decode acceptance: token-weighted over the hour's drafted
+            # tokens. None (not 0) when nothing drafted -- the perf page must
+            # distinguish "no drafting" from "everything rejected".
+            drafted = sum(e.draft_tokens for e in successes)
+            accepted = sum(e.draft_accepted for e in successes)
+            draft_acceptance = round(accepted / drafted, 3) if drafted else None
+
             result.append({
                 "hour": hour,
                 "response_time_ms": round(avg_rt, 1),
@@ -329,6 +336,7 @@ class PerfCollector:
                 "errors": errors,
                 "response_time_change": rt_change,
                 "tps_change": tps_change,
+                "draft_acceptance": draft_acceptance,
             })
 
             prev_rt = avg_rt
