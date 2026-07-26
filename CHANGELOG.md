@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0]
+
+### Added
+
+- **GGUF import/scan support** (plan Phase 7e detection layer). The scan
+  now recognizes GGUF model dirs and builds `provider = "gguf"` entries:
+  primary weight file (largest non-sidecar .gguf), mmproj sidecar paired
+  by precision preference (F16 > BF16 > F32; matches "mmproj" anywhere in
+  the basename -- google names projectors `<model>-mmproj.gguf`),
+  root-level `mtp-*.gguf` drafter auto-paired into `draft_model_path`
+  with `spec_type` deliberately UNSET (spec decode is measured
+  model-dependent; enabling it is an explicit owner choice), modalities
+  text(+vision from mmproj; audio needs GGUF-metadata reading, later).
+  HF-format Assistant/drafter checkpoints (`architectures[]` contains
+  "Assistant") are recognized and REFUSED before the MLX branch could
+  misimport them; `imatrix_*.gguf_file` calibration artifacts are never
+  treated as models. GGUF dir sizes are computed (were 0 GB);
+  `generate_toml` groups entries by provider section;
+  `ScannedModelResponse.provider` widened to
+  `mlx | mlx_embedding | gguf` (scan already emitted embedding entries);
+  `model_service` validators + default-sampler stamping cover gguf, and
+  `import_models` forwards only GGUF-legal fields (the mlx-shaped config
+  it used to build would have failed `extra="forbid"`). Verified against
+  the real driver fleet: 6 correct entries from 8 dirs, both assistant
+  checkpoints skipped.
+- **Audio eval tasks** (completes plan 7d): `audio_speech_keywords`
+  (committed speech fixture; keywords actually said must surface) and
+  `audio_tone_vs_speech` (deterministic stdlib-synthesized sine; tone
+  vocabulary required) -- both gated on the `audio` capability. Bank now
+  15 tasks; 15/15 live-green on gemma-4-E4B-it-qat-gguf.
+
 ## [1.43.0]
 
 ### Added

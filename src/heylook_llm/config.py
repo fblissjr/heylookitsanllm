@@ -604,7 +604,7 @@ class ScannedModelResponse(BaseModel):
     """A model discovered during filesystem scan."""
     id: str = Field(..., description="Auto-generated model identifier")
     path: str = Field(..., description="Filesystem path to model")
-    provider: Literal["mlx"] = Field(..., description="Detected provider type")
+    provider: Literal["mlx", "mlx_embedding", "gguf"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
     vision: bool = Field(default=False, description="Whether model supports vision")
     quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")

@@ -86,12 +86,25 @@ class ModelImporter:
 
             config_data = self._read_model_config(root_path)
 
-            if self._is_embedding_model(root_path, config_data):
+            if self._is_drafter_checkpoint(config_data):
+                # HF-format ASSISTANT/drafter SOURCE checkpoint (config.json +
+                # safetensors -- the same on-disk shape as a real MLX model).
+                # These pair with a GGUF's MTP head; they are not servable on
+                # their own and must be refused BEFORE the mlx branch below
+                # would otherwise happily import them.
+                logging.info(f"Skipping drafter/assistant checkpoint (not servable): {rel_path}")
+            elif self._is_embedding_model(root_path, config_data):
                 logging.info(f"Found embedding model in: {rel_path}")
                 model = self._create_embedding_entry(root_path)
                 if model:
                     models.append(model)
                     logging.info(f"Added embedding model: {model['id']}")
+            elif self._is_gguf_model(root_path):
+                logging.info(f"Found GGUF model in: {rel_path}")
+                model = self._create_gguf_entry(root_path)
+                if model:
+                    models.append(model)
+                    logging.info(f"Added GGUF model: {model['id']}")
             elif self._is_mlx_model(root_path):
                 logging.info(f"Found MLX model in: {rel_path}")
                 model = self._create_mlx_entry(root_path, config_data)
@@ -125,8 +138,12 @@ class ModelImporter:
         models = []
         config_data = self._read_model_config(snapshot_path)
 
-        if self._is_embedding_model(snapshot_path, config_data):
+        if self._is_drafter_checkpoint(config_data):
+            model = None
+        elif self._is_embedding_model(snapshot_path, config_data):
             model = self._create_embedding_entry(snapshot_path)
+        elif self._is_gguf_model(snapshot_path):
+            model = self._create_gguf_entry(snapshot_path)
         elif self._is_mlx_model(snapshot_path):
             model = self._create_mlx_entry(snapshot_path, config_data)
         else:
@@ -136,7 +153,11 @@ class ModelImporter:
             parts = snapshot_path.parent.parent.name.split("--")
             if len(parts) >= 2:
                 model['id'] = f"{parts[1]}/{parts[2]}" if len(parts) > 2 else parts[1]
-                model['config']['model_path'] = str(snapshot_path)
+                # A gguf model_path is the primary .gguf FILE (sidecars live
+                # alongside it) -- overwriting it with the snapshot DIRECTORY
+                # would point GGUFModelConfig.model_path at the wrong thing.
+                if model.get('provider') != 'gguf':
+                    model['config']['model_path'] = str(snapshot_path)
             models.append(model)
 
         return models
@@ -218,6 +239,151 @@ class ModelImporter:
                     return True
         return False
 
+    def _is_drafter_checkpoint(self, config_data: Optional[dict]) -> bool:
+        """HF-format ASSISTANT/drafter SOURCE checkpoint.
+
+        Signal: config.json's "architectures" contains a string with
+        "Assistant" in it (e.g. "Gemma4AssistantForCausalLM",
+        "Gemma4UnifiedAssistantForCausalLM"). On disk these look exactly
+        like a real MLX model (config.json + model.safetensors), but they
+        are drafter/MTP SOURCE checkpoints -- inputs to GGUF conversion,
+        never servable on their own -- and must be refused before the mlx
+        detector would otherwise claim them.
+        """
+        if not config_data:
+            return False
+        architectures = config_data.get("architectures") or []
+        return any("assistant" in str(a).lower() for a in architectures)
+
+    def _is_gguf_model(self, path: Path) -> bool:
+        """Dir containing >=1 PRIMARY .gguf file (root level only).
+
+        "Primary" excludes mmproj-* sidecars and mtp-* drafter sidecars --
+        those are paired onto a primary entry by ``_create_gguf_entry``,
+        never their own entries. ``imatrix_*.gguf_file`` calibration data
+        has a DIFFERENT extension (``.gguf_file``, not ``.gguf``) and is
+        excluded by the suffix check itself.
+        """
+        return self._pick_primary_gguf(path) is not None
+
+    def _iter_root_gguf_files(self, path: Path):
+        """Root-level (non-recursive) ``*.gguf`` files -- never ``.gguf_file``
+        (imatrix calibration data) and never anything in a nested subdir
+        (e.g. an MTP/ precision-variants folder)."""
+        try:
+            for f in path.iterdir():
+                if f.is_file() and f.name.endswith(".gguf"):
+                    yield f
+        except OSError:
+            return
+
+    def _pick_primary_gguf(self, path: Path) -> Optional[Path]:
+        """The primary servable .gguf weight file, largest wins if several."""
+        candidates = [
+            f for f in self._iter_root_gguf_files(path)
+            # "mmproj" appears as a prefix (unsloth: mmproj-F16.gguf) OR a
+            # suffix (google: gemma-4-E4B-it-mmproj.gguf) -- match anywhere.
+            if "mmproj" not in f.name.lower()
+            and not f.name.lower().startswith("mtp-")
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda f: f.stat().st_size)
+
+    # Precision preference for the multimodal projector sidecar: F16 is the
+    # sweet spot for vision-tower activations, BF16 next, F32 (largest/
+    # slowest) is the last resort rather than the default.
+    _MMPROJ_PRECISION_PREFERENCE = ("mmproj-f16.gguf", "mmproj-bf16.gguf", "mmproj-f32.gguf")
+
+    def _pick_mmproj(self, path: Path) -> Optional[Path]:
+        """Best mmproj sidecar by precision preference, else any mmproj* file."""
+        candidates = {
+            f.name.lower(): f
+            for f in self._iter_root_gguf_files(path)
+            # anywhere, not prefix-only: google names projectors <model>-mmproj.gguf
+            if "mmproj" in f.name.lower()
+        }
+        if not candidates:
+            return None
+        for preferred in self._MMPROJ_PRECISION_PREFERENCE:
+            if preferred in candidates:
+                return candidates[preferred]
+        # Arbitrary mmproj-named file that doesn't match a known precision
+        # suffix -- pick deterministically (sorted by name) rather than
+        # dict/iteration order.
+        return sorted(candidates.values(), key=lambda f: f.name)[0]
+
+    def _pick_draft(self, path: Path) -> Optional[Path]:
+        """Root-level mtp-*.gguf drafter sidecar, if any.
+
+        An MTP/ subdirectory may hold additional precision variants of the
+        same drafter -- those are alternates, never used here. A servable
+        pairing needs exactly one drafter path, and only the root-level file
+        is that path.
+        """
+        candidates = [
+            f for f in self._iter_root_gguf_files(path)
+            if f.name.lower().startswith("mtp-")
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda f: f.stat().st_size)
+
+    def _create_gguf_entry(self, path: Path) -> Optional[dict]:
+        """Create a models.toml entry for a GGUF model (served by llama-server)."""
+        model_id = path.name
+        if model_id in self.existing_ids:
+            return None
+
+        primary = self._pick_primary_gguf(path)
+        if primary is None:
+            return None
+        self.existing_ids.add(model_id)
+
+        mmproj = self._pick_mmproj(path)
+        draft = self._pick_draft(path)
+        is_vision = mmproj is not None
+        is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
+        _, size_gb = self._get_model_size(path)
+
+        # Modality DESCRIPTION mirrors detect_modalities' intent, but GGUF
+        # dirs carry no config.json to read -- the only cheap signal is the
+        # mmproj sidecar. Audio is deliberately NOT auto-detected: it would
+        # need reading the GGUF's own metadata (out of scope here).
+        modalities = ["text"]
+        if is_vision:
+            modalities.append("vision")
+
+        tags = self._detect_tags(model_id, is_vision, is_quantized, size_gb)
+        tags.append("gguf")
+
+        config: dict[str, Any] = {
+            "model_path": str(primary),
+            "modalities": modalities,
+        }
+        if mmproj is not None:
+            config["mmproj_path"] = str(mmproj)
+        if draft is not None:
+            config["draft_model_path"] = str(draft)
+        # spec_type is DELIBERATELY left unset even when a draft sidecar is
+        # paired: whether speculative decoding actually helps is measured
+        # per-model (draft-accept rate varies a lot), so import only pairs
+        # the drafter PATH automatically -- turning spec decode ON via
+        # spec_type stays an explicit owner choice, never inferred here.
+
+        if self.sampler_name:
+            config["default_sampler"] = self.sampler_name
+        config.update(self.overrides)
+
+        return {
+            "id": model_id,
+            "provider": "gguf",
+            "description": "Auto-imported GGUF model (llama-server)",
+            "tags": tags,
+            "enabled": True,
+            "config": config,
+        }
+
     def _has_vision_files(self, path: Path) -> bool:
         """Vision-tower / mmproj sidecar files -- the fallback signal for sparse
         checkpoints (GGUF/split) whose config.json lacks a vision block."""
@@ -293,7 +459,11 @@ class ModelImporter:
 
         size_gb = None
         if path.is_dir():
+            # GGUF dirs have no *.safetensors -- sum *.gguf too (this also
+            # covers mmproj/mtp sidecars, since rglob("*.gguf") doesn't
+            # match imatrix's ".gguf_file" extension).
             total_size = sum(f.stat().st_size for f in path.rglob("*.safetensors"))
+            total_size += sum(f.stat().st_size for f in path.rglob("*.gguf"))
             if total_size > 0:
                 size_gb = total_size / (1024 ** 3)
 
@@ -375,8 +545,22 @@ class ModelImporter:
             tags.append("instruct")
         return tags
 
+    # Stable section order for a mixed scan; anything outside this map
+    # (a future provider) still gets emitted, under "Other Models".
+    _SECTION_HEADERS: list[tuple[str, str]] = [
+        ("mlx", "# --- MLX Models ---"),
+        ("mlx_embedding", "# --- Embedding Models ---"),
+        ("gguf", "# --- GGUF Models ---"),
+    ]
+
     def generate_toml(self, models: list[dict], output_file: Optional[str] = None) -> str:
-        """Generate models.toml content from discovered models."""
+        """Generate models.toml content from discovered models.
+
+        Entries are grouped into one ``# --- <Provider> Models ---`` section
+        per provider (stable order: MLX, embedding, GGUF, then anything
+        else) so a mixed scan reads as organized sections instead of one
+        undifferentiated list under a single "MLX Models" header.
+        """
         config = {
             "default_model": models[0]['id'] if models else "none",
             "max_loaded_models": 1,
@@ -390,13 +574,35 @@ class ModelImporter:
             f'default_model = "{config["default_model"]}"',
             f'max_loaded_models = {config["max_loaded_models"]}',
             "",
-            "# --- MLX Models ---",
-            "",
         ]
 
+        by_provider: dict[str, list[dict]] = {}
         for model in models:
-            toml_lines.extend(self._model_to_toml_lines(model))
+            by_provider.setdefault(model.get("provider", "mlx"), []).append(model)
+
+        known_providers = {key for key, _ in self._SECTION_HEADERS}
+        for provider_key, header in self._SECTION_HEADERS:
+            group = by_provider.get(provider_key, [])
+            if not group:
+                continue
+            toml_lines.append(header)
             toml_lines.append("")
+            for model in group:
+                toml_lines.extend(self._model_to_toml_lines(model))
+                toml_lines.append("")
+
+        others = [
+            model
+            for provider_key, group in by_provider.items()
+            if provider_key not in known_providers
+            for model in group
+        ]
+        if others:
+            toml_lines.append("# --- Other Models ---")
+            toml_lines.append("")
+            for model in others:
+                toml_lines.extend(self._model_to_toml_lines(model))
+                toml_lines.append("")
 
         toml_content = "\n".join(toml_lines)
 

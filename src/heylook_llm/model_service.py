@@ -70,11 +70,13 @@ def stamp_default_sampler(
 
     The request-time cascade (``MLXProvider._apply_model_defaults``) picks up
     ``default_sampler`` and applies the preset fields when no per-request
-    preset is specified -- no sampler-field baking. Non-mlx providers
-    (embeddings) don't sample, so the stamp is skipped.
+    preset is specified -- no sampler-field baking. ``gguf`` also samples
+    (``GGUFModelConfig.default_sampler`` feeds the llama-server payload
+    cascade) so it gets the stamp too; embeddings don't sample, so the stamp
+    is skipped for those.
     """
     result = dict(config)
-    if provider == "mlx":
+    if provider in ("mlx", "gguf"):
         result["default_sampler"] = preset_name
     return result
 
@@ -139,6 +141,10 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
         # num_draft_tokens is deliberately NOT emitted: it only matters when
         # a draft_model_path is configured (speculative decoding), and import
         # never configures one -- stamping it on every model is dead config.
+
+    # gguf gets no smart defaults here: llama-server owns its own KV cache
+    # (ctx_size/n_gpu_layers live on GGUFModelConfig directly) -- there's
+    # nothing analogous to cache_type/kv_bits to bake in at import time.
 
     return defaults
 
@@ -394,9 +400,18 @@ class ModelService:
         p = Path(model_path)
         if p.is_dir():
             total = sum(f.stat().st_size for f in p.rglob("*.safetensors"))
+            total += sum(f.stat().st_size for f in p.rglob("*.gguf"))
             size_gb = total / (1024**3)
         elif p.is_file():
-            size_gb = p.stat().st_size / (1024**3)
+            if raw.get("provider") == "gguf":
+                # model_path is the PRIMARY .gguf FILE -- sidecars (mmproj
+                # precision variants, mtp drafter) live alongside it in the
+                # same directory, so report the combined directory size
+                # rather than just the one weight file.
+                total = sum(f.stat().st_size for f in p.parent.glob("*.gguf"))
+                size_gb = total / (1024**3)
+            else:
+                size_gb = p.stat().st_size / (1024**3)
 
         # Configured if the id matches OR the resolved weights path is
         # already configured under any id (see _configured_identity).
@@ -609,7 +624,7 @@ class ModelService:
             for model in models:
                 if model.get("id") in model_ids:
                     config = model.get("config", {}) or {}
-                    if model.get("provider") == "mlx":
+                    if model.get("provider") in ("mlx", "gguf"):
                         config["default_sampler"] = preset_name
                         model["config"] = config
                     updated.append(ModelConfig(**model))
@@ -656,6 +671,36 @@ class ModelService:
                         "model_path": model_path,
                         "max_length": 2048,
                     }
+                elif provider == "gguf":
+                    # GGUFModelConfig has model_config = ConfigDict(extra=
+                    # "forbid") and no "vision"/cache_type/chat-template
+                    # fields (llama-server owns its own KV cache and
+                    # GGUF-embedded chat templating) -- building this from
+                    # the mlx-shaped entry_config below would fail
+                    # validation and silently drop the import. Only pass
+                    # through the GGUF-specific fields the caller actually
+                    # supplied in ``config`` (e.g. from a CLI-importer scan
+                    # via mmproj_path/draft_model_path/modalities).
+                    entry_config = {"model_path": model_path}
+                    for key in (
+                        "mmproj_path", "draft_model_path", "spec_type",
+                        "spec_draft_n_max", "ctx_size", "n_gpu_layers",
+                        "server_binary", "host", "port", "startup_timeout_s",
+                        "extra_args", "max_tokens", "supports_thinking",
+                        "modalities",
+                    ):
+                        # Skip None -- GGUFModelConfig fields are Optional
+                        # with real (non-None) defaults, and TOML has no
+                        # null literal (tomli_w raises on it).
+                        if key in config and config[key] is not None:
+                            entry_config[key] = config[key]
+
+                    if default_sampler:
+                        from heylook_llm.samplers import get_sampler_registry
+                        if default_sampler in get_sampler_registry():
+                            entry_config = stamp_default_sampler(
+                                entry_config, default_sampler, provider
+                            )
                 else:
                     # Start with base config
                     entry_config = {
@@ -745,7 +790,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "mlx_embedding"):
+        elif config_data["provider"] not in ("mlx", "mlx_embedding", "gguf"):
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})
