@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-07-24
+Last updated: 2026-07-26
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -11,14 +11,17 @@ Last updated: 2026-07-24
 
 Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a vanilla-JS web UI, and on-the-fly model swapping.
 
-Built on Apple MLX for text and vision.
+Built on Apple MLX for text and vision, with GGUF models served through a managed [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` subprocess -- one API, one UI, per-model engine choice.
 
 ## Key Features
 
 - **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic Messages-style `/v1/messages` with typed content blocks (text, image, thinking, logprobs, hidden states)
 - **Multi-Provider**:
   - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
+  - **GGUF**: any GGUF model via a managed llama-server subprocess (one process per loaded model; spawn/health/teardown owned by the router) -- vision via mmproj sidecars, audio input, speculative decoding/MTP, prefix caching. Point `server_binary` at a llama-server build (or set `$HEYLOOK_LLAMA_SERVER`)
   - **MLX Embedding**: Sentence embeddings with dynamic backbone loading (any mlx-lm architecture)
+- **Audio Input** (GGUF models): `input_audio` content parts (WAV/MP3/FLAC) on both APIs, an audio attach affordance in the chat UI, and audio tasks in the behavioral eval bank. MLX models reject audio with a clear 400 (their audio towers are skipped at load)
+- **Speculative Decoding** (GGUF): MTP heads -- embedded (Qwen3.6) or sidecar drafters (gemma-4 `mtp-*.gguf`, auto-paired at import) -- with draft-acceptance telemetry in the perf records and UI. Measured model-dependent: +21% on Qwen3.6-35B-A3B thinking traces, a net loss on small fast models, so it's per-model opt-in (`spec_type = "draft-mtp"`)
 - **Thinking Blocks**: format-aware reasoning parsing driven by the model's own chat template -- Qwen3-style `<think>` tags (including Qwen3.5's pre-filled-`<think>` templates) and gemma-4's channel format, with round-trip editing and streaming. Text-based only; there is no token-ID-based detection
 - **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
 - **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
@@ -37,7 +40,7 @@ Built on Apple MLX for text and vision.
 
 Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build step; served directly by the backend. Conversations, notebooks, and presets are stored server-side in DuckDB (messages as content blocks; images round-trip).
 
-- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, multi-image attach, a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets
+- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, capability-gated attach (multi-image, plus audio clips on audio-capable models), a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets
 - **Notebook** -- base-model text continuation with cursor-based generation
 - **Models** -- scan, import, configure, load/unload
 - **Performance** -- system metrics and timing breakdowns
@@ -50,7 +53,8 @@ The React frontend `apps/heylook-frontend-v2/` (served at `/v2`) is retiring aft
 
 ## Platform Support
 
-- **macOS (Apple Silicon)**: MLX backend
+- **macOS (Apple Silicon)**: MLX backend + GGUF via llama-server (Metal)
+- The GGUF provider is pure-stdlib HTTP around a llama-server binary, so a future CPU/CUDA deployment needs only a llama-server build for that platform (the MLX provider stays Apple-only)
 
 ## Quick Start
 
@@ -98,6 +102,8 @@ heylookllm service status|start|stop|restart|uninstall
 There are three ways to add models:
 
 **Web UI** -- Open the Models page in the `/v3` UI. Click Import, scan a directory or your HuggingFace cache, select the models you want, pick a profile, and import. Models are added to `models.toml` and available immediately.
+
+The scan understands MLX/safetensors dirs, embedding models, and GGUF dirs (primary weight + `mmproj` projector + `mtp-` drafter sidecars auto-paired; HF-format assistant/drafter checkpoints and imatrix calibration files are recognized and skipped).
 
 **CLI** -- Scan a directory or HF cache and generate config:
 ```bash

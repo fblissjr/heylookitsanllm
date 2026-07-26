@@ -115,6 +115,20 @@ class TestPayload:
         assert payload["presence_penalty"] == 1.5
         assert payload["top_k"] == 20
 
+    def test_model_config_max_tokens_beats_floor(self):
+        # Deleting this resurrects the dead-overlay bug (code-review
+        # 2026-07-26): the floor pre-seeds max_tokens, so a guarded
+        # "if not in merged" write could never fire and a model-level
+        # max_tokens silently fell back to 4096.
+        p = make_provider(max_tokens=8000)
+        payload = p._build_payload(req())
+        assert payload["max_tokens"] == 8000
+
+    def test_request_max_tokens_beats_model_config(self):
+        p = make_provider(max_tokens=8000)
+        payload = p._build_payload(req(max_tokens=64))
+        assert payload["max_tokens"] == 64
+
     def test_default_sampler_overlays_floor(self):
         from heylook_llm.samplers import get_sampler_registry
 

@@ -51,13 +51,13 @@ class AudioBlock(BaseModel):
         ..., description="How the audio data is provided"
     )
     media_type: Optional[str] = Field(
-        None, description="MIME type, e.g. 'audio/wav'. Advisory -- codecs are sniffed."
+        default=None, description="MIME type, e.g. 'audio/wav'. Advisory -- codecs are sniffed."
     )
     data: Optional[str] = Field(
-        None, description="Base64-encoded audio data (when source_type='base64')"
+        default=None, description="Base64-encoded audio data (when source_type='base64')"
     )
     url: Optional[str] = Field(
-        None, description="Audio URL (when source_type='url')"
+        default=None, description="Audio URL (when source_type='url')"
     )
 
 

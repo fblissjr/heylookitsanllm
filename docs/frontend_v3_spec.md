@@ -183,8 +183,11 @@ are unauthenticated.
 - SSE chunks: `choices[0].delta.content` | `.delta.thinking` | `.logprobs.content`
   (`[{token,logprob,top_logprobs:[{token,logprob}]}]`). Final usage chunk (only if `include_usage`):
   `{ usage:{prompt_tokens,completion_tokens,total_tokens,prompt_tokens_details?},
-  timing:{total_duration_ms, peak_memory_gb?, kv_cache_bytes?, queue_wait_ms?, ...},
-  generation_config?, stop_reason }`. Terminator `data: [DONE]`.
+  timing:{total_duration_ms, peak_memory_gb?, kv_cache_bytes?, queue_wait_ms?,
+  draft_tokens?, draft_accepted?, draft_acceptance?, ...},
+  generation_config?, stop_reason }` (the `draft_*` trio appears only when
+  speculative decoding was active; v3 renders `draft_acceptance` in the
+  post-stream stats line). Terminator `data: [DONE]`.
 - **503 backpressure**: `{error:{code:"model_overloaded"}}` + `Retry-After`, `X-RateLimit-*` headers — v3
   should surface this as a friendly "server busy, retrying" state, not a raw error. (As built: the bounded
   retry lives in `streaming.js` itself with an `onRetryWait(seconds, attempt)` callback; pages only render
@@ -228,8 +231,10 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   `data`); the Messages API accepts the block form `{type:"audio",
   source_type:"base64"|"url", media_type?, data?|url?}`. Only models with
   the `audio` capability (gguf/llama-server) serve it — MLX models return
-  400. Capability-gate any future v3 attach affordance on `audio` (the v3
-  audio UI itself is a 7d follow-up, not yet built).
+  400. The v3 attach affordance is capability-gated on `vision`/`audio`
+  (shipped v1.43.0: gated attach button + dynamic accept list, audio chips
+  in the strip, `<audio controls>` rendering, stored `audio` blocks
+  converted to `input_audio` parts at send).
 - `DELETE /{id}/messages?after={pos}` → deletes `position > pos` (position-based truncation drives
   regenerate/edit-regenerate/delete-cascade).
 

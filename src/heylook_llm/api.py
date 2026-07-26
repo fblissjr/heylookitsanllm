@@ -952,7 +952,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     response_id = f"chatcmpl-{uuid.uuid4()}"
     created_time = int(time.time())
     token_count = 0
-    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
 
     # Enhanced timing tracking
     generation_start_time = time.time()
@@ -1309,7 +1309,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     full_text = ""
     token_count = 0
     pre_thinking_parts: list[str] = []  # chunk.thinking -- engine pre-split reasoning
-    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
     log_request_stage(request_id, "processing_response")
 
     # Initialize logprobs collector if requested

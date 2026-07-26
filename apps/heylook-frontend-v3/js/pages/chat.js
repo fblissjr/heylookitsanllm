@@ -829,8 +829,11 @@ function hasMediaBlocks(msg) {
   return hasImageBlocks(msg) || hasAudioBlocks(msg);
 }
 
-// One place that knows how a media block (image OR audio -- same source
-// shape) becomes a URL; render AND wire use it, they must never disagree.
+// One place that knows how a media block becomes a data/remote URL.
+// IMAGES use it for BOTH render and wire (they must never disagree).
+// Audio uses it for RENDER only -- the audio WIRE shape is deliberately
+// different (input_audio takes RAW base64, a data: URI is rejected
+// server-side), built inline in toWireContent.
 function blockSourceUrl(b) {
   return b.source.type === 'url'
     ? b.source.url

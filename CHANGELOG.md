@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.1]
+
+### Fixed
+
+- Code-review pass over the day's range (5 parallel reviewers; 2 real
+  bugs, both new-in-range):
+  - **gguf: model-level `max_tokens` was dead config.** The cascade
+    guard (`"max_tokens" not in merged`) could never fire because the
+    global floor pre-seeds the key -- a `max_tokens` on a GGUF entry
+    silently fell back to 4096. Config now overlays the floor
+    unconditionally (floor -> model config -> samplers -> request),
+    mirroring MLX; pinned by tests.
+  - **Messages API under-reported spec decode.** Both
+    `messages_api.py` RequestEvent sites omitted
+    `draft_tokens`/`draft_accepted`, so `/v1/messages` traffic read as
+    "no drafting" in the perf trends. Fields threaded through; a new
+    contract test also pins pre-split thinking on the Messages path
+    (the same surface where the omission hid).
+- Hygiene from the same review: `AudioBlock` fields use keyword-form
+  `Field(default=None, ...)` (house pyright rule); `blockSourceUrl`'s
+  comment no longer overclaims a render/wire single source for audio
+  (the raw-base64 wire divergence is deliberate); four "tagged by
+  mlx-lm" telemetry comments now say "tagged by the engine".
+- Docs de-staled: `mlx_provider.md` §4.5 rewritten for the v1.33.0
+  raised-exception error contract (`MLXErrorChunk` no longer exists);
+  `frontend_v3_spec.md` §4 names the `timing.draft_*` fields and drops
+  the "audio UI not yet built" claim; README refreshed for the
+  multi-provider reality (GGUF/llama-server, audio input, speculative
+  decoding, importer coverage).
+
 ## [1.44.0]
 
 ### Added

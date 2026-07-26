@@ -156,7 +156,7 @@ The sampling and KV caching logic are ported directly from `mlx-lm`.
 
 *   **No batched image processing**: VLM vision requests process images sequentially via `BatchVisionProcessor` (parallel image loading, but sequential vision tower passes). Batched vision tower passes are out of scope.
 
-*   **Generation failures do not surface uniformly**: see 4.5 below. Streaming and non-streaming chat/messages endpoints turn a failed generation into a real error. Batch and RLM do not yet -- they still concatenate the error text into their result as if it were model output.
+*   **Generation failures surface uniformly by raising**: see 4.5 below. Providers raise typed `GenerationFailed`/`InvalidGenerationRequest`; every consumer (chat, messages, batch, RLM) fails loudly by default (v1.33.0 contract).
 
 ## 4. Concurrency, Caching, and Dependency Notes (2026-07-05/06)
 
@@ -262,36 +262,29 @@ sites (`memory.py` startup record, `prompt_cache.py`'s memory-pressure
 check -- which would have broken outright once the alias is removed --
 and `/v1/capabilities`).
 
-### 4.5. Error surfacing contract
+### 4.5. Error surfacing contract (updated 2026-07-26; RAISED, not yielded)
 
-Generation failures are yielded as `MLXErrorChunk` (module-level in
-`mlx_provider.py`, `is_error = True`) instead of raised directly, so the
-generator's `finally` blocks (gate release, active-generation count,
-cache cleanup) still run. Four consumer sites check `is_error` and turn
-it into a real error instead of delivering `.text` as assistant content:
+Generation failures are RAISED from the provider generator as typed
+exceptions -- `GenerationFailed` (HTTP 500 / SSE error payload) or its
+subclass `InvalidGenerationRequest` (client error, HTTP 400) -- defined in
+`providers/base.py`. The v1.33.0 migration replaced the earlier
+error-CHUNK mechanism (`MLXErrorChunk` + per-consumer `is_error` checks);
+that class no longer exists, and the owned `GenerationChunk` type
+(v1.40.0) deliberately carries NO error flag: raising means EVERY
+consumer -- including ones written later, and batch/RLM which once
+concatenated error text into results as if the model said it -- fails
+loudly by default. The generator's `finally` blocks (gate release,
+active-count decrement, cache cleanup) still run because the exception
+propagates through the generator normally. Routes translate: HTTP 500
+non-streaming, an OpenAI-style SSE error payload (never a content delta)
+when headers are already out; the Messages API mirrors both. The new
+llama-server provider (v1.41.0) honors the same contract -- HTTP/SSE/
+malformed-frame failures all raise, never yield.
 
-- `api.py` streaming (OpenAI): `data: {"error": {message, type:
-  "server_error", code: "generation_failed"}}` then `data: [DONE]`.
-- `api.py` non-streaming: raises `HTTPException(status_code=500,
-  detail=chunk.text)`.
-- `messages_api.py` streaming (Anthropic Messages): `event: error`.
-- `messages_api.py` non-streaming: HTTP 500.
-
-Before v1.31.1, none of these checks existed -- a failed generation
-(including the radix thread-affinity crash in 4.2) streamed its error
-text as if it were a normal assistant response, and clients rendered
-and sometimes persisted it as one.
-
-**This contract is not yet uniform.** `batch_processor.py` and `rlm.py`
-both consume the same provider generator directly
-(`for chunk in generator: full_text += chunk.text` /
-`text_parts.append(chunk.text)`) without checking `is_error` -- a failed
-generation inside a batch job or an RLM iteration still gets concatenated
-into the result as if it succeeded. RLM specifically feeds that text back
-into its own REPL loop as a sub-answer. Tracked as a deferred fix
-(typed `GenerationFailed` exception raised from the provider generator,
-translated to an error only at the two streaming/HTTP writers) in
-`docs/project/TODO.md`.
+History: before v1.31.1 a failed generation streamed its error text as a
+normal assistant response (including the radix thread-affinity crash in
+4.2); v1.31.1 added error CHUNKS + consumer checks; v1.33.0 replaced
+chunks with raised typed exceptions repo-wide.
 
 ### 4.6. Stop tokens and EOS resolution (2026-07-20)
 

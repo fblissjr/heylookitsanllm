@@ -345,7 +345,7 @@ async def _non_stream_messages(
     full_text = ""
     token_count = 0
     pre_thinking_parts: list = []  # chunk.thinking -- engine pre-split reasoning
-    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
 
     def consume():
         nonlocal full_text, token_count
@@ -444,6 +444,8 @@ async def _non_stream_messages(
             was_streaming=False,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
+            draft_tokens=telemetry.draft_tokens,
+            draft_accepted=telemetry.draft_accepted,
         ))
 
     return response
@@ -481,7 +483,7 @@ async def _stream_messages(
     # message_start
     yield translator.message_start_event()
 
-    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by mlx-lm
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
             # Capture provider metadata
@@ -561,4 +563,6 @@ async def _stream_messages(
             was_streaming=True,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
+            draft_tokens=telemetry.draft_tokens,
+            draft_accepted=telemetry.draft_accepted,
         ))

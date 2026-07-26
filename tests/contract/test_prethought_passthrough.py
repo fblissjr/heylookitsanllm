@@ -59,6 +59,24 @@ def test_non_streaming_carries_thinking(client, presplit_model):
     assert msg["thinking"] == "let me think about this"
 
 
+def test_messages_api_carries_presplit_thinking(client, presplit_model):
+    # Deleting this leaves the /v1/messages consume path unpinned -- the
+    # 2026-07-26 review found exactly this surface silently diverging from
+    # /v1/chat/completions (draft telemetry omitted); the thinking channel
+    # must not repeat that.
+    r = client.post("/v1/messages", json={
+        "model": presplit_model,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 64,
+    })
+    assert r.status_code == 200, r.text
+    blocks = r.json()["content"]
+    thinking = "".join(b["text"] for b in blocks if b["type"] == "thinking")
+    text = "".join(b["text"] for b in blocks if b["type"] == "text")
+    assert thinking == "let me think about this"
+    assert text == "Hello world"
+
+
 def test_streaming_emits_thinking_deltas(client, presplit_model):
     with client.stream("POST", "/v1/chat/completions", json={
         "model": presplit_model,

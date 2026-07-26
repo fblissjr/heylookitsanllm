@@ -217,12 +217,17 @@ class LlamaServerProvider(BaseProvider):
     # ------------------------------------------------------------------
 
     def _build_payload(self, request: ChatRequest) -> dict:
+        # Cascade order mirrors MLX: floor -> model config -> model's
+        # default_sampler -> request's named sampler -> explicit request
+        # fields. The config overlay is UNCONDITIONAL over the floor (the
+        # floor pre-seeds max_tokens, so a "not in merged" guard can never
+        # fire -- the dead-overlay bug caught in the 2026-07-26 review).
         merged = dict(GLOBAL_SAMPLER_FLOOR)
+        if self.config.get("max_tokens"):
+            merged["max_tokens"] = self.config["max_tokens"]
         registry = get_sampler_registry()
         registry.apply_sampler(merged, self.config.get("default_sampler"))
         registry.apply_sampler(merged, request.sampler)
-        if self.config.get("max_tokens") and "max_tokens" not in merged:
-            merged["max_tokens"] = self.config["max_tokens"]
 
         for field in _REQUEST_SAMPLER_FIELDS:
             value = getattr(request, field, None)
