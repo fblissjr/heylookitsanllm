@@ -182,5 +182,5 @@ it yet (the reference in `chat.js:799` is a migration marker).
 ## Verifying v3 in a browser
 
 puppeteer-core + system Chrome via `tests/e2e/` (claude-in-chrome refuses
-localhost by policy). `cd tests/e2e && bun install`, then `node run.mjs [chat|pages]`.
+localhost by policy). `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`.
 MUST run UNSANDBOXED (Chrome profile dir + Metal). See `tests/e2e/README.md`.

@@ -544,7 +544,7 @@ All in the plan with full rationale; one-liners here so nothing is missed:
   MoE gemma-4-26B-A4B: chat 24 + pages 27. Spawns its own server with an
   isolated HEYLOOK_DB_PATH so real data is untouched; each suite clears the temp
   DB, pages ends on the danger-zone clear. `cd tests/e2e && bun install` then
-  `node run.mjs [chat|pages]`. Must run UNSANDBOXED (Chrome profile dir + Metal).
+  `bun run e2e[:chat|:pages]`. Must run UNSANDBOXED (Chrome profile dir + Metal).
 - **STUB -- batch page**: dropped from v3 scope on purpose (spec §6); the
   backend endpoint remains.
 

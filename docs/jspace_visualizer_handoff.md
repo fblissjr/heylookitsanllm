@@ -129,7 +129,7 @@ frontend on data we already return.
   the production own-fit lands (fitting track) it's a drop-in file replacement, no frontend
   change. (The served readouts are "provisional" until the own-fit; fine for UI work.)
 - **Local E2E:** the v3 browser E2E harness is `tests/e2e/` (puppeteer-core + system Chrome —
-  claude-in-chrome refuses localhost). `cd tests/e2e && bun install`, then `node run.mjs pages`.
+  claude-in-chrome refuses localhost). `cd tests/e2e && bun install`, then `bun run e2e:pages`.
   Must run UNSANDBOXED. Add jspace-interaction checks here.
 
 ## Gotchas

@@ -2,9 +2,14 @@
 // run the chat + pages suites against /v3, tear everything down, exit non-zero on
 // any failure.
 //
-//   node run.mjs            # both suites
-//   node run.mjs chat       # chat suite only
-//   node run.mjs pages      # pages suite only
+//   bun run e2e             # both suites
+//   bun run e2e:chat        # chat suite only
+//   bun run e2e:pages       # pages suite only
+//
+// (The package.json script bodies intentionally shell out to `node run.mjs`
+// -- the harness runs under node by design; invoke it VIA bun, whose
+// non-interactive script shell resolves the real node binary and dodges
+// the interactive shell's nvm lazy-load function.)
 //
 // Config via env:
 //   E2E_MODEL      model id to preload + drive        (default: gemma-4-26b-a4b-it-8bit-mlx)
