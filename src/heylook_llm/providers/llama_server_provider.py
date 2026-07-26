@@ -352,4 +352,7 @@ class LlamaServerProvider(BaseProvider):
                 chunk.cached_tokens = timings.get("cache_n") or 0
             if not chunk.generation_tokens:
                 chunk.generation_tokens = timings.get("predicted_n") or 0
+            # present only when speculative decoding was active this request
+            chunk.draft_tokens = timings.get("draft_n") or 0
+            chunk.draft_accepted = timings.get("draft_n_accepted") or 0
         return chunk

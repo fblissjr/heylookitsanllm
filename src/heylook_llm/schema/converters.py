@@ -23,6 +23,7 @@ from typing import Dict, List, Optional
 
 from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.schema.content_blocks import (
+    AudioBlock,
     ImageBlock,
     LogprobsBlock,
     TextBlock,
@@ -64,6 +65,22 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
                     content_parts.append({
                         "type": "image_url",
                         "image_url": {"url": url},
+                    })
+                elif isinstance(block, AudioBlock):
+                    # OpenAI wire shape: RAW base64 in input_audio.data (a
+                    # data: URI here is rejected downstream), or a URL.
+                    input_audio: dict = {}
+                    if block.source_type == "base64" and block.data:
+                        input_audio["data"] = block.data
+                        if block.media_type and "/" in block.media_type:
+                            input_audio["format"] = block.media_type.split("/", 1)[1]
+                    elif block.url:
+                        input_audio["url"] = block.url
+                    else:
+                        continue
+                    content_parts.append({
+                        "type": "input_audio",
+                        "input_audio": input_audio,
                     })
             chat_messages.append(ChatMessage(role=msg.role, content=content_parts))
 

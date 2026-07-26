@@ -130,6 +130,16 @@ class TestTelemetryLatch:
         t.absorb(GenerationChunk(peak_memory=1.0))
         assert t.peak_memory_gb == 2.0
 
+    def test_draft_acceptance_latches(self):
+        # Spec-decode counters are cumulative running totals; the final
+        # chunk carries the request's totals and zeros must not reset them.
+        t = ChunkTelemetry()
+        t.absorb(GenerationChunk(text="a", draft_tokens=10, draft_accepted=4))
+        t.absorb(GenerationChunk(text="b", draft_tokens=20, draft_accepted=9))
+        t.absorb(GenerationChunk(text=""))
+        assert t.draft_tokens == 20
+        assert t.draft_accepted == 9
+
 
 # ---------------------------------------------------------------------------
 # BaseProvider capability surface

@@ -401,6 +401,11 @@ def _infer_model_capabilities(model_config) -> list[str]:
         modalities = getattr(config, "modalities", None) or []
         if getattr(config, "mmproj_path", None) or "vision" in modalities:
             capabilities.append("vision")
+        if "audio" in modalities:
+            # gguf only: MLX strips audio towers at load, so the mlx branch
+            # above must never emit this cap even when the model declares
+            # the modality.
+            capabilities.append("audio")
         if getattr(config, "supports_thinking", None):
             capabilities.append("thinking")
 
@@ -892,6 +897,8 @@ def _maybe_log_request_event(
             "cached_tokens": cached_tokens,
             "stop_reason": stop_reason,
             "image_count": perf_ctx.get("image_count", 0),
+            "draft_tokens": getattr(event, "draft_tokens", 0),
+            "draft_accepted": getattr(event, "draft_accepted", 0),
         },
     )
 
@@ -1215,6 +1222,11 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             timing_data["kv_cache_bytes"] = telemetry.kv_cache_bytes
         if telemetry.queue_wait_ms > 0:
             timing_data["queue_wait_ms"] = round(telemetry.queue_wait_ms, 1)
+        if telemetry.draft_tokens > 0:
+            timing_data["draft_tokens"] = telemetry.draft_tokens
+            timing_data["draft_accepted"] = telemetry.draft_accepted
+            timing_data["draft_acceptance"] = round(
+                telemetry.draft_accepted / telemetry.draft_tokens, 3)
 
         # Build generation config from request using the shared sampler-summary
         # helper so the SSE usage chunk and the request_events.jsonl schema stay
@@ -1273,6 +1285,8 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
             was_streaming=True,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
+            draft_tokens=telemetry.draft_tokens,
+            draft_accepted=telemetry.draft_accepted,
         )
         get_perf_collector().record_request(stream_event)
         _maybe_log_request_event(
@@ -1460,6 +1474,8 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
             was_streaming=False,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
+            draft_tokens=telemetry.draft_tokens,
+            draft_accepted=telemetry.draft_accepted,
         )
         get_perf_collector().record_request(non_stream_event)
         _maybe_log_request_event(

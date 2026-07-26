@@ -40,6 +40,11 @@ class GenerationChunk:
     kv_cache_bytes: int = 0
     queue_wait_ms: float = 0.0
     from_draft: bool = False
+    # Spec-decode acceptance, CUMULATIVE running totals for the request
+    # (llama-server reports them on the final timings frame; MLX stamps the
+    # running counters on every chunk). ChunkTelemetry latches the max.
+    draft_tokens: int = 0
+    draft_accepted: int = 0
 
     @classmethod
     def from_engine(cls, r: Any) -> "GenerationChunk":

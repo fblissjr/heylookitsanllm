@@ -171,7 +171,7 @@ CANNED = [
     'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,'
     '"prompt_tokens_details":{"cached_tokens":2}},'
     '"timings":{"prompt_per_second":100.5,"predicted_per_second":42.0,'
-    '"cache_n":2,"prompt_n":5,"predicted_n":3}}',
+    '"cache_n":2,"prompt_n":5,"predicted_n":3,"draft_n":12,"draft_n_accepted":5}}',
     "data: [DONE]",
     'data: {"choices":[{"delta":{"content":"MUST NOT APPEAR"},"index":0}]}',
 ]
@@ -202,6 +202,9 @@ class TestSSEAdapter:
         assert final.cached_tokens == 2
         assert final.prompt_tps == 100.5
         assert final.generation_tps == 42.0
+        # spec-decode counters (present only when MTP/draft was active)
+        assert final.draft_tokens == 12
+        assert final.draft_accepted == 5
 
     def test_abort_stops_stream(self):
         class Abort:

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0]
+
+### Added
+
+- **Audio input content parts** (plan Phase 7d, API layers; gguf models
+  only). `/v1/chat/completions` accepts OpenAI-wire
+  `{type:"input_audio", input_audio:{data:<raw base64>|url, format?}}`
+  parts; the Messages API gains the `AudioBlock`
+  (`{type:"audio", source_type, media_type?, data?|url?}`) bridged by the
+  converters. The llama-server provider forwards audio verbatim
+  (WAV/MP3/FLAC, sniffed by magic bytes, resampled to 16 kHz); the MLX
+  provider REJECTS audio with a 400 and a pointer to gguf (its audio
+  towers are stripped at load -- the old behavior would have silently
+  dropped the part). gguf models declaring the `audio` modality now
+  advertise the `audio` capability (never MLX). Base64 audio is truncated
+  in debug logs like base64 images. Live-verified end-to-end: E4B
+  described a 15s WAV through heylook's own API. v3 audio UI + audio eval
+  tasks remain 7d follow-ups.
+- **Spec-decode acceptance telemetry** (plan Phase 7c closeout).
+  `GenerationChunk` carries cumulative `draft_tokens`/`draft_accepted`
+  (llama-server: from the final `timings` frame; MLX: running counters
+  stamped per chunk); `ChunkTelemetry` latches them; surfaced in the SSE
+  usage chunk's `timing` (`draft_tokens`/`draft_accepted`/
+  `draft_acceptance`), `RequestEvent` (request_events.jsonl), and the
+  metrics.jsonl `request_complete` record.
+
 ## [1.41.0]
 
 ### Added

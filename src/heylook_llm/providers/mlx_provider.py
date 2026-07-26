@@ -354,6 +354,23 @@ class UnifiedTextStrategy:
         return self._cached_wrapper
 
 
+def _has_audio_parts(messages) -> bool:
+    """True if any message carries an input_audio content part.
+
+    MLX loads gemma-4 audio models with skip_audio=True (the audio tower is
+    stripped), so audio requests must fail LOUDLY here -- vlm_inputs would
+    otherwise silently drop the part and answer text-only. Audio is served
+    by provider="gguf" (llama-server).
+    """
+    for message in messages:
+        content = message.content
+        if isinstance(content, list):
+            for part in content:
+                if getattr(part, 'type', None) == 'input_audio':
+                    return True
+    return False
+
+
 class VLMVisionStrategy:
     """Strategy for VLM requests with images.
 
@@ -1249,6 +1266,13 @@ class MLXProvider(BaseProvider):
                         raise InvalidGenerationRequest(
                             f"Model '{self.model_id}' is text-only and cannot process images. "
                             f"Please use a vision model for image inputs."
+                        )
+
+                    if _has_audio_parts(request.messages):
+                        raise InvalidGenerationRequest(
+                            f"Model '{self.model_id}' is served by the MLX provider, "
+                            f"which does not support audio input (audio towers are "
+                            f"skipped at load). Use a gguf model for audio."
                         )
 
                     # Diffusion first: the AR text/vision split does not apply

@@ -13,7 +13,29 @@ class ImageContentPart(BaseModel):
     type: Literal["image_url"]
     image_url: ImageUrl
 
-ContentPart = Union[TextContentPart, ImageContentPart]
+class InputAudio(BaseModel):
+    """OpenAI-wire audio payload. ``data`` is RAW base64 (no data: URI --
+    llama-server rejects data URIs for audio); ``url`` is the llama-server
+    extension for remote audio; exactly one of the two is required.
+    ``format`` is advisory only (codecs are sniffed: WAV/MP3/FLAC)."""
+    data: Optional[str] = None
+    url: Optional[str] = None
+    format: Optional[str] = None  # "wav" | "mp3" | ...
+
+    @model_validator(mode='after')
+    def require_data_or_url(self):
+        if bool(self.data) == bool(self.url):
+            raise ValueError("input_audio requires exactly one of 'data' (raw base64) or 'url'")
+        return self
+
+class AudioContentPart(BaseModel):
+    """Audio input block (plan Phase 7d). Served ONLY by provider="gguf"
+    (llama-server); the MLX provider rejects audio with a 400 -- its audio
+    towers are skipped at load."""
+    type: Literal["input_audio"]
+    input_audio: InputAudio
+
+ContentPart = Union[TextContentPart, ImageContentPart, AudioContentPart]
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]

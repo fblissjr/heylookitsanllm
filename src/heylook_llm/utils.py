@@ -97,6 +97,13 @@ def sanitize_request_for_debug(chat_request) -> str:
                         url = content_part['image_url']['url']
                         content_part['image_url']['url'] = _truncate_image_url(url)
 
+                    # Base64 audio blows up logs exactly like base64 images
+                    elif (content_part.get('type') == 'input_audio' and
+                          isinstance(content_part.get('input_audio'), dict) and
+                          content_part['input_audio'].get('data')):
+                        data = content_part['input_audio']['data']
+                        content_part['input_audio']['data'] = _truncate_image_url(data)
+
     # Add image summary to the top of the request for easy visibility
     if image_stats['count'] > 0:
         request_dict['_debug_image_summary'] = {

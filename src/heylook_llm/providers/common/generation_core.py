@@ -397,6 +397,11 @@ def run_generation(
                 # this is the ONLY place mlx-lm's GenerationResponse shape is
                 # known; everything downstream sees GenerationChunk.
                 chunk = GenerationChunk.from_engine(response)
+                # Spec-decode acceptance: running totals on every chunk
+                # (ChunkTelemetry latches; two int writes, negligible).
+                if draft_total:
+                    chunk.draft_tokens = draft_total
+                    chunk.draft_accepted = draft_accepted
 
                 # Leading space cleanup (first token only, skip for pre-filled
                 # cache where continuation starts mid-sequence) + cache stats

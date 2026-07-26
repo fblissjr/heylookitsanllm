@@ -39,6 +39,10 @@ class RequestEvent:
     # mlx-lm's own prefill rate, measured tightly around the prefill loop
     # (chunk.prompt_tps). Defaulted for back-compat with older event records.
     prompt_tps: float = 0.0
+    # Spec-decode acceptance for the request (0/0 when no draft/MTP active).
+    # Defaulted for back-compat with older event records.
+    draft_tokens: int = 0
+    draft_accepted: int = 0
 
 
 @dataclass(slots=True)
@@ -61,6 +65,8 @@ class ChunkTelemetry:
     prompt_tps: float = 0.0  # mlx-lm's own prefill rate
     generation_tps: float = 0.0  # mlx-lm's own decode rate
     finish_reason: Optional[str] = None  # "stop" | "length" | None (mlx-lm's)
+    draft_tokens: int = 0  # spec-decode: drafted tokens (cumulative)
+    draft_accepted: int = 0  # spec-decode: accepted drafted tokens
 
     def absorb(self, chunk) -> None:
         # GenerationChunk carries EVERY field on EVERY chunk (slotted, with
@@ -79,6 +85,8 @@ class ChunkTelemetry:
         self.queue_wait_ms = getattr(chunk, "queue_wait_ms", 0.0) or self.queue_wait_ms
         self.prompt_tps = getattr(chunk, "prompt_tps", 0.0) or self.prompt_tps
         self.generation_tps = getattr(chunk, "generation_tps", 0.0) or self.generation_tps
+        self.draft_tokens = getattr(chunk, "draft_tokens", 0) or self.draft_tokens
+        self.draft_accepted = getattr(chunk, "draft_accepted", 0) or self.draft_accepted
         # arrives on the FINAL chunk only -- a later chunk without one must
         # not erase it, so this latches rather than overwrites
         self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason

@@ -222,6 +222,14 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   source of truth). Strings normalize to one text block. For generation, v3
   converts stored image blocks to OpenAI `image_url` parts (data URLs) until
   the Messages-first migration makes the stored blocks the wire shape.
+- **Audio input (added v1.42.0, gguf models only):** `/v1/chat/completions`
+  accepts `{type:"input_audio", input_audio:{data:<RAW base64, NOT a data
+  URL>, format?:"wav"|"mp3"|...}}` content parts (or `url` instead of
+  `data`); the Messages API accepts the block form `{type:"audio",
+  source_type:"base64"|"url", media_type?, data?|url?}`. Only models with
+  the `audio` capability (gguf/llama-server) serve it — MLX models return
+  400. Capability-gate any future v3 attach affordance on `audio` (the v3
+  audio UI itself is a 7d follow-up, not yet built).
 - `DELETE /{id}/messages?after={pos}` → deletes `position > pos` (position-based truncation drives
   regenerate/edit-regenerate/delete-cascade).
 

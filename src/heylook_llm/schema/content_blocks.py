@@ -40,8 +40,29 @@ class ImageBlock(BaseModel):
     )
 
 
+class AudioBlock(BaseModel):
+    """Audio content block (plan Phase 7d). Mirrors ImageBlock's shape.
+
+    Bridged to the OpenAI-wire ``input_audio`` part by converters.py; only
+    the gguf/llama-server provider consumes it (MLX rejects audio).
+    """
+    type: Literal["audio"] = "audio"
+    source_type: Literal["base64", "url"] = Field(
+        ..., description="How the audio data is provided"
+    )
+    media_type: Optional[str] = Field(
+        None, description="MIME type, e.g. 'audio/wav'. Advisory -- codecs are sniffed."
+    )
+    data: Optional[str] = Field(
+        None, description="Base64-encoded audio data (when source_type='base64')"
+    )
+    url: Optional[str] = Field(
+        None, description="Audio URL (when source_type='url')"
+    )
+
+
 # Union of all block types that can appear in a user message
-InputContentBlock = Union[TextBlock, ImageBlock]
+InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock]
 
 
 # ---------------------------------------------------------------------------
