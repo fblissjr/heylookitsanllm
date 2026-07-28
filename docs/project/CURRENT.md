@@ -34,10 +34,16 @@ UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
   (modality_detect.py, cache_defaults.py; stored values = explicit
   overrides), config_tui + --interactive + questionary retired, Phase 1
   item 8 discovered already-done. Suite 1243 green.
-- **NEXT: Wave 1 item 2 (RLM extraction -- owner-gated on the sibling
-  repo; backend prereqs are small) or item 3 (batch-internals collapse)
-  if the owner isn't ready. Still pending: live re-verify of the heretic
-  gemma thinking loop post-restart.**
+- **Heretic gemma live verdict (2026-07-28 PM)**: fix VALIDATED on
+  healthy models (QAT passes vision bank 6/6 + the exact repro scenario
+  on v1.48); the heretic itself is abliteration-DAMAGED on the
+  vision+thinking path -- coherent for ~2 sentences then tail-token
+  garbage collapse at every sampling incl. greedy, and its
+  vision+thinking forwards trigger Metal command-buffer fault cascades
+  that poison the process. RETIRED for vision+thinking (text-only OK).
+  Details: session log 2026-07-28.
+- **NEXT: Wave 1 item 2 (RLM extraction -- owner-gated, skipped for now
+  per owner) -> item 3 (batch-internals collapse) in a fresh session.**
 
 UPDATE 2026-07-26 (PHASE 7, one day, v1.39.17 -> v1.44.2, 14 commits --
 multi-provider is REAL again; full record: the session log + plan Phase 7 +
