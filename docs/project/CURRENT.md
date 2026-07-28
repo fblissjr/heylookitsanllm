@@ -1,7 +1,34 @@
 # Current Work
 
-Last updated: 2026-07-26 (Phase 7 gguf provider arc, v1.40.0-1.44.2; the
-2026-07-23 narrative below is unchanged)
+Last updated: 2026-07-28 (cascade/vendor-layer arc + wave re-plan; the
+2026-07-26 narrative below is unchanged)
+
+UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
+
+- **Gemma thinking-loop root-caused and fixed (v1.45.0)**: the cascade's
+  thinking layer was keyed on a model-config flag nothing sets (dead code
+  -- request-toggled thinking ran with zero repetition control), and the
+  global floor was off-tune for gemma. NEW vendor layer reads each model's
+  own generation_config.json (temp/top_p/top_k) above the floor; thinking
+  overlay re-keyed on the effective switch and slimmed to loop control
+  (presence_penalty). Template/tokenizer drift was RULED OUT against the
+  latest upstream gemma-4 reference (byte-identical template).
+  STILL PENDING: live re-verify on the heretic model post-restart; if it
+  still loops, A/B vs the qat-4bit (abliteration-damage suspect).
+- **One shared cascade (v1.46.0)**: `samplers.resolve_effective_sampling`
+  now serves BOTH providers; gguf adopted MLX semantics (request sampler
+  suppresses default_sampler; unknown default_sampler log-skips). MLX
+  `supports_thinking` config field removed (triple-shadowed by derived
+  truth). Suite 1231 green, TDD red-first throughout.
+- **Full RE-PLAN (plan_2026-07.md "Re-plan 2026-07-28")**: all remaining
+  work regrouped into five WAVES -- 1 shrink (6a derive-at-load + RLM
+  extract + batch collapse + radix simplification), 2 decompose (api.py +
+  mlx_provider), 3 Messages migration, 4 grow (6b admin surface + eval
+  page + perf-page analytics), 5 perf gated. New standing complexity
+  guardrails (delete>decompose>migrate>grow; derived truth over
+  materialized copies; one implementation per mechanism). Phase 6 split
+  6a/6b; Phase 2 item 3 retired as superseded.
+- **NEXT SESSION: Wave 1 item 1 (6a derive-at-load substrate).**
 
 UPDATE 2026-07-26 (PHASE 7, one day, v1.39.17 -> v1.44.2, 14 commits --
 multi-provider is REAL again; full record: the session log + plan Phase 7 +
@@ -633,7 +660,7 @@ Fixed: everything in section 2 above. Deferred (documented, not built):
 - re-import is skip-not-update and `already_configured` matches by id only;
 - update-on-reimport flow;
 - upstream MLX bug report (CompilerCache TLS destructor drops Python refs
-  without the GIL -- .ips reports in ~/Library/Logs/DiagnosticReports).
+  without the GIL -- .ips reports in the macOS DiagnosticReports folder).
 
 ## 4. Test-suite + library-drift cleanup -- DONE (v1.32.1)
 
