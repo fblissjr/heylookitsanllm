@@ -46,7 +46,7 @@ change, re-run before diagnosing a delivery regression.
 | var                   | default                              | meaning |
 |-----------------------|--------------------------------------|---------|
 | `E2E_MODEL`           | `gemma-4-26b-a4b-it-8bit-mlx`            | model to preload + drive (must be in `models.toml`). Use a fast one — an A4B MoE decodes fast; the 31B dense gemma decodes ~10 tok/s and makes streaming look broken (and would false-fail the cadence guard). |
-| `E2E_PORT`            | `8080`                               | server port for the spawned instance |
+| `E2E_PORT`            | `1263`                               | server port for the spawned instance |
 | `E2E_MAX_TOKENS`      | `24`                                 | per-generation cap, seeded via `localStorage` so runs stay fast/deterministic |
 | `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |
 | `E2E_HEADFUL`         | (unset)                              | set to any value to watch the browser (debugging) |

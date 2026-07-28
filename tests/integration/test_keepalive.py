@@ -18,7 +18,7 @@ async def test_keepalive():
     ]
     
     async with aiohttp.ClientSession() as session:
-        url = "http://localhost:8080/v1/chat/completions"
+        url = "http://localhost:1263/v1/chat/completions"
         payload = {
             "model": "dolphin-mistral",  # Change to your model
             "messages": messages,

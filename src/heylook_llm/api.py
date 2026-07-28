@@ -2321,12 +2321,12 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 
 ### 1. Check Available Models
 ```bash
-curl http://localhost:8080/v1/models
+curl http://localhost:1263/v1/models
 ```
 
 ### 2. Generate Text
 ```bash
-curl http://localhost:8080/v1/chat/completions \\
+curl http://localhost:1263/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "qwen2.5-coder-1.5b-instruct-4bit",
@@ -2349,7 +2349,7 @@ data = {
         ]
     }])
 }
-response = requests.post('http://localhost:8080/v1/chat/completions/multipart',
+response = requests.post('http://localhost:1263/v1/chat/completions/multipart',
                         files=files, data=data)
 ```
 
@@ -2358,7 +2358,7 @@ response = requests.post('http://localhost:8080/v1/chat/completions/multipart',
 ### OpenAI Python SDK
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="not-needed")
+client = OpenAI(base_url="http://localhost:1263/v1", api_key="not-needed")
 response = client.chat.completions.create(
     model="qwen2.5-coder-1.5b-instruct-4bit",
     messages=[{"role": "user", "content": "Hello!"}]
@@ -2384,7 +2384,7 @@ no extras required:
     # Add server information
     openapi_schema["servers"] = [
         {
-            "url": "http://localhost:8080",
+            "url": "http://localhost:1263",
             "description": "Default server"
         }
     ]

@@ -6,7 +6,7 @@ Supports both OpenAI and Messages API endpoints, streaming and non-streaming.
 
 Usage:
     uv run scripts/benchmark.py                        # defaults
-    uv run scripts/benchmark.py --url http://localhost:8080
+    uv run scripts/benchmark.py --url http://localhost:1263
     uv run scripts/benchmark.py --model <model-id>
     uv run scripts/benchmark.py --prompts short,medium
     uv run scripts/benchmark.py --mode streaming
@@ -62,7 +62,7 @@ class BenchmarkResult:
 
 @dataclass
 class BenchmarkConfig:
-    base_url: str = "http://localhost:8080"
+    base_url: str = "http://localhost:1263"
     model: str = ""
     prompt_names: list[str] = field(default_factory=lambda: ["short", "medium", "long", "code"])
     modes: list[str] = field(default_factory=lambda: ["streaming", "non-streaming"])
@@ -531,7 +531,7 @@ def print_json_output(results: list[BenchmarkResult], config: BenchmarkConfig, m
 
 def parse_args() -> BenchmarkConfig:
     parser = argparse.ArgumentParser(description="Benchmark heylookitsanllm server")
-    parser.add_argument("--url", default="http://localhost:8080", help="Server base URL")
+    parser.add_argument("--url", default="http://localhost:1263", help="Server base URL")
     parser.add_argument("--model", default="", help="Model ID (auto-discovers if omitted)")
     parser.add_argument("--prompts", default="short,medium,long,code", help="Comma-separated prompt names")
     parser.add_argument("--mode", default="both", choices=["streaming", "non-streaming", "both"], help="Request mode")

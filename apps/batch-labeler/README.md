@@ -27,7 +27,7 @@ uv sync
 
 ```bash
 # 1. Start the server (repo root, separate terminal)
-uv run heylookllm --port 8080
+uv run heylookllm --port 1263
 
 # 2. See what's available
 uv run batch-labeler models          # vision-capable models highlighted
@@ -99,7 +99,7 @@ batch-labeler run IMAGE_DIR [-o results.jsonl] [--limit N] [--no-recursive]
 - `--dry-run` scans, reports counts, and prints the fully-resolved settings.
 - `--limit N` processes only the first N pending images -- sample a batch,
   inspect, then run the rest.
-- Server URL default is `http://localhost:8080`, overridable via the
+- Server URL default is `http://localhost:1263`, overridable via the
   `BATCH_LABELER_SERVER` env var.
 - Transient failures (timeout, connection, 5xx) retry with backoff; 4xx fail
   the image immediately. Failed images are NOT written, so a re-run retries

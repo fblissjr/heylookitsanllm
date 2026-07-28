@@ -25,7 +25,7 @@ tenant authentication is explicitly out of scope.
 ## Recommended topology
 
 ```
-[client on LAN] --HTTPS--> [Caddy on :443] --HTTP--> [heylookllm on 127.0.0.1:8080]
+[client on LAN] --HTTPS--> [Caddy on :443] --HTTP--> [heylookllm on 127.0.0.1:1263]
 ```
 
 - `heylookllm` binds to loopback only (`--host 127.0.0.1`, the default).
@@ -44,12 +44,12 @@ brew install caddy   # macOS
 
 ### 2. Caddyfile
 
-Put this at `/etc/caddy/Caddyfile` (Linux) or `~/Caddyfile` (macOS):
+Put this at `/etc/caddy/Caddyfile` (Linux) or `~/Caddyfile` (macOS): <!-- path-privacy: ignore -->
 
 ```Caddyfile
 heylook.local {
     tls internal
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:1263
 }
 ```
 
@@ -61,13 +61,13 @@ heylook.local {
 On the server machine:
 
 ```sh
-caddy run --config ~/Caddyfile   # or `sudo systemctl enable --now caddy`
+caddy run --config ~/Caddyfile   # path-privacy: ignore
 caddy trust
 ```
 
 Copy the root CA to any other LAN host that will call the server. On
 macOS it lives under
-`~/Library/Application Support/Caddy/pki/authorities/local/root.crt`.
+`~/Library/Application Support/Caddy/pki/authorities/local/root.crt`. <!-- path-privacy: ignore -->
 On Linux, `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`.
 
 On the Ubuntu client:
@@ -121,7 +121,7 @@ server {
     ssl_certificate_key /etc/nginx/certs/heylook.local-key.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:1263;
         proxy_set_header Host $host;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
@@ -152,7 +152,7 @@ take the same time.
 
 ```sh
 export HEYLOOK_ADMIN_TOKEN='choose-any-high-entropy-value'
-heylookllm --host 127.0.0.1 --port 8080
+heylookllm --host 127.0.0.1 --port 1263
 ```
 
 ```sh
@@ -166,12 +166,12 @@ Requests without the header (or with a mismatched value) return `401`.
 
 Opt-in bearer auth for the inference routes. By default, **loopback
 traffic is exempt** -- dev tools on the same machine that hit
-`http://127.0.0.1:8080` don't need to carry the key. LAN and remote
+`http://127.0.0.1:1263` don't need to carry the key. LAN and remote
 clients do.
 
 ```sh
 export HEYLOOK_API_KEY='choose-any-high-entropy-value'
-heylookllm --host 127.0.0.1 --port 8080
+heylookllm --host 127.0.0.1 --port 1263
 ```
 
 On LAN clients (Ubuntu box, ComfyUI node, phone) send:

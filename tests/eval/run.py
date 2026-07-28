@@ -12,7 +12,7 @@
 #
 # Usage:
 #   uv run python tests/eval/run.py --list-tasks
-#   uv run python tests/eval/run.py --server http://localhost:8080 \
+#   uv run python tests/eval/run.py --server http://localhost:1263 \
 #       --models gemma-4-31b-it-8bit-mlx,Qwen3.5-27B-8bit-mlx
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ RED = "\x1b[31m"
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
 
-DEFAULT_SERVER = "http://localhost:8080"  # this repo's conventional dev port (README.md)
+DEFAULT_SERVER = "http://localhost:1263"  # this repo's default port (moved off llama-server's 8080, v1.49.0)
 DEFAULT_OUT = Path(__file__).parent / "results.jsonl"
 
 

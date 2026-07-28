@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0]
+
+### Changed
+
+- **Default port moved 8080 -> 1263.** 8080 is llama-server's default
+  port, and llama.cpp-ecosystem clients (including llama-server's own web
+  UI) probe `localhost:8080` with `GET /props` -- caught live: a restored
+  Chrome tab was hitting heylook's 8080 with the `/v1/models` + `/props`
+  pair on every startup. Moving off 8080 removes the collision class.
+  Swept across CLI defaults, service manager, benchmark/eval/integration
+  harness defaults, and all docs (67 references); historical records
+  (CHANGELOG, plan notes, archives) keep their original port. The E2E
+  harness defaults to 1264 -- it spawns its OWN server and must not
+  collide with the daily instance. External clients (shrug-prompter etc.)
+  need repointing, or run the server with `--port 8080`.
+
 ## [1.48.1]
 
 ### Changed

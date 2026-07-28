@@ -4,7 +4,7 @@ Vanilla JS frontend for heylookitsanllm. No framework, no bundler, no node_modul
 
 ## Running
 
-Start the backend server, then visit `http://localhost:8080/v2`. No build step required.
+Start the backend server, then visit `http://localhost:1263/v2`. No build step required.
 
 ## File Structure
 
@@ -34,7 +34,7 @@ js/
   vendor/
     marked.esm.js        -- marked v17 (vendored, no CDN)
     purify.es.mjs        -- DOMPurify v3 (vendored, no CDN)
-    pretext/             -- @chenglou/pretext v0.0.5 (built from ~/workspace/pretext)
+    pretext/             -- @chenglou/pretext v0.0.5 (built from the pretext sibling repo)
 ```
 
 ## Page Pattern

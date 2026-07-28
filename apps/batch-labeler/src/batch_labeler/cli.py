@@ -41,7 +41,7 @@ from .client import (
 )
 from .tasks import BUILTIN_TASKS, Task, get_task, load_task_file, missing_required_keys
 
-DEFAULT_SERVER = os.environ.get("BATCH_LABELER_SERVER", "http://localhost:8080")
+DEFAULT_SERVER = os.environ.get("BATCH_LABELER_SERVER", "http://localhost:1263")
 
 
 # ---------------------------------------------------------------- arg parsing

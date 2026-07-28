@@ -81,12 +81,12 @@ heylookllm import --folder /path/to/models
 
 # Start
 heylookllm --log-level INFO
-heylookllm --port 8080
+heylookllm --port 1263
 ```
 
 ### Open the Frontend
 
-Once the server is running, open `http://localhost:8080/v3` -- the v3 UI is served
+Once the server is running, open `http://localhost:1263/v3` -- the v3 UI is served
 by the backend (no separate dev server or build step).
 
 ### Run as Background Service
@@ -124,24 +124,24 @@ heylookllm import --hf-cache --sampler balanced
 **API** -- Scan then import programmatically (server must be running):
 ```bash
 # Scan a directory for models
-curl -X POST http://localhost:8080/v1/admin/models/scan \
+curl -X POST http://localhost:1263/v1/admin/models/scan \
   -H "Content-Type: application/json" \
   -d '{"paths": ["/path/to/models"], "scan_hf_cache": true}'
 
 # Import selected models from scan results
-curl -X POST http://localhost:8080/v1/admin/models/import \
+curl -X POST http://localhost:1263/v1/admin/models/import \
   -H "Content-Type: application/json" \
   -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "default_sampler": "balanced"}'
 ```
 
 If you edit `models.toml` directly while the server is running, reload the config:
 ```bash
-curl -X POST http://localhost:8080/v1/admin/reload
+curl -X POST http://localhost:1263/v1/admin/reload
 ```
 
 ## API
 
-Interactive docs at `http://localhost:8080/docs` when the server is running.
+Interactive docs at `http://localhost:1263/docs` when the server is running.
 
 Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`, `/v1/jspace/analyze`. Full live reference: `/docs` (Swagger) and `/openapi.json` on a running server.
 
@@ -177,7 +177,7 @@ Everything is stored in **local files only -- nothing leaves your machine.** The
 single control is `observability_level`; set it to `off` to disable all telemetry:
 
 ```bash
-curl -X PUT http://localhost:8080/v1/admin/config \
+curl -X PUT http://localhost:1263/v1/admin/config \
   -H "Content-Type: application/json" -d '{"observability_level": "off"}'
 ```
 

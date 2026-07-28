@@ -54,7 +54,7 @@ Anti-recommendations, with reasons:
   gemma-4, confirm the canonical `chat_template.jinja` came along.
 - Verify behavior, not vibes: register the model and run the eval bank
   against old + new side by side --
-  `uv run python tests/eval/run.py --server http://localhost:8080 --models <new>,<old>`.
+  `uv run python tests/eval/run.py --server http://localhost:1263 --models <new>,<old>`.
 
 Worked example (gemma-4 QAT downloaded to a local checkout dir):
 

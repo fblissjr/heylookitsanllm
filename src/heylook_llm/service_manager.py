@@ -61,7 +61,7 @@ def detect_venv_path() -> Path:
 
 def install_service_linux(
     host: str = "127.0.0.1",
-    port: int = 8080,
+    port: int = 1263,
     log_level: str = "INFO",
     log_dir: Optional[str] = None,
     system_wide: bool = False,
@@ -152,7 +152,7 @@ def install_service_linux(
 
 def install_service_macos(
     host: str = "127.0.0.1",
-    port: int = 8080,
+    port: int = 1263,
     log_level: str = "INFO",
     log_dir: Optional[str] = None,
 ) -> bool:

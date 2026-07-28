@@ -152,8 +152,8 @@ def main():
     service_parser.add_argument(
         "--port",
         type=int,
-        default=8080,
-        help="Port to run the server on (default: 8080)",
+        default=1263,
+        help="Port to run the server on (default: 1263 -- deliberately NOT 8080, which is llama-server's default; llama.cpp-ecosystem clients probe localhost:8080)",
     )
     service_parser.add_argument(
         "--log-level",
@@ -176,7 +176,7 @@ def main():
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument(
-        "--port", type=int, default=8080, help="Port to run the server on"
+        "--port", type=int, default=1263, help="Port to run the server on"
     )
     parser.add_argument(
         "--log-level",
