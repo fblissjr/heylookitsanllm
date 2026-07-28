@@ -61,7 +61,7 @@ heylook.local {
 On the server machine:
 
 ```sh
-caddy run --config ~/Caddyfile   # path-privacy: ignore
+caddy run --config /path/to/Caddyfile   # or: sudo systemctl enable --now caddy
 caddy trust
 ```
 
