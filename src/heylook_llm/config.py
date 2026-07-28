@@ -234,8 +234,10 @@ class MLXModelConfig(BaseModel):
     # Hidden states defaults (for /v1/hidden_states endpoint)
     default_hidden_layer: int = -2  # Z-Image uses penultimate layer
     default_max_length: int = 512
-    # Thinking support metadata (for model capabilities discovery)
-    supports_thinking: bool = False
+    # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
+    # capability is DERIVED (template probe / enable_thinking / the explicit
+    # ModelConfig.capabilities override). GGUFModelConfig keeps its flag:
+    # the template lives inside GGUF metadata, nothing cheap to probe.
     # Idle-unload override (C2). ``None`` = use ``AppConfig.idle_unload_seconds``
     # global default. ``0`` = never idle-unload this model. Positive = per-model
     # threshold in seconds. Pinned models are exempt regardless of this value.

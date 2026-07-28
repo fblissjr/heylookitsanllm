@@ -265,6 +265,21 @@ class TestPayload:
         payload = p._build_payload(req(enable_thinking=True, presence_penalty=0.3))
         assert payload["presence_penalty"] == 0.3
 
+    def test_unknown_default_sampler_skips_not_raises(self):
+        """Shared-resolver semantics: a default_sampler missing from the
+        registry logs and skips (models validate at startup; a miss here is
+        post-startup registry drift) -- it must not 400 every request."""
+        p = make_provider(default_sampler="gone-from-registry")
+        payload = p._build_payload(req())
+        assert payload["temperature"] == 0.7
+
+    def test_request_sampler_suppresses_default_sampler(self):
+        """Shared-resolver semantics: naming a request sampler replaces the
+        default_sampler layer; fields only the default set revert to floor."""
+        p = make_provider(default_sampler="thinking")
+        payload = p._build_payload(req(sampler="deterministic"))
+        assert payload["presence_penalty"] == 0.0
+
     def test_default_sampler_overlays_floor(self):
         from heylook_llm.samplers import get_sampler_registry
 

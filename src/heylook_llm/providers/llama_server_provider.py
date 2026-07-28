@@ -13,10 +13,10 @@
 #   default-on) -> GenerationChunk.thinking; template_info() stays None so
 #   heylook's parser stack is pass-through (never re-parse another engine's
 #   output).
-# - Sampler cascade mirrors MLX: GLOBAL_SAMPLER_FLOOR -> thinking anti-loop
-#   overlay (request.enable_thinking) -> model default_sampler ->
-#   request.sampler -> explicit request fields. (No vendor layer: GGUF dirs
-#   carry no generation_config.json.)
+# - Sampler cascade IS MLX's: the shared samplers.resolve_effective_sampling
+#   (floor -> thinking anti-loop overlay -> model fields -> default_sampler
+#   -> request.sampler -> explicit request fields). No vendor layer passed:
+#   GGUF dirs carry no generation_config.json.
 #   max_tokens is ALWAYS sent (llama-server's default is unlimited).
 # - -np 1 by OUR choice (full context per slot, matches heylook's
 #   serialized semantics) -- not a compat requirement.
@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Dict, Generator, Optional
 
 from ..config import ChatRequest
-from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, get_sampler_registry
+from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 
 # Every live llama-server we spawned, so no exit path can leak one.
@@ -78,12 +78,6 @@ atexit.register(_kill_orphans)
 # every 30s (sse_ping_interval default), so a healthy stream never blocks a
 # read longer than that; 120s means "server wedged", not "model is slow".
 _SSE_READ_TIMEOUT_S = 120.0
-
-# Request sampler fields copied verbatim into the cascade when set.
-_REQUEST_SAMPLER_FIELDS = (
-    "temperature", "top_p", "top_k", "min_p",
-    "repetition_penalty", "presence_penalty", "max_tokens", "seed",
-)
 
 # cascade key -> llama-server request key
 _PAYLOAD_KEY_MAP = (
@@ -259,34 +253,11 @@ class LlamaServerProvider(BaseProvider):
     # ------------------------------------------------------------------
 
     def _build_payload(self, request: ChatRequest) -> dict:
-        # Cascade order mirrors MLX: floor -> model config -> model's
-        # default_sampler -> request's named sampler -> explicit request
-        # fields. The config overlay is UNCONDITIONAL over the floor (the
-        # floor pre-seeds max_tokens, so a "not in merged" guard can never
-        # fire -- the dead-overlay bug caught in the 2026-07-26 review).
-        merged = dict(GLOBAL_SAMPLER_FLOOR)
-        registry = get_sampler_registry()
-        # Anti-loop thinking overlay, mirroring MLX layer 2. GGUF config has
-        # no enable_thinking field (llama-server owns templating), so the
-        # request field is the only switch. Hardcoded fallback mirrors
-        # thinking.toml.
-        if request.enable_thinking:
-            if "thinking" in registry:
-                registry.apply_sampler(merged, "thinking")
-            else:
-                merged["presence_penalty"] = 1.5
-        if self.config.get("max_tokens"):
-            merged["max_tokens"] = self.config["max_tokens"]
-        registry.apply_sampler(merged, self.config.get("default_sampler"))
-        registry.apply_sampler(merged, request.sampler)
-
-        for field in _REQUEST_SAMPLER_FIELDS:
-            value = getattr(request, field, None)
-            if value is not None:
-                merged[field] = value
-        # thinking: a sampler bundle may carry enable_thinking; the request wins
-        if request.enable_thinking is not None:
-            merged["enable_thinking"] = request.enable_thinking
+        # The shared cascade (samplers.resolve_effective_sampling) -- ONE
+        # implementation with MLX, not a mirror. No vendor layer: GGUF dirs
+        # ship no generation_config.json. Keys llama-server doesn't take
+        # (vision_tokens etc.) are dropped below by _PAYLOAD_KEY_MAP.
+        merged = resolve_effective_sampling(request, self.config)
 
         payload = {
             "model": self.model_id,

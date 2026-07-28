@@ -17,12 +17,11 @@ from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
-from ..samplers import get_sampler_registry
 from .abort import AbortEvent
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
-from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling
+from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import wrap_language_model
@@ -1006,97 +1005,28 @@ class MLXProvider(BaseProvider):
         return False
 
     def _apply_model_defaults(self, request: ChatRequest) -> dict:
-        """Six-layer cascade producing the effective request config.
+        """Effective request config: the shared cascade + MLX runtime fields.
 
-        Each layer overrides the previous for fields it sets; unset fields
-        pass through. Request explicit > request sampler > model default_sampler
-        > model sampler fields > thinking overlay > vendor layer > global floor.
-
-        Layers:
-            1. Global hardcoded floor.
-            1b. Vendor layer: the model dir's own generation_config.json
-                (temperature/top_p/top_k), read once at first use. Per-model
-                decode tuning without models.toml churn.
-            2. Thinking anti-loop overlay (the slimmed 'thinking' sampler:
-               presence_penalty). Keyed on the EFFECTIVE thinking switch --
-               request field when present, else model config.
-            3. Model sampler fields from ``models.toml`` (per-model defaults).
-            3b. Model ``default_sampler`` (C4): applied only when the request
-                has NO explicit sampler. Unknown name logs-and-skips -- models
-                are validated at startup, so a miss here means the registry
-                changed post-startup and inference shouldn't die for it.
-            4. Request sampler (``ChatRequest.sampler``). Overrides the model's
-               default_sampler. Unknown name propagates SamplerNotFound ->
-               translated to HTTP 400 by the route handler.
-            5. Request-level explicit field values.
+        Layer semantics live in ``samplers.resolve_effective_sampling`` (one
+        implementation for every provider -- do not re-inline a cascade
+        here). This wrapper adds the two MLX-only pieces: the cached vendor
+        layer read and the runtime-default (cache/spec-decode) fields.
         """
-        global_defaults = dict(GLOBAL_SAMPLER_FLOOR)
-
-        merged_config = global_defaults.copy()
-
-        # Layer 1b: vendor layer -- the model's own generation_config.json,
-        # read once and cached on the provider.
+        # Vendor layer source: the model's own generation_config.json, read
+        # once and cached on the provider.
         if self._vendor_sampling is None:
             self._vendor_sampling = load_vendor_sampling(self.config.get('model_path', ''))
-        merged_config.update(self._vendor_sampling)
 
-        registry = get_sampler_registry()
-
-        # Layer 2: anti-loop thinking overlay, keyed on the EFFECTIVE thinking
-        # switch: the request field when present, else the model config flag.
-        # (Keying on model config alone made this layer dead code -- nothing
-        # sets it -- so request-toggled thinking ran with zero repetition
-        # control: the 2026-07-28 gemma repetition loop.) Registry is the
-        # canonical source; the hardcoded fallback mirrors thinking.toml so
-        # inference keeps working if the file is removed.
-        request_thinking = getattr(request, 'enable_thinking', None)
-        thinking_active = (request_thinking if request_thinking is not None
-                           else self.config.get('enable_thinking', False))
-        if thinking_active:
-            if 'thinking' in registry:
-                registry.apply_sampler(merged_config, 'thinking')
-            else:
-                merged_config.update({'presence_penalty': 1.5, 'enable_thinking': True})
-
-        config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                       'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking',
-                       'vision_tokens']
-        merged_config.update({k: v for k, v in self.config.items() if k in config_keys and v is not None})
+        merged_config = resolve_effective_sampling(
+            request, self.config, vendor=self._vendor_sampling)
 
         # Cache + speculative-decoding fields tagged with
         # json_schema_extra={"is_runtime_default": True} on MLXModelConfig.
-        # Adding a new tagged field auto-propagates here.
+        # Adding a new tagged field auto-propagates here. Disjoint from the
+        # sampler keys, so ordering vs the cascade is immaterial.
         for key in MLX_RUNTIME_DEFAULT_FIELDS:
             if key not in merged_config and key in self.config:
                 merged_config[key] = self.config[key]
-
-        request_sampler = getattr(request, 'sampler', None)
-
-        # Layer 3b: model default_sampler applies only when the request didn't
-        # pick one. Log-and-skip on unknown name (registry drift, not fatal).
-        if not request_sampler:
-            model_default_sampler = self.config.get('default_sampler')
-            if model_default_sampler:
-                if model_default_sampler in registry:
-                    registry.apply_sampler(merged_config, model_default_sampler)
-                else:
-                    logging.warning(
-                        "model default_sampler %r not in registry; skipping layer",
-                        model_default_sampler,
-                    )
-
-        # Layer 4: request sampler. SamplerNotFound propagates; route handlers
-        # translate to HTTP 400. Keeping the provider transport-agnostic.
-        registry.apply_sampler(merged_config, request_sampler)
-
-        # Layer 5: request explicit fields.
-        request_fields = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
-                          'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking', 'seed',
-                          'vision_tokens']
-        for field in request_fields:
-            val = getattr(request, field, None)
-            if val is not None:
-                merged_config[field] = val
 
         return merged_config
 

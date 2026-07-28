@@ -46,6 +46,22 @@ class TestThinkingCapabilityFromTemplate:
         caps = _infer_model_capabilities(self._model_config(tmp_path))
         assert "thinking" not in caps
 
+    def test_mlx_config_rejects_supports_thinking(self):
+        """Claim: MLX thinking capability is DERIVED (template probe /
+        enable_thinking / the explicit ModelConfig.capabilities override),
+        never a hand-set flag -- a manual flag shadowing derivable truth is
+        the same rot class as the dead enable_thinking cascade layer.
+        supports_thinking stays GGUF-only (no pre-load template to probe).
+        """
+        from pydantic import ValidationError
+
+        from heylook_llm.config import MLXModelConfig
+
+        with pytest.raises(ValidationError):
+            MLXModelConfig.model_validate(
+                {"model_path": "/x", "supports_thinking": True}
+            )
+
 
 @pytest.mark.unit
 class TestVlmTemplateThinkingForwarding:

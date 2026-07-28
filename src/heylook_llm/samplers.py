@@ -241,6 +241,76 @@ GLOBAL_SAMPLER_FLOOR = {
 VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
 
+# Model-config / request keys the cascade resolves. Providers whose config
+# class lacks a key (GGUFModelConfig has only max_tokens/default_sampler)
+# simply never contribute it; unknown keys in the result are ignored by the
+# consumer (gguf's payload map picks only what llama-server understands).
+EFFECTIVE_SAMPLER_KEYS = (
+    'temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
+    'repetition_penalty', 'repetition_context_size', 'presence_penalty',
+    'enable_thinking', 'vision_tokens',
+)
+REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed',)
+
+
+def resolve_effective_sampling(request: Any, model_config: dict,
+                               vendor: dict | None = None) -> dict[str, Any]:
+    """THE effective-request cascade, shared by every provider.
+
+    Layers, later overriding earlier (each only for fields it sets):
+      1.  Global floor (``GLOBAL_SAMPLER_FLOOR``).
+      1b. Vendor layer -- the model's own generation_config.json values,
+          passed by the caller (``load_vendor_sampling``); gguf passes None.
+      2.  Thinking anti-loop overlay (the slimmed 'thinking' sampler),
+          keyed on the EFFECTIVE switch: request.enable_thinking when
+          present, else the model config flag. Hardcoded fallback mirrors
+          thinking.toml so inference survives the file's removal.
+      3.  Model sampler fields from models.toml.
+      3b. Model default_sampler -- only when the request names no sampler;
+          unknown name logs-and-skips (models validate at startup, so a
+          miss here is post-startup registry drift, not a request error).
+      4.  Request sampler -- unknown name raises SamplerNotFound (route
+          handlers translate to HTTP 400).
+      5.  Request explicit fields -- always win.
+    """
+    merged = dict(GLOBAL_SAMPLER_FLOOR)
+    if vendor:
+        merged.update(vendor)
+
+    registry = get_sampler_registry()
+
+    request_thinking = getattr(request, 'enable_thinking', None)
+    thinking_active = (request_thinking if request_thinking is not None
+                       else model_config.get('enable_thinking', False))
+    if thinking_active:
+        if 'thinking' in registry:
+            registry.apply_sampler(merged, 'thinking')
+        else:
+            merged.update({'presence_penalty': 1.5, 'enable_thinking': True})
+
+    merged.update({k: v for k, v in model_config.items()
+                   if k in EFFECTIVE_SAMPLER_KEYS and v is not None})
+
+    request_sampler = getattr(request, 'sampler', None)
+    if not request_sampler:
+        default_sampler = model_config.get('default_sampler')
+        if default_sampler:
+            if default_sampler in registry:
+                registry.apply_sampler(merged, default_sampler)
+            else:
+                logging.warning(
+                    "model default_sampler %r not in registry; skipping layer",
+                    default_sampler,
+                )
+    registry.apply_sampler(merged, request_sampler)
+
+    for field in REQUEST_SAMPLER_FIELDS:
+        value = getattr(request, field, None)
+        if value is not None:
+            merged[field] = value
+    return merged
+
+
 def load_vendor_sampling(model_path: str) -> dict[str, Any]:
     """Sampling defaults from ``<model_path>/generation_config.json``.
 

@@ -390,11 +390,11 @@ def _infer_model_capabilities(model_config) -> list[str]:
         if hasattr(config, "vision") and config.vision:
             capabilities.append("vision")
 
-        # Check for thinking capability: explicit config flags first, then
-        # the model's own chat template (enable_thinking reference).
+        # Thinking capability is DERIVED: the enable_thinking default-on
+        # flag, else the model's own chat template (enable_thinking
+        # reference). No manual MLX flag -- supports_thinking is GGUF-only
+        # (nothing cheap to probe inside GGUF metadata).
         if hasattr(config, "enable_thinking") and config.enable_thinking:
-            capabilities.append("thinking")
-        elif hasattr(config, "supports_thinking") and config.supports_thinking:
             capabilities.append("thinking")
         elif getattr(config, "model_path", None) and _template_supports_thinking(
             str(config.model_path)

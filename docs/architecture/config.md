@@ -142,7 +142,7 @@ Do not put it in `models.toml`.)
 | `max_queue_depth` | int (`ge=1`) | `8` | Requests admitted behind the active generation before 503 backpressure. A real config field as of v1.32.0 -- previously read by the generation gate but not declared on `MLXModelConfig`, so it was silently dropped by Pydantic and permanently 8 regardless of `models.toml` |
 | `enable_thinking` | bool | `false` | Thinking-mode default for this model (any thinking-capable template, not Qwen3-specific -- see "Sampler Defaults" below for the request-time cascade) |
 | `vision_tokens` | int | none | Per-model default visual token budget per image (16-16384). A request's own `vision_tokens` overrides; `none` leaves the image processor's own default. Mapped per model family by `providers/common/vision_budget.py` (gemma-4: discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels`) |
-| `supports_thinking` | bool | `false` | Capability metadata flag |
+| ~~`supports_thinking`~~ | -- | -- | REMOVED v1.46.0 (MLX only; the GGUF config keeps its flag). MLX thinking capability is derived: `enable_thinking`, else template probe, else the explicit `ModelConfig.capabilities` override. |
 | `default_sampler` | string | none | Named-sampler name applied when a request doesn't specify one -- see "Sampler Defaults and the Effective-Request Cascade" below |
 | `draft_model_path` | string | none | Path to draft model for speculative decoding |
 | `num_draft_tokens` | int | `3` | Draft tokens for speculative decoding. The importer no longer stamps this on every import (v1.32.0) -- it's inert without `draft_model_path`, so writing it on every model was dead config. The field and its default of 3 remain; only the automatic import-time write was removed. |
@@ -170,10 +170,12 @@ model_path = "modelzoo/qwen-2.5-custom"
 
 ### Sampler Defaults and the Effective-Request Cascade
 
-A chat request's actual sampler values are resolved by
-`MLXProvider._apply_model_defaults` (`src/heylook_llm/providers/mlx_provider.py`,
-lines 758-836) as a six-layer cascade, each layer overriding only the
-fields it sets:
+A chat request's actual sampler values are resolved by the shared
+`resolve_effective_sampling` (`src/heylook_llm/samplers.py`, v1.46.0) --
+ONE implementation used by BOTH providers (`MLXProvider._apply_model_defaults`
+wraps it to add the cached vendor-layer read and MLX runtime-default fields;
+`LlamaServerProvider._build_payload` calls it directly, passing no vendor
+layer). Layers, each overriding only the fields it sets:
 
 1. **Global hardcoded floor** -- `GLOBAL_SAMPLER_FLOOR` (samplers.py):
    `temperature 0.7`, `top_p 1.0`, `top_k 0`, `min_p 0.0`,

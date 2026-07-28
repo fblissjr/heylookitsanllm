@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0]
+
+### Changed
+
+- **One sampler cascade for all providers.**
+  `samplers.resolve_effective_sampling` is now THE cascade; MLX's
+  `_apply_model_defaults` (wraps it: cached vendor-layer read + runtime
+  cache/spec fields) and the gguf provider's `_build_payload` (calls it
+  directly) no longer carry hand-mirrored copies -- including the two
+  duplicated thinking fallbacks v1.45.0 introduced. gguf picks up MLX's
+  semantics where the mirrors had drifted: a request's named sampler now
+  suppresses the model `default_sampler` layer (was: applied then
+  overlaid), and an unknown `default_sampler` logs-and-skips instead of
+  raising 400 on every request (models validate at startup; a registry
+  miss there is post-startup drift).
+- **MLX `supports_thinking` config field removed.** It was a manual flag
+  triple-shadowed by derived truth (the `enable_thinking` default-on flag,
+  the chat-template probe, and the explicit `ModelConfig.capabilities`
+  override) -- the same rot class as the dead thinking layer fixed in
+  v1.45.0. An MLX models.toml entry setting it now fails loudly at load
+  (`extra="forbid"`). GGUF keeps its flag: the template lives inside GGUF
+  metadata, nothing cheap to probe pre-load.
+
+### Docs
+
+- Phase 6 plan refinement: derive-at-load, override-only registry --
+  stop materializing derived metadata into models.toml instead of
+  building merge machinery to preserve it.
+
 ## [1.45.0]
 
 ### Added

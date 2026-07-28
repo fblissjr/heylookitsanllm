@@ -178,3 +178,92 @@ class TestVendorSampling:
         from heylook_llm.samplers import load_vendor_sampling
 
         assert load_vendor_sampling(str(tmp_path)) == {"top_p": 0.9}
+
+
+class TestResolveEffectiveSampling:
+    """resolve_effective_sampling: the ONE cascade shared by both providers.
+
+    Claim: MLX and gguf resolve request sampling through the same function
+    with the same semantics; the two hand-mirrored implementations (and
+    their duplicated thinking fallbacks) are gone. Deleting any test here
+    lets the providers' cascades drift apart again.
+    """
+
+    @staticmethod
+    def _req(**kw):
+        from heylook_llm.config import ChatRequest
+
+        body = {"messages": [{"role": "user", "content": "hi"}]}
+        body.update(kw)
+        return ChatRequest.model_validate(body)
+
+    def test_floor_only(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(self._req(), {})
+        assert merged["temperature"] == 0.7
+        assert merged["max_tokens"] == 4096
+
+    def test_vendor_overlay_beats_floor(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(
+            self._req(), {}, vendor={"temperature": 1.0, "top_k": 64})
+        assert merged["temperature"] == 1.0
+        assert merged["top_k"] == 64
+
+    def test_request_thinking_engages_overlay(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(self._req(enable_thinking=True), {})
+        assert merged["presence_penalty"] == 1.5
+        assert merged["enable_thinking"] is True
+
+    def test_model_config_thinking_engages_overlay(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(self._req(), {"enable_thinking": True})
+        assert merged["presence_penalty"] == 1.5
+
+    def test_request_false_beats_model_thinking(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(
+            self._req(enable_thinking=False), {"enable_thinking": True})
+        assert merged["presence_penalty"] == 0.0
+        assert merged["enable_thinking"] is False
+
+    def test_request_sampler_suppresses_default_sampler_layer(self):
+        """MLX semantics, now shared: a request naming a sampler replaces the
+        model's default_sampler layer entirely -- fields the default set but
+        the request sampler doesn't revert to floor/vendor."""
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(
+            self._req(sampler="deterministic"), {"default_sampler": "thinking"})
+        assert merged["presence_penalty"] == 0.0  # thinking layer skipped
+
+    def test_unknown_default_sampler_logs_and_skips(self):
+        """Models are validated at startup; a registry miss here means the
+        registry changed post-startup -- inference must not die for it."""
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(self._req(), {"default_sampler": "gone"})
+        assert merged["temperature"] == 0.7  # cascade survived
+
+    def test_unknown_request_sampler_raises(self):
+        from heylook_llm.samplers import SamplerNotFound, resolve_effective_sampling
+
+        with pytest.raises(SamplerNotFound):
+            resolve_effective_sampling(self._req(sampler="gone"), {})
+
+    def test_explicit_request_fields_win(self):
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        merged = resolve_effective_sampling(
+            self._req(enable_thinking=True, presence_penalty=0.2, temperature=0.9),
+            {"temperature": 0.3},
+            vendor={"temperature": 1.0},
+        )
+        assert merged["temperature"] == 0.9
+        assert merged["presence_penalty"] == 0.2
