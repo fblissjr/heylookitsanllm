@@ -343,3 +343,46 @@ class TestModalitiesAndLoader:
         # they must not leak into MLX_RUNTIME_DEFAULT_FIELDS.
         assert "modalities" not in MLX_RUNTIME_DEFAULT_FIELDS
         assert "loader" not in MLX_RUNTIME_DEFAULT_FIELDS
+
+
+@pytest.mark.unit
+class TestModalitiesDeriveAtLoad:
+    """Derive-at-load (Wave 1 / 6a, 2026-07-28): when an entry does not
+    materialize ``modalities``, the config derives it at validation time from
+    the model dir's own config.json -- the same ground truth the importer
+    reads. Stored ``modalities`` is an explicit OVERRIDE and always wins.
+
+    Claim: without this, thin entries silently regress to text-only (the
+    legacy vision-bool fallback) and every import must keep materializing
+    derived metadata that rots when the dir changes in place.
+    """
+
+    def _model_dir(self, tmp_path, config: dict):
+        import json as _json
+        (tmp_path / "config.json").write_text(_json.dumps(config))
+        return str(tmp_path)
+
+    def test_unset_modalities_detects_from_model_dir(self, tmp_path):
+        path = self._model_dir(
+            tmp_path, {"model_type": "gemma4", "vision_config": {}, "audio_config": {}})
+        cfg = MLXModelConfig(model_path=path)
+        assert cfg.modalities == ["text", "vision", "audio"]
+        assert cfg.vision is True  # mirror syncs to detection
+
+    def test_unset_modalities_text_only_dir(self, tmp_path):
+        path = self._model_dir(tmp_path, {"model_type": "llama"})
+        cfg = MLXModelConfig(model_path=path)
+        assert cfg.modalities == ["text"]
+        assert cfg.vision is False
+
+    def test_stored_modalities_override_detection(self, tmp_path):
+        # Operator says text-only; the dir says vision. Stored intent wins.
+        path = self._model_dir(tmp_path, {"model_type": "x", "vision_config": {}})
+        cfg = MLXModelConfig(model_path=path, modalities=["text"])
+        assert cfg.modalities == ["text"]
+        assert cfg.vision is False
+
+    def test_no_config_json_falls_back_to_legacy_vision_bool(self):
+        # Fake paths (tests, HF repo ids) keep the pre-6a derivation.
+        cfg = MLXModelConfig(model_path="/fake/model", vision=True)
+        assert cfg.modalities == ["text", "vision"]

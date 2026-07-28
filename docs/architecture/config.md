@@ -125,7 +125,7 @@ Do not put it in `models.toml`.)
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model_path` | string | required | HuggingFace model ID or local path |
-| `modalities` | list[str] | derived | Author-declared capability set (`text`/`vision`/`audio`/`video`); `text` always present. Detected at import from the model's `config.json` blocks (`vision_config`/`audio_config` + `*_token_id`). Absent -> derived from `vision`. **Authoritative** description of the model. |
+| `modalities` | list[str] | derived | Author-declared capability set (`text`/`vision`/`audio`/`video`); `text` always present. **Derive-at-load (v1.47.0)**: when absent, detected at CONFIG-LOAD time from the model dir's `config.json` blocks (`vision_config`/`audio_config` + `*_token_id`, shared detector `modality_detect.py`); a stored value is an explicit override and wins. No config.json to read -> legacy derivation from `vision`. The importer no longer materializes it (MLX entries; GGUF still does -- no config.json to probe at load). |
 | `loader` | `auto`\|`mlx-vlm`\|`mlx-lm` | `auto` | Engine routing (within `provider="mlx"`). `auto`: mlx-vlm iff the model declares vision AND mlx-vlm registers its `model_type`, else mlx-lm (degrades only on positive non-support). Explicit forces the engine (e.g. run a dual-capable VLM as text via `mlx-lm`). |
 | `vision` | bool | `false` | **Derived mirror** of `"vision" in modalities`, retained for back-compat. Setting it seeds `modalities` when `modalities` is omitted; if both are set, `modalities` wins. Load routing goes through `loader`/`effective_loader`, not this flag. |
 | `max_tokens` | int | none | Default maximum tokens to generate. Unset falls through the effective-request cascade to `GLOBAL_SAMPLER_FLOOR['max_tokens']` (4096) -- see below. |
@@ -149,7 +149,7 @@ Do not put it in `models.toml`.)
 | `default_hidden_layer` | int | `-2` | Layer for hidden state extraction |
 | `default_max_length` | int | `512` | Max sequence length for hidden states |
 | `unload_after_idle_seconds` | int, none | none | Per-model idle-unload override. `None` = use `AppConfig.idle_unload_seconds`; `0` = never idle-unload this model |
-| `chat_template_source` | string, none | none | `"auto"` / `"jinja"` / `"tokenizer_config"` / absolute path -- overrides chat-template source detection |
+| `chat_template_source` | string, none | none | `"auto"` / `"jinja"` / `"tokenizer_config"` / absolute path -- overrides chat-template source detection. Since v1.47.0 the importer records this ONLY for an explicit CLI `--chat-template` override; absent = load-time auto resolution (template_info.py, same policy the detection duplicated). |
 
 **Removed field: `quantized_kv_start`.** Written by the pre-v1.31.3 smart
 defaults and stored in every quantized-cache import, but never consumed by

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.47.0]
+
+### Changed
+
+- **Derive-at-load substrate, first slice (Wave 1 / 6a).** MLX models.toml
+  entries are THIN now: the importer materializes only `model_path` +
+  operator intent (sampler/cache flags, explicit `--chat-template`). What
+  it used to copy in is derived where it's needed instead:
+  - `modalities`/`vision`: detected at config-load time from the model
+    dir's own `config.json` via the new shared `modality_detect.py` (one
+    implementation for importer and config; a stored value is an explicit
+    override and always wins; no config.json -> legacy vision-bool
+    fallback). GGUF entries still materialize modalities -- no config.json
+    to probe at load.
+  - auto-detected `chat_template_source`: no longer recorded; load-time
+    auto resolution (template_info.py) applies the identical policy.
+  - auto description/tags text: no longer written (display-only noise).
+  Existing entries with materialized fields keep their exact behavior.
+- **config_tui retired** (+ the import wizard's `--interactive` per-model
+  customization branch, + the `questionary` dependency). Its hand-editing
+  role is dead under thin entries; operator intent at import is
+  `--sampler`/`--override`; richer editing arrives with the Wave 4 admin
+  CRUD.
+
+### Notes
+
+- Phase 1 item 8 (path identity + PUT re-import on the admin path) was
+  found ALREADY IMPLEMENTED and test-pinned (`test_import_reimport.py`) --
+  the plan carried it as open; Wave 1's fold-in reduces to nothing.
+- Remaining 6a (next session): cache/kv smart defaults computed at load
+  (`cache_type` becomes Optional=auto), GGUF description/tags parity.
+
 ## [1.46.0]
 
 ### Changed

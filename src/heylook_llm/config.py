@@ -265,15 +265,33 @@ class MLXModelConfig(BaseModel):
     def _resolve_modalities(self):
         """Reconcile ``modalities`` <-> ``vision`` (modalities is authoritative).
 
-        - ``modalities`` unset: derive from the legacy ``vision`` bool so old
-          toml entries (``vision = true``, no modalities) keep working.
-        - ``modalities`` set: normalize (``text`` always first, deduped, order
-          preserved) and sync ``vision`` to ``"vision" in modalities`` so a
-          contradiction (``vision = true`` but modalities lacks it) resolves in
-          favor of the richer, author-declared list.
+        - ``modalities`` unset: DERIVE AT LOAD (6a, 2026-07-28) from the model
+          dir's own config.json via the shared detector -- thin entries never
+          materialize what the dir already declares. Falls back to the legacy
+          ``vision`` bool when there is no config.json to read (fake paths in
+          tests, HF repo ids), so old toml entries keep working.
+        - ``modalities`` set: an explicit OVERRIDE -- normalize (``text``
+          always first, deduped, order preserved) and sync ``vision`` to
+          ``"vision" in modalities`` so a contradiction (``vision = true`` but
+          modalities lacks it) resolves in favor of the declared list.
         """
         if self.modalities is None:
-            self.modalities = ["text", "vision"] if self.vision else ["text"]
+            detected = None
+            try:
+                from pathlib import Path as _Path
+
+                from .modality_detect import detect_modalities, read_model_config_json
+                model_dir = _Path(self.model_path)
+                cfg_json = read_model_config_json(model_dir)
+                if cfg_json is not None:
+                    detected = detect_modalities(model_dir, cfg_json)
+            except Exception:
+                detected = None  # detection must never block config load
+            if detected is not None:
+                self.modalities = detected
+                self.vision = "vision" in detected
+            else:
+                self.modalities = ["text", "vision"] if self.vision else ["text"]
         else:
             # Normalize: "text" always first, order-preserving dedup.
             self.modalities = list(dict.fromkeys(["text", *self.modalities]))

@@ -130,11 +130,10 @@ def main():
         default="INFO",
         help="Logging level",
     )
-    import_parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Interactively customize sampler and KV cache settings for each discovered model",
-    )
+    # (--interactive retired 2026-07-28 with config_tui: per-model sampler/KV
+    # customization at import is dead under derive-at-load thin entries --
+    # use --override/--sampler flags or edit models.toml; the Wave 4 admin
+    # CRUD is the interactive surface.)
 
     # Service command - manage background service (macOS/Linux)
     service_parser = subparsers.add_parser(

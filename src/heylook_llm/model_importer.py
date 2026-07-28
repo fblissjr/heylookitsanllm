@@ -20,7 +20,11 @@ from heylook_llm.model_service import (
     get_hf_cache_paths,
     get_smart_defaults,
 )
-from heylook_llm.providers.common.template_info import detect_chat_template_source
+from heylook_llm.modality_detect import (
+    detect_modalities,
+    has_vision_weight_files,
+    read_model_config_json,
+)
 
 __all__ = [
     "ModelImporter",
@@ -163,15 +167,8 @@ class ModelImporter:
         return models
 
     def _read_model_config(self, path: Path) -> Optional[dict]:
-        """Read and parse config.json from a model directory. Returns None on failure."""
-        config_path = path / "config.json"
-        if not config_path.exists():
-            return None
-        try:
-            with open(config_path) as f:
-                return json.load(f)
-        except Exception:
-            return None
+        """Delegates to the shared reader (modality_detect.py, 6a)."""
+        return read_model_config_json(path)
 
     def _is_embedding_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
         """Check if a directory contains an embedding model.
@@ -385,48 +382,16 @@ class ModelImporter:
         }
 
     def _has_vision_files(self, path: Path) -> bool:
-        """Vision-tower / mmproj sidecar files -- the fallback signal for sparse
-        checkpoints (GGUF/split) whose config.json lacks a vision block."""
-        vision_files = ["mmproj", "vision_tower", "image_encoder", "visual_encoder"]
-        try:
-            return any(
-                any(v in f.name.lower() for v in vision_files) for f in path.iterdir()
-            )
-        except OSError:
-            return False
+        """Delegates to the shared detector (modality_detect.py, 6a)."""
+        return has_vision_weight_files(path)
 
     def detect_modalities(self, path: Path, config_data: Optional[dict] = None) -> list[str]:
-        """The model's author-declared modality set, ``text`` always first.
-
-        Primary signal is the config's OWN structure -- ``vision_config`` /
-        ``audio_config`` sub-blocks and ``*_token_id`` keys are how the model
-        declares which modalities it routes (ground truth). ``mmproj``-style
-        weight files are a vision fallback for sparse checkpoints. Pure
-        description: whether mlx-vlm can *load* it (the loader=auto gate) is a
-        separate, library-aware decision made in the provider.
-
-        Robust by construction -- a draft/MTP head or a dir with no/odd
-        config.json yields ``["text"]`` rather than raising.
-        """
+        """Delegates to the shared detector (modality_detect.py) -- ONE
+        implementation serves both scan-time display and the load-time
+        derivation in MLXModelConfig._resolve_modalities."""
         if config_data is None:
             config_data = self._read_model_config(path)
-        cfg = config_data or {}
-
-        mods = ["text"]
-        if (
-            "vision_config" in cfg
-            or "image_token_id" in cfg
-            or "image_token_index" in cfg   # LLaVA/Mistral/Pixtral spelling of the above
-            or "vision_start_token_id" in cfg
-            or "image_size" in cfg          # legacy signal, kept as a weak fallback
-            or self._has_vision_files(path)
-        ):
-            mods.append("vision")
-        if "audio_config" in cfg or "audio_token_id" in cfg:
-            mods.append("audio")
-        if "video_config" in cfg or "video_token_id" in cfg:
-            mods.append("video")
-        return mods
+        return detect_modalities(path, config_data)
 
     def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
         """Back-compat shim: vision is one modality of :meth:`detect_modalities`."""
@@ -479,7 +444,7 @@ class ModelImporter:
         is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
         modalities = self.detect_modalities(path, config_data)
         is_vision = "vision" in modalities
-        size_str, size_gb = self._get_model_size(path)
+        _, size_gb = self._get_model_size(path)
 
         model_info = {
             'name': model_id, 'provider': 'mlx',
@@ -487,39 +452,26 @@ class ModelImporter:
             'size_gb': size_gb or 0,
         }
 
-        tags = self._detect_tags(model_id, is_vision, is_quantized, size_gb)
-
-        # ``modalities`` is the description of record; ``vision`` is retained as
-        # a derived mirror for back-compat readers (config schema keeps them in
-        # sync). Non-text modalities (audio/video) can only be expressed here.
-        config: dict[str, Any] = {
-            "model_path": str(path), "vision": is_vision, "modalities": modalities,
-        }
+        # Derive-at-load (6a, 2026-07-28): entries are THIN -- path + operator
+        # intent only. modalities/vision are detected at config-load time
+        # (MLXModelConfig._resolve_modalities, same shared detector), the
+        # chat-template source is auto-resolved at model load
+        # (template_info.py), and description/tags auto-text is not worth
+        # storing. Materializing any of these is a copy that rots when the
+        # model dir changes in place. Only an explicit CLI --chat-template
+        # override (operator intent) is recorded.
+        config: dict[str, Any] = {"model_path": str(path)}
         config.update(get_smart_defaults(model_info))
 
-        # Chat-template source policy (C4.5):
-        # 1) CLI --chat-template override wins.
-        # 2) Else record the shared detection (same helper as the /v1/admin
-        #    import route) so HF's auto-detection (which varies by
-        #    transformers version) becomes explicit + user-editable.
         if self.chat_template_override:
             config["chat_template_source"] = self.chat_template_override
-        else:
-            detected = detect_chat_template_source(path)
-            if detected:
-                config["chat_template_source"] = detected
 
         if self.sampler_name:
             config["default_sampler"] = self.sampler_name
         config.update(self.overrides)
 
-        if size_gb and size_gb < 1 and not is_vision:
-            tags.append("draft")
-
         return {
-            "id": model_id, "provider": "mlx",
-            "description": f"Auto-imported MLX model{' with vision' if is_vision else ''}{f' ({size_str})' if size_str else ''}",
-            "tags": tags, "enabled": True, "config": config,
+            "id": model_id, "provider": "mlx", "enabled": True, "config": config,
         }
 
     def _detect_tags(self, model_id: str, is_vision: bool, is_quantized: bool, size_gb: Optional[float]) -> list[str]:
@@ -678,63 +630,9 @@ def import_models(args: Any) -> None:
         logging.warning("No models found!")
         return
 
-    # Interactive mode: let user customize sampler/KV cache settings per model
-    if getattr(args, 'interactive', False):
-        try:
-            import questionary
-            from heylook_llm.config_tui import ConfigEditor
-        except ImportError:
-            logging.error("Interactive mode requires 'questionary'. Install with: uv add questionary")
-            return
-
-        editor = ConfigEditor()
-        print(f"\nDiscovered {len(models)} model(s):")
-        for i, m in enumerate(models):
-            print(f"  [{i}] {m['id']} ({m['provider']})")
-
-        # Let user pick which models to customize
-        model_choices = [
-            questionary.Choice(title=f"{m['id']} ({m['provider']})", value=i)
-            for i, m in enumerate(models)
-        ]
-        selected_indices = questionary.checkbox(
-            "Which models would you like to customize?",
-            choices=model_choices,
-            style=editor.style,
-        ).ask()
-
-        if selected_indices is None:
-            # User cancelled (Ctrl+C)
-            print("Cancelled.")
-            return
-
-        for idx in selected_indices:
-            model = models[idx]
-            config = model.get('config', {})
-            print(f"\n--- Customizing: {model['id']} ---")
-
-            # Sampler params
-            sampler_keys = ('temperature', 'top_p', 'top_k', 'min_p',
-                            'max_tokens', 'repetition_penalty', 'repetition_context_size')
-            before_sampler = {k: config[k] for k in sampler_keys if k in config}
-            updated_sampler = editor.edit_sampler_params(before_sampler or None)
-            if updated_sampler != before_sampler:
-                if editor.confirm_changes(before_sampler, updated_sampler):
-                    config.update(updated_sampler)
-
-            # KV cache params (MLX only)
-            if model.get('provider') == 'mlx':
-                model_info = {
-                    'size_gb': config.get('size_gb', 0),
-                    'name': model['id'],
-                }
-                kv_params = editor.edit_kv_cache_params(model_info=model_info)
-                if kv_params:
-                    before_kv = {k: config.get(k) for k in kv_params}
-                    if kv_params != before_kv and editor.confirm_changes(before_kv, kv_params):
-                        config.update(kv_params)
-
-            model['config'] = config
+    # (Interactive per-model customization retired 2026-07-28 with config_tui:
+    # dead under derive-at-load thin entries. Operator intent at import =
+    # --sampler / --override flags; richer editing is the Wave 4 admin CRUD.)
 
     # Print sampler details before writing
     if getattr(args, 'sampler', None):
