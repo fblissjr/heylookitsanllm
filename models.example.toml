@@ -1,0 +1,76 @@
+# models.example.toml -- reference for the model registry format.
+# Last updated: 2026-07-28
+#
+# Copy to models.toml (gitignored) or generate one with `heylookllm import`.
+#
+# Entries are THIN by design (derive-at-load, v1.47+): an entry needs only
+# id + provider + model_path. Everything else is derived from the model's
+# own files at load time, so it never goes stale when a model dir changes:
+#   - modalities        <- config.json (vision_config/audio_config/*_token_id)
+#   - chat template     <- chat_template.jinja > tokenizer_config > chat_template.json
+#   - sampling defaults <- generation_config.json (temperature/top_p/top_k)
+#   - cache defaults    <- actual weight bytes vs this machine's RAM
+# Any field you write here is an explicit OVERRIDE and always wins.
+
+default_model = "my-model-4bit"
+max_loaded_models = 1
+
+# --- MLX: the minimal entry (this is all a typical model needs) ---
+
+[[models]]
+id = "my-model-4bit"
+provider = "mlx"
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/my-model-4bit"
+
+# --- MLX: with operator overrides (each field here is a deliberate choice) ---
+
+[[models]]
+id = "my-tuned-model"
+provider = "mlx"
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/my-tuned-model"
+  # sampling overrides beat the model's generation_config.json
+  temperature = 0.6
+  max_tokens = 8192
+  # named sampler applied when a request doesn't pick one
+  default_sampler = "balanced"
+  # force the KV cache instead of the RAM-relative auto default
+  cache_type = "quantized"
+  kv_bits = 8
+  # run a dual-capable VLM as text-only (routing override)
+  # loader = "mlx-lm"
+  # force a template source instead of load-time auto resolution
+  # chat_template_source = "tokenizer_config"
+
+# --- GGUF (llama-server subprocess): modalities + sidecars stay explicit,
+# --- there is no config.json to probe at load. model_path is the primary
+# --- .gguf FILE. Binary via `server_binary` or $HEYLOOK_LLAMA_SERVER.
+
+[[models]]
+id = "my-gguf-model"
+provider = "gguf"
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/gguf/my-gguf-model/model-Q4_K_XL.gguf"
+  modalities = ["text", "vision"]
+  mmproj_path = "modelzoo/gguf/my-gguf-model/mmproj-F16.gguf"
+  # speculative decoding is per-model opt-in (measured, not assumed):
+  # draft_model_path = "modelzoo/gguf/my-gguf-model/mtp-model.gguf"
+  # spec_type = "draft-mtp"
+
+# --- Embedding ---
+
+[[models]]
+id = "my-embedding-model"
+provider = "mlx_embedding"
+enabled = true
+
+  [models.config]
+  model_path = "modelzoo/my-embedding-model"
+  max_length = 2048

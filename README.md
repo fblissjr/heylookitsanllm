@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-07-26
+Last updated: 2026-07-28
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -77,7 +77,7 @@ The v3 frontend needs no install or build -- the backend serves it at `/v3`.
 # Import models from your HuggingFace cache (auto-generates models.toml)
 heylookllm import --hf-cache
 # Or from a specific directory:
-heylookllm import --folder ~/models
+heylookllm import --folder /path/to/models
 
 # Start
 heylookllm --log-level INFO
@@ -99,16 +99,26 @@ heylookllm service status|start|stop|restart|uninstall
 
 ### Adding Models
 
+Import discovers models and registers them; it deliberately writes THIN
+`models.toml` entries -- `id`, `model_path`, `provider`, plus anything you
+explicitly chose (a default sampler, overrides). Everything else is derived
+from the model's own files at load time and never goes stale: modalities
+from `config.json`, the chat template from the model dir, sampling defaults
+from `generation_config.json`, and KV-cache defaults from actual weight
+size vs your machine's RAM. Re-quantize or swap a model dir in place and
+the derived values follow; a stored field in `models.toml` always wins as
+an explicit override. See `models.example.toml` for the format.
+
 There are three ways to add models:
 
-**Web UI** -- Open the Models page in the `/v3` UI. Click Import, scan a directory or your HuggingFace cache, select the models you want, pick a profile, and import. Models are added to `models.toml` and available immediately.
+**Web UI** -- Open the Models page in the `/v3` UI. Click Import, scan a directory or your HuggingFace cache, select the models you want, optionally pick a default sampler, and import. Models are added to `models.toml` and available immediately.
 
 The scan understands MLX/safetensors dirs, embedding models, and GGUF dirs (primary weight + `mmproj` projector + `mtp-` drafter sidecars auto-paired; HF-format assistant/drafter checkpoints and imatrix calibration files are recognized and skipped).
 
 **CLI** -- Scan a directory or HF cache and generate config:
 ```bash
-heylookllm import --folder ~/models --output models.toml
-heylookllm import --hf-cache --profile tight_fast
+heylookllm import --folder /path/to/models --output models.toml
+heylookllm import --hf-cache --sampler balanced
 ```
 
 **API** -- Scan then import programmatically (server must be running):
@@ -121,7 +131,7 @@ curl -X POST http://localhost:8080/v1/admin/models/scan \
 # Import selected models from scan results
 curl -X POST http://localhost:8080/v1/admin/models/import \
   -H "Content-Type: application/json" \
-  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "profile": "tight_fast"}'
+  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "default_sampler": "balanced"}'
 ```
 
 If you edit `models.toml` directly while the server is running, reload the config:
