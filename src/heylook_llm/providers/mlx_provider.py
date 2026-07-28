@@ -21,6 +21,7 @@ from .abort import AbortEvent
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
+from ..cache_defaults import resolve_cache_config
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
@@ -745,6 +746,11 @@ class MLXProvider(BaseProvider):
 
     def load_model(self):
         model_path = self.config['model_path']
+
+        # Derive-at-load (6a): cache_type=None means auto -- resolve from
+        # actual weight bytes vs RAM here, BEFORE anything reads the config
+        # for cache construction. Explicit values pass through untouched.
+        self.config.update(resolve_cache_config(self.config))
 
         logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path}")
 

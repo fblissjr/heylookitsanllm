@@ -33,7 +33,9 @@ def make_cache(model: nn.Module, config: dict) -> List[Any]:
     - kv_group_size: Group size for quantized cache (default 64)
     - kv_bits: Number of bits for quantized cache (default 8)
     """
-    cache_type = config.get("cache_type", "standard")
+    # None = auto; normally resolved at model load (cache_defaults), but
+    # raw-config paths (tests, direct calls) may still pass None through.
+    cache_type = config.get("cache_type") or "standard"
 
     # If the model has its own custom cache logic (like RecurrentGemma), let it handle it.
     if hasattr(model, "make_cache"):

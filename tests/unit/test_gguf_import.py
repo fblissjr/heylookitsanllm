@@ -150,8 +150,9 @@ class TestCreateGGUFEntry:
         assert entry["id"] == "my-gguf-model"
         assert entry["provider"] == "gguf"
         assert entry["config"]["model_path"] == str(d / "my-gguf-model.gguf")
-        assert "gguf" in entry["tags"]
-        assert entry["description"] == "Auto-imported GGUF model (llama-server)"
+        # Derive-at-load (6a): no auto description/tags materialized.
+        assert "tags" not in entry
+        assert "description" not in entry
 
     def test_spec_type_deliberately_unset(self, importer, tmp_path):
         # spec_type turns speculative decoding ON at request time; whether it

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0]
+
+### Changed
+
+- **Derive-at-load complete (Wave 1 / 6a done).** The remaining
+  materialized copies are gone:
+  - **Cache defaults resolve at model load.** `cache_type` is now
+    Optional; None = auto, resolved by the new `cache_defaults.py` from
+    ACTUAL weight bytes vs machine RAM at load (the import-time copy froze
+    that decision against whatever machine/weights existed at import).
+    Explicit values and pinned knobs (`kv_bits`/`kv_group_size`) are never
+    overridden. `get_smart_defaults` delegates to the same single
+    implementation (survives for the admin what-would-it-be surface).
+  - **The /v1/admin import route builds thin entries** matching the CLI
+    wizard (no vision/smart-defaults/auto template-source materialization;
+    caller-supplied description/tags are kept -- operator intent; auto-text
+    defaults are not).
+  - **GGUF + embedding CLI entries drop auto description/tags** (GGUF
+    keeps `modalities` -- no config.json to probe at load). The dead
+    `_detect_tags` helper is deleted.
+
 ## [1.47.0]
 
 ### Changed

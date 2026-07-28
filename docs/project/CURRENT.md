@@ -28,7 +28,16 @@ UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
   guardrails (delete>decompose>migrate>grow; derived truth over
   materialized copies; one implementation per mechanism). Phase 6 split
   6a/6b; Phase 2 item 3 retired as superseded.
-- **NEXT SESSION: Wave 1 item 1 (6a derive-at-load substrate).**
+- **Wave 1 item 1 (6a) EXECUTED same day (v1.47.0-1.48.0)**: thin
+  models.toml entries everywhere (CLI + admin import; all providers),
+  modalities/template-source/cache-defaults derived at load
+  (modality_detect.py, cache_defaults.py; stored values = explicit
+  overrides), config_tui + --interactive + questionary retired, Phase 1
+  item 8 discovered already-done. Suite 1243 green.
+- **NEXT: Wave 1 item 2 (RLM extraction -- owner-gated on the sibling
+  repo; backend prereqs are small) or item 3 (batch-internals collapse)
+  if the owner isn't ready. Still pending: live re-verify of the heretic
+  gemma thinking loop post-restart.**
 
 UPDATE 2026-07-26 (PHASE 7, one day, v1.39.17 -> v1.44.2, 14 commits --
 multi-provider is REAL again; full record: the session log + plan Phase 7 +

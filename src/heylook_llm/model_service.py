@@ -28,7 +28,6 @@ from typing import Any, Optional
 import tomli_w  # type: ignore[import-untyped]
 
 from heylook_llm.config import AppConfig, ModelConfig
-from heylook_llm.providers.common.template_info import detect_chat_template_source
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +92,6 @@ def available_samplers() -> list[str]:
 # =============================================================================
 
 
-def _system_ram_gb() -> float:
-    """Total unified memory in GB. Conservative fallback if psutil is absent."""
-    try:
-        import psutil
-        return psutil.virtual_memory().total / (1024 ** 3)
-    except Exception:
-        return 64.0
-
-
 def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     """Generate LOAD-TIME smart defaults based on model characteristics.
 
@@ -122,25 +112,17 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     size_gb = model_info.get("size_gb", 0)
 
     if provider == "mlx":
-        # KV quantization is a memory/quality trade-off, so it must be
-        # RAM-relative, not an absolute weight threshold: a 40GB model is
-        # "large" on a 64GB MacBook and trivial on a 192GB Studio. Quantize
-        # only when the weights alone claim over ~35% of unified memory
-        # (leaving the rest for KV, vision towers, and the OS).
+        # ONE implementation with the load-time auto resolution (6a):
+        # cache_defaults.smart_cache_defaults owns the RAM-relative policy.
+        # Since 2026-07-28 import paths no longer materialize these fields
+        # (cache_type=None = auto at load); this function survives for the
+        # admin "what would the defaults be" surface.
         #
-        # max_kv_size is deliberately NEVER defaulted: it creates a
-        # RotatingKVCache that silently drops context beyond the cap --
-        # truncation is an explicit user choice, not an import default.
-        if size_gb > _system_ram_gb() * 0.35:
-            defaults["cache_type"] = "quantized"
-            defaults["kv_bits"] = 8
-            defaults["kv_group_size"] = 64
-        else:
-            defaults["cache_type"] = "standard"
-
         # num_draft_tokens is deliberately NOT emitted: it only matters when
         # a draft_model_path is configured (speculative decoding), and import
         # never configures one -- stamping it on every model is dead config.
+        from heylook_llm.cache_defaults import smart_cache_defaults
+        defaults.update(smart_cache_defaults(size_gb))
 
     # gguf gets no smart defaults here: llama-server owns its own KV cache
     # (ctx_size/n_gpu_layers live on GGUFModelConfig directly) -- there's
@@ -702,15 +684,12 @@ class ModelService:
                                 entry_config, default_sampler, provider
                             )
                 else:
-                    # Start with base config
-                    entry_config = {
-                        "model_path": model_path,
-                        "vision": vision,
-                    }
-
-                    # Apply smart defaults
-                    smart = get_smart_defaults(model_info)
-                    entry_config.update(smart)
+                    # Derive-at-load (6a, 2026-07-28): thin entry, matching
+                    # the CLI wizard. vision/modalities are detected at
+                    # config load, cache defaults resolve at model load
+                    # (cache_type=None = auto), the chat-template source is
+                    # auto-resolved at load. Only operator intent is stored.
+                    entry_config = {"model_path": model_path}
 
                     # Stamp default_sampler if specified and known
                     if default_sampler:
@@ -720,29 +699,22 @@ class ModelService:
                                 entry_config, default_sampler, provider
                             )
 
-                    # Same detection as the CLI import wizard (shared helper --
-                    # the two paths drifted once): record the explicit template
-                    # policy so models.toml reflects it instead of relying on
-                    # HF's version-dependent auto-detection.
-                    if model_path:
-                        detected = detect_chat_template_source(model_path)
-                        if detected:
-                            entry_config["chat_template_source"] = detected
-
                 # Apply any overrides from the import request
                 overrides = model_data.get("overrides", {})
                 entry_config.update(overrides)
 
+                # description/tags only when the CALLER supplied them
+                # (operator intent); auto-text is not materialized (6a).
                 entry = {
                     "id": model_id,
                     "provider": provider,
-                    "description": model_data.get(
-                        "description", f"Imported {provider.upper()} model"
-                    ),
-                    "tags": model_data.get("tags", []),
                     "enabled": model_data.get("enabled", True),
                     "config": entry_config,
                 }
+                if model_data.get("description"):
+                    entry["description"] = model_data["description"]
+                if model_data.get("tags"):
+                    entry["tags"] = model_data["tags"]
 
                 try:
                     validated = ModelConfig(**entry)

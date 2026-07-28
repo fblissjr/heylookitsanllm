@@ -196,17 +196,6 @@ class ModelImporter:
             return None
         self.existing_ids.add(model_id)
 
-        is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
-
-        tags = ["embedding"]
-        model_lower = model_id.lower()
-        for family in ["llama", "qwen", "gemma", "mistral"]:
-            if family in model_lower:
-                tags.append(family)
-                break
-        if is_quantized:
-            tags.append("quantized")
-
         config: dict[str, Any] = {
             "model_path": str(path),
             "max_length": 2048,
@@ -215,8 +204,6 @@ class ModelImporter:
         return {
             "id": model_id,
             "provider": "mlx_embedding",
-            "description": "Auto-imported embedding model",
-            "tags": tags,
             "enabled": True,
             "config": config,
         }
@@ -340,8 +327,6 @@ class ModelImporter:
         mmproj = self._pick_mmproj(path)
         draft = self._pick_draft(path)
         is_vision = mmproj is not None
-        is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
-        _, size_gb = self._get_model_size(path)
 
         # Modality DESCRIPTION mirrors detect_modalities' intent, but GGUF
         # dirs carry no config.json to read -- the only cheap signal is the
@@ -350,9 +335,6 @@ class ModelImporter:
         modalities = ["text"]
         if is_vision:
             modalities.append("vision")
-
-        tags = self._detect_tags(model_id, is_vision, is_quantized, size_gb)
-        tags.append("gguf")
 
         config: dict[str, Any] = {
             "model_path": str(primary),
@@ -373,12 +355,7 @@ class ModelImporter:
         config.update(self.overrides)
 
         return {
-            "id": model_id,
-            "provider": "gguf",
-            "description": "Auto-imported GGUF model (llama-server)",
-            "tags": tags,
-            "enabled": True,
-            "config": config,
+            "id": model_id, "provider": "gguf", "enabled": True, "config": config,
         }
 
     def _has_vision_files(self, path: Path) -> bool:
@@ -441,17 +418,6 @@ class ModelImporter:
             return None
         self.existing_ids.add(model_id)
 
-        is_quantized = any(q in path.name.lower() for q in ['4bit', '8bit', 'q4', 'q8'])
-        modalities = self.detect_modalities(path, config_data)
-        is_vision = "vision" in modalities
-        _, size_gb = self._get_model_size(path)
-
-        model_info = {
-            'name': model_id, 'provider': 'mlx',
-            'is_quantized': is_quantized, 'is_vision': is_vision,
-            'size_gb': size_gb or 0,
-        }
-
         # Derive-at-load (6a, 2026-07-28): entries are THIN -- path + operator
         # intent only. modalities/vision are detected at config-load time
         # (MLXModelConfig._resolve_modalities, same shared detector), the
@@ -461,7 +427,6 @@ class ModelImporter:
         # model dir changes in place. Only an explicit CLI --chat-template
         # override (operator intent) is recorded.
         config: dict[str, Any] = {"model_path": str(path)}
-        config.update(get_smart_defaults(model_info))
 
         if self.chat_template_override:
             config["chat_template_source"] = self.chat_template_override
@@ -473,29 +438,6 @@ class ModelImporter:
         return {
             "id": model_id, "provider": "mlx", "enabled": True, "config": config,
         }
-
-    def _detect_tags(self, model_id: str, is_vision: bool, is_quantized: bool, size_gb: Optional[float]) -> list[str]:
-        """Detect tags from model characteristics."""
-        tags = []
-        if is_vision:
-            tags.append("vision")
-        if is_quantized:
-            tags.append("quantized")
-        if size_gb:
-            if size_gb >= 30:
-                tags.append("large")
-            elif size_gb <= 3:
-                tags.append("small")
-
-        model_lower = model_id.lower()
-        for family in ["llama", "qwen", "gemma", "mistral"]:
-            if family in model_lower:
-                tags.append(family)
-                break
-
-        if 'instruct' in model_lower or 'chat' in model_lower:
-            tags.append("instruct")
-        return tags
 
     # Stable section order for a mixed scan; anything outside this map
     # (a future provider) still gets emitted, under "Other Models".

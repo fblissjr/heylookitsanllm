@@ -80,7 +80,7 @@ class TestSmartDefaultsLoadTimeOnly:
 
     def test_model_large_relative_to_ram_gets_quantized_cache(self, monkeypatch):
         # 40GB weights on a 64GB machine: real memory pressure -> quantize.
-        monkeypatch.setattr("heylook_llm.model_service._system_ram_gb", lambda: 64.0)
+        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
         defaults = get_smart_defaults({
             "provider": "mlx", "name": "big", "size_gb": 40,
         })
@@ -90,14 +90,14 @@ class TestSmartDefaultsLoadTimeOnly:
     def test_same_model_on_big_ram_machine_gets_standard_cache(self, monkeypatch):
         # The SAME 40GB model on a 192GB machine: no pressure -> fp16 KV.
         # KV quantization is a memory trade-off, not a free default.
-        monkeypatch.setattr("heylook_llm.model_service._system_ram_gb", lambda: 192.0)
+        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 192.0)
         defaults = get_smart_defaults({
             "provider": "mlx", "name": "big", "size_gb": 40,
         })
         assert defaults["cache_type"] == "standard"
 
     def test_small_model_gets_standard_cache(self, monkeypatch):
-        monkeypatch.setattr("heylook_llm.model_service._system_ram_gb", lambda: 64.0)
+        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
         defaults = get_smart_defaults({
             "provider": "mlx", "name": "small", "size_gb": 3,
         })
@@ -108,7 +108,7 @@ class TestSmartDefaultsLoadTimeOnly:
         # beyond it -- truncation must be an explicit user choice, never an
         # import-time default (it shipped 2048 on every >30GB model once).
         for ram, size in ((64.0, 40), (192.0, 155), (32.0, 20)):
-            monkeypatch.setattr("heylook_llm.model_service._system_ram_gb", lambda r=ram: r)
+            monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda r=ram: r)
             defaults = get_smart_defaults({
                 "provider": "mlx", "name": "m", "size_gb": size,
             })
@@ -236,10 +236,12 @@ class TestImportWizardChatTemplateDetection:
 
 
 class TestServerImportChatTemplateDetection:
-    """``ModelService.import_models`` (the /v1/admin scan+import route the
-    v3 frontend uses) must apply the same chat_template.jinja detection as
-    the CLI import wizard -- otherwise frontend-imported models silently
-    lose the explicit ``chat_template_source`` the registry relies on."""
+    """Derive-at-load parity (Wave 1 / 6a): the /v1/admin import route,
+    like the CLI wizard, no longer materializes the auto-detected
+    chat_template_source (load-time auto resolution applies the same
+    policy). An explicit override via the request still wins -- that's
+    operator intent. Both paths changed TOGETHER (they drifted once
+    before; keep them pinned to the same claim)."""
 
     def _make_service(self, tmp_path):
         from heylook_llm.model_service import ModelService
@@ -256,7 +258,7 @@ class TestServerImportChatTemplateDetection:
             (model_dir / "chat_template.jinja").write_text("{{ messages }}")
         return model_dir
 
-    def test_import_detects_jinja_in_model_folder(self, tmp_path):
+    def test_import_does_not_materialize_detected_jinja(self, tmp_path):
         service = self._make_service(tmp_path)
         model_dir = self._make_model_dir(tmp_path, with_jinja=True)
 
@@ -265,7 +267,7 @@ class TestServerImportChatTemplateDetection:
         ])
 
         assert len(imported) == 1
-        assert imported[0].config.chat_template_source == "jinja"
+        assert imported[0].config.chat_template_source is None
 
     def test_import_without_jinja_leaves_source_unset(self, tmp_path):
         service = self._make_service(tmp_path)
@@ -278,20 +280,9 @@ class TestServerImportChatTemplateDetection:
         assert len(imported) == 1
         assert imported[0].config.chat_template_source is None
 
-    def test_import_detects_jinja_through_tilde_path(self, tmp_path, monkeypatch):
-        """The admin API accepts arbitrary path strings; a tilde path must not
-        silently skip detection (parity with the CLI wizard, which scans
-        resolved directories)."""
-        monkeypatch.setenv("HOME", str(tmp_path))
-        service = self._make_service(tmp_path)
-        self._make_model_dir(tmp_path, with_jinja=True)
-
-        imported = service.import_models([
-            {"id": "some-model", "path": "~/some-model", "provider": "mlx"},  # path-privacy: ignore
-        ])
-
-        assert len(imported) == 1
-        assert imported[0].config.chat_template_source == "jinja"
+    # (The tilde-path detection test died with detection itself: there is
+    # no import-time probe left for a tilde path to skip. Load-time auto
+    # resolution operates on the resolved model_path.)
 
     def test_import_override_wins_over_detection(self, tmp_path):
         service = self._make_service(tmp_path)
@@ -354,7 +345,8 @@ class TestEmbeddingModelDetection:
         assert entry["config"]["model_path"] == str(tmp_path)
         assert entry["config"]["max_length"] == 2048
         assert "temperature" not in entry["config"]
-        assert "embedding" in entry["tags"]
+        # Derive-at-load (6a): no auto tags materialized.
+        assert "tags" not in entry
 
     def test_scan_finds_embedding_model(self, tmp_path):
         model_dir = tmp_path / "embeddinggemma-300m"
@@ -366,4 +358,4 @@ class TestEmbeddingModelDetection:
 
         assert len(models) == 1
         assert models[0]["provider"] == "mlx_embedding"
-        assert "embedding" in models[0]["tags"]
+        assert "tags" not in models[0]

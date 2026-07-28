@@ -135,7 +135,7 @@ Do not put it in `models.toml`.)
 | `min_p` | float | none | Min-p sampling |
 | `repetition_penalty` | float | none | Repetition penalty |
 | `presence_penalty` | float | none | Presence penalty |
-| `cache_type` | `Literal["standard", "rotating", "quantized"]` | `"standard"` | KV cache implementation. `"rotating"` requires `max_kv_size` (validated at load, not first generation) |
+| `cache_type` | `Literal["standard", "rotating", "quantized"]`, none | none = auto | KV cache implementation. **None = AUTO (v1.48.0)**: resolved at model load from actual weight bytes vs machine RAM (`cache_defaults.resolve_cache_config`; may also fill `kv_bits`/`kv_group_size`, never overriding pinned knobs). A stored value is an explicit override. `"rotating"` requires `max_kv_size` (validated at config load) |
 | `max_kv_size` | int | none | Rotating-cache size cap. **Never set by smart defaults** -- see "Smart Defaults at Import" below. |
 | `kv_bits` | `Literal[2, 4, 8]` | none | KV quantization bits -- constrained to what MLX's `QuantizedKVCache` actually supports |
 | `kv_group_size` | `Literal[32, 64, 128]` | `64` | KV quantization group size -- constrained to what MLX supports |

@@ -207,8 +207,11 @@ class MLXModelConfig(BaseModel):
     max_tokens: Optional[int] = None
     repetition_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
-    cache_type: Literal["standard", "rotating", "quantized"] = Field(
-        "standard", json_schema_extra={"is_runtime_default": True}
+    # None = AUTO (6a derive-at-load): resolved at model load from actual
+    # weight bytes vs RAM (cache_defaults.resolve_cache_config). A stored
+    # value is an explicit operator override.
+    cache_type: Optional[Literal["standard", "rotating", "quantized"]] = Field(
+        default=None, json_schema_extra={"is_runtime_default": True}
     )
     max_kv_size: Optional[int] = Field(default=None, json_schema_extra={"is_runtime_default": True})
     # MLX QuantizedKVCache supports exactly 2/4/8 bits and group sizes that
