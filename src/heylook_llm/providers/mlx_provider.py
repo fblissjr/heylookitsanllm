@@ -22,7 +22,7 @@ from .abort import AbortEvent
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
-from ..samplers import GLOBAL_SAMPLER_FLOOR
+from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import _reconstruct_thinking
 from .common.model_wrappers import wrap_language_model
@@ -726,6 +726,10 @@ class MLXProvider(BaseProvider):
         # Batch text processor (lazy-initialized)
         self._batch_processor = None
 
+        # Vendor sampling layer (generation_config.json), lazy-read + cached
+        # in _apply_model_defaults. None = not read yet; {} = none found.
+        self._vendor_sampling = None
+
         # Serialize generation FIFO across concurrent requests. Process-global
         # (shared across all providers -- one GPU); queues in arrival order (no
         # preemption); check_capacity() rejects with ModelBusyError (-> 503)
@@ -1006,12 +1010,16 @@ class MLXProvider(BaseProvider):
 
         Each layer overrides the previous for fields it sets; unset fields
         pass through. Request explicit > request sampler > model default_sampler
-        > model sampler fields > thinking-mode flag > global floor.
+        > model sampler fields > thinking overlay > vendor layer > global floor.
 
         Layers:
             1. Global hardcoded floor.
-            2. Thinking-mode defaults (when MODEL config sets
-               ``enable_thinking=true``). Sourced from the 'thinking' sampler.
+            1b. Vendor layer: the model dir's own generation_config.json
+                (temperature/top_p/top_k), read once at first use. Per-model
+                decode tuning without models.toml churn.
+            2. Thinking anti-loop overlay (the slimmed 'thinking' sampler:
+               presence_penalty). Keyed on the EFFECTIVE thinking switch --
+               request field when present, else model config.
             3. Model sampler fields from ``models.toml`` (per-model defaults).
             3b. Model ``default_sampler`` (C4): applied only when the request
                 has NO explicit sampler. Unknown name logs-and-skips -- models
@@ -1026,20 +1034,29 @@ class MLXProvider(BaseProvider):
 
         merged_config = global_defaults.copy()
 
+        # Layer 1b: vendor layer -- the model's own generation_config.json,
+        # read once and cached on the provider.
+        if self._vendor_sampling is None:
+            self._vendor_sampling = load_vendor_sampling(self.config.get('model_path', ''))
+        merged_config.update(self._vendor_sampling)
+
         registry = get_sampler_registry()
 
-        # Layer 2: when model declares itself thinking-capable, apply the
-        # 'thinking' sampler automatically. Registry is canonical source;
-        # hardcoded fallback mirrors thinking.toml so inference keeps working
-        # if the file is removed.
-        if self.config.get('enable_thinking', False):
+        # Layer 2: anti-loop thinking overlay, keyed on the EFFECTIVE thinking
+        # switch: the request field when present, else the model config flag.
+        # (Keying on model config alone made this layer dead code -- nothing
+        # sets it -- so request-toggled thinking ran with zero repetition
+        # control: the 2026-07-28 gemma repetition loop.) Registry is the
+        # canonical source; the hardcoded fallback mirrors thinking.toml so
+        # inference keeps working if the file is removed.
+        request_thinking = getattr(request, 'enable_thinking', None)
+        thinking_active = (request_thinking if request_thinking is not None
+                           else self.config.get('enable_thinking', False))
+        if thinking_active:
             if 'thinking' in registry:
                 registry.apply_sampler(merged_config, 'thinking')
             else:
-                merged_config.update({
-                    'temperature': 0.6, 'top_p': 0.95, 'top_k': 20,
-                    'min_p': 0.0, 'presence_penalty': 1.5,
-                })
+                merged_config.update({'presence_penalty': 1.5, 'enable_thinking': True})
 
         config_keys = ['temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
                        'repetition_penalty', 'repetition_context_size', 'presence_penalty', 'enable_thinking',

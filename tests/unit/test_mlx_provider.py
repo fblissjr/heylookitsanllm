@@ -196,7 +196,13 @@ class TestApplyModelDefaults:
         assert effective["max_tokens"] == 1024
 
     def test_thinking_mode_defaults(self, mock_mlx):  # noqa: ARG001
-        """When enable_thinking is set in config, thinking defaults apply."""
+        """Model-config thinking triggers the anti-loop overlay ONLY.
+
+        Claim: the 'thinking' sampler is slimmed to loop control
+        (presence_penalty); decode tuning (temperature/top_k/top_p) comes
+        from the vendor layer or floor, never a Qwen-tuned hardcode that is
+        wrong for other families (gemma wants 1.0/64, not 0.6/20).
+        """
         from heylook_llm.providers.mlx_provider import MLXProvider
 
         provider = MLXProvider(
@@ -212,9 +218,94 @@ class TestApplyModelDefaults:
             messages=[ChatMessage(role="user", content="think about this")],
         )
         effective = provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.6  # thinking default
-        assert effective["top_p"] == 0.95
         assert effective["presence_penalty"] == 1.5
+        assert effective["enable_thinking"] is True
+        assert effective["temperature"] == 0.7  # floor, NOT Qwen's 0.6
+
+    def test_request_thinking_triggers_overlay(self, mock_mlx):  # noqa: ARG001
+        """Claim: a request flipping thinking ON engages the anti-loop
+        overlay even when the model config never declares enable_thinking.
+        Keying the layer on model config alone made it dead code (nothing
+        sets it) -- the 2026-07-28 gemma thinking repetition loop.
+        """
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        provider = MLXProvider(
+            model_id="think-model",
+            config={"model_path": "/fake", "vision": False},
+            verbose=False,
+        )
+        req = ChatRequest(
+            messages=[ChatMessage(role="user", content="hi")],
+            enable_thinking=True,
+        )
+        effective = provider._apply_model_defaults(req)
+        assert effective["presence_penalty"] == 1.5
+        assert effective["enable_thinking"] is True
+
+    def test_request_thinking_false_suppresses_overlay(self, mock_mlx):  # noqa: ARG001
+        """Claim: request enable_thinking=False beats a thinking-on model
+        config -- no loop penalty rides a non-thinking generation."""
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        provider = MLXProvider(
+            model_id="think-model",
+            config={
+                "model_path": "/fake",
+                "vision": False,
+                "enable_thinking": True,
+            },
+            verbose=False,
+        )
+        req = ChatRequest(
+            messages=[ChatMessage(role="user", content="hi")],
+            enable_thinking=False,
+        )
+        effective = provider._apply_model_defaults(req)
+        assert effective["presence_penalty"] == 0.0
+        assert effective["enable_thinking"] is False
+
+    def test_vendor_generation_config_layer(self, mock_mlx, tmp_path):  # noqa: ARG001
+        """Claim: the model dir's generation_config.json supplies per-model
+        decode tuning above the floor (gemma 1.0/64/0.95 vs floor 0.7/0/1.0);
+        without it every model runs one-size floor sampling."""
+        import json
+
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        (tmp_path / "generation_config.json").write_text(
+            json.dumps({"temperature": 1.0, "top_k": 64, "top_p": 0.95,
+                        "do_sample": True, "eos_token_id": [1, 106]})
+        )
+        provider = MLXProvider(
+            model_id="vendor-model",
+            config={"model_path": str(tmp_path), "vision": False},
+            verbose=False,
+        )
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        effective = provider._apply_model_defaults(req)
+        assert effective["temperature"] == 1.0
+        assert effective["top_k"] == 64
+        assert effective["top_p"] == 0.95
+
+    def test_models_toml_overrides_vendor(self, mock_mlx, tmp_path):  # noqa: ARG001
+        """Claim: operator fields in models.toml stay above the vendor layer."""
+        import json
+
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        (tmp_path / "generation_config.json").write_text(
+            json.dumps({"temperature": 1.0})
+        )
+        provider = MLXProvider(
+            model_id="vendor-model",
+            config={"model_path": str(tmp_path), "vision": False,
+                    "temperature": 0.3},
+            verbose=False,
+        )
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        effective = provider._apply_model_defaults(req)
+        assert effective["temperature"] == 0.3
 
     def test_config_overrides_thinking_defaults(self, mock_mlx):  # noqa: ARG001
         from heylook_llm.providers.mlx_provider import MLXProvider

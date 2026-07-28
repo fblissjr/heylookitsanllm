@@ -1,12 +1,7 @@
 [meta]
 name = "thinking"
-description = "Qwen3-style thinking-mode defaults (temperature 0.6, presence penalty to avoid loop). Pair with a thinking-capable model AND enable_thinking=true."
+description = "Anti-loop overlay for thinking mode: presence penalty only. Per-model decode tuning (temperature/top_p/top_k) comes from the model's own generation_config.json vendor layer, not from this sampler. Auto-applied when a request (or model config) enables thinking."
 
 [defaults]
-temperature = 0.6
-top_p = 0.95
-top_k = 20
-min_p = 0.0
 presence_penalty = 1.5
-max_tokens = 4096
 enable_thinking = true

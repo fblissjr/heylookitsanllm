@@ -45,6 +45,7 @@ verbose / creative / deterministic this turn is" without editing
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import tomllib
@@ -232,3 +233,31 @@ GLOBAL_SAMPLER_FLOOR = {
     'repetition_penalty': 1.0,
     'presence_penalty': 0.0,
 }
+
+# Vendor layer: a model dir's generation_config.json carries the vendor's
+# recommended decode settings (gemma-4: 1.0/64/0.95; Qwen3 thinking models:
+# 0.6/20/0.95). Providers overlay it directly above the floor, so models.toml
+# fields, samplers, and request fields all still override it.
+VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
+
+
+def load_vendor_sampling(model_path: str) -> dict[str, Any]:
+    """Sampling defaults from ``<model_path>/generation_config.json``.
+
+    Best-effort by design: a missing file, malformed JSON, or non-numeric
+    values yield {}/are dropped -- a broken vendor file must never block a
+    model load.
+    """
+    try:
+        with open(Path(model_path) / 'generation_config.json', 'rb') as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in VENDOR_SAMPLING_KEYS:
+        value = raw.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = value
+    return out

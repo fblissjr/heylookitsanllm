@@ -1,6 +1,6 @@
 # Configuration System
 
-Last updated: 2026-07-26
+Last updated: 2026-07-28
 
 This document explains the configuration system, `models.toml` structure, Pydantic schemas, and how to configure models for each provider.
 
@@ -175,14 +175,28 @@ A chat request's actual sampler values are resolved by
 lines 758-836) as a six-layer cascade, each layer overriding only the
 fields it sets:
 
-1. **Global hardcoded floor** -- `GLOBAL_SAMPLER_FLOOR` (mlx_provider.py,
-   lines 495-503): `temperature 0.7`, `top_p 1.0`, `top_k 0`, `min_p 0.0`,
+1. **Global hardcoded floor** -- `GLOBAL_SAMPLER_FLOOR` (samplers.py):
+   `temperature 0.7`, `top_p 1.0`, `top_k 0`, `min_p 0.0`,
    `max_tokens 4096`, `repetition_penalty 1.0`, `presence_penalty 0.0`.
-   This is what a request gets when nothing else in the cascade says
-   anything -- the de-facto behavior for a freshly imported model with no
-   `default_sampler`.
-2. **Thinking-mode defaults**, applied only when the model config sets
-   `enable_thinking = true` (sourced from the `thinking` sampler).
+   This is a true fallback: it only survives for models that ship no
+   `generation_config.json` (next layer).
+   1. **Vendor layer** (v1.45.0) -- `load_vendor_sampling` (samplers.py)
+      reads `temperature`/`top_p`/`top_k` from the model dir's own
+      `generation_config.json` (read once at first request, cached on the
+      provider). Every model gets its vendor's decode tuning without
+      models.toml churn: gemma-4 runs 1.0/64/0.95, Qwen3 thinking models
+      0.6/20/0.95, each from its own file. Best-effort: a missing or
+      malformed file yields nothing and never blocks a load.
+2. **Thinking anti-loop overlay**, keyed on the *effective* thinking
+   switch: the request's `enable_thinking` when present, else the model
+   config's. Sourced from the `thinking` sampler, which is deliberately
+   slimmed (v1.45.0) to loop control (`presence_penalty 1.5` +
+   `enable_thinking`): per-model decode tuning is the vendor layer's job,
+   and the sampler's old Qwen-tuned `temperature 0.6 / top_k 20` was
+   wrong for every other family whenever thinking was on. (Before
+   v1.45.0 this layer was keyed on model config alone, which nothing
+   sets -- request-toggled thinking ran with zero repetition control,
+   the 2026-07-28 gemma thinking repetition loop.)
 3. **Model sampler fields** from `models.toml` (per-model overrides in the
    table above).
    1. **Model `default_sampler`** -- applied only when the request has no
@@ -341,7 +355,8 @@ time**, not baked into `models.toml` at import. They live under
 `src/heylook_llm/data/samplers/` as TOML files, loaded by the
 `SamplerRegistry` (`src/heylook_llm/samplers.py`). Current samplers:
 `balanced` (import default), `deterministic` (repro/eval), `thinking`
-(auto-applied by the cascade for `enable_thinking` models),
+(anti-loop overlay, auto-applied by the cascade whenever thinking is
+effectively on -- request field or model config),
 `vlm-describe` / `vlm-extract` (VLM-safe field subsets -- mlx-vlm's
 `stream_generate` ignores top_k/min_p/repetition_penalty; used by
 batch-labeler's tasks).

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0]
+
+### Added
+
+- **Vendor sampling layer.** The effective-request cascade now reads
+  `temperature`/`top_p`/`top_k` from the model dir's own
+  `generation_config.json` (`load_vendor_sampling`, read once at first
+  request, cached on the provider), directly above the global floor.
+  Every MLX model gets its vendor's decode tuning without models.toml
+  churn: gemma-4 runs 1.0/64/0.95, Qwen3 thinking models 0.6/20/0.95,
+  each from its own file. models.toml fields, samplers, and request
+  fields all still override. Best-effort: a missing or malformed file
+  contributes nothing and never blocks a load.
+
+### Fixed
+
+- **Thinking mode ran with zero repetition control.** The cascade's
+  thinking layer was keyed on the model config's `enable_thinking`, which
+  nothing sets -- dead code. A request toggling thinking on (the v3
+  drawer checkbox) got floor sampling with no presence penalty, which
+  looped a gemma-4 MoE thinking trace over two images within one reply.
+  The layer is now keyed on the effective switch (request field when
+  present, else model config), and the gguf provider gains the same
+  overlay in `_build_payload` (request-keyed only; GGUF config has no
+  `enable_thinking` field).
+
+### Changed
+
+- **`thinking` sampler slimmed to loop control** (`presence_penalty 1.5`
+  + `enable_thinking`). Its old Qwen-tuned `temperature 0.6 / top_k 20 /
+  max_tokens 4096` came from before the vendor layer existed and was
+  wrong for every other family whenever thinking was on; per-model decode
+  tuning now comes from each model's `generation_config.json`. Explicit
+  `sampler: "thinking"` users now get their model's vendor temperature
+  instead of Qwen's.
+
 ## [1.44.7]
 
 ### Fixed

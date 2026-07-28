@@ -245,6 +245,26 @@ class TestPayload:
         payload = p._build_payload(req(max_tokens=64))
         assert payload["max_tokens"] == 64
 
+    def test_request_thinking_engages_antiloop_overlay(self):
+        """Claim: gguf mirrors MLX -- a thinking request gets the slimmed
+        'thinking' sampler's presence_penalty (loop control). Without it a
+        thinking model runs floor sampling with zero repetition control."""
+        p = make_provider()
+        payload = p._build_payload(req(enable_thinking=True))
+        assert payload["presence_penalty"] == 1.5
+        assert payload["chat_template_kwargs"] == {"enable_thinking": True}
+
+    def test_request_thinking_off_no_penalty(self):
+        p = make_provider()
+        payload = p._build_payload(req(enable_thinking=False))
+        assert payload["presence_penalty"] == 0.0  # floor value, no overlay
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+    def test_explicit_presence_penalty_beats_thinking_overlay(self):
+        p = make_provider()
+        payload = p._build_payload(req(enable_thinking=True, presence_penalty=0.3))
+        assert payload["presence_penalty"] == 0.3
+
     def test_default_sampler_overlays_floor(self):
         from heylook_llm.samplers import get_sampler_registry
 

@@ -139,3 +139,42 @@ class TestApplyPreset:
         merged = {"temperature": 0.7}
         registry.apply_sampler(merged, None)
         assert merged == {"temperature": 0.7}
+
+
+class TestVendorSampling:
+    """load_vendor_sampling: source of the per-model vendor cascade layer.
+
+    Claim: a model dir's generation_config.json yields exactly the sampling
+    keys (temperature/top_p/top_k), and a missing or broken file yields {}
+    rather than blocking a load.
+    """
+
+    def test_reads_sampling_keys_only(self, tmp_path):
+        (tmp_path / "generation_config.json").write_text(
+            '{"temperature": 1.0, "top_k": 64, "top_p": 0.95,'
+            ' "do_sample": true, "eos_token_id": [1, 106, 50]}'
+        )
+        from heylook_llm.samplers import load_vendor_sampling
+
+        assert load_vendor_sampling(str(tmp_path)) == {
+            "temperature": 1.0, "top_k": 64, "top_p": 0.95,
+        }
+
+    def test_missing_file_is_empty(self, tmp_path):
+        from heylook_llm.samplers import load_vendor_sampling
+
+        assert load_vendor_sampling(str(tmp_path)) == {}
+
+    def test_malformed_json_is_empty(self, tmp_path):
+        (tmp_path / "generation_config.json").write_text("{nope")
+        from heylook_llm.samplers import load_vendor_sampling
+
+        assert load_vendor_sampling(str(tmp_path)) == {}
+
+    def test_non_numeric_values_dropped(self, tmp_path):
+        (tmp_path / "generation_config.json").write_text(
+            '{"temperature": "high", "top_k": true, "top_p": 0.9}'
+        )
+        from heylook_llm.samplers import load_vendor_sampling
+
+        assert load_vendor_sampling(str(tmp_path)) == {"top_p": 0.9}

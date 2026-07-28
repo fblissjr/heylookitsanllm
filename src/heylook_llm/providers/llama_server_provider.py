@@ -13,8 +13,10 @@
 #   default-on) -> GenerationChunk.thinking; template_info() stays None so
 #   heylook's parser stack is pass-through (never re-parse another engine's
 #   output).
-# - Sampler cascade mirrors MLX: GLOBAL_SAMPLER_FLOOR -> model
-#   default_sampler -> request.sampler -> explicit request fields.
+# - Sampler cascade mirrors MLX: GLOBAL_SAMPLER_FLOOR -> thinking anti-loop
+#   overlay (request.enable_thinking) -> model default_sampler ->
+#   request.sampler -> explicit request fields. (No vendor layer: GGUF dirs
+#   carry no generation_config.json.)
 #   max_tokens is ALWAYS sent (llama-server's default is unlimited).
 # - -np 1 by OUR choice (full context per slot, matches heylook's
 #   serialized semantics) -- not a compat requirement.
@@ -263,9 +265,18 @@ class LlamaServerProvider(BaseProvider):
         # floor pre-seeds max_tokens, so a "not in merged" guard can never
         # fire -- the dead-overlay bug caught in the 2026-07-26 review).
         merged = dict(GLOBAL_SAMPLER_FLOOR)
+        registry = get_sampler_registry()
+        # Anti-loop thinking overlay, mirroring MLX layer 2. GGUF config has
+        # no enable_thinking field (llama-server owns templating), so the
+        # request field is the only switch. Hardcoded fallback mirrors
+        # thinking.toml.
+        if request.enable_thinking:
+            if "thinking" in registry:
+                registry.apply_sampler(merged, "thinking")
+            else:
+                merged["presence_penalty"] = 1.5
         if self.config.get("max_tokens"):
             merged["max_tokens"] = self.config["max_tokens"]
-        registry = get_sampler_registry()
         registry.apply_sampler(merged, self.config.get("default_sampler"))
         registry.apply_sampler(merged, request.sampler)
 
