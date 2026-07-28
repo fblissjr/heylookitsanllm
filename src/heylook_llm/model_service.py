@@ -27,6 +27,7 @@ from typing import Any, Optional
 
 import tomli_w  # type: ignore[import-untyped]
 
+from heylook_llm.cache_defaults import smart_cache_defaults, weights_size_gb
 from heylook_llm.config import AppConfig, ModelConfig
 
 logger = logging.getLogger(__name__)
@@ -121,7 +122,6 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
         # num_draft_tokens is deliberately NOT emitted: it only matters when
         # a draft_model_path is configured (speculative decoding), and import
         # never configures one -- stamping it on every model is dead config.
-        from heylook_llm.cache_defaults import smart_cache_defaults
         defaults.update(smart_cache_defaults(size_gb))
 
     # gguf gets no smart defaults here: llama-server owns its own KV cache
@@ -377,13 +377,12 @@ class ModelService:
         elif "mxfp4" in name_lower:
             quantization = "mxfp4"
 
-        # Estimate size
+        # Estimate size (dir case shares the mtime-cached implementation with
+        # the load-time cache-defaults probe -- one byte-summing rule).
         size_gb = 0.0
         p = Path(model_path)
         if p.is_dir():
-            total = sum(f.stat().st_size for f in p.rglob("*.safetensors"))
-            total += sum(f.stat().st_size for f in p.rglob("*.gguf"))
-            size_gb = total / (1024**3)
+            size_gb = weights_size_gb(model_path)
         elif p.is_file():
             if raw.get("provider") == "gguf":
                 # model_path is the PRIMARY .gguf FILE -- sidecars (mmproj
@@ -441,10 +440,15 @@ class ModelService:
         return configs
 
     def get_config(self, model_id: str) -> ModelConfig | None:
-        """Get a single model's config by ID."""
-        for config in self.list_configs():
-            if config.id == model_id:
-                return config
+        """Get a single model's config by ID (constructs only the one entry --
+        constructing all N triggers each model's derive-at-load detection)."""
+        for model_data in self._read_toml().get("models", []):
+            if model_data.get("id") == model_id:
+                try:
+                    return ModelConfig(**model_data)
+                except Exception as e:
+                    logger.warning(f"Invalid model config '{model_id}': {e}")
+                    return None
         return None
 
     def add_config(self, model_data: dict) -> ModelConfig:
@@ -636,16 +640,6 @@ class ModelService:
                 provider = model_data.get("provider", "mlx")
                 config = model_data.get("config", {})
                 model_path = config.get("model_path", model_data.get("path", ""))
-                vision = config.get("vision", model_data.get("vision", False))
-
-                # Build model info for smart defaults
-                model_info = {
-                    "name": model_id,
-                    "provider": provider,
-                    "is_vision": vision,
-                    "size_gb": model_data.get("size_gb", 0),
-                    "is_quantized": model_data.get("quantization") is not None,
-                }
 
                 if provider == "mlx_embedding":
                     # Embedding models: no vision, no generation params, no sampler presets

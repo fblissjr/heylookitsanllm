@@ -17,7 +17,6 @@ does.
 """
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -49,12 +48,9 @@ def mlx_vlm_supports(model_type: str) -> bool:
 def read_model_type(model_path: str) -> Optional[str]:
     """The ``model_type`` from a model dir's config.json, or None. Defensive --
     a missing/odd config (draft/MTP heads, sparse checkpoints) yields None."""
-    try:
-        with open(Path(model_path) / "config.json") as f:
-            mt = json.load(f).get("model_type")
-        return mt if isinstance(mt, str) else None
-    except Exception:
-        return None
+    from ...modality_detect import read_model_config_json  # shared, mtime-cached
+    mt = (read_model_config_json(Path(model_path)) or {}).get("model_type")
+    return mt if isinstance(mt, str) else None
 
 
 def _modalities_of(config: dict) -> list:

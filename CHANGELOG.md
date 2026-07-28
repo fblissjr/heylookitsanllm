@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.1]
+
+### Changed
+
+- **Post-review cleanup of the derive-at-load arc** (/code-review +
+  /simplify over v1.45.0-v1.48.0):
+  - `modality_detect.read_model_config_json` gained an mtime-keyed parse
+    cache -- the reader runs inside config validation, and AppConfig is
+    rebuilt on every admin write, so one "toggle model" call was
+    re-reading every model's config.json from disk.
+  - `cache_defaults.weights_size_gb` caches per (path, dir-mtime), so
+    idle-unload/LRU reload cycles skip the repeated rglob+stat pass, and
+    it is now the ONE byte-summing implementation: model_service's scan
+    path calls it, and the importer's dead `_get_model_size` copy is
+    deleted (with its orphaned tests; the gguf-bytes claim retargeted).
+  - `loader_routing.read_model_type` delegates to the shared cached
+    reader instead of hand-rolling its own config.json parse.
+  - `ModelService.get_config` constructs only the requested entry
+    instead of materializing all N configs per lookup.
+  - Dead imports/exports cleaned out of model_importer (json, re,
+    get_smart_defaults/available_samplers re-exports) and the leftover
+    admin-import `model_info`/`vision` locals removed.
+  - Skipped by judgment (single copies, documented belts): the thinking
+    fallback dict in the shared cascade, cache_helpers' None->standard
+    belt, a GGUF payload-key partition test, and relocating modality
+    detection out of the Pydantic validator (the read cache removes the
+    cost that motivated it).
+
 ## [1.48.0]
 
 ### Changed

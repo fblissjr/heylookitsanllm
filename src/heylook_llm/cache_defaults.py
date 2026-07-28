@@ -20,6 +20,12 @@ def _system_ram_gb() -> float:
         return 64.0
 
 
+# load_model recurs under idle-unload/LRU cycles; skip the rglob+stat pass
+# when the dir is unchanged. Keyed on (path, dir mtime) -- coarse (a swapped
+# shard set changes the dir listing, hence its mtime) but cheap.
+_SIZE_CACHE: dict[str, tuple[float, float]] = {}
+
+
 def weights_size_gb(model_path: str) -> float:
     """Actual weight bytes under a model dir (safetensors + gguf), in GB.
 
@@ -30,11 +36,17 @@ def weights_size_gb(model_path: str) -> float:
     if not path.is_dir():
         return 0.0
     try:
+        mtime = path.stat().st_mtime
+        cached = _SIZE_CACHE.get(str(path))
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
         total = sum(f.stat().st_size for f in path.rglob("*.safetensors"))
         total += sum(f.stat().st_size for f in path.rglob("*.gguf"))
     except OSError:
         return 0.0
-    return total / (1024 ** 3)
+    size = total / (1024 ** 3)
+    _SIZE_CACHE[str(path)] = (mtime, size)
+    return size
 
 
 def smart_cache_defaults(size_gb: float) -> dict[str, Any]:

@@ -17,7 +17,6 @@ This file focuses on:
 """
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -117,50 +116,6 @@ class TestSmartDefaultsLoadTimeOnly:
     def test_mlx_embedding_returns_max_length_only(self):
         defaults = get_smart_defaults({"provider": "mlx_embedding", "name": "e"})
         assert defaults == {"max_length": 2048}
-
-
-class TestModelSizeRegex:
-    """_get_model_size returns (param-count LABEL from the name, real weight
-    GB from safetensors bytes). The old code returned "7B" name matches as
-    size_gb=7.0 -- billions of params masquerading as gigabytes -- and fed
-    that to get_smart_defaults' RAM-relative threshold (audit 2026-07-06)."""
-
-    def _get_size(self, path_str: str):
-        importer = ModelImporter()
-        return importer._get_model_size(Path(path_str))
-
-    def test_label_parsed_but_gb_none_without_files(self):
-        # Name gives the label; GB must come from real bytes, which a
-        # non-existent path doesn't have.
-        label, gb = self._get_size("/models/Llama-3.1-8B")
-        assert label == "8B"
-        assert gb is None
-
-    def test_decimal_label(self):
-        label, gb = self._get_size("/models/Qwen3-0.6B")
-        assert label == "0.6B"
-        assert gb is None
-
-    def test_million_label(self):
-        label, gb = self._get_size("/models/SmolLM-135M")
-        assert label == "135M"
-        assert gb is None
-
-    def test_no_size_marker(self):
-        label, gb = self._get_size("/models/Phi-3-mini-128k")
-        assert label is None
-        assert gb is None
-
-    def test_gb_comes_from_safetensors_bytes_not_name(self, tmp_path):
-        # A "7B" name over 2 GiB of actual weights: label says 7B,
-        # size_gb says 2.0 -- never 7.0.
-        model_dir = tmp_path / "Fake-7B-instruct"
-        model_dir.mkdir()
-        (model_dir / "model.safetensors").write_bytes(b"\0" * (2 * 1024 ** 2))
-        importer = ModelImporter()
-        label, gb = importer._get_model_size(model_dir)
-        assert label == "7B"
-        assert gb == pytest.approx(2 * 1024 ** 2 / 1024 ** 3)
 
 
 class TestImportWizardChatTemplateDetection:

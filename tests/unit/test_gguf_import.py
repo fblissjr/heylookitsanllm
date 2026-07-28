@@ -241,13 +241,14 @@ class TestMLXDetectionRegression:
 
 @pytest.mark.unit
 class TestGGUFSizeComputation:
-    def test_get_model_size_sums_gguf_bytes(self, importer, tmp_path):
-        # Before this fix, _get_model_size only summed *.safetensors, so a
-        # GGUF dir always reported 0 GB regardless of actual weight size.
+    def test_weights_size_sums_gguf_bytes(self, tmp_path):
+        # The one shared byte-summer (cache_defaults.weights_size_gb; the
+        # importer's private copy died in the /simplify dedup) must count
+        # *.gguf, not just *.safetensors -- a GGUF dir must never report 0 GB.
+        from heylook_llm.cache_defaults import weights_size_gb
+
         d = _make_gguf_dir(tmp_path, mmproj=["mmproj-F16.gguf"])
-        _, size_gb = importer._get_model_size(d)
-        assert size_gb is not None
-        assert size_gb > 0
+        assert weights_size_gb(str(d)) > 0
 
     def test_scanned_model_size_gb_nonzero_for_gguf(self, tmp_path):
         config_path = tmp_path / "models.toml"

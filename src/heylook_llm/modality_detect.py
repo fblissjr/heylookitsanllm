@@ -11,17 +11,31 @@ import json
 from pathlib import Path
 from typing import Optional
 
+# mtime-keyed parse cache. This reader runs inside MLXModelConfig validation,
+# and AppConfig is rebuilt wholesale on every admin write (reload_config), so
+# without a cache one "toggle model" call re-reads every model's config.json.
+# Keyed on (resolved path, mtime) so an in-place dir swap invalidates.
+_CONFIG_CACHE: dict[str, tuple[float, Optional[dict]]] = {}
+
 
 def read_model_config_json(path: Path) -> Optional[dict]:
     """Parse ``<path>/config.json``; None on missing/unreadable/invalid."""
     config_path = Path(path) / "config.json"
-    if not config_path.exists():
+    try:
+        mtime = config_path.stat().st_mtime
+    except OSError:
         return None
+    key = str(config_path)
+    cached = _CONFIG_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
     try:
         with open(config_path) as f:
-            return json.load(f)
+            parsed = json.load(f)
     except Exception:
-        return None
+        parsed = None
+    _CONFIG_CACHE[key] = (mtime, parsed)
+    return parsed
 
 
 def has_vision_weight_files(path: Path) -> bool:

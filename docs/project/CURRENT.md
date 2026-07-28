@@ -13,8 +13,8 @@ UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
   overlay re-keyed on the effective switch and slimmed to loop control
   (presence_penalty). Template/tokenizer drift was RULED OUT against the
   latest upstream gemma-4 reference (byte-identical template).
-  STILL PENDING: live re-verify on the heretic model post-restart; if it
-  still loops, A/B vs the qat-4bit (abliteration-damage suspect).
+  (The live re-verify + A/B this bullet originally left pending was
+  DONE same day -- see the "Heretic gemma live verdict" bullet below.)
 - **One shared cascade (v1.46.0)**: `samplers.resolve_effective_sampling`
   now serves BOTH providers; gguf adopted MLX semantics (request sampler
   suppresses default_sampler; unknown default_sampler log-skips). MLX

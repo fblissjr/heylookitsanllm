@@ -281,10 +281,10 @@ class MLXModelConfig(BaseModel):
         if self.modalities is None:
             detected = None
             try:
-                from pathlib import Path as _Path
+                from pathlib import Path
 
                 from .modality_detect import detect_modalities, read_model_config_json
-                model_dir = _Path(self.model_path)
+                model_dir = Path(self.model_path)
                 cfg_json = read_model_config_json(model_dir)
                 if cfg_json is not None:
                     detected = detect_modalities(model_dir, cfg_json)

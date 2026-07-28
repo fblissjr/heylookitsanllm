@@ -7,32 +7,20 @@ and the import_models CLI handler. Profiles, smart defaults, and HF cache paths
 are defined in model_service.py (single source of truth).
 """
 
-import json
 import logging
 import os
-import re
 import tomli_w
 from pathlib import Path
 from typing import Any, Optional
 
-from heylook_llm.model_service import (
-    available_samplers,
-    get_hf_cache_paths,
-    get_smart_defaults,
-)
+from heylook_llm.model_service import get_hf_cache_paths
 from heylook_llm.modality_detect import (
     detect_modalities,
     has_vision_weight_files,
     read_model_config_json,
 )
 
-__all__ = [
-    "ModelImporter",
-    "available_samplers",
-    "get_hf_cache_paths",
-    "get_smart_defaults",
-    "import_models",
-]
+__all__ = ["ModelImporter", "get_hf_cache_paths", "import_models"]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
 
@@ -373,43 +361,6 @@ class ModelImporter:
     def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
         """Back-compat shim: vision is one modality of :meth:`detect_modalities`."""
         return "vision" in self.detect_modalities(path, config_data)
-
-    def _get_model_size(self, path: Path) -> tuple[Optional[str], Optional[float]]:
-        """Return (param-count label from the name, ACTUAL weight bytes in GB).
-
-        These are different units and must not be conflated: the old code
-        returned "7" from a `-7B` name as size_gb=7.0 (billions of params,
-        not gigabytes) and fed it to get_smart_defaults, whose KV-quant
-        threshold is real GB relative to RAM. size_gb now always comes from
-        the safetensors byte-sum (matching the admin scan path); the name
-        regex only supplies the human-facing label.
-        """
-        # Only the model DIRECTORY name -- matching the full path lets size-
-        # looking fragments in parent dirs (e.g. a tmp dir "…680b…") win.
-        path_str = path.name.lower()
-
-        label = None
-        for pattern, fmt in [
-            (r'(\d+\.\d+)b', lambda x: f"{x}B"),
-            (r'(\d+)b', lambda x: f"{x}B"),
-            (r'(\d+)m', lambda x: f"{int(x)/1000:.1f}B" if int(x) >= 1000 else f"{x}M"),
-        ]:
-            match = re.search(pattern, path_str)
-            if match:
-                label = fmt(match.group(1))
-                break
-
-        size_gb = None
-        if path.is_dir():
-            # GGUF dirs have no *.safetensors -- sum *.gguf too (this also
-            # covers mmproj/mtp sidecars, since rglob("*.gguf") doesn't
-            # match imatrix's ".gguf_file" extension).
-            total_size = sum(f.stat().st_size for f in path.rglob("*.safetensors"))
-            total_size += sum(f.stat().st_size for f in path.rglob("*.gguf"))
-            if total_size > 0:
-                size_gb = total_size / (1024 ** 3)
-
-        return label, size_gb
 
     def _create_mlx_entry(self, path: Path, config_data: Optional[dict] = None) -> Optional[dict]:
         """Create a models.toml entry for an MLX model."""
