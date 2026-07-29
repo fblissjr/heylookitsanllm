@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.1]
+
+### Changed
+
+- **/simplify pass on the port-move + example-file commits:**
+  - `DEFAULT_PORT` constant in config.py -- server.py's two argparse
+    defaults, service_manager's install defaults, and the OpenAPI
+    `servers` entry all pull from it (the renumbering commit was itself
+    the failure mode scattered literals invite). Docs/scripts/tests keep
+    prose literals (a Python constant can't reach markdown).
+  - `models.example.toml` is now test-anchored: a unit test round-trips
+    every entry through the real Pydantic validators, so a schema change
+    breaks CI instead of silently rotting the example.
+  - docs/architecture/config.md examples de-fattened to the thin-entry
+    format (they still showed `vision = true` / `cache_type = "standard"`
+    style entries, contradicting the field table below them and the new
+    example file); `gguf` added to its provider table.
+
 ## [1.49.0]
 
 ### Changed

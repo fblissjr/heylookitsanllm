@@ -17,6 +17,7 @@ from heylook_llm.router import ModelNotFound, ModelRouter
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.config import (
+    DEFAULT_PORT,
     ChatRequest, ChatCompletionResponse, PerformanceMetrics,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse,
@@ -2384,7 +2385,7 @@ no extras required:
     # Add server information
     openapi_schema["servers"] = [
         {
-            "url": "http://localhost:1263",
+            "url": f"http://localhost:{DEFAULT_PORT}",
             "description": "Default server"
         }
     ]

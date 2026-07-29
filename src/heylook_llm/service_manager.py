@@ -17,6 +17,8 @@ import shutil
 import subprocess
 import logging
 from pathlib import Path
+
+from heylook_llm.config import DEFAULT_PORT
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ def detect_venv_path() -> Path:
 
 def install_service_linux(
     host: str = "127.0.0.1",
-    port: int = 1263,
+    port: int = DEFAULT_PORT,
     log_level: str = "INFO",
     log_dir: Optional[str] = None,
     system_wide: bool = False,
@@ -152,7 +154,7 @@ def install_service_linux(
 
 def install_service_macos(
     host: str = "127.0.0.1",
-    port: int = 1263,
+    port: int = DEFAULT_PORT,
     log_level: str = "INFO",
     log_dir: Optional[str] = None,
 ) -> bool:

@@ -388,3 +388,26 @@ class TestModalitiesDeriveAtLoad:
         # Fake paths (tests, HF repo ids) keep the pre-6a derivation.
         cfg = MLXModelConfig(model_path="/fake/model", vision=True)
         assert cfg.modalities == ["text", "vision"]
+
+
+@pytest.mark.unit
+class TestModelsExampleToml:
+    """models.example.toml is the tracked format reference (README points at
+    it). Claim: every entry in it must round-trip the REAL Pydantic
+    validators -- without this anchor, a field rename in config.py rots the
+    example silently and only a future user's copy-paste fails.
+    """
+
+    def test_example_file_validates(self):
+        import tomllib
+        from pathlib import Path
+
+        from heylook_llm.config import AppConfig
+
+        example = Path(__file__).parents[2] / "models.example.toml"
+        with open(example, "rb") as f:
+            data = tomllib.load(f)
+        cfg = AppConfig(**data)
+        assert len(cfg.models) >= 3  # minimal MLX, override MLX, gguf, embedding
+        providers = {m.provider for m in cfg.models}
+        assert {"mlx", "gguf", "mlx_embedding"} <= providers

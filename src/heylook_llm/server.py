@@ -10,6 +10,7 @@ import sys
 
 import uvicorn
 
+from heylook_llm.config import DEFAULT_PORT
 from heylook_llm.router import ModelRouter
 
 # Try to use uvloop for better async performance
@@ -152,8 +153,8 @@ def main():
     service_parser.add_argument(
         "--port",
         type=int,
-        default=1263,
-        help="Port to run the server on (default: 1263 -- deliberately NOT 8080, which is llama-server's default; llama.cpp-ecosystem clients probe localhost:8080)",
+        default=DEFAULT_PORT,
+        help=f"Port to run the server on (default: {DEFAULT_PORT} -- deliberately NOT 8080, which is llama-server's default; llama.cpp-ecosystem clients probe localhost:8080)",
     )
     service_parser.add_argument(
         "--log-level",
@@ -176,7 +177,7 @@ def main():
     # Add server arguments to main parser for backwards compatibility
     parser.add_argument("--host", default="127.0.0.1", help="Host to run the server on")
     parser.add_argument(
-        "--port", type=int, default=1263, help="Port to run the server on"
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port to run the server on (default: {DEFAULT_PORT})"
     )
     parser.add_argument(
         "--log-level",

@@ -1,5 +1,12 @@
 # src/heylook_llm/config.py
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Default API port. Deliberately NOT 8080: that is llama-server's default,
+# and llama.cpp-ecosystem clients (including its web UI) probe
+# localhost:8080 with GET /props -- moving off it avoids the collision
+# class entirely (v1.49.0). One source of truth for server.py argparse,
+# service_manager install defaults, and the OpenAPI servers entry.
+DEFAULT_PORT = 1263
 from typing import List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):

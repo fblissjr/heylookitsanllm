@@ -45,15 +45,18 @@ default_model = "model-id"    # ROUTING fallback for requests naming no model.
                               # via `--model-id` only.
 max_loaded_models = 2
 
+# THIN by design (derive-at-load, v1.47+): id + provider + model_path is a
+# complete entry. Anything else you write is an explicit override. Live
+# reference: models.example.toml at the repo root (validated against the
+# real schema by tests/unit/test_config.py::TestModelsExampleToml).
 [[models]]
 id = "model-identifier"       # Unique ID for API requests
-provider = "mlx"              # Provider: mlx, mlx_embedding
+provider = "mlx"              # mlx | mlx_embedding | gguf
 enabled = true                # Include in /v1/models?
-capabilities = ["chat"]       # Feature flags for clients
 
   [models.config]
   model_path = "path/to/model"
-  # ... provider-specific options
+  # optional operator overrides only -- see the field table below
 ```
 
 ### Top-Level Fields
@@ -62,12 +65,13 @@ capabilities = ["chat"]       # Feature flags for clients
 Unique identifier used in API requests. Must be unique, no spaces, case-sensitive.
 
 #### `provider` (required)
-Valid values: `"mlx"`, `"mlx_embedding"`
+Valid values: `"mlx"`, `"mlx_embedding"`, `"gguf"`
 
 | Provider | Text | Vision | Embeddings | Platforms |
 |---|---|---|---|---|
 | `mlx` | Yes | Yes | No | macOS (Apple Silicon) |
 | `mlx_embedding` | No | No | Yes | macOS (Apple Silicon) |
+| `gguf` | Yes | Yes (mmproj) | No | anywhere a llama-server binary runs |
 
 #### `enabled` (optional, default `true`)
 Whether the model appears in `/v1/models`. Set to `false` to hide experimental models.
@@ -82,35 +86,39 @@ Provider-specific configuration (see sections below).
 
 ## MLX Provider Configuration (`provider = "mlx"`)
 
-### Text Models
+### Examples
+
+The minimal entry IS the normal entry (derive-at-load: modalities, chat
+template, sampling and cache defaults all come from the model's own files;
+text vs vision needs no declaration for a local dir with a config.json):
 
 ```toml
 [[models]]
-id = "qwen-2.5-3b"
+id = "my-model-4bit"
 provider = "mlx"
 enabled = true
 
   [models.config]
-  model_path = "mlx-community/Qwen2.5-3B-Instruct-4bit"
-  vision = false
-  max_tokens = 2048
-  temperature = 0.7
-  cache_type = "standard"
+  model_path = "modelzoo/my-model-4bit"
 ```
 
-### Vision Models
+Fields you write are explicit overrides (each a deliberate choice):
 
 ```toml
 [[models]]
-id = "qwen-vl-7b"
+id = "my-tuned-model"
 provider = "mlx"
 enabled = true
 
   [models.config]
-  model_path = "mlx-community/Qwen2-VL-7B-Instruct-4bit"
-  vision = true
-  max_tokens = 1024
+  model_path = "modelzoo/my-tuned-model"
+  temperature = 0.6         # beats the model's generation_config.json
+  max_tokens = 8192
+  cache_type = "quantized"  # beats the RAM-relative auto default
+  kv_bits = 8
 ```
+
+More shapes (GGUF sidecars, embedding): `models.example.toml`.
 
 ### MLX Config Fields
 
