@@ -280,8 +280,17 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     registry = get_sampler_registry()
 
     request_thinking = getattr(request, 'enable_thinking', None)
-    thinking_active = (request_thinking if request_thinking is not None
-                       else model_config.get('enable_thinking', False))
+    thinking_active = bool(request_thinking if request_thinking is not None
+                           else model_config.get('enable_thinking', False))
+    # Materialize the effective switch ALWAYS, not only when the overlay
+    # below fires. Downstream, an absent key is not "no opinion": gguf's
+    # payload builder only sends chat_template_kwargs for a non-None value,
+    # so an omitted key handed llama-server's --jinja run to the GGUF's own
+    # template default -- thinking ON for gemma-4/Qwen3.6/DeepSeek-V4 --
+    # while MLX resolved the very same unset request to False. One v3
+    # checkbox, opposite meanings per engine, and no way to turn thinking
+    # off on a gguf model at all. Unset means OFF; both engines now say so.
+    merged['enable_thinking'] = thinking_active
     if thinking_active:
         if 'thinking' in registry:
             registry.apply_sampler(merged, 'thinking')

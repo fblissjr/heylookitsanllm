@@ -168,17 +168,37 @@ MODEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$")
 
 @dataclass
 class ScannedModel:
-    """A model discovered during filesystem scan."""
+    """A model discovered during filesystem scan.
+
+    Everything past ``vision`` is REPORTING, not configuration: the importer
+    already derives these facts (projector flags, the GGUF's own embedded
+    chat template, the drafter's name prefix) and used to keep them to
+    itself or to the server log. They ride along so the one surface where
+    someone decides whether to import a model can show what it actually is.
+    """
 
     id: str
     path: str
-    provider: str  # "mlx", "mlx_embedding"
+    provider: str  # "mlx", "mlx_embedding", "gguf"
     size_gb: float
     vision: bool
     quantization: Optional[str] = None
     already_configured: bool = False
     tags: list[str] = field(default_factory=list)
     description: str = ""
+    # The author-declared modality set (["text", "vision", "audio", ...]).
+    # ``vision`` above is its boolean shadow, kept for existing readers.
+    modalities: list[str] = field(default_factory=list)
+    # Thinking support read from the model's own chat template. None = there
+    # was no template to judge (an MTP/drafter head legitimately has none) --
+    # deliberately distinct from a known-false.
+    supports_thinking: Optional[bool] = None
+    # A paired speculative drafter and the ``--spec-type`` it REQUIRES.
+    # Import never turns spec decode on for you (that is a per-model
+    # measurement), but which type this drafter needs is a fact about the
+    # file, and guessing it wrong is a load failure.
+    draft_model_path: Optional[str] = None
+    draft_spec_type: Optional[str] = None
 
 
 @dataclass
@@ -400,16 +420,49 @@ class ModelService:
         if not already and configured_paths and model_path:
             already = str(Path(model_path).expanduser().resolve()) in configured_paths
 
+        # Modalities, and `vision` as their boolean shadow. Neither is read
+        # from a config key any more, because after derive-at-load (6a) no
+        # entry reliably has one: MLX entries are THIN (modalities resolve at
+        # model load) and the gguf builder never wrote `vision` at all -- so
+        # `config["vision"]` reported false for every scanned model of either
+        # provider. gguf states its modalities in the entry (read from the
+        # projector's own header); for everything else this derives them from
+        # the model dir through the same shared detector the config validator
+        # uses. Deriving is right HERE specifically because a scan result is
+        # reporting, not stored config.
+        modalities = list(config.get("modalities") or [])
+        if not modalities and p.is_dir():
+            from heylook_llm.modality_detect import detect_modalities
+
+            modalities = detect_modalities(p)
+        vision = "vision" in modalities
+
+        # Which --spec-type a paired drafter needs: a fact about the file
+        # (llama.cpp resolves siblings by these prefixes), recomputed here
+        # rather than smuggled through the entry dict -- the entry is what
+        # gets written to models.toml, and spec_type stays deliberately
+        # unset there.
+        draft_path = config.get("draft_model_path")
+        draft_spec_type = None
+        if draft_path:
+            from heylook_llm import gguf_metadata
+
+            draft_spec_type = gguf_metadata.infer_spec_type(Path(draft_path))
+
         return ScannedModel(
             id=raw.get("id", ""),
             path=model_path,
             provider=raw.get("provider", "mlx"),
             size_gb=round(size_gb, 2),
-            vision=config.get("vision", False),
+            vision=vision,
             quantization=quantization,
             already_configured=already,
             tags=raw.get("tags", []),
             description=raw.get("description", ""),
+            modalities=modalities,
+            supports_thinking=config.get("supports_thinking"),
+            draft_model_path=draft_path,
+            draft_spec_type=draft_spec_type,
         )
 
     # --- Smart Defaults ---

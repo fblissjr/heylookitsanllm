@@ -461,9 +461,26 @@ derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
   (P3, cleanup): `vision` is kept as a validator-maintained mirror of
   `"vision" in modalities` for back-compat. Migrate readers to `modalities`
   (grep `config.vision` / `.get("vision")` / `config["vision"]` -- known:
-  `api.py::_infer_model_capabilities`, `model_importer` entry-build,
+  `capabilities.py::infer_model_capabilities`, `model_importer` entry-build,
   `loader_routing._modalities_of` raw-dict fallback), then drop the mirror + the
   bool. Do NOT do piecemeal -- it's a coordinated removal.
+  (`model_service._raw_to_scanned` was migrated 2026-08-07 -- it read
+  `config["vision"]`, which no entry builder writes any more, and so reported
+  `vision:false` for every scanned model of both providers.)
+- [ ] **Derive gguf `modalities`/`supports_thinking` at LOAD, like MLX**
+  (P2, found 2026-08-07, Wave-1 derive-at-load coupled): the gguf importer
+  STORES both in the entry, so an entry written before v1.49.4/.6 under-reports
+  forever. Measured on the local fleet: every gemma-4 GGUF's entry says
+  `["chat","vision"]` while a fresh scan of the same files derives
+  `["text","vision","audio"]` + `supports_thinking: true`. Since v3 gates all
+  modality UI on capabilities, those models show no thinking toggle and no audio
+  attach even though the server serves both. `gguf_metadata` already reads
+  headers cheaply (stops at the last requested key) and `modality_detect` has the
+  mtime-cache precedent, so a `GGUFModelConfig` validator mirroring
+  `MLXModelConfig._resolve_modalities` is the shape. NOTE this does not fix
+  EXISTING entries: a stored value is indistinguishable from a deliberate
+  override, so those need a re-import (or the two keys deleted) either way --
+  deriving is what stops it recurring.
 
 See also the Phase 6 "per-model SIDECAR ARTIFACTS" note (draft model / j-space
 lens / future LoRA managed as a group on the admin CRUD surface).
@@ -563,7 +580,9 @@ None currently.
 - [x] Wire up ConfigEditor in import workflow (DONE v1.18.1)
 - [x] Move profiles to TOML files, rename profiles, dynamic discovery (DONE v1.19.0)
 - [x] Fix `ModelProfile.apply()` precedence bug (DONE v1.19.0)
-- [ ] Test with: `heylookllm import --folder ~/test --interactive` (manual)
+- [x] ~~Manual test of `import --folder ... --interactive`~~ MOOT: `--interactive`
+  and the config TUI were retired in v1.47.0 (derive-at-load); import is
+  non-interactive now.
 
 ### Dependency Cleanup
 - [x] Remove `mlx` optional extra (duplicated core deps) (DONE v1.19.0)

@@ -62,21 +62,21 @@ class TestGGUFConfig:
             GGUFModelConfig.model_validate({"model_path": "/x.gguf", "surprise": True})
 
     def test_capability_inference(self):
-        from heylook_llm.api import _infer_model_capabilities
+        from heylook_llm.capabilities import infer_model_capabilities
 
         plain = ModelConfig.model_validate(
             {"id": "m", "provider": "gguf", "config": {"model_path": "/x.gguf"}})
-        assert _infer_model_capabilities(plain) == ["chat"]
+        assert infer_model_capabilities(plain) == ["chat"]
 
         vision = ModelConfig.model_validate(
             {"id": "m", "provider": "gguf",
              "config": {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf"}})
-        assert "vision" in _infer_model_capabilities(vision)
+        assert "vision" in infer_model_capabilities(vision)
 
         thinking = ModelConfig.model_validate(
             {"id": "m", "provider": "gguf",
              "config": {"model_path": "/x.gguf", "supports_thinking": True}})
-        caps = _infer_model_capabilities(thinking)
+        caps = infer_model_capabilities(thinking)
         assert "thinking" in caps
         assert "hidden_states" not in caps  # MLX-only feature stays MLX-only
 
@@ -382,10 +382,26 @@ class TestPayload:
         p = make_provider()
         on = p._build_payload(req(enable_thinking=True))
         off = p._build_payload(req(enable_thinking=False))
-        unset = p._build_payload(req())
         assert on["chat_template_kwargs"] == {"enable_thinking": True}
         assert off["chat_template_kwargs"] == {"enable_thinking": False}
-        assert "chat_template_kwargs" not in unset
+
+    def test_unset_thinking_is_sent_as_an_explicit_off(self):
+        """Claim: an omitted enable_thinking means OFF on gguf, exactly as it
+        already does on MLX -- and it must travel as an explicit `false`.
+
+        Omitting the key is not "no opinion" here. llama-server runs --jinja,
+        so with no chat_template_kwargs it applies the GGUF's own template
+        default, which is thinking-ON for gemma-4 / Qwen3.6 / DeepSeek-V4.
+        MLX resolves the same unset request to False. That made one v3
+        checkbox mean opposite things per engine, and left no way at all to
+        turn thinking off on a gguf model (the control only ever sends
+        true/null). Asserting the sent VALUE, not just the key's presence,
+        is the point: a bare `"chat_template_kwargs" in payload` check would
+        pass on a payload that says true.
+        """
+        payload = make_provider()._build_payload(req())
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+        assert payload["presence_penalty"] == 0.0  # off => no anti-loop overlay
 
     def test_multimodal_content_parts_pass_through(self):
         p = make_provider()

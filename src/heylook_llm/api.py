@@ -4,8 +4,6 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from functools import lru_cache
-from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Body, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +33,7 @@ from heylook_llm.utils import log_request_start, log_request_stage, log_request_
 from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
 from heylook_llm.samplers import SamplerNotFound
+from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     effective_thinking_flag,
@@ -344,87 +343,15 @@ async def list_models(request: Request):
             if modalities:
                 model_entry["modalities"] = modalities
 
-            # Use explicit capabilities if set, otherwise auto-detect
-            if model_config.capabilities:
-                model_entry["capabilities"] = model_config.capabilities
-            else:
-                # Auto-detect capabilities from model config
-                capabilities = _infer_model_capabilities(model_config)
-                if capabilities:
-                    model_entry["capabilities"] = capabilities
+            # Explicit capabilities override, else derive -- one
+            # implementation, shared with /v1/admin/models (capabilities.py).
+            capabilities = effective_capabilities(model_config)
+            if capabilities:
+                model_entry["capabilities"] = capabilities
 
         models_data.append(model_entry)
 
     return {"object": "list", "data": models_data}
-
-
-@lru_cache(maxsize=64)
-def _template_supports_thinking(model_path: str) -> bool:
-    """Whether the model's own chat template references ``enable_thinking``.
-
-    The template kwarg is the cross-model thinking mechanism (Qwen3 renders
-    <think> blocks, gemma-4 renders thought channels; transformers forwards
-    extra apply_chat_template kwargs as template variables), so the template
-    referencing the variable IS the capability signal -- no manual
-    models.toml flag needed. Cached per path: file reads on every
-    /v1/models call would add up, and templates only change with a restart
-    in practice.
-    """
-    try:
-        from heylook_llm.providers.common.template_info import read_template_info
-        return read_template_info(Path(model_path), None).supports_enable_thinking
-    except Exception:
-        return False
-
-
-def _infer_model_capabilities(model_config) -> list[str]:
-    """Infer model capabilities from config when not explicitly set."""
-    capabilities = []
-    provider = model_config.provider
-    config = model_config.config
-
-    # Chat models (MLX)
-    if provider == "mlx":
-        capabilities.append("chat")
-
-        # Check for vision capability
-        if hasattr(config, "vision") and config.vision:
-            capabilities.append("vision")
-
-        # Thinking capability is DERIVED: the enable_thinking default-on
-        # flag, else the model's own chat template (enable_thinking
-        # reference). No manual MLX flag -- supports_thinking is GGUF-only
-        # (nothing cheap to probe inside GGUF metadata).
-        if hasattr(config, "enable_thinking") and config.enable_thinking:
-            capabilities.append("thinking")
-        elif getattr(config, "model_path", None) and _template_supports_thinking(
-            str(config.model_path)
-        ):
-            capabilities.append("thinking")
-
-        # MLX models support hidden states extraction
-        if provider == "mlx":
-            capabilities.append("hidden_states")
-
-    # GGUF via llama-server subprocess. Capabilities come from the entry's
-    # own description (mmproj sidecar / modalities / explicit thinking flag)
-    # -- no template probing (the template lives inside GGUF metadata), and
-    # NEVER hidden_states/logprobs (MLX-only surfaces). The explicit
-    # ModelConfig.capabilities override short-circuits this entirely.
-    elif provider == "gguf":
-        capabilities.append("chat")
-        modalities = getattr(config, "modalities", None) or []
-        if getattr(config, "mmproj_path", None) or "vision" in modalities:
-            capabilities.append("vision")
-        if "audio" in modalities:
-            # gguf only: MLX strips audio towers at load, so the mlx branch
-            # above must never emit this cap even when the model declares
-            # the modality.
-            capabilities.append("audio")
-        if getattr(config, "supports_thinking", None):
-            capabilities.append("thinking")
-
-    return capabilities
 
 
 # Initialize metrics collector as None - will be created on first request

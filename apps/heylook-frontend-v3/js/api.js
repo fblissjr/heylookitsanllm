@@ -75,7 +75,10 @@ const ROUTES = {
 
   // admin models
   adminListModels:   ['GET', () => '/v1/admin/models'],
-  adminLoadModel:    ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/load`],
+  // warm=true additionally runs a 1-token generation through the real
+  // generation path -- the server-owned readiness call (v1.38.0), so the
+  // first real message doesn't pay the Metal kernel JIT.
+  adminLoadModel:    ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/load${warm ? '?warm=true' : ''}`],
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
   adminScan:         ['POST', () => '/v1/admin/models/scan', true],
   adminImport:       ['POST', () => '/v1/admin/models/import', true],

@@ -12,6 +12,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from heylook_llm.auth import require_admin_token
+from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.config import (
     AdminModelListResponse,
     AdminModelResponse,
@@ -24,6 +25,7 @@ from heylook_llm.config import (
     ModelValidateRequest,
     SamplerInfo,
     SamplerListResponse,
+    ScannedModelListResponse,
 )
 from heylook_llm.model_service import ModelService
 
@@ -61,14 +63,21 @@ def _safe_reload_config(request: Request) -> str | None:
 
 
 def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
-    """Convert a ModelConfig to an AdminModelResponse."""
+    """Convert a ModelConfig to an AdminModelResponse.
+
+    ``capabilities`` is DERIVED through the same shared helper /v1/models
+    uses. Reading ``mc.capabilities`` directly meant reporting the stored
+    override, which is empty on every entry that never hand-wrote one -- so
+    the Models page listed no capabilities at all while the chat page, one
+    endpoint over, gated its whole UI on them.
+    """
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
         description=mc.description,
         tags=mc.tags,
         enabled=mc.enabled,
-        capabilities=mc.capabilities,
+        capabilities=effective_capabilities(mc),
         config=mc.config.model_dump() if hasattr(mc.config, 'model_dump') else dict(mc.config),
         loaded=mc.id in loaded_ids,
     )
@@ -409,7 +418,13 @@ scan_import_router.add_api_route(
     _scan_for_models,
     methods=["POST"],
     summary="Scan for Models",
-    description="Scan filesystem paths and HF cache for importable models.",
+    description=(
+        "Scan filesystem paths and HF cache for importable models. Body: "
+        "{paths?: [], scan_hf_cache: bool} -- `paths` is how local model "
+        "folders (a modelzoo of GGUFs, say) are found; the HF cache is a "
+        "separate, additive source, not the only one."
+    ),
+    response_model=ScannedModelListResponse,
 )
 
 scan_import_router.add_api_route(

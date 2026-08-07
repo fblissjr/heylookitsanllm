@@ -668,16 +668,46 @@ class StreamChunk(BaseModel):
 # =============================================================================
 
 class ScannedModelResponse(BaseModel):
-    """A model discovered during filesystem scan."""
+    """A model discovered during filesystem scan.
+
+    Mirrors ``model_service.ScannedModel``. Wired as the /scan route's
+    ``response_model`` on purpose: this model sat unreferenced for months
+    while the dataclass grew, so the declared contract and what the route
+    actually returned had no way to disagree loudly.
+    """
     id: str = Field(..., description="Auto-generated model identifier")
     path: str = Field(..., description="Filesystem path to model")
     provider: Literal["mlx", "mlx_embedding", "gguf"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
-    vision: bool = Field(default=False, description="Whether model supports vision")
+    vision: bool = Field(default=False, description="Whether model supports vision (shadow of `modalities`)")
     quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")
     already_configured: bool = Field(default=False, description="True if ID already exists in models.toml")
     tags: List[str] = Field(default_factory=list)
     description: str = ""
+    modalities: List[str] = Field(
+        default_factory=list,
+        description="Author-declared modality set (text/vision/audio/video)",
+    )
+    supports_thinking: Optional[bool] = Field(
+        default=None,
+        description="Thinking support read from the model's own chat template; "
+                    "null = no template to judge (e.g. a drafter head)",
+    )
+    draft_model_path: Optional[str] = Field(
+        default=None, description="Paired speculative drafter sidecar, if any"
+    )
+    draft_spec_type: Optional[str] = Field(
+        default=None,
+        description="The --spec-type that drafter REQUIRES. Reported, never applied: "
+                    "import leaves spec_type unset because whether speculative "
+                    "decoding pays off is a per-model measurement.",
+    )
+
+
+class ScannedModelListResponse(BaseModel):
+    """Response for a model scan."""
+    models: List[ScannedModelResponse] = Field(default_factory=list)
+    total: int = 0
 
 
 class ModelScanRequest(BaseModel):

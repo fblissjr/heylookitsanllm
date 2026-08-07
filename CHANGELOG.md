@@ -5,6 +5,92 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0]
+
+Frontend v3 catch-up against the backend changes since 2026-07-26
+(v1.45.0-1.49.9). Everything here is live-verified against a real server;
+backend suite 1310 green, E2E chat 40/40 + pages 39/39.
+
+### Fixed
+
+- **Thinking could not be turned off on a gguf model.** v3's toggle is binary --
+  it sends `enable_thinking: true` or omits the key, never `false` -- so what an
+  omitted key resolves to IS the off state. MLX resolved it to an explicit
+  `False`; the gguf provider only sends `chat_template_kwargs` for a non-None
+  value, so an omitted key handed llama-server's `--jinja` run to the GGUF's own
+  template default, which is thinking-ON for gemma-4 / Qwen3.6 / DeepSeek-V4.
+  One checkbox, opposite meanings per engine. v1.49.6 made this reachable by
+  teaching import to detect the thinking capability, so the control started
+  appearing for gguf models -- and lying.
+
+  Fixed in the shared cascade rather than per-provider:
+  `samplers.resolve_effective_sampling` now materializes the effective switch
+  unconditionally instead of only when the thinking overlay fires, so both
+  engines send an explicit bool. The MLX effective request is byte-identical
+  before and after (its config always carried the key). Live-verified on
+  `google_gemma-4-E4B-it-qat-q4_0-gguf`: omitted and `false` both produce no
+  thinking, `true` still does.
+
+  A tri-state (auto/on/off) making the template default reachable again stays
+  the deferred Phase-3b design item.
+- **The Models page could not see any locally downloaded model.** It posted
+  `{scan_hf_cache: true}` with no `paths`, so the entire GGUF import arc
+  (v1.44.0 detection through v1.49.6 -- shard pinning, four-family drafter
+  pairing, header reads, per-quant variant dirs) targeted folders the UI had no
+  way to name. The scan section now takes a folder list (comma/newline
+  separated, persisted locally) plus an HF-cache toggle, and refuses a scan with
+  both sources off rather than round-tripping a request that can only return
+  nothing.
+- **Scan results claimed `vision: false` for every model, of both providers.**
+  `_raw_to_scanned` read `config["vision"]`, a key only the MLX entry builder
+  ever wrote -- and derive-at-load (v1.47.0) stopped writing it there too.
+  Modalities are now derived: gguf states them in its entry (read from the
+  projector's own header), everything else goes through the same shared detector
+  the config validator uses. Deriving is right here specifically because a scan
+  result is reporting, not stored config.
+- **`GET /v1/admin/models` reported capabilities that were always empty.** It
+  read the stored `ModelConfig.capabilities` OVERRIDE rather than deriving, so
+  the Models page listed no capabilities for anything while the chat page, one
+  endpoint over, gated its whole UI on them. Inference moved to a new
+  `capabilities.py` shared by both surfaces, with the explicit-override
+  short-circuit stated once.
+- **E2E: the thinking check failed on legal model output.** It waited for a
+  persisted assistant row, but with thinking on at temperature 1.0 this model
+  sometimes spends the whole token budget inside the thinking block and emits no
+  content (measured: 1 run in 6, `finish_reason=length`, 1513 chars of thinking
+  and 0 of content). `finishStream` deliberately drops an empty completion, so
+  nothing persists and the wait timed out -- a red bar for exactly the outcome
+  the suite's README says never to flake on.
+
+### Added
+
+- **Scan results report what the importer actually found**: `modalities`,
+  `supports_thinking`, a paired `draft_model_path` and the `draft_spec_type` it
+  REQUIRES. That last one was written only to the server log, so the one surface
+  where someone decides whether to import a model could not see it. It stays
+  reported and never applied -- import pairs a drafter's path but leaves
+  `spec_type` unset, because whether speculative decoding pays off is a
+  per-model measurement.
+- **`ScannedModelListResponse` is now the /scan route's `response_model`.** The
+  response model sat unreferenced for months while the dataclass grew, which is
+  how the declared contract and the shipped payload drifted apart silently.
+- **The Models page Load button sends `?warm=true`** -- the server-owned
+  readiness call (v1.38.0) that `dev_server.sh` and the E2E harness already use
+  -- and reports the warm timing. "Loaded" now means ready, not merely resident.
+  A warm failure reports as a note, not an error: the model is loaded either way.
+
+### Known gap (owner action, not code)
+
+- `modalities`/`supports_thinking` are STORED on a gguf entry at import, so
+  entries written before v1.49.4/.6 under-report: every local gemma-4 GGUF
+  reports `["chat","vision"]` from its entry while a fresh scan of the same files
+  derives `["text","vision","audio"]` + thinking. v3 gates modality UI on
+  capabilities, so those models show no thinking toggle and no audio attach. A
+  stored value is indistinguishable from a deliberate override, so nothing
+  rewrites it for you -- re-import the affected entries, or drop those two keys.
+  Deriving them at load (as the MLX path does) is the durable fix and belongs
+  with the Wave 1 derive-at-load arc.
+
 ## [1.49.9]
 
 ### Added

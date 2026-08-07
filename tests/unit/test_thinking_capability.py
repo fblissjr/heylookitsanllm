@@ -31,19 +31,19 @@ class TestThinkingCapabilityFromTemplate:
         )
 
     def test_template_toggle_reports_thinking(self, tmp_path):
-        from heylook_llm.api import _infer_model_capabilities
+        from heylook_llm.capabilities import infer_model_capabilities
 
         (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
-        caps = _infer_model_capabilities(self._model_config(tmp_path))
+        caps = infer_model_capabilities(self._model_config(tmp_path))
         assert "thinking" in caps
 
     def test_no_toggle_no_thinking(self, tmp_path):
-        from heylook_llm.api import _infer_model_capabilities
+        from heylook_llm.capabilities import infer_model_capabilities
 
         (tmp_path / "chat_template.jinja").write_text(
             "{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}"
         )
-        caps = _infer_model_capabilities(self._model_config(tmp_path))
+        caps = infer_model_capabilities(self._model_config(tmp_path))
         assert "thinking" not in caps
 
     def test_mlx_config_rejects_supports_thinking(self):
@@ -61,6 +61,40 @@ class TestThinkingCapabilityFromTemplate:
             MLXModelConfig.model_validate(
                 {"model_path": "/x", "supports_thinking": True}
             )
+
+
+@pytest.mark.unit
+class TestCapabilitiesReachBothSurfaces:
+    """Derived capabilities have TWO readers -- /v1/models (what chat gates
+    its UI on) and /v1/admin/models (what the Models page lists). Only the
+    first ever ran the inference, so the admin list reported the stored
+    ``capabilities`` override, which is empty on every entry that never set
+    one -- i.e. all of them, and even more so after thin entries landed. The
+    Models page therefore showed no capabilities at all.
+    """
+
+    def test_admin_response_reports_derived_capabilities(self, tmp_path):
+        from heylook_llm.admin_api import _model_config_to_response
+        from heylook_llm.config import ModelConfig
+
+        (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
+        (tmp_path / "config.json").write_text('{"model_type": "gemma", "vision_config": {}}')
+        mc = ModelConfig(id="m", provider="mlx", config={"model_path": str(tmp_path)})
+        assert mc.capabilities == [], "fixture must not pre-set an override"
+
+        caps = _model_config_to_response(mc, set()).capabilities
+        assert "chat" in caps and "vision" in caps and "thinking" in caps, caps
+
+    def test_explicit_override_still_wins(self, tmp_path):
+        # Same short-circuit /v1/models honors: a hand-written capabilities
+        # list is an override, not a hint.
+        from heylook_llm.admin_api import _model_config_to_response
+        from heylook_llm.config import ModelConfig
+
+        (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
+        mc = ModelConfig(id="m", provider="mlx", config={"model_path": str(tmp_path)},
+                         capabilities=["chat"])
+        assert _model_config_to_response(mc, set()).capabilities == ["chat"]
 
 
 @pytest.mark.unit

@@ -329,6 +329,92 @@ class TestCreateGGUFEntry:
 
 
 # ---------------------------------------------------------------------------
+# What a SCAN RESULT reports -- the importer's findings have to survive the
+# trip through ModelService into the admin API, or the Models page can only
+# ever show what an MLX safetensors dir happens to expose.
+# ---------------------------------------------------------------------------
+
+
+def _scan_one(tmp_path, scan_root):
+    """Scan `scan_root` through a real ModelService; return the one result."""
+    config_path = tmp_path / "models.toml"
+    config_path.write_text('default_model = "none"\nmax_loaded_models = 1\n')
+    results = ModelService(str(config_path)).scan_directory(str(scan_root))
+    assert len(results) == 1
+    return results[0]
+
+
+@pytest.mark.unit
+class TestGGUFScanResultReporting:
+    def test_gguf_with_a_projector_reports_vision(self, tmp_path):
+        """Claim: a scanned GGUF's `vision` reflects its modalities.
+
+        It used to read `config["vision"]`, a key only the MLX entry builder
+        writes -- so EVERY gguf result reported vision=false no matter what
+        projector sat beside it, and the Models page said "no vision" for a
+        model that serves images.
+        """
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        _make_gguf_dir(root, mmproj=["mmproj-F16.gguf"])
+        result = _scan_one(tmp_path, root)
+        assert result.provider == "gguf"
+        assert "vision" in result.modalities
+        assert result.vision is True
+
+    def test_text_only_gguf_reports_no_vision(self, tmp_path):
+        # The other half of the claim above: modality reporting must still be
+        # able to say NO, or "vision" becomes a constant.
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        _make_gguf_dir(root)
+        result = _scan_one(tmp_path, root)
+        assert result.modalities == ["text"]
+        assert result.vision is False
+
+    def test_paired_drafter_reports_the_spec_type_it_needs(self, tmp_path):
+        """Claim: a paired drafter and the `--spec-type` it REQUIRES both
+        reach the client.
+
+        Import deliberately never sets `spec_type` (whether spec decode pays
+        off is a per-model measurement), but WHICH type a given drafter needs
+        is a fact about the file and getting it wrong is a load failure. That
+        fact was only ever written to the server log, so the one surface where
+        someone decides "do I want this on" could not see it.
+        """
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        d = _make_gguf_dir(root, mtp="dspark-my-gguf-model.gguf")
+        result = _scan_one(tmp_path, root)
+        assert result.draft_model_path == str(d / "dspark-my-gguf-model.gguf")
+        assert result.draft_spec_type == "draft-dspark"
+
+    def test_no_drafter_leaves_both_draft_fields_unset(self, tmp_path):
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        _make_gguf_dir(root)
+        result = _scan_one(tmp_path, root)
+        assert result.draft_model_path is None
+        assert result.draft_spec_type is None
+
+    def test_mlx_scan_result_still_reports_its_modalities(self, tmp_path):
+        # The field is shared, not gguf-only: an MLX dir's derived modalities
+        # must ride along too, so the two providers render the same way.
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        d = root / "plain-mlx-vlm"
+        d.mkdir()
+        (d / "config.json").write_text(
+            json.dumps({"model_type": "llama", "vision_config": {}})
+        )
+        _write_bytes(d / "model.safetensors", 5_000)
+        result = _scan_one(tmp_path, root)
+        assert result.provider == "mlx"
+        assert result.modalities == ["text", "vision"]
+        assert result.vision is True
+
+
+# ---------------------------------------------------------------------------
 # Regression: plain MLX dirs must still be detected as mlx (not swallowed by
 # the new gguf/assistant-checkpoint branches)
 # ---------------------------------------------------------------------------

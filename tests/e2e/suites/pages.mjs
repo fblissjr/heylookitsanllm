@@ -1,8 +1,8 @@
 // Pages suite: notebook (autosave + generate-at-cursor tail preservation),
 // explore (logprob chips + keyboard nav), perf (no-polling proof + ranges),
-// jspace (Jacobian-lens workspace strip, lens-gated), models (list/load/unload
-// + HF scan + danger-zone clear). Data is cleared by the orchestrator before
-// this runs; the danger-zone clear check runs LAST.
+// jspace (Jacobian-lens workspace strip, lens-gated), models (list/load+warm/
+// unload + folder & HF scan + danger-zone clear). Data is cleared by the
+// orchestrator before this runs; the danger-zone clear check runs LAST.
 
 import { assert, waitFor, sleep, proveQuiet } from '../lib/harness.mjs';
 import { serverGet } from '../lib/server-state.mjs';
@@ -385,19 +385,93 @@ export async function runPagesSuite({ suite, ctx, config }) {
     btn = await rowActionBtn();
     await btn.click();
     await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
-      { timeout: 90000, message: 'model never reloaded' });
+      { timeout: 120000, message: 'model never reloaded' });
   });
 
-  await suite.check('HF cache scan renders results panel', async () => {
-    await clickByText(page, '.models__section-head button', 'Scan HF cache');
-    await waitFor(async () => {
-      const hasRows = (await count(page, '.scan-panel .scan-row')) > 0;
-      const hasEmpty = (await count(page, '.scan-panel .empty-state')) > 0;
-      const hasNote = (await count(page, '.scan-panel .muted')) > 0;
-      return hasRows || hasEmpty || hasNote;
-    }, { timeout: 30000, message: 'scan panel never populated' });
+  await suite.check('Load warms the model, not just resides it', async () => {
+    // The Load button sends ?warm=true, so "Loaded" means the Metal kernels
+    // are JIT'd too and the first real message doesn't pay for it. The warm
+    // TIMING note is the only observable difference between a warm load and
+    // a bare one -- without asserting it, a silently-dropped `warm` param
+    // would leave every other check on this page passing.
+    const note = await textOf(page, '.models__list-note');
+    assert(/loaded and warmed in [\d.]+s/.test(note || ''),
+      `expected a warm-timing note after the reload above, got ${JSON.stringify(note)}`);
+  });
+
+  // Drive one scan and wait for THAT scan to finish. Waiting on "the panel
+  // has rows" instead is a trap: the previous scan's rows are still there, so
+  // the wait returns instantly and the assertions read pre-click state.
+  // Returns the request body the page actually sent, or null if it refused to
+  // send one.
+  async function runScan({ paths, hf }) {
+    await page.$eval('#scan-paths', (el) => { el.value = ''; });
+    if (paths) await page.type('#scan-paths', paths);
+    await page.$eval('#scan-hf', (el, want) => { if (el.checked !== want) el.click(); }, hf);
+
+    let sentBody = null;
+    let responded = false;
+    const onRequest = (req) => {
+      if (req.url().endsWith('/v1/admin/models/scan')) sentBody = JSON.parse(req.postData() || '{}');
+    };
+    const onResponse = (res) => {
+      if (res.url().endsWith('/v1/admin/models/scan')) responded = true;
+    };
+    page.on('request', onRequest);
+    page.on('response', onResponse);
+    try {
+      await clickByText(page, '.models__section-head button', 'Scan');
+      if (paths || hf) {
+        await waitFor(async () => responded, { timeout: 60000, message: 'scan never responded' });
+        // the click handler renders after the await; give it the same tick
+        await waitFor(async () => (await textOf(page, '.models__section-head button')) === 'Scan',
+          { timeout: 10000, message: 'scan button never returned to idle' });
+      }
+    } finally {
+      page.off('request', onRequest);
+      page.off('response', onResponse);
+    }
+    return sentBody;
+  }
+
+  await suite.check('scan reaches local folders, not just the HF cache', async () => {
+    // The whole GGUF import path targets local model folders. The page used
+    // to hardcode {scan_hf_cache: true} with no paths, so nothing on disk
+    // outside the HF cache was reachable from the UI at all.
+    const body = await runScan({ paths: 'modelzoo', hf: false });
+    assert(body?.paths?.includes('modelzoo'),
+      `scan body carried no local path: ${JSON.stringify(body)}`);
+    assert(body.scan_hf_cache === false, 'unchecking the HF cache did not reach the request');
     const err = await textOf(page, '.models__status .error-note');
     assert(!err, `scan raised an error: ${err}`);
+  });
+
+  await suite.check('scanning nothing at all is refused, not sent', async () => {
+    // Both sources off can only return nothing; the page has to say so rather
+    // than round-trip an empty scan and render "No new models found", which
+    // reads as "your folder is empty".
+    const body = await runScan({ paths: '', hf: false });
+    assert(body === null, `empty scan was still sent: ${JSON.stringify(body)}`);
+    await waitFor(async () => !!(await textOf(page, '.models__status .error-note')),
+      { timeout: 5000, message: 'empty scan raised no error note' });
+  });
+
+  await suite.check('HF cache scan still works and rows report what was found', async () => {
+    const body = await runScan({ paths: '', hf: true });
+    assert(body?.scan_hf_cache === true, `HF scan not requested: ${JSON.stringify(body)}`);
+    const err = await textOf(page, '.models__status .error-note');
+    assert(!err, `scan raised an error: ${err}`);
+
+    // Every rendered row must carry a meta line whose first field is a size
+    // and a provider. The importer's findings (modalities, thinking, a paired
+    // drafter) are appended to that same line, so a bare meta means the row
+    // regressed to id-only.
+    const metas = await page.$$eval('.scan-row .scan-row__meta',
+      (els) => els.map((e) => e.textContent.trim()));
+    for (const meta of metas) {
+      assert(/^\d+\.\d+ GB · (mlx|mlx_embedding|gguf)/.test(meta),
+        `scan row meta is not size + provider: ${JSON.stringify(meta)}`);
+    }
   });
 
   await suite.check('models page has no horizontal overflow at 390px', async () => {

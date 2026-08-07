@@ -1,6 +1,17 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-07-26 (attach button now capability-gated like the
+Last updated: 2026-08-07 (catch-up pass against the backend changes since
+2026-07-26 -- v1.45.0-1.49.9. Four fixes, all live-verified: omitting
+`enable_thinking` now means OFF on gguf too (it meant ON, so the toggle
+lied and thinking could not be turned off at all); the Models page can
+scan LOCAL folders, which is the only way to reach the entire GGUF import
+arc; scan rows report what the importer actually found (modalities incl.
+audio, thinking, a paired drafter and the `--spec-type` it needs) and stop
+claiming `vision:false` for everything; Load sends `?warm=true`. Plus:
+`/v1/admin/models` now DERIVES capabilities through the shared
+`capabilities.py` instead of the always-empty stored override, so the
+Models page shows them at all. Previously 2026-07-26: attach button
+capability-gated like the
 thinking toggle -- vision and/or audio caps drive visibility AND the
 picker's accept list; audio attach/render shipped for `audio`-capable
 models (gguf); perf trends grew a draft-acceptance column. DECIDED:
@@ -118,7 +129,7 @@ auto-appear from template detection, no `models.toml` flag needed).
 |------|-----------|
 | chat | `/v1/conversations` CRUD, `/v1/chat/completions` (SSE), `/v1/presets` CRUD |
 | notebook | `/v1/notebooks` CRUD, `/v1/chat/completions` |
-| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan`, load/unload) |
+| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
 | explore | `/v1/chat/completions` **with logprobs** |
 | jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
@@ -140,6 +151,23 @@ it yet (the reference in `chat.js:799` is a migration marker).
 4. **Server-side persistence** is a product pillar (what makes iPhone+desktop
    co-primary work; position-based truncation builds on it). The DuckDB store is
    that pillar.
+
+### Known gap: gguf entries imported before 2026-08-07 under-report (owner action)
+
+`modalities` and `supports_thinking` are STORED on a gguf entry at import time
+(unlike MLX, which derives them at load), so an entry written before v1.49.4/.6
+carries neither the audio modality nor the thinking flag. `/v1/models` reports
+capabilities from those stored values, and v3 gates all modality UI on
+capabilities — so those models show no thinking toggle and no audio attach even
+though the server serves both. Verified 2026-08-07 on the local fleet: every
+gemma-4 GGUF reports `["chat","vision"]` from its entry while a fresh scan of the
+same files derives `["text","vision","audio"]` + `supports_thinking: true`.
+
+A stored value is indistinguishable from a deliberate override, so nothing should
+silently rewrite it: the remedy is to re-import (or delete those two keys from) the
+affected `models.toml` entries. The durable fix is to derive them at load like the
+MLX path does, which belongs with the Wave 1 derive-at-load arc rather than bolted
+on here.
 
 ### Backend work v3 still needs (sourced from the plan)
 

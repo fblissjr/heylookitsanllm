@@ -792,7 +792,33 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .model-badge--loaded { background: var(--brand-tint); color: var(--ink); }
 
+/* Warm-load timing. Reserves its line so the list doesn't jump when a load
+   finishes; the shared status area above stays reserved for errors. */
+.models__list-note { margin-top: 0.6rem; min-height: 1.2rem; }
+
 /* ---- scan panel ---- */
+
+/* Scan sources: a folder list + the HF cache toggle. Label above the field
+   (not beside it) so a long path gets the full width on a phone. */
+.scan-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.scan-controls__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.scan-controls__row label { color: var(--ink-muted); font-size: var(--text-sm); }
+.scan-controls .input { width: 100%; text-align: left; }
+.scan-controls__row--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+.scan-controls__row--check label { font-size: var(--text-ui); }
 
 .scan-panel { display: flex; flex-direction: column; }
 
@@ -816,6 +842,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .scan-row__main strong { overflow-wrap: break-word; }
 .scan-row__meta { overflow-wrap: break-word; }
+/* Its own line inside the baseline-aligned flex row: the drafter note is a
+   sentence, not another chip, and wrapping it beside the meta reads as noise. */
+.scan-row__note { flex-basis: 100%; overflow-wrap: break-word; }
 .scan-row__actions { flex-shrink: 0; }
 
 /* ---- danger zone ---- */
@@ -838,10 +867,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .model-row, .scan-row { padding: 0.85rem 0; }
   .model-row__actions .btn,
   .scan-row__actions .btn,
+  .models__section-head .btn,
   .models__danger .btn {
     min-height: 44px;
     padding: 0.55rem 0.9rem;
   }
+  /* Comfortable hit target for the one checkbox on this page (§7). */
+  .scan-controls__row--check input[type="checkbox"] { width: 20px; height: 20px; }
+  .scan-controls .input { min-height: 44px; }
 }
 
 

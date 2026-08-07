@@ -97,14 +97,14 @@ class TestMLXGuard:
 
 class TestCapability:
     def test_gguf_audio_modality_yields_audio_cap(self):
-        from heylook_llm.api import _infer_model_capabilities
+        from heylook_llm.capabilities import infer_model_capabilities
 
         mc = ModelConfig.model_validate({
             "id": "m", "provider": "gguf",
             "config": {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf",
                        "modalities": ["text", "vision", "audio"]},
         })
-        caps = _infer_model_capabilities(mc)
+        caps = infer_model_capabilities(mc)
         assert "audio" in caps
         assert "vision" in caps
 
@@ -119,5 +119,5 @@ class TestCapability:
 
 
 def _infer(mc):
-    from heylook_llm.api import _infer_model_capabilities
-    return _infer_model_capabilities(mc)
+    from heylook_llm.capabilities import infer_model_capabilities
+    return infer_model_capabilities(mc)

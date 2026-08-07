@@ -209,6 +209,17 @@ are unauthenticated.
 - **Server-side defaults (v1.32.0)**: when the request, its preset, and the model config are all silent,
   the effective sampler floor is `temperature 0.7, max_tokens 4096` (was 0.1/512), and imported models
   carry `default_sampler = "balanced"`. The UI's null-means-cascade settings contract is unchanged.
+- **Omitting `enable_thinking` means OFF, on every engine (2026-08-07)**. v3's toggle is
+  binary — it sends `true` or omits the key, never `false` — so what "omitted" resolves to
+  IS the off state. MLX always resolved it to an explicit `False`; gguf only sent
+  `chat_template_kwargs` for a non-None value, so an omitted key handed llama-server's
+  `--jinja` run to the GGUF's own template default — thinking ON for gemma-4 / Qwen3.6 /
+  DeepSeek-V4. One checkbox, opposite meanings per engine, and no way at all to turn
+  thinking off on a gguf model. The shared cascade
+  (`samplers.resolve_effective_sampling`) now materializes the effective switch
+  unconditionally instead of only when the thinking overlay fires, so both providers
+  send an explicit bool. A tri-state (auto/on/off) that makes the template default
+  reachable again is still the deferred Phase-3b design item.
 - **Trap**: setting `processing_mode` (≠ "conversation") switches the response to a *different* schema
   (`chat.completion.batch`). v3 chat should NOT send `processing_mode` — ignore this path.
 
@@ -280,9 +291,39 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`;
 `POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20); `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
-`{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description}], total}`;
+`{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,
+modalities,supports_thinking?,draft_model_path?,draft_spec_type?}], total}`
+(`ScannedModelListResponse`, wired as the route's `response_model` 2026-08-07 — it sat
+unreferenced for months while the dataclass grew, so the declared contract had no way to
+disagree loudly with what shipped);
 `POST /import` `{models:[{id,path,provider}], default_sampler?}` → `{imported:[...], total, warning?}`
 (field renamed from `profile` 2026-07-20; unknown body keys 422 via extra="forbid").
+
+Three things about `/scan` that bit (all fixed 2026-08-07):
+- **`paths` is not optional in practice.** The HF cache is ONE source; every locally
+  downloaded model — the whole GGUF fleet — is reachable only through `paths`, and v3
+  hardcoded `{scan_hf_cache: true}` with no paths, so none of it could be found from the
+  UI. Paths resolve on the SERVER (a relative one against its working directory); a
+  missing path is a no-op, not an error.
+- **`modalities`/`vision` are DERIVED, not read from a config key.** Only the MLX entry
+  builder ever wrote `config["vision"]`, and thin entries stopped writing it — so scans
+  reported `vision:false` for every model of both providers. gguf states its modalities in
+  the entry (read from the projector's own header, which declares vision and audio
+  separately); everything else derives them from the model dir through the shared detector.
+- **`draft_spec_type` is reported, never applied.** Import pairs a drafter's PATH but
+  leaves `spec_type` unset, because whether speculative decoding pays off is a per-model
+  measurement. Which `--spec-type` the drafter requires is a fact about the file, and it
+  only ever reached the server log.
+
+`GET /v1/admin/models`'s `capabilities` is DERIVED through the same helper `/v1/models`
+uses (`capabilities.py`, extracted 2026-08-07). It previously reported the stored
+`ModelConfig.capabilities` OVERRIDE, which is empty on every entry that never hand-wrote
+one — so the Models page listed no capabilities at all while chat, one endpoint over,
+gated its entire UI on them.
+
+`POST /{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
+rather than merely resident; the page renders `warm_ms` as a note and surfaces
+`warm_error` without calling the load a failure (the model is loaded either way).
 (Backend also exposes toggle/status/validate/samplers/bulk-default-sampler/discovered — the
 sampler routes were renamed from profiles/bulk-profile 2026-07-20; out of scope unless a
 trimmed feature needs them.)

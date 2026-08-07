@@ -838,11 +838,28 @@ export async function runChatSuite({ suite, ctx, config }) {
       { message: 'thinking toggle did not turn on' });
 
     await sendText(page, 'What is 17 times 24? Reason through the multiplication step by step, then give the final number.');
-    await waitFor(async () => (await conversationStateById(page, convId)).lastAssistant !== null,
-      { timeout: 30000, message: 'assistant reply never persisted' });
-
-    const state = await conversationStateById(page, convId);
-    if (!state.lastAssistant.thinking) {
+    // Wait on the STREAM finishing, not on a persisted row. With thinking on
+    // at temperature 1.0 this model sometimes spends the entire token budget
+    // inside the thinking block and emits no content at all (measured
+    // 2026-08-07: 1 run in 6, finish_reason=length, 1513 chars of thinking and
+    // 0 of content). finishStream deliberately drops an empty completion, so
+    // nothing ever persists and waiting on lastAssistant times out -- a red
+    // bar for legal model output, which is exactly what the README says this
+    // suite must not do.
+    await waitIdle(page);
+    // finishStream releases the Send button BEFORE it awaits the save, so a
+    // bounded poll separates "not saved yet" from "never saved".
+    let state = await conversationStateById(page, convId);
+    if (!state.lastAssistant) {
+      try {
+        await waitFor(async () => (await conversationStateById(page, convId)).lastAssistant !== null,
+          { timeout: 5000 });
+        state = await conversationStateById(page, convId);
+      } catch { /* nothing arrived: the empty-completion case below */ }
+    }
+    if (!state.lastAssistant) {
+      console.log('      model produced thinking but no content (legal, ~1 run in 6) -- nothing to persist, UI half skipped');
+    } else if (!state.lastAssistant.thinking) {
       // Empty/absent thinking is legal model output (README: never flake on
       // it) -- the request/persistence pipeline is what this half proves.
       console.log('      model produced no thinking content for this prompt (legal) -- pipeline half verified, UI half skipped');
