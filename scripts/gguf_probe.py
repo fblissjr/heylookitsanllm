@@ -8,8 +8,17 @@
 #
 # Usage:
 #   uv run python scripts/gguf_probe.py <model-dir-or-gguf-file>
-#       [--spec-type draft-mtp] [--spec-draft-n-max N] [--ctx N]
-#       [--prompt TEXT] [--max-tokens N] [--no-gen]
+#       [--spec-type draft-mtp] [--spec-draft-n-max N] [--draft PATH]
+#       [--ctx N] [--prompt TEXT] [--max-tokens N] [--no-gen]
+#       [--seed N] [--temp F]
+#
+# Comparing runs (what this script is mostly for): --seed is PINNED by
+# default (1234) and --draft overrides sidecar pairing, so two builds of one
+# drafter can be A/B'd. Seeding is necessary but NOT sufficient for identical
+# output: speculative decoding changes the verify batch composition per eval,
+# which perturbs floating-point reductions and can still diverge the text.
+# For a tight drafter A/B add `--temp 0`; otherwise treat single runs as
+# samples and repeat across seeds (`--seed -1` = random, for variance checks).
 #
 # Given a DIRECTORY, sidecar pairing (mmproj / mtp- drafter) reuses the
 # importer's own pickers -- the single source of pairing truth. Drift note:
@@ -93,6 +102,14 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=1234,
                     help="sampling seed; pinned by default so runs are comparable "
                          "(-1 = random, for variance checks)")
+    # Seeding alone does NOT make two configs produce identical text: spec
+    # decode changes the verify batch composition per eval, FP reductions
+    # shift, and the streams diverge. `--temp 0` removes sampling as a
+    # variable entirely, which is the right control when the thing being
+    # compared is a drafter rather than the model's prose.
+    ap.add_argument("--temp", type=float, default=None,
+                    help="sampling temperature; 0 for a deterministic A/B "
+                         "(default: leave to the sampler cascade)")
     args = ap.parse_args()
 
     cfg = build_config(args.target, args)
@@ -122,7 +139,9 @@ def main() -> None:
                 t = time.time()
                 chunks = list(p.create_chat_completion(ChatRequest.model_validate({
                     "messages": [{"role": "user", "content": args.prompt}],
-                    "max_tokens": args.max_tokens, "seed": args.seed, **extra})))
+                    "max_tokens": args.max_tokens, "seed": args.seed,
+                    **({} if args.temp is None else {"temperature": args.temp}),
+                    **extra})))
                 final = chunks[-1]
                 thinking = sum(len(c.thinking or "") for c in chunks)
                 print(f"[probe] {label}: {time.time()-t:.1f}s | gen={final.generation_tokens} tok "

@@ -5,16 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.9]
+
+### Added
+
+- **`gguf_probe --temp`**, and an honest statement of what `--seed` buys.
+  v1.49.8 implied a pinned seed made runs comparable. It narrows the gap; it
+  does not close it. Speculative decoding changes the verify batch
+  composition per eval, which perturbs floating-point reductions, so two
+  drafter configurations can diverge in generated text even at a fixed seed
+  -- and acceptance rate tracks text. `--temp 0` removes sampling as a
+  variable entirely and is the right control for a drafter A/B; without it,
+  single runs are samples and conclusions need repeating across seeds (which
+  is why the DSpark n-max result was reported as sign-only, over 3 seeds).
+
+  The script's own usage block had also gone stale -- neither `--draft`
+  (v1.49.8) nor `--seed` appeared in it, and the `gguf-probe` skill points
+  readers at that header.
+
 ## [1.49.8]
 
 ### Added
 
 - **`gguf_probe --seed`, pinned by default (1234).** The script exists to
-  compare runs, and unseeded it could not: each run generates different text
-  and draft acceptance tracks content. Two nominally-identical DSpark runs
-  came out 11.7 acceptance points apart -- wider than the Q8_0-vs-BF16 effect
-  being measured, which is noise large enough to turn a null result into an
-  apparent one. `--seed -1` restores random sampling for variance checks.
+  compare runs, and unseeded the noise swamped the signal: each run generates
+  different text and draft acceptance tracks content, so two
+  nominally-identical DSpark runs came out 11.7 acceptance points apart --
+  wider than the Q8_0-vs-BF16 effect being measured. `--seed -1` restores
+  random sampling (llama-server's own documented value for it) for variance
+  checks. See v1.49.9 for what seeding does NOT fix.
 - **`gguf_probe --draft`** to override the paired drafter, for A/B-ing two
   builds of the same speculative module (DeepSeek-V4 ships its dspark module
   as both Q8_0 and BF16, with the BF16 in a `dspark/` subdir that root-level
