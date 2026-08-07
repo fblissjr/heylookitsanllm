@@ -379,8 +379,11 @@ class GGUFModelConfig(BaseModel):
     extra_args: List[str] = Field(default_factory=list)  # raw passthrough flags
     default_sampler: Optional[str] = None  # named sampler (SamplerRegistry)
     max_tokens: Optional[int] = Field(default=None, gt=0)  # model-level default cap
-    # Capability DESCRIPTION (no cheap GGUF-metadata probe yet; the explicit
-    # ModelConfig.capabilities override also short-circuits inference):
+    # Capability DESCRIPTION. Import fills this from the GGUF's own embedded
+    # chat template (gguf_metadata.supports_thinking, same enable_thinking
+    # rule the MLX path uses); it stays overridable by hand, and the explicit
+    # ModelConfig.capabilities override short-circuits inference entirely.
+    # None = no template to judge, e.g. an MTP/drafter head.
     supports_thinking: Optional[bool] = None
     modalities: Optional[List[str]] = None
 

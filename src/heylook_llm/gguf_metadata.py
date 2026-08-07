@@ -205,6 +205,32 @@ _SPEC_TYPE_BY_PREFIX = (
 )
 
 
+_CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
+
+
+def supports_thinking(primary: Path) -> Optional[bool]:
+    """Whether the GGUF's embedded chat template references ``enable_thinking``.
+
+    Same signal the MLX path uses (`template_info._ENABLE_THINKING_PATTERN`),
+    applied to the template GGUF carries in its own metadata rather than to a
+    `chat_template.jinja` on disk. The kwarg is the cross-model thinking
+    mechanism -- transformers forwards extra apply_chat_template kwargs as
+    template variables, so a template that mentions the variable is a template
+    that can switch thinking -- which makes "mentions it" the capability
+    signal on both engines.
+
+    Returns None when there is no template to judge (an MTP/drafter head
+    legitimately has none), so callers can leave `supports_thinking` unset
+    rather than assert a false.
+    """
+    from .providers.common.template_info import _ENABLE_THINKING_PATTERN
+
+    template = safe_read_metadata(primary, {_CHAT_TEMPLATE_KEY}).get(_CHAT_TEMPLATE_KEY)
+    if not template:
+        return None
+    return bool(_ENABLE_THINKING_PATTERN.search(template))
+
+
 def infer_spec_type(drafter: Path) -> Optional[str]:
     """The ``--spec-type`` this drafter REQUIRES, or None if unrecognised.
 

@@ -440,6 +440,15 @@ class ModelImporter:
             "model_path": str(primary),
             "modalities": modalities,
         }
+        # Thinking capability from the GGUF's OWN embedded chat template, by
+        # the same enable_thinking rule the MLX path uses. This was a manual
+        # flag on the grounds that GGUF metadata had nothing cheap to probe;
+        # reading the header directly is that cheap probe. Left unset when
+        # there is no template (an MTP head legitimately has none) rather
+        # than asserting a false.
+        thinking = gguf_metadata.supports_thinking(primary)
+        if thinking is not None:
+            config["supports_thinking"] = thinking
         if mmproj is not None:
             config["mmproj_path"] = str(mmproj)
         if draft is not None:

@@ -28,6 +28,7 @@ from heylook_llm.gguf_metadata import (
     infer_spec_type,
     read_metadata,
     safe_read_metadata,
+    supports_thinking,
 )
 
 # GGUFValueType codes (gguf.constants)
@@ -208,6 +209,50 @@ class TestDetectModalities:
         primary = write_gguf(tmp_path / "m.gguf", [("general.architecture", STR, "gemma4")])
         mm = write_gguf(tmp_path / "mmproj.gguf", [("clip.has_audio_encoder", BOOL, True)])
         assert detect_modalities(primary, mm)[0] == "text"
+
+
+@pytest.mark.unit
+class TestSupportsThinking:
+    """Same signal the MLX path uses, read from GGUF's embedded template.
+    `supports_thinking` was a hand-set flag because GGUF metadata had
+    'nothing cheap to probe'; the header read is that probe."""
+
+    def test_template_mentioning_enable_thinking(self, tmp_path):
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "deepseek4"),
+            ("tokenizer.chat_template", STR,
+             "{% if enable_thinking %}<think>{% endif %}"),
+        ])
+        assert supports_thinking(f) is True
+
+    def test_template_without_it(self, tmp_path):
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("tokenizer.chat_template", STR, "{{ messages[0].content }}"),
+        ])
+        assert supports_thinking(f) is False
+
+    def test_no_template_is_none_not_false(self, tmp_path):
+        # An MTP/drafter head legitimately carries no chat template. None lets
+        # the importer leave the field unset; False would assert a capability
+        # judgement it has no basis for.
+        f = write_gguf(tmp_path / "mtp.gguf", [("general.architecture", STR, "dflash")])
+        assert supports_thinking(f) is None
+
+    def test_word_boundary_not_substring(self, tmp_path):
+        # Shares template_info's \benable_thinking\b rule; a template merely
+        # containing the letters must not count.
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("tokenizer.chat_template", STR, "{{ disable_thinkingness }}"),
+        ])
+        assert supports_thinking(f) is False
+
+    def test_matches_the_mlx_rule_exactly(self, tmp_path):
+        # One rule, two engines: if template_info's pattern changes, this
+        # fails rather than letting the two paths drift apart.
+        from heylook_llm.providers.common.template_info import _ENABLE_THINKING_PATTERN
+        template = "{%- if enable_thinking is defined %}x{%- endif %}"
+        f = write_gguf(tmp_path / "m.gguf", [("tokenizer.chat_template", STR, template)])
+        assert supports_thinking(f) is bool(_ENABLE_THINKING_PATTERN.search(template))
 
 
 @pytest.mark.unit

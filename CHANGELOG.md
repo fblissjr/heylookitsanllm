@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.6]
+
+### Added
+
+- **GGUF thinking capability is now detected, not hand-set.** `supports_thinking`
+  carried the note "no cheap GGUF-metadata probe yet" -- reading the header is
+  that probe. Import checks the GGUF's OWN embedded `tokenizer.chat_template`
+  for `enable_thinking`, reusing `template_info._ENABLE_THINKING_PATTERN` so
+  the two engines share one rule rather than drifting apart. Left unset when
+  there is no template to judge (an MTP/drafter head has none) rather than
+  asserting a false. The flag stays overridable by hand.
+
+  Effect on real entries: gemma-4 GGUFs now infer
+  `["chat", "vision", "audio", "thinking"]` where they previously inferred
+  `["chat", "vision"]` -- audio from the projector flags (v1.49.4), thinking
+  from the template.
+
 ## [1.49.5]
 
 ### Fixed
