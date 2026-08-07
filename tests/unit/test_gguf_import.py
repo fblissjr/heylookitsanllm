@@ -204,6 +204,67 @@ class TestCreateGGUFEntry:
         entry = importer._create_gguf_entry(d)
         assert entry["config"]["model_path"] == str(d / "sharded-00001-of-00003.gguf")
 
+    def test_quant_variant_dir_is_named_by_its_weights_not_the_folder(self, importer, tmp_path):
+        # HF repos with many quants of one big model ship each in its own
+        # subdir, so a structure-preserving download nests the weights. Naming
+        # the entry after the folder gives every such model the id "UD-IQ4_XS".
+        repo = tmp_path / "unsloth_Some-Model-GGUF"
+        variant = repo / "UD-IQ4_XS"
+        variant.mkdir(parents=True)
+        _write_bytes(variant / "Some-Model-UD-IQ4_XS-00001-of-00002.gguf", 100)
+        _write_bytes(variant / "Some-Model-UD-IQ4_XS-00002-of-00002.gguf", 90_000)
+        entry = importer._create_gguf_entry(variant)
+        assert entry["id"] == "Some-Model-UD-IQ4_XS"
+
+    def test_directory_named_repo_keeps_its_folder_id(self, importer, tmp_path):
+        # The complement, and the reason the rule is safe to add: ids already
+        # written into a models.toml must not move.
+        d = _make_gguf_dir(tmp_path, name="unsloth_gemma-4-12B-it-qat-GGUF")
+        assert importer._create_gguf_entry(d)["id"] == "unsloth_gemma-4-12B-it-qat-GGUF"
+
+    def test_drafter_beside_the_variant_dir_is_still_paired(self, importer, tmp_path):
+        # HF puts the drafter at the REPO root, next to the quant folders
+        # rather than inside them -- DeepSeek-V4-Flash's dspark-*.gguf sits
+        # beside UD-IQ4_XS/. Searching only the model's own directory drops it,
+        # and a missing drafter is silent: you just never get spec decode.
+        repo = tmp_path / "unsloth_Some-Model-GGUF"
+        variant = repo / "UD-IQ4_XS"
+        variant.mkdir(parents=True)
+        _write_bytes(variant / "Some-Model-UD-IQ4_XS-00001-of-00001.gguf", 90_000)
+        drafter = repo / "dspark-Some-Model-Q8_0.gguf"
+        _write_bytes(drafter, 2_000)
+        entry = importer._create_gguf_entry(variant)
+        assert entry["config"]["draft_model_path"] == str(drafter)
+
+    def test_parent_lookup_only_applies_to_variant_dirs(self, importer, tmp_path):
+        # A drafter belonging to a DIFFERENT sibling model must not be hoovered
+        # up: without the variant-dir gate, every model in a shared parent
+        # directory would claim the first drafter it found upstairs.
+        parent = tmp_path / "zoo"
+        parent.mkdir()
+        d = _make_gguf_dir(parent, name="unrelated-model")
+        _write_bytes(parent / "dspark-someone-elses.gguf", 2_000)
+        entry = importer._create_gguf_entry(d)
+        assert "draft_model_path" not in entry["config"]
+
+    @pytest.mark.parametrize("weights", [
+        "self-named.gguf",                    # dir name == file stem
+        "self-named-00001-of-00002.gguf",     # ... and again once sharded
+    ])
+    def test_self_named_dir_is_not_a_variant_dir(self, importer, tmp_path, weights):
+        # `foo/foo.gguf` is an ordinary model directory. A naive "is the dir
+        # name inside the file name" test calls it a quant-variant folder,
+        # which then lets it adopt an unrelated sibling's drafter from the
+        # parent -- the exact failure the gate above exists to prevent.
+        parent = tmp_path / "zoo"
+        d = parent / "self-named"
+        d.mkdir(parents=True)
+        _write_bytes(d / weights, 90_000)
+        _write_bytes(parent / "dspark-someone-elses.gguf", 2_000)
+        entry = importer._create_gguf_entry(d)
+        assert entry["id"] == "self-named"
+        assert "draft_model_path" not in entry["config"]
+
     def test_sharded_set_outweighs_a_standalone_sibling(self, importer, tmp_path):
         # The first shard is a few MB; the SET is the servable weight. Sizing
         # the candidate by its own bytes would hand the entry to any standalone

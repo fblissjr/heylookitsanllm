@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.5]
+
+### Fixed
+
+- **GGUF import: per-quant subdirectory layouts.** HF repos shipping many
+  quants of one large model put each in its own subdirectory, so a
+  structure-preserving download nests the weights and leaves sidecars at the
+  repo root:
+
+      <repo>/dspark-<model>-Q8_0.gguf
+      <repo>/UD-IQ4_XS/<model>-UD-IQ4_XS-00001-of-00004.gguf
+
+  Two things broke there. The entry took its id from the directory, yielding
+  `UD-IQ4_XS` -- uninformative, and colliding across every model quantised
+  the same way. And the drafter went unpaired, because sidecar lookup only
+  ever searched the model's own directory. Both now key off one shared test
+  (`_is_variant_dir`): a folder whose name is already spelled out in the
+  weight file's name is labelling a quant, not naming a model, so the id
+  comes from the file and sidecars are also looked for one level up. The
+  test compares against the SHARD-STRIPPED name and requires a PROPER
+  substring, so `foo/foo.gguf` and `foo/foo-00001-of-00002.gguf` stay
+  ordinary model directories -- otherwise they would adopt an unrelated
+  sibling's drafter from the parent. Directory-named repos are unaffected,
+  so no id already in a models.toml moves.
+- `scripts/ram_report.py`: `--path` now passes the primary to the drafter
+  picker (so a variant layout's sidecar is counted), and every printed unit
+  is labelled GiB. The arithmetic was always `1024**3`; calling it GB
+  understated each figure by ~7% and invited exactly the decimal-vs-binary
+  confusion that makes vendor sizing tables look wrong against a Mac.
+
 ## [1.49.4]
 
 ### Added

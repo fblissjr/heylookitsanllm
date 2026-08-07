@@ -336,36 +336,98 @@ class ModelImporter:
         # dict/iteration order.
         return sorted(candidates.values(), key=lambda f: f.name)[0]
 
-    def _pick_draft(self, path: Path) -> Optional[Path]:
-        """Root-level drafter sidecar (``_DRAFTER_PREFIXES``), if any.
+    def _pick_draft(self, path: Path, primary: Optional[Path] = None) -> Optional[Path]:
+        """Drafter sidecar (``_DRAFTER_PREFIXES``), if any.
 
         An MTP/ subdirectory may hold additional precision variants of the
         same drafter -- those are alternates, never used here. A servable
-        pairing needs exactly one drafter path, and only the root-level file
-        is that path. A sharded drafter is picked at its first shard, same
-        rule as the primary.
+        pairing needs exactly one drafter path, and only a root-level file is
+        that path. A sharded drafter is picked at its first shard, same rule
+        as the primary.
+
+        When the weights sit in a per-quant VARIANT folder, the repo root one
+        level up is also searched: HF ships the drafter beside the quant
+        folders, not inside them, so DeepSeek-V4-Flash's ``dspark-*.gguf``
+        lives next to ``UD-IQ4_XS/`` rather than in it. Searching only the
+        model's own directory silently drops it.
         """
-        candidates = [
-            f for f in self._iter_root_gguf_files(path)
-            if self._is_drafter(f) and self._is_loadable_shard(f)
-        ]
+        candidates = self._drafters_in(path)
+        if not candidates and primary is not None and self._is_variant_dir(path, primary):
+            candidates = self._drafters_in(path.parent)
         if not candidates:
             return None
         return max(candidates, key=self._servable_size)
 
+    def _drafters_in(self, path: Path) -> list:
+        return [
+            f for f in self._iter_root_gguf_files(path)
+            if self._is_drafter(f) and self._is_loadable_shard(f)
+        ]
+
+    @classmethod
+    def _model_name_from_file(cls, primary: Path) -> str:
+        """The weight file's model name: basename minus shard suffix and ``.gguf``."""
+        return cls._SHARD_RE.sub("", primary.name).removesuffix(".gguf")
+
+    @classmethod
+    def _is_variant_dir(cls, path: Path, primary: Path) -> bool:
+        """Whether ``path`` is a per-quant VARIANT folder, not the model folder.
+
+        HF repos that ship many quants of one big model put each in its own
+        subdirectory (unsloth's large models; also the layout llama-server's
+        own ``--models-dir`` documents), so a download preserving repo
+        structure looks like::
+
+            <repo>/dspark-<model>-Q8_0.gguf          <- sidecars at repo root
+            <repo>/UD-IQ4_XS/<model>-UD-IQ4_XS-00001-of-00004.gguf
+
+        The tell is that a variant folder's name is already spelled out in the
+        weight file's own name -- ``UD-IQ4_XS`` inside
+        ``...-UD-IQ4_XS-00001-of-00004``. A directory-named repo
+        (``unsloth_gemma-4-12B-it-qat-GGUF/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf``)
+        fails that test, which is what keeps existing behaviour intact.
+
+        Two things follow from it: the id must come from the file, and sidecars
+        must be looked for one level UP as well.
+
+        The comparison is against the SHARD-STRIPPED name and requires a
+        PROPER substring. Both guards are load-bearing: ``foo/foo.gguf`` and
+        ``foo/foo-00001-of-00002.gguf`` are ordinary model directories, and a
+        plain "is the dir name inside the file name" test calls both of them
+        variant folders -- which would then let them adopt a drafter belonging
+        to some unrelated sibling model upstairs.
+        """
+        base = cls._model_name_from_file(primary).lower()
+        name = path.name.lower()
+        return name != base and name in base
+
+    @classmethod
+    def _gguf_model_id(cls, path: Path, primary: Path) -> str:
+        """Model id: the directory name, or the weight file's own name when the
+        directory only labels a quant (see :meth:`_is_variant_dir`).
+
+        Taking the directory name in a variant layout yields ``UD-IQ4_XS`` --
+        uninformative, and colliding across every model quantised the same way.
+        No id already in a models.toml moves: directory-named repos are not
+        variant dirs.
+        """
+        if cls._is_variant_dir(path, primary):
+            return cls._model_name_from_file(primary)
+        return path.name
+
     def _create_gguf_entry(self, path: Path) -> Optional[dict]:
         """Create a models.toml entry for a GGUF model (served by llama-server)."""
-        model_id = path.name
-        if model_id in self.existing_ids:
-            return None
-
         primary = self._pick_primary_gguf(path)
         if primary is None:
+            return None
+
+        model_id = self._gguf_model_id(path, primary)
+        if model_id in self.existing_ids:
             return None
         self.existing_ids.add(model_id)
 
         mmproj = self._pick_mmproj(path)
-        draft = self._pick_draft(path)
+        draft = self._pick_draft(path, primary)
 
         # Modality DESCRIPTION read from the projector's own header
         # (clip.has_vision_encoder / clip.has_audio_encoder) rather than
