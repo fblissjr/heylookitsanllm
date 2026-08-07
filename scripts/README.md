@@ -1,10 +1,10 @@
 # scripts/
 
-Last updated: 2026-07-24
+Last updated: 2026-08-07
 
 Standalone developer/ops scripts. All are run with `uv run` (PEP 723 headers
 provision their own deps where noted, so they don't add anything to the project
-environment). Flat by design -- six files don't need subdirectories, and several
+environment). Flat by design -- a handful of files don't need subdirectories, and several
 are referenced by path from `CLAUDE.md`, `docs/`, and `tests/`, so moving them
 would just create churn.
 
@@ -13,6 +13,7 @@ would just create churn.
 | `update_deps.py` | **Dependency updater.** Bumps git-sourced packages (mlx-lm, mlx-vlm) to their latest commit and writes the resolved SHA back as a pinned `rev` in `[tool.uv.sources]`, then relocks -- plain uv has no command that pins HEAD into pyproject. Also does `--release` PyPI bumps with an optional `--pin` floor-raise. Has `--dry-run`. | `uv run scripts/update_deps.py [pkgs...] [--release] [--pin] [--branch B] [--dry-run]` |
 | `dev_server.sh` | Spawns an **isolated** heylookllm server for live verification (temp DB, RAM pre-flight, server-owned load+warm readiness). Same warm contract as `tests/e2e`. The `dev-server` skill wraps this. | `scripts/dev_server.sh start\|stop\|status [--port N] [--model ID]` |
 | `gguf_probe.py` | Direct llama-server diagnostics for one GGUF model, BELOW `dev_server.sh` (no FastAPI/DB): /props modalities, thinking-template on/off diff, one-shot gen w/ tps + draft acceptance, auto-teardown. Sidecar pairing via the importer's pickers. The `gguf-probe` skill wraps this. | `uv run python scripts/gguf_probe.py <model-dir> [--spec-type draft-mtp]` |
+| `ram_report.py` | **Memory pre-flight.** What is holding RAM (rolled up by app) and the ceilings that actually refuse a load: available RAM, the Metal working-set limit (~161 GB of 192 on an M2 Ultra -- well below total), and the per-allocation buffer cap. With `--model`/`--path` it sizes the model the way it is really loaded (whole shard SET, plus mmproj/drafter sidecars) and checks it against each. `dev_server.sh` calls it in `--quiet` form. | `uv run python scripts/ram_report.py [--model ID \| --path DIR] [--headroom N] [--quiet]` |
 | `benchmark.py` | HTTP benchmark against a **running** server: TTFT, generation TPS, memory; OpenAI + Messages endpoints, streaming and not. (Uses `rich`, in the dev group.) | `uv run scripts/benchmark.py [--url ...] [--model ...]` |
 | `export_openapi.py` | Exports the OpenAPI spec from the FastAPI app **without** running the server. | `uv run python scripts/export_openapi.py [--format yaml] [-o PATH] [--stats]` |
 | `jspace_convert_lens.py` | Converts a Jacobian-lens `.pt` into an mx-safetensors lens for the j-space feature. Self-contained deps via its PEP 723 header (torch, safetensors, jlens). | `uv run scripts/jspace_convert_lens.py ...` |

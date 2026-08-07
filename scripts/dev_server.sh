@@ -12,7 +12,11 @@
 #     contract) -- this script never re-invents poll/warm semantics.
 #   - RAM pre-flight: refuses to start if the model + headroom exceeds what the
 #     machine has AVAILABLE RIGHT NOW (so a model already resident in another
-#     server/agent's process is automatically accounted for).
+#     server/agent's process is automatically accounted for) OR what the GPU
+#     will hold. Delegated to `scripts/ram_report.py --quiet` -- the sizing has
+#     traps (a GGUF model_path names ONE shard of a set; sidecars load into the
+#     same process; the Metal working-set ceiling is well below total RAM) and
+#     they are worth getting wrong in exactly zero places.
 #   - Only ever kills the PID it spawned itself (recorded in the state dir).
 #
 # Must run UNSANDBOXED: needs Metal, localhost, and modelzoo traversal.
@@ -51,38 +55,13 @@ PIDFILE="$STATE/pid"
 LOG="$STATE/server.log"
 BASE="http://127.0.0.1:${PORT}"
 
-avail_gb() {
-  vm_stat | awk '
-    /page size of/ {ps=$8}
-    /Pages free/ {gsub(/\./,"",$3); free=$3}
-    /Pages inactive/ {gsub(/\./,"",$3); inact=$3}
-    /Pages purgeable/ {gsub(/\./,"",$3); purg=$3}
-    END {printf "%.0f", (free+inact+purg)*ps/1073741824}'
-}
-
-model_size_gb() {
-  # Resolve model id -> weights dir via models.toml, then du. Empty on failure.
-  ( cd "$REPO_ROOT" && uv run python - "$1" <<'PY' 2>/dev/null ) || true
-import sys, tomllib, pathlib
-mid = sys.argv[1]
-cfg = tomllib.loads(pathlib.Path("models.toml").read_text())
-for m in cfg.get("models", []):
-    if m.get("id") == mid:
-        c = m.get("config", {})
-        p = pathlib.Path(c.get("model_path", ""))
-        if p.is_dir():
-            print(round(sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1e9))
-        elif p.is_file():
-            # gguf entries point at a FILE; count declared sidecars too
-            # (mmproj/drafter load into the same subprocess).
-            total = p.stat().st_size
-            for key in ("mmproj_path", "draft_model_path"):
-                sp = pathlib.Path(c.get(key) or "")
-                if sp.is_file():
-                    total += sp.stat().st_size
-            print(round(total / 1e9))
-        break
-PY
+ram_preflight() {
+  # Delegates to scripts/ram_report.py: prints one line, exits non-zero when
+  # the model won't fit. Sizing a GGUF entry here by hand is what made the
+  # old inline version clear a 155 GB model as needing 10 GB -- model_path
+  # names one shard of a set.
+  ( cd "$REPO_ROOT" && uv run python scripts/ram_report.py \
+      --model "$1" --headroom "$2" --quiet )
 }
 
 probe() {
@@ -151,17 +130,17 @@ case "$CMD" in
       exit 1
     fi
 
-    AVAIL=$(avail_gb)
-    SIZE=$(model_size_gb "$MODEL")
-    if [ -n "$SIZE" ]; then
-      NEED=$((SIZE + HEADROOM_GB))
-      if [ "$AVAIL" -lt "$NEED" ]; then
-        echo "RAM pre-flight FAILED: model ~${SIZE}GB + ${HEADROOM_GB}GB headroom = ${NEED}GB, but only ~${AVAIL}GB available now (another server/agent may hold a model). Not starting." >&2
-        exit 1
-      fi
-      echo "RAM pre-flight OK: need ~${NEED}GB, ~${AVAIL}GB available"
+    if PREFLIGHT=$(ram_preflight "$MODEL" "$HEADROOM_GB"); then
+      echo "$PREFLIGHT"
     else
-      echo "WARNING: could not size model '$MODEL' from models.toml; skipping RAM check (~${AVAIL}GB available)" >&2
+      case "$PREFLIGHT" in
+        # A model missing from models.toml exits 2 with no verdict line; that
+        # is a bad --model, not a memory refusal, so say which it was.
+        "") echo "RAM pre-flight: could not size model '$MODEL' (not in models.toml?). Not starting." >&2 ;;
+        *)  echo "$PREFLIGHT (another server/agent may hold a model). Not starting." >&2 ;;
+      esac
+      echo "  run: uv run python scripts/ram_report.py --model $MODEL   # for the full breakdown" >&2
+      exit 1
     fi
 
     mkdir -p "$STATE"

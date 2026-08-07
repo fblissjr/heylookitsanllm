@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.49.2]
 
+### Added
+
+- **`scripts/ram_report.py` -- memory pre-flight.** Reports what is holding
+  RAM (RSS rolled up by app) and, more usefully, the ceilings that actually
+  refuse a load. Total RAM is the wrong number: on a 192 GB M2 Ultra the
+  Metal `max_recommended_working_set_size` is ~161 GB, so a 155 GB model
+  fits with ~6 GB for KV cache and a 10 GB drafter beside it does not --
+  a refusal that is invisible if you only look at free memory. With
+  `--model`/`--path` it sizes a model as it is really loaded (whole shard
+  SET plus mmproj/drafter sidecars) and checks it against each ceiling;
+  `--quiet` gives one line and an exit status.
+- `dev_server.sh` now delegates its RAM pre-flight to that script. Its
+  inline version sized a GGUF entry as the single shard `model_path`
+  names, so it would have cleared a 155 GB model as needing 10 GB.
+
 ### Fixed
 
 - **GGUF import: multi-shard models picked an unloadable shard.**
