@@ -153,6 +153,17 @@ class LlamaServerProvider(BaseProvider):
             args += ["--spec-type", cfg["spec_type"]]
         if cfg.get("spec_draft_n_max"):
             args += ["--spec-draft-n-max", str(cfg["spec_draft_n_max"])]
+        # `is not None`, not truthiness: 0 is meaningful for both (keep the
+        # drafter off the GPU / disable the prompt cache), and -1 means
+        # "unlimited" for -cram.
+        if cfg.get("n_gpu_layers_draft") is not None:
+            args += ["-ngld", str(cfg["n_gpu_layers_draft"])]
+        if cfg.get("cache_ram_mb") is not None:
+            args += ["-cram", str(cfg["cache_ram_mb"])]
+        if cfg.get("sleep_idle_seconds"):
+            args += ["--sleep-idle-seconds", str(cfg["sleep_idle_seconds"])]
+        if cfg.get("load_mode"):
+            args += ["-lm", cfg["load_mode"]]
         args += list(cfg.get("extra_args") or [])
         return args
 
@@ -277,6 +288,41 @@ class LlamaServerProvider(BaseProvider):
             payload["chat_template_kwargs"] = {"enable_thinking": bool(enable_thinking)}
         return payload
 
+    def _is_sleeping(self) -> bool:
+        """Whether llama-server has idled its model out (``--sleep-idle-seconds``).
+
+        GET /props is explicitly exempt from counting as a task, so asking does
+        not itself wake the server or reset its idle timer. Best-effort: an
+        unreachable/older server just reports False and we use the normal
+        timeout.
+        """
+        if self._base_url is None:
+            return False
+        try:
+            with urllib.request.urlopen(self._base_url + "/props", timeout=10) as resp:
+                return bool(json.loads(resp.read()).get("is_sleeping"))
+        except Exception:
+            return False
+
+    def _request_timeout(self) -> float:
+        """Socket timeout for a generation request.
+
+        Normally ``_SSE_READ_TIMEOUT_S`` -- a healthy stream never blocks a read
+        longer than llama-server's 30s keepalive, so 120s means "wedged". But a
+        SLEEPING server reloads the model before it emits anything, and for a
+        large model that reload is minutes, not seconds. Waiting on the sleep
+        path with the wedge-detection timeout would turn a working
+        configuration into a timeout on the first request after an idle gap.
+        """
+        if self.config.get("sleep_idle_seconds") and self._is_sleeping():
+            wake_timeout = float(self.config.get("startup_timeout_s") or 300.0)
+            logging.info(
+                f"[GGUF] '{self.model_id}' is sleeping; allowing {wake_timeout:.0f}s "
+                f"for llama-server to reload it"
+            )
+            return max(_SSE_READ_TIMEOUT_S, wake_timeout)
+        return _SSE_READ_TIMEOUT_S
+
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         if self._base_url is None:
             raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
@@ -292,7 +338,7 @@ class LlamaServerProvider(BaseProvider):
             method="POST",
         )
         try:
-            response = urllib.request.urlopen(http_request, timeout=_SSE_READ_TIMEOUT_S)
+            response = urllib.request.urlopen(http_request, timeout=self._request_timeout())
         except urllib.error.HTTPError as e:
             detail = self._error_detail(e)
             if e.code == 400:

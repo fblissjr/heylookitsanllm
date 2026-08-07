@@ -352,6 +352,26 @@ class GGUFModelConfig(BaseModel):
     spec_draft_n_max: Optional[int] = Field(default=None, ge=1, le=16)
     ctx_size: Optional[int] = Field(default=None, ge=512)
     n_gpu_layers: int = 999  # -ngl; 999 = everything on GPU
+    # Draft-model GPU offload (-ngld). Its own knob because the pair can exceed
+    # the GPU budget when the target alone does not: on a 192 GiB M2 Ultra the
+    # Metal residency recommendation is ~161 GiB, so a 144 GiB target plus a
+    # 10 GiB drafter is over it while either alone is under. `0` keeps the
+    # drafter off the GPU. None = inherit llama-server's own default.
+    n_gpu_layers_draft: Optional[int] = Field(default=None, ge=0)
+    # llama-server's OWN idle sleep (--sleep-idle-seconds): frees the model and
+    # KV cache but KEEPS THE PROCESS, and reloads on the next task. Strictly
+    # cheaper than heylook's idle-unload, which SIGTERMs and respawns -- so set
+    # this BELOW the effective idle_unload_seconds and you get the cheap
+    # recovery first and the expensive one only for a genuinely cold model.
+    # None = disabled (llama-server's default).
+    sleep_idle_seconds: Optional[int] = Field(default=None, ge=1)
+    # -cram: prompt-cache budget in MiB. llama-server defaults to only 8192;
+    # -1 = unlimited, 0 = disable the cache entirely.
+    cache_ram_mb: Optional[int] = Field(default=None, ge=-1)
+    # -lm: how weights are brought in. `mlock` pins them against paging, which
+    # is the lever for a model near the memory ceiling; llama.cpp's Metal
+    # residency set is separate and already on by default.
+    load_mode: Optional[Literal["none", "mmap", "mlock", "mmap+mlock", "dio"]] = None
     server_binary: Optional[str] = None  # else required via $HEYLOOK_LLAMA_SERVER
     host: str = "127.0.0.1"
     port: int = 0  # 0 = pick a free port at load

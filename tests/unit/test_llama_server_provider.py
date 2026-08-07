@@ -96,6 +96,86 @@ class TestProviderSurface:
 
 
 # ---------------------------------------------------------------------------
+# Spawn args
+# ---------------------------------------------------------------------------
+
+class TestBuildArgs:
+    """The spawn command is the whole configuration surface of a llama-server;
+    a field that never reaches argv is a field that silently does nothing."""
+
+    @staticmethod
+    def _args(**config):
+        from pathlib import Path
+        return make_provider(**config)._build_args(Path("/bin/llama-server"), 1234)
+
+    def test_memory_and_lifecycle_flags_reach_argv(self):
+        args = self._args(
+            n_gpu_layers_draft=0,
+            cache_ram_mb=32768,
+            sleep_idle_seconds=120,
+            load_mode="mmap+mlock",
+        )
+        pairs = list(zip(args, args[1:]))
+        assert ("-ngld", "0") in pairs
+        assert ("-cram", "32768") in pairs
+        assert ("--sleep-idle-seconds", "120") in pairs
+        assert ("-lm", "mmap+mlock") in pairs
+
+    def test_absent_knobs_emit_nothing(self):
+        # Every one of these has a llama-server default worth inheriting; a
+        # provider that always passes a value silently overrides upstream.
+        args = self._args()
+        for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm"):
+            assert flag not in args
+
+    @pytest.mark.parametrize("field,flag,value", [
+        ("n_gpu_layers_draft", "-ngld", 0),   # 0 = drafter entirely off the GPU
+        ("cache_ram_mb", "-cram", 0),         # 0 = disable the prompt cache
+        ("cache_ram_mb", "-cram", -1),        # -1 = unlimited
+    ])
+    def test_falsy_but_meaningful_values_are_not_dropped(self, field, flag, value):
+        # These went through `if cfg.get(x)` once; 0 and -1 are real settings,
+        # not "unset", and truthiness silently discarded them.
+        args = self._args(**{field: value})
+        assert (flag, str(value)) in list(zip(args, args[1:]))
+
+
+# ---------------------------------------------------------------------------
+# Sleep/wake timeout
+# ---------------------------------------------------------------------------
+
+class TestSleepWakeTimeout:
+    """`--sleep-idle-seconds` frees the model but keeps the process, so the
+    next request pays a full RELOAD before the first byte. On a large model
+    that is minutes -- far past the 120s wedge-detection timeout."""
+
+    def test_normal_timeout_when_sleep_is_not_configured(self):
+        p = make_provider()
+        p._base_url = "http://127.0.0.1:1"
+        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
+
+    def test_awake_server_keeps_the_wedge_timeout(self, monkeypatch):
+        p = make_provider(sleep_idle_seconds=60, startup_timeout_s=900.0)
+        p._base_url = "http://127.0.0.1:1"
+        monkeypatch.setattr(p, "_is_sleeping", lambda: False)
+        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
+
+    def test_sleeping_server_gets_the_reload_budget(self, monkeypatch):
+        p = make_provider(sleep_idle_seconds=60, startup_timeout_s=900.0)
+        p._base_url = "http://127.0.0.1:1"
+        monkeypatch.setattr(p, "_is_sleeping", lambda: True)
+        assert p._request_timeout() == 900.0
+
+    def test_unreachable_props_does_not_raise(self):
+        # Best-effort probe: an older llama-server without /props is_sleeping,
+        # or one mid-restart, must degrade to the normal timeout, not a 500.
+        p = make_provider(sleep_idle_seconds=60)
+        p._base_url = "http://127.0.0.1:1"  # nothing listening
+        assert p._is_sleeping() is False
+        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
+
+
+# ---------------------------------------------------------------------------
 # Orphan prevention: the process-exit backstop
 # ---------------------------------------------------------------------------
 

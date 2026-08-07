@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.3]
+
+### Added
+
+- **GGUF provider: memory + lifecycle knobs that were unreachable.** Four
+  new `GGUFModelConfig` fields, each reaching `llama-server` argv:
+  - `n_gpu_layers_draft` (`-ngld`) -- separate GPU offload for the drafter.
+    The pair can exceed the GPU budget when the target alone does not: on a
+    192 GiB M2 Ultra the Metal residency recommendation is ~161 GiB, so a
+    144 GiB target plus a 10 GiB drafter is over it while either alone is
+    under. `0` keeps the drafter off the GPU.
+  - `sleep_idle_seconds` (`--sleep-idle-seconds`) -- llama-server's own idle
+    sleep, which frees the model and KV cache but KEEPS THE PROCESS and
+    reloads on the next task. Strictly cheaper than heylook's idle-unload
+    (SIGTERM + respawn), so setting it below the effective
+    `idle_unload_seconds` gets the cheap recovery first.
+  - `cache_ram_mb` (`-cram`) -- prompt-cache budget; llama-server defaults to
+    only 8192 MiB.
+  - `load_mode` (`-lm`) -- `mmap`/`mlock`/`mmap+mlock`/`dio`.
+
+  All four use `is not None` rather than truthiness, because `0` (drafter off
+  the GPU, cache disabled) and `-1` (unlimited cache) are real settings.
+
+- **Sleeping-server wake budget.** A model slept out by
+  `--sleep-idle-seconds` reloads before it emits a single byte, and for a
+  large model that reload is minutes -- well past the 120 s socket timeout
+  that exists to detect a *wedged* server. The provider now checks
+  `/props.is_sleeping` (an endpoint llama-server exempts from counting as a
+  task, so asking neither wakes it nor resets its timer) and allows
+  `startup_timeout_s` for that request only. Without this, enabling idle
+  sleep would turn the first request after any idle gap into a timeout.
+
 ## [1.49.2]
 
 ### Added
