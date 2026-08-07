@@ -69,15 +69,79 @@ _SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 
 def available_gb() -> float:
-    """RAM the OS can hand out now: free + inactive + purgeable.
+    """RAM the OS can hand out WITHOUT reclaiming anything: free + inactive.
 
-    Matches dev_server.sh's vm_stat arithmetic. macOS "used" includes file
-    cache it will evict on demand, so `total - used` understates headroom.
+    The conservative figure. Reported for context, but it is the wrong number
+    to gate a model load on -- see :func:`reclaimable_gb`.
     """
     import psutil
 
     vm = psutil.virtual_memory()
     return vm.available / GB
+
+
+def _vm_stat_pages() -> dict[str, int]:
+    """`vm_stat` counters in BYTES. Empty dict off macOS or if it is unreadable."""
+    import re as _re
+    import subprocess
+
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if out.returncode != 0:
+        return {}
+    page = 4096
+    m = _re.search(r"page size of (\d+) bytes", out.stdout)
+    if m:
+        page = int(m.group(1))
+    stats: dict[str, int] = {}
+    for line in out.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        digits = value.strip().rstrip(".").replace(",", "")
+        if digits.isdigit():
+            stats[key.strip().lower()] = int(digits) * page
+    return stats
+
+
+def reclaimable_gb() -> Optional[float]:
+    """RAM a model load can actually reach: total - anonymous - wired.
+
+    This is the number that predicts success, and `free + inactive` is not.
+    Both llama.cpp and MLX load weights through **mmap**, so their pages are
+    clean and file-backed: macOS evicts them on demand and will evict any
+    other clean file page to make room. But it parks recently-touched file
+    pages in the ACTIVE queue, where `free + inactive` cannot see them.
+
+    Measured on this machine right after a 127 GiB model unloaded: psutil
+    reported 125 GiB "available" while 154 GiB was file-backed and only 27 GiB
+    was anonymous. The conservative figure said a 138 GiB load would not fit;
+    it then ran with zero swapins and zero swapouts. Gating on that figure
+    refuses loads that work.
+
+    Anonymous pages are the genuinely unavailable ones -- no backing file, so
+    they can only be compressed or swapped, never dropped. Wired pages cannot
+    even be that. Everything else is negotiable.
+
+    Returns None off macOS, where the caller should fall back to
+    :func:`available_gb`.
+    """
+    stats = _vm_stat_pages()
+    anonymous = stats.get("anonymous pages")
+    wired = stats.get("pages wired down")
+    if anonymous is None or wired is None:
+        return None
+    import psutil
+
+    return (psutil.virtual_memory().total - anonymous - wired) / GB
+
+
+def usable_gb() -> float:
+    """The figure to gate on: reclaimable where measurable, else conservative."""
+    reclaimable = reclaimable_gb()
+    return reclaimable if reclaimable is not None else available_gb()
 
 
 def sysctl_wired_limit_mb() -> Optional[int]:
@@ -286,14 +350,14 @@ def check_fit(size_gb: float, headroom_gb: float, hard_working_set: bool = True)
       performance warning, not a refusal, and calling it FAIL would be wrong.
     """
     need = size_gb + headroom_gb
-    avail = available_gb()
+    avail = usable_gb()
     lines = []
     ok = True
 
     ram_ok = need <= avail
     ok &= ram_ok
     lines.append(
-        f"  {'PASS' if ram_ok else 'FAIL'}  available RAM      "
+        f"  {'PASS' if ram_ok else 'FAIL'}  reclaimable RAM    "
         f"need {need:6.1f} GiB have {avail:6.1f} GiB"
     )
 
@@ -359,14 +423,14 @@ def main() -> int:
 
     if args.quiet:
         if config is None:
-            print(f"{available_gb():.0f} GiB available")
+            print(f"{usable_gb():.0f} GiB reclaimable")
             return 0
         size_gb, _ = size_config_gb(config)
         fits, _ = check_fit(size_gb, args.headroom, is_mlx_config(config))
         verdict = "OK" if fits else "FAILED"
         print(
             f"RAM pre-flight {verdict}: {label} ~{size_gb:.0f} GiB "
-            f"+ {args.headroom:.0f} GiB headroom, ~{available_gb():.0f} GiB available"
+            f"+ {args.headroom:.0f} GiB headroom, ~{usable_gb():.0f} GiB reclaimable"
         )
         return 0 if fits else 1
 
@@ -374,7 +438,10 @@ def main() -> int:
     import psutil
 
     print(f"  total RAM            {psutil.virtual_memory().total / GB:6.1f} GiB")
-    print(f"  available now        {available_gb():6.1f} GiB  (free + inactive; macOS evicts file cache on demand)")
+    print(f"  free right now       {available_gb():6.1f} GiB  (free + inactive -- conservative, NOT the gate)")
+    reclaim = reclaimable_gb()
+    if reclaim is not None:
+        print(f"  reclaimable          {reclaim:6.1f} GiB  (total - anonymous - wired) <- what an mmap-backed load can reach")
     metal = metal_ceilings()
     if metal:
         wired_mb = metal.get("sysctl_wired_mb")

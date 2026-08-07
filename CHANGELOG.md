@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.7]
+
+### Fixed
+
+- **`ram_report` refused loads that fit** -- and since v1.49.2 wired it in,
+  `dev_server.sh` refused to start them. It gated on `free + inactive`, which
+  is the wrong number on macOS: both llama.cpp and MLX load weights through
+  **mmap**, so those pages are clean and file-backed and the OS evicts them
+  on demand -- but it parks recently-touched file pages in the ACTIVE queue,
+  where `free + inactive` cannot see them. Caught in practice this session:
+  the check said a 138 GiB load would not fit against "125 GiB available",
+  while 154 GiB was file-backed and only 27 GiB anonymous; the load then ran
+  with zero swapins and zero swapouts.
+
+  The gate is now `total - anonymous - wired` (`reclaimable_gb`) -- anonymous
+  pages have no backing file so they can only be compressed or swapped, never
+  dropped, and wired pages cannot even be that; everything else is
+  negotiable. The conservative figure is still reported for context, clearly
+  labelled as not the gate. Falls back to the old figure when `vm_stat`
+  counters are unavailable (i.e. off macOS), and refuses to compute from a
+  partial pair rather than guessing the missing term.
+
+  Now covered by `tests/unit/test_ram_report.py` -- the script became a gate
+  in v1.49.2 with no tests behind it, which is how this shipped.
+
 ## [1.49.6]
 
 ### Added
