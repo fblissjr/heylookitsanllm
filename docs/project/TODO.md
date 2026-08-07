@@ -467,6 +467,20 @@ derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
   (`model_service._raw_to_scanned` was migrated 2026-08-07 -- it read
   `config["vision"]`, which no entry builder writes any more, and so reported
   `vision:false` for every scanned model of both providers.)
+- [ ] **Audit the other five v3 pages for the status-area shape** (P2, found
+  2026-08-07): the models page wrote an error and then awaited an internal
+  refetch that cleared it on success, so it had never once shown a load failure
+  since the page was built (fixed v1.50.2 via a `keepStatus` flag). For chat,
+  notebook, explore, perf and jspace: find any handler that writes an error and
+  then awaits a refresh whose success path clears it. Unknown whether any share
+  the shape -- this item is the check, not a claim that they do.
+- [ ] **`test-audit` over the payload/cascade tests** (P2, found 2026-08-07):
+  two green-but-blind escapes in one session, both assertions written from the
+  perspective of the case the author had in mind. One actively PINNED the bug
+  as correct (`"chat_template_kwargs" not in unset`). Specific question, not a
+  general sweep: does any other test assert a key's ABSENCE where the sent
+  VALUE is the contract? Grep `not in payload` / `not in body` across `tests/`
+  and review each hit.
 - [ ] **Derive gguf `modalities`/`supports_thinking` at LOAD, like MLX**
   (P2, found 2026-08-07, Wave-1 derive-at-load coupled): the gguf importer
   STORES both in the entry, so an entry written before v1.49.4/.6 under-reports
@@ -484,6 +498,73 @@ derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
 
 See also the Phase 6 "per-model SIDECAR ARTIFACTS" note (draft model / j-space
 lens / future LoRA managed as a group on the admin CRUD surface).
+
+## Qwen3.5-27B thinking-path repetition collapse (found 2026-08-07, P1)
+
+**Observation.** `Qwen3.5-27B-8bit-mlx` degenerates into repetition on the
+thinking path at large budgets. Same prompt ("What is 12 times 13?"),
+`enable_thinking = true`, non-streaming:
+
+| max_tokens | result |
+| --- | --- |
+| 600  | `thinking=1349ch content=0ch`, coherent opening |
+| 2500 | `thinking=13070ch content=0ch`, opens `ejahterejahterejahter Consor...` |
+
+Reproduces with `sampler="thinking"` too (`thinking=48ch` then junk).
+`Qwen3.5-0.8B-MLX-8bit` shows the same shape (`门门门门...`, `款款款款...`), so it
+is not obviously size-specific.
+
+**Not caused by the v1.50.x work.** For an explicit `enable_thinking=true`
+request the resolution is byte-identical before and after (old:
+`effective_thinking_flag(True, provider)` -> True; new: cascade -> True), and
+the prompt side never changed. What DID change is visibility: the trace now
+lands in the `thinking` field instead of being mislabelled as `content`, so
+this was always happening and was simply harder to see.
+
+**Why it is worth real time.** This is the daily-driver-class model, the
+collapse is in the reasoning trace rather than the answer, and two of the
+project's own subsystems are plausible causes.
+
+**Hypotheses, roughly in order of suspicion.** Each is falsifiable:
+
+1. **The `thinking` sampler's anti-loop overlay is causing the loop.** The
+   overlay applies `presence_penalty = 1.5` (`src/heylook_llm/data/samplers/thinking.toml`,
+   slimmed to loop control in v1.45.0) and was tuned against a GEMMA repetition
+   loop, never against Qwen3.5. A penalty that pushes hard away from recent
+   tokens can drive a model into novel-token gibberish, which is what
+   `ejahter`/`Consor` look like. FALSIFIED IF collapse rate is unchanged at
+   `presence_penalty = 0.0`.
+2. **The vendor layer picks bad values for this checkpoint.** v1.45.0 reads
+   temp/top_p/top_k from the model's own `generation_config.json` above the
+   floor (`samplers.load_vendor_sampling`). Check what it actually reads for
+   this model dir and whether those values are sane for long generations.
+   FALSIFIED IF collapse persists with vendor values overridden by the floor.
+3. **Long-context degradation of the checkpoint/quant itself.** 8-bit Qwen3.5
+   at multi-thousand-token self-generated context. FALSIFIED IF a different
+   quant or `Qwen3.5-27B-8bit-ours` behaves differently under identical
+   sampling.
+4. **Radix/prompt-cache interaction.** Qwen3.5 is HYBRID (KVCache+ArraysCache)
+   and CLAUDE.md already records limited radix correctness there — ArraysCache
+   cannot trim to a prefix. FALSIFIED IF collapse reproduces with the radix
+   gate off (it should already be off: the gate requires `cache_type=standard`
+   with no `max_kv_size`, so CONFIRM that first rather than assuming).
+
+**Do this first, before any hypothesis.** Run thinking OFF at the same budgets
+(600/1200/2500). If it collapses there too, this is not a thinking-path bug at
+all and hypotheses 1-2 are dead on arrival — the name of the item is wrong and
+the search should start at 3-4. This is one server start and three requests.
+
+**Measurement discipline (learned the hard way twice on 2026-08-07).** Single
+unseeded runs on this stack are SAMPLES, not measurements: the DSpark A/B this
+morning came out 11.7 acceptance points apart on two nominally identical runs,
+and an E2E check turned out to fail 1 run in 6 from model nondeterminism alone.
+So: pin the seed, repeat each cell at >= 3 seeds, and report the SIGN before
+the magnitude. Report "collapsed / did not collapse" as a count out of N, not a
+character length from one run.
+
+**Related open thread:** `Qwen3.5-27B-8bit-ours` and the abliterated pair are
+the jlens study models. If the collapse is checkpoint-specific, that matters
+to the lens work too -- see `docs/jspace_integration_plan.md`.
 
 ## Observability + config redesign (2026-07-11)
 
