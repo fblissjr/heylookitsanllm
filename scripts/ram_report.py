@@ -70,6 +70,32 @@ def available_gb() -> float:
     return vm.available / GB
 
 
+def sysctl_wired_limit_mb() -> Optional[int]:
+    """`iogpu.wired_limit_mb`, the SYSTEM-wide GPU wired ceiling.
+
+    0 means "OS default" (~84% of total on a 192 GB M2 Ultra). This is the
+    only lever that RAISES the Metal working set -- heylook's own
+    ``mx.set_wired_limit`` at startup consumes that budget for MLX, it does
+    not enlarge it, and it has no effect at all on a llama-server subprocess.
+    Returns None if the OID is unreadable (non-Apple-Silicon, or sandboxed).
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "iogpu.wired_limit_mb"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    try:
+        return int(out.stdout.strip())
+    except ValueError:
+        return None
+
+
 def metal_ceilings() -> Optional[dict]:
     """GPU working-set limits, or None off Metal (or if MLX is unavailable).
 
@@ -89,6 +115,7 @@ def metal_ceilings() -> Optional[dict]:
         "device": info.get("device_name", "?"),
         "working_set_gb": working_set / GB,
         "max_buffer_gb": (info.get("max_buffer_length") or 0) / GB,
+        "sysctl_wired_mb": sysctl_wired_limit_mb(),
     }
 
 
@@ -240,6 +267,17 @@ def check_fit(size_gb: float, headroom_gb: float) -> tuple[bool, list[str]]:
             f"  {'PASS' if ws_ok else 'FAIL'}  Metal working set  "
             f"need {need:6.1f} GB  have {metal['working_set_gb']:6.1f} GB"
         )
+        if not ws_ok and metal.get("sysctl_wired_mb") == 0:
+            # Only actionable while the sysctl is at its default; if someone
+            # already raised it, the ceiling is a deliberate choice and this
+            # hint would just be noise.
+            suggest = int((need + 8) * 1024)
+            lines.append(
+                f"        ^ this ceiling is the OS DEFAULT "
+                f"(iogpu.wired_limit_mb=0). To raise it:\n"
+                f"          sudo sysctl iogpu.wired_limit_mb={suggest}   "
+                f"# resets on reboot; leave the OS real headroom"
+            )
         # Per-allocation cap. Not a hard fail: llama.cpp/MLX split weights
         # across buffers, so exceeding it is a warning to check the layout
         # (one unsharded file over the cap is the case that actually bites).
@@ -299,7 +337,13 @@ def main() -> int:
     print(f"  available now        {available_gb():6.1f} GB   (free + inactive; macOS evicts file cache on demand)")
     metal = metal_ceilings()
     if metal:
-        print(f"  Metal working set    {metal['working_set_gb']:6.1f} GB   ({metal['device']}) <- the real ceiling for GPU-resident weights")
+        wired_mb = metal.get("sysctl_wired_mb")
+        origin = (
+            "OS default, raisable" if wired_mb == 0
+            else f"set by sysctl to {wired_mb / 1024:.0f} GB" if wired_mb
+            else "sysctl unreadable"
+        )
+        print(f"  Metal working set    {metal['working_set_gb']:6.1f} GB   ({metal['device']}; {origin}) <- the real ceiling for GPU-resident weights")
         print(f"  Metal max buffer     {metal['max_buffer_gb']:6.1f} GB   per single allocation")
     swap = psutil.swap_memory()
     print(f"  swap in use          {swap.used / GB:6.1f} GB")

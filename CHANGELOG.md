@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a refusal that is invisible if you only look at free memory. With
   `--model`/`--path` it sizes a model as it is really loaded (whole shard
   SET plus mmproj/drafter sidecars) and checks it against each ceiling;
-  `--quiet` gives one line and an exit status.
+  `--quiet` gives one line and an exit status. It also reports whether that
+  Metal ceiling is the OS default (`iogpu.wired_limit_mb=0`) or a tuned
+  value, and prints the sysctl to raise it when a fit fails there --
+  server.py's `mx.set_wired_limit` CONSUMES that budget for MLX, it does
+  not enlarge it, and it does not reach a llama-server subprocess at all.
 - `dev_server.sh` now delegates its RAM pre-flight to that script. Its
   inline version sized a GGUF entry as the single shard `model_path`
   names, so it would have cleared a 155 GB model as needing 10 GB.
