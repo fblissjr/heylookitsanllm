@@ -115,16 +115,22 @@ def _get_generation_gate(max_waiting: int) -> "GenerationGate":
         return _GENERATION_GATE
 
 
-def _resolve_enable_thinking(effective_request: dict, model_config: dict):
-    """Request value wins; else the model-config default. An ABSENT kwarg is
-    uncontrollable (mlx-lm's TokenizerWrapper silently injects
-    enable_thinking=True), so this always returns an explicit bool.
-    Delegates to the SINGLE shared resolver so template application and
-    parser arming can never drift."""
-    from heylook_llm.reasoning_parser import resolve_enable_thinking
-    return resolve_enable_thinking(
-        effective_request.get("enable_thinking"), model_config
-    )
+def _resolve_enable_thinking(effective_request: dict) -> bool:
+    """The thinking flag this prompt is templated with.
+
+    Read straight off the effective request: the shared cascade
+    (``samplers.resolve_effective_sampling``) materializes ``enable_thinking``
+    unconditionally, so the key is always present and already carries every
+    layer -- request field, named sampler, model default_sampler, model
+    config. There is nothing left to resolve here.
+
+    It must stay an explicit bool: an ABSENT kwarg is uncontrollable, because
+    mlx-lm's TokenizerWrapper silently injects ``enable_thinking=True`` when
+    the caller omits it. Same value ``BaseProvider.effective_thinking``
+    reports to the parser -- by construction now, not by two call sites
+    agreeing to read the same thing.
+    """
+    return bool(effective_request.get("enable_thinking"))
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None):
@@ -266,7 +272,7 @@ class UnifiedTextStrategy:
         Text-only: tokenizer.apply_chat_template with enable_thinking support.
         VLM text: vlm_apply_chat_template (uses processor + model config).
         """
-        enable_thinking = _resolve_enable_thinking(effective_request, self.model_config)
+        enable_thinking = _resolve_enable_thinking(effective_request)
 
         if self.is_vlm:
             prompt = vlm_apply_chat_template(
@@ -411,7 +417,7 @@ class VLMVisionStrategy:
         # Prepare VLM inputs: extract images, format prompt with chat template
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
             request.messages, processor, model.config, model,
-            enable_thinking=_resolve_enable_thinking(effective_request, self.model_config),
+            enable_thinking=_resolve_enable_thinking(effective_request),
         )
 
         num_images = len(images) if images else 0
@@ -620,7 +626,7 @@ class DiffusionStrategy:
         images, formatted_prompt, has_images, _ = prepare_vlm_inputs_parallel(
             request.messages, processor, model.config, self._batch_vision_processor,
             vlm_apply_chat_template, model=model,
-            enable_thinking=_resolve_enable_thinking(effective_request, self.model_config),
+            enable_thinking=_resolve_enable_thinking(effective_request),
         )
 
         inputs = vlm_prepare_inputs(

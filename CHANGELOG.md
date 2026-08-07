@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.1]
+
+### Fixed
+
+- **A named sampler that turned thinking on built a thinking prompt and armed
+  a content-state parser.** The two readings of one decision had stopped
+  taking the same input: the prompt side reads the CASCADE OUTPUT, the parser
+  side read the RAW request -- differing by the entire sampler layer. So
+  `sampler="thinking"`, or a model whose `default_sampler` is thinking, split
+  them. On a `prefills_thinking` template (Qwen3.5 pre-fills an unclosed
+  `<think>`) the model's output starts inside the block, so a content-state
+  parser routes the whole reasoning trace into `content`. Same failure as
+  v1.34.64, reachable again through a different door.
+
+  Measured on `Qwen3.5-0.8B-MLX-8bit`, `sampler="thinking"`, same prompt and
+  budget: before, `thinking=0ch content=275ch` with the content literally
+  beginning `"Thinking Process:\n\n1. **Ancede..."`; after,
+  `thinking=929ch content=0ch`. Confirmed on `Qwen3.5-27B-8bit-mlx`.
+
+  A shared resolver was supposed to prevent exactly this and did not, because
+  a shared function cannot fix callers that hand it different arguments. The
+  fix is a single OWNER instead: `BaseProvider.effective_thinking(request)`
+  derives it from the shared cascade, and nothing re-derives it.
+  `api.py` and `messages_api.py` now ask the provider (messages resolves it
+  once where the converted ChatRequest still exists, since its handlers only
+  carry the MessageCreateRequest, whose raw `thinking` field is missing the
+  sampler layer).
+
+  `reasoning_parser.resolve_enable_thinking` and `effective_thinking_flag`
+  are DELETED rather than fixed. With the flag resolved once from the cascade
+  there is no absent case left to default -- which is what made their
+  absent-key fallback (an arbitrary `True`, inconsistent with the cascade's
+  own `False`) unanswerable on its own terms. `mlx_provider._resolve_enable_thinking`
+  is now a plain read of the effective request.
+
+  Pinned as a PROPERTY over the request/config cross-product (the divergence
+  lived in specific combinations, which is what an example-per-case test
+  missed), with a guard asserting the matrix is not all one value.
+
+- **The contract tests' fake providers duck-typed `BaseProvider`.** Adding an
+  obligation to the provider contract turned every route test into a bare 500
+  with no hint of the cause. `FakeProvider`, `PreSplitProvider` and
+  `_FailingProvider` now SUBCLASS `BaseProvider`, so a contract addition
+  arrives with its default in place and only a deliberate difference has to
+  be written down. Same drift class as the fake-provider file deleted in
+  v1.32.1.
+
+### Known, pre-existing, unrelated to the above
+
+- `Qwen3.5-27B-8bit-mlx` collapses into repetition on the thinking path at
+  large budgets (~13k chars of `ejahterejahter...` at `max_tokens=2500`;
+  coherent at 600). Reproduces with a plain `enable_thinking=true`, whose
+  code path is byte-identical before and after this change, so it is not
+  introduced here -- but it is now VISIBLE in the thinking channel where it
+  used to be mislabelled as content. Worth its own look.
+
 ## [1.50.0]
 
 Frontend v3 catch-up against the backend changes since 2026-07-26

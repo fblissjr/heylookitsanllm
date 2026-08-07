@@ -492,23 +492,19 @@ class GemmaChannelParser:
         return ("content", text)
 
 
-def resolve_enable_thinking(request_value, config) -> bool:
-    """THE single request-vs-config resolution for the thinking flag, used
-    by BOTH template application (mlx_provider) and parser arming (below).
-    One implementation on purpose: a prompt built thinking-ON with a
-    content-state parser (or vice versa) misroutes the whole reasoning
-    trace, so the two sides may never drift."""
-    if request_value is not None:
-        return bool(request_value)
-    return bool(config.get("enable_thinking", True)) if isinstance(config, dict) else False
-
-
-def effective_thinking_flag(request_enable_thinking, provider) -> bool:
-    """Provider-object adapter over ``resolve_enable_thinking`` for the API
-    layers (provider may be None on shutdown paths)."""
-    return resolve_enable_thinking(
-        request_enable_thinking, getattr(provider, "config", None)
-    )
+# NOTE (2026-08-07): `resolve_enable_thinking` / `effective_thinking_flag`
+# used to live here -- a request-vs-config resolver whose whole job was to
+# keep template application and parser arming from drifting. They drifted
+# anyway, because the two callers stopped passing it the same input: the
+# template side read the CASCADE OUTPUT while the parser side read the RAW
+# request, so the entire sampler layer was missing from one of them.
+#
+# The answer is not a shared function, it is a single OWNER: the provider
+# knows how it built the prompt, so `BaseProvider.effective_thinking(request)`
+# is now the only source and nothing re-derives it. Both helpers were deleted
+# rather than fixed -- with the flag resolved once from the cascade there is
+# no absent case left to default, which is what made their absent-key
+# fallback (an arbitrary True) unanswerable on its own terms.
 
 
 def select_reasoning_parser(

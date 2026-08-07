@@ -98,6 +98,100 @@ class TestCapabilitiesReachBothSurfaces:
 
 
 @pytest.mark.unit
+class TestThinkingFlagAgreesAcrossSurfaces:
+    """PROPERTY, not an example: the flag the PROMPT was built with and the
+    flag the PARSER is armed with must be equal for every request shape.
+
+    They are two readings of one decision. A prompt built thinking-ON with a
+    content-state parser misroutes the entire reasoning trace -- on a
+    ``prefills_thinking`` template (Qwen3.5 pre-fills an unclosed ``<think>``)
+    the model's output starts inside the block, so a content-state parser
+    silently routes all of it to content. That is the v1.34.64 bug.
+
+    One shared resolver was supposed to prevent this, but the two sides
+    stopped feeding it the same INPUT: the prompt side reads the cascade
+    OUTPUT (which includes the sampler layers) while the parser side read the
+    RAW request (which does not). So any sampler that sets enable_thinking --
+    the bundled `thinking` sampler by request, or a model's default_sampler --
+    split them. Stated as a property over the cross-product because the
+    divergence lives in specific COMBINATIONS, and an example-per-case test
+    is exactly what missed it.
+    """
+
+    CONFIGS = [
+        {"model_path": "/fake", "vision": False},
+        {"model_path": "/fake", "vision": False, "enable_thinking": True},
+        {"model_path": "/fake", "vision": False, "enable_thinking": False},
+        {"model_path": "/fake", "vision": False, "default_sampler": "thinking"},
+        {"model_path": "/fake", "vision": False, "default_sampler": "deterministic"},
+    ]
+    REQUESTS = [
+        {},
+        {"enable_thinking": True},
+        {"enable_thinking": False},
+        {"sampler": "thinking"},
+        {"sampler": "deterministic"},
+        {"sampler": "thinking", "enable_thinking": False},
+        {"sampler": "deterministic", "enable_thinking": True},
+    ]
+
+    # Driven through LlamaServerProvider deliberately: `effective_thinking`
+    # lives on BaseProvider, and this provider is pure stdlib (no MLX import),
+    # so the property runs standalone. test_mlx_provider.py pins the MLX
+    # provider's own prompt-side wrapper against the same rule -- it lives in
+    # the file that already needs the batched MLX module mocks.
+    def _provider(self, config):
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        return LlamaServerProvider("m", dict(config, model_path="/fake/model.gguf"), False)
+
+    def test_prompt_and_parser_see_the_same_flag(self):
+        from heylook_llm.config import ChatMessage, ChatRequest
+
+        for cfg in self.CONFIGS:
+            for kw in self.REQUESTS:
+                provider = self._provider({k: v for k, v in cfg.items()
+                                           if k not in ("model_path", "vision")})
+                request = ChatRequest(
+                    messages=[ChatMessage(role="user", content="hi")], **kw
+                )
+                # PROMPT side, read off the real thing this provider sends --
+                # not a re-derivation, which is the whole failure being pinned.
+                prompt_side = provider._build_payload(request)["chat_template_kwargs"]["enable_thinking"]
+                # PARSER side (api.py / messages_api.py arm from this).
+                parser_side = provider.effective_thinking(request)
+                assert prompt_side == parser_side, (
+                    f"config={cfg} request={kw}: prompt built with "
+                    f"thinking={prompt_side} but parser armed with {parser_side}"
+                )
+
+    def test_a_sampler_that_turns_thinking_on_reaches_the_parser(self):
+        """The specific combination that was broken, pinned on its own so a
+        regression names itself instead of surfacing as one row of a matrix."""
+        from heylook_llm.config import ChatMessage, ChatRequest
+
+        msg = [ChatMessage(role="user", content="hi")]
+        assert self._provider({}).effective_thinking(
+            ChatRequest(messages=msg, sampler="thinking")) is True
+        assert self._provider({"default_sampler": "thinking"}).effective_thinking(
+            ChatRequest(messages=msg)) is True
+
+    def test_the_matrix_is_not_all_one_value(self):
+        """Guard against a vacuous property: if every row of the cross-product
+        resolved the same way, the agreement above would hold trivially."""
+        from heylook_llm.config import ChatMessage, ChatRequest
+
+        msg = [ChatMessage(role="user", content="hi")]
+        seen = {
+            self._provider({k: v for k, v in cfg.items()
+                            if k not in ("model_path", "vision")})
+                .effective_thinking(ChatRequest(messages=msg, **kw))
+            for cfg in self.CONFIGS for kw in self.REQUESTS
+        }
+        assert seen == {True, False}, f"matrix only ever produced {seen}"
+
+
+@pytest.mark.unit
 class TestVlmTemplateThinkingForwarding:
     class _FakeTokenizer:
         def __init__(self):

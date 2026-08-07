@@ -107,6 +107,33 @@ class BaseProvider(ABC):
         """
         return getattr(self, "_template_info", None)
 
+    def effective_thinking(self, request: ChatRequest) -> bool:
+        """Whether THIS request's prompt is built with thinking on.
+
+        The provider is the only thing that knows how it built the prompt, so
+        it is the only honest answer to the question the reasoning parser has
+        to ask before it can be armed. Callers must not re-derive it.
+
+        This exists because they did. The parser used to resolve the flag
+        itself from the RAW request while the prompt was templated from the
+        CASCADE OUTPUT -- two readings of one decision, differing by the whole
+        sampler layer. So `sampler="thinking"` (or a model whose
+        `default_sampler` is thinking) built a thinking prompt and armed a
+        content-state parser, and on a ``prefills_thinking`` template
+        (Qwen3.5 pre-fills an unclosed ``<think>``) the model's output starts
+        inside the block -- the entire reasoning trace lands in content. Same
+        failure as v1.34.64, reachable again through a different door.
+
+        Deriving from the shared cascade means the answer cannot disagree with
+        what the provider actually sent: gguf's payload builder and MLX's
+        template application both read the same resolved value. The vendor
+        layer can never contribute here (VENDOR_SAMPLING_KEYS is numeric-only),
+        so the base implementation needs no per-provider override.
+        """
+        from ..samplers import resolve_effective_sampling
+
+        return bool(resolve_effective_sampling(request, self.config).get("enable_thinking"))
+
     @abstractmethod
     def load_model(self):
         raise NotImplementedError

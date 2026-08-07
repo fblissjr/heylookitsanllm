@@ -36,7 +36,6 @@ from heylook_llm.samplers import SamplerNotFound
 from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
-    effective_thinking_flag,
     parse_reasoning,
     select_reasoning_parser,
 )
@@ -930,9 +929,14 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # leaves stale buffer for the next). Instantiation is cheap even for
     # Mistral-sized special-token sets -- the compiled strip pattern is cached
     # and shared; only the buffers are per-instance.
+    # The provider answers "was this prompt built with thinking on" -- never
+    # re-derived here. Reading chat_request.enable_thinking directly skipped
+    # the sampler layer the provider templates from, so a request naming the
+    # `thinking` sampler armed a content-state parser against a thinking
+    # prompt (see BaseProvider.effective_thinking).
     thinking_parser = select_reasoning_parser(
         provider.template_info() if provider else None,
-        thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
+        thinking_enabled=provider.effective_thinking(chat_request) if provider else False,
     )
 
     # Initialize logprobs collector if requested
@@ -1349,7 +1353,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         full_text,
         select_reasoning_parser(
             provider.template_info() if provider else None,
-            thinking_enabled=effective_thinking_flag(chat_request.enable_thinking, provider),
+            thinking_enabled=provider.effective_thinking(chat_request) if provider else False,
         ),
     )
 

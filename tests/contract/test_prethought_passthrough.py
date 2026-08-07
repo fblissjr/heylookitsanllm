@@ -13,20 +13,26 @@ import json
 
 import pytest
 
-from heylook_llm.providers.base import GenerationChunk
+from heylook_llm.providers.base import BaseProvider, GenerationChunk
 
 
-class PreSplitProvider:
+class PreSplitProvider(BaseProvider):
     """Yields chunks the way a llama-server adapter will: reasoning first
     (thinking field, empty text), then content text, then a final counts
-    chunk."""
+    chunk.
+
+    Subclasses BaseProvider so a new provider obligation lands here with its
+    default rather than as a 500 from a route (see conftest.FakeProvider).
+    """
+
+    provider_name = "gguf"
 
     def __init__(self, model_id: str):
-        self.model_id = model_id
+        super().__init__(model_id, {"model_path": "/fake/model.gguf"}, False)
         self.processor = None
 
-    def check_capacity(self):
-        pass
+    def load_model(self):
+        """Nothing to load."""
 
     def template_info(self):
         return None  # gguf providers pre-split; parser stack goes pass-through

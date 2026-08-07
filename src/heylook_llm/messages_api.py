@@ -37,7 +37,6 @@ from heylook_llm.perf_collector import (
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
-    effective_thinking_flag,
     parse_reasoning,
     select_reasoning_parser,
 )
@@ -326,15 +325,21 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         "had_images": had_images,
     }
 
+    # Resolved ONCE, here, where the converted ChatRequest still exists: the
+    # provider is the only honest source for "was this prompt built with
+    # thinking on", and the handlers below only carry the MessageCreateRequest
+    # (whose raw `thinking` field is missing the whole sampler layer).
+    thinking_enabled = provider.effective_thinking(chat_request) if provider else False
+
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled),
             media_type="text/event-stream",
         )
     else:
         return await _non_stream_messages(
             generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
-            provider=provider,
+            provider=provider, thinking_enabled=thinking_enabled,
         )
 
 
@@ -349,6 +354,7 @@ async def _non_stream_messages(
     request_start_time: float,
     perf_ctx: dict | None = None,
     provider=None,
+    thinking_enabled: bool = False,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -382,7 +388,7 @@ async def _non_stream_messages(
         full_text,
         select_reasoning_parser(
             provider.template_info() if provider else None,
-            thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
+            thinking_enabled=thinking_enabled,
         ),
     )
 
@@ -469,6 +475,7 @@ async def _stream_messages(
     provider=None,
     perf_ctx: dict | None = None,
     abort_event=None,
+    thinking_enabled: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -477,7 +484,7 @@ async def _stream_messages(
         message_id, model,
         thinking_parser=select_reasoning_parser(
             provider.template_info() if provider else None,
-            thinking_enabled=effective_thinking_flag(msg_request.thinking, provider),
+            thinking_enabled=thinking_enabled,
         ),
     )
 

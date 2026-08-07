@@ -18,22 +18,28 @@ import json
 
 import pytest
 
-from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
+from heylook_llm.providers.base import (
+    BaseProvider, GenerationFailed, InvalidGenerationRequest,
+)
 from helpers.mlx_mock import FakeChunk
 
 
-class _FailingProvider:
-    """Yields one real chunk, then raises -- the mid-stream failure shape."""
+class _FailingProvider(BaseProvider):
+    """Yields one real chunk, then raises -- the mid-stream failure shape.
+
+    Subclasses BaseProvider so a new provider obligation lands here with its
+    default rather than as a 500 from a route (see conftest.FakeProvider).
+    """
 
     provider_name = "mlx"
 
     def __init__(self, exc):
-        self.model_id = "test-mlx-model"
+        super().__init__("test-mlx-model", {"model_path": "/fake/mlx-model", "vision": False}, False)
         self.processor = None
         self._exc = exc
 
-    def check_capacity(self):
-        pass
+    def load_model(self):
+        """Nothing to load."""
 
     def template_info(self):
         return None

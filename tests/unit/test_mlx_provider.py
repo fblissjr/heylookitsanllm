@@ -363,6 +363,53 @@ class TestResolveAddGenerationPrompt:
 
 
 @pytest.mark.unit
+@pytest.mark.unit
+class TestMLXPromptSideMatchesReportedThinking:
+    """The MLX half of the cross-surface property.
+
+    ``test_thinking_capability.py`` pins it through the gguf provider (which
+    runs without the MLX module mocks); this pins the MLX path specifically,
+    because MLX's prompt side reads the effective request through its own
+    helper AND its cascade call passes a vendor layer that the reported flag's
+    does not. Vendor sampling is numeric-only, so the two agree -- if that
+    ever stops being true, the prompt and the parser diverge again and this
+    is where it surfaces.
+    """
+
+    def test_prompt_helper_matches_effective_thinking(self, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import (
+            MLXProvider, _resolve_enable_thinking,
+        )
+
+        cases = [{}, {"enable_thinking": True}, {"enable_thinking": False},
+                 {"sampler": "thinking"}, {"sampler": "deterministic"}]
+        for config in ({"model_path": "/fake", "vision": False},
+                       {"model_path": "/fake", "vision": False, "enable_thinking": True},
+                       {"model_path": "/fake", "vision": False, "default_sampler": "thinking"}):
+            provider = MLXProvider(model_id="m", config=dict(config), verbose=False)
+            for kw in cases:
+                req = ChatRequest(messages=[ChatMessage(role="user", content="hi")], **kw)
+                prompt_side = _resolve_enable_thinking(provider._apply_model_defaults(req))
+                assert prompt_side == provider.effective_thinking(req), (config, kw)
+
+    def test_sampler_named_thinking_reaches_the_prompt(self, mock_mlx):  # noqa: ARG002
+        # The combination that was silently broken: nothing in the request
+        # says enable_thinking, but the named sampler does.
+        from heylook_llm.providers.mlx_provider import (
+            MLXProvider, _resolve_enable_thinking,
+        )
+
+        provider = MLXProvider(
+            model_id="m", config={"model_path": "/fake", "vision": False}, verbose=False
+        )
+        req = ChatRequest(
+            messages=[ChatMessage(role="user", content="hi")], sampler="thinking"
+        )
+        assert _resolve_enable_thinking(provider._apply_model_defaults(req)) is True
+        assert provider.effective_thinking(req) is True
+
+
+@pytest.mark.unit
 class TestApplyModelDefaultsPresetCascade:
     """Preset layer sits between model sampler fields and request explicit
     fields. These tests pin the resolution order so a refactor doesn't

@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks
 from heylook_llm.config import AppConfig
+from heylook_llm.providers.base import BaseProvider
 
 
 # ---------------------------------------------------------------------------
@@ -38,20 +39,33 @@ TEST_MODELS_DATA = {
 # Fake provider that yields canned chunks
 # ---------------------------------------------------------------------------
 
-class FakeProvider:
-    """Minimal provider mock that yields pre-set FakeChunks."""
+class FakeProvider(BaseProvider):
+    """Minimal provider that yields pre-set FakeChunks.
 
-    provider_name = "mlx"  # BaseProvider contract (telemetry's provider type)
+    SUBCLASSES BaseProvider rather than duck-typing it. It used to hand-roll
+    the surface (provider_name / check_capacity / template_info), which meant
+    every new obligation on the provider contract had to be remembered here
+    too -- and the first one that wasn't (``effective_thinking``, 2026-08-07)
+    turned every route test into a 500 with no hint of why. Inheriting means
+    a contract addition arrives with its default already in place, and only a
+    DELIBERATE difference needs to be written down.
+    """
 
-    def __init__(self, model_id: str):
-        self.model_id = model_id
+    provider_name = "mlx"  # telemetry's provider type
+
+    def __init__(self, model_id: str, config: dict | None = None):
+        # Real config shape, so cascade-derived answers (effective_thinking)
+        # match what a real MLX provider would say for the same request.
+        super().__init__(model_id, config or {"model_path": "/fake/mlx-model", "vision": False}, False)
         self.processor = None
 
-    def check_capacity(self):
-        """No-op admission check (BaseProvider contract); never busy in tests."""
+    def load_model(self):
+        """Nothing to load; the fixtures hand out ready providers."""
 
     def template_info(self):
-        """BaseProvider contract: None -> pass-through reasoning parser."""
+        """None -> pass-through reasoning parser. Stated explicitly because
+        it is a CHOICE (these tests assert unparsed passthrough), not just
+        the inherited default."""
         return None
 
     def create_chat_completion(self, request, abort_event=None):
