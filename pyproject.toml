@@ -54,6 +54,7 @@ dependencies = [
     "PyTurboJPEG>=1.7.5",
     "cachetools>=5.3.2",
     "uvloop>=0.19.0; sys_platform != 'win32'",   # Unix-only; excluded on Windows
+    "tomlkit>=0.15.1",
 ]
 
 # Developer tooling. uv installs this group by DEFAULT on `uv sync`, so a plain
@@ -107,8 +108,8 @@ override-dependencies = ["transformers>=5.13.1"]
 # bump them to the latest commit with `scripts/update_deps.py` (see scripts/README.md),
 # which re-pins the resolved SHA here -- plain uv has no command that does this.
 [tool.uv.sources]
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "cf10f962b7a20e63a6df43dbf0faf06070153d40" }
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "b739dfa4b681951acd4a2d439f343e002e6b3013" }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "254d153fdeb6f150edd4fc5a54f9828638481fa8" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "c088c0bad1b5da84e9731b8c0d84784a657b1d7a" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
