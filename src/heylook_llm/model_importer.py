@@ -318,14 +318,27 @@ class ModelImporter:
     # slowest) is the last resort rather than the default.
     _MMPROJ_PRECISION_PREFERENCE = ("mmproj-f16.gguf", "mmproj-bf16.gguf", "mmproj-f32.gguf")
 
-    def _pick_mmproj(self, path: Path) -> Optional[Path]:
-        """Best mmproj sidecar by precision preference, else any mmproj* file."""
-        candidates = {
+    def _mmprojs_in(self, path: Path) -> dict:
+        return {
             f.name.lower(): f
             for f in self._iter_root_gguf_files(path)
             # anywhere, not prefix-only: google names projectors <model>-mmproj.gguf
             if "mmproj" in f.name.lower()
         }
+
+    def _pick_mmproj(self, path: Path, primary: Optional[Path] = None) -> Optional[Path]:
+        """Best mmproj sidecar by precision preference, else any mmproj* file.
+
+        Searches the repo root one level up for a per-quant VARIANT folder,
+        exactly as :meth:`_pick_draft` does -- a multimodal model shipped as
+        quant subdirectories keeps its projector beside them. Without this the
+        projector is silently dropped, and a silently-dropped projector is
+        worse than a loud failure: the model imports as text-only and its
+        vision (and audio) simply never work.
+        """
+        candidates = self._mmprojs_in(path)
+        if not candidates and primary is not None and self._is_variant_dir(path, primary):
+            candidates = self._mmprojs_in(path.parent)
         if not candidates:
             return None
         for preferred in self._MMPROJ_PRECISION_PREFERENCE:
@@ -426,7 +439,7 @@ class ModelImporter:
             return None
         self.existing_ids.add(model_id)
 
-        mmproj = self._pick_mmproj(path)
+        mmproj = self._pick_mmproj(path, primary)
         draft = self._pick_draft(path, primary)
 
         # Modality DESCRIPTION read from the projector's own header

@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Now covered by `tests/unit/test_ram_report.py` -- the script became a gate
   in v1.49.2 with no tests behind it, which is how this shipped.
+- **mmproj lookup now matches the drafter's.** v1.49.5 taught sidecar pairing
+  to search the repo root for a per-quant variant folder, but only for the
+  drafter. A multimodal model shipped as quant subdirectories keeps its
+  projector beside them too, and a dropped projector is the worse failure of
+  the two: the model imports text-only and vision simply never works, rather
+  than failing loudly.
 
 ## [1.49.6]
 

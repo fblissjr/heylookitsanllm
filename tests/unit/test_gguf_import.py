@@ -236,6 +236,19 @@ class TestCreateGGUFEntry:
         entry = importer._create_gguf_entry(variant)
         assert entry["config"]["draft_model_path"] == str(drafter)
 
+    def test_projector_beside_the_variant_dir_is_still_paired(self, importer, tmp_path):
+        # Same rule as the drafter, and the same silent failure if missed: a
+        # dropped projector imports a multimodal model as text-only, so vision
+        # just never works rather than failing loudly.
+        repo = tmp_path / "unsloth_Some-VLM-GGUF"
+        variant = repo / "UD-Q4_K_XL"
+        variant.mkdir(parents=True)
+        _write_bytes(variant / "Some-VLM-UD-Q4_K_XL-00001-of-00001.gguf", 90_000)
+        mmproj = repo / "mmproj-F16.gguf"
+        _write_bytes(mmproj, 1_000)
+        entry = importer._create_gguf_entry(variant)
+        assert entry["config"]["mmproj_path"] == str(mmproj)
+
     def test_parent_lookup_only_applies_to_variant_dirs(self, importer, tmp_path):
         # A drafter belonging to a DIFFERENT sibling model must not be hoovered
         # up: without the variant-dir gate, every model in a shared parent
