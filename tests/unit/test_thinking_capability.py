@@ -176,6 +176,28 @@ class TestThinkingFlagAgreesAcrossSurfaces:
         assert self._provider({"default_sampler": "thinking"}).effective_thinking(
             ChatRequest(messages=msg)) is True
 
+    def test_a_gguf_entry_can_still_ask_for_thinking_by_default(self):
+        """Claim: `enable_thinking` is settable on a gguf models.toml entry.
+
+        Making unset mean OFF (v1.50.0) is right, but GGUFModelConfig is
+        extra="forbid" and had no such field -- so a gguf model that used to
+        inherit its template's thinking-ON default had NO way to ask for that
+        back, short of `default_sampler = "thinking"`, which drags a
+        presence_penalty change along with it.
+        """
+        from heylook_llm.config import ChatMessage, ChatRequest, GGUFModelConfig
+
+        GGUFModelConfig(model_path="/fake/model.gguf", enable_thinking=True)  # must validate
+
+        msg = [ChatMessage(role="user", content="hi")]
+        on = self._provider({"enable_thinking": True})
+        assert on.effective_thinking(ChatRequest(messages=msg)) is True
+        # ...and an explicit request still wins over the model default.
+        assert on.effective_thinking(
+            ChatRequest(messages=msg, enable_thinking=False)) is False
+        # An unset field stays off, and must not override the materialized value.
+        assert self._provider({}).effective_thinking(ChatRequest(messages=msg)) is False
+
     def test_the_matrix_is_not_all_one_value(self):
         """Guard against a vacuous property: if every row of the cross-product
         resolved the same way, the agreement above would hold trivially."""

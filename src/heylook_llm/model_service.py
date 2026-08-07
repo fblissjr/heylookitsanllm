@@ -449,6 +449,18 @@ class ModelService:
 
             draft_spec_type = gguf_metadata.infer_spec_type(Path(draft_path))
 
+        # Thinking support. Only the gguf entry builder writes this (read from
+        # the GGUF's embedded template); MLXModelConfig actively REJECTS the
+        # key, so reading the config alone reported null for every MLX row --
+        # and the same page then listed `thinking` in that model's
+        # capabilities after import, disagreeing with itself. The MLX answer
+        # comes from the same template probe the capability surface uses.
+        supports_thinking = config.get("supports_thinking")
+        if supports_thinking is None and raw.get("provider") != "gguf" and p.is_dir():
+            from heylook_llm.capabilities import template_supports_thinking
+
+            supports_thinking = template_supports_thinking(model_path)
+
         return ScannedModel(
             id=raw.get("id", ""),
             path=model_path,
@@ -460,7 +472,7 @@ class ModelService:
             tags=raw.get("tags", []),
             description=raw.get("description", ""),
             modalities=modalities,
-            supports_thinking=config.get("supports_thinking"),
+            supports_thinking=supports_thinking,
             draft_model_path=draft_path,
             draft_spec_type=draft_spec_type,
         )

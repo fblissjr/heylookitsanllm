@@ -149,13 +149,20 @@ function clearError(ctx) {
 // model list
 // ---------------------------------------------------------------------------
 
-async function fetchModels(ctx) {
+// `keepStatus` marks an INTERNAL refetch -- the list refresh that trails a
+// load/unload/import. Those must not clear the status area, because the
+// action that triggered them may have just written its own failure there and
+// this refetch succeeding says nothing about that. Without it, every error
+// this page can raise was painted and then wiped ~200ms later: the models
+// page has in fact never shown a load failure. A refetch still reports its
+// OWN failure either way, since that is news.
+async function fetchModels(ctx, { keepStatus = false } = {}) {
   const s = ctx.state;
   try {
     const data = await api.adminListModels({ signal: ctx.signal });
     if (!ctx.alive) return;
     s.models = data.models ?? [];
-    clearError(ctx);
+    if (!keepStatus) clearError(ctx);
   } catch (err) {
     if (!ctx.alive) return;
     showError(ctx, `Could not load models: ${err.message}`);
@@ -168,7 +175,8 @@ function renderModelList(ctx) {
   if (!s.models.length) {
     s.listEl.replaceChildren(
       createEl('div', { class: 'empty-state' }, [
-        'models.toml has no entries yet. Use "Scan HF cache" below to find models to import.',
+        'models.toml has no entries yet. Use "Find models" below to scan a folder '
+        + 'or the HuggingFace cache.',
       ]),
     );
     return;
@@ -250,9 +258,10 @@ async function toggleLoad(ctx, model) {
   }
 
   s.loadingIds.delete(model.id);
-  if (ctx.alive) await fetchModels(ctx);
-  // After fetchModels, never before: it clears the error area on success,
-  // which would swallow a note written earlier in this handler.
+  // keepStatus: this handler already wrote its outcome (cleared, or an
+  // error); the refresh must not overwrite it. The note is flushed after,
+  // because the list re-render is what it annotates.
+  if (ctx.alive) await fetchModels(ctx, { keepStatus: true });
   if (ctx.alive) flushLoadNote(ctx);
 }
 
@@ -402,7 +411,7 @@ async function importModel(ctx, result) {
   clearError(ctx);
   s.scanResults = s.scanResults.filter((r) => r.id !== result.id);
   renderScanResults(ctx);
-  await fetchModels(ctx);
+  await fetchModels(ctx, { keepStatus: true });
 }
 
 // ---------------------------------------------------------------------------

@@ -434,6 +434,54 @@ export async function runPagesSuite({ suite, ctx, config }) {
     return sentBody;
   }
 
+  await suite.check('a failed Load stays on screen after the list refreshes', async () => {
+    // The handler paints its failure, then refetches the model list to update
+    // badges -- and that refetch used to clear the status area on success,
+    // wiping the message ~200ms later. Consequence: this page has never once
+    // shown a load failure. Asserting AFTER the row has re-rendered is the
+    // whole point; asserting immediately passes even with the bug.
+    await page.setRequestInterception(true);
+    const fail = (req) => {
+      if (req.method() === 'POST' && /\/v1\/admin\/models\/.*\/load/.test(req.url())) {
+        req.respond({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Failed to load model: synthetic e2e failure' }),
+        });
+      } else {
+        req.continue();
+      }
+    };
+    page.on('request', fail);
+    try {
+      const row = await findModelRow(page, config.model);
+      const btn = await row.$('.model-row__actions button');
+      const wasLoaded = (await btn.evaluate((e) => e.textContent.trim())) === 'Unload';
+      if (wasLoaded) {
+        // Unload first (real call), so the next click is a Load we can fail.
+        await btn.click();
+        await waitFor(async () => (await modelRowState(page, config.model))?.badge === 'Idle',
+          { timeout: 30000, message: 'model never became Idle' });
+      }
+      await (await (await findModelRow(page, config.model)).$('.model-row__actions button')).click();
+      await waitFor(async () => !!(await textOf(page, '.models__status .error-note')),
+        { timeout: 15000, message: 'load failure raised no error note at all' });
+      // Let the trailing refetch land, then re-assert.
+      await sleep(1000);
+      const err = await textOf(page, '.models__status .error-note');
+      assert(err && /Load failed/.test(err),
+        `the load failure was wiped by the list refresh (status now ${JSON.stringify(err)})`);
+    } finally {
+      page.off('request', fail);
+      await page.setRequestInterception(false);
+    }
+
+    // Restore: really load it again for the checks that follow.
+    await (await (await findModelRow(page, config.model)).$('.model-row__actions button')).click();
+    await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
+      { timeout: 120000, message: 'model never reloaded after the failure check' });
+  });
+
   await suite.check('scan reaches local folders, not just the HF cache', async () => {
     // The whole GGUF import path targets local model folders. The page used
     // to hardcode {scan_hf_cache: true} with no paths, so nothing on disk

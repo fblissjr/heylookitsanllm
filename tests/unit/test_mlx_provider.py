@@ -363,7 +363,6 @@ class TestResolveAddGenerationPrompt:
 
 
 @pytest.mark.unit
-@pytest.mark.unit
 class TestMLXPromptSideMatchesReportedThinking:
     """The MLX half of the cross-surface property.
 

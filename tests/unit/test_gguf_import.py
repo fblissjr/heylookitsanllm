@@ -397,6 +397,40 @@ class TestGGUFScanResultReporting:
         assert result.draft_model_path is None
         assert result.draft_spec_type is None
 
+    def test_mlx_scan_result_reports_thinking_from_its_template(self, tmp_path):
+        """Claim: `supports_thinking` is answered for MLX rows too.
+
+        Only the gguf entry builder writes the key (MLXModelConfig actively
+        REJECTS it), so reading the config alone reported null for every MLX
+        model -- while the same page listed `thinking` in that model's
+        capabilities after import, disagreeing with itself one section apart.
+        The MLX answer comes from the same template probe the capability
+        surface uses.
+        """
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        d = root / "thinky-mlx"
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({"model_type": "qwen3"}))
+        (d / "chat_template.jinja").write_text(
+            "{% if enable_thinking %}<think>{% endif %}"
+            "{% for m in messages %}{{ m['content'] }}{% endfor %}"
+        )
+        _write_bytes(d / "model.safetensors", 5_000)
+        assert _scan_one(tmp_path, root).supports_thinking is True
+
+    def test_mlx_scan_result_without_a_thinking_template_says_so(self, tmp_path):
+        root = tmp_path / "scan-root"
+        root.mkdir()
+        d = root / "plain-mlx"
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({"model_type": "llama"}))
+        (d / "chat_template.jinja").write_text(
+            "{% for m in messages %}{{ m['content'] }}{% endfor %}"
+        )
+        _write_bytes(d / "model.safetensors", 5_000)
+        assert _scan_one(tmp_path, root).supports_thinking is False
+
     def test_mlx_scan_result_still_reports_its_modalities(self, tmp_path):
         # The field is shared, not gguf-only: an MLX dir's derived modalities
         # must ride along too, so the two providers render the same way.

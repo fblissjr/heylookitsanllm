@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.2]
+
+Post-review fixes (`/code-review high` on v1.50.0-.1). All six findings taken.
+
+### Fixed
+
+- **The Models page has never once shown a load failure.** Every error it can
+  raise was painted and then wiped ~200ms later: the handler writes its
+  failure, then refetches the model list to update badges, and that refetch
+  cleared the status area on success. The new `warm_error` branch inherited
+  the same fate, so a model could sit there marked "Loaded" with its warm-up
+  generation silently failed. Internal refetches now pass `keepStatus` --
+  a refresh succeeding says nothing about the action that triggered it. Its
+  OWN failure still reports, since that is news.
+
+  Guarded by an E2E check that asserts the message survives *after* the row
+  re-renders (asserting immediately passes even with the bug), and
+  mutation-verified: reverting the one-line fix turns it red.
+- **Every MLX scan row reported `supports_thinking: null`.** Only the gguf
+  entry builder writes that key -- `MLXModelConfig` actively rejects it -- so
+  the field's own description ("read from the model's own chat template") was
+  false for half the results, and the page disagreed with itself: a Qwen3 MLX
+  dir showed no thinking before import and `thinking` in its capabilities
+  after. MLX rows now answer from the same template probe the capability
+  surface uses.
+- **A gguf entry could no longer ask for thinking on by default.** Making
+  unset mean OFF (v1.50.0) is right, but `GGUFModelConfig` is `extra="forbid"`
+  and had no `enable_thinking` field, so a model that previously inherited its
+  template's thinking-ON default had no way to get it back short of
+  `default_sampler = "thinking"` -- which drags `presence_penalty = 1.5` along
+  with it. The field exists now (`None` = unset = off), distinct from
+  `supports_thinking`, which only describes capability.
+- Models page empty state pointed at a `"Scan HF cache"` button that this
+  release renamed, and omitted the folder scanning it exists to expose.
+- `docs/architecture/mlx_provider.md` still described `_resolve_enable_thinking`
+  as a request-vs-config resolution -- exactly what v1.50.1 deleted. It now
+  records the single-owner rule and why the old shape drifted.
+- Duplicate `@pytest.mark.unit` on `TestMLXPromptSideMatchesReportedThinking`.
+
 ## [1.50.1]
 
 ### Fixed

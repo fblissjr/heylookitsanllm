@@ -386,6 +386,15 @@ class GGUFModelConfig(BaseModel):
     # None = no template to judge, e.g. an MTP/drafter head.
     supports_thinking: Optional[bool] = None
     modalities: Optional[List[str]] = None
+    # Model-level thinking DEFAULT (the MLX config's counterpart), distinct
+    # from `supports_thinking` above, which only describes CAPABILITY.
+    # Required since unset started meaning OFF everywhere (v1.50.0): before
+    # that, a gguf model inherited its template's own default -- thinking-ON
+    # for gemma-4/Qwen3.6/DeepSeek-V4 -- and with extra="forbid" and no field
+    # here there was then NO way to ask for that back. The only remaining
+    # route was `default_sampler = "thinking"`, which drags a presence_penalty
+    # change in with it. None = unset = off.
+    enable_thinking: Optional[bool] = None
 
 
 # Single source of truth for which providers exist and which config class

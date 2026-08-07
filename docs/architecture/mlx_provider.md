@@ -66,8 +66,20 @@ text-only-request leg (`vlm_apply_chat_template`, above) and the
 vision-request leg (`VLMVisionStrategy` -> `prepare_vlm_inputs_parallel` ->
 `vlm_inputs.py`'s own `apply_chat_template` call). Both forward it only as
 a template kwarg (`{"enable_thinking": ...}` or `{}` if `None`) -- the
-resolved value itself comes from `_resolve_enable_thinking()` (request
-field, else the model's `enable_thinking` config default).
+resolved value itself is read off the EFFECTIVE REQUEST
+(`_resolve_enable_thinking()`, now a plain read: the shared cascade
+materializes `enable_thinking` unconditionally, so it already carries every
+layer -- request field, named sampler, model `default_sampler`, model
+config).
+
+That is deliberate and load-bearing (2026-08-07). It used to be a
+request-vs-config resolution shared with the reasoning parser, which drifted
+because the two sides fed it different inputs: the prompt read the cascade
+output, the parser read the RAW request, and the sampler layer sat between
+them. `sampler="thinking"` therefore built a thinking prompt and armed a
+content-state parser -- on a `prefills_thinking` template the whole reasoning
+trace lands in `content`. The flag now has ONE owner,
+`BaseProvider.effective_thinking(request)`, and nothing re-derives it.
 
 Everything else -- message prep, cache config, prompt cache lookup, generation loop, acceptance tracking, KV snapshot storage -- lives in `generation_core`, shared across both paths.
 
