@@ -10,9 +10,19 @@ Two jobs, because on this hardware they are the same question:
    against every ceiling that can refuse it.
 
 The Metal ceiling is the one that surprises people. On a 192 GB M2 Ultra the
-GPU's ``max_recommended_working_set_size`` is ~161 GB, not 192 -- so a 155 GB
-model fits with ~6 GB to spare for KV cache and compute buffers, and adding a
-10 GB drafter puts you OVER a limit that has nothing to do with free RAM.
+GPU's ``max_recommended_working_set_size`` is ~161 GB, not 192 -- a limit that
+has nothing to do with free RAM, and that ``iogpu.wired_limit_mb`` (default 0)
+can raise. What it MEANS depends on the engine, so this script reports it per
+engine rather than as one verdict:
+
+- **MLX** treats it as hard. server.py sets ``mx.set_wired_limit`` to exactly
+  the recommendation, and MLX refuses any larger value outright.
+- **llama.cpp** wires through the same ``MTLResidencySet`` (on by default;
+  ``GGML_METAL_NO_RESIDENCY=1`` disables, ``GGML_METAL_RESIDENCY_KEEP_ALIVE_S``
+  defaults to 180 s) but checks the recommendation only as a debug-build
+  warning. Past the line the model still loads -- Metal just stops guaranteeing
+  residency and you degrade into paging. A performance warning, not a refusal.
+
 ``max_buffer_length`` (~121 GB) is a separate per-allocation cap; sharded
 GGUFs stay under it naturally, one giant single-file model may not.
 
@@ -172,6 +182,17 @@ def _shard_set_bytes(f: Path) -> int:
     )
 
 
+def is_mlx_config(config: dict) -> bool:
+    """True when this entry loads in-process through MLX.
+
+    Decides whether the Metal working set is a hard ceiling or advisory --
+    a `.gguf` model_path means a llama-server subprocess, anything else
+    (a weights DIR) means MLX. Cheap and layout-based on purpose: no
+    models.toml `provider` field is needed, so `--path` works too.
+    """
+    return not str(config.get("model_path") or "").lower().endswith(".gguf")
+
+
 def size_config_gb(config: dict) -> tuple[float, list[str]]:
     """Resident weight bytes for a models.toml ``config`` block, plus notes.
 
@@ -245,8 +266,22 @@ def config_from_path(path: Path) -> dict:
 # Report
 # ---------------------------------------------------------------------------
 
-def check_fit(size_gb: float, headroom_gb: float) -> tuple[bool, list[str]]:
-    """(fits, one line per ceiling). Fails on ANY ceiling, not just RAM."""
+def check_fit(size_gb: float, headroom_gb: float, hard_working_set: bool = True) -> tuple[bool, list[str]]:
+    """(fits, one line per ceiling).
+
+    ``hard_working_set`` distinguishes the two engines, which treat the Metal
+    recommendation differently and must not be reported the same way:
+
+    - **MLX (True)**: server.py calls ``mx.set_wired_limit`` at exactly the
+      recommendation, and MLX REFUSES anything above it
+      ("Setting a wired limit larger than the maximum working set size is not
+      allowed"). Over the line is a hard stop.
+    - **llama.cpp (False)**: it wires through the same ``MTLResidencySet``,
+      but ``recommendedMaxWorkingSetSize`` is only a debug-build warning --
+      never a refusal. Over the line the model still loads; Metal just stops
+      guaranteeing residency and you degrade into paging. That is a
+      performance warning, not a refusal, and calling it FAIL would be wrong.
+    """
     need = size_gb + headroom_gb
     avail = available_gb()
     lines = []
@@ -262,10 +297,12 @@ def check_fit(size_gb: float, headroom_gb: float) -> tuple[bool, list[str]]:
     metal = metal_ceilings()
     if metal:
         ws_ok = need <= metal["working_set_gb"]
-        ok &= ws_ok
+        ok &= ws_ok or not hard_working_set
+        verdict = ("PASS" if ws_ok else "FAIL") if hard_working_set else ("PASS" if ws_ok else "WARN")
+        engine = "hard limit, MLX" if hard_working_set else "advisory, llama.cpp pages past it"
         lines.append(
-            f"  {'PASS' if ws_ok else 'FAIL'}  Metal working set  "
-            f"need {need:6.1f} GB  have {metal['working_set_gb']:6.1f} GB"
+            f"  {verdict}  Metal working set  "
+            f"need {need:6.1f} GB  have {metal['working_set_gb']:6.1f} GB   ({engine})"
         )
         if not ws_ok and metal.get("sysctl_wired_mb") == 0:
             # Only actionable while the sysctl is at its default; if someone
@@ -322,7 +359,7 @@ def main() -> int:
             print(f"{available_gb():.0f} GB available")
             return 0
         size_gb, _ = size_config_gb(config)
-        fits, _ = check_fit(size_gb, args.headroom)
+        fits, _ = check_fit(size_gb, args.headroom, is_mlx_config(config))
         verdict = "OK" if fits else "FAILED"
         print(
             f"RAM pre-flight {verdict}: {label} ~{size_gb:.0f} GB "
@@ -359,7 +396,7 @@ def main() -> int:
         print(f"  weights              {size_gb:6.1f} GB")
         for note in notes:
             print(f"    {note}")
-        fits, lines = check_fit(size_gb, args.headroom)
+        fits, lines = check_fit(size_gb, args.headroom, is_mlx_config(config))
         print(f"  headroom requested   {args.headroom:6.1f} GB")
         for line in lines:
             print(line)
