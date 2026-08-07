@@ -83,6 +83,16 @@ def main() -> None:
     ap.add_argument("--prompt", default="Write a 150-word story about a lighthouse keeper.")
     ap.add_argument("--max-tokens", type=int, default=400)
     ap.add_argument("--no-gen", action="store_true")
+    # Pinned by DEFAULT, because this script's whole job is comparing runs.
+    # Unseeded, each run generates different text and draft acceptance tracks
+    # content: two nominally-identical DSpark runs came out 11.7 acceptance
+    # points apart, wider than the Q8_0-vs-BF16 effect being measured. Noise
+    # that large silently turns a null result into an apparent one.
+    # `--seed -1` restores llama-server's random behaviour when you actually
+    # want sampling variety rather than a comparison.
+    ap.add_argument("--seed", type=int, default=1234,
+                    help="sampling seed; pinned by default so runs are comparable "
+                         "(-1 = random, for variance checks)")
     args = ap.parse_args()
 
     cfg = build_config(args.target, args)
@@ -112,7 +122,7 @@ def main() -> None:
                 t = time.time()
                 chunks = list(p.create_chat_completion(ChatRequest.model_validate({
                     "messages": [{"role": "user", "content": args.prompt}],
-                    "max_tokens": args.max_tokens, **extra})))
+                    "max_tokens": args.max_tokens, "seed": args.seed, **extra})))
                 final = chunks[-1]
                 thinking = sum(len(c.thinking or "") for c in chunks)
                 print(f"[probe] {label}: {time.time()-t:.1f}s | gen={final.generation_tokens} tok "

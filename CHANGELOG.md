@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.8]
+
+### Added
+
+- **`gguf_probe --seed`, pinned by default (1234).** The script exists to
+  compare runs, and unseeded it could not: each run generates different text
+  and draft acceptance tracks content. Two nominally-identical DSpark runs
+  came out 11.7 acceptance points apart -- wider than the Q8_0-vs-BF16 effect
+  being measured, which is noise large enough to turn a null result into an
+  apparent one. `--seed -1` restores random sampling for variance checks.
+- **`gguf_probe --draft`** to override the paired drafter, for A/B-ing two
+  builds of the same speculative module (DeepSeek-V4 ships its dspark module
+  as both Q8_0 and BF16, with the BF16 in a `dspark/` subdir that root-level
+  sidecar pairing cannot see).
+
 ## [1.49.7]
 
 ### Fixed
