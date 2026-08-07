@@ -7,8 +7,10 @@ and the import_models CLI handler. Profiles, smart defaults, and HF cache paths
 are defined in model_service.py (single source of truth).
 """
 
+import glob
 import logging
 import os
+import re
 import tomli_w
 from pathlib import Path
 from typing import Any, Optional
@@ -230,11 +232,12 @@ class ModelImporter:
     def _is_gguf_model(self, path: Path) -> bool:
         """Dir containing >=1 PRIMARY .gguf file (root level only).
 
-        "Primary" excludes mmproj-* sidecars and mtp-* drafter sidecars --
-        those are paired onto a primary entry by ``_create_gguf_entry``,
-        never their own entries. ``imatrix_*.gguf_file`` calibration data
-        has a DIFFERENT extension (``.gguf_file``, not ``.gguf``) and is
-        excluded by the suffix check itself.
+        "Primary" excludes mmproj-* sidecars and drafter sidecars (see
+        ``_DRAFTER_PREFIXES``) -- those are paired onto a primary entry by
+        ``_create_gguf_entry``, never their own entries.
+        ``imatrix_*.gguf_file`` calibration data has a DIFFERENT extension
+        (``.gguf_file``, not ``.gguf``) and is excluded by the suffix check
+        itself.
         """
         return self._pick_primary_gguf(path) is not None
 
@@ -249,6 +252,52 @@ class ModelImporter:
         except OSError:
             return
 
+    # Drafter-sidecar prefixes, mirroring llama.cpp's own sibling resolution
+    # (common/download.cpp find_best_sibling): one prefix per speculative
+    # family. A file carrying any of these is a drafter, never the primary --
+    # and `mtp-` alone was leaving DSpark/DFlash/EAGLE3 drafters unpaired
+    # (DeepSeek-V4-Flash ships `dspark-*.gguf`).
+    _DRAFTER_PREFIXES = ("mtp-", "dspark-", "dflash-", "eagle3-")
+
+    # llama.cpp shard naming: `<prefix>-00001-of-00005.gguf`. Only the FIRST
+    # shard is loadable -- llama_model_loader hard-errors on any other
+    # ("model must be loaded with the first split"), because it derives its
+    # siblings from the given file's own split index.
+    _SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
+
+    @classmethod
+    def _shard_index(cls, f: Path) -> Optional[int]:
+        """1-based shard index if ``f`` is part of a split set, else None."""
+        m = cls._SHARD_RE.search(f.name)
+        return int(m.group(1)) if m else None
+
+    @classmethod
+    def _is_loadable_shard(cls, f: Path) -> bool:
+        """True unless ``f`` is a non-first shard of a split set."""
+        idx = cls._shard_index(f)
+        return idx is None or idx == 1
+
+    @classmethod
+    def _is_drafter(cls, f: Path) -> bool:
+        return f.name.lower().startswith(cls._DRAFTER_PREFIXES)
+
+    @classmethod
+    def _servable_size(cls, f: Path) -> int:
+        """Bytes this entry would actually serve.
+
+        For a first shard that is the WHOLE split set, not the 5 MB index
+        shard -- otherwise a sharded 155 GB model loses `max()` to any
+        standalone .gguf sitting beside it.
+        """
+        m = cls._SHARD_RE.search(f.name)
+        if m is None:
+            return f.stat().st_size
+        prefix = f.name[: m.start()]
+        return sum(
+            s.stat().st_size
+            for s in f.parent.glob(f"{glob.escape(prefix)}-*-of-*.gguf")
+        )
+
     def _pick_primary_gguf(self, path: Path) -> Optional[Path]:
         """The primary servable .gguf weight file, largest wins if several."""
         candidates = [
@@ -256,11 +305,12 @@ class ModelImporter:
             # "mmproj" appears as a prefix (unsloth: mmproj-F16.gguf) OR a
             # suffix (google: gemma-4-E4B-it-mmproj.gguf) -- match anywhere.
             if "mmproj" not in f.name.lower()
-            and not f.name.lower().startswith("mtp-")
+            and not self._is_drafter(f)
+            and self._is_loadable_shard(f)
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda f: f.stat().st_size)
+        return max(candidates, key=self._servable_size)
 
     # Precision preference for the multimodal projector sidecar: F16 is the
     # sweet spot for vision-tower activations, BF16 next, F32 (largest/
@@ -286,20 +336,21 @@ class ModelImporter:
         return sorted(candidates.values(), key=lambda f: f.name)[0]
 
     def _pick_draft(self, path: Path) -> Optional[Path]:
-        """Root-level mtp-*.gguf drafter sidecar, if any.
+        """Root-level drafter sidecar (``_DRAFTER_PREFIXES``), if any.
 
         An MTP/ subdirectory may hold additional precision variants of the
         same drafter -- those are alternates, never used here. A servable
         pairing needs exactly one drafter path, and only the root-level file
-        is that path.
+        is that path. A sharded drafter is picked at its first shard, same
+        rule as the primary.
         """
         candidates = [
             f for f in self._iter_root_gguf_files(path)
-            if f.name.lower().startswith("mtp-")
+            if self._is_drafter(f) and self._is_loadable_shard(f)
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda f: f.stat().st_size)
+        return max(candidates, key=self._servable_size)
 
     def _create_gguf_entry(self, path: Path) -> Optional[dict]:
         """Create a models.toml entry for a GGUF model (served by llama-server)."""

@@ -177,6 +177,45 @@ class TestCreateGGUFEntry:
         entry = importer._create_gguf_entry(d)
         assert "draft_model_path" not in entry["config"]
 
+    @pytest.mark.parametrize("prefix", ["mtp-", "dspark-", "dflash-", "eagle3-"])
+    def test_every_drafter_family_is_paired(self, importer, tmp_path, prefix):
+        # llama.cpp resolves drafter siblings by one prefix per speculative
+        # family (common/download.cpp). Knowing only "mtp-" left DeepSeek-V4's
+        # `dspark-*.gguf` unpaired -- and, being neither mmproj nor mtp, it
+        # also polluted the PRIMARY candidate set.
+        d = _make_gguf_dir(tmp_path, name=f"m-{prefix.strip('-')}")
+        drafter = d / f"{prefix}drafter.gguf"
+        _write_bytes(drafter, 2_000)
+        entry = importer._create_gguf_entry(d)
+        assert entry["config"]["draft_model_path"] == str(drafter)
+        assert entry["config"]["model_path"] == str(d / f"{d.name}.gguf")
+
+    def test_sharded_model_loads_at_first_shard(self, importer, tmp_path):
+        # llama_model_loader hard-errors ("model must be loaded with the first
+        # split") on any shard but 00001, because it derives its siblings from
+        # the given file's own split index. Picking the LARGEST shard -- which
+        # a plain size-max does, since shard 1 is a tiny index shard -- makes
+        # every multi-shard GGUF unloadable.
+        d = tmp_path / "sharded"
+        d.mkdir()
+        _write_bytes(d / "sharded-00001-of-00003.gguf", 100)
+        _write_bytes(d / "sharded-00002-of-00003.gguf", 90_000)
+        _write_bytes(d / "sharded-00003-of-00003.gguf", 80_000)
+        entry = importer._create_gguf_entry(d)
+        assert entry["config"]["model_path"] == str(d / "sharded-00001-of-00003.gguf")
+
+    def test_sharded_set_outweighs_a_standalone_sibling(self, importer, tmp_path):
+        # The first shard is a few MB; the SET is the servable weight. Sizing
+        # the candidate by its own bytes would hand the entry to any standalone
+        # .gguf sitting beside a much larger sharded model.
+        d = tmp_path / "mixed"
+        d.mkdir()
+        _write_bytes(d / "big-00001-of-00002.gguf", 100)
+        _write_bytes(d / "big-00002-of-00002.gguf", 90_000)
+        _write_bytes(d / "small-standalone.gguf", 50_000)
+        entry = importer._create_gguf_entry(d)
+        assert entry["config"]["model_path"] == str(d / "big-00001-of-00002.gguf")
+
     def test_mmproj_preference_f16_over_bf16_and_f32(self, importer, tmp_path):
         d = _make_gguf_dir(
             tmp_path, mmproj=["mmproj-BF16.gguf", "mmproj-F16.gguf", "mmproj-F32.gguf"]

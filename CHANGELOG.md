@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.2]
+
+### Fixed
+
+- **GGUF import: multi-shard models picked an unloadable shard.**
+  `_pick_primary_gguf` took the largest `.gguf` in the directory, which for
+  a split model is never shard 00001 (that one is a small index shard).
+  `llama_model_loader` hard-errors on any other shard -- *"model must be
+  loaded with the first split"* -- because it derives its siblings from the
+  given file's own split index. Sharded entries are now pinned to shard
+  00001, and a candidate's weight for the largest-wins rule is the size of
+  its whole shard SET, so a 155 GB split model no longer loses to a
+  standalone `.gguf` beside it. Surfaced by importing
+  DeepSeek-V4-Flash-0731 (5 shards), which resolved to shard 00004.
+- **GGUF import: only `mtp-` drafter sidecars were paired.** llama.cpp
+  resolves drafter siblings by one prefix per speculative family
+  (`common/download.cpp`): `mtp-`, `dspark-`, `dflash-`, `eagle3-`. Knowing
+  only `mtp-` left the other three unpaired *and* let them compete as
+  primary-weight candidates. All four are now recognised as drafters.
+  `spec_type` stays deliberately unset -- pairing the drafter path is not
+  the same decision as turning speculative decoding on.
+
 ## [1.49.1]
 
 ### Changed
