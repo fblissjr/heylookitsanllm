@@ -40,6 +40,13 @@ def build_config(target: Path, args) -> dict:
         cfg = {k: v for k, v in entry["config"].items() if v is not None}
     else:
         cfg = {"model_path": str(target)}
+    if args.draft:
+        # Explicit override of the paired drafter. Needed to A/B two builds of
+        # the SAME speculative module (e.g. DeepSeek-V4's dspark Q8_0 vs BF16,
+        # which HF ships in a `dspark/` subdir the root-level picker cannot
+        # see) -- drafter fidelity drives acceptance rate, so comparing them
+        # is a real measurement, not a config convenience.
+        cfg["draft_model_path"] = str(args.draft)
     if args.spec_type:
         cfg["spec_type"] = args.spec_type
     if args.spec_draft_n_max:
@@ -68,6 +75,8 @@ def apply_template(base: str, kwargs: dict | None) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("target", type=Path)
+    ap.add_argument("--draft", type=Path,
+                    help="drafter .gguf, overriding whatever sidecar pairing found")
     ap.add_argument("--spec-type")
     ap.add_argument("--spec-draft-n-max", type=int)
     ap.add_argument("--ctx", type=int)
