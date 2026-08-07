@@ -15,6 +15,7 @@ import tomli_w
 from pathlib import Path
 from typing import Any, Optional
 
+from heylook_llm import gguf_metadata
 from heylook_llm.model_service import get_hf_cache_paths
 from heylook_llm.modality_detect import (
     detect_modalities,
@@ -365,15 +366,13 @@ class ModelImporter:
 
         mmproj = self._pick_mmproj(path)
         draft = self._pick_draft(path)
-        is_vision = mmproj is not None
 
-        # Modality DESCRIPTION mirrors detect_modalities' intent, but GGUF
-        # dirs carry no config.json to read -- the only cheap signal is the
-        # mmproj sidecar. Audio is deliberately NOT auto-detected: it would
-        # need reading the GGUF's own metadata (out of scope here).
-        modalities = ["text"]
-        if is_vision:
-            modalities.append("vision")
+        # Modality DESCRIPTION read from the projector's own header
+        # (clip.has_vision_encoder / clip.has_audio_encoder) rather than
+        # inferred from "an mmproj exists". The two disagree on every omni
+        # projector: gemma-4's mmproj sets BOTH flags, so presence-only
+        # detection silently dropped its audio tower.
+        modalities = gguf_metadata.detect_modalities(primary, mmproj)
 
         config: dict[str, Any] = {
             "model_path": str(primary),
@@ -388,6 +387,23 @@ class ModelImporter:
         # per-model (draft-accept rate varies a lot), so import only pairs
         # the drafter PATH automatically -- turning spec decode ON via
         # spec_type stays an explicit owner choice, never inferred here.
+        #
+        # But WHICH spec type a drafter requires is a fact about the file, not
+        # a choice, and guessing it wrong is a load failure. Report it so the
+        # decision is "do I want this on", not "what is this drafter called".
+        if draft is not None:
+            spec_type = gguf_metadata.infer_spec_type(draft)
+            if spec_type:
+                logging.info(
+                    f"[import] {model_id}: paired drafter {draft.name} -- "
+                    f"set spec_type = \"{spec_type}\" to enable speculative decoding"
+                )
+            else:
+                logging.warning(
+                    f"[import] {model_id}: drafter {draft.name} has no recognised "
+                    f"spec-type prefix (mtp-/dspark-/dflash-/eagle3-); spec_type "
+                    f"must be set by hand"
+                )
 
         if self.sampler_name:
             config["default_sampler"] = self.sampler_name

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.4]
+
+### Added
+
+- **`gguf_metadata.py` -- read the GGUF header instead of guessing from the
+  filename.** A stdlib-only KV-header reader (no new dependency; the gguf
+  provider's no-extra-deps property is deliberate). It walks only the header
+  and stops as soon as the requested keys are found, skipping values it was
+  not asked for -- so a multi-MB tokenizer vocab costs one seek, not a list
+  of a hundred thousand Python strings. Verified key-for-key against
+  llama.cpp's own `gguf-py` reader on every GGUF in the local modelzoo.
+
+### Fixed
+
+- **GGUF import: omni projectors lost their audio tower.** Modalities were
+  inferred from "an mmproj sidecar exists" -> vision, with a standing note in
+  `model_importer` that audio "would need reading the GGUF's own metadata
+  (out of scope here)". The projector declares the two SEPARATELY
+  (`clip.has_vision_encoder` / `clip.has_audio_encoder`), and gemma-4's sets
+  both -- so every gemma-4 GGUF imported as vision-only. Detection now reads
+  those flags. This also makes `api.py`'s `audio` capability branch reachable
+  for auto-imported models; it was correct code that nothing could trigger.
+  An unreadable projector still falls back to the old presence heuristic
+  rather than stripping vision from a model that plainly has one.
+- **GGUF import now reports which `--spec-type` a paired drafter needs.**
+  `spec_type` stays deliberately unset (whether speculative decoding pays off
+  is a per-model measurement), but WHICH type a drafter requires is a fact
+  about the file, and guessing it wrong is a load failure. Derived from the
+  prefix llama.cpp itself resolves siblings by -- notably `dspark-` vs
+  `dflash-`, which share `general.architecture == "dflash"` and are
+  distinguishable only by name.
+
 ## [1.49.3]
 
 ### Added
