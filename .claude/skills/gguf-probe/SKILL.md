@@ -1,6 +1,6 @@
 ---
 name: gguf-probe
-description: Direct llama-server diagnostics for one GGUF model (no FastAPI/DB/router) -- /props modalities, thinking-template on/off diff, one-shot generation with tps + draft acceptance, clean teardown. Use for provider debugging, new-GGUF triage, and MTP A/B measurements (e.g. the open gemma-4 12B TODO).
+description: Direct llama-server diagnostics for one GGUF model (no FastAPI/DB/router) -- /props modalities, thinking-template on/off diff, one-shot generation with tps + draft acceptance, LoRA adapter attach + off/on A/B, clean teardown. Use for provider debugging, new-GGUF triage, MTP A/B measurements (e.g. the open gemma-4 12B TODO), and checking whether a LoRA applies and what it costs.
 ---
 
 # gguf-probe
@@ -21,6 +21,9 @@ uv run python scripts/gguf_probe.py modelzoo/gguf/unsloth_gemma-4-E4B-it-qat-GGU
 uv run python scripts/gguf_probe.py modelzoo/gguf/unsloth_gemma-4-12B-it-qat-GGUF --no-gen
 uv run python scripts/gguf_probe.py modelzoo/gguf/unsloth_gemma-4-12B-it-qat-GGUF \
   --spec-type draft-mtp --spec-draft-n-max 4
+
+# LoRA: attach an adapter, then A/B it off vs on in ONE process/model load.
+uv run python scripts/gguf_probe.py <base-dir> --lora <adapter>.gguf --lora-ab --temp 0
 ```
 
 What it reports (and why each matters):
@@ -33,6 +36,15 @@ What it reports (and why each matters):
   plus the subprocess log's `draft acceptance = ...` lines (the ONE fragile
   grep if llama.cpp ever rewords that line -- everything else rides stable
   surfaces).
+- with `--lora-ab`: tok/s, draft-acceptance and output deltas between adapter
+  off and on, toggled over `POST /lora-adapters` so both runs share one model
+  load. IDENTICAL output proves the adapter did nothing; differing output is
+  only consistent with it working, so pass `--temp 0` before trusting either
+  reading. An acceptance collapse means the draft path is UNADAPTED (an
+  embedded MTP head is not covered by the adapter) -- worth knowing before
+  pairing a LoRA with spec decode. `--lora` rides `extra_args`, the same raw
+  passthrough a models.toml gguf entry uses, so a working flag transfers
+  verbatim to a server config.
 
 Non-negotiables: one model at a time (each run spawns/kills its own
 subprocess; RAM per the model's size); never point it at a long-running
