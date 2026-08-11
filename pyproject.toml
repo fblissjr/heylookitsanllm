@@ -22,9 +22,10 @@ classifiers = [
 
 # Everything the server + CLI need to fully work. `uv sync` (no flags) installs
 # this plus the `dev` group below -- there are deliberately NO optional extras
-# to remember. The MLX stack is git-sourced (see [tool.uv.sources]) and
-# darwin-only; the `sys_platform` markers keep a base install resolvable on
-# Linux/Windows even though inference itself is Apple-Silicon-only.
+# to remember. The MLX stack is darwin-only; the `sys_platform` markers keep a
+# base install resolvable on Linux/Windows even though inference itself is
+# Apple-Silicon-only. Where each upstream comes from (published release vs
+# tracked git HEAD) is [tool.heylook.deps] below, not here.
 dependencies = [
     # MLX / model stack (git-sourced; darwin-only)
     "mlx>=0.22.0; sys_platform == 'darwin'",
@@ -109,8 +110,6 @@ override-dependencies = ["transformers>=5.13.1"]
 # it always carries an explicit `rev` so the lock is reproducible. Plain uv has
 # no command that pins HEAD into pyproject, which is why the script exists.
 [tool.uv.sources]
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "254d153fdeb6f150edd4fc5a54f9828638481fa8" }
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "321514d633342f079f97fc7b80aa787249217116" }
 
 # ── Upstream channels ───────────────────────────────────────────────────────
 # Where the fast-moving upstreams come from. `scripts/update_deps.py` reads
@@ -131,17 +130,20 @@ mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "321514d633342f079
 # tracking an unreviewed upstream HEAD because a config file they never read
 # said so. Opting into `latest` is a thing you do knowingly, by name.
 channel = "stable"
-# Overrides are a standing, informed choice for THIS checkout -- they say
-# "resolve these two from git HEAD when I ask", not "update automatically".
-# Nothing moves without naming the package and confirming the plan, so the
-# opt-in is re-stated at every bump; this just avoids re-deciding the policy.
-# Kept on `latest` because the published releases genuinely lag: as of
-# 2026-08-10 mlx-vlm's newest tag is v0.6.9 while git is 0.6.12, and
-# docs/architecture/ecosystem_strategy.md records mlx-lm shipping fixes as
-# commits rather than releases. Delete a key to put that package on releases.
-# NB: a fresh clone is unaffected either way -- `uv sync` installs the exact
-# revs in uv.lock, and only running update_deps.py consults these channels.
-overrides = { mlx-lm = "latest", mlx-vlm = "latest" }
+# Per-package channel overrides. EMPTY: everything is on published releases.
+#
+# mlx-lm and mlx-vlm moved off `latest` on 2026-08-10, and checking rather than
+# assuming is what made it free -- PyPI had mlx-lm 0.31.3 and mlx-vlm 0.6.12,
+# the exact versions the pinned git revs resolved to, so nothing regressed. The
+# apparent lag was in the TAGS (mlx-vlm's newest was v0.6.9) while the release
+# itself was published the same day. Judging release-starvation by git tags
+# would have kept us on HEAD for no reason.
+#
+# The posture in docs/architecture/ecosystem_strategy.md still stands as a
+# reason to RE-CHECK, not as a standing exemption: if a needed fix is sitting
+# unreleased, put that one package back with
+# `uv run scripts/update_deps.py <pkg> --channel latest`.
+overrides = {}
 
 # Where "latest" comes from. Kept here rather than only in [tool.uv.sources]
 # so the URL survives a switch to the stable channel (which deletes the source

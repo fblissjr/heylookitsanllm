@@ -445,8 +445,8 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5.2" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.22.0" },
-    { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/ml-explore/mlx-lm?rev=254d153fdeb6f150edd4fc5a54f9828638481fa8" },
-    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=321514d633342f079f97fc7b80aa787249217116" },
+    { name = "mlx-lm", marker = "sys_platform == 'darwin'", specifier = ">=0.21.0" },
+    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", specifier = ">=0.3.11" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "orjson", specifier = ">=3.9.15" },
     { name = "pillow", specifier = ">=10.0.1" },
@@ -841,7 +841,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.31.3"
-source = { git = "https://github.com/ml-explore/mlx-lm?rev=254d153fdeb6f150edd4fc5a54f9828638481fa8#254d153fdeb6f150edd4fc5a54f9828638481fa8" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "mlx" },
@@ -850,6 +850,10 @@ dependencies = [
     { name = "pyyaml" },
     { name = "sentencepiece" },
     { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/94/9a38d6b0c6fcca995b9136c94eb7da1e9c5165652edf228b96b29960fa7a/mlx_lm-0.31.3.tar.gz", hash = "sha256:61eb0e3ba09444f77f874aff295401d7ccd20b39495cbbce0c782a15474ce733", size = 304318, upload-time = "2026-04-22T07:37:27.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/02/9a67b8e4f87e3e2e5cd7b1ad79304b93c09a0db6af34bee75e6551c06c60/mlx_lm-0.31.3-py3-none-any.whl", hash = "sha256:758cfddf1180053b7613db76fad3d246a331a2a905808e1164a275621fc983b8", size = 408890, upload-time = "2026-04-22T07:37:25.965Z" },
 ]
 
 [[package]]
@@ -865,7 +869,7 @@ wheels = [
 [[package]]
 name = "mlx-vlm"
 version = "0.6.12"
-source = { git = "https://github.com/Blaizzy/mlx-vlm?rev=321514d633342f079f97fc7b80aa787249217116#321514d633342f079f97fc7b80aa787249217116" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "llguidance" },
@@ -882,6 +886,10 @@ dependencies = [
     { name = "tqdm" },
     { name = "transformers" },
     { name = "uvicorn" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/e0/05f6a5a338aa580469c68bf13c82b90a6f7c4725dc973b7ca911bd874c7d/mlx_vlm-0.6.12.tar.gz", hash = "sha256:68bc27c1482b7d1145e9ac3d9ecd352cc55c91e5492a9355c5c8b40d5d43ccb0", size = 1806547, upload-time = "2026-08-10T20:58:32.852Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/ae/991c8ccec4dddf2f576d793e7344fc8ae0bfd0925fbbfd80869bb48cd8e4/mlx_vlm-0.6.12-py3-none-any.whl", hash = "sha256:47432e34344cb6939b9c9eb0d088fd40a797c4176f6b4c3d3f323e712dabaf6f", size = 2268495, upload-time = "2026-08-10T20:58:30.993Z" },
 ]
 
 [[package]]
