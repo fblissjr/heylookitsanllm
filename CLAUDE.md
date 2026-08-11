@@ -35,8 +35,14 @@ always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spe
 `spec_draft_n_max` AND `spec_draft_p_min` -- because they interact and the interaction
 INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 0.9),
 so a 1D n_max sweep finds a different and WRONG optimum AT SHORT PROMPT.
-EVERY SPEC-DECODE NUMBER BELOW IS PROMPT-LENGTH CONDITIONAL -- quote none of them
-without it, because the one time the corner was varied the headline inverted.
+EVERY SPEC-DECODE NUMBER BELOW WAS TAKEN AT temp 0 AND IS PROMPT-LENGTH CONDITIONAL --
+two fixed corners, and BOTH times a corner was varied the conclusion moved. temp 0 is
+now BANNED as a measurement setting (the probe refuses it): greedy acceptance is exact
+argmax matching while temp>0 is the rejection-sampling criterion, and acceptance is the
+quantity every one of these conclusions rests on. So treat the whole block as a prior
+to re-measure at vendor sampling, not as findings. The `p_min` LEVER still applies at
+temperature (it thresholds the drafter's top-token probability, not gated on greedy);
+it is the acceptance DYNAMICS that do not carry over.
 WHAT SURVIVED a long-context check (gemma-4 12B, ~6k, 4 runs/config): spec decode
 ITSELF is worth ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
 n_max/p_min bought NOTHING measurable there (shipped mean 66.1, tuned 66.3, overlapping
@@ -54,6 +60,11 @@ replacement is only established at short prompt: E4B is -5.2%/-24.4% at p_min=0.
 HYPOTHESIS (3 models, n=1 per cell, SHORT prompts/temp 0/Q4 -- a prior to sweep
 from, NOT a default to ship, and untested at realistic context): the split tracks
 DRAFTER ARCHITECTURE, not model size --
+NB unsloth.ai's docs currently say the OPPOSITE packaging (gemma embedded, Qwen
+sidecar). The LOCAL FILES are ground truth and they say what is written here: gemma-4
+12B ships `mtp-gemma-4-12B-it.gguf` with ZERO nextn tensors in the main file, Qwen3.6-27B
+has `blk.64.nextn.*` embedded and no sidecar. Do NOT flip these labels to match a vendor
+doc -- read the GGUF. (Vendor docs may describe newer packaging, or be out of sync.)
 SIDECAR drafters (gemma `mtp-*.gguf`) have real per-draft cost so pruning pays (p_min
 high ~0.9); an EMBEDDED MTP head (Qwen3.6) drafts nearly free so low-confidence drafts
 still clear the bar (p_min 0, every p_min>0 tested is worse, 5 samples). NB the split
