@@ -32,11 +32,22 @@ runs `--jinja` + reasoning pre-split by default (provider template_info()=None r
 heylook's parsers to pass-through -- never re-parse another engine's split output);
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in -- measured +21% on Qwen3.6 thinking,
-NET LOSS on small gemmas; gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
+NET LOSS on small gemmas, and its win is ERASED by a LoRA (the draft head is NOT
+adapted, so it drafts the base distribution while the target generates the adapted
+one: measured 65.3% -> 39.2% acceptance, +10.5% -> -4.3% tok/s on Qwen3.6-27B-MTP
+Q4_K_XL. `common_set_adapter_lora` has ONE call site in tools/server and applies to
+`ctx_tgt` only, so no draft-side tuning recovers it. `--spec-type` is a SPAWN flag
+while `lora` is per-REQUEST, so one process serving both kinds of traffic cannot suit
+both -- leave spec ON: turning it off to help the adapted path taxes the unadapted
+path 10.5% to save 4.5%); gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
 importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
 local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
 `$HEYLOOK_LLAMA_SERVER` (no built-in default -- one of these is REQUIRED, else load fails
-loudly). Audio input
+loudly), BUILT by `scripts/update_deps.py llama.cpp` (the only thing that clones/builds
+it; `uv sync` cannot -- it is C++, not a uv package). llama.cpp is NOT vendored and NOT
+a submodule: the clone + build tree live OUTSIDE the repo (fixed dir under the user's
+home; `dir`/`$HEYLOOK_LLAMA_CPP_DIR` relocate), so upstream source can never be
+committed or packaged and there is nothing to `submodule init`. Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
 load) -- the 400 guard lives in MLXProvider.create_chat_completion. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
@@ -132,7 +143,7 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - `test_mlx_provider.py` SEGFAULTS at GC teardown when run in near-ISOLATION (MLX `unload`/`__del__` flakiness) but passes clean in any multi-file batch / the full suite -- not a regression; run it batched, not alone.
 - Provider unit tests build `MLXProvider` from RAW config dicts (bypassing `MLXModelConfig` validation; production passes `model_config.config.model_dump()`), so provider/loader code must tolerate un-normalized config (e.g. missing `modalities`) -- a back-compat branch that looks dead in the router path may be live only in tests.
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
-- Root venv: plain `uv sync` is the whole story now (v1.39.17). The performance stack (pyturbojpeg, uvloop, xxhash, cachetools) are CORE deps (questionary retired 2026-07-28 with config_tui), and dev tooling (pytest+plugins, httpx, build, twine, rich, py-spy) is the `dev` dependency-group uv installs by default -- there are NO optional extras anymore, and no `--all-extras` to forget. `uv sync --no-dev` for a runtime-only install. Bump the git-pinned mlx-lm/mlx-vlm revs with `scripts/update_deps.py` (index: `scripts/README.md`).
+- Root venv: plain `uv sync` is the whole story now (v1.39.17). The performance stack (pyturbojpeg, uvloop, xxhash, cachetools) are CORE deps (questionary retired 2026-07-28 with config_tui), and dev tooling (pytest+plugins, httpx, build, twine, rich, py-spy) is the `dev` dependency-group uv installs by default -- there are NO optional extras anymore, and no `--all-extras` to forget. `uv sync --no-dev` for a runtime-only install. ALL upstream bumps go through `scripts/update_deps.py` -- mlx-lm, mlx-vlm AND llama.cpp (which it clones + BUILDS into llama-server; `uv sync` can't build C++, so that one is always an explicit run). NOTHING moves unless you NAME it: a bare run only reports the current pins, a named run prints a plan (old -> new + compare link) and asks, and `-y` is required off a tty -- never re-add a default package set, the point is that pulling unreviewed upstream code is a deliberate act. Each runs on a `stable`/`latest` channel declared in `[tool.heylook.deps]`, and the resolved pin is written back to pyproject, so the file always states what you run. Build flags + their rationale (why no LTO, no OpenMP, and why `GGML_METAL_NDEBUG` stays OFF): `scripts/README.md`.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`).
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).
 - Sandbox traps: `ENV=x uv run ...` does NOT match the uv exemption (env-var prefix changes the command match -> sandboxed, no Metal); sandboxed `curl` can't reach localhost (probe via `uv run python` + urllib); never launch the server piped to `head` (SIGPIPE wedges it -- redirect to a file). To verify schema-neutrality of a change (no committed OpenAPI artifact exists -- deliberate), export `app.openapi()` from a HEAD~1 worktree and byte-compare. Sandboxed `find` can silently return nothing traversing `modelzoo/` (files present per `ls`) -- enumerate model dirs with `ls` or `uv run python` glob/`os.walk` instead.

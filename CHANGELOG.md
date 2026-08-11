@@ -5,6 +5,149 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0]
+
+### Added
+
+- **llama.cpp joins `scripts/update_deps.py`, which is now the one place any
+  upstream moves.** It clones (blobless), checks out, builds `llama-server`,
+  verifies the binary, and writes a `heylook-build.json` manifest recording
+  rev + flags + version. `uv sync` installs the Python packages but cannot
+  build C++, so a llama.cpp bump is always an explicit run -- never a side
+  effect of sync. The script prints the `HEYLOOK_LLAMA_SERVER` export line and
+  warns when that variable already points at a different binary (in which case
+  the server keeps using the old one).
+- **Upstream channels in `[tool.heylook.deps]`.** Each upstream runs on
+  `stable` (PyPI for the Python packages, newest `b<N>` release tag for
+  llama.cpp) or `latest` (branch tip, pinned to the exact commit). `channel` is
+  the project default, `overrides` is per package, and `--channel` changes and
+  persists the decision -- pyproject always states what is actually installed.
+  mlx-lm/mlx-vlm are held on `latest` by override, per the release-starvation
+  posture in `docs/architecture/ecosystem_strategy.md`. `[tool.heylook.deps.git]`
+  keeps the git origins so a stable/latest round trip is one flag.
+- New flags: `--all`, `-y/--yes`, `--rebuild` (rebuild the pinned rev),
+  `--clean`, `--lto`, `--openmp`, `--ui`, `--jobs`. `--release` is gone,
+  replaced by `--channel stable`.
+- **`scripts/gguf_probe.py` can attach a LoRA and A/B it.** `--lora` /
+  `--lora-scale` ride `extra_args`, the same raw passthrough a models.toml
+  gguf entry uses, so a flag proven in the probe transfers to a server config
+  verbatim. `--lora-ab` toggles scale over llama-server's
+  `POST /lora-adapters` between two otherwise identical runs sharing one model
+  load, reporting the tok/s, draft-acceptance and output deltas -- identical
+  output proves the adapter did nothing, so pair it with `--temp 0`. An
+  acceptance collapse means the draft path is unadapted, which is the thing to
+  know before pairing a LoRA with spec decode. The probe also now prints the
+  llama-server binary it resolved, since more than one build can exist on a
+  machine and it silently inherits `$HEYLOOK_LLAMA_SERVER`.
+
+### Security
+
+- **No upstream moves unless you name it.** The script previously had a default
+  package set, so a bare run fetched and pinned whatever mlx-lm and mlx-vlm
+  HEAD happened to be -- unreviewed upstream code, no naming, no confirmation,
+  no visibility into what changed. Now a bare run only *reports* the current
+  pins (no network, no writes). Naming packages resolves the targets and prints
+  a plan first: old -> new, a GitHub compare link so the diff is one click
+  away, and an explicit note when a bump pins unreviewed code. Then it asks.
+- `-y/--yes` is **required** when stdin is not a terminal, so an automated
+  caller cannot drift the pins as a side effect of running the script.
+- All named packages are resolved before any is applied, so a multi-package run
+  cannot half-land before the whole plan has been seen.
+- The build manifest records a `sha256` of the produced binary, so "is the
+  llama-server I am running the one I built" is answerable, plus the
+  `effective` cmake cache values (not just the requested args) so it describes
+  the binary rather than the wish.
+- Writes into a missing `[tool.uv.sources]` table are no longer silently
+  discarded. `.get(...)` chaining returned a throwaway dict, so the script
+  could report a pin it never wrote and then lock against a floating source --
+  reachable because the stable channel deletes entries and can empty the table.
+
+### Fixed
+
+Two pre-existing `scripts/gguf_probe.py` bugs, surfaced by running the new
+LoRA A/B against Qwen3.6-27B:
+
+- **The probe aborted on Qwen3.6 before generating.** The apply-template diff
+  raised `StopIteration`: `zip(on, off)` stops at the shorter string, so when
+  one template is a strict *prefix* of the other (Qwen3.6 appends rather than
+  edits) it yields no differing pair and the bare `next()` raised. Falls back
+  to the common-prefix length.
+- **The draft-acceptance grep reported another model's numbers.** Every run
+  reuses one log filename and the provider appends, so a run that generated no
+  acceptance lines of its own confidently printed the *previous* probe's. Now
+  records the file offset after load and reads only that run's tail. Any
+  acceptance figure taken from a session that probed more than one model is
+  suspect.
+
+Found by `/code-review high` on this changeset, all pre-release:
+
+- **A fresh clone could never build.** Build was gated on the pin having moved,
+  so with pyproject already pinning the newest tag, the command `setup.sh`
+  recommends printed "already current" and exited without cloning or building.
+  Gated on artifact state now (binary present *and* built from the pinned rev),
+  so a missing or stale binary plans a build and says which it is.
+- **The apply loop could build when the plan said it would not.** `--all` with
+  another package moving ran the llama.cpp build unconditionally. Plan and
+  apply now share one `plan_acts()` predicate, so consent matches action.
+- **`--openmp` silently produced a non-OpenMP binary** -- ggml warns rather
+  than failing when OpenMP is missing, and AppleClang needs explicit flags that
+  `-DOpenMP_ROOT=` does not supply. The flag now passes the working incantation
+  and verifies `GGML_OPENMP_ENABLED` in the cache, refusing to build otherwise.
+  This one mattered: it would have quietly invalidated the expert-offload A/B
+  the flag exists for.
+- `--all --channel X` set three per-package overrides instead of moving the
+  project default, leaving the file claiming a channel nothing used.
+- `--branch` was applied to every named package, so `--all --branch main` died
+  on llama.cpp (whose branch is `master`) after resolving the others. Now
+  restricted to a single named package.
+- The dirty-tree guard counted untracked files, so a stray `.DS_Store` blocked
+  a checkout with a message insisting it was "real work" that `git stash` would
+  not clear. Blocks on tracked modifications only; untracked files are reported
+  and carried across.
+- `-G Ninja` was injected at an existing build dir configured with another
+  generator, a hard cmake error surfacing as a bare "command failed (1)". The
+  cached generator is reused when one exists.
+- "nothing changed; uv.lock left as-is" could be false after the stable path
+  had already run `uv lock`. Lock writes are tracked separately from pyproject
+  writes and reported honestly.
+- `print_status` never read the build manifest, so it printed the pinned rev
+  next to a binary that might have been built from something else. It now flags
+  the mismatch and shows the effective OpenMP/LTO state.
+- Restored the ability to bump ordinary PyPI dependencies, dropped in the
+  rewrite. `transformers` is the live case, and `--pin` now also keeps
+  `[tool.uv] override-dependencies` in step with the floor -- pyproject's own
+  comment says the two are kept equal, and nothing enforced it.
+- Python packages are applied before the llama.cpp build, so a failing build
+  cannot strand a half-applied pyproject.
+
+### Changed
+
+- Build settings for llama-server are chosen for a Metal-bound Apple Silicon
+  host and documented with their rationale in `scripts/README.md`: static,
+  native, Metal with embedded metallib, Accelerate + Apple BLAS, ccache; no
+  LTO (reaches only CPU-side glue, costs a multi-minute link, defeats ccache,
+  and upstream enables it on no platform), no OpenMP (ggml's own threadpool
+  does the same decomposition with the same affinity/priority handling, and
+  macOS has no libomp -- so this is the path every upstream mac binary already
+  runs), no WebUI (re-provisions from a network bucket on every build; the
+  provider drives llama-server over HTTP). `GGML_METAL_NDEBUG` deliberately
+  stays OFF: it compiles out the "allocated size is greater than the
+  recommended max working set size" warning, which is the ceiling that
+  actually refuses loads here.
+- **llama.cpp is not vendored and is not a submodule.** No upstream source or
+  build output lives in this repo, tracked or untracked, so nothing can be
+  committed, packaged into an sdist/wheel, or shipped, and there is no
+  submodule to initialise or forget. The checkout goes to a fixed directory
+  under the user's home directory (`.heylook/llama.cpp`) -- the same path on
+  every machine, so docs and errors can name it. `dir` in
+  `[tool.heylook.llama-cpp]` relocates it (relative paths resolve against the
+  repo root); `$HEYLOOK_LLAMA_CPP_DIR` overrides both. The plan prints the
+  destination before anything is written.
+- The script refuses to check out over a dirty tree rather than clobbering
+  local work, and discards a build tree that was configured for a different
+  source path (moving a checkout otherwise leaves cmake hard-erroring on a
+  cached absolute path, with no hint that deleting the tree is the fix).
+
 ## [1.50.2]
 
 Post-review fixes (`/code-review high` on v1.50.0-.1). All six findings taken.

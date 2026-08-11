@@ -446,7 +446,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.22.0" },
     { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/ml-explore/mlx-lm?rev=254d153fdeb6f150edd4fc5a54f9828638481fa8" },
-    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=c088c0bad1b5da84e9731b8c0d84784a657b1d7a" },
+    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=321514d633342f079f97fc7b80aa787249217116" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "orjson", specifier = ">=3.9.15" },
     { name = "pillow", specifier = ">=10.0.1" },
@@ -864,8 +864,8 @@ wheels = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.6.11"
-source = { git = "https://github.com/Blaizzy/mlx-vlm?rev=c088c0bad1b5da84e9731b8c0d84784a657b1d7a#c088c0bad1b5da84e9731b8c0d84784a657b1d7a" }
+version = "0.6.12"
+source = { git = "https://github.com/Blaizzy/mlx-vlm?rev=321514d633342f079f97fc7b80aa787249217116#321514d633342f079f97fc7b80aa787249217116" }
 dependencies = [
     { name = "fastapi" },
     { name = "llguidance" },
