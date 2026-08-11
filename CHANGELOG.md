@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It immediately caught one: `draft_model_path` declared `--model-draft` while
   the provider emits the `-md` alias. Same behaviour, different command line,
   so the metadata is now the spelling actually used.
+- `heylookllm import` now VALIDATES every entry against the provider config
+  class before writing `models.toml`. It validated nothing, so one mistyped
+  `--override` (`ctx_sze=8192`) produced a successful-looking import and a
+  server that then refused to start -- the failure surfacing at config load,
+  far from the command that caused it, with no indication which entry was at
+  fault. The error now names the entry, the bad key, and the settable keys for
+  that provider (derived from the class, not a second hand-written list).
 - llama-server spawn logs a warning when any `LLAMA_ARG_*` is set in the
   environment. Verified against llama.cpp's parser: a CLI arg WINS over its env
   var, so anything heylook passes is safe -- but a flag it does not pass gets

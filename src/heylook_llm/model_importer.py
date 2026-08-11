@@ -108,7 +108,7 @@ class ModelImporter:
                     logging.info(f"Added MLX model: {model['id']}")
 
         logging.info(f"Scan complete: {dirs_scanned} directories scanned, {len(models)} models imported")
-        return models
+        return self._validate(models)
 
     def scan_hf_cache(self) -> list[dict]:
         """Scan HuggingFace cache directories for models."""
@@ -126,7 +126,7 @@ class ModelImporter:
                                 if snapshot.is_dir():
                                     found_models = self._scan_hf_snapshot(snapshot)
                                     models.extend(found_models)
-        return models
+        return self._validate(models)
 
     def _scan_hf_snapshot(self, snapshot_path: Path) -> list[dict]:
         """Scan a HF cache snapshot directory."""
@@ -155,6 +155,43 @@ class ModelImporter:
                     model['config']['model_path'] = str(snapshot_path)
             models.append(model)
 
+        return self._validate(models)
+
+    def _validate(self, models: list[dict]) -> list[dict]:
+        """Reject entries that would not load, BEFORE they reach models.toml.
+
+        The importer writes the config file directly and validated nothing, so
+        a single mistyped ``--override`` (``ctx_sze=8192``) produced a
+        successful-looking import and a server that then refused to start --
+        with the failure pointing at config load, far from the command that
+        caused it, and no indication which of N imported entries was at fault.
+
+        ``--override`` is free-form by design (it has to reach provider config
+        fields this code does not enumerate), so the config CLASS is the only
+        thing that knows what is valid. Same reasoning as the derived reload
+        set and import allowlist: ask the schema, do not maintain a second
+        list of field names here.
+        """
+        from heylook_llm.config import (
+            PROVIDER_CONFIG_CLASSES,
+            ModelConfig,
+            configurable_fields,
+        )
+
+        for model in models:
+            try:
+                ModelConfig(**model)
+            except Exception as e:
+                provider = model.get("provider", "?")
+                cls = PROVIDER_CONFIG_CLASSES.get(provider)
+                valid = (
+                    ", ".join(sorted(configurable_fields(cls))) if cls else "unknown provider"
+                )
+                raise ValueError(
+                    f"import would write an invalid entry for "
+                    f"'{model.get('id', '?')}' (provider={provider}): {e}\n"
+                    f"Settable config keys for {provider}: {valid}"
+                ) from e
         return models
 
     def _read_model_config(self, path: Path) -> Optional[dict]:
