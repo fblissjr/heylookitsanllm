@@ -199,7 +199,14 @@ class BatchChatResponse(BaseModel):
 #   per_request      A model-level DEFAULT the loaded process can vary per
 #                    request without changing what it is.
 #   descriptive      Not a setting at all -- it describes the model (what we
-#                    serve it as), and nothing about the process depends on it.
+#                    serve it as), and nothing about the PROCESS depends on it.
+#                    NB "descriptive" is not "inert": `modalities` and
+#                    `supports_thinking` feed capability inference, which gates
+#                    v3's attach button and thinking toggle. Verified those are
+#                    re-derived per read (effective_capabilities is called in
+#                    the route handlers, not cached at load), so the change
+#                    lands immediately and still needs no reload -- which is
+#                    what keeps this class distinct from requires_reload.
 #
 # Field-local on purpose. Every drift this replaced (an MLX-shaped reload set
 # that listed no gguf load-time field; an import allowlist that silently
@@ -489,8 +496,11 @@ class MLXModelConfig(BaseModel):
 # is_runtime_default=True on MLXModelConfig above, it automatically flows into
 # effective_request without touching mlx_provider.py.
 MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
+    # via _extra(): pydantic allows json_schema_extra to be a CALLABLE, and
+    # `.get` on one raises at runtime, not just under a type checker. One
+    # accessor for both this and the `effect` metadata.
     name for name, field in MLXModelConfig.model_fields.items()
-    if (field.json_schema_extra or {}).get("is_runtime_default")  # type: ignore[union-attr]
+    if _extra(field).get("is_runtime_default")
 )
 
 class MLXEmbeddingModelConfig(BaseModel):
@@ -647,6 +657,15 @@ def _validate_effect_declarations() -> None:
     effect is indistinguishable from a correct one at a glance and degrades
     silently in the safe-looking direction (the field simply stops being
     reload-required), so it has to be impossible to run the server with one.
+
+    Why raising at import is proportionate here and would NOT be elsewhere:
+    the input is developer-authored STATIC data. A bad classification is a code
+    bug that surfaces on the first import -- in dev, in CI, on any startup
+    while someone is working -- and can never be provoked by user data in
+    production. Fail-fast on static developer data is cheap and correct. The
+    same guard applied to runtime user input would be hostile, because then a
+    bad input takes down a running server. Read the distinction before
+    "fixing" this into a warning.
     """
     problems: List[str] = []
     for provider, cls in PROVIDER_CONFIG_CLASSES.items():
