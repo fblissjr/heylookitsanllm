@@ -30,6 +30,17 @@ def test_v3_spa_fallback(client):
     assert "text/html" in r.headers["content-type"]
 
 
+def test_v3_assets_are_revalidated(client):
+    # v3 is no-build with unhashed URLs, so a cached module is only ever
+    # invalidated by revalidation. Drop this header and browsers fall back to
+    # HEURISTIC freshness (~10% of the file's age), which serves rarely-edited
+    # modules stale for hours while their frequently-edited callers refetch --
+    # a mixed-version frontend whose symptom is "X is not a function".
+    for path in ("/v3", "/v3/index.html", "/v3/js/preset-bar.js", "/v3/some/deep/route"):
+        r = client.get(path)
+        assert r.headers.get("cache-control") == "no-cache", path
+
+
 def test_v3_path_traversal_falls_back_to_index(client):
     # %2e%2e decodes to ".." in the path param; resolution lands outside the
     # frontend dir, so the handler must serve index.html, not the target file.

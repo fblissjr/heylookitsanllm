@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.2]
+
+### Fixed
+
+- **v3 assets are served `Cache-Control: no-cache`, ending silently
+  mixed-version frontends.** The `/v3` route sent no cache directive and
+  starlette's `FileResponse` has no 304 path, so browsers fell back to
+  HEURISTIC freshness -- roughly 10% of a file's age at cache time, computed
+  per file. On a no-build frontend with unhashed URLs that is a version
+  skew generator: a file edited every session (`js/pages/chat.js`) earns a
+  freshness window of minutes and refetches, while a rarely-touched module
+  it imports (`js/preset-bar.js`) keeps a window of hours and is served from
+  cache without a request. The new caller then calls into the old module and
+  the page dies on `... is not a function` -- observed as "Create failed:
+  presetForNewDoc is not a function" on New conversation, with the function
+  present in the source all along. Revalidating every v3 asset costs a full
+  re-send (no 304s), which is nothing for a ~450KB localhost frontend.
+  Pinned by `test_v3_assets_are_revalidated`.
+
 ## [1.62.1]
 
 ### Fixed

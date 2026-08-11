@@ -290,6 +290,17 @@ _v3_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "app
 if _v3_frontend_dir.is_dir():
     from starlette.responses import FileResponse
 
+    # v3 has no build step and no content hashes in its URLs, so a cached
+    # module can only ever be invalidated by revalidation. Without an explicit
+    # Cache-Control a browser applies HEURISTIC freshness (~10% of the file's
+    # age at cache time) and skips the request entirely -- which silently
+    # mixes module versions: frequently-edited files (chat.js) refetch while
+    # rarely-edited ones (preset-bar.js) serve stale for hours, and the new
+    # caller calls into the old module ("X is not a function"). no-cache makes
+    # every asset revalidate; starlette's FileResponse has no 304 path, so
+    # that is a full re-send, which is free for a ~450KB localhost frontend.
+    _V3_NO_CACHE = {"Cache-Control": "no-cache"}
+
     @app.get("/v3")
     @app.get("/v3/{rest:path}")
     async def serve_v3_frontend(rest: str = ""):
@@ -297,8 +308,8 @@ if _v3_frontend_dir.is_dir():
         if rest:
             resolved = (_v3_frontend_dir / rest).resolve()
             if resolved.is_relative_to(_v3_frontend_dir) and resolved.is_file():
-                return FileResponse(resolved)
-        return FileResponse(_v3_frontend_dir / "index.html")
+                return FileResponse(resolved, headers=_V3_NO_CACHE)
+        return FileResponse(_v3_frontend_dir / "index.html", headers=_V3_NO_CACHE)
 
 @app.get("/v1/models",
     summary="List Available Models",
