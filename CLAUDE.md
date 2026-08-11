@@ -44,14 +44,14 @@ quantity every one of these conclusions rests on. So treat the whole block as a 
 to re-measure at vendor sampling, not as findings. The `p_min` LEVER still applies at
 temperature (it thresholds the drafter's top-token probability, not gated on greedy);
 it is the acceptance DYNAMICS that do not carry over.
-SIGN WARNING, and it supersedes the rest of this block: at VENDOR SAMPLING and ~6k,
-spec decode measured a NET LOSS on both models tested -- gemma-4 12B -5.8% (60.1 -> 56.6)
-and Qwen3.6-27B -2.7% (26.83 -> 26.10), 3 pinned-seed runs each. The "+14-15% over off"
-below was a GREEDY result and it does not merely shrink at temperature, it inverts:
-acceptance falls (gemma 63% -> 44% in the same config) and the drafting overhead stops
-being recovered, which is what rejection-sampling-vs-argmax predicts. Cross-seed
-variance is still being measured, so treat the sign as strongly indicated rather than
-final -- but do NOT enable spec decode on a new model expecting a win.
+MEASUREMENTS SUSPENDED (2026-08-10). Do not act on ANY spec-decode number below, in
+either direction. Two unresolved anomalies invalidate the long-context runs rather than
+qualifying them: a `[spec] failed to measure draft model memory` warning on every gemma
+load, and a 3.4x throughput swing from `--ctx 16384` alone with IDENTICAL draft counts
+(11.1 vs 38.0 tok/s), which probably means one arm was silently truncating a ~6k prompt.
+Everything here is greedy AND short-prompt AND now suspect. The numbers are kept only
+as a record of what inverted under each corner change; treat spec-on/off as UNKNOWN
+until the anomalies are diagnosed. Retained below:
 THE GREEDY RESULT, retained only to show what inverted: spec decode
 ITSELF measured ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
 n_max/p_min bought NOTHING measurable there (shipped mean 66.1, tuned 66.3, overlapping
