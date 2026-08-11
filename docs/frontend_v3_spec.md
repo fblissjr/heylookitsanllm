@@ -413,6 +413,30 @@ usage/timing. Per-message actions: Edit (inline textarea → Save / Save&Regener
 send/switch/stream-start). Stale-response guard: capture `targetConvId` at stream start, bail in callbacks if
 `activeId` changed. beforeunload during stream. Remove the unused `bus.js` import (dead code in v2).
 
+**Model switching (added 2026-08-11, v1.57.0 -- the §15 arc of the load-options
+design doc, `internal/research/expert_offload_design_frontend.md`):** the select's
+option labels carry residency (`●` resident / `○` idle, from `/v1/admin/models`;
+plain ids until the first successful fetch -- the UI never guesses residency;
+refreshed at mount, after Load, and after each completed generation, never
+polled). Switching runs a PRE-switch check: incompatible history media
+("N images... will be dropped"), an unloaded target's load cost, and -- only
+alongside a real warning -- a thinking-toggle-will-hide note. Warnings render
+inline in the chat status area (never a modal) with Cancel / Switch anyway;
+the switch does NOT commit (model_id write, cap re-gating, drawer rebuild)
+until confirmed, Cancel reverts the select, and a Send with the unconfirmed
+target selected commits it (sending is the strongest confirmation). A clean
+switch (resident + compatible) commits silently. A "Load" button beside the
+select appears for unloaded models and runs the same `load?warm=true` warm
+contract, phases spoken by the status line. **History media is caps-gated at
+the wire** (`toWireContent(msg, caps)`): blocks the current model cannot take
+are dropped from requests -- never from the store; switch back and they ride
+again -- with a per-message "N images not sent to this model" disclosure in
+the transcript. DELIBERATE ASYMMETRY: staged attachments still BLOCK the send
+(just chosen, trivially un-choosable), history DROPS with disclosure (work
+already done; forcing its deletion punishes the wrong thing) -- commented at
+both sites, do not unify. Mid-stream switch stops the stream BEFORE model_id
+changes hands (an abort, not attribution -- G5 waits for messages.model_id).
+
 **Composer image + thinking controls (added post-spec, v1.34.20 + v1.34.60-.61 --
 documented here for the current build):** attach and thinking-toggle are icon
 buttons (`.btn--icon`, see DESIGN.md §7) beside the textarea, not text buttons.

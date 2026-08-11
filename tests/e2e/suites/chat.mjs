@@ -614,6 +614,26 @@ export async function runChatSuite({ suite, ctx, config }) {
   // the suite's original conversation never reaches these generations.
   const THINK_BTN = '.chat__composer button[aria-label="Toggle thinking"]';
 
+  // Switching models can now present a pre-switch warning (G3: an unloaded
+  // target names its load cost; incompatible history names what gets
+  // dropped) with explicit Cancel / Switch anyway -- the switch does not
+  // COMMIT until confirmed, so cap-gated UI deliberately keeps tracking the
+  // old model while the warning is up. Tests that switch act like a user
+  // who means it: confirm when asked.
+  async function selectModelConfirming(id) {
+    await page.select(MODEL_SELECT, id);
+    const confirmed = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('.chat__switch-actions button')]
+        .find((b) => b.textContent.trim() === 'Switch anyway');
+      if (btn) { btn.click(); return true; }
+      return false;
+    });
+    if (confirmed) {
+      await waitFor(async () => (await count(page, '.chat__switch-warning')) === 0,
+        { timeout: 5000, message: 'switch warning never cleared after confirm' });
+    }
+  }
+
   await closeDrawer(page); // defensive: a prior failure could have left it open
 
   await suite.check('capability gating: thinking toggle and vision_tokens track the selected model', async () => {
@@ -649,7 +669,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // open -- change the model with the drawer CLOSED, then open it to read
     // the (force-rebuilt) panel, matching the drawer's actual re-render gate
     // (it only rebuilds while open).
-    await page.select(MODEL_SELECT, negative.id);
+    await selectModelConfirming(negative.id);
     if (!hasCap(negative, 'thinking')) {
       const negThinkHidden = await page.$eval(THINK_BTN, (b) => b.hidden);
       assert(negThinkHidden === true, `thinking toggle still visible for non-thinking model ${negative.id}`);
@@ -662,7 +682,30 @@ export async function runChatSuite({ suite, ctx, config }) {
     await closeDrawer(page);
 
     // restore the capable model for the checks below
-    await page.select(MODEL_SELECT, config.model);
+    await selectModelConfirming(config.model);
+  });
+
+  await suite.check('model switch warns before committing and Cancel reverts', async () => {
+    // G3: choosing a costly/incompatible model is a decision, not a
+    // discovery -- the warning must appear BEFORE the switch commits, and
+    // Cancel must put the select back on the committed model.
+    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const other = models.find((m) => m.id !== config.model);
+    if (!other) {
+      console.log('      only one model configured -- skipping');
+      return;
+    }
+    await page.select(MODEL_SELECT, other.id);
+    if ((await count(page, '.chat__switch-warning')) === 0) {
+      // Target was resident and fully compatible: a clean switch commits
+      // silently by design. Restore and pass.
+      await selectModelConfirming(config.model);
+      return;
+    }
+    await clickByText(page, '.chat__switch-actions button', 'Cancel');
+    const val = await page.$eval(MODEL_SELECT, (el) => el.value);
+    assert(val === config.model, `Cancel did not revert the select (now on ${val})`);
+    assert((await count(page, '.chat__switch-warning')) === 0, 'warning still up after Cancel');
   });
 
   await suite.check('vision_tokens control round-trips through localStorage', async () => {

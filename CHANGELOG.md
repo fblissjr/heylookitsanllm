@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.0]
+
+### Added
+
+- **v3 chat: switch models anytime, honestly** -- the §15 arc of the
+  load-options design doc, closing the two gaps that made "switch anytime"
+  nominal:
+  - **G1, history media**: `toWireContent` is caps-gated -- blocks the
+    current model cannot take are dropped from the WIRE (never the store;
+    switch back and they ride again), with a per-message "N images not sent
+    to this model" transcript disclosure. Previously a vision conversation
+    switched to a text-only model shipped image parts unconditionally and
+    failed raw on send. Staged attachments still BLOCK -- the asymmetry is
+    deliberate and commented at both sites.
+  - **G3, load cost**: option labels carry residency (● resident / ○ idle,
+    plain ids until known -- never guessed; refreshed at mount, after Load,
+    after each completed generation, no polling); switching runs a
+    pre-switch check whose warnings (dropped media, unloaded target's load
+    cost, thinking-toggle note riding along) render inline in the status
+    area with Cancel / Switch anyway -- the switch does not commit until
+    confirmed, a clean switch commits silently, and Send with the
+    unconfirmed target selected commits it. A Load button beside the select
+    pays the warm load deliberately while reading.
+- E2E: chat suite grows a warning-flow check (warn before commit, Cancel
+  reverts) and the capability-gating check now confirms switches like a
+  user who means it (41 checks).
+
 ## [1.56.0]
 
 /code-review high over the branch: 12 verified findings, 10 confirmed, all

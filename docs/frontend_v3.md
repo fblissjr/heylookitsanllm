@@ -138,7 +138,7 @@ auto-appear from template detection, no `models.toml` flag needed).
 
 | Page | Endpoints |
 |------|-----------|
-| chat | `/v1/conversations` CRUD, `/v1/chat/completions` (SSE), `/v1/presets` CRUD |
+| chat | `/v1/conversations` CRUD, `/v1/chat/completions` (SSE), `/v1/presets` CRUD, `/v1/admin/models` (residency dots + pre-switch load-cost warning, 2026-08-11) + `load?warm=true` (the bar's Load button) |
 | notebook | `/v1/notebooks` CRUD, `/v1/chat/completions` |
 | models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
@@ -206,9 +206,14 @@ on here.
   WARN-for-gguf asymmetry) as the surface's real payoff; it needs the fit
   endpoint (`ram_report.py`'s `check_fit`/`size_config_gb` behind HTTP --
   backend ask #2 in `internal/research/expert_offload_design_frontend.md` §9),
-  which does not exist yet. Do NOT compute fit client-side. Same doc §15: the
-  chat model-switch hardening arc (history-media guard, mid-stream switch stop,
-  load-cost signal) is designed and unbuilt.
+  which does not exist yet. Do NOT compute fit client-side. The §15
+  model-switch arc SHIPPED 2026-08-11 (G1 drop-with-disclosure for history
+  media -- block stays for staged attachments, the asymmetry is commented at
+  both sites; G2 stop-stream-on-switch; G3 residency dots + pre-switch
+  warning with Cancel/Switch-anyway + Load now button; a send with an
+  unconfirmed target selected commits the switch). Still open from §15: G4
+  context-length estimate, G5 per-message model attribution (waits for a
+  `_SCHEMA_VERSION` bump), F14 switch-lock during a pending load.
 - **Model-management page promotion (plan Phase 6)** -- the `models` page today
   lists + loads/unloads via `/v1/admin/models`, and (2026-08-11) edits per-model
   config through the schema-driven Configure panel. Phase 6's redesign

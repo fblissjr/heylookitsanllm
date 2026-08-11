@@ -10,7 +10,7 @@
 // - Abort (Stop button) is normal completion: partial content is saved.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamChat } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -87,9 +87,14 @@ export default createPage({
     s.models = models.data ?? [];
     s.conversations = convList.conversations ?? [];
     fillModelSelect(ctx);
+    s.committedModelId = s.modelSelect.value || null;
     refreshThinkBtn(ctx);
     refreshAttachBtn(ctx);
     renderConvList(ctx);
+    // Residency is a load-cost signal, not a gate -- fetched non-fatally and
+    // AFTER first paint. Until it arrives the select shows plain ids and the
+    // not-loaded warning stays silent (an honest "don't know", never a guess).
+    refreshLoadedIds(ctx);
 
     if (s.conversations.length) {
       await selectConversation(ctx, s.conversations[0].id);
@@ -119,28 +124,34 @@ function buildSkeleton(ctx) {
   ]);
 
   s.modelSelect = createEl('select', { title: 'Model' });
+  s.loadedIds = new Set();   // model ids with a resident process (admin list)
+  s.loadedKnown = false;     // false until the first successful residency fetch
+  s.committedModelId = null; // last COMMITTED selection (the select may show an unconfirmed target)
   s.modelSelect.addEventListener('change', () => {
-    // Stop an in-flight stream BEFORE model_id changes hands, so the old
-    // model stops generating the moment the user switches away. NB this is
-    // an abort, not a settled handoff: the partial still persists
-    // asynchronously into this same conversation after model_id is
-    // rewritten, and messages carry no model column -- so a reader of
-    // conversation.model_id still misattributes it. True per-message
-    // attribution is G5 in the switching design (deferred until a
-    // _SCHEMA_VERSION bump adds messages.model_id).
-    if (s.stream) stopStream(ctx);
-    if (ctx.state.activeId) {
-      api.updateConversation(ctx.state.activeId, { model_id: s.modelSelect.value })
-        .catch((err) => console.warn('model_id save failed', err));
-      const conv = s.conversations.find((c) => c.id === ctx.state.activeId);
-      if (conv) conv.model_id = s.modelSelect.value;
+    const from = s.committedModelId;
+    const to = s.modelSelect.value;
+    if (!to || to === from) return;
+    // Pre-switch check, not post-switch discovery: cost and compatibility
+    // are only actionable BEFORE the switch commits. A clean switch (target
+    // resident, nothing in the conversation it can't take) commits silently.
+    const warnings = switchWarnings(ctx, from, to);
+    if (!warnings.length) {
+      commitModelSwitch(ctx, to);
+      return;
     }
-    // Capability-gated controls (enable_thinking) must track the model: force
-    // an open drawer to rebuild here, not only on its next open.
-    drawer.requestRebuild({ force: true });
-    refreshThinkBtn(ctx);
-    refreshAttachBtn(ctx);
+    showSwitchWarning(ctx, to, warnings,
+      () => commitModelSwitch(ctx, to),
+      () => { s.modelSelect.value = from; showStatus(ctx, ''); });
   });
+
+  // Pays the load deliberately, while reading, instead of discovering it
+  // after hitting Send. Same server-owned load?warm=true the models page
+  // uses; the status line speaks (buttons never spin).
+  s.loadNowBtn = createEl('button', {
+    class: 'btn btn--sm chat__load-btn', hidden: true,
+    title: 'Load this model now so the first message does not pay for it',
+  }, ['Load']);
+  s.loadNowBtn.addEventListener('click', () => loadModelNow(ctx));
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
   convsToggle.addEventListener('click', () => s.rootEl.classList.toggle('chat--convs-open'));
@@ -230,6 +241,7 @@ function buildSkeleton(ctx) {
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
+      s.loadNowBtn,
       s.presetChip,
       createEl('div', { class: 'chat__bar-spacer' }),
       settingsBtn,
@@ -272,9 +284,156 @@ const ICON_THINK =
   + '<path d="M9 18h6"/><path d="M10 22h4"/>'
   + '<path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>';
 
+// Residency rides the option label (● resident / ○ idle) so the load cost is
+// visible in the act of choosing -- the only moment it can influence the
+// choice. Values stay bare ids; titles spell the state out for AT/hover.
+// Until the first residency fetch lands, labels are plain ids (no dot is an
+// honest "don't know", a hollow dot would be a claim).
 function fillModelSelect(ctx) {
   const s = ctx.state;
-  fillOptions(s.modelSelect, s.models.map((m) => m.id));
+  const prev = s.modelSelect.value;
+  s.modelSelect.replaceChildren(...s.models.map((m) => {
+    const label = s.loadedKnown
+      ? `${s.loadedIds.has(m.id) ? '●' : '○'} ${m.id}`
+      : m.id;
+    return createEl('option', {
+      value: m.id,
+      title: s.loadedKnown ? (s.loadedIds.has(m.id) ? `${m.id} — loaded` : `${m.id} — not loaded`) : m.id,
+    }, [label]);
+  }));
+  if (prev && s.models.some((m) => m.id === prev)) s.modelSelect.value = prev;
+}
+
+// Non-fatal residency read (admin list). Refreshed at mount, after Load now,
+// and after each completed generation -- a send can load the target AND evict
+// the previous resident (max_loaded_models=1), so completion is exactly when
+// the dots go stale. No polling: it fights the metrics cache and burns phone
+// battery; these three moments are when the answer actually changes.
+async function refreshLoadedIds(ctx) {
+  const s = ctx.state;
+  try {
+    const data = await api.adminListModels({ signal: ctx.signal });
+    if (!ctx.alive) return;
+    s.loadedIds = new Set((data.models ?? []).filter((m) => m.loaded).map((m) => m.id));
+    s.loadedKnown = true;
+  } catch {
+    return; // keep the last known state; the UI never guesses residency
+  }
+  fillModelSelect(ctx);
+  refreshLoadBtn(ctx);
+}
+
+function refreshLoadBtn(ctx) {
+  const s = ctx.state;
+  const id = s.modelSelect.value;
+  s.loadNowBtn.hidden = !(s.loadedKnown && id && !s.loadedIds.has(id) && !s.loadNowBtn.dataset.busy);
+}
+
+async function loadModelNow(ctx) {
+  const s = ctx.state;
+  const id = s.modelSelect.value;
+  if (!id || s.loadNowBtn.dataset.busy) return;
+  s.loadNowBtn.dataset.busy = '1';
+  s.loadNowBtn.disabled = true;
+  showStatus(ctx, `Loading ${id}…`);
+  try {
+    const result = await api.adminLoadModel(id, true);
+    if (!ctx.alive) return;
+    if (result?.warm_error) {
+      showStatus(ctx, `Loaded, but the warm-up generation failed: ${result.warm_error}`, true);
+    } else {
+      showStatus(ctx, result?.warm_ms != null
+        ? `${id} loaded and warmed in ${(result.warm_ms / 1000).toFixed(1)}s.`
+        : `${id} loaded.`);
+    }
+  } catch (err) {
+    if (!ctx.alive) return;
+    showStatus(ctx, `Load failed: ${err.message}`, true);
+  }
+  delete s.loadNowBtn.dataset.busy;
+  s.loadNowBtn.disabled = false;
+  if (ctx.alive) await refreshLoadedIds(ctx);
+}
+
+// What committing this switch would actually do to THIS conversation.
+// Returned lines gate the confirm flow: empty = clean switch, commit
+// silently. The thinking note is informational and deliberately does NOT
+// trigger the flow on its own -- the toggle disappearing is its own visible
+// signal, and a confirm dialog for a reversible toggle hide trains
+// click-through (it rides along only when a real warning is already showing).
+function switchWarnings(ctx, from, to) {
+  const s = ctx.state;
+  const target = s.models.find((m) => m.id === to);
+  const caps = target?.capabilities ?? [];
+  const lines = [];
+
+  const count = (type) => s.messages.reduce(
+    (n, m) => n + (m.content_blocks?.filter((b) => b.type === type).length ?? 0), 0);
+  const images = count('image');
+  const audio = count('audio');
+  if (images && !caps.includes('vision')) {
+    lines.push(`This conversation has ${images} image${images === 1 ? '' : 's'}. `
+      + 'They will be dropped from every request to this model — it cannot read them.');
+  }
+  if (audio && !caps.includes('audio')) {
+    lines.push(`This conversation has ${audio} audio clip${audio === 1 ? '' : 's'}. `
+      + 'They will be dropped from every request to this model — it cannot hear them.');
+  }
+  if (s.loadedKnown && !s.loadedIds.has(to)) {
+    lines.push('Not loaded — the first message pays the load (and may evict the resident model).');
+  }
+  if (lines.length && getSetting('enable_thinking') === true) {
+    const fromCaps = s.models.find((m) => m.id === from)?.capabilities ?? [];
+    if (fromCaps.includes('thinking') && !caps.includes('thinking')) {
+      lines.push('Thinking is unavailable on this model; the toggle will hide.');
+    }
+  }
+  return lines;
+}
+
+// Inline in the chat status area, per the switching design -- NOT a modal (a
+// modal would block reading the very conversation being decided about). The
+// select keeps showing the unconfirmed target; Cancel reverts it.
+function showSwitchWarning(ctx, to, lines, onConfirm, onCancel) {
+  const s = ctx.state;
+  const confirmBtn = createEl('button', { class: 'btn btn--sm' }, ['Switch anyway']);
+  const cancelBtn = createEl('button', { class: 'btn btn--sm' }, ['Cancel']);
+  confirmBtn.addEventListener('click', onConfirm);
+  cancelBtn.addEventListener('click', onCancel);
+  s.statusEl.replaceChildren(createEl('div', { class: 'chat__switch-warning' }, [
+    createEl('div', {}, [`Switching to ${to}:`]),
+    ...lines.map((l) => createEl('div', { class: 'chat__switch-line' }, [l])),
+    createEl('div', { class: 'chat__switch-actions' }, [cancelBtn, confirmBtn]),
+  ]));
+}
+
+function commitModelSwitch(ctx, to) {
+  const s = ctx.state;
+  // Stop an in-flight stream BEFORE model_id changes hands, so the old
+  // model stops generating the moment the user switches away. NB this is
+  // an abort, not a settled handoff: the partial still persists
+  // asynchronously into this same conversation after model_id is
+  // rewritten, and messages carry no model column -- so a reader of
+  // conversation.model_id still misattributes it. True per-message
+  // attribution is G5 in the switching design (deferred until a
+  // _SCHEMA_VERSION bump adds messages.model_id).
+  if (s.stream) stopStream(ctx);
+  s.committedModelId = to;
+  showStatus(ctx, '');
+  if (s.activeId) {
+    api.updateConversation(s.activeId, { model_id: to })
+      .catch((err) => console.warn('model_id save failed', err));
+    const conv = s.conversations.find((c) => c.id === s.activeId);
+    if (conv) conv.model_id = to;
+  }
+  // Capability-gated controls (enable_thinking) must track the model: force
+  // an open drawer to rebuild here, not only on its next open.
+  drawer.requestRebuild({ force: true });
+  refreshThinkBtn(ctx);
+  refreshAttachBtn(ctx);
+  refreshLoadBtn(ctx);
+  // Per-message drop disclosures depend on the current model's caps.
+  renderMessages(ctx);
 }
 
 // Visible only for thinking-capable models (mirrors the drawer's requiresCap
@@ -515,6 +674,10 @@ async function selectConversation(ctx, convId) {
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
+    // Programmatic selection IS the committed model -- a restore never runs
+    // the pre-switch warning flow (the conversation already lives there).
+    s.committedModelId = s.modelSelect.value || null;
+    refreshLoadBtn(ctx);
     // an open drawer shows the previous conversation's system prompt otherwise
     drawer.requestRebuild({ force: true });
     s.presetBar.syncIndicator(); // rebuild no-ops while the drawer is closed
@@ -596,6 +759,24 @@ function buildMessageEl(ctx, msg) {
   const children = [];
   if (msg.role === 'assistant' && msg.thinking) children.push(buildThinkingEl(msg.thinking));
   children.push(bubble);
+  // Drop disclosure: media still renders (it's in the store) but is not sent
+  // to the CURRENT model (toWireContent drops what the caps exclude). The
+  // marker is what keeps the drop honest -- without it the model answers as
+  // if the image were invisible and the user has no idea why.
+  const caps = currentCaps(ctx);
+  const dropped = [];
+  const imgCount = msg.content_blocks?.filter((b) => b.type === 'image').length ?? 0;
+  const audCount = msg.content_blocks?.filter((b) => b.type === 'audio').length ?? 0;
+  if (imgCount && !caps.includes('vision')) {
+    dropped.push(`${imgCount} image${imgCount === 1 ? '' : 's'}`);
+  }
+  if (audCount && !caps.includes('audio')) {
+    dropped.push(`${audCount} audio clip${audCount === 1 ? '' : 's'}`);
+  }
+  if (dropped.length) {
+    children.push(createEl('div', { class: 'message-drop-note muted small' },
+      [`${dropped.join(' and ')} not sent to this model`]));
+  }
   children.push(buildActions(ctx, msg));
 
   return createEl('div', { class: `message message--${msg.role}` }, children);
@@ -875,8 +1056,20 @@ async function send(ctx) {
     showStatus(ctx, 'No models available.', true);
     return;
   }
+  // A pending switch warning leaves the select on an unconfirmed target;
+  // sending WITH that target selected is the strongest confirmation there
+  // is -- commit it (which also clears the warning) rather than sending to
+  // a model the conversation isn't labelled with.
+  if (s.committedModelId && s.modelSelect.value !== s.committedModelId) {
+    commitModelSwitch(ctx, s.modelSelect.value);
+  }
   // Attachments staged on a capable model must not ride to a model that
   // lost the cap on switch -- fail loudly, keep them staged for a re-pick.
+  // DELIBERATE ASYMMETRY with history media (toWireContent): staged media is
+  // something the user just chose and can trivially un-choose, so BLOCK;
+  // history is work already done, and refusing to talk until it's deleted
+  // punishes the wrong thing, so history DROPS with disclosure instead.
+  // Do not "fix" one site to match the other.
   const caps = currentCaps(ctx);
   if (images.length && !caps.includes('vision')) {
     showStatus(ctx, 'This model does not take images -- remove them or switch models.', true);
@@ -947,33 +1140,48 @@ async function send(ctx) {
 // audio blocks to input_audio parts (RAW base64 -- a data URL here is
 // rejected server-side). When v3 migrates to /v1/messages (Phase 3b) the
 // stored blocks ARE the wire shape and this conversion disappears.
-function toWireContent(msg) {
+//
+// `caps` gates HISTORY media: blocks the current model cannot take are
+// DROPPED from the wire (never from the store -- switch back and they ride
+// again), with a per-message disclosure in the transcript. Deliberate
+// asymmetry with send()'s staged-attachment BLOCK -- see the comment there.
+// Without this, a vision conversation switched to a text-only model shipped
+// image parts unconditionally and failed raw on send: the switch was
+// nominally allowed but the conversation was bricked.
+function toWireContent(msg, caps) {
   if (!hasMediaBlocks(msg)) return msg.content;
-  return msg.content_blocks.map((b) => {
+  const parts = [];
+  for (const b of msg.content_blocks) {
     if (b.type === 'image') {
-      return { type: 'image_url', image_url: { url: blockSourceUrl(b) } };
-    }
-    if (b.type === 'audio') {
+      if (!caps.includes('vision')) continue;
+      parts.push({ type: 'image_url', image_url: { url: blockSourceUrl(b) } });
+    } else if (b.type === 'audio') {
+      if (!caps.includes('audio')) continue;
       const input_audio = b.source.type === 'url'
         ? { url: b.source.url }
         : {
           data: b.source.data,
           format: (b.source.media_type ?? '').split('/')[1] || undefined,
         };
-      return { type: 'input_audio', input_audio };
+      parts.push({ type: 'input_audio', input_audio });
+    } else {
+      parts.push({ type: 'text', text: b.text ?? '' });
     }
-    return { type: 'text', text: b.text ?? '' };
-  });
+  }
+  // Every block dropped and no text: fall back to the flattened text (may be
+  // ''), not an empty parts array the server would reject.
+  return parts.length ? parts : (msg.content ?? '');
 }
 
 function buildRequestBody(ctx) {
   const s = ctx.state;
+  const caps = currentCaps(ctx);
   const messages = [];
   if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
-  for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m) });
+  for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m, caps) });
   // caps filter: cap-gated keys (enable_thinking, vision_tokens) set on a
   // capable model must not ride requests to a model that lacks the cap
-  return { model: s.modelSelect.value, messages, ...samplerParams(currentCaps(ctx)) };
+  return { model: s.modelSelect.value, messages, ...samplerParams(caps) };
 }
 
 function startStream(ctx) {
@@ -1016,7 +1224,13 @@ function startStream(ctx) {
     onRetryWait: (wait) => {
       if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
     },
-    onComplete: (result) => finishStream(ctx, stream, result),
+    onComplete: (result) => {
+      finishStream(ctx, stream, result);
+      // A send can load the target AND evict the previous resident
+      // (max_loaded_models=1) -- completion is when the residency dots and
+      // the Load button go stale, so refresh them here rather than polling.
+      if (ctx.alive) refreshLoadedIds(ctx);
+    },
     onError: (err) => handleStreamError(ctx, stream, err),
   });
 }

@@ -598,6 +598,26 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   min-height: 1.4rem;
 }
 
+/* Pre-switch warning: inline in the status area (never a modal -- it must
+   not block reading the conversation being decided about). */
+.chat__switch-warning {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  padding: 0.5rem 0.75rem;
+  margin: 0.15rem 0;
+}
+.chat__switch-line { color: var(--ink); }
+.chat__switch-actions { display: flex; gap: 0.4rem; justify-content: flex-end; }
+
+/* History media the CURRENT model won't receive (drop disclosure). */
+.message-drop-note { padding: 0.1rem 0.25rem; }
+.message--user .message-drop-note { text-align: right; }
+
 /* -- image attachments -------------------------------------------------- */
 
 .chat__attach {
@@ -713,6 +733,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .chat--convs-open .chat__convs { display: flex; }
   .chat__convs-toggle { display: inline-block; }
   .message-bubble { max-width: 92%; }
+  /* §7 touch targets for the bar's Load button + the switch-warning actions. */
+  .chat__load-btn,
+  .chat__switch-actions .btn {
+    min-height: 44px;
+    padding: 0.55rem 0.9rem;
+  }
 }
 
 /* ================= page css sections (merged from per-page builds) ================= */

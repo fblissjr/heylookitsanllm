@@ -608,13 +608,13 @@ Full design + status: `internal/research/observability_and_config_redesign.md`
 **Config-editor / audit follow-ups (2026-08-11, sourced from the four-agent
 audit; design context `internal/research/expert_offload_design_frontend.md`
 + `_backend.md`):**
-- [ ] **Chat model-switch hardening G1+G3** (P1 -- the owner's "switch
-  anytime mid-conversation" goal is nominal until these): G1 = history
-  media unguarded (caps-aware `toWireContent` with drop-disclosure +
-  per-message marker; keep BLOCK for staged attachments, comment the
-  asymmetry at both sites); G3 = load-cost signal (residency prefix on the
-  select options, pre-switch warning line, explicit "Load now"). Doc §15.3
-  has the full design. (G2 stop-stream-on-switch DONE v1.55.0.)
+- [x] **Chat model-switch hardening G1+G3 -- DONE v1.57.0** (G2 v1.55.0):
+  caps-gated `toWireContent` with per-message drop disclosure (staged
+  attachments still block -- asymmetry commented at both sites); residency
+  dots + pre-switch warning (Cancel / Switch anyway; Send with the
+  unconfirmed target commits) + Load button on the chat bar. Still open
+  from doc §15: G4 context estimate, G5 per-message attribution (waits for
+  a `_SCHEMA_VERSION` bump), F14 switch-lock during a pending load.
 - [ ] **Fit meter** (P2, the frontend design doc's stated heart): needs the
   fit endpoint first (backend ask #2 -- `ram_report.py`'s
   check_fit/size_config_gb/metal_ceilings behind HTTP, `hard_working_set`
