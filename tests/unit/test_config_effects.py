@@ -250,8 +250,14 @@ def test_gguf_arg_spellings_are_unique_and_plausible():
         n for n in reload_fields
         if not (getattr(cls.model_fields[n], "json_schema_extra", None) or {}).get("arg")
     )
-    # extra_args is raw passthrough: it IS argv, it just has no single flag.
-    assert argless == ["extra_args"], (
+    # Legitimate reasons a reload-required field carries no `arg`: extra_args IS
+    # argv but has no single flag; host/port/server_binary/startup_timeout_s are
+    # spawn PLUMBING (binary is argv[0], port is the resolved free port rather
+    # than the field, the timeout never reaches llama). They are
+    # requires_reload because a reload genuinely changes them -- the property
+    # that matters -- not because they map to a flag.
+    assert argless == ["extra_args", "host", "port", "server_binary",
+                       "startup_timeout_s"], (
         f"gguf reload-required fields with no `arg` spelling: {argless}"
     )
 

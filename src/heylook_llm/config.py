@@ -190,7 +190,15 @@ class BatchChatResponse(BaseModel):
 #   load_time_only   Fixed for the life of the process and NOT recoverable by
 #                    reloading this model (e.g. max_queue_depth is process-wide
 #                    -- the first provider created wins). UI: disabled, with
-#                    the reason.
+#                    the reason. NB the bar is "a reload cannot fix it", NOT
+#                    "it feels like plumbing": gguf's host/port/server_binary/
+#                    startup_timeout_s were misfiled here on the second reading
+#                    and are really requires_reload, because the router builds
+#                    a NEW provider per load and they all go into the fresh
+#                    spawn. The tell was that PATCHing server_binary reported
+#                    "no reload required" while the subprocess kept running the
+#                    old binary -- the exact regression this metadata exists to
+#                    prevent.
 #   applies_live     Re-read by the router while the model stays loaded; takes
 #                    effect immediately, no reload, no ceremony. UI: freely
 #                    editable. Deliberately distinct from load_time_only --
@@ -521,6 +529,12 @@ MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
 
 class MLXEmbeddingModelConfig(BaseModel):
     """Configuration for MLX embedding models."""
+    # extra="forbid" like the other two provider configs. Without it pydantic
+    # DEFAULTS to ignoring unknown keys, so `max_lenght = 4096` validated fine,
+    # got written to models.toml, and was then dropped forever at load -- the
+    # importer's own validator could not catch it because there was nothing to
+    # catch. Silent, permanent loss of an operator's setting.
+    model_config = ConfigDict(extra="forbid")
     # Local path or HF repo
     model_path: str = Field(json_schema_extra={"effect": EFFECT_IDENTITY})
     # Both are baked into the loaded backbone: max_length sizes the truncation
@@ -582,9 +596,10 @@ class GGUFModelConfig(BaseModel):
     # HISTORY, not evidence. Both anomalies that suspended these were resolved
     # 2026-08-10 (the draft-memory warning is a harmless sizing pre-flight; the
     # 3.4x `--ctx` swing was a cold-vs-warm prompt-cache artifact), and the
-    # clean re-run at VENDOR SAMPLING found spec decode COSTS ~5% on this model
-    # -- so the table below, which is all temp 0, describes a regime nobody
-    # serves. The FIELD is still right to have (reachable, harmless, and the
+    # clean re-run at VENDOR SAMPLING and a REALISTIC generation length found
+    # spec on/off to be a WASH on this model (the apparent ~5% cost was
+    # per-draft overhead amortised over a 48-token answer) -- so the table
+    # below, which is all temp 0 and short, describes a regime nobody serves. The FIELD is still right to have (reachable, harmless, and the
     # only route to the short-prompt optimum); what it is worth is unknown.
     # EVERY NUMBER BELOW CARRIES ITS PROMPT LENGTH, because that turned out to
     # be the condition the whole result depends on -- and all of it is temp 0,
@@ -686,25 +701,17 @@ class GGUFModelConfig(BaseModel):
     # else required via $HEYLOOK_LLAMA_SERVER
     server_binary: Optional[str] = Field(
         default=None,
-        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
-                           "reason": "which llama-server binary runs; set via "
-                                     "$HEYLOOK_LLAMA_SERVER or models.toml, "
-                                     "not per-model at runtime"})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     host: str = Field(
         default="127.0.0.1",
-        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
-                           "reason": "subprocess plumbing, not a model setting"})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # 0 = pick a free port at load
     port: int = Field(
         default=0,
-        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
-                           "reason": "0 picks a free port at load; subprocess "
-                                     "plumbing, not a model setting"})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     startup_timeout_s: float = Field(
         default=300.0,
-        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
-                           "reason": "how long to wait for THIS spawn; changing "
-                                     "it cannot affect a process already up"})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Raw passthrough flags. requires_reload because they are spawn argv --
     # and note this is remote argv injection into a subprocess for anyone with
     # admin PATCH access, so a UI should not make it a casual free-text field.

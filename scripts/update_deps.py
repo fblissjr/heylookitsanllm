@@ -518,10 +518,15 @@ def apply_python(doc, plan: dict, pin: bool) -> tuple[bool, bool, bool]:
         if not plan["changes"]:
             print(f"  already at {green(_short(plan['old']))} -- no change")
             return False, False, False
+        # git + rev ONLY. uv rejects `branch` alongside `rev` outright ("expected
+        # at most one of `rev`, `tag`, or `branch`"), and the failure is nasty:
+        # main() writes pyproject BEFORE it locks, so the unparseable file is
+        # already on disk when uv errors, and every project-scoped uv command
+        # then fails until it is undone. The branch belongs to
+        # [tool.heylook.deps.git], which is where git_origin() reads it from --
+        # duplicating it here bought nothing and broke the whole channel.
         entry = tomlkit.inline_table()
         entry["git"] = plan["url"]
-        if plan["branch"]:
-            entry["branch"] = plan["branch"]
         entry["rev"] = plan["new"]
         sources_table(doc, create=True)[pkg] = entry  # create: the table may be gone
         print(f"  pinned {green(_short(plan['new']))}")

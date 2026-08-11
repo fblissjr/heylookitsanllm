@@ -42,9 +42,14 @@ realistic context, matched warm cache, LONG generation), spec on/off is a WASH -
 indistinguishable from noise. Every larger effect seen that day dissolved when one more
 variable was controlled: a big tuning win was a greedy artifact, a clear cost was a
 short-generation artifact, a dramatic context effect was a cache-ordering mistake, and
-a "broken drafter" was refuted by the drafter's own output. Default OFF because it is
-unproven here, NOT because it is known harmful -- and expect your own case to need its
-own check rather than inheriting any of this.
+a "broken drafter" was refuted by the drafter's own output. Default OFF for a NEW model because it is unproven
+here, NOT because it is known harmful -- and expect your own case to need its own check.
+CARVE-OUT, do not undo it: the owner has decided the DeepSeek V4 Flash entry KEEPS spec
+decode on, on community evidence and their own judgement rather than anything measured
+here. "Default OFF" means do not ENABLE it elsewhere without checking; it does not mean
+disable what is already running. Nothing above transfers to that entry anyway -- it is
+a different spec type on a bandwidth-bound MoE, which is the regime most likely to win
+and the opposite of the cheap dense target these observations came from.
 Local detail, conditions and the history: `internal/research/`.
 CHECKING IT YOURSELF (a day of wrong answers produced these, and they are the durable
 part): never at temp 0 -- greedy acceptance is exact argmax matching while temp>0 is
