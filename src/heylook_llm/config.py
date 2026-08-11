@@ -579,12 +579,13 @@ class GGUFModelConfig(BaseModel):
     # interaction inverts, so a 1D n_max sweep finds a DIFFERENT and wrong
     # optimum. Tune the two together or not at all.
     #
-    # SUSPENDED 2026-08-10: the ~6k column below is NOT trustworthy. Those runs
-    # hit a llama-server `[spec] failed to measure draft model memory` warning
-    # and an unexplained 3.4x swing from `--ctx 16384` with identical draft
-    # counts (probable prompt truncation in one arm). Kept as a record of what
-    # changed under each corner, not as findings. The FIELD is still right to
-    # have; what is unknown is what it is worth.
+    # HISTORY, not evidence. Both anomalies that suspended these were resolved
+    # 2026-08-10 (the draft-memory warning is a harmless sizing pre-flight; the
+    # 3.4x `--ctx` swing was a cold-vs-warm prompt-cache artifact), and the
+    # clean re-run at VENDOR SAMPLING found spec decode COSTS ~5% on this model
+    # -- so the table below, which is all temp 0, describes a regime nobody
+    # serves. The FIELD is still right to have (reachable, harmless, and the
+    # only route to the short-prompt optimum); what it is worth is unknown.
     # EVERY NUMBER BELOW CARRIES ITS PROMPT LENGTH, because that turned out to
     # be the condition the whole result depends on -- and all of it is temp 0,
     # which is not a regime anyone serves. gemma-4 12B MTP:

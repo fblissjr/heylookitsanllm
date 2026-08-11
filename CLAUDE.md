@@ -31,72 +31,35 @@ GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-se
 runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
 heylook's parsers to pass-through -- never re-parse another engine's split output);
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
-(`spec_type = "draft-mtp"`) is per-model opt-in and must be tuned in TWO dimensions --
-`spec_draft_n_max` AND `spec_draft_p_min` -- because they interact and the interaction
-INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 0.9),
-so a 1D n_max sweep finds a different and WRONG optimum AT SHORT PROMPT.
-EVERY SPEC-DECODE NUMBER BELOW WAS TAKEN AT temp 0 AND IS PROMPT-LENGTH CONDITIONAL --
-two fixed corners, and BOTH times a corner was varied the conclusion moved. temp 0 is
-fine for REPRODUCIBILITY or a smoke test, and never the basis of a performance number
-or a default (the probe warns): greedy acceptance is exact
-argmax matching while temp>0 is the rejection-sampling criterion, and acceptance is the
-quantity every one of these conclusions rests on. So treat the whole block as a prior
-to re-measure at vendor sampling, not as findings. The `p_min` LEVER still applies at
-temperature (it thresholds the drafter's top-token probability, not gated on greedy);
-it is the acceptance DYNAMICS that do not carry over.
-MEASUREMENTS SUSPENDED (2026-08-10). Do not act on ANY spec-decode number below, in
-either direction. Two unresolved anomalies invalidate the long-context runs rather than
-qualifying them: a `[spec] failed to measure draft model memory` warning on every gemma
-load, and a 3.4x throughput swing from `--ctx 16384` alone with IDENTICAL draft counts
-(11.1 vs 38.0 tok/s), which probably means one arm was silently truncating a ~6k prompt.
-Everything here is greedy AND short-prompt AND now suspect. The numbers are kept only
-as a record of what inverted under each corner change; treat spec-on/off as UNKNOWN
-until the anomalies are diagnosed. Retained below:
-THE GREEDY RESULT, retained only to show what inverted: spec decode
-ITSELF measured ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
-n_max/p_min bought NOTHING measurable there (shipped mean 66.1, tuned 66.3, overlapping
-ranges); the configs really are distinct (draft counts 32/51 vs 29/35), they just land
-at the same speed. The tuning win is a SHORT-PROMPT effect: at ~30 tokens tuned beats
-shipped by +14.7 points, because the SHIPPED config is the thing that changes with
-context (+1.0% -> +14.7%), not the tuned one. And RANKING moves, not just magnitude:
-n_max=2 is second-best short and the WORST spec option at 6k, below the default it was
-meant to beat -- so short-prompt tuning actively misleads. Draft volumes collapse with
-context (243/178/94 -> 51/42/35, same 200-token budget); mechanism not understood.
-Tune at YOUR context -- and settle spec-on/off FIRST, at your real sampling, because
-that is the decision with a sign that flips.
-The old "NET LOSS on small gemmas" note is wrong AS WRITTEN (unconditional), but its
-replacement is only established at short prompt: E4B is -5.2%/-24.4% at p_min=0.0 and
-+2.7%/+1.4% at p_min=0.9 on a ~30-token prompt, UNVERIFIED at realistic context.
-HYPOTHESIS (3 models, n=1 per cell, SHORT prompts/temp 0/Q4 -- a prior to sweep
-from, NOT a default to ship, and untested at realistic context): the split tracks
-DRAFTER ARCHITECTURE, not model size --
-NB unsloth.ai's docs currently say the OPPOSITE packaging (gemma embedded, Qwen
-sidecar). The LOCAL FILES are ground truth and they say what is written here: gemma-4
-12B ships `mtp-gemma-4-12B-it.gguf` with ZERO nextn tensors in the main file, Qwen3.6-27B
-has `blk.64.nextn.*` embedded and no sidecar. Do NOT flip these labels to match a vendor
-doc -- read the GGUF. (Vendor docs may describe newer packaging, or be out of sync.)
-SIDECAR drafters (gemma `mtp-*.gguf`) have real per-draft cost so pruning pays (p_min
-high ~0.9); an EMBEDDED MTP head (Qwen3.6) drafts nearly free so low-confidence drafts
-still clear the bar (p_min 0, every p_min>0 tested is worse, 5 samples). NB the split
-is currently CONFOUNDED with model family (both sidecar points are gemma) -- DeepSeek
-V4 Flash + DSpark is the one available test that separates them. Spec decode's win is
-also ERODED by a LoRA (the draft head is NOT
-adapted, so it drafts the base distribution while the target generates the adapted
-one). The MECHANISM is structural, not empirical: `common_set_adapter_lora` has ONE
-call site in tools/server and applies to `ctx_tgt` only, so no draft-side tuning
-recovers it and no adapter escapes it. The MAGNITUDE scales with how far the adapter
-moves the distribution, and is measured on n=1 ADAPTER -- a heavy task adapter (rank
-256, alpha 512) ERASED the win outright: 65.3% -> 39.2% acceptance, +10.5% -> -4.3%
-tok/s on Qwen3.6-27B-MTP Q4_K_XL. A light style/domain adapter should erode it less;
-untested (needs a second qwen35 adapter: `gguf_probe.py <mtp-gguf> --lora <a>.gguf
---lora-ab --spec-type draft-mtp` at the model's VENDOR-RECOMMENDED sampling --
-never temp 0 for a perf number, which the probe warns about; greedy is a different regime and
-tuning there can point at the wrong setting). `--spec-type` is a SPAWN flag while `lora`
-is per-REQUEST, so one process serving both kinds of traffic cannot suit both --
-leave spec ON, and note that conclusion does NOT rest on the n=1 number: a lighter
-adapter collapses acceptance less, which only makes spec decode MORE worth having on
-the adapted path, while the unadapted path keeps its full +10.5% either way. Turning
-it off taxes the unadapted path 10.5% to save the adapted path 4.5%); gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
+(`spec_type = "draft-mtp"`) is per-model opt-in and should stay OFF unless YOU have
+measured it a win on YOUR model at YOUR context: the one clean measurement says it
+COSTS ~5%. Established 2026-08-10 for gemma-4 12B MTP at vendor sampling (temp 1.0 /
+top_p 0.95 / top_k 64), ~6k prompt (prompt=9385, cached=9384), seed 1234, gen=48,
+`--ctx 16384`: OFF 59.9 vs ON 56.8 tok/s, -5.2%, run spreads under 0.7%. Mechanism:
+44% draft acceptance at n_max=3 does not pay for the drafting. NOT established beyond
+those exact conditions -- other seeds, prompts, generation lengths or models are
+unmeasured, and gen=48 is SHORT, which weighs per-token overhead more heavily than a
+long answer would. Qwen3.6-27B showed -2.7% under the same setup but predates the
+prompt-length control, so it needs one re-run before it counts.
+MEASURING IT YOURSELF (a day of wrong answers produced these rules): never at temp 0 --
+greedy acceptance is exact argmax matching while temp>0 is rejection sampling, a
+different regime, not a quieter one (temp 0 is fine for reproducibility, never for a
+perf number; the probe warns). Match prompt length, generation length, seed, sampling
+AND PROMPT-CACHE STATE across arms -- cold-vs-warm cache produced a 3.4x phantom that
+looked like a real effect. Tune `spec_draft_n_max` and `spec_draft_p_min` TOGETHER;
+they interact and a 1D sweep finds a different, wrong optimum. Every short-prompt/temp-0
+figure from 2026-08-10 is history, not evidence: the tuning "win" evaporated at realistic
+context and the sign of spec-on/off flipped.
+DRAFTER PACKAGING (read the GGUF, do not trust vendor docs -- unsloth.ai currently
+states the OPPOSITE): gemma-4 12B ships a SIDECAR `mtp-gemma-4-12B-it.gguf` with zero
+nextn tensors in the main file; Qwen3.6-27B has `blk.64.nextn.*` EMBEDDED and no
+sidecar. A LoRA further ERODES whatever win exists: `common_set_adapter_lora` has ONE
+call site in tools/server and applies to `ctx_tgt` only, so the drafter proposes the
+base distribution while the target generates the adapted one -- structural, no adapter
+escapes it, though the magnitude (n=1 heavy adapter: 65.3% -> 39.2% acceptance) is not
+general. `--spec-type` is a SPAWN flag while `lora` is per-REQUEST, so one process
+cannot suit both kinds of traffic -- but that tradeoff only matters if spec decode is
+a win at all, which on current evidence it is not. gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
 importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
 local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
 `$HEYLOOK_LLAMA_SERVER` (no built-in default -- one of these is REQUIRED, else load fails
