@@ -1,7 +1,44 @@
 # Current Work
 
-Last updated: 2026-07-28 (cascade/vendor-layer arc + wave re-plan; the
-2026-07-26 narrative below is unchanged)
+Last updated: 2026-08-11 (v3 config editor + audit round; earlier narrative
+below unchanged)
+
+UPDATE 2026-08-11 (v1.54.0-1.55.0, branch `worktree-v3-model-config-editor`):
+
+- **SOLID -- v3 per-model config editor (Wave 4 / 6b territory, arrived
+  early)**: Models page Configure panel, schema-driven off
+  `GET /v1/admin/model-options` -- the FIRST consumer of the v1.52 effect
+  classes (until it, a misclassification was invisible, as v1.53's changelog
+  predicted). Effect-class grouping, tri-state default selects, null =
+  reset-to-default, armed reload, persistent reload-needed row marker,
+  non-default summary chip. gguf plumbing (host/port/server_binary/
+  startup_timeout_s) + mlx's derived `vision` deliberately not rendered.
+  Design record: `internal/research/expert_offload_design_frontend.md`
+  (this ships its schema-form half). E2E pages 43/43 + chat 40/40 live;
+  unit+contract 1426.
+- **SOLID -- audit round (4 parallel review agents over yesterday's
+  v1.52-1.53 work)**: found + fixed a HIGH semantic defect -- per_request
+  defaults were load-time snapshots, so a PATCH on a loaded model reported
+  no-reload-required while the process served the old value;
+  `reload_config()` now refreshes them into loaded providers (pinned by
+  `test_per_request_refresh.py`). Also: admin `config` = stored keys only
+  (exclude_unset -- set vs default is now distinguishable on the wire);
+  gguf gained the design-doc-approved-but-never-landed `-ctk`/`-ctv`,
+  `-ncmoed`/`-cmoed`, `--spec-draft-n-min` (coverage vs pinned b10362
+  otherwise clean); ModelUpdateRequest extra=forbid; chat stops an
+  in-flight stream before a model switch re-labels the conversation.
+- **update_deps pyproject-writeback AUDITED: KEEP WITH FIXES** (tomlkit
+  round-trip is comment-safe -- verified live; fixes wanted: concurrent-edit
+  guard on the final write, rollback when the follow-up `uv lock` fails,
+  write-path tests). NOTE: primary checkout carries an uncommitted
+  7-package `uv.lock` full-upgrade relock (incl. transformers 5.15.0) that
+  NO script path produces -- owner decision pending (commit as pair, or
+  checkout the lock and keep the one-line llama.cpp rev bump).
+- **Left (ranked, from the audits)**: chat model-switch hardening G1
+  (history media unguarded -- ships image parts to a text-only model) + G3
+  (no load-cost signal), fit-meter backend endpoint (frontend design doc
+  ask #2), server-owned reload route (ask #4), update_deps hardenings
+  above. Small: see TODO.md "Config-editor / audit follow-ups".
 
 UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
 

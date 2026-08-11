@@ -435,6 +435,45 @@ heylookllm import --hf-cache --sampler balanced
 
 ---
 
+## Field-effect metadata (v1.52+, design record)
+
+Every provider-config field declares WHEN a change to it takes effect, as
+`json_schema_extra={"effect": ...}` on the field itself -- six classes:
+`identity` (a different entry), `requires_reload` (teardown/respawn),
+`load_time_only` (a reload cannot fix it; carries a `reason`),
+`applies_live` (router re-reads while loaded), `per_request` (a model-level
+default), `descriptive` (changes what we advertise, not the process).
+Field-local ON PURPOSE: every drift this replaced (an MLX-shaped reload set
+naming no gguf field; an import allowlist that silently dropped five)
+existed because the fact lived somewhere other than the declaration it
+described. `arg` alongside it is the llama-server spelling, pinned to the
+emitted argv by `tests/unit/test_gguf_argv_matches_metadata.py`; `ui`/
+`shape`/`reason` are pass-through UI hints.
+
+Derived consumers (never hand-maintain a second copy):
+- `reload_required_for(provider)` -- the PATCH route's
+  `reload_required_fields`, provider-aware.
+- the gguf import allowlist (`configurable_fields`, "not identity").
+- `GET /v1/admin/model-options` -- the full six-way distinction, consumed by
+  v3's config editor. This is the consumer that makes a misclassification
+  VISIBLE; the in-process two collapse the classes to a binary.
+- `_validate_effect_declarations()` refuses to import with an unclassified
+  or misspelt field.
+
+Invariant added 2026-08-11 (v1.55.0): **`per_request` means the loaded
+process re-reads the default** -- `router.reload_config()` pushes
+per_request keys from the fresh config into every loaded provider's config
+dict, because providers are constructed with a snapshot and read these
+defaults from it at request time. Without the refresh, "applies
+immediately" was false for every per_request field on a loaded model.
+`requires_reload` keys deliberately stay snapshots: the reported reload is
+their real cost. Pinned both ways by
+`tests/unit/test_per_request_refresh.py`.
+
+Wire contract corollary (same date): admin responses serialize `config`
+with `exclude_unset` -- absent IS how a default is spelled in models.toml,
+and set-vs-default must survive the wire for any UI to render it honestly.
+
 ## Configuration Management
 
 ### Loading
@@ -499,10 +538,10 @@ Check `/v1/models` or run `heylookllm import` to regenerate `models.toml`.
 
 ```
 ValidationError: provider
-  Input should be 'mlx' or 'mlx_embedding'
+  Input should be 'mlx', 'mlx_embedding' or 'gguf'
 ```
 
-`llama_cpp` and `mlx_stt` providers have been removed. Update `models.toml` to use `"mlx"` for text/vision or `"mlx_embedding"` for sentence-transformer models.
+`llama_cpp` (embedded) and `mlx_stt` providers have been removed. Valid providers: `"mlx"` (text/vision), `"mlx_embedding"` (sentence-transformer), `"gguf"` (llama-server subprocess, v1.41+).
 
 ### Model Load Failure
 

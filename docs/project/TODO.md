@@ -605,6 +605,44 @@ Full design + status: `internal/research/observability_and_config_redesign.md`
 - [ ] **Never-stops health signal** (P3): flag models whose requests consistently
   hit `stop_reason=length`/`abort` (surfaces broken templates in the metrics).
 
+**Config-editor / audit follow-ups (2026-08-11, sourced from the four-agent
+audit; design context `internal/research/expert_offload_design_frontend.md`
++ `_backend.md`):**
+- [ ] **Chat model-switch hardening G1+G3** (P1 -- the owner's "switch
+  anytime mid-conversation" goal is nominal until these): G1 = history
+  media unguarded (caps-aware `toWireContent` with drop-disclosure +
+  per-message marker; keep BLOCK for staged attachments, comment the
+  asymmetry at both sites); G3 = load-cost signal (residency prefix on the
+  select options, pre-switch warning line, explicit "Load now"). Doc §15.3
+  has the full design. (G2 stop-stream-on-switch DONE v1.55.0.)
+- [ ] **Fit meter** (P2, the frontend design doc's stated heart): needs the
+  fit endpoint first (backend ask #2 -- `ram_report.py`'s
+  check_fit/size_config_gb/metal_ceilings behind HTTP, `hard_working_set`
+  flag for the MLX-FAIL/gguf-WARN asymmetry). NEVER compute fit client-side.
+- [ ] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true`** (P2,
+  ask #4): v3's Reload now is unload-then-load from the browser; a dying
+  browser strands the model unloaded.
+- [ ] **update_deps hardenings** (P2, from the KEEP-WITH-FIXES verdict):
+  re-read pyproject before the final write and abort/re-apply on
+  concurrent change (the C++ build makes the window minutes long);
+  roll back the pyproject write when the follow-up `uv lock` fails;
+  unit tests for the write path (latest-channel sources = git+rev only;
+  tomlkit round-trip comment-preservation).
+- [ ] Small backend nits (P3): `extra_args` schema reports `default: null`
+  (default_factory not serialized) and array fields carry no `items` type;
+  top-level `description`/`tags` not clearable via null (asymmetric with
+  config nulls); admin `/import` still log-skips invalid entries while the
+  CLI importer refuses loudly; `$HEYLOOK_LLAMA_SERVER` pointing at an older
+  build than the update_deps one gets no staleness warning; consider
+  `-t`/`--threads` field (design doc's trigger -- experts-on-CPU landed)
+  and widening `n_gpu_layers` to accept `auto`/`all` (b10362 idiom);
+  `num_draft_tokens`/`prefill_step_size` effect-class re-read now that
+  per_request means "refreshed live into loaded providers".
+- [ ] Small editor nits (P3): armed reload label could name the recorded
+  cost (retain last warm_ms per model); F8 field-level 422 mapping onto the
+  offending input; F6b warn when an `extra_args` token collides with a
+  managed field's declared `arg`; per-group collapse on phone widths.
+
 **Frontend TODO (v3):**
 - [x] **Per-document settings UI** DONE 2026-07-11 (v1.34.57-.58): ONE shared
   `settings.bindDocumentParams`/`hydrateDocParams`; chat.js + notebook.js both use
