@@ -186,3 +186,35 @@ def test_n_max_bound_and_emitter_agree():
         "check now silently drops a valid setting -- switch that line to "
         "`is not None` like the rest of the block"
     )
+
+
+@pytest.mark.unit
+def test_binary_fallback_matches_where_the_updater_builds():
+    """The provider's last-resort binary path and the path
+    `scripts/update_deps.py` builds to must be the same directory.
+
+    They live in different files with no import between them (the script is a
+    standalone PEP 723 tool, deliberately not importable from the package), so
+    nothing but this test stops them drifting. If they drift, the fallback
+    silently stops finding a binary that was just built -- and the failure
+    looks like "no binary configured" rather than "these two disagree".
+    """
+    import re
+    from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+    script = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "scripts" / "update_deps.py"
+    ).read_text()
+    m = re.search(r'LLAMA_HOME_SUBDIR\s*=\s*\(([^)]*)\)', script)
+    assert m, "update_deps.py no longer declares LLAMA_HOME_SUBDIR"
+    parts = [p.strip().strip('"\'') for p in m.group(1).split(",") if p.strip()]
+
+    fallback = LlamaServerProvider.DEFAULT_BUILD
+    # .../<subdir parts>/build/bin/llama-server
+    assert fallback.name == "llama-server"
+    assert fallback.parent.name == "bin" and fallback.parent.parent.name == "build"
+    assert list(fallback.parent.parent.parent.parts[-len(parts):]) == parts, (
+        f"provider falls back to {fallback}, but update_deps.py builds to "
+        f"{'/'.join(parts)}/build/bin/llama-server"
+    )
