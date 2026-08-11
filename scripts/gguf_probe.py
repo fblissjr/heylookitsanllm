@@ -76,6 +76,11 @@ def build_config(target: Path, args) -> dict:
         cfg["spec_type"] = args.spec_type
     if args.spec_draft_n_max:
         cfg["spec_draft_n_max"] = args.spec_draft_n_max
+    if args.spec_draft_p_min is not None:
+        # `is not None`, not truthiness: 0.0 is a real setting AND llama.cpp's
+        # default, so truthiness would silently drop an explicit 0.0 and make
+        # "set to default" indistinguishable from "unset".
+        cfg["spec_draft_p_min"] = args.spec_draft_p_min
     if args.ctx:
         cfg["ctx_size"] = args.ctx
     if args.lora:
@@ -152,6 +157,11 @@ def main() -> None:
                     help="drafter .gguf, overriding whatever sidecar pairing found")
     ap.add_argument("--spec-type")
     ap.add_argument("--spec-draft-n-max", type=int)
+    # Drives the CONFIG FIELD, not --arg passthrough. Once a flag earns a
+    # GGUFModelConfig field the probe must exercise that path, or it keeps
+    # certifying a route production does not take. --arg stays for the flags
+    # that are still unmodelled.
+    ap.add_argument("--spec-draft-p-min", type=float)
     ap.add_argument("--ctx", type=int)
     ap.add_argument("--prompt", default="Write a 150-word story about a lighthouse keeper.")
     ap.add_argument("--max-tokens", type=int, default=400)
