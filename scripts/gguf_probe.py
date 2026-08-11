@@ -43,6 +43,7 @@
 import argparse
 import json
 import re
+import shlex
 import sys
 import time
 import urllib.request
@@ -89,6 +90,11 @@ def build_config(target: Path, args) -> dict:
             else:
                 flags += ["--lora-scaled", f"{path}:{args.lora_scale}"]
         cfg["extra_args"] = list(cfg.get("extra_args") or []) + flags
+    if args.arg:
+        # shlex per token: argparse refuses a value starting with "-", so a
+        # flag+value must arrive as ONE quoted string ("--spec-draft-p-min 0.3").
+        cfg["extra_args"] = list(cfg.get("extra_args") or []) + [
+            part for chunk in args.arg for part in shlex.split(chunk)]
     cfg.pop("modalities", None)  # description only; /props is the live truth
     return cfg
 
@@ -125,7 +131,11 @@ def run_gen(p, args, label: str, extra: dict) -> tuple:
     print(f"[probe] {label}: {time.time()-t:.1f}s | gen={final.generation_tokens} tok "
           f"@ {final.generation_tps:.1f} tok/s | thinking={thinking} ch | "
           f"cached={final.cached_tokens} | draft={final.draft_accepted}/{final.draft_tokens}")
-    return final, "".join(c.text or "" for c in chunks)
+    # THINKING COUNTS AS OUTPUT for the A/B comparison. Comparing `text` alone
+    # silently reports "no effect" for any model that spends the whole budget
+    # reasoning: both arms come back empty and two empty strings are equal.
+    # That is a false negative on the one check the A/B exists to make.
+    return final, "".join((c.thinking or "") + (c.text or "") for c in chunks)
 
 
 def apply_template(base: str, kwargs: dict | None) -> str:
@@ -172,6 +182,13 @@ def main() -> None:
     ap.add_argument("--lora-ab", action="store_true",
                     help="generate twice in one process, adapter off then on, and "
                          "report the tok/s, draft-acceptance and output deltas")
+    # Reaching flags heylook does NOT model. Several spec-decode knobs
+    # (--spec-draft-p-min, --spec-draft-n-min, --spec-draft-p-split) have no
+    # GGUFModelConfig field, so without this the probe cannot measure the very
+    # levers that would justify adding one.
+    ap.add_argument("--arg", action="append", metavar="FLAG", default=[],
+                    help="raw llama-server flag+value as ONE quoted string, "
+                         "repeatable, e.g. --arg '--spec-draft-p-min 0.5'")
     args = ap.parse_args()
     if args.lora_ab and not args.lora:
         ap.error("--lora-ab needs at least one --lora to toggle")
@@ -244,7 +261,13 @@ def main() -> None:
             # Identical text is proof the adapter did nothing; differing text is
             # only consistent with it working, so run --temp 0 before believing
             # either direction.
-            if off_text == on_text:
+            if not off_text and not on_text:
+                # Distinct from "no effect": there is nothing to compare, so the
+                # check did not run. Reporting no-effect here would be a pass
+                # earned by vacuity.
+                print("[probe] A/B output: NO OUTPUT in either arm -- comparison "
+                      "did not run (raise --max-tokens, or the model emitted nothing)")
+            elif off_text == on_text:
                 print("[probe] A/B output: IDENTICAL -- adapter had no effect on generation")
             else:
                 print("[probe] A/B output: differs (expected when the adapter applies)")
