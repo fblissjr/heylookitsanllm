@@ -315,6 +315,9 @@ async function refreshLoadedIds(ctx) {
     const data = await api.adminListModels({ signal: ctx.signal });
     if (!ctx.alive) return;
     s.loadedIds = new Set((data.models ?? []).filter((m) => m.loaded).map((m) => m.id));
+    // Provider per model, for the one continuation asymmetry: user-role
+    // continuation is MLX-only (llama-server prefills assistant turns only).
+    s.providerById = new Map((data.models ?? []).map((m) => [m.id, m.provider]));
     s.loadedKnown = true;
   } catch {
     return; // keep the last known state; the UI never guesses residency
@@ -827,7 +830,7 @@ function buildEditEl(ctx, msg) {
   textarea.addEventListener('input', () => autoGrow(textarea, growCap()));
   const cancel = () => { s.editingId = null; renderMessages(ctx); };
 
-  const save = async (regenerateAfter) => {
+  const save = async (regenerateAfter, continueAfter = false) => {
     const next = textarea.value;
     try {
       if (next !== msg.content) {
@@ -843,6 +846,14 @@ function buildEditEl(ctx, msg) {
         if (!ctx.alive) return;
         renderMessages(ctx);
         startStream(ctx);
+      } else if (continueAfter) {
+        // Continue FROM the edited text: everything after this message goes
+        // (it belongs to the pre-edit tail), then the model finishes the
+        // message itself -- prefill semantics, current model + settings.
+        await truncateAfter(ctx, msg.position);
+        if (!ctx.alive) return;
+        renderMessages(ctx);
+        startStream(ctx, msg);
       } else {
         renderMessages(ctx);
       }
@@ -861,6 +872,19 @@ function buildEditEl(ctx, msg) {
     const saveRegen = createEl('button', { class: 'btn btn--sm btn--primary' }, ['Save & Regenerate']);
     saveRegen.addEventListener('click', () => save(true));
     buttons.push(saveRegen);
+  }
+  // Continuation works for BOTH roles (an assistant message is finished; a
+  // user message is co-written) -- but user-role continuation is MLX-only:
+  // llama-server prefills assistant turns and has no user-turn spelling, so
+  // the button hides rather than offering a guaranteed 400.
+  const provider = s.providerById?.get(s.modelSelect.value);
+  if (msg.id && (msg.role === 'assistant' || provider !== 'gguf')) {
+    const saveContinue = createEl('button', {
+      class: 'btn btn--sm btn--primary',
+      title: 'Save, drop everything after, and let the model finish this message',
+    }, ['Save & Continue']);
+    saveContinue.addEventListener('click', () => save(false, true));
+    buttons.push(saveContinue);
   }
 
   const el = createEl('div', { class: `message message--${msg.role}` }, [
@@ -1185,7 +1209,7 @@ function toWireContent(msg, caps) {
   return parts.length ? parts : (msg.content ?? '');
 }
 
-function buildRequestBody(ctx) {
+function buildRequestBody(ctx, extra = {}) {
   const s = ctx.state;
   const caps = currentCaps(ctx);
   const messages = [];
@@ -1193,29 +1217,39 @@ function buildRequestBody(ctx) {
   for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m, caps) });
   // caps filter: cap-gated keys (enable_thinking, vision_tokens) set on a
   // capable model must not ride requests to a model that lacks the cap
-  return { model: s.modelSelect.value, messages, ...samplerParams(caps) };
+  return { model: s.modelSelect.value, messages, ...samplerParams(caps), ...extra };
 }
 
-function startStream(ctx) {
+function startStream(ctx, continueMsg = null) {
   const s = ctx.state;
   if (s.stream || !s.activeId) return;
 
   const controller = ctx.linkedController();
 
-  // streaming placeholder message
+  // Streaming placeholder message. A CONTINUATION streams into the tail of
+  // an EXISTING message (continueMsg, the last one after truncation): the
+  // placeholder is seeded with its content, replaces its rendered element,
+  // and finishStream PUTs the combined text back onto the same row instead
+  // of appending a new one.
+  const baseContent = continueMsg?.content ?? '';
+  const role = continueMsg?.role ?? 'assistant';
   const contentEl = createEl('div', { class: 'message-content' });
-  const thinkingEl = buildThinkingEl('', true);
-  thinkingEl.hidden = true;
-  const msgEl = createEl('div', { class: 'message message--assistant message--streaming' }, [
+  if (baseContent) contentEl.innerHTML = renderMarkdown(baseContent);
+  const thinkingEl = buildThinkingEl(continueMsg?.thinking ?? '', true);
+  thinkingEl.hidden = !continueMsg?.thinking;
+  const msgEl = createEl('div', { class: `message message--${role} message--streaming` }, [
     thinkingEl,
     createEl('div', { class: 'message-bubble' }, [contentEl]),
   ]);
+  if (continueMsg) s.messagesInner.lastElementChild?.remove(); // its own rendered row
   s.messagesInner.append(msgEl);
   scrollMessages(ctx, true);
 
   const stream = {
     controller,
     targetConvId: s.activeId,
+    continueMsg,
+    baseContent,
     content: '',
     thinking: '',
     contentDirty: false,
@@ -1229,7 +1263,7 @@ function startStream(ctx) {
 
   const isCurrent = () => s.stream === stream && s.activeId === stream.targetConvId;
 
-  streamChat(buildRequestBody(ctx), {
+  streamChat(buildRequestBody(ctx, continueMsg ? { continue_final_message: true } : {}), {
     signal: controller.signal,
     onToken: (_, full) => { stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
@@ -1255,7 +1289,9 @@ function paintStream(ctx) {
   if (!stream || s.activeId !== stream.targetConvId) return;
   if (stream.contentDirty) {
     stream.contentDirty = false;
-    stream.els.contentEl.innerHTML = renderMarkdown(stream.content);
+    // A continuation paints prefix + new text as ONE markdown document --
+    // rendering them separately would break constructs spanning the seam.
+    stream.els.contentEl.innerHTML = renderMarkdown(stream.baseContent + stream.content);
   }
   if (stream.thinkingDirty) {
     stream.thinkingDirty = false;
@@ -1286,7 +1322,28 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
   // Persist to the conversation the stream belonged to, even if the user
   // switched away or the page is tearing down mid-stream.
   let saved = null;
-  if (content || thinking) {
+  if (stream.continueMsg) {
+    // Continuation: the text belongs to the EXISTING message -- PUT the
+    // combined result back onto it, never a new row. An abort mid-way still
+    // persists the partial continuation, same contract as a normal stream.
+    const msg = stream.continueMsg;
+    const combinedContent = stream.baseContent + content;
+    const combinedThinking = [msg.thinking, thinking].filter(Boolean).join('') || undefined;
+    if (content || thinking) {
+      try {
+        saved = await api.updateMessage(stream.targetConvId, msg.id, {
+          content: combinedContent, thinking: combinedThinking,
+        });
+      } catch (err) {
+        if (ctx.alive) showStatus(ctx, `Could not save continuation: ${err.message}`, true);
+      }
+      // Local state either way -- an unsaved continuation staying on screen
+      // beats vanishing text (same rule as the append path below).
+      msg.content = saved?.content ?? combinedContent;
+      if (saved?.content_blocks) msg.content_blocks = saved.content_blocks;
+      if (combinedThinking) msg.thinking = saved?.thinking ?? combinedThinking;
+    }
+  } else if (content || thinking) {
     try {
       saved = await api.addMessage(stream.targetConvId, {
         role: 'assistant',
@@ -1301,12 +1358,14 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
 
   stream.els.msgEl.remove();
-  if (saved) {
-    s.messages.push(saved);
-  } else if (content || thinking) {
-    // save failed -- keep it on screen unsaved rather than vanishing text
-    s.messages.push({ id: null, role: 'assistant', content, thinking,
-      position: (s.messages[s.messages.length - 1]?.position ?? -1) + 1 });
+  if (!stream.continueMsg) {
+    if (saved) {
+      s.messages.push(saved);
+    } else if (content || thinking) {
+      // save failed -- keep it on screen unsaved rather than vanishing text
+      s.messages.push({ id: null, role: 'assistant', content, thinking,
+        position: (s.messages[s.messages.length - 1]?.position ?? -1) + 1 });
+    }
   }
   renderMessages(ctx);
   scrollMessages(ctx);

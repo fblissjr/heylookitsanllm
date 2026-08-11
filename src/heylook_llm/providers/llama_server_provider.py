@@ -398,6 +398,52 @@ class LlamaServerProvider(BaseProvider):
             return max(_SSE_READ_TIMEOUT_S, wake_timeout)
         return _SSE_READ_TIMEOUT_S
 
+    def _continuation_echo_chars(self, request: ChatRequest) -> int:
+        """Chars of prefill llama-server will ECHO back, to strip from the stream.
+
+        llama-server natively continues a trailing assistant message (the
+        rendered turn stays open -- verified on the pinned build via
+        /apply-template), but its response RE-EMITS the prefilled content as
+        the leading delta(s). heylook's contract on every provider is
+        "response = continuation only", so the echo is stripped positionally
+        (not by string match: retokenization can attach whitespace to the
+        echoed span, so byte-equality would false-negative).
+
+        Also enforces what llama-server cannot express:
+        - user-role continuation (explicit ``continue_final_message: true``
+          with a non-assistant final message) has no llama-server spelling;
+        - ``continue_final_message: false`` with a trailing assistant message
+          cannot be honored -- llama-server ALWAYS continues one, and
+          pretending otherwise would return a continuation labelled as a
+          fresh turn.
+        """
+        last_role = request.messages[-1].role if request.messages else None
+        if request.continue_final_message is True and last_role != "assistant":
+            raise InvalidGenerationRequest(
+                "user-role continuation is not supported on gguf models: "
+                "llama-server prefills assistant turns only. Use an MLX model "
+                "for continuing a non-assistant message."
+            )
+        if request.continue_final_message is False and last_role == "assistant":
+            raise InvalidGenerationRequest(
+                "continue_final_message=false cannot be honored on gguf models: "
+                "llama-server always continues a trailing assistant message. "
+                "Omit the flag or drop the trailing assistant turn."
+            )
+        if not request.is_continuation():
+            return 0
+        content = request.messages[-1].content
+        if not isinstance(content, str):
+            # The strip is positional, so its length must equal EXACTLY what
+            # llama-server renders as the prefill -- knowable only for plain
+            # string content (llama-server flattens part-lists by its own
+            # rules). Refuse rather than guess and mis-cut the stream.
+            raise InvalidGenerationRequest(
+                "continuation requires the final message content to be a "
+                "plain string on gguf models"
+            )
+        return len(content)
+
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         if self._base_url is None:
             raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
@@ -405,6 +451,7 @@ class LlamaServerProvider(BaseProvider):
             payload = self._build_payload(request)
         except SamplerNotFound as e:
             raise InvalidGenerationRequest(str(e))
+        echo_chars = self._continuation_echo_chars(request)
 
         http_request = urllib.request.Request(
             self._base_url + "/v1/chat/completions",
@@ -424,7 +471,7 @@ class LlamaServerProvider(BaseProvider):
                 f"llama-server for '{self.model_id}' unreachable: {e}"
             )
         try:
-            yield from self._stream_chunks(response, abort_event)
+            yield from self._stream_chunks(response, abort_event, echo_chars=echo_chars)
         finally:
             # Closing the connection frees the llama-server slot on abort.
             try:
@@ -440,11 +487,16 @@ class LlamaServerProvider(BaseProvider):
         except Exception:
             return f"llama-server returned HTTP {e.code}"
 
-    def _stream_chunks(self, fp, abort_event) -> Generator:
+    def _stream_chunks(self, fp, abort_event, echo_chars: int = 0) -> Generator:
         """Adapt llama-server SSE lines to GenerationChunk.
 
         Split out from create_chat_completion so it is unit-testable with a
         canned byte stream -- no HTTP, no subprocess.
+
+        ``echo_chars``: leading CONTENT chars to drop -- llama-server echoes
+        the prefill of a continued assistant message back as the first
+        delta(s) (see _continuation_echo_chars). Thinking deltas are never
+        stripped: the echo is content-channel only.
         """
         for raw_line in fp:
             if abort_event is not None and abort_event.is_set():
@@ -465,8 +517,16 @@ class LlamaServerProvider(BaseProvider):
                     f"Malformed SSE frame from llama-server: {e}"
                 )
             chunk = self._frame_to_chunk(frame)
-            if chunk is not None:
-                yield chunk
+            if chunk is None:
+                continue
+            if echo_chars > 0 and chunk.text:
+                cut = min(echo_chars, len(chunk.text))
+                echo_chars -= cut
+                chunk.text = chunk.text[cut:]
+                if not chunk.text and not chunk.thinking and not chunk.finish_reason \
+                        and not chunk.prompt_tokens and not chunk.generation_tokens:
+                    continue  # the delta was pure echo -- nothing to emit
+            yield chunk
 
     @staticmethod
     def _frame_to_chunk(frame: dict) -> Optional[GenerationChunk]:

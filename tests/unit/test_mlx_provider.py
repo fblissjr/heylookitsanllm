@@ -363,6 +363,76 @@ class TestResolveAddGenerationPrompt:
 
 
 @pytest.mark.unit
+class TestContinuationTemplate:
+    """continue_final_message reaches the template call with the right shape:
+    add_generation_prompt=False + continue_final_message=True (transformers
+    refuses True/True). Suppressing the generation prompt alone was NOT
+    continuation -- the turn still rendered CLOSED, so the model saw a
+    finished message and nothing to continue; that half-state is the bug this
+    class exists to keep dead."""
+
+    class _Tok:
+        def __init__(self, reject=()):
+            self.calls = []
+            self.reject = set(reject)
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.calls.append(kwargs)
+            if self.reject & set(kwargs):
+                raise TypeError("unexpected keyword argument")
+            return "PROMPT"
+
+        def encode(self, s):
+            return [1, 2, 3]
+
+    def _apply(self, tok, continuing, mock_mlx):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+        strategy = UnifiedTextStrategy(model_id="m")
+        messages = [{"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "he"}]
+        return strategy._apply_template(
+            messages, tok, None, None, {"enable_thinking": False},
+            continuing=continuing)
+
+    def test_continuing_leaves_the_turn_open(self, mock_mlx):
+        tok = self._Tok()
+        self._apply(tok, True, mock_mlx)
+        kwargs = tok.calls[-1]
+        assert kwargs["continue_final_message"] is True
+        assert kwargs["add_generation_prompt"] is False
+
+    def test_not_continuing_never_passes_the_kwarg(self, mock_mlx):
+        # continuing=False here is the resolved EXPLICIT opt-out
+        # (continue_final_message=false): the trailing assistant turn renders
+        # closed and a FRESH generation prompt opens -- "reply to it", the
+        # only meaning "never continue" can coherently have. (Auto mode never
+        # reaches this branch with a trailing assistant message.)
+        tok = self._Tok()
+        self._apply(tok, False, mock_mlx)
+        kwargs = tok.calls[-1]
+        assert "continue_final_message" not in kwargs
+        assert kwargs["add_generation_prompt"] is True
+
+    def test_enable_thinking_fallback_keeps_continuation(self, mock_mlx):
+        # A wrapper that rejects enable_thinking must retry WITHOUT it but
+        # WITH continue_final_message -- dropping both would silently render
+        # a closed turn.
+        tok = self._Tok(reject={"enable_thinking"})
+        self._apply(tok, True, mock_mlx)
+        kwargs = tok.calls[-1]
+        assert kwargs["continue_final_message"] is True
+        assert "enable_thinking" not in kwargs
+
+    def test_unsupported_continuation_refuses_loudly(self, mock_mlx):
+        from heylook_llm.providers.base import InvalidGenerationRequest
+
+        tok = self._Tok(reject={"continue_final_message"})
+        with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
+            self._apply(tok, True, mock_mlx)
+
+
+@pytest.mark.unit
 class TestMLXPromptSideMatchesReportedThinking:
     """The MLX half of the cross-surface property.
 

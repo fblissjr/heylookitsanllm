@@ -330,6 +330,40 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await userCount(page)) === 1, 'user message preserved');
   });
 
+  await suite.check('save & continue extends the message in place', async () => {
+    // Continuation (v1.61.0): edit the assistant reply down to a distinctive
+    // partial, Save & Continue -- the model FINISHES the same message
+    // (prefill). Contract under test: same message id (updated in place,
+    // never a new row), edited text as the verbatim prefix, and the reply
+    // grew past it. Leaves the thread at 1 user + 1 assistant, which the
+    // delete check below expects.
+    const before = (await conversationStateServerSide(page)).lastAssistantId;
+    assert(before !== null, 'had a persisted assistant message');
+    const PREFIX = 'Once upon a time there was a';
+    await clickByText(page, '.message--assistant .message__actions button', 'Edit');
+    await page.waitForSelector('.message-edit textarea');
+    await page.evaluate((p) => {
+      const ta = document.querySelector('.message-edit textarea');
+      ta.value = p;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }, PREFIX);
+    await clickByText(page, '.message-edit__buttons button', 'Save & Continue');
+    await waitFor(async () => {
+      const list = await serverGet(page, '/v1/conversations');
+      const first = list?.conversations?.[0];
+      if (!first) return false;
+      const msgs = (await serverGet(page, `/v1/conversations/${first.id}`))?.messages ?? [];
+      const last = msgs.filter((m) => m.role === 'assistant').at(-1);
+      return Boolean(last && last.id === before
+        && (last.content ?? '').startsWith(PREFIX)
+        && (last.content ?? '').length > PREFIX.length);
+    }, { message: 'continuation did not extend the same message in place' });
+    await waitIdle(page);
+    await waitFor(async () => (await assistantCount(page)) === 1,
+      { message: 'continuation must not add a message row' });
+    assert((await userCount(page)) === 1, 'user message preserved');
+  });
+
   await suite.check('delete (armed) removes a message via truncation', async () => {
     // Delete the assistant message -> truncates from its position, leaving the
     // single user message.

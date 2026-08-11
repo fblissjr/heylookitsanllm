@@ -333,13 +333,14 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation()),
             media_type="text/event-stream",
         )
     else:
         return await _non_stream_messages(
             generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
             provider=provider, thinking_enabled=thinking_enabled,
+            continuing=chat_request.is_continuation(),
         )
 
 
@@ -355,6 +356,7 @@ async def _non_stream_messages(
     perf_ctx: dict | None = None,
     provider=None,
     thinking_enabled: bool = False,
+    continuing: bool = False,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -389,6 +391,7 @@ async def _non_stream_messages(
         select_reasoning_parser(
             provider.template_info() if provider else None,
             thinking_enabled=thinking_enabled,
+            continuing=continuing,
         ),
     )
 
@@ -476,6 +479,7 @@ async def _stream_messages(
     perf_ctx: dict | None = None,
     abort_event=None,
     thinking_enabled: bool = False,
+    continuing: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -485,6 +489,7 @@ async def _stream_messages(
         thinking_parser=select_reasoning_parser(
             provider.template_info() if provider else None,
             thinking_enabled=thinking_enabled,
+            continuing=continuing,
         ),
     )
 

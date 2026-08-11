@@ -1,8 +1,9 @@
 # Current Work
 
 Last updated: 2026-08-11 (v1.54.0-1.57.1 config editor + switch arc, then
-v1.58.0 toml comments / v1.59.0 preset inheritance / v1.60.0 fit arc --
-all on main; earlier narrative below unchanged)
+v1.58.0 toml comments / v1.59.0 preset inheritance / v1.60.0 fit arc /
+v1.61.0 continuation + Save & Continue -- all on main; earlier narrative
+below unchanged)
 
 HANDOFF (next session start here): the day shipped six commits --
 v1.54.0 config editor, v1.55.0 audit fixes, docs, v1.56.0 /code-review

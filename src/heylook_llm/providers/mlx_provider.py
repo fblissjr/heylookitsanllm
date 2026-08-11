@@ -133,7 +133,8 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
     return bool(effective_request.get("enable_thinking"))
 
 
-def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None):
+def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
+                            continue_final_message=False):
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
@@ -185,14 +186,28 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
                     parts.append(item)
             msg["content"] = " ".join(parts).strip() if parts else ""
 
-    # Step 3: apply the tokenizer's own chat template
+    # Step 3: apply the tokenizer's own chat template. Continuation leaves
+    # the final turn OPEN (continue_final_message trims the closing markup;
+    # add_generation_prompt must be False with it -- transformers refuses
+    # the combination).
     template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
+    if continue_final_message:
+        template_kwargs["continue_final_message"] = True
     try:
         return tokenizer.apply_chat_template(
-            formatted_messages, tokenize=False, add_generation_prompt=True,
+            formatted_messages, tokenize=False,
+            add_generation_prompt=not continue_final_message,
             **template_kwargs,
         )
     except TypeError:
+        if continue_final_message:
+            # The role-joined fallback below cannot leave a turn open --
+            # a silent fall-through would RESTART the message instead of
+            # continuing it. Refuse loudly.
+            raise InvalidGenerationRequest(
+                "This model's template stack cannot continue the final "
+                "message (continue_final_message unsupported)."
+            )
         # Tokenizer template still can't handle the messages -- manual fallback
         return "\n".join(
             f"{msg.get('role', 'user')}: {msg.get('content', '')}"
@@ -231,7 +246,10 @@ class UnifiedTextStrategy:
         tokenizer = getattr(processor, "tokenizer", processor)
 
         messages_for_template = self._prepare_messages(request.messages)
-        prompt_tokens = self._apply_template(messages_for_template, tokenizer, processor, model, effective_request)
+        prompt_tokens = self._apply_template(
+            messages_for_template, tokenizer, processor, model, effective_request,
+            continuing=request.is_continuation(),
+        )
         gen_model = self._get_generation_model(model)
 
         # Compute system prompt token boundary for segment-aware cache eviction.
@@ -266,11 +284,18 @@ class UnifiedTextStrategy:
             messages_for_template.append(msg_dict)
         return messages_for_template
 
-    def _apply_template(self, messages, tokenizer, processor, model, effective_request) -> list[int]:
+    def _apply_template(self, messages, tokenizer, processor, model, effective_request,
+                        continuing: bool = False) -> list[int]:
         """Dispatch template application based on is_vlm.
 
         Text-only: tokenizer.apply_chat_template with enable_thinking support.
         VLM text: vlm_apply_chat_template (uses processor + model config).
+
+        ``continuing``: leave the final message's turn OPEN so generation
+        finishes it (continue_final_message). Before this kwarg the trailing-
+        assistant convention only suppressed the generation prompt, which
+        still rendered the turn CLOSED -- the model saw a finished turn and
+        nothing to continue.
         """
         enable_thinking = _resolve_enable_thinking(effective_request)
 
@@ -278,22 +303,36 @@ class UnifiedTextStrategy:
             prompt = vlm_apply_chat_template(
                 processor, model.config, messages, num_images=0,
                 enable_thinking=enable_thinking,
+                continue_final_message=continuing,
             )
         else:
-            add_gen_prompt = resolve_add_generation_prompt(messages)
+            base_kwargs: dict = {"tokenize": False,
+                                 "add_generation_prompt": not continuing}
+            if continuing:
+                # transformers refuses the True/True combination, hence the
+                # add_generation_prompt flip above.
+                base_kwargs["continue_final_message"] = True
 
             try:
                 try:
                     prompt = tokenizer.apply_chat_template(
-                        messages, tokenize=False,
-                        add_generation_prompt=add_gen_prompt,
-                        enable_thinking=enable_thinking,
+                        messages, enable_thinking=enable_thinking, **base_kwargs,
                     )
                 except TypeError:
-                    prompt = tokenizer.apply_chat_template(
-                        messages, tokenize=False,
-                        add_generation_prompt=add_gen_prompt,
-                    )
+                    if continuing:
+                        # Can't tell WHICH kwarg the wrapper rejected; retry
+                        # without enable_thinking only. If continue_final_message
+                        # itself is the problem, refuse rather than silently
+                        # render a closed turn that would restart the message.
+                        try:
+                            prompt = tokenizer.apply_chat_template(messages, **base_kwargs)
+                        except TypeError as te:
+                            raise InvalidGenerationRequest(
+                                "This model's template stack cannot continue the "
+                                "final message (continue_final_message unsupported)."
+                            ) from te
+                    else:
+                        prompt = tokenizer.apply_chat_template(messages, **base_kwargs)
             except ValueError as e:
                 # transformers raises a raw ValueError when the tokenizer has
                 # no chat template at all; that message surfaces verbatim as
@@ -302,6 +341,14 @@ class UnifiedTextStrategy:
                 err = missing_template_error(tokenizer, self.model_id)
                 if err is not None:
                     raise err from e
+                if continuing:
+                    # transformers also ValueErrors when the template rewrites
+                    # the final message so its content no longer ends the
+                    # rendered text -- user-actionable, not a server fault.
+                    raise InvalidGenerationRequest(
+                        f"Cannot continue the final message with this model's "
+                        f"chat template: {e}"
+                    ) from e
                 raise
 
         if isinstance(prompt, str):
@@ -1231,6 +1278,18 @@ class MLXProvider(BaseProvider):
                             f"Model '{self.model_id}' is served by the MLX provider, "
                             f"which does not support audio input (audio towers are "
                             f"skipped at load). Use a gguf model for audio."
+                        )
+
+                    # Continuation is a TEXT-path feature: the vision strategy
+                    # renders through mlx-vlm's prepare_inputs (no open-turn
+                    # spelling there yet), and a denoising engine has no turn
+                    # to leave open at all. Refuse rather than silently
+                    # restart the message.
+                    if request.is_continuation() and (self.is_diffusion or (self.is_vlm and has_images)):
+                        raise InvalidGenerationRequest(
+                            "continue_final_message is not supported with image "
+                            "history or diffusion models yet -- text-only "
+                            "continuation works on every MLX chat model."
                         )
 
                     # Diffusion first: the AR text/vision split does not apply

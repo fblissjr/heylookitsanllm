@@ -179,7 +179,24 @@ are unauthenticated.
 
 **Chat completions** `POST /v1/chat/completions` (streaming SSE):
 - Body: `{ model, messages:[{role,content,thinking?}], ...samplerParams(), stream:true,
-  stream_options:{include_usage:true}, logprobs?, top_logprobs? }`, header `X-Request-ID`.
+  stream_options:{include_usage:true}, logprobs?, top_logprobs?,
+  continue_final_message? }`, header `X-Request-ID`.
+- **Continuation / prefill (`continue_final_message`, added v1.61.0):**
+  finish the FINAL message instead of opening a new assistant turn. Absent =
+  auto: a trailing assistant message is continued (both providers; before
+  v1.61.0 this convention only suppressed the generation prompt on MLX and
+  the turn still rendered CLOSED -- it did not actually continue). `true` =
+  continue whatever the final message is, ANY role -- user-role continuation
+  is MLX-only (llama-server prefills assistant turns natively but has no
+  user-turn spelling; gguf 400s). `false` = never continue (MLX opens a
+  fresh assistant turn; gguf 400s on a trailing assistant message, which
+  llama-server always continues). The response carries ONLY the continuation
+  text on every provider (llama-server's prefill echo is stripped
+  server-side). Not supported with image history or diffusion models (400).
+  v3's Save & Continue on the message editor uses this: PUT the edit,
+  truncate after, stream with `continue_final_message: true`, append into
+  the SAME message row (both roles; the button hides for user messages on
+  gguf models).
 - SSE chunks: `choices[0].delta.content` | `.delta.thinking` | `.logprobs.content`
   (`[{token,logprob,top_logprobs:[{token,logprob}]}]`). Final usage chunk (only if `include_usage`):
   `{ usage:{prompt_tokens,completion_tokens,total_tokens,prompt_tokens_details?},

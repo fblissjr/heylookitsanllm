@@ -97,6 +97,24 @@ class ChatRequest(BaseModel):
 
     # Named sampler (resolved against the SamplerRegistry at generation
     # time). Overlays the sampler's fields on top of model-level defaults;
+    # Continuation ("prefill"): finish the FINAL message instead of opening a
+    # new assistant turn. None = auto -- a trailing assistant message is
+    # continued (the long-standing prefill convention, resolve_add_generation_
+    # prompt). True = continue whatever the final message is, ANY role
+    # (user-role continuation is MLX-only; llama-server prefills assistant
+    # turns natively but has no user-turn spelling -- it 400s). False = never
+    # continue (MLX renders the trailing turn closed and opens a fresh one;
+    # gguf 400s on a trailing assistant, because llama-server ALWAYS continues
+    # one and pretending otherwise would lie). The response carries ONLY the
+    # continuation text, never an echo of the prefill, on every provider.
+    continue_final_message: Optional[bool] = Field(
+        default=None,
+        description="Continue the final message (prefill) instead of opening a new "
+                    "assistant turn. Default: auto (a trailing assistant message is "
+                    "continued). true = continue any role's final message (user-role "
+                    "is MLX-only); false = never continue."
+    )
+
     # explicit request fields still win. Unknown name -> 400.
     # NOT the /v1/presets user presets (v3's saved prompt+sampler bundles).
     sampler: Optional[str] = Field(
@@ -125,6 +143,14 @@ class ChatRequest(BaseModel):
         if not v:
             raise ValueError("Messages list cannot be empty")
         return v
+
+    def is_continuation(self) -> bool:
+        """Whether this request continues its final message (see
+        ``continue_final_message``). The ONE resolution of flag-vs-convention;
+        providers and the parser selection must all ask here, never re-derive."""
+        if self.continue_final_message is not None:
+            return self.continue_final_message
+        return bool(self.messages) and self.messages[-1].role == 'assistant'
 
 class PerformanceMetrics(BaseModel):
     prompt_tps: float

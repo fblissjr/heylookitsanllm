@@ -486,3 +486,90 @@ class TestSSEAdapter:
         p = make_provider()
         with pytest.raises(GenerationFailed):
             list(p._stream_chunks(_stream_bytes("data: {not json"), abort_event=None))
+
+
+class TestContinuationEchoStrip:
+    """llama-server ECHOES a continued assistant message's prefill back as the
+    leading content delta(s) (observed live on the pinned build: prefill
+    "1, 2, 3," came back as the first delta '1, 2, 3, '). The strip is
+    POSITIONAL: retokenization can attach whitespace to the echoed span, so a
+    byte-equality check would false-negative and leak the echo through."""
+
+    def collect(self, frames, echo_chars):
+        p = make_provider()
+        return list(p._stream_chunks(_stream_bytes(*frames), abort_event=None,
+                                     echo_chars=echo_chars))
+
+    def test_echo_in_one_delta_is_stripped(self):
+        frames = [
+            'data: {"choices":[{"delta":{"content":"1, 2, 3, "},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"4, 5"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        text = "".join(c.text for c in self.collect(frames, echo_chars=len("1, 2, 3,")))
+        assert text == " 4, 5"  # the delta's surplus space is real continuation
+
+    def test_echo_spanning_deltas_is_stripped(self):
+        frames = [
+            'data: {"choices":[{"delta":{"content":"1, 2"},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":", 3, 4"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        text = "".join(c.text for c in self.collect(frames, echo_chars=len("1, 2, 3")))
+        assert text == ", 4"
+
+    def test_pure_echo_deltas_are_swallowed_not_emitted_empty(self):
+        frames = [
+            'data: {"choices":[{"delta":{"content":"prefix"},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":" tail"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        chunks = self.collect(frames, echo_chars=len("prefix"))
+        assert all(c.text or c.thinking or c.finish_reason or c.prompt_tokens for c in chunks)
+        assert "".join(c.text for c in chunks) == " tail"
+
+    def test_thinking_deltas_are_never_stripped(self):
+        frames = [
+            'data: {"choices":[{"delta":{"reasoning_content":"hmm"},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"prefixreal"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        chunks = self.collect(frames, echo_chars=len("prefix"))
+        assert "".join(c.thinking or "" for c in chunks) == "hmm"
+        assert "".join(c.text for c in chunks) == "real"
+
+
+class TestContinuationGuards:
+    """What llama-server cannot express must 400, not silently do the wrong
+    thing: user-role continuation has no llama-server spelling, and a trailing
+    assistant message is ALWAYS continued (so false cannot be honored)."""
+
+    def _req(self, messages, flag):
+        from heylook_llm.config import ChatRequest
+        return ChatRequest(model="m", messages=messages, continue_final_message=flag)
+
+    def test_user_role_continuation_400s(self):
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        p = make_provider()
+        req = self._req([{"role": "user", "content": "finish my sentence"}], True)
+        with pytest.raises(InvalidGenerationRequest, match="assistant turns only"):
+            p._continuation_echo_chars(req)
+
+    def test_false_with_trailing_assistant_400s(self):
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        p = make_provider()
+        req = self._req([{"role": "user", "content": "hi"},
+                         {"role": "assistant", "content": "he"}], False)
+        with pytest.raises(InvalidGenerationRequest, match="always continues"):
+            p._continuation_echo_chars(req)
+
+    def test_auto_trailing_assistant_returns_prefill_length(self):
+        p = make_provider()
+        req = self._req([{"role": "user", "content": "count"},
+                         {"role": "assistant", "content": "1, 2,"}], None)
+        assert p._continuation_echo_chars(req) == 5
+
+    def test_no_continuation_returns_zero(self):
+        p = make_provider()
+        req = self._req([{"role": "user", "content": "hi"}], None)
+        assert p._continuation_echo_chars(req) == 0

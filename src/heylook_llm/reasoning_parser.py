@@ -508,7 +508,8 @@ class GemmaChannelParser:
 
 
 def select_reasoning_parser(
-    template_info: Any = None, *, thinking_enabled: bool | None = None
+    template_info: Any = None, *, thinking_enabled: bool | None = None,
+    continuing: bool = False,
 ) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
     pass-through so shutdown paths + unit tests don't need a full load.
@@ -518,6 +519,12 @@ def select_reasoning_parser(
     templates that pre-fill an unclosed ``<think>`` into the generation
     prompt (``prefills_thinking``): the model's output then starts inside
     the block, so the parser must start in thinking state.
+
+    ``continuing`` is the request's continuation resolution
+    (``ChatRequest.is_continuation()``): a continuation has NO generation
+    prompt, so a ``prefills_thinking`` template never opened a block -- the
+    stream starts inside the final message's CONTENT, and a parser armed in
+    thinking state would misfile the whole continuation as thinking.
 
     Declared specials are stripped by ONE wrapper (``StripSpecials``) that
     every routing parser composes -- a model that declares none gets the
@@ -539,7 +546,8 @@ def select_reasoning_parser(
         from heylook_llm.thinking_parser import HybridThinkingParser
         parser = HybridThinkingParser(
             initial_thinking=bool(thinking_enabled)
-            and getattr(template_info, "prefills_thinking", False),
+            and getattr(template_info, "prefills_thinking", False)
+            and not continuing,
         )
     else:
         parser = PassThroughParser()

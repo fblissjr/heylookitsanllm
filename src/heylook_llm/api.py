@@ -937,6 +937,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     thinking_parser = select_reasoning_parser(
         provider.template_info() if provider else None,
         thinking_enabled=provider.effective_thinking(chat_request) if provider else False,
+        continuing=chat_request.is_continuation(),
     )
 
     # Initialize logprobs collector if requested
@@ -1354,6 +1355,7 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
         select_reasoning_parser(
             provider.template_info() if provider else None,
             thinking_enabled=provider.effective_thinking(chat_request) if provider else False,
+            continuing=chat_request.is_continuation(),
         ),
     )
 

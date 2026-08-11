@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.61.0]
+
+### Added
+
+- **True continuation (prefill) + Save & Continue** (owner request).
+  `ChatRequest.continue_final_message`: absent = auto (a trailing assistant
+  message is continued -- the long-standing convention, now actually TRUE:
+  before this, MLX only suppressed the generation prompt and the turn still
+  rendered CLOSED, so the model saw a finished message and nothing to
+  continue); `true` = continue the final message whatever its role
+  (user-role co-writing is MLX-only); `false` = never continue. MLX passes
+  `continue_final_message=True` through the template (transformers trims
+  the closing markup; refusals are loud 400s, never a silent closed turn),
+  and a continuation disarms the `prefills_thinking` parser assumption --
+  there is no generation prompt, so the stream starts inside CONTENT and an
+  armed parser would misfile the whole continuation as thinking.
+  llama-server (verified live on the pinned build via /apply-template)
+  continues a trailing assistant turn natively but ECHOES the prefill back
+  as the leading delta(s); the provider strips it positionally (byte
+  equality would false-negative -- retokenization attaches whitespace to
+  the echoed span), so the response is continuation-only on every provider.
+  What llama-server cannot express 400s honestly: user-role continuation,
+  and `false` with a trailing assistant message (it ALWAYS continues one).
+  v3: the message editor gains **Save & Continue** (both roles; hidden for
+  user messages on gguf models): save the edit, truncate everything after,
+  and stream the continuation into the SAME message row -- an abort keeps
+  the partial, same contract as a normal stream. Not supported with image
+  history or diffusion models (400). Tests: template-kwarg shape +
+  loud-refusal paths, echo-strip cases, parser edge, flag resolution; E2E
+  "save & continue extends the message in place" against the live model.
+
 ## [1.60.0]
 
 ### Added
