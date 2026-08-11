@@ -288,12 +288,20 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
-`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`.
+`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,
+stale_reload_fields}], total}`.
 `config` is the model's STORED keys only (`exclude_unset`, 2026-08-11) — absent IS how a
 default is spelled in models.toml, and the config editor + the row's non-default summary
 chip depend on telling "explicitly set" from "inherited default". The resolved dump it
 used to be made every default look deliberately chosen (chip on every row,
-`n_gpu_layers 999` rendered as an explicit choice);
+`n_gpu_layers 999` rendered as an explicit choice). NB pydantic validators that ASSIGN
+derived values must restore `__pydantic_fields_set__` or their fields leak back into
+this dump as "stored" (`_resolve_modalities` does; a test pins it).
+`stale_reload_fields` (2026-08-11) is SERVER-derived: the requires_reload keys whose
+saved value differs from what the loaded process was built with (always `[]` when not
+loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
+client-side bookkeeping of the same fact dies on remount and drifts on partial
+failures;
 `POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20); `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,
@@ -345,8 +353,12 @@ models.toml, a loaded model keeps running as-is until reloaded (the editor offer
 "Reload now" = unload + `load?warm=true` after such a save); `load_time_only` = rendered
 disabled with the field's `reason`; `identity` fields are never listed. `arg` is the
 llama-server flag spelling (shown as a hint, pinned to the emitted argv by a backend
-test); `ui:"advanced"` collapses the field into an Advanced group; `shape:"flag"` marks
-a bare boolean flag.
+test); `ui:"advanced"` collapses the field into an Advanced group; `ui:"hidden"` means
+NO editor renders it (declared on the field — gguf's host/port/server_binary/
+startup_timeout_s, mlx's derived `vision` mirror — so the hide policy has one source
+instead of a name-list copied into every consumer); `shape:"flag"` marks a bare
+boolean flag. Array fields edit as one element per LINE, never comma-joined —
+elements legitimately contain commas (`extra_args`: `--tensor-split "3,1"`).
 `PATCH /v1/admin/models/{id}` body `{config:{key: value|null}}` →
 `{model, reload_required_fields, warning?}`. Values are TYPED JSON (numbers as numbers);
 **null means "unset — back to the default"** and removes the key from models.toml (absent
@@ -459,12 +471,15 @@ by effect class (immediate / requires-reload / advanced / fixed-with-reason); tr
 selects for booleans and enums (`default (X)` = unset), empty input = unset, so the
 null-means-default contract is honest in every control; Save PATCHes only dirty fields;
 after a reload-required save on a loaded model the panel offers Reload now (unload +
-warm load, same per-row busy flag), and the ROW keeps a persistent
-"config changed — reload to apply" marker until a reload or unload actually applies it
-(the panel-local note dies with the panel; the marker is what prevents "I set it and
-nothing happened"). Unsaved edits live in a per-model draft map keyed
-off page state so the list's re-renders don't lose them. Errors go to the page's single
-status area; save/reload outcomes render in the panel's own `role="status"` note.
+warm load, same per-row busy flag), and the ROW shows a
+"config changed — reload to apply" marker driven by the response's
+`stale_reload_fields` — server truth, so it survives remounts/other tabs and clears
+itself on the refetch after a reload or unload (the marker is what prevents "I set it
+and nothing happened"). A save REBUILDS the panel (that is how the marker/chip
+repaint); the outcome text survives the rebuild as a one-shot note, written into the
+`role="status"` live region only after mount so it actually announces. Unsaved edits
+live in a per-model draft map keyed off page state so re-renders don't lose them.
+Errors go to the page's single status area.
 
 ### batch — DROPPED from v3 scope
 Not included (user decision). The backend endpoint (`/v1/batch/chat/completions`) stays; if batch is wanted

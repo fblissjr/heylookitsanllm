@@ -24,17 +24,11 @@ import { api } from './api.js';
 
 const LIVE_EFFECTS = new Set(['per_request', 'applies_live', 'descriptive']);
 
-// Deliberately not rendered at all (stricter than disabled -- absence is the
-// UI's choice; the effect class is the floor, not the ceiling). Per the
-// owner-approved design (internal/research/expert_offload_design_frontend.md
-// §7): port 0 = pick-a-free-port is correct and nothing good comes of a UI
-// breaking it; a per-model path-to-executable picker in a web form is a
-// foot-cannon; host/startup_timeout_s are plumbing. `vision` (mlx) is a
-// DERIVED mirror of modalities -- config re-derives it whenever modalities
-// is set or detectable, so an edit silently reverts on the next load: a dead
-// knob with a live-looking affordance. All names are single-provider today,
-// so a flat set is safe -- revisit if a second provider grows one of these.
-const HIDDEN_FIELDS = new Set(['host', 'port', 'server_binary', 'startup_timeout_s', 'vision']);
+// Which fields never render is declared ON the field (`ui: "hidden"` in the
+// backend schema -- gguf's host/port/server_binary/startup_timeout_s, mlx's
+// derived `vision` mirror), not in a frontend name-list: one source, read by
+// this editor, the summary chip, and the E2E check alike.
+const isHidden = (f) => f.ui === 'hidden';
 
 // The collapsed-row summary chip: which of this entry's stored keys are worth
 // announcing on the list ("why is this one configured differently"). Only
@@ -45,7 +39,7 @@ export function configSummary(config, fields) {
   if (!config || !fields?.length) return null;
   const parts = [];
   for (const f of fields) {
-    if (f.effect === 'descriptive' || HIDDEN_FIELDS.has(f.name)) continue;
+    if (f.effect === 'descriptive' || isHidden(f)) continue;
     const v = config[f.name];
     if (v == null || Array.isArray(v) || typeof v === 'object') continue;
     if (typeof v === 'string' && v.length > 16) continue;
@@ -75,7 +69,11 @@ function parseControlValue(field, raw) {
     case 'boolean':
       return { value: raw === 'true' };
     case 'array':
-      return { value: raw.split(',').map((s) => s.trim()).filter(Boolean) };
+      // One element per LINE, not comma-separated: array elements can
+      // legitimately contain commas (extra_args: --tensor-split "3,1",
+      // -ot "a=CPU,b=GPU"), and a comma split silently rewrites them into a
+      // different argv that only fails at the next spawn.
+      return { value: raw.split('\n').map((s) => s.trim()).filter(Boolean) };
     default:
       return { value: raw };
   }
@@ -84,7 +82,7 @@ function parseControlValue(field, raw) {
 // The control's string form of a stored value (inverse of parseControlValue).
 function toControlValue(field, value) {
   if (value == null) return '';
-  if (field.type === 'array') return Array.isArray(value) ? value.join(', ') : String(value);
+  if (field.type === 'array') return Array.isArray(value) ? value.join('\n') : String(value);
   return String(value);
 }
 
@@ -111,7 +109,7 @@ function buildHint(field) {
   if (def != null) bits.push(`default ${def}`);
   const bounds = boundsLabel(field);
   if (bounds) bits.push(bounds);
-  if (field.type === 'array') bits.push('comma-separated');
+  if (field.type === 'array') bits.push('one per line');
   if (field.reason) bits.push(field.reason);
   if (!bits.length) return null;
   const el = createEl('div', { class: 'cfg-field__hint muted small' });
@@ -142,6 +140,19 @@ function buildControl(field, rawValue, inputId, onEdit) {
     select.value = rawValue;
     select.addEventListener('change', () => onEdit(field.name, select.value));
     return select;
+  }
+
+  if (field.type === 'array') {
+    const area = createEl('textarea', {
+      id: inputId,
+      class: 'input cfg-field__lines',
+      rows: 3,
+      value: rawValue,
+      placeholder: defaultLabel(field) ?? 'default',
+      disabled,
+    });
+    area.addEventListener('input', () => onEdit(field.name, area.value));
+    return area;
   }
 
   const isNumeric = field.type === 'integer' || field.type === 'number';
@@ -185,23 +196,34 @@ function sectionEl(title, note, rows) {
 
 // ---------------------------------------------------------------------------
 
-// createModelConfigEditor({ model, fields, draft, onError, onSaved, onReload, onReset })
+// createModelConfigEditor({ model, fields, draft, initialNote, onError, onSaved, onReload, onReset })
 //
-// - model:  the AdminModelResponse row (id, provider, loaded, config, ...)
-// - fields: the option schema's field list for model.provider (HIDDEN_FIELDS
-//           are filtered here, so callers pass the schema verbatim)
+// - model:  the AdminModelResponse row (id, provider, loaded, config,
+//           stale_reload_fields, ...). stale_reload_fields is SERVER truth
+//           ("saved but the loaded process still runs the old value") and is
+//           what re-arms the Reload offer on every rebuild -- panel-local
+//           state cannot survive a remount, and a client-side copy of this
+//           fact drifts (it did).
+// - fields: the option schema's field list for model.provider (ui:"hidden"
+//           fields are filtered here, so callers pass the schema verbatim)
 // - draft:  caller-owned {fieldName: rawControlValue} of unsaved edits; the
 //           editor mutates it so a page re-render can rebuild without loss
+// - initialNote: one-shot status text to show (and announce) after mounting
+//           -- the save outcome survives the post-save rebuild through it
 // - onError(msg): route a failure to the page's status area (page invariant:
 //           errors have ONE home)
-// - onSaved(updatedModel, reloadFields): the PATCH landed; caller refreshes
-//           its list row and, when reloadFields is non-empty (only ever on a
-//           loaded model), marks the row reload-needed until a reload/unload
-// - onReload(): caller runs its unload + warm-load cycle (button appears only
-//           on a loaded model after a reload-required save, armed-confirmed)
+// - onSaved(updatedModel, noteText): the PATCH landed; caller swaps its row
+//           model, re-renders (this editor is REBUILT -- do nothing after),
+//           and hands noteText to the rebuilt panel as initialNote
+// - onReload(): caller runs its unload + warm-load cycle (armed-confirmed)
 // - onReset(): drafts were dropped; caller rebuilds the panel from saved state
-export function createModelConfigEditor({ model, fields: allFields, draft, onError, onSaved, onReload, onReset }) {
-  const fields = allFields.filter((f) => !HIDDEN_FIELDS.has(f.name));
+//
+// The returned { el, announce } contract: caller invokes announce() AFTER
+// appending el to the document -- a live region only announces text written
+// into an already-mounted node, so baking the note into the initial DOM
+// would render it silent to assistive tech.
+export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset }) {
+  const fields = allFields.filter((f) => !isHidden(f));
   const idPrefix = `mcfg-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   // Editor-local baseline (what dirty is measured against). A copy, updated
   // on each successful save -- reading model.config would go stale after the
@@ -214,10 +236,14 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
   const currentRaw = (field) =>
     Object.hasOwn(draft, field.name) ? draft[field.name] : savedRaw(field);
 
+  // Server-derived: which saved requires_reload values the loaded process
+  // has not picked up yet. Drives the Reload offer across rebuilds/remounts.
+  const staleFields = model.loaded ? (model.stale_reload_fields || []) : [];
+
   const noteEl = createEl('div', { class: 'cfg-note muted small', role: 'status' });
   const saveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save']);
   const resetBtn = createEl('button', { class: 'btn btn--sm' }, ['Reset']);
-  const reloadBtn = createEl('button', { class: 'btn btn--sm', hidden: true }, ['Reload now']);
+  const reloadBtn = createEl('button', { class: 'btn btn--sm', hidden: !staleFields.length }, ['Reload now']);
 
   const dirtyFields = () =>
     fields.filter((f) => Object.hasOwn(draft, f.name) && draft[f.name] !== savedRaw(f));
@@ -272,16 +298,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
     try {
       const result = await api.adminUpdateModel(model.id, { config });
       const reloadNeeded = result.reload_required_fields || [];
-      for (const [key, value] of Object.entries(config)) {
-        if (value === null) delete saved[key];
-        else saved[key] = value;
-      }
       for (const field of dirty) delete draft[field.name];
-      // The response's model is the post-save truth; hand it up with the
-      // reload set so the page can keep a persistent reload-needed marker on
-      // the row (the panel-local note dies with the panel, and "I set it and
-      // nothing happened" is the failure this surface exists to prevent).
-      onSaved(result.model, model.loaded ? reloadNeeded : []);
       const parts = ['Saved.'];
       if (reloadNeeded.length) {
         parts.push(model.loaded
@@ -289,8 +306,11 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
           : `Applies on next load: ${reloadNeeded.join(', ')}.`);
       }
       if (result.warning) parts.push(result.warning);
-      setNote(parts.join(' '));
-      reloadBtn.hidden = !(model.loaded && reloadNeeded.length);
+      // The page swaps the row model and REBUILDS this panel (so the row's
+      // reload marker and chip actually repaint); the rebuilt panel restores
+      // the outcome via initialNote and the response's stale_reload_fields.
+      onSaved(result.model, parts.join(' '));
+      return;
     } catch (err) {
       onError(`Save failed: ${err.message}`);
     }
@@ -310,11 +330,16 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
   // minutes of disk I/O, so the first click arms rather than fires.
   armedConfirm(reloadBtn, () => { reloadBtn.hidden = true; onReload(); }, 'Confirm reload?');
 
-  // --- layout: live / reload / advanced / fixed ---
-  const advanced = fields.filter((f) => f.ui === 'advanced');
+  // --- layout: a strict PARTITION of the field set. `fixed` wins over
+  // `advanced` (a load_time_only field must render disabled-with-reason
+  // exactly once, never twice with a duplicate id), and the Advanced title
+  // only claims a reload when every field in it actually requires one --
+  // stamping "(requires reload)" over a live field would be the exact lie
+  // pendingNote exists to avoid.
+  const fixed = fields.filter((f) => f.effect === 'load_time_only');
+  const advanced = fields.filter((f) => f.ui === 'advanced' && f.effect !== 'load_time_only');
   const live = fields.filter((f) => LIVE_EFFECTS.has(f.effect) && f.ui !== 'advanced');
   const reload = fields.filter((f) => f.effect === 'requires_reload' && f.ui !== 'advanced');
-  const fixed = fields.filter((f) => f.effect === 'load_time_only');
 
   const rows = (list) => list.map((f) => fieldRow(f, currentRaw(f), idPrefix, onEdit));
 
@@ -332,8 +357,10 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
     ));
   }
   if (advanced.length) {
+    const allReload = advanced.every((f) => f.effect === 'requires_reload');
     children.push(createEl('details', { class: 'cfg-section' }, [
-      createEl('summary', { class: 'cfg-section__title' }, ['Advanced (requires reload)']),
+      createEl('summary', { class: 'cfg-section__title' },
+        [allReload ? 'Advanced (requires reload)' : 'Advanced']),
       ...rows(advanced),
     ]));
   }
@@ -348,5 +375,13 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
   children.push(createEl('div', { class: 'cfg-actions' }, [saveBtn, resetBtn, reloadBtn, noteEl]));
 
   syncSaveState();
-  return { el: createEl('div', { class: 'model-config' }, children) };
+  // The mount note: the save outcome carried across the rebuild, or the
+  // standing server-derived reload reminder. Written by announce() AFTER the
+  // caller mounts the element, so the live region actually announces it.
+  const mountNote = initialNote
+    || (staleFields.length ? `Saved changes pending reload: ${staleFields.join(', ')}.` : '');
+  return {
+    el: createEl('div', { class: 'model-config' }, children),
+    announce: () => { if (mountNote && !noteEl.textContent) setNote(mountNote); },
+  };
 }

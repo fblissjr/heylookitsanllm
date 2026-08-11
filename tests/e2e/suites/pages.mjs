@@ -538,12 +538,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
     const models = await serverGet(page, '/v1/admin/models');
     const provider = models?.models?.find((m) => m.id === config.model)?.provider;
     const schema = await serverGet(page, '/v1/admin/model-options');
-    // Mirrors HIDDEN_FIELDS in js/model-config.js: gguf plumbing the UI
-    // deliberately does not render (design doc §7 "do not expose"), plus
-    // mlx's derived-mirror `vision`.
-    const hidden = new Set(['host', 'port', 'server_binary', 'startup_timeout_s', 'vision']);
-    const expected = (schema?.providers?.[provider]?.fields ?? [])
-      .map((f) => f.name).filter((n) => !hidden.has(n)).sort();
+    // Hidden fields are declared IN the schema (ui:"hidden"), so the check
+    // derives them from the same source the editor reads -- no hand-copied
+    // mirror to rot.
+    const schemaFields = schema?.providers?.[provider]?.fields ?? [];
+    const expected = schemaFields
+      .filter((f) => f.ui !== 'hidden').map((f) => f.name).sort();
     assert(expected.length > 0, `option schema has no fields for provider ${provider}`);
 
     const rendered = (await page.$$eval('.model-config .cfg-field__label',
@@ -552,8 +552,8 @@ export async function runPagesSuite({ suite, ctx, config }) {
       `rendered fields diverge from the option schema:\n  schema: ${expected.join(',')}\n  rendered: ${rendered.join(',')}`);
 
     // load_time_only fields must be disabled and say why.
-    for (const f of schema.providers[provider].fields) {
-      if (f.effect !== 'load_time_only' || hidden.has(f.name)) continue;
+    for (const f of schemaFields) {
+      if (f.effect !== 'load_time_only' || f.ui === 'hidden') continue;
       const disabled = await page.$eval(`#mcfg-${config.model.replace(/[^a-zA-Z0-9_-]/g, '-')}-${f.name}`,
         (el) => el.disabled);
       assert(disabled, `load_time_only field ${f.name} is editable`);
@@ -574,10 +574,17 @@ export async function runPagesSuite({ suite, ctx, config }) {
     const fake = (req) => {
       if (req.method() === 'PATCH' && req.url().includes('/v1/admin/models/')) {
         bodies.push(JSON.parse(req.postData() || '{}'));
+        // Echo a post-save model like the real route would: the page rebuilds
+        // the panel from response.model.config, so the fake must carry the
+        // saved key for the follow-up clear-to-null step to be dirty.
+        const cfg = bodies.length === 1 ? { max_tokens: 512 } : {};
         req.respond({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ model: null, reload_required_fields: [] }),
+          body: JSON.stringify({
+            model: { config: cfg, stale_reload_fields: [] },
+            reload_required_fields: [],
+          }),
         });
       } else {
         req.continue();
@@ -594,9 +601,16 @@ export async function runPagesSuite({ suite, ctx, config }) {
       await waitFor(async () => /Saved\./.test(await textOf(page, '.model-config .cfg-note') || ''),
         { timeout: 5000, message: 'save note never appeared' });
 
-      // Clearing the just-saved value must re-arm Save (the editor's dirty
-      // baseline follows the save) and send an explicit null.
-      await input.click({ clickCount: 3 });
+      // The save rebuilds the panel (that is how the row marker/chip
+      // repaint), so the old input handle is detached -- re-query it.
+      const input2 = await page.$('.model-config input[id$="-max_tokens"]');
+      assert(input2, 'max_tokens control missing after the post-save rebuild');
+      assert(await input2.evaluate((el) => el.value) === '512',
+        'rebuilt panel did not show the saved value');
+
+      // Clearing the just-saved value must re-arm Save (the rebuilt panel's
+      // baseline is the response config) and send an explicit null.
+      await input2.click({ clickCount: 3 });
       await page.keyboard.press('Backspace');
       await clickByText(page, '.model-config .cfg-actions button', 'Save');
       await waitFor(async () => bodies.length === 2, { timeout: 10000, message: 'null-reset PATCH never sent' });

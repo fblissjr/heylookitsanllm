@@ -847,7 +847,9 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   overflow-wrap: break-word;
   min-width: 0;
 }
-.cfg-field > .input, .cfg-field > select { grid-area: control; text-align: left; }
+.cfg-field > .input, .cfg-field > select, .cfg-field > textarea { grid-area: control; text-align: left; }
+/* Array fields: one element per line (elements may contain commas/spaces). */
+.cfg-field__lines { font-family: var(--mono); resize: vertical; }
 .cfg-field__hint { grid-area: hint; }
 .cfg-field__arg { font-family: var(--mono); }
 .cfg-field--fixed .cfg-field__label { color: var(--ink-muted); }

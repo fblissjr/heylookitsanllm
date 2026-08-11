@@ -271,3 +271,21 @@ def test_load_time_only_fields_are_not_offered_as_reload(provider):
     assert not (load_time & reload_required_fields(cls))
     live = fields_by_effect(cls).get(EFFECT_APPLIES_LIVE, frozenset())
     assert not (live & reload_required_fields(cls))
+
+
+@pytest.mark.unit
+def test_validator_derived_fields_do_not_report_as_stored():
+    """exclude_unset is the admin API's set-vs-default line; validators that
+    ASSIGN derived values (modalities/vision reconciliation) must not smuggle
+    those names into __pydantic_fields_set__, or every mlx entry reports
+    derived values as explicitly stored -- the 'every default looks
+    deliberately chosen' failure, surviving for validator-assigned fields."""
+    cls = PROVIDER_CONFIG_CLASSES["mlx"]
+
+    thin = cls(model_path="/fake/nonexistent").model_dump(exclude_unset=True)
+    assert "modalities" not in thin and "vision" not in thin, thin
+
+    explicit = cls(
+        model_path="/fake/nonexistent", modalities=["text", "vision"]
+    ).model_dump(exclude_unset=True)
+    assert explicit.get("modalities") == ["text", "vision"]

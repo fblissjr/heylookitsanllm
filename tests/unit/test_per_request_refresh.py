@@ -24,7 +24,9 @@ from heylook_llm.providers.base import BaseProvider
 class _ConfigDictProvider(BaseProvider):
     """Follows the BaseProvider convention (self.config = the dict), unlike
     the shared MockProvider, which renames it -- the refresh keys off the
-    real attribute."""
+    real attribute AND the declared provider_name (the class-match guard)."""
+
+    provider_name = "mlx"
 
     def __init__(self, model_id, model_config, is_debug):
         super().__init__(model_id, model_config, is_debug)
@@ -39,7 +41,7 @@ class _ConfigDictProvider(BaseProvider):
         pass
 
 
-def _toml(temperature=None, max_kv_size=None, model_id="m1"):
+def _toml(temperature=None, max_kv_size=None, model_id="m1", enabled=True):
     lines = [
         f'default_model = "{model_id}"',
         "max_loaded_models = 1",
@@ -47,7 +49,7 @@ def _toml(temperature=None, max_kv_size=None, model_id="m1"):
         "[[models]]",
         f'id = "{model_id}"',
         'provider = "mlx"',
-        "enabled = true",
+        f"enabled = {str(enabled).lower()}",
         "",
         "[models.config]",
         'model_path = "/fake/path/m1"',
@@ -117,6 +119,33 @@ class TestPerRequestRefresh(unittest.TestCase):
         self._rewrite(model_id="m2")
         router.reload_config()  # must not raise
         self.assertIsNone(provider.config.get("temperature"))
+
+    def test_disabled_but_loaded_model_still_refreshes(self):
+        # POST /{id}/toggle disables WITHOUT unloading, and re-enabling must
+        # not resurrect stale defaults -- so the refresh must look the entry
+        # up regardless of `enabled` (get_model_config filters on it).
+        router, provider = self._router_with_loaded_provider()
+
+        self._rewrite(temperature=0.9, enabled=False)
+        router.reload_config()
+
+        self.assertEqual(provider.config["temperature"], 0.9)
+
+    def test_stale_reload_fields_tracks_the_loaded_snapshot(self):
+        router, provider = self._router_with_loaded_provider()
+        self.assertEqual(router.stale_reload_fields("m1"), [])
+
+        self._rewrite(max_kv_size=4096)
+        router.reload_config()
+
+        # requires_reload change on a loaded model -> reported stale...
+        self.assertEqual(router.stale_reload_fields("m1"), ["max_kv_size"])
+        # ...while a per_request change never is (it refreshes live).
+        self._rewrite(max_kv_size=4096, temperature=0.9)
+        router.reload_config()
+        self.assertEqual(router.stale_reload_fields("m1"), ["max_kv_size"])
+        # Unloaded models report nothing regardless of saved diffs.
+        self.assertEqual(router.stale_reload_fields("m2"), [])
 
 
 if __name__ == "__main__":

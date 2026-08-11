@@ -330,8 +330,12 @@ class MLXModelConfig(BaseModel):
     # ``"vision" in modalities`` (kept for back-compat with readers of
     # config["vision"]). ``modalities`` is the author-declared capability set;
     # ``loader`` selects the mlx engine (within provider="mlx" only).
+    # ui:"hidden": a derived mirror is a dead knob in an editor -- config
+    # re-derives it whenever modalities is set or detectable, so an edit
+    # silently reverts at the next load. Edit modalities instead.
     vision: bool = Field(
-        default=False, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+        default=False,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # None = "not provided" -> derived from ``vision`` in _resolve_modalities.
     # Detected at import from the config's own blocks (vision_config/audio_config
     # + *_token_id); see model_importer.detect_modalities.
@@ -470,6 +474,11 @@ class MLXModelConfig(BaseModel):
           ``"vision" in modalities`` so a contradiction (``vision = true`` but
           modalities lacks it) resolves in favor of the declared list.
         """
+        # Assignments below add their names to __pydantic_fields_set__, which
+        # would make DERIVED values report as explicitly stored -- the admin
+        # API serializes config with exclude_unset precisely to distinguish
+        # set from default, and this validator must not erase that line.
+        provided = set(self.__pydantic_fields_set__)
         if self.modalities is None:
             detected = None
             try:
@@ -491,6 +500,9 @@ class MLXModelConfig(BaseModel):
             # Normalize: "text" always first, order-preserving dedup.
             self.modalities = list(dict.fromkeys(["text", *self.modalities]))
             self.vision = "vision" in self.modalities
+        for name in ("modalities", "vision"):
+            if name not in provided:
+                self.__pydantic_fields_set__.discard(name)
         return self
 
     @model_validator(mode="after")
@@ -738,20 +750,27 @@ class GGUFModelConfig(BaseModel):
         default=None,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-lm"},
     )
+    # The four below are ui:"hidden": settable (requires_reload is their real
+    # effect class -- a fresh spawn reads them), but no editor should offer
+    # them. port 0 = pick-a-free-port is the correct behavior and nothing
+    # good comes of a UI breaking it; a per-model path-to-an-executable
+    # picker in a web form is a foot-cannon; host/startup_timeout_s are
+    # plumbing. Declared HERE so every consumer (v3 editor, its E2E check,
+    # any future UI) reads one source instead of each hand-copying the list.
     # else required via $HEYLOOK_LLAMA_SERVER
     server_binary: Optional[str] = Field(
         default=None,
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     host: str = Field(
         default="127.0.0.1",
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # 0 = pick a free port at load
     port: int = Field(
         default=0,
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     startup_timeout_s: float = Field(
         default=300.0,
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # Raw passthrough flags. requires_reload because they are spawn argv --
     # and note this is remote argv injection into a subprocess for anyone with
     # admin PATCH access, so a UI should not make it a casual free-text field
@@ -1227,6 +1246,11 @@ class AdminModelResponse(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     config: Dict = Field(default_factory=dict)
     loaded: bool = False
+    # requires_reload keys whose saved value differs from what the LOADED
+    # process was built with (router.stale_reload_fields -- server-derived,
+    # so a UI's "reload to apply" marker survives remounts and other tabs).
+    # Always [] for unloaded models.
+    stale_reload_fields: List[str] = Field(default_factory=list)
 
 
 class AdminModelListResponse(BaseModel):

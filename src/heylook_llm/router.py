@@ -467,9 +467,19 @@ class ModelRouter:
         )
         with self.cache_lock:
             for model_id, provider in self.providers.items():
-                model_config = self.app_config.get_model_config(model_id)
+                # NOT get_model_config: that filters on `enabled`, and a
+                # disabled-but-still-loaded model (toggle does not unload)
+                # must keep receiving refreshes -- re-enabling it must not
+                # resurrect stale defaults.
+                model_config = self._any_model_config(model_id)
                 if model_config is None:
                     continue  # entry removed while loaded; unload handles it
+                # Guard the class match: re-import can change an entry's
+                # provider without evicting the loaded provider, and pushing
+                # one class's per_request keys into another class's snapshot
+                # is silent cross-class bleed.
+                if model_config.provider != getattr(provider, "provider_name", None):
+                    continue
                 cls = PROVIDER_CONFIG_CLASSES.get(model_config.provider)
                 cfg_dict = getattr(provider, "config", None)
                 if cls is None or not isinstance(cfg_dict, dict):
@@ -477,6 +487,48 @@ class ModelRouter:
                 fresh = model_config.config.model_dump()
                 for key in fields_by_effect(cls).get(EFFECT_PER_REQUEST, ()):
                     cfg_dict[key] = fresh[key]
+
+    def _any_model_config(self, model_id: str):
+        """The config entry for ``model_id`` regardless of ``enabled``."""
+        for m in self.app_config.models:
+            if m.id == model_id:
+                return m
+        return None
+
+    def stale_reload_fields(self, model_id: str) -> list:
+        """requires_reload fields whose saved value differs from what the
+        LOADED provider was constructed with. Empty for unloaded models.
+
+        This is the server-derived truth behind any "config changed --
+        reload to apply" marker: client-side bookkeeping of the same fact
+        dies on page remount and drifts on partial failures, while the
+        snapshot comparison cannot (the provider's config dict IS what the
+        process was built from; per_request keys are refreshed live and so
+        never diff here).
+        """
+        from heylook_llm.config import (
+            PROVIDER_CONFIG_CLASSES, reload_required_fields,
+        )
+        with self.cache_lock:
+            provider = self.providers.get(model_id)
+        if provider is None:
+            return []
+        model_config = self._any_model_config(model_id)
+        if model_config is None:
+            return []
+        if model_config.provider != getattr(provider, "provider_name", None):
+            # Provider changed under a loaded model (re-import): everything
+            # about the process is stale; report the identity field.
+            return ["provider"]
+        cls = PROVIDER_CONFIG_CLASSES.get(model_config.provider)
+        snap = getattr(provider, "config", None)
+        if cls is None or not isinstance(snap, dict):
+            return []
+        fresh = model_config.config.model_dump()
+        return sorted(
+            key for key in reload_required_fields(cls)
+            if snap.get(key) != fresh.get(key)
+        )
 
     def unload_model(self, model_id: str, force: bool = False) -> bool:
         """Explicitly unload a specific model from cache.

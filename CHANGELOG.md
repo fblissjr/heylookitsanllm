@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.56.0]
+
+/code-review high over the branch: 12 verified findings, 10 confirmed, all
+10 applied.
+
+### Added
+
+- **`stale_reload_fields` on admin model responses** -- server-derived list
+  of requires_reload keys whose saved value differs from what the LOADED
+  process was built with (`router.stale_reload_fields`; `[]` when
+  unloaded). Replaces v1.55.0's client-side reload-needed Set, which never
+  repainted on save, died on page remount, and mis-cleared when an
+  unload-succeeds/load-fails reload left the marker on an unloaded model.
+  The v3 row marker and the panel's Reload offer now both render from it.
+- `ui:"hidden"` on config fields the schema exposes but no editor should
+  offer: gguf host/port/server_binary/startup_timeout_s and mlx's derived
+  `vision` mirror. Declared on the field, so the v3 editor, the summary
+  chip, and the E2E schema check all read ONE source instead of each
+  hand-copying a name list (the E2E mirror had already been born stale).
+
+### Fixed
+
+- **`exclude_unset` was not "stored keys only"**: `_resolve_modalities`
+  assigns derived `modalities`/`vision` during validation, which added them
+  to `__pydantic_fields_set__` -- every mlx entry reported them as
+  explicitly stored, re-creating the every-default-looks-chosen failure for
+  validator-assigned fields. The validator now restores the fields-set;
+  pinned by a test.
+- **The per_request refresh skipped disabled-but-loaded models**
+  (`get_model_config` filters on `enabled`, and toggle does not unload) and
+  had no provider-class guard (re-import can change an entry's provider
+  under a loaded provider -- pushing one class's keys into another's
+  snapshot). Both closed; pinned in `test_per_request_refresh.py`.
+- **Array config fields no longer corrupt comma-bearing elements**: the
+  editor edited arrays as a comma join/split, silently rewriting
+  `extra_args = ["--tensor-split", "3,1"]` into a different argv on the
+  next edit. Arrays now edit one element per line (mono textarea).
+- Editor section partition made exclusive (a load_time_only + ui:advanced
+  field would have rendered twice with duplicate ids) and the Advanced
+  title only says "(requires reload)" when every field in it does.
+- The panel's save-outcome note is written into the live region AFTER
+  mount, so it actually announces to assistive tech; the row marker is
+  visual-only (a freshly inserted role=status node never announces).
+- The mid-stream model-switch comment + CHANGELOG no longer claim an
+  attribution guarantee the code does not establish (see the corrected
+  v1.55.0 entry).
+
 ## [1.55.0]
 
 ### Added
@@ -52,9 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `default_hidden_layer -2 · ... · +4 more` with nothing set). Absent is how
   a default is spelled in models.toml; the wire now says the same.
 - v3 chat: switching models mid-stream now stops the in-flight stream BEFORE
-  `model_id` changes hands, so the arriving partial persists under the model
-  that actually produced it (a conversation switch already did this; the
-  model switch did not).
+  `model_id` changes hands, so the old model stops generating the moment the
+  user switches away. (Correction, same day: this does NOT settle
+  attribution -- the partial still persists asynchronously into the
+  re-labelled conversation, and messages carry no model column. Honest
+  per-message attribution is G5 in the switching design, deferred to the
+  next `_SCHEMA_VERSION` bump.)
 
 ## [1.54.0]
 

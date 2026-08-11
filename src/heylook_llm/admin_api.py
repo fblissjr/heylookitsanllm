@@ -64,7 +64,7 @@ def _safe_reload_config(request: Request) -> str | None:
         return f"Config saved but runtime reload failed: {e}. Changes will apply on next restart."
 
 
-def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
+def _model_config_to_response(mc, loaded_ids: set[str], router=None) -> AdminModelResponse:
     """Convert a ModelConfig to an AdminModelResponse.
 
     ``capabilities`` is DERIVED through the same shared helper /v1/models
@@ -81,6 +81,7 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
     two apart. A resolved dump made every default look deliberately chosen
     (chip on every row, ``n_gpu_layers 999`` rendered as an explicit choice).
     """
+    loaded = mc.id in loaded_ids
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
@@ -90,7 +91,10 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
         capabilities=effective_capabilities(mc),
         config=(mc.config.model_dump(exclude_unset=True)
                 if hasattr(mc.config, 'model_dump') else dict(mc.config)),
-        loaded=mc.id in loaded_ids,
+        loaded=loaded,
+        stale_reload_fields=(
+            router.stale_reload_fields(mc.id) if router is not None and loaded else []
+        ),
     )
 
 
@@ -115,9 +119,10 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
 )
 async def list_model_configs(request: Request):
     service = _get_service(request)
+    router = request.app.state.router_instance
     loaded_ids = _get_loaded_model_ids(request)
     configs = service.list_configs()
-    models = [_model_config_to_response(c, loaded_ids) for c in configs]
+    models = [_model_config_to_response(c, loaded_ids, router) for c in configs]
     return AdminModelListResponse(models=models, total=len(models))
 
 
@@ -132,11 +137,12 @@ async def list_model_configs(request: Request):
 )
 async def add_model_config(request: Request, body: dict):
     service = _get_service(request)
+    router = request.app.state.router_instance
     try:
         config = service.add_config(body)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        response = _model_config_to_response(config, loaded_ids)
+        response = _model_config_to_response(config, loaded_ids, router)
         result = response.model_dump()
         if warning:
             result["warning"] = warning
@@ -167,11 +173,12 @@ async def get_model_status(model_id: str, request: Request):
 )
 async def toggle_model(model_id: str, request: Request):
     service = _get_service(request)
+    router = request.app.state.router_instance
     try:
         config = service.toggle_enabled(model_id)
         _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        return _model_config_to_response(config, loaded_ids)
+        return _model_config_to_response(config, loaded_ids, router)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -255,12 +262,13 @@ async def unload_model(model_id: str, request: Request):
 )
 async def get_model_config(model_id: str, request: Request):
     service = _get_service(request)
+    router = request.app.state.router_instance
     config = service.get_config(model_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
     loaded_ids = _get_loaded_model_ids(request)
-    return _model_config_to_response(config, loaded_ids)
+    return _model_config_to_response(config, loaded_ids, router)
 
 
 @admin_router.patch(
@@ -270,12 +278,13 @@ async def get_model_config(model_id: str, request: Request):
 )
 async def update_model_config(model_id: str, request: Request, updates: ModelUpdateRequest):
     service = _get_service(request)
+    router = request.app.state.router_instance
     try:
         update_dict = updates.model_dump(exclude_none=True)
         config, reload_fields = service.update_config(model_id, update_dict)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        response = _model_config_to_response(config, loaded_ids)
+        response = _model_config_to_response(config, loaded_ids, router)
         result = {
             "model": response.model_dump(),
             "reload_required_fields": reload_fields,
@@ -362,6 +371,7 @@ async def _scan_for_models(request: Request, scan_request: ModelScanRequest):
 async def _import_models(request: Request, import_request: ModelImportRequest):
     """Import scanned models with configuration."""
     service = _get_service(request)
+    router = request.app.state.router_instance
     try:
         imported = service.import_models(
             models_to_import=import_request.models,
@@ -370,7 +380,7 @@ async def _import_models(request: Request, import_request: ModelImportRequest):
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
         result: dict = {
-            "imported": [_model_config_to_response(c, loaded_ids).model_dump() for c in imported],
+            "imported": [_model_config_to_response(c, loaded_ids, router).model_dump() for c in imported],
             "total": len(imported),
         }
         if warning:
@@ -407,12 +417,13 @@ async def _list_samplers(request: Request):
 async def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest):
     """Record a named sampler as default_sampler on multiple models."""
     service = _get_service(request)
+    router = request.app.state.router_instance
     try:
         updated = service.bulk_set_default_sampler(body.model_ids, body.sampler)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
         result: dict = {
-            "updated": [_model_config_to_response(c, loaded_ids).model_dump() for c in updated],
+            "updated": [_model_config_to_response(c, loaded_ids, router).model_dump() for c in updated],
             "total": len(updated),
         }
         if warning:

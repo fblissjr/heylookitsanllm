@@ -120,11 +120,14 @@ function buildSkeleton(ctx) {
 
   s.modelSelect = createEl('select', { title: 'Model' });
   s.modelSelect.addEventListener('change', () => {
-    // Stop an in-flight stream BEFORE model_id changes hands: the arriving
-    // partial belongs to the OLD model and persists under it, exactly as a
-    // conversation switch already does. Without this, a mid-stream switch
-    // leaves the old model generating while the conversation is re-labelled,
-    // silently attributing its output to a model that never produced it.
+    // Stop an in-flight stream BEFORE model_id changes hands, so the old
+    // model stops generating the moment the user switches away. NB this is
+    // an abort, not a settled handoff: the partial still persists
+    // asynchronously into this same conversation after model_id is
+    // rewritten, and messages carry no model column -- so a reader of
+    // conversation.model_id still misattributes it. True per-message
+    // attribution is G5 in the switching design (deferred until a
+    // _SCHEMA_VERSION bump adds messages.model_id).
     if (s.stream) stopStream(ctx);
     if (ctx.state.activeId) {
       api.updateConversation(ctx.state.activeId, { model_id: s.modelSelect.value })
