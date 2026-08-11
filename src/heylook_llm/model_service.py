@@ -28,7 +28,13 @@ from typing import Any, Optional
 import tomli_w  # type: ignore[import-untyped]
 
 from heylook_llm.cache_defaults import smart_cache_defaults, weights_size_gb
-from heylook_llm.config import AppConfig, ModelConfig
+from heylook_llm.config import (
+    PROVIDER_CONFIG_CLASSES,
+    AppConfig,
+    ModelConfig,
+    configurable_fields,
+    reload_required_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,22 +137,31 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     return defaults
 
 
-# Fields that require a model reload vs runtime-changeable
-RELOAD_REQUIRED_FIELDS = frozenset(
-    {
-        "model_path",
-        "vision",
-        "cache_type",
-        "kv_bits",
-        "kv_group_size",
-        "max_kv_size",
-        "draft_model_path",
-        "num_draft_tokens",
-        "default_hidden_layer",
-        "default_max_length",
-        "supports_thinking",
-    }
+# Fields that require a model reload vs runtime-changeable.
+#
+# DERIVED per provider from the `effect` metadata on each config field (see
+# config.py) -- do not hand-edit. The old hand-written frozenset was
+# MLX-shaped, so it named no gguf load-time field at all: changing `ctx_size`
+# on a loaded gguf model reported "no reload required" and the server kept
+# serving the old argv. It also still listed `supports_thinking`, which was
+# removed from MLXModelConfig in v1.46.0.
+#
+# Kept as a module-level name because callers without a provider in hand still
+# need "is this field reload-required for ANY provider"; prefer
+# `reload_required_for(provider)` when the provider IS known.
+RELOAD_REQUIRED_FIELDS: frozenset = frozenset().union(
+    *(reload_required_fields(cls) for cls in PROVIDER_CONFIG_CLASSES.values())
 )
+
+
+def reload_required_for(provider: Optional[str]) -> frozenset:
+    """Reload-required fields for one provider, or the union if unknown.
+
+    The union is the conservative fallback: over-reporting costs a needless
+    reload prompt, under-reporting silently serves a stale process.
+    """
+    cls = PROVIDER_CONFIG_CLASSES.get(provider or "")
+    return reload_required_fields(cls) if cls is not None else RELOAD_REQUIRED_FIELDS
 
 RUNTIME_CHANGEABLE_FIELDS = frozenset(
     {
@@ -595,10 +610,28 @@ class ModelService:
             if "config" in updates and isinstance(updates["config"], dict):
                 if "config" not in model:
                     model["config"] = {}
+                # Provider-aware: a gguf entry's reload-required set is not the
+                # MLX one (this is what silently missed ctx_size before).
+                reload_fields = reload_required_for(model.get("provider"))
                 for key, value in updates["config"].items():
+                    had_key = key in model["config"]
                     old_value = model["config"].get(key)
-                    model["config"][key] = value
-                    if old_value != value and key in RELOAD_REQUIRED_FIELDS:
+                    if value is None:
+                        # An explicit null means "unset this -- go back to the
+                        # default". TOML cannot express null (tomli_w raises
+                        # TypeError on a None VALUE), and for these fields
+                        # "absent" IS how the default is spelled, so remove the
+                        # key rather than storing None. Without this, any
+                        # reset-to-default control 500s on the TOML write after
+                        # passing validation, because Optional[...] = None is
+                        # perfectly valid to pydantic and only fails at the
+                        # serializer.
+                        model["config"].pop(key, None)
+                        changed = had_key
+                    else:
+                        model["config"][key] = value
+                        changed = old_value != value
+                    if changed and key in reload_fields:
                         changed_reload_fields.append(key)
 
             # Validate the updated model -- only commit if valid
@@ -723,12 +756,13 @@ class ModelService:
                     # supplied in ``config`` (e.g. from a CLI-importer scan
                     # via mmproj_path/draft_model_path/modalities).
                     entry_config = {"model_path": model_path}
-                    for key in (
-                        "mmproj_path", "draft_model_path", "spec_type",
-                        "spec_draft_n_max", "ctx_size", "n_gpu_layers",
-                        "server_binary", "host", "port", "startup_timeout_s",
-                        "extra_args", "max_tokens", "supports_thinking",
-                        "modalities",
+                    # DERIVED: every GGUFModelConfig field except identity
+                    # (model_path, set above). The old hand-written tuple had
+                    # drifted from the config class and silently dropped
+                    # n_gpu_layers_draft, cache_ram_mb, load_mode,
+                    # sleep_idle_seconds and enable_thinking on import.
+                    for key in sorted(
+                        configurable_fields(PROVIDER_CONFIG_CLASSES["gguf"])
                     ):
                         # Skip None -- GGUFModelConfig fields are Optional
                         # with real (non-None) defaults, and TOML has no
@@ -878,11 +912,23 @@ class ModelService:
 
     # --- Helpers ---
 
-    def get_field_reload_info(self) -> dict[str, str]:
-        """Return field -> reload requirement mapping."""
+    def get_field_reload_info(self, provider: Optional[str] = None) -> dict[str, str]:
+        """Return field -> reload requirement mapping.
+
+        Pass ``provider`` to get that provider's answer; without it the union
+        is used, which over-reports rather than under-reports.
+        """
         info = {}
-        for f in RELOAD_REQUIRED_FIELDS:
-            info[f] = "reload_required"
+        # Hand-written list FIRST so the derived set overwrites it, never the
+        # other way round. RUNTIME_CHANGEABLE_FIELDS is still maintained by
+        # hand; if it ever names a field that config.py declares
+        # requires_reload, the two disagree and the derived declaration is the
+        # one to trust -- reporting a spawn-time flag as a live knob is how the
+        # UI ends up telling someone a change took effect when the process
+        # kept the old value. (The sets are disjoint today, and a test keeps
+        # them that way; this ordering makes the collision harmless meanwhile.)
         for f in RUNTIME_CHANGEABLE_FIELDS:
             info[f] = "runtime"
+        for f in reload_required_for(provider):
+            info[f] = "reload_required"
         return info

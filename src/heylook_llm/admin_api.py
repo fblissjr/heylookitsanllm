@@ -274,6 +274,16 @@ async def update_model_config(model_id: str, request: Request, updates: ModelUpd
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TypeError as e:
+        # A value pydantic accepts but TOML cannot serialize reaches the writer
+        # and raises AFTER validation passed. That is a bad request, not a
+        # server fault -- as a 500 it tells the caller nothing about which
+        # value was rejected. (Nulls, the common case, are handled upstream as
+        # "unset this field" and never get here.)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Config value is not storable in models.toml: {e}",
+        )
 
 
 @admin_router.delete(

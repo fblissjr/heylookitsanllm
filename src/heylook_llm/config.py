@@ -178,6 +178,115 @@ class BatchChatResponse(BaseModel):
     data: List[ChatCompletionResponse]
     batch_stats: BatchStats
 
+# ── Effect classification ───────────────────────────────────────────────────
+# Every field on a provider config declares WHEN a change to it takes effect,
+# as ``json_schema_extra={"effect": ...}``:
+#
+#   identity         Changes which model this entry IS. Not editable; that is
+#                    a different entry.
+#   requires_reload  Changes what the loaded process IS. Editable, but taking
+#                    effect costs a teardown + respawn (gguf) or unload +
+#                    reload (MLX) -- so the UI must confirm and name the cost.
+#   load_time_only   Fixed for the life of the process and NOT recoverable by
+#                    reloading this model (e.g. max_queue_depth is process-wide
+#                    -- the first provider created wins). UI: disabled, with
+#                    the reason.
+#   applies_live     Re-read by the router while the model stays loaded; takes
+#                    effect immediately, no reload, no ceremony. UI: freely
+#                    editable. Deliberately distinct from load_time_only --
+#                    "you cannot change this" and "change it, it just works"
+#                    need opposite affordances, and one bucket cannot say both.
+#   per_request      A model-level DEFAULT the loaded process can vary per
+#                    request without changing what it is.
+#   descriptive      Not a setting at all -- it describes the model (what we
+#                    serve it as), and nothing about the process depends on it.
+#
+# Field-local on purpose. Every drift this replaced (an MLX-shaped reload set
+# that listed no gguf load-time field; an import allowlist that silently
+# dropped five) existed because the fact lived somewhere other than the
+# declaration it describes. ``tests/unit/test_config_effects.py`` fails if any
+# field omits it, so a new field cannot be added without classifying it.
+#
+# ``arg`` alongside it is the llama-server spelling, for the gguf argv builder.
+EFFECT_IDENTITY = "identity"
+EFFECT_REQUIRES_RELOAD = "requires_reload"
+EFFECT_LOAD_TIME_ONLY = "load_time_only"
+EFFECT_APPLIES_LIVE = "applies_live"
+EFFECT_PER_REQUEST = "per_request"
+EFFECT_DESCRIPTIVE = "descriptive"
+
+EFFECT_CLASSES: frozenset[str] = frozenset({
+    EFFECT_IDENTITY, EFFECT_REQUIRES_RELOAD, EFFECT_LOAD_TIME_ONLY,
+    EFFECT_APPLIES_LIVE, EFFECT_PER_REQUEST, EFFECT_DESCRIPTIVE,
+})
+
+
+def _extra(field) -> dict:
+    """The json_schema_extra dict for a pydantic FieldInfo ({} when absent)."""
+    extra = getattr(field, "json_schema_extra", None)
+    return extra if isinstance(extra, dict) else {}
+
+
+def field_effect(field) -> Optional[str]:
+    """Declared effect class for one FieldInfo, or None if it declares none."""
+    value = _extra(field).get("effect")
+    return str(value) if value is not None else None
+
+
+def fields_by_effect(cls: type) -> Dict[Optional[str], frozenset]:
+    """{effect class -> field names} for a provider config class.
+
+    A total partition of ``model_fields``. Fields with no effect -- or an
+    effect that is not a KNOWN class -- land under ``None``.
+
+    That second case is load-bearing. An earlier version bucketed by the raw
+    string, so a one-character typo (``"requires-reload"`` with a hyphen) got
+    its own bucket, left ``None`` empty, passed the completeness test, and
+    dropped the field out of the reload set: exactly the silent "no reload
+    required, keeps serving the old argv" bug this metadata replaced. An
+    unrecognised effect is not a category, it is a mistake.
+    """
+    buckets: Dict[Optional[str], set] = {e: set() for e in EFFECT_CLASSES}
+    buckets[None] = set()
+    for name, field in cls.model_fields.items():
+        effect = field_effect(field)
+        buckets[effect if effect in EFFECT_CLASSES else None].add(name)
+    return {k: frozenset(v) for k, v in buckets.items()}
+
+
+def invalid_effects(cls: type) -> Dict[str, str]:
+    """{field name -> the bogus effect string it declared}. Empty when clean."""
+    return {
+        name: str(field_effect(f))
+        for name, f in cls.model_fields.items()
+        if field_effect(f) is not None and field_effect(f) not in EFFECT_CLASSES
+    }
+
+
+def reload_required_fields(cls: type) -> frozenset:
+    """Fields whose change needs a reload, DERIVED per provider config class.
+
+    Replaces a single hand-written frozenset that was MLX-shaped and therefore
+    wrong for gguf: changing ``ctx_size`` on a loaded gguf model reported "no
+    reload required" and kept serving the old argv.
+
+    Includes ``identity``: swapping the weights out from under a loaded model
+    is the strongest form of "needs a reload", and the old hand-written set
+    listed ``model_path`` for exactly that reason.
+    """
+    by = fields_by_effect(cls)
+    return by.get(EFFECT_REQUIRES_RELOAD, frozenset()) | by.get(EFFECT_IDENTITY, frozenset())
+
+
+def configurable_fields(cls: type) -> frozenset:
+    """Everything an importer/editor may legitimately set: all but identity."""
+    by = fields_by_effect(cls)
+    return frozenset(
+        name for effect, names in by.items()
+        if effect != EFFECT_IDENTITY for name in names
+    )
+
+
 class MLXModelConfig(BaseModel):
     # Runtime-default fields (marked with ``is_runtime_default=True``) flow
     # from models.toml into each request's effective_request dict via
@@ -189,61 +298,110 @@ class MLXModelConfig(BaseModel):
     # loudly at load time, not silently revert to defaults.
     model_config = ConfigDict(extra="forbid")
 
-    model_path: str
-    draft_model_path: Optional[str] = None
-    num_draft_tokens: Optional[int] = Field(default=3, json_schema_extra={"is_runtime_default": True})
+    model_path: str = Field(json_schema_extra={"effect": EFFECT_IDENTITY})
+    draft_model_path: Optional[str] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    # Classified requires_reload rather than per_request despite being a
+    # runtime default: spec decode is set up when the draft model is loaded,
+    # and the old hand-written reload set listed it. An unnecessary reload
+    # prompt is a nuisance; a missed one silently serves stale behaviour.
+    num_draft_tokens: Optional[int] = Field(
+        default=3,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_REQUIRES_RELOAD},
+    )
     # DESCRIPTION vs ROUTING split (Phase 6 refinement 2026-07-11). ``vision``
     # historically did both jobs; it is now a derived mirror of
     # ``"vision" in modalities`` (kept for back-compat with readers of
     # config["vision"]). ``modalities`` is the author-declared capability set;
     # ``loader`` selects the mlx engine (within provider="mlx" only).
-    vision: bool = False
+    vision: bool = Field(
+        default=False, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # None = "not provided" -> derived from ``vision`` in _resolve_modalities.
     # Detected at import from the config's own blocks (vision_config/audio_config
     # + *_token_id); see model_importer.detect_modalities.
-    modalities: Optional[List[str]] = None
+    # requires_reload here, DESCRIPTIVE on the gguf config: for MLX this feeds
+    # effective_loader (mlx-vlm vs mlx-lm), so changing it changes which engine
+    # holds the weights. Provider-aware classification is the point.
+    modalities: Optional[List[str]] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Engine routing. "auto": mlx-vlm if "vision" in modalities AND mlx-vlm
     # registers the model_type, else mlx-lm. Explicit values force the engine
     # (e.g. run a dual-capable VLM as text via "mlx-lm"). Resolution + the
     # effective loader live in the provider (is_vlm derives from it).
-    loader: Literal["auto", "mlx-vlm", "mlx-lm"] = "auto"
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    min_p: Optional[float] = None
-    max_tokens: Optional[int] = None
-    repetition_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
+    loader: Literal["auto", "mlx-vlm", "mlx-lm"] = Field(
+        default="auto", json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    # Sampler defaults: the loaded model serves any of these per request.
+    temperature: Optional[float] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    top_p: Optional[float] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    top_k: Optional[int] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    min_p: Optional[float] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    max_tokens: Optional[int] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    repetition_penalty: Optional[float] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    presence_penalty: Optional[float] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # None = AUTO (6a derive-at-load): resolved at model load from actual
     # weight bytes vs RAM (cache_defaults.resolve_cache_config). A stored
     # value is an explicit operator override.
     cache_type: Optional[Literal["standard", "rotating", "quantized"]] = Field(
-        default=None, json_schema_extra={"is_runtime_default": True}
+        default=None,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_REQUIRES_RELOAD},
     )
-    max_kv_size: Optional[int] = Field(default=None, json_schema_extra={"is_runtime_default": True})
+    max_kv_size: Optional[int] = Field(
+        default=None,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_REQUIRES_RELOAD},
+    )
     # MLX QuantizedKVCache supports exactly 2/4/8 bits and group sizes that
     # divide the head dim; anything else fails at first generation, so reject
     # it at config-load time instead.
-    kv_bits: Optional[Literal[2, 4, 8]] = Field(default=None, json_schema_extra={"is_runtime_default": True})
-    kv_group_size: Literal[32, 64, 128] = Field(default=64, json_schema_extra={"is_runtime_default": True})
+    kv_bits: Optional[Literal[2, 4, 8]] = Field(
+        default=None,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_REQUIRES_RELOAD},
+    )
+    kv_group_size: Literal[32, 64, 128] = Field(
+        default=64,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_REQUIRES_RELOAD},
+    )
     # In-flight + queued requests admitted before 503 backpressure. Consumed
     # by the generation gate (process-wide; the first provider created wins).
-    max_queue_depth: int = Field(default=8, ge=1)
+    # Process-wide once the gate exists (first provider created wins), so it
+    # is infrastructure rather than a per-model tuning control.
+    max_queue_depth: int = Field(
+        default=8, ge=1, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
     # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
     prefill_step_size: Optional[int] = Field(
-        None, gt=0, json_schema_extra={"is_runtime_default": True}
+        default=None, gt=0,
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_PER_REQUEST},
     )
     # Thinking mode (Qwen3 models with <think> blocks)
-    enable_thinking: bool = False
+    enable_thinking: bool = Field(
+        default=False, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Per-model default visual token budget per image (request vision_tokens
     # overrides; None = the processor's own default). Mapped per family by
     # providers/common/vision_budget.py.
-    vision_tokens: Optional[int] = Field(default=None, ge=16, le=16384)
+    vision_tokens: Optional[int] = Field(
+        default=None, ge=16, le=16384,
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Hidden states defaults (for /v1/hidden_states endpoint)
-    default_hidden_layer: int = -2  # Z-Image uses penultimate layer
-    default_max_length: int = 512
+    # Kept requires_reload to match the old hand-written set rather than
+    # quietly relaxing behaviour during a refactor.
+    default_hidden_layer: int = Field(  # Z-Image uses penultimate layer
+        default=-2, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    default_max_length: int = Field(
+        default=512, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
     # capability is DERIVED (template probe / enable_thinking / the explicit
     # ModelConfig.capabilities override). GGUFModelConfig keeps its flag:
@@ -251,14 +409,20 @@ class MLXModelConfig(BaseModel):
     # Idle-unload override (C2). ``None`` = use ``AppConfig.idle_unload_seconds``
     # global default. ``0`` = never idle-unload this model. Positive = per-model
     # threshold in seconds. Pinned models are exempt regardless of this value.
-    unload_after_idle_seconds: Optional[int] = Field(default=None, ge=0)
+    # applies_live, NOT load_time_only: the router re-reads this on each idle
+    # sweep, so a change takes effect on a loaded model with no reload. The UI
+    # should let it be edited freely -- the opposite of max_queue_depth above,
+    # which no reload of THIS model can change.
+    unload_after_idle_seconds: Optional[int] = Field(
+        default=None, ge=0, json_schema_extra={"effect": EFFECT_APPLIES_LIVE})
     # Default sampler applied when a request doesn't specify ``sampler`` (C4).
     # Resolved against the SamplerRegistry at request time; an unknown name
     # falls back to "skip this layer" rather than raising -- the model config
     # is validated at server startup, so an unknown name here indicates a
     # post-startup registry rebuild drift and should log at the layer, not
     # kill inference.
-    default_sampler: Optional[str] = None
+    default_sampler: Optional[str] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Chat-template source policy (C4.5):
     # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present);
     #   if the tokenizer ends up template-less, the provider installs whatever
@@ -269,7 +433,9 @@ class MLXModelConfig(BaseModel):
     # - absolute path: load that specific .jinja file
     # Useful when a model ships a broken jinja but a working embedded template,
     # or when the user wants to test a custom template without re-exporting.
-    chat_template_source: Optional[str] = None
+    # Force-installed on the tokenizer at LOAD, so a change needs a reload.
+    chat_template_source: Optional[str] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
 
     @model_validator(mode="after")
     def _resolve_modalities(self):
@@ -329,9 +495,15 @@ MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
 
 class MLXEmbeddingModelConfig(BaseModel):
     """Configuration for MLX embedding models."""
-    model_path: str  # Local path or HF repo
-    max_length: int = 2048
-    pooling: Literal["mean", "cls", "none"] = "mean"
+    # Local path or HF repo
+    model_path: str = Field(json_schema_extra={"effect": EFFECT_IDENTITY})
+    # Both are baked into the loaded backbone: max_length sizes the truncation
+    # the encoder was loaded for, pooling selects the head. Changing either
+    # under a live model would silently mismatch the weights in memory.
+    max_length: int = Field(
+        default=2048, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    pooling: Literal["mean", "cls", "none"] = Field(
+        default="mean", json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
 
 class GGUFModelConfig(BaseModel):
     """A GGUF model served by a llama-server SUBPROCESS (plan Phase 7).
@@ -345,47 +517,103 @@ class GGUFModelConfig(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    model_path: str  # path to the .gguf file
-    mmproj_path: Optional[str] = None  # multimodal projector sidecar
-    draft_model_path: Optional[str] = None  # sidecar drafter (e.g. gemma mtp-*.gguf)
-    spec_type: Optional[str] = None  # llama-server --spec-type (e.g. "draft-mtp")
-    spec_draft_n_max: Optional[int] = Field(default=None, ge=1, le=16)
-    ctx_size: Optional[int] = Field(default=None, ge=512)
-    n_gpu_layers: int = 999  # -ngl; 999 = everything on GPU
+    # path to the .gguf file
+    model_path: str = Field(json_schema_extra={"effect": EFFECT_IDENTITY})
+    # multimodal projector sidecar
+    mmproj_path: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--mmproj"},
+    )
+    # sidecar drafter (e.g. gemma mtp-*.gguf)
+    draft_model_path: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--model-draft"},
+    )
+    # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded
+    # adapter erases spec decode's win, because the draft context never
+    # receives the adapter (see CLAUDE.md's gguf gotchas). Leave it ON anyway.
+    spec_type: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--spec-type"},
+    )
+    spec_draft_n_max: Optional[int] = Field(
+        default=None, ge=1, le=16,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--spec-draft-n-max"},
+    )
+    ctx_size: Optional[int] = Field(
+        default=None, ge=512,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size"},
+    )
+    # -ngl; 999 = everything on GPU
+    n_gpu_layers: int = Field(
+        default=999,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngl"},
+    )
     # Draft-model GPU offload (-ngld). Its own knob because the pair can exceed
     # the GPU budget when the target alone does not: on a 192 GiB M2 Ultra the
     # Metal residency recommendation is ~161 GiB, so a 144 GiB target plus a
     # 10 GiB drafter is over it while either alone is under. `0` keeps the
     # drafter off the GPU. None = inherit llama-server's own default.
-    n_gpu_layers_draft: Optional[int] = Field(default=None, ge=0)
+    n_gpu_layers_draft: Optional[int] = Field(
+        default=None, ge=0,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngld"},
+    )
     # llama-server's OWN idle sleep (--sleep-idle-seconds): frees the model and
     # KV cache but KEEPS THE PROCESS, and reloads on the next task. Strictly
     # cheaper than heylook's idle-unload, which SIGTERMs and respawns -- so set
     # this BELOW the effective idle_unload_seconds and you get the cheap
     # recovery first and the expensive one only for a genuinely cold model.
     # None = disabled (llama-server's default).
-    sleep_idle_seconds: Optional[int] = Field(default=None, ge=1)
+    sleep_idle_seconds: Optional[int] = Field(
+        default=None, ge=1,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--sleep-idle-seconds"},
+    )
     # -cram: prompt-cache budget in MiB. llama-server defaults to only 8192;
     # -1 = unlimited, 0 = disable the cache entirely.
-    cache_ram_mb: Optional[int] = Field(default=None, ge=-1)
+    cache_ram_mb: Optional[int] = Field(
+        default=None, ge=-1,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cram"},
+    )
     # -lm: how weights are brought in. `mlock` pins them against paging, which
     # is the lever for a model near the memory ceiling; llama.cpp's Metal
     # residency set is separate and already on by default.
-    load_mode: Optional[Literal["none", "mmap", "mlock", "mmap+mlock", "dio"]] = None
-    server_binary: Optional[str] = None  # else required via $HEYLOOK_LLAMA_SERVER
-    host: str = "127.0.0.1"
-    port: int = 0  # 0 = pick a free port at load
-    startup_timeout_s: float = 300.0
-    extra_args: List[str] = Field(default_factory=list)  # raw passthrough flags
-    default_sampler: Optional[str] = None  # named sampler (SamplerRegistry)
-    max_tokens: Optional[int] = Field(default=None, gt=0)  # model-level default cap
+    load_mode: Optional[Literal["none", "mmap", "mlock", "mmap+mlock", "dio"]] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-lm"},
+    )
+    # else required via $HEYLOOK_LLAMA_SERVER
+    server_binary: Optional[str] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+    host: str = Field(
+        default="127.0.0.1", json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+    # 0 = pick a free port at load
+    port: int = Field(default=0, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+    startup_timeout_s: float = Field(
+        default=300.0, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+    # Raw passthrough flags. requires_reload because they are spawn argv --
+    # and note this is remote argv injection into a subprocess for anyone with
+    # admin PATCH access, so a UI should not make it a casual free-text field.
+    extra_args: List[str] = Field(
+        default_factory=list,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD},
+    )
+    # named sampler (SamplerRegistry)
+    default_sampler: Optional[str] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    # model-level default cap
+    max_tokens: Optional[int] = Field(
+        default=None, gt=0, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Capability DESCRIPTION. Import fills this from the GGUF's own embedded
     # chat template (gguf_metadata.supports_thinking, same enable_thinking
     # rule the MLX path uses); it stays overridable by hand, and the explicit
     # ModelConfig.capabilities override short-circuits inference entirely.
     # None = no template to judge, e.g. an MTP/drafter head.
-    supports_thinking: Optional[bool] = None
-    modalities: Optional[List[str]] = None
+    supports_thinking: Optional[bool] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_DESCRIPTIVE})
+    modalities: Optional[List[str]] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_DESCRIPTIVE})
     # Model-level thinking DEFAULT (the MLX config's counterpart), distinct
     # from `supports_thinking` above, which only describes CAPABILITY.
     # Required since unset started meaning OFF everywhere (v1.50.0): before
@@ -394,7 +622,8 @@ class GGUFModelConfig(BaseModel):
     # here there was then NO way to ask for that back. The only remaining
     # route was `default_sampler = "thinking"`, which drags a presence_penalty
     # change in with it. None = unset = off.
-    enable_thinking: Optional[bool] = None
+    enable_thinking: Optional[bool] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
 
 # Single source of truth for which providers exist and which config class
@@ -406,6 +635,35 @@ PROVIDER_CONFIG_CLASSES: Dict[str, type] = {
     "mlx_embedding": MLXEmbeddingModelConfig,
     "gguf": GGUFModelConfig,
 }
+
+
+def _validate_effect_declarations() -> None:
+    """Fail at IMPORT if any provider-config field is unclassified or misspelt.
+
+    A test would catch this too, but only when the suite runs. A misspelt
+    effect is indistinguishable from a correct one at a glance and degrades
+    silently in the safe-looking direction (the field simply stops being
+    reload-required), so it has to be impossible to run the server with one.
+    """
+    problems: List[str] = []
+    for provider, cls in PROVIDER_CONFIG_CLASSES.items():
+        for name, bad in invalid_effects(cls).items():
+            problems.append(
+                f"  {provider}.{name}: effect={bad!r} is not one of "
+                f"{sorted(EFFECT_CLASSES)}"
+            )
+        missing = sorted(fields_by_effect(cls).get(None, frozenset())
+                         - set(invalid_effects(cls)))
+        for name in missing:
+            problems.append(f"  {provider}.{name}: no `effect` declared")
+    if problems:
+        raise RuntimeError(
+            "Provider config fields must declare when a change takes effect "
+            'via json_schema_extra={"effect": ...}:\n' + "\n".join(problems)
+        )
+
+
+_validate_effect_declarations()
 
 
 class ModelConfig(BaseModel):

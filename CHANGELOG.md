@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.52.0]
+
+### Added
+
+- **Every provider-config field now declares WHEN a change takes effect**, as
+  `json_schema_extra={"effect": ...}` on the field itself, in one of six
+  classes: `identity`, `requires_reload`, `load_time_only`, `applies_live`,
+  `per_request`, `descriptive`. Field-local on purpose -- every drift this
+  replaced existed because the fact lived somewhere other than the declaration
+  it described. `arg` alongside it carries the llama-server spelling.
+- `RELOAD_REQUIRED_FIELDS` and the gguf import allowlist are now DERIVED from
+  that metadata rather than hand-maintained, and the reload set is
+  **provider-aware** (`reload_required_for(provider)`), which one shared
+  frozenset could never be.
+- `_validate_effect_declarations()` runs at IMPORT and refuses to start with an
+  unclassified or misspelt field, naming it. A test only fires when the suite
+  runs; this makes shipping one impossible.
+- `tests/unit/test_config_effects.py` + `test_config_effects_adversarial.py`
+  (39 tests): completeness, partitioning, and mutation-derived guards.
+
+### Fixed
+
+- **Changing `ctx_size` (or any gguf load-time flag) on a loaded model reported
+  "no reload required" and kept serving the old argv.** The single
+  `RELOAD_REQUIRED_FIELDS` frozenset was MLX-shaped and named no gguf field at
+  all; it also still listed `supports_thinking`, removed from MLXModelConfig in
+  v1.46.0. Now derived per provider, so this class of drift is unrepresentable.
+- The gguf import path silently dropped `n_gpu_layers_draft`, `cache_ram_mb`,
+  `load_mode`, `sleep_idle_seconds` and `enable_thinking` -- its allowlist had
+  drifted from the config class.
+- **Clearing a config field back to its default 500'd.** `null` is how every
+  optional load option spells "inherit the default", but nested nulls survive
+  `exclude_none=True`, pass pydantic validation (`Optional[...] = None` is
+  legal), and only fail at `tomli_w` with a `TypeError` the route did not
+  catch. An explicit null now removes the key -- absent IS how a default is
+  spelled on disk -- and a serializer refusal returns 400, not 500.
+- `get_field_reload_info` filled one dict from two loops with the
+  hand-maintained `RUNTIME_CHANGEABLE_FIELDS` last, so it silently overrode the
+  derived answer -- reporting a spawn-time flag as a live knob. The derived set
+  now wins. Latent (the sets are disjoint today) and found by an adversarial
+  pass, not by inspection.
+- A misspelt effect (`"requires-reload"`) used to get its own bucket, leave the
+  unclassified set empty, pass every completeness check, and drop the field out
+  of the reload set -- reintroducing the exact bug by one character. An
+  unrecognised effect is now treated as unclassified, not as a new category.
+
 ## [1.51.0]
 
 ### Added
