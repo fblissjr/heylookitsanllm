@@ -1,9 +1,34 @@
 # Current Work
 
-Last updated: 2026-08-11 (v3 config editor + audit round; earlier narrative
-below unchanged)
+Last updated: 2026-08-11 (v3 config editor + switch arc + audit rounds,
+v1.54.0-1.57.1, MERGED to main; earlier narrative below unchanged)
 
-UPDATE 2026-08-11 (v1.54.0-1.55.0, branch `worktree-v3-model-config-editor`):
+HANDOFF (next session start here): the day shipped six commits --
+v1.54.0 config editor, v1.55.0 audit fixes, docs, v1.56.0 /code-review
+fixes (all 10 confirmed findings), v1.57.0 chat model-switch arc (G1+G3),
+v1.57.1 update_deps write-path hardening. Suite 1434 green; E2E pages
+43/43 + chat 41/41 live-verified. NEXT, in order:
+1. **models.toml comment preservation** -- owner-approved want, now urgent
+   (the editor makes admin PATCHes routine and every save drops all
+   comments). Constraints + the failed attempt's post-mortem are in
+   CLAUDE.md ("models.toml COMMENTS ARE EPHEMERAL" block): tomli_w stays
+   authoritative for values; copy only COMMENTS onto freshly rendered
+   tables; a note must never outlive what it describes; must pass
+   test_import_reimport.py.
+2. **Fit endpoint + fit meter** (frontend design doc
+   internal/research/expert_offload_design_frontend.md §5/§9 ask #2):
+   ram_report.py's check_fit/size_config_gb/metal_ceilings behind HTTP with
+   the hard_working_set flag (MLX=FAIL vs gguf=WARN asymmetry is the whole
+   point); the UI is a thin renderer. NEVER compute fit client-side.
+3. Remaining small items: TODO.md "Config-editor / audit follow-ups"
+   (G4/G5/F14 switch polish, server-owned reload route, schema nits).
+Gotchas for the next session: worktree setup traps are in the session log
+(internal/log/log_2026-08-11.md, "Worktree gotchas"); run `uv sync` in the
+primary after any worktree `uv run` (it re-points the shared editable
+install); E2E must run unsandboxed and its server uses the REAL
+models.toml (only the DB is isolated) -- intercept any PATCH.
+
+UPDATE 2026-08-11 (v1.54.0-1.57.1, merged to main same day):
 
 - **SOLID -- v3 per-model config editor (Wave 4 / 6b territory, arrived
   early)**: Models page Configure panel, schema-driven off
@@ -14,8 +39,7 @@ UPDATE 2026-08-11 (v1.54.0-1.55.0, branch `worktree-v3-model-config-editor`):
   non-default summary chip. gguf plumbing (host/port/server_binary/
   startup_timeout_s) + mlx's derived `vision` deliberately not rendered.
   Design record: `internal/research/expert_offload_design_frontend.md`
-  (this ships its schema-form half). E2E pages 43/43 + chat 40/40 live;
-  unit+contract 1426.
+  (this ships its schema-form half).
 - **SOLID -- audit round (4 parallel review agents over yesterday's
   v1.52-1.53 work)**: found + fixed a HIGH semantic defect -- per_request
   defaults were load-time snapshots, so a PATCH on a loaded model reported
@@ -27,18 +51,34 @@ UPDATE 2026-08-11 (v1.54.0-1.55.0, branch `worktree-v3-model-config-editor`):
   `-ncmoed`/`-cmoed`, `--spec-draft-n-min` (coverage vs pinned b10362
   otherwise clean); ModelUpdateRequest extra=forbid; chat stops an
   in-flight stream before a model switch re-labels the conversation.
-- **update_deps pyproject-writeback AUDITED: KEEP WITH FIXES** (tomlkit
-  round-trip is comment-safe -- verified live; fixes wanted: concurrent-edit
-  guard on the final write, rollback when the follow-up `uv lock` fails,
-  write-path tests). NOTE: primary checkout carries an uncommitted
-  7-package `uv.lock` full-upgrade relock (incl. transformers 5.15.0) that
-  NO script path produces -- owner decision pending (commit as pair, or
-  checkout the lock and keep the one-line llama.cpp rev bump).
-- **Left (ranked, from the audits)**: chat model-switch hardening G1
-  (history media unguarded -- ships image parts to a text-only model) + G3
-  (no load-cost signal), fit-meter backend endpoint (frontend design doc
-  ask #2), server-owned reload route (ask #4), update_deps hardenings
-  above. Small: see TODO.md "Config-editor / audit follow-ups".
+- **SOLID -- /code-review high round (v1.56.0)**: 12 verified candidates,
+  10 confirmed, all applied. The three load-bearing ones: reload-needed
+  marker moved to SERVER truth (`stale_reload_fields` on admin responses,
+  from router snapshot comparison -- client bookkeeping died on remount and
+  mis-cleared on failed reloads); `_resolve_modalities` restores
+  `__pydantic_fields_set__` (validator-assigned fields reported as stored,
+  defeating exclude_unset); per_request refresh fixed for
+  disabled-but-loaded models + guarded against re-import provider changes.
+  Plus: hide policy as `ui:"hidden"` ON the fields (one source), arrays
+  edit one-element-per-line (comma split corrupted `--tensor-split "3,1"`),
+  save notes announced after mount.
+- **SOLID -- chat model-switch arc (v1.57.0, design doc §15)**: G1 history
+  media caps-gated at the wire with per-message drop disclosure (staged
+  attachments still BLOCK -- deliberate asymmetry, commented both sites);
+  G3 residency dots on the select + pre-switch warning (Cancel / Switch
+  anyway; Send with unconfirmed target commits) + Load button (warm
+  contract); G2 (v1.55.0) stop-stream before model_id changes hands.
+  Still open from §15: G4 context estimate, G5 attribution (schema bump),
+  F14 switch-lock during pending load.
+- **SOLID -- update_deps writeback (audited KEEP WITH FIXES, fixes shipped
+  v1.57.1)**: tomlkit round-trip comment-safe (verified live + now
+  test-pinned); one guarded write helper refusing concurrent edits;
+  rollback when the follow-up `uv lock` fails; first write-path tests.
+  The primary's stray 7-package relock (incl. transformers 5.15.0) was
+  committed as a NAMED act after the full suite passed under it.
+- **Left**: see the HANDOFF block above + TODO.md
+  "Config-editor / audit follow-ups". Final state: suite 1434 green,
+  E2E pages 43/43 + chat 41/41.
 
 UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
 

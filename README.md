@@ -40,9 +40,9 @@ Built on Apple MLX for text and vision, with GGUF models served through a manage
 
 Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build step; served directly by the backend. Conversations, notebooks, and presets are stored server-side in DuckDB (messages as content blocks; images round-trip).
 
-- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, capability-gated attach (multi-image, plus audio clips on audio-capable models), a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets
+- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, capability-gated attach (multi-image, plus audio clips on audio-capable models), a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets. Switch models mid-conversation: the select shows which models are resident, switching to a costly or incompatible model warns first (with a Load button to pay the warm-up deliberately), and history media a model can't take is dropped from requests with a per-message note -- never deleted
 - **Notebook** -- base-model text continuation with cursor-based generation
-- **Models** -- scan, import, configure, load/unload
+- **Models** -- scan, import, load/unload, and a per-model config editor generated from the server's option schema: every settable field with type/bounds/defaults, grouped by when a change takes effect (live vs needs-reload vs fixed), with reset-to-default and a reload-to-apply marker driven by the server
 - **Performance** -- system metrics and timing breakdowns
 - **Token Explorer** -- token probability visualization with top-K alternatives
 - **J-Space** -- Jacobian-lens "workspace" heatmap: the silent tokens a model tracks before answering, with an optional hallucination-risk badge (needs a fitted lens installed under `adapters/jspace/`; see the [guide](docs/jspace_guide.md))

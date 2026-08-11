@@ -86,7 +86,19 @@ committed or packaged and there is nothing to `submodule init`. Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
 load) -- the 400 guard lives in MLXProvider.create_chat_completion. Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
-config in `models.toml`. API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
+config in `models.toml`. Every provider-config FIELD declares when a change
+takes effect (`json_schema_extra={"effect": ...}`, six classes; reload set +
+import allowlist + `/v1/admin/model-options` all DERIVE from it -- never
+hand-maintain a second copy; new field = classify it or import refuses).
+Invariants (v1.55-56, design record docs/architecture/config.md):
+`reload_config()` pushes per_request defaults into LOADED providers (they
+are construction-time snapshots otherwise -- "applies immediately" was a lie
+before this); admin responses serialize config `exclude_unset` (absent IS
+the default's spelling -- a validator that ASSIGNS derived fields must
+restore `__pydantic_fields_set__` or they leak back as "stored");
+`stale_reload_fields` on admin responses is the server-derived
+"saved-but-process-runs-old-value" truth (never rebuild it client-side).
+API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
 settings), telemetry (frontend ingestion). DuckDB store (`db.py`: conversations +
 notebooks + presets + `settings`, single serialized writer thread, transactional ops;
@@ -107,6 +119,15 @@ Phase 3b), takes image input + renders image content blocks out of the DuckDB
 store, and has a per-document system-prompt editor + a saved-preset bar (TWO shared
 drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat AND
 notebook -- fix a bug in the shared factory, never in one page's copy).
+Since v1.54-1.57: the models page EDITS per-model config (`js/model-config.js`,
+schema-driven off `/v1/admin/model-options` -- a new backend config field
+appears in the UI with no frontend change; `ui:"hidden"` on a field is what
+keeps it out), and chat switches models mid-conversation honestly: history
+media the current model can't take is dropped AT THE WIRE with a per-message
+disclosure while staged attachments still BLOCK (deliberate asymmetry,
+commented at both sites -- do not unify), residency dots + a pre-switch
+warning gate costly switches, and chat now consumes `/v1/admin/models`
+(residency) + `load?warm=true` (its Load button).
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the authoritative backend API contract -- update it in the same commit as any
 contract change); orientation + backend coupling: [docs/frontend_v3.md](./docs/frontend_v3.md).
