@@ -168,7 +168,7 @@ git = "https://github.com/ggml-org/llama.cpp"
 branch = "master"
 dir = ""
 targets = ["llama-server"]
-rev = "b10354"
+rev = "b10362"
 extra_cmake_args = []
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
