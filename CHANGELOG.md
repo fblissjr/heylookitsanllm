@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.58.0]
+
+### Added
+
+- **models.toml comments survive admin writes** (`toml_comments.py`).
+  Every admin write (import, PATCH, config edit) regenerates the file
+  through tomli_w, which emits no comments -- routine editor saves were
+  silently wiping every comment. Now `_write_toml` still renders values
+  through tomli_w (layout, quoting and key order stay canonical -- the
+  old file's formatting is never spliced in), then carries the previous
+  file's comments onto the fresh render. A comment is carried only while
+  its anchor is unchanged, so a note can never outlive what it describes:
+  a top-level key's comment needs that key unchanged; everything inside a
+  `[[models]]` entry needs that model's values byte-identical (normalized
+  through tomli_w, so hand-formatting doesn't pin anything); a block
+  sitting above the next model's header additionally needs that model
+  unchanged and still immediately next. Merging is best-effort and gated
+  on the merged text parsing to exactly the fresh render's values: any
+  parse failure, missing anchor, or value drift degrades to a comment-less
+  write -- never a refused or corrupted one. Implementation note pinned in
+  the module docstring: tomlkit is used strictly read-only for extraction,
+  because mutating any item of a tomlkit-parsed array-of-tables (even
+  comment trivia) makes it re-render as a malformed inline array -- the
+  failure mode that sank the earlier whole-table-splice attempt against
+  `test_import_reimport.py`, which now passes alongside 16 new tests
+  (`test_toml_comment_preservation.py`).
+
 ## [1.57.1]
 
 ### Fixed

@@ -622,7 +622,7 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
 - [ ] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true`** (P2,
   ask #4): v3's Reload now is unload-then-load from the browser; a dying
   browser strands the model unloaded.
-- [ ] **update_deps hardenings** (P2, from the KEEP-WITH-FIXES verdict):
+- [x] **update_deps hardenings -- DONE v1.57.1** (P2, from the KEEP-WITH-FIXES verdict):
   re-read pyproject before the final write and abort/re-apply on
   concurrent change (the C++ build makes the window minutes long);
   roll back the pyproject write when the follow-up `uv lock` fails;

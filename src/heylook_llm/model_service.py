@@ -35,6 +35,7 @@ from heylook_llm.config import (
     configurable_fields,
     reload_required_fields,
 )
+from heylook_llm.toml_comments import merge_comments
 
 logger = logging.getLogger(__name__)
 
@@ -287,12 +288,26 @@ class ModelService:
             return tomllib.load(f)
 
     def _write_toml(self, data: dict) -> None:
-        """Atomic write: write to .tmp, validate, rename. Creates backup."""
+        """Atomic write: write to .tmp, validate, rename. Creates backup.
+
+        tomli_w's render is authoritative for values; comments from the
+        existing file are carried onto it best-effort (see toml_comments) --
+        a failed carry degrades to a comment-less write, never a refusal.
+        """
         tmp_path = self.config_path.with_suffix(".toml.tmp")
         backup_path = self.config_path.with_suffix(".toml.bak")
 
+        toml_text = tomli_w.dumps(data)
+        if self.config_path.exists():
+            try:
+                old_text = self.config_path.read_text(encoding="utf-8")
+            except OSError:
+                old_text = None
+            if old_text:
+                toml_text = merge_comments(old_text, toml_text)
+
         # Write to temp file
-        toml_bytes = tomli_w.dumps(data).encode("utf-8")
+        toml_bytes = toml_text.encode("utf-8")
         tmp_path.write_bytes(toml_bytes)
 
         # Validate the written file can be parsed back

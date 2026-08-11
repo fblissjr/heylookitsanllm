@@ -6,21 +6,16 @@ v1.54.0-1.57.1, MERGED to main; earlier narrative below unchanged)
 HANDOFF (next session start here): the day shipped six commits --
 v1.54.0 config editor, v1.55.0 audit fixes, docs, v1.56.0 /code-review
 fixes (all 10 confirmed findings), v1.57.0 chat model-switch arc (G1+G3),
-v1.57.1 update_deps write-path hardening. Suite 1434 green; E2E pages
-43/43 + chat 41/41 live-verified. NEXT, in order:
-1. **models.toml comment preservation** -- owner-approved want, now urgent
-   (the editor makes admin PATCHes routine and every save drops all
-   comments). Constraints + the failed attempt's post-mortem are in
-   CLAUDE.md ("models.toml COMMENTS ARE EPHEMERAL" block): tomli_w stays
-   authoritative for values; copy only COMMENTS onto freshly rendered
-   tables; a note must never outlive what it describes; must pass
-   test_import_reimport.py.
-2. **Fit endpoint + fit meter** (frontend design doc
+v1.57.1 update_deps write-path hardening; a follow-on session shipped
+v1.58.0 models.toml comment preservation (was item 1 here -- DONE:
+`toml_comments.py`, anchor semantics in the CLAUDE.md block, 16 new tests
++ test_import_reimport green; suite 1450). NEXT, in order:
+1. **Fit endpoint + fit meter** (frontend design doc
    internal/research/expert_offload_design_frontend.md §5/§9 ask #2):
    ram_report.py's check_fit/size_config_gb/metal_ceilings behind HTTP with
    the hard_working_set flag (MLX=FAIL vs gguf=WARN asymmetry is the whole
    point); the UI is a thin renderer. NEVER compute fit client-side.
-3. Remaining small items: TODO.md "Config-editor / audit follow-ups"
+2. Remaining small items: TODO.md "Config-editor / audit follow-ups"
    (G4/G5/F14 switch polish, server-owned reload route, schema nits).
 Gotchas for the next session: worktree setup traps are in the session log
 (internal/log/log_2026-08-11.md, "Worktree gotchas"); run `uv sync` in the
