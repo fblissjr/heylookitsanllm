@@ -32,14 +32,21 @@ runs `--jinja` + reasoning pre-split by default (provider template_info()=None r
 heylook's parsers to pass-through -- never re-parse another engine's split output);
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in -- measured +21% on Qwen3.6 thinking,
-NET LOSS on small gemmas, and its win is ERASED by a LoRA (the draft head is NOT
+NET LOSS on small gemmas, and its win is ERODED by a LoRA (the draft head is NOT
 adapted, so it drafts the base distribution while the target generates the adapted
-one: measured 65.3% -> 39.2% acceptance, +10.5% -> -4.3% tok/s on Qwen3.6-27B-MTP
-Q4_K_XL. `common_set_adapter_lora` has ONE call site in tools/server and applies to
-`ctx_tgt` only, so no draft-side tuning recovers it. `--spec-type` is a SPAWN flag
-while `lora` is per-REQUEST, so one process serving both kinds of traffic cannot suit
-both -- leave spec ON: turning it off to help the adapted path taxes the unadapted
-path 10.5% to save 4.5%); gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
+one). The MECHANISM is structural, not empirical: `common_set_adapter_lora` has ONE
+call site in tools/server and applies to `ctx_tgt` only, so no draft-side tuning
+recovers it and no adapter escapes it. The MAGNITUDE scales with how far the adapter
+moves the distribution, and is measured on n=1 ADAPTER -- a heavy task adapter (rank
+256, alpha 512) ERASED the win outright: 65.3% -> 39.2% acceptance, +10.5% -> -4.3%
+tok/s on Qwen3.6-27B-MTP Q4_K_XL. A light style/domain adapter should erode it less;
+untested (needs a second qwen35 adapter: `gguf_probe.py <mtp-gguf> --lora <a>.gguf
+--lora-ab --spec-type draft-mtp --temp 0`). `--spec-type` is a SPAWN flag while `lora`
+is per-REQUEST, so one process serving both kinds of traffic cannot suit both --
+leave spec ON, and note that conclusion does NOT rest on the n=1 number: a lighter
+adapter collapses acceptance less, which only makes spec decode MORE worth having on
+the adapted path, while the unadapted path keeps its full +10.5% either way. Turning
+it off taxes the unadapted path 10.5% to save the adapted path 4.5%); gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
 importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
 local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
 `$HEYLOOK_LLAMA_SERVER` (no built-in default -- one of these is REQUIRED, else load fails

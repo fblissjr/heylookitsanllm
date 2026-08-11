@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tests/unit/test_gguf_argv_matches_metadata.py`: the `arg` spelling a field
+  declares must be the flag `_build_args` actually emits. This is the third
+  leg of the same drift -- the metadata is what a UI and any derived emitter
+  read, the builder is what the process gets, and nothing tied them together.
+  It immediately caught one: `draft_model_path` declared `--model-draft` while
+  the provider emits the `-md` alias. Same behaviour, different command line,
+  so the metadata is now the spelling actually used.
+- llama-server spawn logs a warning when any `LLAMA_ARG_*` is set in the
+  environment. Verified against llama.cpp's parser: a CLI arg WINS over its env
+  var, so anything heylook passes is safe -- but a flag it does not pass gets
+  set silently, and the running process then differs from what models.toml and
+  the admin API report. Surfaced rather than stripped, since someone may be
+  using it deliberately.
+
 - **Every provider-config field now declares WHEN a change takes effect**, as
   `json_schema_extra={"effect": ...}` on the field itself, in one of six
   classes: `identity`, `requires_reload`, `load_time_only`, `applies_live`,

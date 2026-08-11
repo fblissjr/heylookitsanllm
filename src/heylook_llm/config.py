@@ -524,10 +524,13 @@ class GGUFModelConfig(BaseModel):
         default=None,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--mmproj"},
     )
-    # sidecar drafter (e.g. gemma mtp-*.gguf)
+    # sidecar drafter (e.g. gemma mtp-*.gguf). `-md`, not the `--model-draft`
+    # alias: `arg` must be the spelling the provider ACTUALLY emits, so a UI or
+    # a derived emitter reproduces the real command line rather than an
+    # equivalent-but-different one.
     draft_model_path: Optional[str] = Field(
         default=None,
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--model-draft"},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md"},
     )
     # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded
     # adapter erases spec decode's win, because the draft context never

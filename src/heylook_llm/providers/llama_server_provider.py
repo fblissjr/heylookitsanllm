@@ -179,6 +179,22 @@ class LlamaServerProvider(BaseProvider):
         log_path = log_dir / f"llama_server_{safe_id}.log"
         self._log_handle = open(log_path, "ab")
 
+        # llama-server reads LLAMA_ARG_* from the environment for most flags.
+        # A CLI arg WINS over its env var (llama.cpp warns and overrides), so
+        # anything heylook passes is safe -- but a flag we DON'T pass is set
+        # silently, and then the running process differs from what models.toml
+        # and the admin API say it is. Surface it rather than stripping the
+        # env: someone may be using it deliberately, and quietly changing the
+        # child's environment would be its own invisible behaviour.
+        llama_env = sorted(k for k in os.environ if k.startswith("LLAMA_ARG_"))
+        if llama_env:
+            logging.warning(
+                f"[GGUF] {', '.join(llama_env)} set in the environment. Flags "
+                f"heylook passes explicitly override these, but any flag it "
+                f"does NOT pass is being set from the environment and will not "
+                f"be visible in this model's config."
+            )
+
         logging.info(f"[GGUF] Spawning llama-server for '{self.model_id}': {' '.join(args)}")
         self._proc = subprocess.Popen(
             args,
