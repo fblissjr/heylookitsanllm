@@ -36,11 +36,15 @@ checked it a win on YOUR model at YOUR context. NO PERFORMANCE NUMBERS IN TRACKE
 -- 2026-08-10 produced a string of figures that were each confidently wrong in turn,
 and the ones that survived were spot OBSERVATIONS, not performance testing: nothing
 controlled for quant version, which llama.cpp produced the quant, build flags, thermal
-state, memory pressure, or a second machine. Direction only, here: on the one case
-looked at most carefully (a gemma-4 MTP model, vendor sampling, realistic context,
-matched cache), spec decode came out SLOWER than off, with a coherent mechanism --
-acceptance under half at n_max=3 does not pay for the drafting. Treat that as a reason
-to default OFF and check your own case, not as a fact about speculative decoding.
+state, memory pressure, or a second machine. What is left after a day of chasing it:
+on the one case examined most carefully (a gemma-4 MTP model, vendor sampling,
+realistic context, matched warm cache, LONG generation), spec on/off is a WASH --
+indistinguishable from noise. Every larger effect seen that day dissolved when one more
+variable was controlled: a big tuning win was a greedy artifact, a clear cost was a
+short-generation artifact, a dramatic context effect was a cache-ordering mistake, and
+a "broken drafter" was refuted by the drafter's own output. Default OFF because it is
+unproven here, NOT because it is known harmful -- and expect your own case to need its
+own check rather than inheriting any of this.
 Local detail, conditions and the history: `internal/research/`.
 CHECKING IT YOURSELF (a day of wrong answers produced these, and they are the durable
 part): never at temp 0 -- greedy acceptance is exact argmax matching while temp>0 is

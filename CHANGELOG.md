@@ -34,8 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unexplained 3.4x `--ctx` effect -- and every number here is temp 0, which is
   not a regime anyone serves. So the field is justified because the setting is
   reachable and harmless, NOT because a payoff has been established. No
-  defensible global default: p_min helps both gemmas and is -11% on
-  Qwen3.6-27B at every value tested.
+  defensible global default: its sign differed between the models looked at.
+  (Figures deliberately omitted -- every performance number produced that day
+  was later withdrawn; conditions live in internal/research/.)
 - **Expert offload**: `n_cpu_moe` (`-ncmoe`), `cpu_moe` (`-cmoe`, a bare flag)
   and `override_tensor` (`-ot`). On unified memory these do not shrink RAM --
   they move bytes out of the Metal working set, and that math onto CPU cores.
