@@ -615,10 +615,13 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   unconfirmed target commits) + Load button on the chat bar. Still open
   from doc §15: G4 context estimate, G5 per-message attribution (waits for
   a `_SCHEMA_VERSION` bump), F14 switch-lock during a pending load.
-- [ ] **Fit meter** (P2, the frontend design doc's stated heart): needs the
-  fit endpoint first (backend ask #2 -- `ram_report.py`'s
-  check_fit/size_config_gb/metal_ceilings behind HTTP, `hard_working_set`
-  flag for the MLX-FAIL/gguf-WARN asymmetry). NEVER compute fit client-side.
+- [x] **Fit meter -- DONE v1.60.0** (P2, the frontend design doc's stated
+  heart): `heylook_llm.ram_fit` (extracted from `ram_report.py`, which now
+  renders it), `POST /v1/admin/models/{id}/fit` with the provider-derived
+  `hard_working_set` (MLX-FAIL/gguf-WARN), v3 Memory-fit section + Load
+  gating on FAIL. Fit stays server-computed. Left for later: the §5
+  "observed after load" line (swap the estimate row for
+  `/v1/system/metrics` `models[id].memory_mb` once loaded).
 - [ ] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true`** (P2,
   ask #4): v3's Reload now is unload-then-load from the browser; a dying
   browser strands the model unloaded.
