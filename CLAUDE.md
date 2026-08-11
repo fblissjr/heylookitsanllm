@@ -44,8 +44,16 @@ quantity every one of these conclusions rests on. So treat the whole block as a 
 to re-measure at vendor sampling, not as findings. The `p_min` LEVER still applies at
 temperature (it thresholds the drafter's top-token probability, not gated on greedy);
 it is the acceptance DYNAMICS that do not carry over.
-WHAT SURVIVED a long-context check (gemma-4 12B, ~6k, 4 runs/config): spec decode
-ITSELF is worth ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
+SIGN WARNING, and it supersedes the rest of this block: at VENDOR SAMPLING and ~6k,
+spec decode measured a NET LOSS on both models tested -- gemma-4 12B -5.8% (60.1 -> 56.6)
+and Qwen3.6-27B -2.7% (26.83 -> 26.10), 3 pinned-seed runs each. The "+14-15% over off"
+below was a GREEDY result and it does not merely shrink at temperature, it inverts:
+acceptance falls (gemma 63% -> 44% in the same config) and the drafting overhead stops
+being recovered, which is what rejection-sampling-vs-argmax predicts. Cross-seed
+variance is still being measured, so treat the sign as strongly indicated rather than
+final -- but do NOT enable spec decode on a new model expecting a win.
+THE GREEDY RESULT, retained only to show what inverted: spec decode
+ITSELF measured ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
 n_max/p_min bought NOTHING measurable there (shipped mean 66.1, tuned 66.3, overlapping
 ranges); the configs really are distinct (draft counts 32/51 vs 29/35), they just land
 at the same speed. The tuning win is a SHORT-PROMPT effect: at ~30 tokens tuned beats
@@ -54,7 +62,8 @@ context (+1.0% -> +14.7%), not the tuned one. And RANKING moves, not just magnit
 n_max=2 is second-best short and the WORST spec option at 6k, below the default it was
 meant to beat -- so short-prompt tuning actively misleads. Draft volumes collapse with
 context (243/178/94 -> 51/42/35, same 200-token budget); mechanism not understood.
-Tune at YOUR context, and treat spec-on/off as the decision that actually pays.
+Tune at YOUR context -- and settle spec-on/off FIRST, at your real sampling, because
+that is the decision with a sign that flips.
 The old "NET LOSS on small gemmas" note is wrong AS WRITTEN (unconditional), but its
 replacement is only established at short prompt: E4B is -5.2%/-24.4% at p_min=0.0 and
 +2.7%/+1.4% at p_min=0.9 on a ~30-token prompt, UNVERIFIED at realistic context.
