@@ -22,14 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `load_time_only` fields now carry a `reason`. They render disabled, and the
   class genuinely cannot imply why -- `max_queue_depth` is fixed because it is
   process-wide, `port` for an unrelated reason.
-- **`spec_draft_p_min`** (`--spec-draft-p-min`) on GGUFModelConfig. Measured on
-  gemma-4 12B MTP: the shipped default is +1.0% over spec-off, the best
-  reachable WITHOUT this field is +6.7%, and the true optimum
-  (n_max=4, p_min=0.9) is +15.7% -- so roughly 14.5% was unreachable because
-  the config surface could not express it. The two levers INTERACT and the
-  interaction inverts: n_max=4 is the worst setting at p_min=0.0 and the best
-  at p_min=0.9, so a one-dimensional n_max sweep finds a different and wrong
-  optimum. No defensible global default -- p_min=0.9 is -11% on Qwen3.6-27B.
+- **`spec_draft_p_min`** (`--spec-draft-p-min`) on GGUFModelConfig, previously
+  unreachable. The two spec levers INTERACT and the interaction inverts, so a
+  one-dimensional `n_max` sweep finds a different and wrong optimum -- tune
+  them together. Justified because the tuned setting wins or ties everywhere
+  measured, but the SIZE of the payoff is prompt-length dependent and the
+  numbers only mean anything with that condition attached: on gemma-4 12B MTP,
+  tuned beats the shipped default by +14.7 points at a ~30-token prompt and by
+  ~1.4 at ~6k, which is inside run-to-run noise. The shipped default is not
+  broadly bad -- it is bad on short prompts and fine on long ones. No
+  defensible global default: p_min helps both gemmas and is -11% on
+  Qwen3.6-27B at every value tested.
 - **Expert offload**: `n_cpu_moe` (`-ncmoe`), `cpu_moe` (`-cmoe`, a bare flag)
   and `override_tensor` (`-ot`). On unified memory these do not shrink RAM --
   they move bytes out of the Metal working set, and that math onto CPU cores.

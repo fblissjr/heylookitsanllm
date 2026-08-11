@@ -37,8 +37,16 @@ INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 
 so a 1D n_max sweep finds a different and WRONG optimum. The old "NET LOSS on small
 gemmas" note was never a fact about gemmas, only about the config surface before p_min
 was exposed: E4B is -5.2%/-24.4% at p_min=0.0 and +2.7%/+1.4% at p_min=0.9.
-HYPOTHESIS (3 models, n=1 per cell, one prompt/short gens/temp 0/Q4 -- a prior to sweep
-from, NOT a default to ship): the split tracks DRAFTER ARCHITECTURE, not model size --
+EVERY SPEC-DECODE NUMBER HERE IS PROMPT-LENGTH CONDITIONAL -- quote none of them
+without it. On gemma-4 12B the TUNED setting beats the shipped default by +14.7 points
+at a ~30-token prompt and by ~1.4 at ~6k, i.e. inside noise; what changes with context
+is the SHIPPED config (+1.0% -> +14.7%), not the tuned one, so the default is bad on
+short prompts and fine on long ones. n_max=2 inverts outright: second-best short,
+WORST spec option at 6k. Draft volumes collapse with context (243/178/94 -> 51/42/35
+for the same 200-token budget), mechanism not understood. Tune at YOUR context.
+HYPOTHESIS (3 models, n=1 per cell, SHORT prompts/temp 0/Q4 -- a prior to sweep
+from, NOT a default to ship, and untested at realistic context): the split tracks
+DRAFTER ARCHITECTURE, not model size --
 SIDECAR drafters (gemma `mtp-*.gguf`) have real per-draft cost so pruning pays (p_min
 high ~0.9); an EMBEDDED MTP head (Qwen3.6) drafts nearly free so low-confidence drafts
 still clear the bar (p_min 0, every p_min>0 tested is worse, 5 samples). NB the split

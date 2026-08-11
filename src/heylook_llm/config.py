@@ -576,14 +576,32 @@ class GGUFModelConfig(BaseModel):
     )
     # --spec-draft-p-min: minimum probability for a drafted token to be kept.
     # NOT a minor tuning knob -- it INTERACTS with spec_draft_n_max and the
-    # interaction inverts. Measured on gemma-4 12B MTP: n_max=4 is the WORST
-    # setting at p_min=0.0 (52.1 tok/s, -13% vs spec off) and the BEST at
-    # p_min=0.9 (69.3, +15.7%), because p_min binds first and n_max stops being
-    # the operative constraint. So a one-dimensional n_max sweep does not find
-    # a smaller win, it finds a DIFFERENT and wrong optimum -- tune the two
-    # together or not at all.
-    # No defensible global default: p_min=0.9 is +15.7% on gemma-4 12B and
-    # -11% on Qwen3.6-27B (it pruned nearly every draft there). Per-model.
+    # interaction inverts, so a 1D n_max sweep finds a DIFFERENT and wrong
+    # optimum. Tune the two together or not at all.
+    #
+    # EVERY NUMBER BELOW CARRIES ITS PROMPT LENGTH, because that turned out to
+    # be the condition the whole result depends on. gemma-4 12B MTP, temp 0:
+    #
+    #                             ~30-tok prompt   ~6k prompt
+    #   spec off                  59.9             57.8
+    #   shipped (n_max=3, p_min=0) 60.5  (+1.0%)   66.3  (+14.7%)
+    #   n_max=2, p_min=0          63.9  (+6.7%)    63.2  (+9.3%)
+    #   n_max=4, p_min=0.9        69.3  (+15.7%)   67.2  (+16.3%)
+    #
+    # Read it carefully: TUNING's advantage over the shipped default is +14.7
+    # points at short prompt and ~1.4 at 6k, which is inside run-to-run noise.
+    # What moved is the SHIPPED config, not the tuned one -- the default is bad
+    # on short prompts and fine on long ones. And the n_max-alone answer
+    # INVERTS: n_max=2 is second-best short and the worst spec option at 6k,
+    # below the default it was meant to improve on.
+    # Draft volumes collapse with context (243/178/94 short vs 51/42/35 at 6k
+    # for the same 200-token budget); the mechanism is not understood.
+    #
+    # So the FIELD is justified -- tuned wins or ties everywhere measured -- but
+    # the size of the payoff was a property of a ~30-token prompt, not of the
+    # model. Do not quote a single percentage without its context length.
+    # No defensible global default either: p_min=0.9 helps both gemmas and is
+    # -11% on Qwen3.6-27B at every value tested (5 samples). Per-model.
     spec_draft_p_min: Optional[float] = Field(
         default=None, ge=0.0, le=1.0,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
