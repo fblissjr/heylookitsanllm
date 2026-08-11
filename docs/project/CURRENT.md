@@ -17,11 +17,10 @@ v1.58.0 models.toml comment preservation (was item 1 here -- DONE:
    point); the UI is a thin renderer. NEVER compute fit client-side.
 2. Remaining small items: TODO.md "Config-editor / audit follow-ups"
    (G4/G5/F14 switch polish, server-owned reload route, schema nits).
-Gotchas for the next session: worktree setup traps are in the session log
-(internal/log/log_2026-08-11.md, "Worktree gotchas"); run `uv sync` in the
-primary after any worktree `uv run` (it re-points the shared editable
-install); E2E must run unsandboxed and its server uses the REAL
-models.toml (only the DB is isolated) -- intercept any PATCH.
+Gotchas for the next session: E2E must run unsandboxed and its server
+uses the REAL models.toml (only the DB is isolated) -- intercept any
+config-writing PATCH. (The worktree-per-session convention was retired
+2026-08-11 -- sessions run in the primary checkout again.)
 
 UPDATE 2026-08-11 (v1.54.0-1.57.1, merged to main same day):
 
