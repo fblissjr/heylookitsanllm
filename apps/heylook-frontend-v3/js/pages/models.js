@@ -444,9 +444,9 @@ async function reloadModel(ctx, model) {
   renderModelList(ctx);
 
   try {
-    await api.adminUnloadModel(model.id);
-    if (!ctx.alive) return;
-    const result = await api.adminLoadModel(model.id, true);
+    // Server-owned reload (v1.62.0): one call, so a dying browser can no
+    // longer strand the model unloaded between an unload and a load.
+    const result = await api.adminReloadModel(model.id, true);
     if (!ctx.alive) return;
     if (result?.warm_error) {
       showError(ctx, `Reloaded, but the warm-up generation failed: ${result.warm_error}`);

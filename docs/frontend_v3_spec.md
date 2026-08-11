@@ -348,7 +348,13 @@ sysctl hint iff present. 404 unknown id; 422 `{field:"model_path",...}` when
 the (overridden) path does not exist. All numbers are measured today;
 `estimated` flips when any component becomes an approximation and estimates
 must render in a different visual register (design doc §5).
-`POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20); `POST /{id}/unload` →
+`POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20);
+`POST /{id}/reload[?warm=true]` (added v1.62.0) → unload + load(+warm) as ONE
+server-owned operation, exact `load` response shape (shared body, so the warm
+contract cannot fork). Reloading an unloaded model is just a load. This is
+what v3's "Reload now" sends -- the old browser-driven unload-then-load pair
+could strand a model unloaded if the tab died between the calls;
+`POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,
 modalities,supports_thinking?,draft_model_path?,draft_spec_type?}], total}`
@@ -396,7 +402,7 @@ NOT under `/v1/admin/models` (its `{model_id:path}` catch-all would eat the path
 `effect` says WHEN a change lands and drives the editor's layout:
 `per_request`/`applies_live`/`descriptive` = immediate; `requires_reload` = saved to
 models.toml, a loaded model keeps running as-is until reloaded (the editor offers
-"Reload now" = unload + `load?warm=true` after such a save); `load_time_only` = rendered
+"Reload now" = `POST /{id}/reload?warm=true` after such a save, v1.62.0); `load_time_only` = rendered
 disabled with the field's `reason`; `identity` fields are never listed. `arg` is the
 llama-server flag spelling (shown as a hint, pinned to the emitted argv by a backend
 test); `ui:"advanced"` collapses the field into an Advanced group; `ui:"hidden"` means

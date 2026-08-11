@@ -250,6 +250,12 @@ async def load_model(model_id: str, request: Request, warm: bool = False):
     the model is loaded and the server usable either way.
     """
     router = request.app.state.router_instance
+    return await _load_and_warm(router, model_id, warm)
+
+
+async def _load_and_warm(router, model_id: str, warm: bool) -> dict:
+    """The one load(+warm) body -- shared by /load and /reload so the warm
+    contract cannot fork between them."""
     try:
         import asyncio
         provider = await asyncio.to_thread(router.get_provider, model_id)
@@ -286,6 +292,23 @@ async def load_model(model_id: str, request: Request, warm: bool = False):
             result["warmed"] = False
             result["warm_error"] = str(e)[:500]
     return result
+
+
+@admin_router.post(
+    "/{model_id:path}/reload",
+    summary="Reload Model",
+    description=(
+        "Unload then load(+warm) as ONE server-owned operation -- the "
+        "browser-driven unload-then-load pair could strand a model unloaded "
+        "if the client died between the calls. Same response shape as /load."
+    ),
+)
+async def reload_model(model_id: str, request: Request, warm: bool = False):
+    router = request.app.state.router_instance
+    # A reload of an unloaded model is just a load -- unload_model returning
+    # False (not loaded) is not an error here.
+    router.unload_model(model_id)
+    return await _load_and_warm(router, model_id, warm)
 
 
 @admin_router.post(

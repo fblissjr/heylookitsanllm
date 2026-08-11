@@ -622,9 +622,10 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   gating on FAIL. Fit stays server-computed. Left for later: the §5
   "observed after load" line (swap the estimate row for
   `/v1/system/metrics` `models[id].memory_mb` once loaded).
-- [ ] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true`** (P2,
-  ask #4): v3's Reload now is unload-then-load from the browser; a dying
-  browser strands the model unloaded.
+- [x] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true` -- DONE
+  v1.62.0** (P2, ask #4): one route sharing load's exact body (warm contract
+  can't fork); v3's "Reload now" points at it. The fit meter's §5 observed
+  line (resident memory, measured after load) landed in the same version.
 - [x] **update_deps hardenings -- DONE v1.57.1** (P2, from the KEEP-WITH-FIXES verdict):
   re-read pyproject before the final write and abort/re-apply on
   concurrent change (the C++ build makes the window minutes long);

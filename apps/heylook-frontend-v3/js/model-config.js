@@ -207,13 +207,33 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 
 function buildFitMeter({ model, overrides, onGate }) {
   const rowsEl = createEl('div', { class: 'cfg-fit__rows' });
+  // The observed line (design §5's closing loop): once the model is LOADED,
+  // show what it actually holds resident -- the user sees how good the
+  // sizing above was and learns whether to trust it. Distinctly labelled
+  // measured-after-load; best-effort (the fit rows stand alone without it).
+  const observedEl = createEl('div', { class: 'cfg-fit__row cfg-fit__observed', hidden: true });
   // role=status: the verdict flips live as fields are edited -- announced,
   // not just shown (DESIGN.md §7).
   const verdictEl = createEl('div', { class: 'cfg-fit__verdict', role: 'status' });
   const el = createEl('section', { class: 'cfg-section cfg-fit' }, [
     createEl('h3', { class: 'cfg-section__title' }, ['Memory fit']),
-    rowsEl, verdictEl,
+    rowsEl, observedEl, verdictEl,
   ]);
+
+  async function refreshObserved() {
+    if (!model.loaded) return;
+    try {
+      const metrics = await api.systemMetrics();
+      const mb = metrics?.models?.[model.id]?.memory_mb;
+      if (mb == null) return;
+      observedEl.replaceChildren(
+        createEl('span', { class: 'cfg-fit__label' }, ['Resident now']),
+        createEl('span', { class: 'cfg-fit__value' }, [gib(mb / 1024)]),
+        createEl('span', { class: 'muted small' }, ['measured after load']),
+      );
+      observedEl.hidden = false;
+    } catch { /* stays hidden */ }
+  }
 
   const row = (label, value, note) => createEl('div', { class: 'cfg-fit__row' }, [
     createEl('span', { class: 'cfg-fit__label' }, [label]),
@@ -294,7 +314,7 @@ function buildFitMeter({ model, overrides, onGate }) {
     }
   }
 
-  return { el, refresh, scheduleRefresh: debounce(refresh, 300) };
+  return { el, refresh, refreshObserved, scheduleRefresh: debounce(refresh, 300) };
 }
 
 // createModelConfigEditor({ model, fields, draft, initialNote, onError, onSaved, onReload, onReset })
@@ -497,6 +517,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
 
   syncSaveState();
   fitMeter.refresh(); // first paint; needs no DOM, lands whenever it lands
+  fitMeter.refreshObserved(); // loaded models also show the measured resident line
   // The mount note: the save outcome carried across the rebuild, or the
   // standing server-derived reload reminder. Written by announce() AFTER the
   // caller mounts the element, so the live region actually announces it.

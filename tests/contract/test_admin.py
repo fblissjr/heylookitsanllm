@@ -128,3 +128,30 @@ class TestAdminLoadWarm:
     def test_load_warm_unknown_model_400(self, client):
         resp = client.post("/v1/admin/models/nope/load?warm=true")
         assert resp.status_code == 400
+
+
+class TestAdminReload:
+    """POST /v1/admin/models/{id}/reload[?warm=true] -- ONE server-owned
+    unload+load(+warm). The browser-driven unload-then-load pair could
+    strand a model unloaded if the client died between the calls; this
+    route shares load's exact body, so the warm contract cannot fork."""
+
+    def test_reload_returns_load_shape(self, client):
+        resp = client.post("/v1/admin/models/test-mlx-model/reload?warm=true")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "loaded"
+        assert data["model_id"] == "test-mlx-model"
+        assert data["warmed"] is True
+        assert isinstance(data["warm_ms"], int)
+
+    def test_reload_of_unloaded_model_is_just_a_load(self, client, mock_router):
+        mock_router.unload_model("test-mlx-model")
+        resp = client.post("/v1/admin/models/test-mlx-model/reload")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "loaded"
+        assert "warmed" not in resp.json()
+
+    def test_reload_unknown_model_400(self, client):
+        resp = client.post("/v1/admin/models/nope/reload?warm=true")
+        assert resp.status_code == 400

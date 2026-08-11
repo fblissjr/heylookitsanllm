@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.0]
+
+### Added
+
+- **Server-owned reload** (design ask #4): `POST
+  /v1/admin/models/{id}/reload[?warm=true]` runs unload + load(+warm) as
+  ONE operation, sharing `/load`'s exact body so the warm contract cannot
+  fork; reloading an unloaded model is just a load. v3's "Reload now"
+  points at it -- the old browser-driven unload-then-load pair could
+  strand a model unloaded if the tab died between the calls. Spec §4 +
+  contract tests.
+- **Fit meter's observed line** (design §5's closing loop): a LOADED
+  model's Memory-fit section shows "Resident now" from `/v1/system/metrics`
+  `models[id].memory_mb`, labelled measured-after-load -- the user sees how
+  good the sizing was and learns whether to trust it. Best-effort; the fit
+  rows stand alone without it.
+
 ## [1.61.1]
 
 ### Fixed

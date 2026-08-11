@@ -80,6 +80,9 @@ const ROUTES = {
   // first real message doesn't pay the Metal kernel JIT.
   adminLoadModel:    ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/load${warm ? '?warm=true' : ''}`],
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
+  // ONE server-owned unload+load(+warm): a browser-driven pair could strand
+  // the model unloaded if the tab died between the calls. Load's shape.
+  adminReloadModel:  ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/reload${warm ? '?warm=true' : ''}`],
   adminScan:         ['POST', () => '/v1/admin/models/scan', true],
   adminImport:       ['POST', () => '/v1/admin/models/import', true],
   // The per-provider option schema (field type/bounds/enum/default + the
