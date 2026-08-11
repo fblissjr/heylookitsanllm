@@ -29,8 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measured, but the SIZE of the payoff is prompt-length dependent and the
   numbers only mean anything with that condition attached: on gemma-4 12B MTP,
   tuned beats the shipped default by +14.7 points at a ~30-token prompt and by
-  ~1.4 at ~6k, which is inside run-to-run noise. The shipped default is not
-  broadly bad -- it is bad on short prompts and fine on long ones. No
+  NOTHING MEASURABLE at ~6k (4 runs each: 66.1 vs 66.3, overlapping). Spec
+  decode itself is worth ~+14-15% at long context -- for both configs -- so
+  that is the decision that pays; the tuning is a short-prompt effect. The
+  shipped default is not broadly bad: it is bad on short prompts and fine on
+  long ones. No
   defensible global default: p_min helps both gemmas and is -11% on
   Qwen3.6-27B at every value tested.
 - **Expert offload**: `n_cpu_moe` (`-ncmoe`), `cpu_moe` (`-cmoe`, a bare flag)

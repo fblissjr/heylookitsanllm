@@ -34,16 +34,23 @@ always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spe
 (`spec_type = "draft-mtp"`) is per-model opt-in and must be tuned in TWO dimensions --
 `spec_draft_n_max` AND `spec_draft_p_min` -- because they interact and the interaction
 INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 0.9),
-so a 1D n_max sweep finds a different and WRONG optimum. The old "NET LOSS on small
-gemmas" note was never a fact about gemmas, only about the config surface before p_min
-was exposed: E4B is -5.2%/-24.4% at p_min=0.0 and +2.7%/+1.4% at p_min=0.9.
-EVERY SPEC-DECODE NUMBER HERE IS PROMPT-LENGTH CONDITIONAL -- quote none of them
-without it. On gemma-4 12B the TUNED setting beats the shipped default by +14.7 points
-at a ~30-token prompt and by ~1.4 at ~6k, i.e. inside noise; what changes with context
-is the SHIPPED config (+1.0% -> +14.7%), not the tuned one, so the default is bad on
-short prompts and fine on long ones. n_max=2 inverts outright: second-best short,
-WORST spec option at 6k. Draft volumes collapse with context (243/178/94 -> 51/42/35
-for the same 200-token budget), mechanism not understood. Tune at YOUR context.
+so a 1D n_max sweep finds a different and WRONG optimum AT SHORT PROMPT.
+EVERY SPEC-DECODE NUMBER BELOW IS PROMPT-LENGTH CONDITIONAL -- quote none of them
+without it, because the one time the corner was varied the headline inverted.
+WHAT SURVIVED a long-context check (gemma-4 12B, ~6k, 4 runs/config): spec decode
+ITSELF is worth ~+14-15% over off -- for BOTH the shipped and the tuned config. TUNING
+n_max/p_min bought NOTHING measurable there (shipped mean 66.1, tuned 66.3, overlapping
+ranges); the configs really are distinct (draft counts 32/51 vs 29/35), they just land
+at the same speed. The tuning win is a SHORT-PROMPT effect: at ~30 tokens tuned beats
+shipped by +14.7 points, because the SHIPPED config is the thing that changes with
+context (+1.0% -> +14.7%), not the tuned one. And RANKING moves, not just magnitude:
+n_max=2 is second-best short and the WORST spec option at 6k, below the default it was
+meant to beat -- so short-prompt tuning actively misleads. Draft volumes collapse with
+context (243/178/94 -> 51/42/35, same 200-token budget); mechanism not understood.
+Tune at YOUR context, and treat spec-on/off as the decision that actually pays.
+The old "NET LOSS on small gemmas" note is wrong AS WRITTEN (unconditional), but its
+replacement is only established at short prompt: E4B is -5.2%/-24.4% at p_min=0.0 and
++2.7%/+1.4% at p_min=0.9 on a ~30-token prompt, UNVERIFIED at realistic context.
 HYPOTHESIS (3 models, n=1 per cell, SHORT prompts/temp 0/Q4 -- a prior to sweep
 from, NOT a default to ship, and untested at realistic context): the split tracks
 DRAFTER ARCHITECTURE, not model size --

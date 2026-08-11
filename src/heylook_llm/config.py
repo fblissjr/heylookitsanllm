@@ -588,8 +588,12 @@ class GGUFModelConfig(BaseModel):
     #   n_max=2, p_min=0          63.9  (+6.7%)    63.2  (+9.3%)
     #   n_max=4, p_min=0.9        69.3  (+15.7%)   67.2  (+16.3%)
     #
-    # Read it carefully: TUNING's advantage over the shipped default is +14.7
-    # points at short prompt and ~1.4 at 6k, which is inside run-to-run noise.
+    # Read it carefully. Repeated 4x per config at 6k: shipped mean 66.1,
+    # tuned 66.3, overlapping ranges -- TUNING BUYS NOTHING MEASURABLE at
+    # realistic context on this model. Not an unresolved measurement: the
+    # configs are genuinely distinct (draft counts 32/51 vs 29/35), they just
+    # arrive at the same speed. Tuning's +14.7-point edge is a SHORT-PROMPT
+    # effect.
     # What moved is the SHIPPED config, not the tuned one -- the default is bad
     # on short prompts and fine on long ones. And the n_max-alone answer
     # INVERTS: n_max=2 is second-best short and the worst spec option at 6k,
