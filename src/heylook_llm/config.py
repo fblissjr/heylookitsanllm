@@ -499,6 +499,18 @@ class MLXModelConfig(BaseModel):
 # rather than a hardcoded list. If you annotate a new field with
 # is_runtime_default=True on MLXModelConfig above, it automatically flows into
 # effective_request without touching mlx_provider.py.
+# NB this OVERLAPS `effect` without contradicting it, and the two look like
+# they should agree. They answer different questions:
+#   is_runtime_default -> does this flow into effective_request per generation?
+#   effect             -> when does CHANGING it in models.toml take effect?
+# Five fields are is_runtime_default AND requires_reload (cache_type, kv_bits,
+# kv_group_size, max_kv_size, num_draft_tokens). That is correct, not a drift:
+# they ride the per-request plumbing (_build_cache_config reads them out of
+# effective_request every generation), but no ChatRequest field can override
+# them, and a loaded provider holds its own config copy -- so editing one in
+# models.toml does nothing until the model is reloaded. Do not "reconcile"
+# these two sets; reconciling them would make one of the questions
+# unanswerable.
 MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
     # via _extra(): pydantic allows json_schema_extra to be a CALLABLE, and
     # `.get` on one raises at runtime, not just under a type checker. One

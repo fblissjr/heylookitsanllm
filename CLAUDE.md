@@ -31,8 +31,20 @@ GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-se
 runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
 heylook's parsers to pass-through -- never re-parse another engine's split output);
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
-(`spec_type = "draft-mtp"`) is per-model opt-in -- measured +21% on Qwen3.6 thinking,
-NET LOSS on small gemmas, and its win is ERODED by a LoRA (the draft head is NOT
+(`spec_type = "draft-mtp"`) is per-model opt-in and must be tuned in TWO dimensions --
+`spec_draft_n_max` AND `spec_draft_p_min` -- because they interact and the interaction
+INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 0.9),
+so a 1D n_max sweep finds a different and WRONG optimum. The old "NET LOSS on small
+gemmas" note was never a fact about gemmas, only about the config surface before p_min
+was exposed: E4B is -5.2%/-24.4% at p_min=0.0 and +2.7%/+1.4% at p_min=0.9.
+HYPOTHESIS (3 models, n=1 per cell, one prompt/short gens/temp 0/Q4 -- a prior to sweep
+from, NOT a default to ship): the split tracks DRAFTER ARCHITECTURE, not model size --
+SIDECAR drafters (gemma `mtp-*.gguf`) have real per-draft cost so pruning pays (p_min
+high ~0.9); an EMBEDDED MTP head (Qwen3.6) drafts nearly free so low-confidence drafts
+still clear the bar (p_min 0, every p_min>0 tested is worse, 5 samples). NB the split
+is currently CONFOUNDED with model family (both sidecar points are gemma) -- DeepSeek
+V4 Flash + DSpark is the one available test that separates them. Spec decode's win is
+also ERODED by a LoRA (the draft head is NOT
 adapted, so it drafts the base distribution while the target generates the adapted
 one). The MECHANISM is structural, not empirical: `common_set_adapter_lora` has ONE
 call site in tools/server and applies to `ctx_tgt` only, so no draft-side tuning
