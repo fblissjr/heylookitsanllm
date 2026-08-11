@@ -785,6 +785,8 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   color: var(--ink-muted);
   overflow-wrap: break-word;
 }
+/* Saved-but-not-applied marker; persists until a reload/unload clears it. */
+.model-row__stale { color: var(--accent); }
 .model-row__actions { flex-shrink: 0; }
 
 .model-badge {

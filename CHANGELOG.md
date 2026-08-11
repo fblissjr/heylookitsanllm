@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.0]
+
+### Added
+
+- **gguf: the three flag families the backend design doc decided to expose
+  and that never landed** (found by a coverage audit of GGUFModelConfig vs
+  the pinned llama-server build; every already-declared spelling matched, so
+  these are the only gaps): `cache_type_k`/`cache_type_v` (`-ctk`/`-ctv` KV
+  cache quantization -- usually the better first lever for a KV headroom
+  problem than expert offload), `n_cpu_moe_draft`/`cpu_moe_draft`
+  (`-ncmoed`/`-cmoed`, the drafter's half of the residency budget) and
+  `spec_draft_n_min` (`--spec-draft-n-min`, third member of the interacting
+  spec tuning family). All requires_reload; offload/KV fields ui:advanced;
+  argv spellings pinned by the existing metadata test (samples added).
+- v3 Models page: a persistent per-row "config changed — reload to apply"
+  marker after a reload-required save on a loaded model, cleared only by a
+  reload or unload. The panel-local note dies with the panel; this is the
+  guard against "I set ctx_size and nothing happened".
+
+### Fixed
+
+- **`per_request` defaults now actually reach a loaded model.** A provider is
+  built with a snapshot of its config dict and reads per_request defaults
+  (default_sampler, enable_thinking, temperature, vision_tokens, ...) from it
+  at request time -- so a PATCH to one of them reported "no reload required"
+  while the loaded process kept serving the old default: the stale-snapshot
+  lie the effect classification exists to prevent, relocated into the
+  per_request bucket, and rendered as a false "Applies immediately" by the
+  class's first real consumer (the new editor). `reload_config()` now pushes
+  per_request keys from the fresh config into every loaded provider;
+  requires_reload keys deliberately stay snapshots (the reported reload is
+  their real cost). Pinned by `tests/unit/test_per_request_refresh.py`.
+- `ModelUpdateRequest` is now `extra="forbid"`: a config key sent at the top
+  level (`{"ctx_size": ...}` without the `config` wrapper) used to validate,
+  get silently ignored, and return 200 with nothing changed. Now 422, naming
+  the key.
+- The editor no longer offers mlx's `vision` -- it is a derived mirror of
+  `modalities` that config re-derives at load, so an edit silently reverted:
+  a dead knob with a live-looking affordance.
+- **Admin model responses now report the STORED config keys only**
+  (`exclude_unset`), not the resolved model. The resolved dump made every
+  default look deliberately chosen: the new editor rendered `n_gpu_layers`
+  as an explicit 999 instead of an honest placeholder, and the non-default
+  summary chip fired on every row (an mlx entry chipped
+  `default_hidden_layer -2 · ... · +4 more` with nothing set). Absent is how
+  a default is spelled in models.toml; the wire now says the same.
+- v3 chat: switching models mid-stream now stops the in-flight stream BEFORE
+  `model_id` changes hands, so the arriving partial persists under the model
+  that actually produced it (a conversation switch already did this; the
+  model switch did not).
+
 ## [1.54.0]
 
 ### Added

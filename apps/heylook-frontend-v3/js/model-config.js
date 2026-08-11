@@ -29,9 +29,12 @@ const LIVE_EFFECTS = new Set(['per_request', 'applies_live', 'descriptive']);
 // owner-approved design (internal/research/expert_offload_design_frontend.md
 // §7): port 0 = pick-a-free-port is correct and nothing good comes of a UI
 // breaking it; a per-model path-to-executable picker in a web form is a
-// foot-cannon; host/startup_timeout_s are plumbing. All gguf-only names, so a
-// flat set is safe today -- revisit if another provider grows one of these.
-const HIDDEN_FIELDS = new Set(['host', 'port', 'server_binary', 'startup_timeout_s']);
+// foot-cannon; host/startup_timeout_s are plumbing. `vision` (mlx) is a
+// DERIVED mirror of modalities -- config re-derives it whenever modalities
+// is set or detectable, so an edit silently reverts on the next load: a dead
+// knob with a live-looking affordance. All names are single-provider today,
+// so a flat set is safe -- revisit if a second provider grows one of these.
+const HIDDEN_FIELDS = new Set(['host', 'port', 'server_binary', 'startup_timeout_s', 'vision']);
 
 // The collapsed-row summary chip: which of this entry's stored keys are worth
 // announcing on the list ("why is this one configured differently"). Only
@@ -191,7 +194,9 @@ function sectionEl(title, note, rows) {
 //           editor mutates it so a page re-render can rebuild without loss
 // - onError(msg): route a failure to the page's status area (page invariant:
 //           errors have ONE home)
-// - onSaved(updatedModel): the PATCH landed; caller refreshes its list row
+// - onSaved(updatedModel, reloadFields): the PATCH landed; caller refreshes
+//           its list row and, when reloadFields is non-empty (only ever on a
+//           loaded model), marks the row reload-needed until a reload/unload
 // - onReload(): caller runs its unload + warm-load cycle (button appears only
 //           on a loaded model after a reload-required save, armed-confirmed)
 // - onReset(): drafts were dropped; caller rebuilds the panel from saved state
@@ -272,9 +277,11 @@ export function createModelConfigEditor({ model, fields: allFields, draft, onErr
         else saved[key] = value;
       }
       for (const field of dirty) delete draft[field.name];
-      // The response's model is the post-save truth (defaults resolved,
-      // values normalized); hand it up so the row + next rebuild use it.
-      onSaved(result.model);
+      // The response's model is the post-save truth; hand it up with the
+      // reload set so the page can keep a persistent reload-needed marker on
+      // the row (the panel-local note dies with the panel, and "I set it and
+      // nothing happened" is the failure this surface exists to prevent).
+      onSaved(result.model, model.loaded ? reloadNeeded : []);
       const parts = ['Saved.'];
       if (reloadNeeded.length) {
         parts.push(model.loaded

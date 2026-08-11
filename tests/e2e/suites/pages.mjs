@@ -539,8 +539,9 @@ export async function runPagesSuite({ suite, ctx, config }) {
     const provider = models?.models?.find((m) => m.id === config.model)?.provider;
     const schema = await serverGet(page, '/v1/admin/model-options');
     // Mirrors HIDDEN_FIELDS in js/model-config.js: gguf plumbing the UI
-    // deliberately does not render (design doc §7 "do not expose").
-    const hidden = new Set(['host', 'port', 'server_binary', 'startup_timeout_s']);
+    // deliberately does not render (design doc §7 "do not expose"), plus
+    // mlx's derived-mirror `vision`.
+    const hidden = new Set(['host', 'port', 'server_binary', 'startup_timeout_s', 'vision']);
     const expected = (schema?.providers?.[provider]?.fields ?? [])
       .map((f) => f.name).filter((n) => !hidden.has(n)).sort();
     assert(expected.length > 0, `option schema has no fields for provider ${provider}`);

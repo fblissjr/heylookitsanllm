@@ -29,6 +29,7 @@ export default createPage({
     s.optionsPromise = null;    // in-flight fetch of the above
     s.configOpenId = null;      // model id with the config editor expanded (single panel)
     s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
+    s.reloadNeeded = new Set(); // loaded models with a saved-but-not-applied reload-required change
 
     buildSkeleton(ctx);
     // No sampler/page settings here -- register so the drawer still offers the
@@ -240,6 +241,13 @@ function buildModelRow(ctx, model) {
   if (summary) {
     main.push(createEl('div', { class: 'model-row__conf small' }, [summary]));
   }
+  // Persistent until a reload or unload actually applies the change --
+  // otherwise "I saved ctx_size and nothing happened" has no visible cause
+  // once the panel closes.
+  if (s.reloadNeeded.has(model.id)) {
+    main.push(createEl('div', { class: 'model-row__stale small', role: 'status' },
+      ['config changed — reload to apply']));
+  }
 
   const btn = createEl('button', { class: 'btn btn--sm' }, [
     busy ? (model.loaded ? 'Unloading…' : 'Loading…') : (model.loaded ? 'Unload' : 'Load'),
@@ -275,6 +283,8 @@ async function toggleLoad(ctx, model) {
       await api.adminUnloadModel(model.id);
       if (!ctx.alive) return;
       clearError(ctx);
+      // A dead process has no stale argv; the next load reads the new config.
+      s.reloadNeeded.delete(model.id);
     } else {
       // warm=true: load, then run a 1-token generation through the real
       // path so the Metal kernel JIT is paid here rather than by whoever
@@ -284,6 +294,7 @@ async function toggleLoad(ctx, model) {
       // server usable, so it reports as a note, not an error.
       const result = await api.adminLoadModel(model.id, true);
       if (!ctx.alive) return;
+      s.reloadNeeded.delete(model.id);
       if (result?.warm_error) {
         showError(ctx, `Loaded, but the warm-up generation failed: ${result.warm_error}`);
       } else {
@@ -363,12 +374,13 @@ function buildConfigPanel(ctx, model) {
     fields,
     draft,
     onError: (msg) => showError(ctx, msg),
-    onSaved: (updatedModel) => {
+    onSaved: (updatedModel, reloadFields) => {
       clearError(ctx);
       // Swap the row's model in place; a full refetch would say nothing this
       // response doesn't already say, and would rebuild the panel mid-read.
       const idx = s.models.findIndex((m) => m.id === model.id);
       if (idx >= 0 && updatedModel) s.models[idx] = { ...s.models[idx], ...updatedModel };
+      if (reloadFields?.length) s.reloadNeeded.add(model.id);
     },
     onReload: () => reloadModel(ctx, model),
     onReset: () => renderModelList(ctx),
@@ -391,6 +403,7 @@ async function reloadModel(ctx, model) {
     if (!ctx.alive) return;
     const result = await api.adminLoadModel(model.id, true);
     if (!ctx.alive) return;
+    s.reloadNeeded.delete(model.id);
     if (result?.warm_error) {
       showError(ctx, `Reloaded, but the warm-up generation failed: ${result.warm_error}`);
     } else {

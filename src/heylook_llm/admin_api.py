@@ -72,6 +72,14 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
     override, which is empty on every entry that never hand-wrote one -- so
     the Models page listed no capabilities at all while the chat page, one
     endpoint over, gated its whole UI on them.
+
+    ``config`` is the STORED keys only (exclude_unset), not the resolved
+    model. Absent IS how a default is spelled in models.toml, and the config
+    editor renders exactly that distinction: a stored key is a set value, a
+    missing one shows the schema default as a placeholder, and the row's
+    non-default summary chip only exists because this response can tell the
+    two apart. A resolved dump made every default look deliberately chosen
+    (chip on every row, ``n_gpu_layers 999`` rendered as an explicit choice).
     """
     return AdminModelResponse(
         id=mc.id,
@@ -80,7 +88,8 @@ def _model_config_to_response(mc, loaded_ids: set[str]) -> AdminModelResponse:
         tags=mc.tags,
         enabled=mc.enabled,
         capabilities=effective_capabilities(mc),
-        config=mc.config.model_dump() if hasattr(mc.config, 'model_dump') else dict(mc.config),
+        config=(mc.config.model_dump(exclude_unset=True)
+                if hasattr(mc.config, 'model_dump') else dict(mc.config)),
         loaded=mc.id in loaded_ids,
     )
 

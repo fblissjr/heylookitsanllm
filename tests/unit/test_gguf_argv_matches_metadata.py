@@ -29,9 +29,14 @@ SAMPLE_VALUES = {
     "sleep_idle_seconds": 30,
     "load_mode": "mlock",
     "spec_draft_p_min": 0.9,
+    "spec_draft_n_min": 3,
     "n_cpu_moe": 8,
     "cpu_moe": True,  # bare flag -- no value follows it in argv
     "override_tensor": "exps=CPU",
+    "n_cpu_moe_draft": 4,
+    "cpu_moe_draft": True,  # bare flag, like cpu_moe
+    "cache_type_k": "q8_0",
+    "cache_type_v": "q8_0",
 }
 
 

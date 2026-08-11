@@ -191,6 +191,9 @@ class LlamaServerProvider(BaseProvider):
         # two interact and the interaction inverts (see the config docstring).
         if cfg.get("spec_draft_p_min") is not None:
             args += ["--spec-draft-p-min", str(cfg["spec_draft_p_min"])]
+        # `is not None`: 0 = "no floor" is an explicit choice.
+        if cfg.get("spec_draft_n_min") is not None:
+            args += ["--spec-draft-n-min", str(cfg["spec_draft_n_min"])]
         # Expert offload. `is not None` again: 0 means "offload no layers",
         # which is a meaningful explicit choice, not an absent one.
         if cfg.get("n_cpu_moe") is not None:
@@ -199,6 +202,16 @@ class LlamaServerProvider(BaseProvider):
             args += ["-cmoe"]  # BARE flag: llama.cpp takes no value for this
         if cfg.get("override_tensor"):
             args += ["-ot", cfg["override_tensor"]]
+        # Draft-side expert offload mirrors the target pair.
+        if cfg.get("n_cpu_moe_draft") is not None:
+            args += ["-ncmoed", str(cfg["n_cpu_moe_draft"])]
+        if cfg.get("cpu_moe_draft"):
+            args += ["-cmoed"]  # BARE flag, like -cmoe
+        # KV cache quantization; usually the first lever for KV headroom.
+        if cfg.get("cache_type_k"):
+            args += ["-ctk", cfg["cache_type_k"]]
+        if cfg.get("cache_type_v"):
+            args += ["-ctv", cfg["cache_type_v"]]
         # `is not None`, not truthiness: 0 is meaningful for both (keep the
         # drafter off the GPU / disable the prompt cache), and -1 means
         # "unlimited" for -cram.

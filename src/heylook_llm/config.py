@@ -634,6 +634,14 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "arg": "--spec-draft-p-min"},
     )
+    # Third member of the spec tuning family (--spec-draft-n-min): the floor
+    # on how many draft tokens a speculation round keeps. Same caveat as its
+    # siblings: the levers interact, tune together, per-model.
+    spec_draft_n_min: Optional[int] = Field(
+        default=None, ge=0,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--spec-draft-n-min"},
+    )
     # Expert offload. On UNIFIED memory this does not shrink total RAM -- it
     # moves those bytes out of the Metal working set, and that math onto CPU
     # cores. The lever for a model that fits in RAM but crowds out the KV
@@ -658,6 +666,38 @@ class GGUFModelConfig(BaseModel):
     override_tensor: Optional[str] = Field(
         default=None,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ot",
+                           "ui": "advanced"},
+    )
+    # Draft-side expert offload (-ncmoed/-cmoed): the drafter's half of the
+    # residency budget. Exists for the target-offloaded + drafter-resident
+    # split, where the pair exceeds the working set while either alone fits.
+    n_cpu_moe_draft: Optional[int] = Field(
+        default=None, ge=0,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ncmoed",
+                           "ui": "advanced"},
+    )
+    cpu_moe_draft: Optional[bool] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cmoed",
+                           "shape": "flag", "ui": "advanced"},
+    )
+    # KV cache quantization (-ctk/-ctv). For a headroom problem this is
+    # usually the better first lever than expert offload: it shrinks the KV
+    # bytes themselves instead of moving weight math to CPU. Values are the
+    # cache types the pinned llama-server build accepts; quantized V-cache
+    # needs flash attention, whose default is auto in current builds.
+    cache_type_k: Optional[Literal[
+        "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"
+    ]] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctk",
+                           "ui": "advanced"},
+    )
+    cache_type_v: Optional[Literal[
+        "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"
+    ]] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctv",
                            "ui": "advanced"},
     )
     # -ngl; 999 = everything on GPU
@@ -1128,7 +1168,16 @@ class ModelImportRequest(BaseModel):
 
 
 class ModelUpdateRequest(BaseModel):
-    """Partial update to model config."""
+    """Partial update to model config.
+
+    extra="forbid": a config key sent at the TOP level (`{"ctx_size": ...}`
+    instead of `{"config": {"ctx_size": ...}}`) used to validate, get ignored
+    by the fixed top-level key list, and return 200 with nothing changed --
+    the silent-drop class this repo rejects elsewhere (import, the
+    preset->sampler guard). Now it 422s naming the key.
+    """
+    model_config = ConfigDict(extra="forbid")
+
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     enabled: Optional[bool] = None

@@ -441,10 +441,42 @@ class ModelRouter:
             config_data = self._load_config(self.config_path)
             self.app_config = AppConfig(**config_data)
             self.max_loaded_models = self.app_config.max_loaded_models
+            self._refresh_per_request_defaults()
             logging.info(f"Model configuration reloaded from {self.config_path}")
         except Exception as e:
             logging.error(f"Failed to reload configuration: {e}")
             raise
+
+    def _refresh_per_request_defaults(self):
+        """Push per_request defaults from the fresh config into LOADED providers.
+
+        A provider is constructed with a SNAPSHOT of its config dict and reads
+        per_request defaults (default_sampler, enable_thinking, temperature,
+        vision_tokens, ...) from that snapshot at request time -- so without
+        this, a PATCH to one of them returned "no reload required" while the
+        loaded model kept serving the old default: the exact stale-snapshot
+        lie the effect classification exists to prevent, relocated into the
+        per_request bucket. Only per_request keys are touched -- spawn/load
+        state (requires_reload, load_time_only) genuinely needs the reload the
+        API reports. Plain dict-key writes; a request mid-flight reads each
+        default at most once, and a torn read across two defaults is no worse
+        than the request racing the PATCH itself.
+        """
+        from heylook_llm.config import (
+            EFFECT_PER_REQUEST, PROVIDER_CONFIG_CLASSES, fields_by_effect,
+        )
+        with self.cache_lock:
+            for model_id, provider in self.providers.items():
+                model_config = self.app_config.get_model_config(model_id)
+                if model_config is None:
+                    continue  # entry removed while loaded; unload handles it
+                cls = PROVIDER_CONFIG_CLASSES.get(model_config.provider)
+                cfg_dict = getattr(provider, "config", None)
+                if cls is None or not isinstance(cfg_dict, dict):
+                    continue
+                fresh = model_config.config.model_dump()
+                for key in fields_by_effect(cls).get(EFFECT_PER_REQUEST, ()):
+                    cfg_dict[key] = fresh[key]
 
     def unload_model(self, model_id: str, force: bool = False) -> bool:
         """Explicitly unload a specific model from cache.

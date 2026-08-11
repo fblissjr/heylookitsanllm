@@ -120,6 +120,12 @@ function buildSkeleton(ctx) {
 
   s.modelSelect = createEl('select', { title: 'Model' });
   s.modelSelect.addEventListener('change', () => {
+    // Stop an in-flight stream BEFORE model_id changes hands: the arriving
+    // partial belongs to the OLD model and persists under it, exactly as a
+    // conversation switch already does. Without this, a mid-stream switch
+    // leaves the old model generating while the conversation is re-labelled,
+    // silently attributing its output to a model that never produced it.
+    if (s.stream) stopStream(ctx);
     if (ctx.state.activeId) {
       api.updateConversation(ctx.state.activeId, { model_id: s.modelSelect.value })
         .catch((err) => console.warn('model_id save failed', err));

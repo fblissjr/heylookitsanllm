@@ -288,7 +288,12 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
-`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`;
+`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded}], total}`.
+`config` is the model's STORED keys only (`exclude_unset`, 2026-08-11) — absent IS how a
+default is spelled in models.toml, and the config editor + the row's non-default summary
+chip depend on telling "explicitly set" from "inherited default". The resolved dump it
+used to be made every default look deliberately chosen (chip on every row,
+`n_gpu_layers 999` rendered as an explicit choice);
 `POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20); `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,
@@ -454,7 +459,10 @@ by effect class (immediate / requires-reload / advanced / fixed-with-reason); tr
 selects for booleans and enums (`default (X)` = unset), empty input = unset, so the
 null-means-default contract is honest in every control; Save PATCHes only dirty fields;
 after a reload-required save on a loaded model the panel offers Reload now (unload +
-warm load, same per-row busy flag). Unsaved edits live in a per-model draft map keyed
+warm load, same per-row busy flag), and the ROW keeps a persistent
+"config changed — reload to apply" marker until a reload or unload actually applies it
+(the panel-local note dies with the panel; the marker is what prevents "I set it and
+nothing happened"). Unsaved edits live in a per-model draft map keyed
 off page state so the list's re-renders don't lose them. Errors go to the page's single
 status area; save/reload outcomes render in the panel's own `role="status"` note.
 
