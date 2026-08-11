@@ -779,6 +779,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .model-row__title strong { font-size: var(--text-ui); overflow-wrap: break-word; }
 .model-row__meta, .model-row__desc { overflow-wrap: break-word; }
+/* Non-default load options chip line -- config keys are token-literals. */
+.model-row__conf {
+  font-family: var(--mono);
+  color: var(--ink-muted);
+  overflow-wrap: break-word;
+}
 .model-row__actions { flex-shrink: 0; }
 
 .model-badge {
@@ -795,6 +801,64 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* Warm-load timing. Reserves its line so the list doesn't jump when a load
    finishes; the shared status area above stays reserved for errors. */
 .models__list-note { margin-top: 0.6rem; min-height: 1.2rem; }
+
+/* ---- per-model config editor (model-config.js) ---- */
+
+/* A pinned-detail card in the document flow (§3 grammar), opened under its
+   model row. Controls are schema-generated; the grid keeps the toml key, the
+   control, and the hint on one scanline each on desktop. */
+.model-config {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 0.9rem 1rem;
+  margin: 0.25rem 0 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cfg-section { display: flex; flex-direction: column; gap: 0.45rem; }
+.cfg-section__title {
+  color: var(--ink-muted);
+  font-weight: 550;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+details.cfg-section summary.cfg-section__title { cursor: pointer; }
+details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
+
+.cfg-field {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14rem) minmax(7rem, 12rem);
+  grid-template-areas: "label control" "hint hint";
+  align-items: center;
+  column-gap: 0.75rem;
+  row-gap: 0.15rem;
+}
+/* Config keys are toml literals -> mono (the token-literal rule). */
+.cfg-field__label {
+  grid-area: label;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+.cfg-field > .input, .cfg-field > select { grid-area: control; text-align: left; }
+.cfg-field__hint { grid-area: hint; }
+.cfg-field__arg { font-family: var(--mono); }
+.cfg-field--fixed .cfg-field__label { color: var(--ink-muted); }
+
+.cfg-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+.cfg-note { min-height: 1.2rem; flex: 1; min-width: 12rem; }
 
 /* ---- scan panel ---- */
 
@@ -875,6 +939,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   /* Comfortable hit target for the one checkbox on this page (§7). */
   .scan-controls__row--check input[type="checkbox"] { width: 20px; height: 20px; }
   .scan-controls .input { min-height: 44px; }
+  /* Config editor stacks label-over-control on the phone; §7 touch targets. */
+  .cfg-field {
+    grid-template-columns: 1fr;
+    grid-template-areas: "label" "control" "hint";
+    align-items: stretch;
+  }
+  .cfg-field > .input, .cfg-field > select { min-height: 44px; }
+  .cfg-actions .btn { min-height: 44px; padding: 0.55rem 0.9rem; }
 }
 
 

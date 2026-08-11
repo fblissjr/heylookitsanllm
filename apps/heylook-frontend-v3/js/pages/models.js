@@ -14,6 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, armedConfirm } from '../utils.js';
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
+import { createModelConfigEditor, configSummary } from '../model-config.js';
 
 export default createPage({
   async setup(ctx) {
@@ -24,11 +25,26 @@ export default createPage({
     s.scanning = false;
     s.importingIds = new Set(); // scan result ids mid import
     s.pendingLoadNote = null;   // warm-timing note, flushed after the list refetch
+    s.optionsSchema = null;     // /v1/admin/model-options payload (fetched on first Configure)
+    s.optionsPromise = null;    // in-flight fetch of the above
+    s.configOpenId = null;      // model id with the config editor expanded (single panel)
+    s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
 
     buildSkeleton(ctx);
     // No sampler/page settings here -- register so the drawer still offers the
     // global Display prefs and hides the sampler panel.
     ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
+    // The option schema also feeds the per-row summary chip, so fetch it
+    // eagerly but NON-fatally -- the page must work without it (Configure
+    // retries the fetch and reports failure itself).
+    s.optionsPromise = api.adminModelOptions({ signal: ctx.signal });
+    s.optionsPromise
+      .then((schema) => {
+        if (!ctx.alive) return;
+        s.optionsSchema = schema;
+        renderModelList(ctx);
+      })
+      .catch(() => { s.optionsPromise = null; });
     await fetchModels(ctx);
   },
 });
@@ -181,7 +197,14 @@ function renderModelList(ctx) {
     );
     return;
   }
-  s.listEl.replaceChildren(...s.models.map((m) => buildModelRow(ctx, m)));
+  const children = [];
+  for (const m of s.models) {
+    children.push(buildModelRow(ctx, m));
+    if (s.configOpenId === m.id) children.push(buildConfigPanel(ctx, m));
+  }
+  // An open panel whose model vanished (removed entry) just doesn't render;
+  // its draft stays in configDrafts, which is harmless and tiny.
+  s.listEl.replaceChildren(...children);
 }
 
 function modelMetaLine(model) {
@@ -210,6 +233,13 @@ function buildModelRow(ctx, model) {
   if (model.description) {
     main.push(createEl('div', { class: 'model-row__desc muted small' }, [model.description]));
   }
+  // Non-default load options say so on the list -- the discoverability
+  // mechanism for "why is this model configured differently from its twin".
+  const summary = configSummary(model.config,
+    s.optionsSchema?.providers?.[model.provider]?.fields);
+  if (summary) {
+    main.push(createEl('div', { class: 'model-row__conf small' }, [summary]));
+  }
 
   const btn = createEl('button', { class: 'btn btn--sm' }, [
     busy ? (model.loaded ? 'Unloading…' : 'Loading…') : (model.loaded ? 'Unload' : 'Load'),
@@ -217,9 +247,18 @@ function buildModelRow(ctx, model) {
   btn.disabled = busy;
   btn.addEventListener('click', () => toggleLoad(ctx, model));
 
+  const open = s.configOpenId === model.id;
+  const cfgBtn = createEl('button', {
+    class: 'btn btn--sm',
+    'aria-expanded': open ? 'true' : 'false',
+  }, [open ? 'Close' : 'Configure']);
+  cfgBtn.addEventListener('click', () => toggleConfig(ctx, model));
+
+  // Load/Unload stays the FIRST button in the actions cell -- it is the
+  // primary action, and the E2E helpers address it positionally.
   return createEl('div', { class: 'model-row' }, [
     createEl('div', { class: 'model-row__main' }, main),
-    createEl('div', { class: 'model-row__actions' }, [btn]),
+    createEl('div', { class: 'model-row__actions' }, [btn, cfgBtn]),
   ]);
 }
 
@@ -279,6 +318,93 @@ function flushLoadNote(ctx) {
   const s = ctx.state;
   s.listNoteEl.textContent = s.pendingLoadNote || '';
   s.pendingLoadNote = null;
+}
+
+// ---------------------------------------------------------------------------
+// per-model config editor (schema-driven -- see model-config.js)
+// ---------------------------------------------------------------------------
+
+async function toggleConfig(ctx, model) {
+  const s = ctx.state;
+  if (s.configOpenId === model.id) {
+    s.configOpenId = null;
+    renderModelList(ctx);
+    return;
+  }
+  // The option schema is one static payload for all models; fetch once per
+  // page mount, before first paint of the panel (it decides every control).
+  // The promise is cached so a double-click doesn't fetch twice.
+  if (!s.optionsSchema) {
+    if (!s.optionsPromise) s.optionsPromise = api.adminModelOptions({ signal: ctx.signal });
+    try {
+      s.optionsSchema = await s.optionsPromise;
+    } catch (err) {
+      s.optionsPromise = null;
+      if (!ctx.alive) return;
+      showError(ctx, `Could not load option schema: ${err.message}`);
+      return;
+    }
+    if (!ctx.alive) return;
+  }
+  s.configOpenId = model.id;
+  renderModelList(ctx);
+}
+
+function buildConfigPanel(ctx, model) {
+  const s = ctx.state;
+  const fields = s.optionsSchema?.providers?.[model.provider]?.fields ?? [];
+  let draft = s.configDrafts.get(model.id);
+  if (!draft) {
+    draft = {};
+    s.configDrafts.set(model.id, draft);
+  }
+  const editor = createModelConfigEditor({
+    model,
+    fields,
+    draft,
+    onError: (msg) => showError(ctx, msg),
+    onSaved: (updatedModel) => {
+      clearError(ctx);
+      // Swap the row's model in place; a full refetch would say nothing this
+      // response doesn't already say, and would rebuild the panel mid-read.
+      const idx = s.models.findIndex((m) => m.id === model.id);
+      if (idx >= 0 && updatedModel) s.models[idx] = { ...s.models[idx], ...updatedModel };
+    },
+    onReload: () => reloadModel(ctx, model),
+    onReset: () => renderModelList(ctx),
+  });
+  return editor.el;
+}
+
+// The "Reload now" cycle after a reload-required save: teardown + fresh load
+// through the same warm path the Load button uses, so "Loaded" keeps meaning
+// ready. Reuses the per-row busy set -- the row renders Loading… while the
+// cycle runs.
+async function reloadModel(ctx, model) {
+  const s = ctx.state;
+  if (s.loadingIds.has(model.id)) return;
+  s.loadingIds.add(model.id);
+  renderModelList(ctx);
+
+  try {
+    await api.adminUnloadModel(model.id);
+    if (!ctx.alive) return;
+    const result = await api.adminLoadModel(model.id, true);
+    if (!ctx.alive) return;
+    if (result?.warm_error) {
+      showError(ctx, `Reloaded, but the warm-up generation failed: ${result.warm_error}`);
+    } else {
+      clearError(ctx);
+      setLoadNote(ctx, model.id, result?.warm_ms);
+    }
+  } catch (err) {
+    if (!ctx.alive) return;
+    showError(ctx, `Reload failed: ${err.message}`);
+  }
+
+  s.loadingIds.delete(model.id);
+  if (ctx.alive) await fetchModels(ctx, { keepStatus: true });
+  if (ctx.alive) flushLoadNote(ctx);
 }
 
 // ---------------------------------------------------------------------------

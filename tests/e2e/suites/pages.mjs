@@ -522,6 +522,104 @@ export async function runPagesSuite({ suite, ctx, config }) {
     }
   });
 
+  await suite.check('Configure opens a schema-driven config editor', async () => {
+    // The panel is generated from GET /v1/admin/model-options, so the honest
+    // assertion is against that schema: every field the server declares for
+    // this model's provider must render a control (advanced ones live inside
+    // a <details>, but they are in the DOM either way). A hand-picked field
+    // list here would rot the first time the backend adds one -- schema-driven
+    // is the feature, so schema-driven is the check.
+    const row = await findModelRow(page, config.model);
+    const cfgBtn = await row.evaluateHandle((r) =>
+      [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Configure'));
+    await cfgBtn.asElement().click();
+    await page.waitForSelector('.model-config', { timeout: 10000 });
+
+    const models = await serverGet(page, '/v1/admin/models');
+    const provider = models?.models?.find((m) => m.id === config.model)?.provider;
+    const schema = await serverGet(page, '/v1/admin/model-options');
+    // Mirrors HIDDEN_FIELDS in js/model-config.js: gguf plumbing the UI
+    // deliberately does not render (design doc §7 "do not expose").
+    const hidden = new Set(['host', 'port', 'server_binary', 'startup_timeout_s']);
+    const expected = (schema?.providers?.[provider]?.fields ?? [])
+      .map((f) => f.name).filter((n) => !hidden.has(n)).sort();
+    assert(expected.length > 0, `option schema has no fields for provider ${provider}`);
+
+    const rendered = (await page.$$eval('.model-config .cfg-field__label',
+      (els) => els.map((e) => e.textContent.trim()))).sort();
+    assert(JSON.stringify(rendered) === JSON.stringify(expected),
+      `rendered fields diverge from the option schema:\n  schema: ${expected.join(',')}\n  rendered: ${rendered.join(',')}`);
+
+    // load_time_only fields must be disabled and say why.
+    for (const f of schema.providers[provider].fields) {
+      if (f.effect !== 'load_time_only' || hidden.has(f.name)) continue;
+      const disabled = await page.$eval(`#mcfg-${config.model.replace(/[^a-zA-Z0-9_-]/g, '-')}-${f.name}`,
+        (el) => el.disabled);
+      assert(disabled, `load_time_only field ${f.name} is editable`);
+    }
+  });
+
+  await suite.check('config save PATCHes typed values and null resets a cleared field', async () => {
+    // Intercepted end to end: the E2E server runs on the REAL models.toml
+    // (only the DB is isolated), and a landed PATCH would rewrite it. The
+    // check is about what the page SENDS -- typed JSON, not strings, and an
+    // explicit null for a cleared field (the wire spelling of "back to the
+    // default") -- plus the reload affordance rendered from the response.
+    const input = await page.$('.model-config input[id$="-max_tokens"]');
+    assert(input, 'no max_tokens control in the open panel');
+
+    const bodies = [];
+    await page.setRequestInterception(true);
+    const fake = (req) => {
+      if (req.method() === 'PATCH' && req.url().includes('/v1/admin/models/')) {
+        bodies.push(JSON.parse(req.postData() || '{}'));
+        req.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ model: null, reload_required_fields: [] }),
+        });
+      } else {
+        req.continue();
+      }
+    };
+    page.on('request', fake);
+    try {
+      await input.click({ clickCount: 3 });
+      await input.type('512');
+      await clickByText(page, '.model-config .cfg-actions button', 'Save');
+      await waitFor(async () => bodies.length === 1, { timeout: 10000, message: 'PATCH never sent' });
+      assert(bodies[0]?.config?.max_tokens === 512,
+        `expected typed integer 512, got ${JSON.stringify(bodies[0])}`);
+      await waitFor(async () => /Saved\./.test(await textOf(page, '.model-config .cfg-note') || ''),
+        { timeout: 5000, message: 'save note never appeared' });
+
+      // Clearing the just-saved value must re-arm Save (the editor's dirty
+      // baseline follows the save) and send an explicit null.
+      await input.click({ clickCount: 3 });
+      await page.keyboard.press('Backspace');
+      await clickByText(page, '.model-config .cfg-actions button', 'Save');
+      await waitFor(async () => bodies.length === 2, { timeout: 10000, message: 'null-reset PATCH never sent' });
+      assert(bodies[1]?.config?.max_tokens === null,
+        `expected explicit null for the cleared field, got ${JSON.stringify(bodies[1])}`);
+    } finally {
+      page.off('request', fake);
+      await page.setRequestInterception(false);
+    }
+  });
+
+  await suite.check('open config panel fits a phone viewport', async () => {
+    await ctx.setViewport(390, 780);
+    assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px with the config panel open');
+    await ctx.setViewport(1280, 900);
+    // Close the panel so later checks see the page in its default state.
+    const row = await findModelRow(page, config.model);
+    const closeBtn = await row.evaluateHandle((r) =>
+      [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Close'));
+    await closeBtn.asElement().click();
+    await waitFor(async () => (await count(page, '.model-config')) === 0,
+      { timeout: 5000, message: 'config panel never closed' });
+  });
+
   await suite.check('models page has no horizontal overflow at 390px', async () => {
     await ctx.setViewport(390, 780);
     await ctx.open('#/models');

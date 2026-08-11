@@ -82,6 +82,14 @@ const ROUTES = {
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
   adminScan:         ['POST', () => '/v1/admin/models/scan', true],
   adminImport:       ['POST', () => '/v1/admin/models/import', true],
+  // The per-provider option schema (field type/bounds/enum/default + the
+  // `effect` class saying WHEN a change takes effect). NOT under
+  // /v1/admin/models -- that router's {model_id:path} would eat the path.
+  adminModelOptions: ['GET', () => '/v1/admin/model-options'],
+  // PATCH body {config:{key:value|null}}; null means "unset -- back to the
+  // default" (the key is removed from models.toml). Response carries
+  // reload_required_fields (+ warning when the post-save reload failed).
+  adminUpdateModel:  ['PATCH', (id) => `/v1/admin/models/${encodeURIComponent(id)}`, true],
 };
 
 function makeCall(method, buildPath, hasBody) {

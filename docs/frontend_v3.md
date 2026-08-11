@@ -1,6 +1,17 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-08-07 (catch-up pass against the backend changes since
+Last updated: 2026-08-11 (per-model config editor: the Models page grew a
+schema-driven Configure panel consuming the v1.52-1.53 admin surface --
+`GET /v1/admin/model-options` (field type/bounds/enum/default + the six-class
+`effect` metadata + `arg`/`ui`/`shape`/`reason` hints) and
+`PATCH /v1/admin/models/{id}` (typed values, null = reset-to-default,
+`reload_required_fields` in the response). Shared editor module
+`js/model-config.js`; grouped by effect class; gguf plumbing
+host/port/server_binary/startup_timeout_s deliberately not rendered; non-default
+rows carry a mono summary chip. Design + remaining arc (fit meter, editorial
+groups, model-switch hardening):
+`internal/research/expert_offload_design_frontend.md`. Previously 2026-08-07:
+catch-up pass against the backend changes since
 2026-07-26 -- v1.45.0-1.49.9. Four fixes, all live-verified: omitting
 `enable_thinking` now means OFF on gguf too (it meant ON, so the toggle
 lied and thinking could not be turned off at all); the Models page can
@@ -129,7 +140,7 @@ auto-appear from template detection, no `models.toml` flag needed).
 |------|-----------|
 | chat | `/v1/conversations` CRUD, `/v1/chat/completions` (SSE), `/v1/presets` CRUD |
 | notebook | `/v1/notebooks` CRUD, `/v1/chat/completions` |
-| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload) |
+| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
 | explore | `/v1/chat/completions` **with logprobs** |
 | jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
@@ -190,8 +201,17 @@ on here.
 - **Radix single-slot (Q7)** has a named v3 UX cost: sidebar conversation switches
   re-prefill (TTFT on big models). Decided knowingly; measure switch frequency if
   it hurts.
+- **Fit meter for the config editor** -- the load-options design names the
+  memory readout (weights vs Metal working set vs KV headroom, FAIL-for-MLX /
+  WARN-for-gguf asymmetry) as the surface's real payoff; it needs the fit
+  endpoint (`ram_report.py`'s `check_fit`/`size_config_gb` behind HTTP --
+  backend ask #2 in `internal/research/expert_offload_design_frontend.md` §9),
+  which does not exist yet. Do NOT compute fit client-side. Same doc §15: the
+  chat model-switch hardening arc (history-media guard, mid-stream switch stop,
+  load-cost signal) is designed and unbuilt.
 - **Model-management page promotion (plan Phase 6)** -- the `models` page today
-  lists + loads/unloads via `/v1/admin/models`. Phase 6's redesign
+  lists + loads/unloads via `/v1/admin/models`, and (2026-08-11) edits per-model
+  config through the schema-driven Configure panel. Phase 6's redesign
   (registry-over-scan, add-by-path-anywhere, non-clobbering toml merge) makes
   this page the real model-management UI: add-by-path, edit id/tags/config,
   enable/disable, dedupe, re-scan-as-merge -- so `models.toml` becomes an

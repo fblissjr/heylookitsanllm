@@ -328,6 +328,31 @@ rather than merely resident; the page renders `warm_ms` as a note and surfaces
 sampler routes were renamed from profiles/bulk-profile 2026-07-20; out of scope unless a
 trimmed feature needs them.)
 
+**Per-model config editing** (consumed since 2026-08-11, backend v1.52-1.53):
+`GET /v1/admin/model-options` → `{providers:{[provider]:{fields:[{name,effect,type,
+default,required,minimum?,maximum?,exclusiveMinimum?,exclusiveMaximum?,enum?,arg?,ui?,
+shape?,reason?}]}}}` — every settable models.toml key per provider, derived from the
+provider config classes (a new backend field appears in the UI with no frontend change).
+NOT under `/v1/admin/models` (its `{model_id:path}` catch-all would eat the path).
+`effect` says WHEN a change lands and drives the editor's layout:
+`per_request`/`applies_live`/`descriptive` = immediate; `requires_reload` = saved to
+models.toml, a loaded model keeps running as-is until reloaded (the editor offers
+"Reload now" = unload + `load?warm=true` after such a save); `load_time_only` = rendered
+disabled with the field's `reason`; `identity` fields are never listed. `arg` is the
+llama-server flag spelling (shown as a hint, pinned to the emitted argv by a backend
+test); `ui:"advanced"` collapses the field into an Advanced group; `shape:"flag"` marks
+a bare boolean flag.
+`PATCH /v1/admin/models/{id}` body `{config:{key: value|null}}` →
+`{model, reload_required_fields, warning?}`. Values are TYPED JSON (numbers as numbers);
+**null means "unset — back to the default"** and removes the key from models.toml (absent
+IS how a default is spelled on disk; this is the same null-means-cascade philosophy as
+guardrail #3). `reload_required_fields` is the server's provider-aware answer — the
+frontend renders it rather than re-deriving reloadiness client-side. `warning` carries a
+post-save config-reload failure. A value TOML can't store returns 400, not 500.
+CAUTION for harnesses: the PATCH rewrites models.toml through `tomli_w`, which drops
+every comment in the file — E2E checks must intercept it, never let it land (the E2E
+server isolates only the DB, not models.toml).
+
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
@@ -422,6 +447,16 @@ removes from panel + reloads list). "Clear all conversations & notebooks" with `
 inconsistent error UX**: pick ONE surfacing strategy (v2 shows errors only on initial list load, silently
 console-logs scan/load/import/clear failures). **Fix**: add the missing `if (!ctx) return` post-await guards
 (free via `createPage`). Custom scan `paths` UI is a v2 gap — leave out of scope unless requested.
+
+Added 2026-08-11: per-row **Configure** expands an inline config-editor card
+(`js/model-config.js`, schema-driven off `GET /v1/admin/model-options` — see §4). Grouped
+by effect class (immediate / requires-reload / advanced / fixed-with-reason); tri-state
+selects for booleans and enums (`default (X)` = unset), empty input = unset, so the
+null-means-default contract is honest in every control; Save PATCHes only dirty fields;
+after a reload-required save on a loaded model the panel offers Reload now (unload +
+warm load, same per-row busy flag). Unsaved edits live in a per-model draft map keyed
+off page state so the list's re-renders don't lose them. Errors go to the page's single
+status area; save/reload outcomes render in the panel's own `role="status"` note.
 
 ### batch — DROPPED from v3 scope
 Not included (user decision). The backend endpoint (`/v1/batch/chat/completions`) stays; if batch is wanted

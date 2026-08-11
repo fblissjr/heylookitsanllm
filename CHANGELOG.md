@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.54.0]
+
+### Added
+
+- **v3 Models page: per-model config editor** (`js/model-config.js`), the first
+  consumer of `GET /v1/admin/model-options` -- and therefore the first thing
+  that renders the six effect classes distinctly rather than collapsing them.
+  Every control is generated from the option schema (type, bounds, enum,
+  default, `arg` spelling), so a new backend config field appears in the UI
+  with no frontend change. Grouped by effect: immediate / requires-reload /
+  advanced (collapsed `<details>`; `extra_args` now declares `ui:"advanced"`
+  at the field, its comment already said a UI must not make it casual) /
+  fixed-with-reason (disabled). Booleans and enums render as tri-state selects
+  whose first option is `default (X)`; empty input = unset; a cleared field
+  PATCHes explicit null (the wire spelling of reset-to-default). The dirty
+  note names what a save will do PER CLASS before the click -- never a reload
+  cost for a live field, never silence about one that needs it -- and after a
+  reload-required save on a loaded model the panel offers an armed-confirmed
+  "Reload now" (unload + `load?warm=true`, per-row busy). gguf's
+  host/port/server_binary/startup_timeout_s are deliberately not rendered
+  (design doc §7: nothing good comes of a per-model binary picker in a web
+  form). Rows with non-default load options carry a mono summary chip
+  (`ctx_size 65536 · spec_type draft-mtp`) so a differently-configured model
+  says so on the list.
+- Three E2E checks (`tests/e2e/suites/pages.mjs`): the rendered field set is
+  asserted against the live option schema (schema-driven is the feature, so
+  schema-driven is the check); the PATCH round-trip is asserted on the wire --
+  typed integer on save, explicit null on clear -- with the request
+  intercepted, because the E2E server runs on the REAL models.toml and a
+  landed PATCH would rewrite it (and drop its comments); the open panel is
+  overflow-checked at phone width.
+- Design record: the load-options surface, fit-meter arc, and model-switch
+  hardening are `internal/research/expert_offload_design_frontend.md`; what
+  shipped here is its schema-form half. The fit meter (backend ask #2) and the
+  editorial field groups/hints stay open.
+
 ## [1.53.0]
 
 ### Added

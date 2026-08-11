@@ -714,10 +714,11 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Raw passthrough flags. requires_reload because they are spawn argv --
     # and note this is remote argv injection into a subprocess for anyone with
-    # admin PATCH access, so a UI should not make it a casual free-text field.
+    # admin PATCH access, so a UI should not make it a casual free-text field
+    # (ui:"advanced" keeps it behind v3's collapsed disclosure).
     extra_args: List[str] = Field(
         default_factory=list,
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced"},
     )
     # named sampler (SamplerRegistry)
     default_sampler: Optional[str] = Field(
