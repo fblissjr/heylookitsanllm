@@ -30,7 +30,16 @@ uv run python scripts/gguf_probe.py <base-dir> --lora <adapter>.gguf --lora-ab \
 
 What it reports (and why each matters):
 - `/props modalities` -- the LIVE capability truth (config `modalities` is
-  description only).
+  description only). **Scope that to modalities.** `/props` is NOT a general
+  capability oracle: it says nothing usable about speculative decoding. Verified
+  2026-08-10 on b10323 with `spec_type = "draft-mtp"` and a paired drafter --
+  `/props` returned NO speculative fields at all while `timings.draft_n = 91`
+  (48 accepted), i.e. speculation demonstrably running. (A parallel session
+  reported seeing `speculative.types: 'none'` there instead, presumably on a
+  different build; either way the field cannot be trusted.) **To ask whether
+  speculation actually ran, read `timings.draft_n` from the completion
+  response** -- or the probe's own `draft=accepted/total`, which is the same
+  number. A `/props`-based spec check would report "off" on a working config.
 - apply-template on/off/unset diff -- `unset != off` means thinking-off
   must be sent EXPLICITLY (gemma's empty-thought prefill; the bug-shaped
   behavior found 2026-07-26).
