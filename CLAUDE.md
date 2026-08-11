@@ -37,7 +37,8 @@ INVERTS (gemma-4 12B: n_max=4 is the worst setting at p_min=0.0 and the best at 
 so a 1D n_max sweep finds a different and WRONG optimum AT SHORT PROMPT.
 EVERY SPEC-DECODE NUMBER BELOW WAS TAKEN AT temp 0 AND IS PROMPT-LENGTH CONDITIONAL --
 two fixed corners, and BOTH times a corner was varied the conclusion moved. temp 0 is
-now BANNED as a measurement setting (the probe refuses it): greedy acceptance is exact
+fine for REPRODUCIBILITY or a smoke test, and never the basis of a performance number
+or a default (the probe warns): greedy acceptance is exact
 argmax matching while temp>0 is the rejection-sampling criterion, and acceptance is the
 quantity every one of these conclusions rests on. So treat the whole block as a prior
 to re-measure at vendor sampling, not as findings. The `p_min` LEVER still applies at
@@ -80,7 +81,7 @@ moves the distribution, and is measured on n=1 ADAPTER -- a heavy task adapter (
 tok/s on Qwen3.6-27B-MTP Q4_K_XL. A light style/domain adapter should erode it less;
 untested (needs a second qwen35 adapter: `gguf_probe.py <mtp-gguf> --lora <a>.gguf
 --lora-ab --spec-type draft-mtp` at the model's VENDOR-RECOMMENDED sampling --
-never temp 0, which the probe refuses; greedy is a different decoding regime and
+never temp 0 for a perf number, which the probe warns about; greedy is a different regime and
 tuning there can point at the wrong setting). `--spec-type` is a SPAWN flag while `lora`
 is per-REQUEST, so one process serving both kinds of traffic cannot suit both --
 leave spec ON, and note that conclusion does NOT rest on the n=1 number: a lighter
