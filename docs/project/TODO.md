@@ -626,6 +626,15 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   v1.62.0** (P2, ask #4): one route sharing load's exact body (warm contract
   can't fork); v3's "Reload now" points at it. The fit meter's §5 observed
   line (resident memory, measured after load) landed in the same version.
+- [ ] **Continuation loose ends** (P3, from v1.61.0-1.61.1; the feature is
+  complete and review-hardened, these are parity/depth): MessageCreateRequest
+  has no explicit `continue_final_message` field (the auto trailing-assistant
+  convention works on /v1/messages and block-form prefill is flattened, but
+  there is no explicit control for OpenAI-endpoint parity); image-history
+  continuation is a deliberate 400 (the vision strategy has no open-turn
+  spelling yet); the eval bank's thinking/stop tasks have not been run over
+  the template change (explicit-ask tier per testing-cost discipline --
+  normal-path rendering is covered by the suite + live E2E).
 - [x] **update_deps hardenings -- DONE v1.57.1** (P2, from the KEEP-WITH-FIXES verdict):
   re-read pyproject before the final write and abort/re-apply on
   concurrent change (the C++ build makes the window minutes long);

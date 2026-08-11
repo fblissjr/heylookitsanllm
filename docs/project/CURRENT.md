@@ -1,28 +1,80 @@
 # Current Work
 
-Last updated: 2026-08-11 (v1.54.0-1.57.1 config editor + switch arc, then
-v1.58.0 toml comments / v1.59.0 preset inheritance / v1.60.0 fit arc /
-v1.61.0 continuation + Save & Continue -- all on main; earlier narrative
-below unchanged)
+Last updated: 2026-08-11 end of day (v1.54.0-1.57.1 config editor +
+switch arc, then the follow-on session's v1.58.0-1.62.0: toml comments,
+preset inheritance, fit arc, continuation + its review round, reload
+route + observed line -- all on main, unpushed; earlier narrative below
+unchanged)
 
-HANDOFF (next session start here): the day shipped six commits --
-v1.54.0 config editor, v1.55.0 audit fixes, docs, v1.56.0 /code-review
-fixes (all 10 confirmed findings), v1.57.0 chat model-switch arc (G1+G3),
-v1.57.1 update_deps write-path hardening; a follow-on session shipped
-v1.58.0 models.toml comment preservation (was item 1 here -- DONE:
-`toml_comments.py`, anchor semantics in the CLAUDE.md block, 16 new tests
-+ test_import_reimport green), v1.59.0 preset inheritance for new
-documents + the chat edit-box sizing fix (owner requests, same day), and
-v1.60.0 the fit endpoint + fit meter (was item 2 -- DONE:
-`heylook_llm.ram_fit` extracted from ram_report.py, POST
-/v1/admin/models/{id}/fit, v3 Memory-fit section with the MLX-FAIL vs
-gguf-WARN asymmetry + Load gating; spec §4 updated). NEXT, in order:
-1. Remaining small items: TODO.md "Config-editor / audit follow-ups"
-   (G4/G5/F14 switch polish, server-owned reload route, schema nits).
+HANDOFF (next session start here): main is at v1.62.0, suite 1496
+unit+contract green, E2E chat 43/43 + pages 43/43 live-verified. The
+2026-08-11 arc (eleven commits across two sessions, v1.54.0-1.62.0) is
+COMPLETE except the two small items below -- see the UPDATE blocks for
+what each version shipped. NEXT, in order:
+1. **F14 switch-lock + G4 context estimate** (last §15 switch polish;
+   TODO.md). F14 is an hour (disable the model select during a pending
+   load -- state already tracked). G4 is a half-day: honest context
+   estimation wants server-side token counting (a client-side count would
+   be the same drift sin the fit meter exists to avoid).
+2. **P3 schema-nits batch** (TODO.md, one sitting): extra_args
+   default/items typing, description/tags clearable via null, binary
+   staleness warning, -t/--threads + n_gpu_layers auto/all. One OWNER
+   DECISION embedded: admin /import currently log-skips invalid entries
+   where the CLI refuses loudly -- pick a behavior before changing it.
+Continuation loose ends parked in TODO (Messages-API explicit flag,
+image-history continuation, eval-bank run = explicit-ask tier).
 Gotchas for the next session: E2E must run unsandboxed and its server
 uses the REAL models.toml (only the DB is isolated) -- intercept any
-config-writing PATCH. (The worktree-per-session convention was retired
-2026-08-11 -- sessions run in the primary checkout again.)
+config-writing PATCH; contract tests only run green BATCHED (mock-MLX
+import ordering), use the full-suite command. (The worktree-per-session
+convention was retired 2026-08-11 -- sessions run in the primary
+checkout again.)
+
+UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
+
+- **SOLID -- models.toml comment preservation (v1.58.0)**: tomli_w stays
+  authoritative for values; comments carried onto the fresh render ONLY
+  while their anchor is unchanged (whole-model byte-identical through
+  tomli_w normalization; a block above a [[models]] header also needs the
+  FOLLOWING model unchanged). tomlkit is read-only extraction -- mutating
+  a parsed AoT re-renders it as a malformed inline array (why the first
+  attempt died); mechanism pinned in CLAUDE.md + toml_comments.py.
+- **SOLID -- preset inheritance + edit box (v1.59.0, owner decisions)**:
+  new conversations/notebooks START as the selected (or stamped) preset --
+  prompt + params + applied_preset_id stamped at birth (starting-as IS an
+  apply); create contracts gained applied_preset_id (spec §4). The
+  "prompt not saved" report was the inert-select design colliding with
+  the sampler-carries/prompt-doesn't asymmetry -- the save path never
+  dropped anything. Chat's message-edit textarea now sizes to its message
+  (rAF-timed grow, 60vh cap).
+- **SOLID -- fit arc (v1.60.0, design §5 + ask #2)**: ram_report.py's
+  arithmetic extracted to heylook_llm.ram_fit (script = renderer over the
+  same structured report; --quiet contract unchanged); POST
+  /v1/admin/models/{id}/fit with provider-derived hard_working_set
+  (MLX-FAIL vs gguf-WARN is the point) + server-gated sysctl hint; v3
+  Memory-fit section renders it verbatim (never client-computed), FAIL
+  gates the row's Load button in place.
+- **SOLID -- true continuation + Save & Continue (v1.61.0 + v1.61.1)**:
+  continue_final_message on ChatRequest (auto = trailing assistant; true =
+  any role, user-role MLX-only; false = never). The old convention only
+  suppressed the generation prompt -- the turn rendered CLOSED and nothing
+  continued. MLX passes continue_final_message through the template;
+  continuation disarms the prefills_thinking parser assumption;
+  llama-server continues natively but ECHOES the prefill (verified live) --
+  stripped positionally. v3: Save & Continue on the message editor, both
+  roles, streaming into the SAME row. v1.61.1 applied all 8 confirmed
+  /code-review findings -- incl. two PRE-EXISTING Save & Regenerate races
+  (missing s.stream guard; truncation anchored to a conv id captured
+  before the first await) and typed in-band invalid_request_error frames
+  on both streaming APIs (spec §4 now states the streaming caveat).
+- **SOLID -- reload route + observed line (v1.62.0)**: POST
+  /{id}/reload[?warm=true] = unload + load(+warm) as one server-owned op
+  sharing /load's body; v3 "Reload now" uses it. Fit meter shows
+  "Resident now" (measured after load) for loaded models -- §5's loop
+  closer.
+- Also: worktree-per-session convention retired (owner call); editable
+  install re-pointed at the primary; DuckDB store cleared by the owner
+  (fresh state is intentional, not a bug).
 
 UPDATE 2026-08-11 (v1.54.0-1.57.1, merged to main same day):
 
