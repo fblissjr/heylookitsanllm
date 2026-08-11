@@ -157,3 +157,32 @@ def test_n_cpu_moe_zero_is_emitted_not_swallowed():
     """0 = offload no layers, an explicit choice distinct from unset."""
     argv = _build_argv({"model_path": "/tmp/m.gguf", "n_cpu_moe": 0})
     assert argv[argv.index("-ncmoe") + 1] == "0"
+
+
+@pytest.mark.unit
+def test_n_max_bound_and_emitter_agree():
+    """`spec_draft_n_max` is the one flag in its block gated on truthiness
+    rather than `is not None`, which is safe ONLY because `ge=1` makes 0
+    unreachable through validation -- the two tests are then equivalent over
+    every valid value.
+
+    That safety is a coupling between a constraint and an emitter sitting in
+    different files, with nothing holding them together. If the bound is ever
+    relaxed to allow 0, the emitter silently starts dropping a valid setting;
+    this fails first and says so. The raw-dict path matters here: provider unit
+    tests and gguf_probe both build config dicts that bypass validation, so an
+    out-of-range 0 can reach the emitter in exactly the places used to measure.
+    """
+    from heylook_llm.config import PROVIDER_CONFIG_CLASSES
+
+    field = PROVIDER_CONFIG_CLASSES["gguf"].model_fields["spec_draft_n_max"]
+    lower_bounds = [
+        getattr(m, "ge", None) or getattr(m, "gt", None)
+        for m in field.metadata
+        if hasattr(m, "ge") or hasattr(m, "gt")
+    ]
+    assert lower_bounds and min(b for b in lower_bounds if b is not None) >= 1, (
+        "spec_draft_n_max no longer excludes 0, so _build_args' truthiness "
+        "check now silently drops a valid setting -- switch that line to "
+        "`is not None` like the rest of the block"
+    )

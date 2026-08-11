@@ -151,6 +151,13 @@ class LlamaServerProvider(BaseProvider):
             args += ["-md", cfg["draft_model_path"]]
         if cfg.get("spec_type"):
             args += ["--spec-type", cfg["spec_type"]]
+        # Truthiness here, `is not None` two lines down -- deliberate, not an
+        # oversight. 0 is a MEANINGFUL value for p_min/-ngld/-cram, so dropping
+        # it would lose a real setting. For n_max it is INVALID (ge=1), so the
+        # two tests are equivalent over every value that can reach here through
+        # validation. Pinned by test_n_max_bound_and_emitter_agree: if that
+        # bound is ever relaxed to allow 0, this line silently starts dropping
+        # a valid setting, and that test goes red first.
         if cfg.get("spec_draft_n_max"):
             args += ["--spec-draft-n-max", str(cfg["spec_draft_n_max"])]
         # `is not None`: 0.0 is a real setting (keep every draft), and it is
