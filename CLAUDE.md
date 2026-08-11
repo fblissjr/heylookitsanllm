@@ -58,8 +58,11 @@ reproducibility, never for a throughput claim; the probe warns). Match prompt le
 generation length, seed, sampling, WHICH BINARY, and PROMPT-CACHE STATE across arms --
 an unmatched cache produced a large phantom that survived repeats and looked exactly
 like a finding. Tune `spec_draft_n_max` and `spec_draft_p_min` TOGETHER; they interact
-and a 1D sweep finds a different, wrong optimum. Short prompts and short generations
-mislead about ranking, not just magnitude.
+and a 1D sweep finds a different, wrong optimum. Short prompts and short generations mislead about
+RANKING, not just magnitude. And matching every control you thought of does not
+make a result sound -- it only rules out the confounds you imagined: the runs that
+produced the since-dissolved cost matched prompt, cache, seed and sampling, and
+were still measuring the wrong thing because nobody had varied generation length.
 DRAFTER PACKAGING (read the GGUF, do not trust vendor docs -- unsloth.ai currently
 states the OPPOSITE): gemma-4 12B ships a SIDECAR `mtp-gemma-4-12B-it.gguf` with zero
 nextn tensors in the main file; Qwen3.6-27B has `blk.64.nextn.*` EMBEDDED and no
