@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.1]
+
+### Fixed
+
+- **update_deps.py write path hardened** (the three fixes from the
+  KEEP-WITH-FIXES audit verdict): pyproject.toml writes go through ONE
+  guarded helper that refuses (nothing written) if the file changed on disk
+  since this run loaded it -- parallel sessions are normal here, and the
+  llama.cpp path holds the in-memory doc across a minutes-long C++ build,
+  so the final write was last-writer-wins over anything another session
+  landed meanwhile. A failed `uv lock` after a write now ROLLS THE WRITE
+  BACK (both the mid-run stable-channel write and the final one), so the
+  030119f class -- an on-disk pyproject every project-scoped uv command
+  then chokes on -- is dead structurally, not just for the one trigger
+  that fix removed. And the write path has tests at all now
+  (`tests/unit/test_update_deps_write_path.py`): the latest-channel
+  sources entry is pinned to exactly {git, rev} (uv hard-rejects `branch`
+  alongside `rev`), the tomlkit round-trip is byte-identical on the real
+  pyproject (the property separating this from the models.toml/tomli_w
+  comment loss), and both guard directions fire.
+
 ## [1.57.0]
 
 ### Added

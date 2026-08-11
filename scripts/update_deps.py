@@ -147,10 +147,47 @@ def _short(rev: str | None) -> str:
 # ---------------------------------------------------------------------------
 # pyproject access
 # ---------------------------------------------------------------------------
+# What the file contained when WE last read or wrote it. The write guard
+# compares against this: parallel sessions are normal in this repo, and the
+# llama.cpp path holds the in-memory doc across a minutes-long C++ build, so
+# an unguarded final write is last-writer-wins over anything another session
+# landed in the meantime.
+_pyproject_snapshot: str | None = None
+
+
 def load_doc() -> "tomlkit.TOMLDocument":
+    global _pyproject_snapshot
     if not PYPROJECT.exists():
         die(f"{PYPROJECT} not found")
-    return tomlkit.parse(PYPROJECT.read_text())
+    text = PYPROJECT.read_text()
+    _pyproject_snapshot = text
+    return tomlkit.parse(text)
+
+
+def write_pyproject(doc) -> None:
+    """The ONE place pyproject.toml is written.
+
+    Refuses (nothing written) if the file changed on disk since this run
+    read it -- the other session's edit wins, this run re-runs. tomlkit
+    serialization is comment/format-preserving, so an accepted write touches
+    only the keys this run mutated.
+    """
+    global _pyproject_snapshot
+    current = PYPROJECT.read_text()
+    if _pyproject_snapshot is not None and current != _pyproject_snapshot:
+        die("pyproject.toml changed on disk since this run loaded it "
+            "(another session?). Nothing was written -- re-run to pick up "
+            "the fresh file.")
+    text = tomlkit.dumps(doc)
+    PYPROJECT.write_text(text)
+    _pyproject_snapshot = text
+
+
+def restore_pyproject(text: str) -> None:
+    """Roll the file back after a failed follow-up lock (see callers)."""
+    global _pyproject_snapshot
+    PYPROJECT.write_text(text)
+    _pyproject_snapshot = text
 
 
 def sources_table(doc, *, create: bool = False) -> dict:
@@ -534,15 +571,25 @@ def apply_python(doc, plan: dict, pin: bool) -> tuple[bool, bool, bool]:
 
     # stable: the git source must go first, or uv relocks it right back.
     source_removed = False
+    prev_text = _pyproject_snapshot
     if pkg in sources:
         del sources[pkg]
         source_removed = True
         print(f"  {yellow('dropped the git source')}")
         # uv reads pyproject from disk, so land the removal before locking.
-        PYPROJECT.write_text(tomlkit.dumps(doc))
+        write_pyproject(doc)
 
     before = lock_version(pkg)
-    run(["uv", "lock", "--upgrade-package", pkg])
+    try:
+        run(["uv", "lock", "--upgrade-package", pkg])
+    except SystemExit:
+        # Never strand a pyproject uv.lock does not reflect: the mid-run
+        # write above already landed, so a failed lock rolls it back.
+        if source_removed and prev_text is not None:
+            restore_pyproject(prev_text)
+            print(red("uv lock failed; pyproject.toml restored to its "
+                      "pre-run state."), file=sys.stderr)
+        raise
     after = lock_version(pkg)
     if before == after:
         print(f"  already at latest allowed release {green(after or '?')}")
@@ -1111,12 +1158,23 @@ def main() -> None:
         needs_relock |= relock
         lock_touched |= locked
 
+    prev_text = _pyproject_snapshot
     if pyproject_changed:
-        PYPROJECT.write_text(tomlkit.dumps(doc))
+        write_pyproject(doc)
         print(green(f"\nwrote {PYPROJECT.relative_to(ROOT)}"))
     if needs_relock or (pyproject_changed and not lock_touched):
         # Relock so uv.lock captures the new revs / floors from pyproject.
-        run(["uv", "lock"])
+        # A failed lock rolls the pyproject write back -- the 030119f class
+        # (an on-disk pyproject every uv command then chokes on) stays dead
+        # structurally, not just for the one trigger that fix removed.
+        try:
+            run(["uv", "lock"])
+        except SystemExit:
+            if pyproject_changed and prev_text is not None:
+                restore_pyproject(prev_text)
+                print(red("uv lock failed; pyproject.toml restored to its "
+                          "pre-write state."), file=sys.stderr)
+            raise
         lock_touched = True
     if lock_touched:
         print(green("\nuv.lock updated. Sync your env with:"))
