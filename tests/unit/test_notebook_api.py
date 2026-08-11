@@ -37,6 +37,21 @@ class TestNotebookCRUD:
         assert nb["model_id"] is None
 
     @pytest.mark.asyncio
+    async def test_create_with_applied_preset_stamps(self, conn):
+        # Same new-document preset inheritance contract as conversations:
+        # starting-as-a-preset is an explicit apply, stamped at creation.
+        nb = await db.create_notebook(conn, title="Inherited", applied_preset_id="preset-123")
+        assert nb["applied_preset_id"] == "preset-123"
+        fetched = await db.get_notebook(conn, nb["id"])
+        assert fetched is not None
+        assert fetched["applied_preset_id"] == "preset-123"
+
+    @pytest.mark.asyncio
+    async def test_create_without_preset_stays_unstamped(self, conn):
+        nb = await db.create_notebook(conn)
+        assert nb["applied_preset_id"] is None
+
+    @pytest.mark.asyncio
     async def test_list_ordered_by_updated(self, conn):
         n1 = await db.create_notebook(conn, title="First")
         n2 = await db.create_notebook(conn, title="Second")

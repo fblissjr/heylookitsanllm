@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.0]
+
+### Added
+
+- **New documents start as the selected preset** (owner decision, option 1
+  of the 2026-08-11 preset-semantics review). The preset bar's select was
+  fully inert: a preset landed on a document only via explicit Apply, so a
+  new conversation opened with an empty prompt while half the settings
+  panel (sampler knobs) carried forward anyway -- which read as "my prompt
+  wasn't saved". Now the shared bar exposes `presetForNewDoc()` (explicit
+  selection, else the active document's durable stamp, so the behavior
+  survives a reload) and BOTH pages' New buttons create the document as
+  that preset: prompt + params + `applied_preset_id` stamped at birth
+  (starting-as is an explicit apply under the stamp rules, not an
+  inference). A prompt drafted before any conversation exists still wins
+  over the preset; without a preset, the old rules hold verbatim. Wire
+  change: `POST /v1/conversations` and `POST /v1/notebooks` accept
+  `applied_preset_id` (spec §4 updated; db create paths persist it,
+  test-pinned). E2E: new chat check "new conversation starts as the
+  selected preset".
+
+### Fixed
+
+- **Chat message editor opens as a slit** (owner report): the edit
+  textarea sized itself in a microtask (pre-layout, so `scrollHeight` read
+  short), never re-grew while typing, and capped at 400px regardless of
+  viewport. Now it sizes on a `requestAnimationFrame` (post-layout), grows
+  on input like the composer, and caps at ~60% of the viewport height.
+
 ## [1.58.0]
 
 ### Added

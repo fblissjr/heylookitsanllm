@@ -16,6 +16,10 @@
 //   - the drift line says what Apply/Save would DO to the selected preset,
 //     updated in place -- the drawer's focus guard means a rebuild can't be
 //     relied on while the user is typing in a field
+//   - a NEW document is the one exception to "the select never touches the
+//     document": it starts as the selected (or, after a reload, the stamped)
+//     preset -- prompt + params + stamp -- via presetForNewDoc(). Existing
+//     documents still change only on an explicit Apply.
 //
 // Presets are global (one /v1/presets store); the prompt side is the page's
 // document, adapted via getPrompt/setPrompt. The bar subscribes to sampler
@@ -62,6 +66,16 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
 
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
   const selected = () => presets.find((p) => p.id === presetId);
+
+  // The preset a NEW document should start from (owner decision 2026-08-11:
+  // the selected preset is the unit of continuity across documents). The
+  // explicit bar selection wins; else the active document's stamp, so the
+  // behavior survives a reload (selection is session state, the stamp is
+  // durable). Returns null when neither exists -- the page then creates the
+  // document exactly as before. Starting-as counts as an apply, so the page
+  // passes the id as applied_preset_id at create.
+  const presetForNewDoc = () =>
+    selected() ?? presets.find((p) => p.id === getStamp?.()) ?? null;
 
   // Resolves true when the list (or the selection's validity) actually
   // changed, so cosmetic repaints can be skipped.
@@ -280,5 +294,5 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     ]);
   }
 
-  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator };
+  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator, presetForNewDoc };
 }

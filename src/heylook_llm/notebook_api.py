@@ -26,6 +26,10 @@ class NotebookCreate(BaseModel):
     system_prompt: str | None = None
     model_id: str | None = None
     params: dict = {}  # per-notebook sampler settings (same shape as conversations)
+    # A new document can START as a preset (v3's new-document inheritance) --
+    # an explicit apply at birth, so it stamps. Same contract as
+    # NotebookUpdate.applied_preset_id otherwise.
+    applied_preset_id: str | None = None
 
 
 class NotebookUpdate(BaseModel):
@@ -61,6 +65,7 @@ async def create_notebook(request: Request, body: NotebookCreate):
     nb = await db.create_notebook(
         conn, title=body.title, content=body.content,
         system_prompt=body.system_prompt, model_id=body.model_id, params=body.params,
+        applied_preset_id=body.applied_preset_id,
     )
     return nb
 

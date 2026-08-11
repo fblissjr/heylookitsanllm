@@ -546,6 +546,41 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
   });
 
+  await suite.check('new conversation starts as the selected preset', async () => {
+    // v1.59.0 inheritance: e2e-preset is selected (drawer state from the
+    // check above) and the panel is deliberately drifted from it -- a NEW
+    // conversation must start as the PRESET (prompt + params + stamp), not
+    // as the drifted panel. Server-side assertions: the stamp is written at
+    // create, not inferred client-side.
+    await closeDrawer(page); // the drawer is modal; the New button lives in #app
+    const convId = await newFreshConversation(page);
+    const conv = await page.evaluate(async (id) =>
+      await (await fetch(`/v1/conversations/${id}`)).json(), convId);
+    assert(conv.applied_preset_id, 'new conversation was not stamped with the preset');
+    assert((conv.system_prompt ?? '').includes('Be terse.'),
+      `preset prompt not inherited (got ${JSON.stringify(conv.system_prompt)})`);
+    assert(String(conv.params?.temperature) === '0.31',
+      `preset params not inherited (got ${JSON.stringify(conv.params)})`);
+    // The inherited state hydrates the panel, so the chip reads un-edited.
+    await waitFor(async () => {
+      const chip = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
+      return Boolean(chip?.includes('e2e-preset') && !chip.includes('(edited)'));
+    }, { message: 'chip should show the inherited preset un-edited' });
+    // Leave the world as found: later checks index into the conv list
+    // ('the second item is the older one with messages'), so the inherited
+    // conversation must not survive this check. UI delete re-selects the
+    // suite's original conversation, restoring the pre-check active state.
+    const before = await count(page, '.conv-item');
+    const delConv = await page.$('.conv-item--active .conv-item__delete');
+    await armedClick(delConv);
+    await delConv.dispose();
+    await waitFor(async () => (await count(page, '.conv-item')) === before - 1,
+      { message: 'inherited conversation not cleaned up' });
+    // Restore the delete check's preconditions (drawer open + selection).
+    await openDrawer(page);
+    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+  });
+
   await suite.check('preset delete (armed) removes it from the select', async () => {
     const delBtn = await page.$('.preset-section .btn--ghost');
     await armedClick(delBtn);

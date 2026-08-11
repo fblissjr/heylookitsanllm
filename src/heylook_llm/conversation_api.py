@@ -31,6 +31,10 @@ class ConversationCreate(BaseModel):
     model_id: str | None = None
     system_prompt: str | None = None
     params: dict = {}  # per-conversation sampler settings (temperature, top_p, ...)
+    # A new document can START as a preset (v3's new-conversation inheritance)
+    # -- that is an explicit apply at birth, so it stamps. Same contract as
+    # ConversationUpdate.applied_preset_id otherwise.
+    applied_preset_id: str | None = None
 
 
 class ConversationUpdate(BaseModel):
@@ -86,7 +90,8 @@ async def create_conversation(request: Request, body: ConversationCreate):
     conn = _get_db(request)
     conv = await db.create_conversation(
         conn, title=body.title, model_id=body.model_id,
-        system_prompt=body.system_prompt, params=body.params
+        system_prompt=body.system_prompt, params=body.params,
+        applied_preset_id=body.applied_preset_id,
     )
     return conv
 

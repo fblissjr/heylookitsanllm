@@ -38,6 +38,27 @@ class TestConversationCRUD:
         assert fetched["messages"] == []
 
     @pytest.mark.asyncio
+    async def test_create_with_applied_preset_stamps(self, conn):
+        # New-document preset inheritance: a document can START as a preset,
+        # which is an explicit apply, so the stamp is written at creation and
+        # must round-trip (not just echo in the create response).
+        conv = await db.create_conversation(
+            conn, title="Inherited", applied_preset_id="preset-123"
+        )
+        assert conv["applied_preset_id"] == "preset-123"
+        fetched = await db.get_conversation(conn, conv["id"])
+        assert fetched is not None
+        assert fetched["applied_preset_id"] == "preset-123"
+
+    @pytest.mark.asyncio
+    async def test_create_without_preset_stays_unstamped(self, conn):
+        conv = await db.create_conversation(conn, title="Plain")
+        assert conv["applied_preset_id"] is None
+        fetched = await db.get_conversation(conn, conv["id"])
+        assert fetched is not None
+        assert fetched["applied_preset_id"] is None
+
+    @pytest.mark.asyncio
     async def test_list_ordered_by_updated(self, conn):
         c1 = await db.create_conversation(conn, title="First")
         c2 = await db.create_conversation(conn, title="Second")

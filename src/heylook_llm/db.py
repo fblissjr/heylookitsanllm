@@ -379,17 +379,24 @@ async def create_conversation(
     model_id: str | None = None,
     system_prompt: str | None = None,
     params: dict | None = None,
+    applied_preset_id: str | None = None,
 ) -> dict:
-    """Create a new conversation and return it."""
+    """Create a new conversation and return it.
+
+    ``applied_preset_id`` at creation is the new-document preset inheritance:
+    the document explicitly STARTS as that preset, which is an apply, so the
+    stamp is legitimate under the explicit-stamps-only rule. A dangling id
+    stays harmless -- readers resolve stamps against the live preset list.
+    """
     conv_id = new_id()
     now = _now_iso()
     params = params or {}
     params_json = _encode_params(params)
     def op(conn):
         conn.execute(
-            "INSERT INTO conversations (id, title, model_id, system_prompt, params, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conv_id, title, model_id, system_prompt, params_json, now, now),
+            "INSERT INTO conversations (id, title, model_id, system_prompt, params, applied_preset_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (conv_id, title, model_id, system_prompt, params_json, applied_preset_id, now, now),
         )
     await db.run(op)
     return {
@@ -398,7 +405,7 @@ async def create_conversation(
         "model_id": model_id,
         "system_prompt": system_prompt,
         "params": params,
-        "applied_preset_id": None,
+        "applied_preset_id": applied_preset_id,
         "created_at": now,
         "updated_at": now,
         "messages": [],
@@ -613,23 +620,27 @@ async def create_notebook(
     system_prompt: str | None = None,
     model_id: str | None = None,
     params: dict | None = None,
+    applied_preset_id: str | None = None,
 ) -> dict:
-    """Create a new notebook and return it."""
+    """Create a new notebook and return it.
+
+    ``applied_preset_id`` at creation: same new-document preset inheritance
+    contract as ``create_conversation``."""
     nb_id = new_id()
     now = _now_iso()
     params = params or {}
     params_json = _encode_params(params)
     def op(conn):
         conn.execute(
-            "INSERT INTO notebooks (id, title, content, system_prompt, model_id, params, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (nb_id, title, content, system_prompt, model_id, params_json, now, now),
+            "INSERT INTO notebooks (id, title, content, system_prompt, model_id, params, applied_preset_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (nb_id, title, content, system_prompt, model_id, params_json, applied_preset_id, now, now),
         )
     await db.run(op)
     return {
         "id": nb_id, "title": title, "content": content,
         "system_prompt": system_prompt, "model_id": model_id, "params": params,
-        "applied_preset_id": None, "created_at": now, "updated_at": now,
+        "applied_preset_id": applied_preset_id, "created_at": now, "updated_at": now,
     }
 
 

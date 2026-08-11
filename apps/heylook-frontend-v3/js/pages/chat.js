@@ -608,15 +608,20 @@ async function newConversation(ctx) {
   const s = ctx.state;
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   try {
+    // The selected (or stamped) preset is the unit of continuity: a new
+    // conversation STARTS as it -- prompt + params + stamp (starting-as is an
+    // apply, so stamping at create is explicit, not inferred). Without one,
+    // the old rules hold: an active conversation's prompt does NOT leak, and
+    // sampler knobs carry forward from the current panel.
+    const preset = s.presetBar.presetForNewDoc();
     const conv = await api.createConversation({
       title: 'New conversation',
       model_id: s.modelSelect.value || undefined,
-      // a prompt drafted before ANY conversation exists comes along; an
-      // active conversation's prompt does NOT leak into the new one
-      system_prompt: (!s.activeId && s.systemPrompt) || undefined,
-      // sampler knobs DO carry forward -- new chat continues with the current
-      // panel (last-used / last-viewed conversation's settings)
-      params: snapshotSettings(),
+      // a prompt drafted before ANY conversation exists still wins over the
+      // preset -- it is the more explicit act
+      system_prompt: (!s.activeId && s.systemPrompt) || preset?.system_prompt || undefined,
+      params: preset ? { ...(preset.params ?? {}) } : snapshotSettings(),
+      applied_preset_id: preset?.id,
     });
     if (!ctx.alive) return;
     s.conversations.unshift(conv);
@@ -815,6 +820,11 @@ function buildActions(ctx, msg) {
 function buildEditEl(ctx, msg) {
   const s = ctx.state;
   const textarea = createEl('textarea', { value: msg.content });
+  // Size to the message, not a fixed pixel cap: long messages were getting a
+  // barely-readable slit. Cap at ~60% of the viewport so the buttons stay on
+  // screen; past that the textarea scrolls internally.
+  const growCap = () => Math.max(400, Math.round(window.innerHeight * 0.6));
+  textarea.addEventListener('input', () => autoGrow(textarea, growCap()));
   const cancel = () => { s.editingId = null; renderMessages(ctx); };
 
   const save = async (regenerateAfter) => {
@@ -859,7 +869,9 @@ function buildEditEl(ctx, msg) {
       createEl('div', { class: 'message-edit__buttons' }, buttons),
     ]),
   ]);
-  queueMicrotask(() => { autoGrow(textarea, 400); textarea.focus(); });
+  // rAF, not microtask: the initial grow needs layout to have happened, or
+  // scrollHeight reads short and the editor opens as a slit.
+  requestAnimationFrame(() => { autoGrow(textarea, growCap()); textarea.focus(); });
   return el;
 }
 

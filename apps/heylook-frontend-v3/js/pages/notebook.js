@@ -312,7 +312,16 @@ async function newNotebook(ctx) {
   const s = ctx.state;
   s.scheduleSave.flush();
   try {
-    const nb = await api.createNotebook({ title: 'Untitled', content: '', params: snapshotSettings() });
+    // Same new-document preset inheritance as chat's newConversation: the
+    // selected (or stamped) preset is the unit of continuity, and starting-as
+    // is an explicit apply, so it stamps at create.
+    const preset = s.presetBar.presetForNewDoc();
+    const nb = await api.createNotebook({
+      title: 'Untitled', content: '',
+      system_prompt: preset?.system_prompt || undefined,
+      params: preset ? { ...(preset.params ?? {}) } : snapshotSettings(),
+      applied_preset_id: preset?.id,
+    });
     if (!ctx.alive) return;
     s.notebooks.unshift(nb);
     renderList(ctx);

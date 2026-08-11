@@ -229,7 +229,10 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
 
 **Conversations** (prefix `/v1/conversations`, no auth):
 - `GET /` → `{conversations:[{id,title,model_id,system_prompt,params,applied_preset_id,created_at,updated_at}], total}` — **no messages**.
-- `POST /` (201) `{title,model_id?,system_prompt?}` → full conv incl `messages:[]`.
+- `POST /` (201) `{title,model_id?,system_prompt?,params?,applied_preset_id?}` → full conv incl `messages:[]`.
+  `applied_preset_id` at create (added v1.59.0) is the new-document preset
+  inheritance: the document explicitly STARTS as that preset, which counts as
+  an apply under the stamp rules below.
 - `GET /{id}` → conv **with** `messages:[{id,role,content,thinking,position,...}]` ordered by position.
 - `PUT /{id}` `{title?,model_id?,system_prompt?,params?,applied_preset_id?}` (only set fields patched; empty→400) → updated conv
   **without messages** (asymmetric — keep your in-memory messages, don't trust PUT to return them).
@@ -259,8 +262,9 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   regenerate/edit-regenerate/delete-cascade).
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
-`POST /` `{title,content,system_prompt?,model_id?}`; `PUT /{id}` partial (incl content, `params`,
-`applied_preset_id`); `DELETE /{id}`.
+`POST /` `{title,content,system_prompt?,model_id?,params?,applied_preset_id?}` (`applied_preset_id`
+at create: same v1.59.0 inheritance contract as conversations); `PUT /{id}` partial (incl content,
+`params`, `applied_preset_id`); `DELETE /{id}`.
 
 **Presets** (prefix `/v1/presets`, no auth; added v1.34.22): saved bundles of system prompt + sampler
 params, LM-Studio-style. UI-authored and expanded **client-side** (apply = copy `system_prompt` onto the
@@ -273,7 +277,9 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 - `DELETE /{id}` → `{status:"deleted",id}`.
 - **`applied_preset_id` (schema v6, added v1.39.16)** — on conversations AND
   notebooks, the preset a document is running. Written on EXPLICIT actions
-  only: Apply and Save stamp it, Del clears it for the active document.
+  only: Apply and Save stamp it, Del clears it for the active document, and
+  a NEW document created from the selected/stamped preset stamps at birth
+  (v1.59.0 inheritance -- starting-as IS an apply).
   A document whose state merely *matches* a preset is labelled by live
   client-side inference and is NEVER stamped — storing an inference could
   bind stale state to the wrong document after a failed load (the v1.39.7
