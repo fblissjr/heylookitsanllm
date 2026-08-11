@@ -138,7 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verbatim. `--lora-ab` toggles scale over llama-server's
   `POST /lora-adapters` between two otherwise identical runs sharing one model
   load, reporting the tok/s, draft-acceptance and output deltas -- identical
-  output proves the adapter did nothing, so pair it with `--temp 0`. An
+  output proves the adapter did nothing, so repeat at a pinned seed. An
   acceptance collapse means the draft path is unadapted, which is the thing to
   know before pairing a LoRA with spec decode. The probe also now prints the
   llama-server binary it resolved, since more than one build can exist on a

@@ -18,8 +18,14 @@
 # drafter can be A/B'd. Seeding is necessary but NOT sufficient for identical
 # output: speculative decoding changes the verify batch composition per eval,
 # which perturbs floating-point reductions and can still diverge the text.
-# For a tight drafter A/B add `--temp 0`; otherwise treat single runs as
-# samples and repeat across seeds (`--seed -1` = random, for variance checks).
+# NEVER measure at `--temp 0`: greedy is a DIFFERENT REGIME, not a quieter one.
+# Speculative acceptance under greedy is exact argmax matching; at temp>0 it is
+# the rejection-sampling criterion, so n_max/p_min conclusions can differ in KIND
+# and point at the wrong setting. It is smoke-test-only and the probe refuses it.
+# Use the model's VENDOR-RECOMMENDED sampling (unsloth.ai/docs/models/<model>:
+# gemma-4 = temp 1.0/top_p 0.95/top_k 64; Qwen3.6 thinking = temp 1.0/top_p 0.95/
+# top_k 20/min_p 0). Comparability comes from the PINNED SEED plus repeats, not
+# from flattening the sampler (`--seed -1` = random, for variance checks).
 #
 # LoRA: `--lora PATH` rides `extra_args`, the SAME raw-passthrough field a
 # models.toml gguf entry uses -- so a flag proven here transfers to a server
@@ -30,7 +36,7 @@
 # other tell), what does it cost, and does it wreck speculative decoding
 # (draft acceptance off vs on -- an embedded MTP head is NOT adapted, so a
 # collapse here is the expected failure and the reason to measure). Pair it
-# with `--temp 0`, same as the drafter A/B. Note the adapter switch CLEARS
+# at vendor-recommended sampling, same as the drafter A/B. Note the switch CLEARS
 # the prompt cache server-side, which the printed `cached=` makes visible.
 #
 # Given a DIRECTORY, sidecar pairing (mmproj / mtp- drafter) reuses the
@@ -130,6 +136,9 @@ def run_gen(p, args, label: str, extra: dict) -> tuple:
         "messages": [{"role": "user", "content": args.prompt}],
         "max_tokens": args.max_tokens, "seed": args.seed,
         **({} if args.temp is None else {"temperature": args.temp}),
+        **({} if args.top_p is None else {"top_p": args.top_p}),
+        **({} if args.top_k is None else {"top_k": args.top_k}),
+        **({} if args.min_p is None else {"min_p": args.min_p}),
         **extra})))
     final = chunks[-1]
     thinking = sum(len(c.thinking or "") for c in chunks)
@@ -178,12 +187,16 @@ def main() -> None:
                          "(-1 = random, for variance checks)")
     # Seeding alone does NOT make two configs produce identical text: spec
     # decode changes the verify batch composition per eval, FP reductions
-    # shift, and the streams diverge. `--temp 0` removes sampling as a
-    # variable entirely, which is the right control when the thing being
-    # compared is a drafter rather than the model's prose.
+    # shift, and the streams diverge. The control for that is REPEATS at a
+    # pinned seed -- NOT flattening the sampler, which would move the run into
+    # a decoding regime nobody serves and can invert which setting looks best.
     ap.add_argument("--temp", type=float, default=None,
-                    help="sampling temperature; 0 for a deterministic A/B "
-                         "(default: leave to the sampler cascade)")
+                    help="sampling temperature; use the model's vendor-recommended "
+                         "value. 0 is REFUSED -- see the header (default: leave to "
+                         "the sampler cascade)")
+    ap.add_argument("--top-p", type=float)
+    ap.add_argument("--top-k", type=int)
+    ap.add_argument("--min-p", type=float)
     ap.add_argument("--lora", type=Path, action="append", metavar="PATH",
                     help="LoRA adapter .gguf, repeatable; must be converted for "
                          "THIS base (llama.cpp rejects an arch mismatch)")
@@ -200,6 +213,11 @@ def main() -> None:
                     help="raw llama-server flag+value as ONE quoted string, "
                          "repeatable, e.g. --arg '--spec-draft-p-min 0.5'")
     args = ap.parse_args()
+    if args.temp is not None and args.temp == 0:
+        ap.error("--temp 0 is not a valid measurement setting in this repo: greedy "
+                 "is a different decoding regime, so any tuning conclusion drawn "
+                 "there can point at the wrong setting. Use the model's "
+                 "vendor-recommended sampling and pin --seed for comparability.")
     if args.lora_ab and not args.lora:
         ap.error("--lora-ab needs at least one --lora to toggle")
 
@@ -269,8 +287,8 @@ def main() -> None:
                 print(f"[probe] A/B draft acceptance: off={fmt(a_off)} on={fmt(a_on)}"
                       "  (a collapse means the draft path is UNADAPTED)")
             # Identical text is proof the adapter did nothing; differing text is
-            # only consistent with it working, so run --temp 0 before believing
-            # either direction.
+            # only consistent with it working, so repeat at a pinned seed before
+            # believing either direction.
             if not off_text and not on_text:
                 # Distinct from "no effect": there is nothing to compare, so the
                 # check did not run. Reporting no-effect here would be a pass

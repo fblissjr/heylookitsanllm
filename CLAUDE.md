@@ -68,7 +68,9 @@ moves the distribution, and is measured on n=1 ADAPTER -- a heavy task adapter (
 256, alpha 512) ERASED the win outright: 65.3% -> 39.2% acceptance, +10.5% -> -4.3%
 tok/s on Qwen3.6-27B-MTP Q4_K_XL. A light style/domain adapter should erode it less;
 untested (needs a second qwen35 adapter: `gguf_probe.py <mtp-gguf> --lora <a>.gguf
---lora-ab --spec-type draft-mtp --temp 0`). `--spec-type` is a SPAWN flag while `lora`
+--lora-ab --spec-type draft-mtp` at the model's VENDOR-RECOMMENDED sampling --
+never temp 0, which the probe refuses; greedy is a different decoding regime and
+tuning there can point at the wrong setting). `--spec-type` is a SPAWN flag while `lora`
 is per-REQUEST, so one process serving both kinds of traffic cannot suit both --
 leave spec ON, and note that conclusion does NOT rest on the n=1 number: a lighter
 adapter collapses acceptance less, which only makes spec decode MORE worth having on
