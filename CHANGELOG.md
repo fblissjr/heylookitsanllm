@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.1]
+
+### Fixed
+
+- **All 8 confirmed /code-review findings on v1.62.0, plus the /unload and
+  DELETE ride-alongs.** The reload route: every unload now runs via
+  `asyncio.to_thread` (the drain can wait up to 30s on active generations
+  whose SSE delivery the event loop itself drives -- running it ON the
+  loop guaranteed the full freeze and then a force-unload under an active
+  Metal command buffer); a pinned model is a 409 with the pin reason
+  (was an opaque 500), on /reload, /unload AND DELETE (checked BEFORE the
+  config row is deleted); a load already in flight is refused with 409
+  instead of silently joined-and-misreported (`router.is_loading`, since
+  unload_model cannot distinguish 'not loaded' from 'loading'); and the
+  route calls `reload_config()` first so a hand-edited models.toml is
+  picked up -- which also let the now-caller-less
+  `router.reload_single_model` be deleted. The observed-resident line:
+  fetches metrics with `force_refresh` (the 30s cache predates exactly
+  the load the line exists to reveal), treats the collector's 0.0
+  failure sentinel as no-reading instead of rendering "0.0 GiB
+  measured", and is built by the same row() helper as the estimate rows
+  so a restyle cannot fork its markup. Plus the contradictory TODO
+  sentence.
+
 ## [1.62.0]
 
 ### Added

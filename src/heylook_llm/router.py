@@ -710,15 +710,12 @@ class ModelRouter:
             self._pinned.discard(model_id)
             logging.info(f"Unpinned model: {model_id} (pinned: {self._pinned})")
 
-    def reload_single_model(self, model_id: str) -> None:
-        """Reload config for one model without clearing entire cache.
-
-        If the model is currently loaded, it gets unloaded and the new config
-        is stored. It does NOT auto-reload -- the caller should use get_provider()
-        when they want it loaded again.
-        """
-        # Reload config from file first
-        self.reload_config()
-
-        # Unload if currently loaded (will be re-loaded with new config on next request)
-        self.unload_model(model_id)
+    def is_loading(self, model_id: str) -> bool:
+        """Whether a load of this model is in flight (capacity reserved but
+        the provider not yet published to ``providers``). The reload route
+        refuses on this instead of silently JOINING the in-flight load and
+        reporting a reload that never happened -- unload_model returns False
+        for a loading model (it's not in ``providers`` yet), so without this
+        check the route cannot tell 'not loaded' from 'loading right now'."""
+        with self.cache_lock:
+            return model_id in self._loading

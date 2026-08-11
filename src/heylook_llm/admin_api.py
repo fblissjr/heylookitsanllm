@@ -304,10 +304,40 @@ async def _load_and_warm(router, model_id: str, warm: bool) -> dict:
     ),
 )
 async def reload_model(model_id: str, request: Request, warm: bool = False):
+    import asyncio
+
     router = request.app.state.router_instance
-    # A reload of an unloaded model is just a load -- unload_model returning
-    # False (not loaded) is not an error here.
-    router.unload_model(model_id)
+    # Re-read models.toml first: the v3 editor flow has already
+    # reload_config'd after its PATCH, but a hand-edit of the file has not --
+    # without this, "reload" would rebuild the provider from stale config.
+    try:
+        await asyncio.to_thread(router.reload_config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Config reload failed: {e}")
+    # A load already in flight would be silently JOINED by _load_and_warm
+    # (built from the pre-save config snapshot) while this route reports a
+    # reload that never happened -- refuse honestly instead. Best-effort:
+    # a load STARTING between this check and the load below still joins;
+    # closing that fully would mean holding the per-model load lock across
+    # the async boundary, which is not worth the machinery for an admin op.
+    if router.is_loading(model_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A load of '{model_id}' is already in flight; "
+                   f"reload after it completes.",
+        )
+    try:
+        # to_thread: the unload drain can wait up to 30s on active
+        # generations, and running it on the event loop would freeze the
+        # very SSE streams it is waiting to drain (guaranteed timeout +
+        # force-unload under an active Metal command buffer).
+        # A reload of an unloaded model is just a load -- unload_model
+        # returning False (not loaded) is not an error here.
+        await asyncio.to_thread(router.unload_model, model_id)
+    except RuntimeError as e:
+        # Pinned (RLM job / j-space analysis in progress): the caller can
+        # act on this -- it is a conflict, not a server fault.
+        raise HTTPException(status_code=409, detail=str(e))
     return await _load_and_warm(router, model_id, warm)
 
 
@@ -317,11 +347,20 @@ async def reload_model(model_id: str, request: Request, warm: bool = False):
     description="Explicitly unload a model from the LRU cache.",
 )
 async def unload_model(model_id: str, request: Request):
+    import asyncio
+
     router = request.app.state.router_instance
-    if router.unload_model(model_id):
+    # Same two mechanisms as /reload (ride-along fixes, same review): the
+    # unload drain must not run ON the event loop (it waits on generations
+    # whose SSE delivery the loop drives), and a pinned model is a 409 the
+    # caller can act on, not a raw 500.
+    try:
+        unloaded = await asyncio.to_thread(router.unload_model, model_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if unloaded:
         return {"status": "unloaded", "model_id": model_id}
-    else:
-        return {"status": "not_loaded", "model_id": model_id}
+    return {"status": "not_loaded", "model_id": model_id}
 
 
 # --- Catch-all routes (LAST -- {model_id:path} is greedy) ---
@@ -384,11 +423,18 @@ async def update_model_config(model_id: str, request: Request, updates: ModelUpd
     description="Remove a model from configuration. Model files stay on disk.",
 )
 async def remove_model_config(model_id: str, request: Request):
+    import asyncio
+
     service = _get_service(request)
     router = request.app.state.router_instance
 
-    # Unload if currently loaded
-    router.unload_model(model_id)
+    # Unload if currently loaded -- off the event loop, and pinned = 409
+    # BEFORE the config row is deleted (removing a model an RLM job is
+    # actively running would be the worse half of the failure).
+    try:
+        await asyncio.to_thread(router.unload_model, model_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     if not service.remove_config(model_id):
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")

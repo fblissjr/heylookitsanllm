@@ -132,6 +132,9 @@ class MockRouter:
     def reload_config(self):
         pass
 
+    def is_loading(self, model_id):
+        return False
+
     def clear_cache(self):
         pass
 

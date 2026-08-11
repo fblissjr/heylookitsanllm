@@ -223,14 +223,18 @@ function buildFitMeter({ model, overrides, onGate }) {
   async function refreshObserved() {
     if (!model.loaded) return;
     try {
-      const metrics = await api.systemMetrics();
+      // force_refresh: the metrics snapshot is 30s-cached, and right after a
+      // (re)load the cached entry predates it -- the one moment this line
+      // exists for is exactly when the cache is wrong.
+      const metrics = await api.systemMetrics(true);
       const mb = metrics?.models?.[model.id]?.memory_mb;
-      if (mb == null) return;
+      // 0.0 is the collector's measurement-FAILED sentinel, not a reading --
+      // rendering "0.0 GiB measured" would be the opposite of calibration.
+      if (!mb) return;
+      // Built by the same row() helper as the estimate rows above, so a
+      // restyle can't silently fork this line's markup.
       observedEl.replaceChildren(
-        createEl('span', { class: 'cfg-fit__label' }, ['Resident now']),
-        createEl('span', { class: 'cfg-fit__value' }, [gib(mb / 1024)]),
-        createEl('span', { class: 'muted small' }, ['measured after load']),
-      );
+        ...row('Resident now', gib(mb / 1024), 'measured after load').children);
       observedEl.hidden = false;
     } catch { /* stays hidden */ }
   }

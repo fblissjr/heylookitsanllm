@@ -155,3 +155,32 @@ class TestAdminReload:
     def test_reload_unknown_model_400(self, client):
         resp = client.post("/v1/admin/models/nope/reload?warm=true")
         assert resp.status_code == 400
+
+    def test_reload_pinned_model_409s_with_the_reason(self, client, mock_router, monkeypatch):
+        # A pinned model (RLM job / j-space analysis) is a CONFLICT the caller
+        # can act on -- previously the RuntimeError escaped as an opaque 500.
+        def _pinned(model_id, force=False):
+            raise RuntimeError(f"Model '{model_id}' is pinned (batch job in progress).")
+        monkeypatch.setattr(mock_router, "unload_model", _pinned)
+        resp = client.post("/v1/admin/models/test-mlx-model/reload")
+        assert resp.status_code == 409
+        assert "pinned" in resp.json()["detail"]
+
+    def test_reload_refuses_while_a_load_is_in_flight(self, client, mock_router, monkeypatch):
+        # unload_model cannot see an in-flight load (the provider isn't
+        # published yet), so without this refusal the route would silently
+        # JOIN the old-config load and report a reload that never happened.
+        monkeypatch.setattr(mock_router, "is_loading",
+                            lambda mid: mid == "test-mlx-model")
+        resp = client.post("/v1/admin/models/test-mlx-model/reload")
+        assert resp.status_code == 409
+        assert "in flight" in resp.json()["detail"]
+
+    def test_unload_pinned_model_409s_too(self, client, mock_router, monkeypatch):
+        # Ride-along: /unload shared the raw-500 mechanism.
+        def _pinned(model_id, force=False):
+            raise RuntimeError(f"Model '{model_id}' is pinned (batch job in progress).")
+        monkeypatch.setattr(mock_router, "unload_model", _pinned)
+        resp = client.post("/v1/admin/models/test-mlx-model/unload")
+        assert resp.status_code == 409
+        assert "pinned" in resp.json()["detail"]

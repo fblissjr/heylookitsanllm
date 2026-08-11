@@ -619,9 +619,8 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   heart): `heylook_llm.ram_fit` (extracted from `ram_report.py`, which now
   renders it), `POST /v1/admin/models/{id}/fit` with the provider-derived
   `hard_working_set` (MLX-FAIL/gguf-WARN), v3 Memory-fit section + Load
-  gating on FAIL. Fit stays server-computed. Left for later: the §5
-  "observed after load" line (swap the estimate row for
-  `/v1/system/metrics` `models[id].memory_mb` once loaded).
+  gating on FAIL. Fit stays server-computed. The §5 "observed after load"
+  line landed in v1.62.0.
 - [x] **Server-owned `POST /v1/admin/models/{id}/reload?warm=true` -- DONE
   v1.62.0** (P2, ask #4): one route sharing load's exact body (warm contract
   can't fork); v3's "Reload now" points at it. The fit meter's §5 observed
