@@ -28,6 +28,10 @@ SAMPLE_VALUES = {
     "cache_ram_mb": 512,
     "sleep_idle_seconds": 30,
     "load_mode": "mlock",
+    "spec_draft_p_min": 0.9,
+    "n_cpu_moe": 8,
+    "cpu_moe": True,  # bare flag -- no value follows it in argv
+    "override_tensor": "exps=CPU",
 }
 
 
@@ -111,3 +115,45 @@ def test_extra_args_are_appended_last():
          "extra_args": ["--ctx-size", "9999"]}
     )
     assert argv[-2:] == ["--ctx-size", "9999"]
+
+
+@pytest.mark.unit
+def test_cpu_moe_is_a_bare_flag_with_no_value():
+    """`-cmoe` takes NO argument in llama.cpp. Emitting a value after it would
+    make llama-server read the next token as a positional and fail at spawn --
+    a load failure, not a misconfiguration."""
+    base = _build_argv({"model_path": "/tmp/m.gguf"})
+    with_flag = _build_argv({"model_path": "/tmp/m.gguf", "cpu_moe": True})
+    # Exactly one token longer: the flag itself and nothing else. Checking the
+    # length delta rather than the following token, because the flag can land
+    # last in argv (nothing to inspect) and a value that happened to start with
+    # "-" would slip past a token check.
+    assert len(with_flag) == len(base) + 1, (
+        f"-cmoe should add exactly one token; added {len(with_flag) - len(base)}: "
+        f"{[a for a in with_flag if a not in base]}"
+    )
+    assert "-cmoe" in with_flag
+
+
+@pytest.mark.unit
+def test_cpu_moe_false_emits_nothing():
+    """A bare flag is presence-signalled: False must not emit `-cmoe`, or
+    'expert offload off' would silently mean 'all experts on CPU'."""
+    assert "-cmoe" not in _build_argv(
+        {"model_path": "/tmp/m.gguf", "cpu_moe": False}
+    )
+
+
+@pytest.mark.unit
+def test_p_min_zero_is_emitted_not_swallowed():
+    """0.0 is a real setting (keep every draft) AND llama.cpp's default, so
+    truthiness would make an explicit 0.0 indistinguishable from unset."""
+    argv = _build_argv({"model_path": "/tmp/m.gguf", "spec_draft_p_min": 0.0})
+    assert argv[argv.index("--spec-draft-p-min") + 1] == "0.0"
+
+
+@pytest.mark.unit
+def test_n_cpu_moe_zero_is_emitted_not_swallowed():
+    """0 = offload no layers, an explicit choice distinct from unset."""
+    argv = _build_argv({"model_path": "/tmp/m.gguf", "n_cpu_moe": 0})
+    assert argv[argv.index("-ncmoe") + 1] == "0"

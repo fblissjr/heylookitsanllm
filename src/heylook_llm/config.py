@@ -384,7 +384,11 @@ class MLXModelConfig(BaseModel):
     # Process-wide once the gate exists (first provider created wins), so it
     # is infrastructure rather than a per-model tuning control.
     max_queue_depth: int = Field(
-        default=8, ge=1, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+        default=8, ge=1,
+        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
+                           "reason": "process-wide: the first provider created "
+                                     "wins, so reloading this model cannot "
+                                     "change it"})
     # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
@@ -558,6 +562,47 @@ class GGUFModelConfig(BaseModel):
         default=None, ge=512,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size"},
     )
+    # --spec-draft-p-min: minimum probability for a drafted token to be kept.
+    # NOT a minor tuning knob -- it INTERACTS with spec_draft_n_max and the
+    # interaction inverts. Measured on gemma-4 12B MTP: n_max=4 is the WORST
+    # setting at p_min=0.0 (52.1 tok/s, -13% vs spec off) and the BEST at
+    # p_min=0.9 (69.3, +15.7%), because p_min binds first and n_max stops being
+    # the operative constraint. So a one-dimensional n_max sweep does not find
+    # a smaller win, it finds a DIFFERENT and wrong optimum -- tune the two
+    # together or not at all.
+    # No defensible global default: p_min=0.9 is +15.7% on gemma-4 12B and
+    # -11% on Qwen3.6-27B (it pruned nearly every draft there). Per-model.
+    spec_draft_p_min: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--spec-draft-p-min"},
+    )
+    # Expert offload. On UNIFIED memory this does not shrink total RAM -- it
+    # moves those bytes out of the Metal working set, and that math onto CPU
+    # cores. The lever for a model that fits in RAM but crowds out the KV
+    # cache. Consider -ctk/-ctv KV quantization first: for a headroom problem
+    # it is usually the better trade and a smaller change.
+    # NB `-ncmoe` past the model's layer count is a SILENT no-op, not an
+    # error -- the block regexes simply never match.
+    n_cpu_moe: Optional[int] = Field(
+        default=None, ge=0,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ncmoe",
+                           "ui": "advanced"},
+    )
+    # All expert tensors to CPU. Equivalent to n_cpu_moe >= n_layer, kept
+    # separate because it needs no layer count to express. A BARE flag.
+    cpu_moe: Optional[bool] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cmoe",
+                           "shape": "flag", "ui": "advanced"},
+    )
+    # Raw tensor-buffer overrides: the unrestricted form of the two above. A
+    # pattern that matches nothing is a silent no-op, so prefer n_cpu_moe.
+    override_tensor: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ot",
+                           "ui": "advanced"},
+    )
     # -ngl; 999 = everything on GPU
     n_gpu_layers: int = Field(
         default=999,
@@ -598,13 +643,26 @@ class GGUFModelConfig(BaseModel):
     )
     # else required via $HEYLOOK_LLAMA_SERVER
     server_binary: Optional[str] = Field(
-        default=None, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+        default=None,
+        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
+                           "reason": "which llama-server binary runs; set via "
+                                     "$HEYLOOK_LLAMA_SERVER or models.toml, "
+                                     "not per-model at runtime"})
     host: str = Field(
-        default="127.0.0.1", json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+        default="127.0.0.1",
+        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
+                           "reason": "subprocess plumbing, not a model setting"})
     # 0 = pick a free port at load
-    port: int = Field(default=0, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+    port: int = Field(
+        default=0,
+        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
+                           "reason": "0 picks a free port at load; subprocess "
+                                     "plumbing, not a model setting"})
     startup_timeout_s: float = Field(
-        default=300.0, json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY})
+        default=300.0,
+        json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
+                           "reason": "how long to wait for THIS spawn; changing "
+                                     "it cannot affect a process already up"})
     # Raw passthrough flags. requires_reload because they are spawn argv --
     # and note this is remote argv injection into a subprocess for anyone with
     # admin PATCH access, so a UI should not make it a casual free-text field.

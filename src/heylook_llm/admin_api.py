@@ -14,10 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from heylook_llm.auth import require_admin_token
 from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.config import (
+    PROVIDER_CONFIG_CLASSES,
     AdminModelListResponse,
     AdminModelResponse,
     AdminValidationResult,
     BulkDefaultSamplerRequest,
+    configurable_fields,
     ModelImportRequest,
     ModelScanRequest,
     ModelStatusResponse,
@@ -498,6 +500,87 @@ admin_ops_router = APIRouter(
     tags=["Admin"],
     dependencies=[Depends(require_admin_token)],
 )
+
+
+def _flatten_optional(schema: dict) -> dict:
+    """Pull the real type out of pydantic's `anyOf: [T, null]` for Optional[T].
+
+    Every optional field arrives wrapped, and a client should not have to
+    understand that encoding to render a number input.
+    """
+    branches = schema.get("anyOf")
+    if not branches:
+        return schema
+    real = [b for b in branches if b.get("type") != "null"]
+    return real[0] if len(real) == 1 else schema
+
+
+def _field_options(cls) -> list[dict]:
+    """The editable options for one provider config class.
+
+    Built from ``model_json_schema()`` rather than by introspecting
+    annotations: pydantic already emits type, bounds, enum choices and the
+    default, AND merges ``json_schema_extra``, so `effect`/`arg`/`ui` ride
+    along for free. Hand-rolled introspection here would be a fourth thing to
+    keep in step with the field declarations.
+    """
+    schema = cls.model_json_schema()
+    properties = schema.get("properties", {})
+    out = []
+    for name in sorted(configurable_fields(cls)):
+        prop = dict(properties.get(name, {}))
+        inner = _flatten_optional(prop)
+        entry = {
+            "name": name,
+            "effect": prop.get("effect"),
+            "type": inner.get("type"),
+            "default": prop.get("default"),
+            "required": name in schema.get("required", []),
+        }
+        for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum"):
+            if key in inner:
+                entry[key] = inner[key]
+        # Pass-through hints declared on the field: `arg` (the flag actually
+        # emitted -- pinned to the argv builder by a test), `ui`, `shape`
+        # ("flag" = a bare flag, no value), and `reason` (why a
+        # load_time_only field is not editable, which the class cannot imply).
+        for key in ("arg", "ui", "shape", "reason"):
+            if key in prop:
+                entry[key] = prop[key]
+        out.append(entry)
+    return out
+
+
+@admin_ops_router.get(
+    "/model-options",
+    summary="Model Option Schema",
+    description=(
+        "Every settable config option per provider, with the effect class that "
+        "says WHEN a change takes effect: per_request (live), applies_live "
+        "(re-read while loaded), requires_reload (needs a respawn -- confirm "
+        "and name the cost), load_time_only (cannot be changed, not even by "
+        "reloading), descriptive (changes what we advertise, not the process). "
+        "Derived from the provider config classes, so a new field appears here "
+        "without touching this route."
+    ),
+)
+async def get_model_options():
+    """The schema a UI needs to render per-model defaults generically.
+
+    This is deliberately NOT under /v1/admin/models: that router owns
+    `/{model_id:path}`, which would capture this path as a model id.
+
+    It is also the first consumer that can distinguish all the effect classes.
+    Both in-process consumers collapse them -- the reload set to a binary, the
+    import allowlist to "not identity" -- so until something reads `effect`
+    per field, a misclassification is invisible.
+    """
+    return {
+        "providers": {
+            name: {"fields": _field_options(cls)}
+            for name, cls in PROVIDER_CONFIG_CLASSES.items()
+        }
+    }
 
 
 @admin_ops_router.post(

@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.0]
+
+### Added
+
+- **`GET /v1/admin/model-options`** -- every settable default per provider
+  (mlx 25, mlx_embedding 2, gguf 24), each with the effect class that says WHEN
+  a change takes effect, plus type, bounds, enum choices, default, and the
+  `arg` spelling. Derived from the provider config classes via
+  `model_json_schema()`, so a new field appears without touching the route.
+  Deliberately NOT under `/v1/admin/models`, whose `/{model_id:path}` would
+  capture it as a model id. This is the first consumer that can distinguish
+  all six effect classes: the reload set collapses them to a binary and the
+  import allowlist to "not identity", so until something reads `effect` per
+  field, a misclassification is invisible.
+- `load_time_only` fields now carry a `reason`. They render disabled, and the
+  class genuinely cannot imply why -- `max_queue_depth` is fixed because it is
+  process-wide, `port` for an unrelated reason.
+- **`spec_draft_p_min`** (`--spec-draft-p-min`) on GGUFModelConfig. Measured on
+  gemma-4 12B MTP: the shipped default is +1.0% over spec-off, the best
+  reachable WITHOUT this field is +6.7%, and the true optimum
+  (n_max=4, p_min=0.9) is +15.7% -- so roughly 14.5% was unreachable because
+  the config surface could not express it. The two levers INTERACT and the
+  interaction inverts: n_max=4 is the worst setting at p_min=0.0 and the best
+  at p_min=0.9, so a one-dimensional n_max sweep finds a different and wrong
+  optimum. No defensible global default -- p_min=0.9 is -11% on Qwen3.6-27B.
+- **Expert offload**: `n_cpu_moe` (`-ncmoe`), `cpu_moe` (`-cmoe`, a bare flag)
+  and `override_tensor` (`-ot`). On unified memory these do not shrink RAM --
+  they move bytes out of the Metal working set, and that math onto CPU cores.
+  Unmeasured here; consider `-ctk/-ctv` KV quantization first for a headroom
+  problem. `-ncmoe` past the layer count is a silent no-op, not an error.
+
 ## [1.52.0]
 
 ### Added

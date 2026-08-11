@@ -261,7 +261,18 @@ def test_allowlist_widening_added_exactly_the_dropped_fields():
         f"the derived allowlist DROPPED {sorted(previously_allowed - now)} -- "
         f"a field that used to import silently stopped importing"
     )
-    assert sorted(now - previously_allowed) == [
-        "cache_ram_mb", "default_sampler", "enable_thinking", "load_mode",
-        "n_gpu_layers_draft", "sleep_idle_seconds",
-    ]
+    # The five fields the derivation FIXED, plus default_sampler. These are the
+    # regression -- each one used to be silently dropped on import.
+    for field in ("cache_ram_mb", "enable_thinking", "load_mode",
+                  "n_gpu_layers_draft", "sleep_idle_seconds", "default_sampler"):
+        assert field in now, f"`{field}` was dropped on import before; it must stay settable"
+
+    # Deliberately NOT an exact frozen list of the difference. The original
+    # version pinned one, and adding four legitimate fields (spec_draft_p_min,
+    # n_cpu_moe, cpu_moe, override_tensor) broke it with no safety gained --
+    # a hand-maintained list of field names that must be edited whenever a
+    # field is added is the very pattern this whole change removed. The real
+    # invariants are: nothing is dropped (above), and the allowlist is exactly
+    # the non-identity fields of the class (below), which stays true forever.
+    cls = PROVIDER_CONFIG_CLASSES["gguf"]
+    assert now == frozenset(cls.model_fields) - {"model_path"}

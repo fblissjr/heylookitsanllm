@@ -153,6 +153,20 @@ class LlamaServerProvider(BaseProvider):
             args += ["--spec-type", cfg["spec_type"]]
         if cfg.get("spec_draft_n_max"):
             args += ["--spec-draft-n-max", str(cfg["spec_draft_n_max"])]
+        # `is not None`: 0.0 is a real setting (keep every draft), and it is
+        # also llama.cpp's default -- so truthiness would make "explicitly 0.0"
+        # indistinguishable from unset. Tune this WITH spec_draft_n_max; the
+        # two interact and the interaction inverts (see the config docstring).
+        if cfg.get("spec_draft_p_min") is not None:
+            args += ["--spec-draft-p-min", str(cfg["spec_draft_p_min"])]
+        # Expert offload. `is not None` again: 0 means "offload no layers",
+        # which is a meaningful explicit choice, not an absent one.
+        if cfg.get("n_cpu_moe") is not None:
+            args += ["-ncmoe", str(cfg["n_cpu_moe"])]
+        if cfg.get("cpu_moe"):
+            args += ["-cmoe"]  # BARE flag: llama.cpp takes no value for this
+        if cfg.get("override_tensor"):
+            args += ["-ot", cfg["override_tensor"]]
         # `is not None`, not truthiness: 0 is meaningful for both (keep the
         # drafter off the GPU / disable the prompt cache), and -1 means
         # "unlimited" for -cram.
