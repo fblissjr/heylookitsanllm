@@ -831,27 +831,38 @@ function buildEditEl(ctx, msg) {
   const cancel = () => { s.editingId = null; renderMessages(ctx); };
 
   const save = async (regenerateAfter, continueAfter = false) => {
+    // The truncate-then-stream branches are destructive; with a stream
+    // already running they mangle the thread (the truncation commits, the
+    // new stream silently no-ops, the old one paints into a detached node).
+    // Same guard regenerate() and deleteMessage() carry.
+    if ((regenerateAfter || continueAfter) && s.stream) return;
+    // Everything below is anchored to the conversation the edit belongs to,
+    // captured NOW: s.activeId read after an await can be a different
+    // conversation (switch mid-PUT), and deleteMessagesAfter against it
+    // would irreversibly truncate the wrong thread.
+    const convId = s.activeId;
     const next = textarea.value;
     try {
       if (next !== msg.content) {
-        const updated = await api.updateMessage(s.activeId, msg.id, { content: next });
+        const updated = await api.updateMessage(convId, msg.id, { content: next });
         if (!ctx.alive) return;
         // keep content AND content_blocks in sync with the server's view
         msg.content = updated.content;
         msg.content_blocks = updated.content_blocks;
       }
+      if (s.activeId !== convId) return; // switched away mid-save: edit saved, nothing destructive
       s.editingId = null;
       if (regenerateAfter) {
-        await truncateAfter(ctx, msg.position);
-        if (!ctx.alive) return;
+        await truncateAfter(ctx, msg.position, convId);
+        if (!ctx.alive || s.activeId !== convId) return;
         renderMessages(ctx);
         startStream(ctx);
       } else if (continueAfter) {
         // Continue FROM the edited text: everything after this message goes
         // (it belongs to the pre-edit tail), then the model finishes the
         // message itself -- prefill semantics, current model + settings.
-        await truncateAfter(ctx, msg.position);
-        if (!ctx.alive) return;
+        await truncateAfter(ctx, msg.position, convId);
+        if (!ctx.alive || s.activeId !== convId) return;
         renderMessages(ctx);
         startStream(ctx, msg);
       } else {
@@ -876,9 +887,11 @@ function buildEditEl(ctx, msg) {
   // Continuation works for BOTH roles (an assistant message is finished; a
   // user message is co-written) -- but user-role continuation is MLX-only:
   // llama-server prefills assistant turns and has no user-turn spelling, so
-  // the button hides rather than offering a guaranteed 400.
+  // the button hides rather than offering a guaranteed 400. FAIL CLOSED
+  // while the provider is unknown (fetch pending or failed): showing the
+  // button on a guess costs a destructive truncate before the 400 lands.
   const provider = s.providerById?.get(s.modelSelect.value);
-  if (msg.id && (msg.role === 'assistant' || provider !== 'gguf')) {
+  if (msg.id && (msg.role === 'assistant' || (provider != null && provider !== 'gguf'))) {
     const saveContinue = createEl('button', {
       class: 'btn btn--sm btn--primary',
       title: 'Save, drop everything after, and let the model finish this message',
@@ -909,18 +922,24 @@ function scrollMessages(ctx, force = false) {
 // message mutations (position-based truncation)
 // ---------------------------------------------------------------------------
 
-async function truncateAfter(ctx, position) {
+async function truncateAfter(ctx, position, convId) {
   const s = ctx.state;
-  await api.deleteMessagesAfter(s.activeId, position);
-  if (!ctx.alive) return;
+  // convId is the conversation this truncation was DECIDED against, captured
+  // by the caller before any await -- s.activeId here could already be a
+  // different conversation (switch mid-flight), and position-based deletion
+  // against the wrong one is irreversible.
+  await api.deleteMessagesAfter(convId, position);
+  if (!ctx.alive || s.activeId !== convId) return; // server truncated; local state belongs to another conv now
   s.messages = s.messages.filter((m) => m.position <= position);
 }
 
 async function regenerate(ctx, msg) {
-  if (ctx.state.stream) return;
+  const s = ctx.state;
+  if (s.stream) return;
+  const convId = s.activeId; // anchor the truncation before any await
   try {
-    await truncateAfter(ctx, msg.position - 1);
-    if (!ctx.alive) return;
+    await truncateAfter(ctx, msg.position - 1, convId);
+    if (!ctx.alive || s.activeId !== convId) return;
     renderMessages(ctx);
     scrollMessages(ctx, true);
     startStream(ctx);
@@ -930,10 +949,12 @@ async function regenerate(ctx, msg) {
 }
 
 async function deleteMessage(ctx, msg) {
-  if (ctx.state.stream) return;
+  const s = ctx.state;
+  if (s.stream) return;
+  const convId = s.activeId; // anchor the truncation before any await
   try {
-    await truncateAfter(ctx, msg.position - 1);
-    if (!ctx.alive) return;
+    await truncateAfter(ctx, msg.position - 1, convId);
+    if (!ctx.alive || s.activeId !== convId) return;
     renderMessages(ctx);
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Delete failed: ${err.message}`, true);
@@ -1250,6 +1271,7 @@ function startStream(ctx, continueMsg = null) {
     targetConvId: s.activeId,
     continueMsg,
     baseContent,
+    baseThinking: continueMsg?.thinking ?? '',
     content: '',
     thinking: '',
     contentDirty: false,
@@ -1296,7 +1318,9 @@ function paintStream(ctx) {
   if (stream.thinkingDirty) {
     stream.thinkingDirty = false;
     stream.els.thinkingEl.hidden = false;
-    stream.els.thinkingBody.textContent = stream.thinking;
+    // Same seam rule as content: a continuation's seeded prior thinking must
+    // survive the first new thinking delta, not vanish until finishStream.
+    stream.els.thinkingBody.textContent = stream.baseThinking + stream.thinking;
   }
   scrollMessages(ctx);
 }

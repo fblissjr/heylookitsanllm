@@ -300,11 +300,23 @@ class UnifiedTextStrategy:
         enable_thinking = _resolve_enable_thinking(effective_request)
 
         if self.is_vlm:
-            prompt = vlm_apply_chat_template(
-                processor, model.config, messages, num_images=0,
-                enable_thinking=enable_thinking,
-                continue_final_message=continuing,
-            )
+            try:
+                prompt = vlm_apply_chat_template(
+                    processor, model.config, messages, num_images=0,
+                    enable_thinking=enable_thinking,
+                    continue_final_message=continuing,
+                )
+            except ValueError as e:
+                # Same mapping as the text branch below: a template that
+                # rewrites the final message during continuation is a
+                # user-actionable 400, not a 500 (transformers raises a raw
+                # ValueError for it).
+                if continuing:
+                    raise InvalidGenerationRequest(
+                        f"Cannot continue the final message with this "
+                        f"model's chat template: {e}"
+                    ) from e
+                raise
         else:
             base_kwargs: dict = {"tokenize": False,
                                  "add_generation_prompt": not continuing}
@@ -1158,19 +1170,37 @@ class MLXProvider(BaseProvider):
                 msg_dict = _reconstruct_thinking(msg_dict)
                 messages_for_template.append(msg_dict)
 
-            # Prefill: if last message is assistant, don't add generation prompt
-            add_gen_prompt = resolve_add_generation_prompt(messages_for_template)
+            # Same continuation resolution as the single-request path
+            # (is_continuation: auto trailing-assistant, or the explicit
+            # flag) -- before v1.61.1 this loop only suppressed the
+            # generation prompt, the closed-turn half-state the single path
+            # was cured of in v1.61.0.
+            continuing = req.is_continuation()
+            template_kwargs: dict = {"tokenize": False,
+                                     "add_generation_prompt": not continuing}
+            if continuing:
+                template_kwargs["continue_final_message"] = True
 
             try:
                 prompt = tokenizer.apply_chat_template(
-                    messages_for_template,
-                    tokenize=False,
-                    add_generation_prompt=add_gen_prompt
+                    messages_for_template, **template_kwargs,
                 )
+            except TypeError as te:
+                if continuing:
+                    raise InvalidGenerationRequest(
+                        "This model's template stack cannot continue the "
+                        "final message (continue_final_message unsupported)."
+                    ) from te
+                raise
             except ValueError as e:
                 err = missing_template_error(tokenizer, self.model_id)
                 if err is not None:
                     raise err from e
+                if continuing:
+                    raise InvalidGenerationRequest(
+                        f"Cannot continue the final message with this "
+                        f"model's chat template: {e}"
+                    ) from e
                 raise
 
             tokens = tokenizer.encode(prompt)

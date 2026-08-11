@@ -529,6 +529,16 @@ async def _stream_messages(
             for event_str in translator.process_chunk(chunk.text, token_id=token_id):
                 yield event_str
 
+    except InvalidGenerationRequest as e:
+        # Provider request-validation guards fire at first next(), after
+        # headers flushed -- type the in-band event as the CLIENT error it is
+        # (Anthropic's invalid_request_error), not an api_error.
+        yield translator._sse("error", {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": str(e)},
+        })
+        return
+
     except GenerationFailed as e:
         # Mid-stream failure: headers already sent -- Anthropic-style error
         # event, never content.

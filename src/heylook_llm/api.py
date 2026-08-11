@@ -1053,6 +1053,25 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
                     yield make_delta(delta_type, text, logprobs_delta)
                     logprobs_delta = None  # Only include logprobs in first delta for this token
 
+    except InvalidGenerationRequest as e:
+        # Provider request-validation guards (audio-on-MLX, the continuation
+        # guards) only fire at first next() -- after HTTP 200 + headers have
+        # flushed -- so a real 400 is impossible here. Type the in-band frame
+        # as the CLIENT error it is; before this branch existed they fell
+        # through to GenerationFailed and read as server faults.
+        log_request_complete(request_id, success=False, error_msg=str(e))
+        diag_event("request_error", request_id=request_id, level="error",
+                   model=chat_request.model, stage="streaming",
+                   tokens_emitted=token_count, **exception_detail(e))
+        error_payload = {"error": {
+            "message": str(e),
+            "type": "invalid_request_error",
+            "code": "invalid_request",
+        }}
+        yield f"data: {json.dumps(error_payload)}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
     except GenerationFailed as e:
         # HTTP 200 + headers were already flushed when streaming began, so a
         # mid-stream failure can only be surfaced in-band. Record it here --

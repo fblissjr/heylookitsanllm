@@ -192,7 +192,13 @@ are unauthenticated.
   fresh assistant turn; gguf 400s on a trailing assistant message, which
   llama-server always continues). The response carries ONLY the continuation
   text on every provider (llama-server's prefill echo is stripped
-  server-side). Not supported with image history or diffusion models (400).
+  server-side; an all-text parts-list prefill is flattened with the same
+  ' '-join rule as MLX and works -- v1.61.1). Not supported with image
+  history or diffusion models (400). STREAMING caveat (v1.61.1): these
+  refusals fire after HTTP 200 + headers have flushed, so they surface as an
+  in-band SSE error frame typed `invalid_request_error` (code
+  `invalid_request`; on `/v1/messages` an Anthropic error event of the same
+  type) -- never `server_error`. Clients should treat that frame as a 400.
   v3's Save & Continue on the message editor uses this: PUT the edit,
   truncate after, stream with `continue_final_message: true`, append into
   the SAME message row (both roles; the button hides for user messages on

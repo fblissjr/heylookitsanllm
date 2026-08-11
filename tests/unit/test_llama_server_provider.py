@@ -548,12 +548,15 @@ class TestContinuationGuards:
         from heylook_llm.config import ChatRequest
         return ChatRequest(model="m", messages=messages, continue_final_message=flag)
 
+    def _payload(self, req):
+        return {"messages": [m.model_dump(exclude_none=True) for m in req.messages]}
+
     def test_user_role_continuation_400s(self):
         from heylook_llm.providers.base import InvalidGenerationRequest
         p = make_provider()
         req = self._req([{"role": "user", "content": "finish my sentence"}], True)
         with pytest.raises(InvalidGenerationRequest, match="assistant turns only"):
-            p._continuation_echo_chars(req)
+            p._continuation_echo_chars(req, self._payload(req))
 
     def test_false_with_trailing_assistant_400s(self):
         from heylook_llm.providers.base import InvalidGenerationRequest
@@ -561,15 +564,47 @@ class TestContinuationGuards:
         req = self._req([{"role": "user", "content": "hi"},
                          {"role": "assistant", "content": "he"}], False)
         with pytest.raises(InvalidGenerationRequest, match="always continues"):
-            p._continuation_echo_chars(req)
+            p._continuation_echo_chars(req, self._payload(req))
 
     def test_auto_trailing_assistant_returns_prefill_length(self):
         p = make_provider()
         req = self._req([{"role": "user", "content": "count"},
                          {"role": "assistant", "content": "1, 2,"}], None)
-        assert p._continuation_echo_chars(req) == 5
+        assert p._continuation_echo_chars(req, self._payload(req)) == 5
 
     def test_no_continuation_returns_zero(self):
         p = make_provider()
         req = self._req([{"role": "user", "content": "hi"}], None)
-        assert p._continuation_echo_chars(req) == 0
+        assert p._continuation_echo_chars(req, self._payload(req)) == 0
+
+    def test_text_parts_prefill_is_flattened_not_refused(self):
+        # /code-review 53b266c finding 1: block-form prefill (what the
+        # Messages converter produces, with no opt-out field) must WORK --
+        # the payload's copy is flattened to the exact measured string so
+        # the positional strip stays exact.
+        p = make_provider()
+        req = self._req([
+            {"role": "user", "content": "count"},
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "1, 2,"},
+                         {"type": "text", "text": "3,"}]},
+        ], None)
+        payload = self._payload(req)
+        chars = p._continuation_echo_chars(req, payload)
+        assert payload["messages"][-1]["content"] == "1, 2, 3,"
+        assert chars == len("1, 2, 3,")
+
+    def test_non_text_parts_continue_unstripped_not_400(self):
+        # No knowable rendered length -> continuation proceeds (llama-server
+        # always continues a trailing assistant turn) with NOTHING stripped,
+        # the pre-v1.61 behavior -- never a new 400 on old traffic.
+        p = make_provider()
+        req = self._req([
+            {"role": "user", "content": "look"},
+            {"role": "assistant",
+             "content": [{"type": "text", "text": "as you can see"},
+                         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]},
+        ], None)
+        payload = self._payload(req)
+        assert p._continuation_echo_chars(req, payload) == 0
+        assert isinstance(payload["messages"][-1]["content"], list)  # untouched

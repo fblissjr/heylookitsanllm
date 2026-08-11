@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.61.1]
+
+### Fixed
+
+- **All 8 confirmed /code-review findings on the v1.61.0 continuation
+  commit** (8 finder angles, ~35 candidates, 10 verified, 8 confirmed; the
+  suspected gguf echo over-strip was REFUTED -- the pinned build renders
+  the prefill verbatim, so the positional strip is exact). The three
+  destructive ones, two of which were pre-existing races in Save &
+  Regenerate that the new Save & Continue inherited: `save()`'s
+  truncate-then-stream paths now carry the same `s.stream` guard as
+  regenerate/delete; every truncation is anchored to the conversation id
+  captured BEFORE the first await (a mid-save conversation switch could
+  irreversibly truncate the NEWLY opened conversation); and the user-role
+  Save & Continue gate fails CLOSED while the provider is unknown
+  (`undefined !== 'gguf'` showed the button on gguf models before the
+  admin fetch resolved -- truncation committed, then the 400 landed).
+  Contract honesty: streaming guard refusals are now typed
+  `invalid_request_error`/`invalid_request` in-band (both APIs; they fire
+  after headers flush, so a real 400 is impossible -- previously they read
+  as `server_error`, spec §4 updated), and gguf auto-continuation no
+  longer 400s an all-text parts-list prefill (the Messages-API block form,
+  which has no opt-out field and streamed fine on v1.60) -- the payload's
+  copy is flattened with MLX's own ' '-join rule so the echo strip stays
+  exact; non-text-part prefills continue unstripped (the v1.60 behavior)
+  with a warning instead of a new 400. Completeness: the batch path now
+  runs the same continuation resolution as the single-request path (it
+  still rendered the closed-turn half-state and silently ignored the
+  flag), the VLM text path maps the continuation-template ValueError to
+  the same 400 as the pure-text branch (was a 500), and a continuation's
+  seeded prior thinking survives the first new thinking delta on screen.
+
 ## [1.61.0]
 
 ### Added

@@ -112,6 +112,24 @@ def test_streaming_preflight_failure_also_error_payload(client, swap_provider):
     assert any("error" in p for p in payloads)
 
 
+def test_streaming_client_error_is_typed_invalid_request(client, swap_provider):
+    # /code-review 53b266c finding 2: provider request-validation guards
+    # (audio-on-MLX, the continuation guards) fire at first next(), after
+    # headers flushed -- a real 400 is impossible, but the in-band frame must
+    # be TYPED as the client error it is, not fall through to server_error.
+    swap_provider(_PreflightFailingProvider(InvalidGenerationRequest(
+        "user-role continuation is not supported on gguf models")))
+    resp = _stream(client)
+    assert resp.status_code == 200  # headers already sent
+    payloads = [json.loads(l[6:]) for l in resp.text.split("\n")
+                if l.startswith("data: ") and l != "data: [DONE]"]
+    errors = [p["error"] for p in payloads if "error" in p]
+    assert errors, f"expected an error payload, got: {payloads}"
+    assert errors[0]["type"] == "invalid_request_error"
+    assert errors[0]["code"] == "invalid_request"
+    assert "continuation" in errors[0]["message"]
+
+
 def test_non_streaming_server_failure_returns_500(client, swap_provider):
     swap_provider(_FailingProvider(GenerationFailed("MLX generation failed: boom")))
     resp = client.post("/v1/chat/completions", json={

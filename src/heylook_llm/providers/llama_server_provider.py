@@ -398,8 +398,12 @@ class LlamaServerProvider(BaseProvider):
             return max(_SSE_READ_TIMEOUT_S, wake_timeout)
         return _SSE_READ_TIMEOUT_S
 
-    def _continuation_echo_chars(self, request: ChatRequest) -> int:
+    def _continuation_echo_chars(self, request: ChatRequest, payload: dict) -> int:
         """Chars of prefill llama-server will ECHO back, to strip from the stream.
+
+        May NORMALIZE ``payload`` in place: an all-text parts-list prefill is
+        flattened to the exact string being measured, so the strip stays
+        positional-and-exact.
 
         llama-server natively continues a trailing assistant message (the
         rendered turn stays open -- verified on the pinned build via
@@ -433,16 +437,29 @@ class LlamaServerProvider(BaseProvider):
         if not request.is_continuation():
             return 0
         content = request.messages[-1].content
-        if not isinstance(content, str):
-            # The strip is positional, so its length must equal EXACTLY what
-            # llama-server renders as the prefill -- knowable only for plain
-            # string content (llama-server flattens part-lists by its own
-            # rules). Refuse rather than guess and mis-cut the stream.
-            raise InvalidGenerationRequest(
-                "continuation requires the final message content to be a "
-                "plain string on gguf models"
-            )
-        return len(content)
+        if isinstance(content, str):
+            return len(content)
+        # Parts-list content (standard for many SDKs, and what the Messages
+        # API converter produces for block-form prefill -- refusing it broke
+        # requests that streamed fine pre-v1.61). The positional strip needs
+        # the EXACT string llama-server renders as prefill, so for all-text
+        # parts we flatten the PAYLOAD's copy ourselves (same ' '-join rule
+        # as the MLX _prepare_messages flatten) and measure that. Non-text
+        # parts in a trailing assistant message have no knowable rendered
+        # length: continuation still happens (llama-server always continues
+        # a trailing assistant turn) but nothing is stripped -- the pre-strip
+        # v1.60 behavior, logged so it is at least visible.
+        parts = content or []
+        if all(getattr(p, "type", None) == "text" for p in parts):
+            flattened = " ".join(getattr(p, "text", None) or "" for p in parts)
+            payload["messages"][-1]["content"] = flattened
+            return len(flattened)
+        logging.warning(
+            f"[GGUF] '{self.model_id}': continuing a trailing assistant message "
+            f"with non-text parts -- prefill echo cannot be measured and is NOT "
+            f"stripped from the response"
+        )
+        return 0
 
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         if self._base_url is None:
@@ -451,7 +468,7 @@ class LlamaServerProvider(BaseProvider):
             payload = self._build_payload(request)
         except SamplerNotFound as e:
             raise InvalidGenerationRequest(str(e))
-        echo_chars = self._continuation_echo_chars(request)
+        echo_chars = self._continuation_echo_chars(request, payload)
 
         http_request = urllib.request.Request(
             self._base_url + "/v1/chat/completions",
