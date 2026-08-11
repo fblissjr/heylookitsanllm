@@ -172,7 +172,11 @@ def run_gen(p, args, label: str, extra: dict) -> tuple:
         **extra})))
     final = chunks[-1]
     thinking = sum(len(c.thinking or "") for c in chunks)
-    print(f"[probe] {label}: {time.time()-t:.1f}s | gen={final.generation_tokens} tok "
+    # prompt= is load-bearing, not decoration: without it a SILENTLY TRUNCATED
+    # prompt (ctx smaller than the input) looks like a legitimate fast run, and
+    # two arms that processed different amounts of context compare as if equal.
+    print(f"[probe] {label}: {time.time()-t:.1f}s | prompt={final.prompt_tokens} "
+          f"| gen={final.generation_tokens} tok "
           f"@ {final.generation_tps:.1f} tok/s | thinking={thinking} ch | "
           f"cached={final.cached_tokens} | draft={final.draft_accepted}/{final.draft_tokens}")
     # THINKING COUNTS AS OUTPUT for the A/B comparison. Comparing `text` alone
