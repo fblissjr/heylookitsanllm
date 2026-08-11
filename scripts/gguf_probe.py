@@ -18,10 +18,12 @@
 # drafter can be A/B'd. Seeding is necessary but NOT sufficient for identical
 # output: speculative decoding changes the verify batch composition per eval,
 # which perturbs floating-point reductions and can still diverge the text.
-# NEVER measure at `--temp 0`: greedy is a DIFFERENT REGIME, not a quieter one.
-# Speculative acceptance under greedy is exact argmax matching; at temp>0 it is
-# the rejection-sampling criterion, so n_max/p_min conclusions can differ in KIND
-# and point at the wrong setting. It is smoke-test-only and the probe refuses it.
+# Do not draw PERFORMANCE conclusions at `--temp 0`: greedy is a DIFFERENT
+# REGIME, not a quieter one. Speculative acceptance under greedy is exact argmax
+# matching; at temp>0 it is the rejection-sampling criterion, so n_max/p_min
+# conclusions can differ in KIND and name the wrong setting. It stays available
+# (reproducing an exact output is a real need) and the probe warns rather than
+# refusing -- but it can never be a perf number or a shipped default.
 # Use the model's VENDOR-RECOMMENDED sampling (unsloth.ai/docs/models/<model>:
 # gemma-4 = temp 1.0/top_p 0.95/top_k 64; Qwen3.6 thinking = temp 1.0/top_p 0.95/
 # top_k 20/min_p 0). Comparability comes from the PINNED SEED plus repeats, not
@@ -110,6 +112,34 @@ def build_config(target: Path, args) -> dict:
     return cfg
 
 
+def reject_banned_flags(cfg: dict, fail) -> None:
+    """Enforce the temp-0 ban on RAW PASSTHROUGH too, not just --temp.
+
+    A control with a bypass is not a control. `--arg '--temp 0'` put
+    `--temp 0` in extra_args and reached llama-server as a server-side
+    sampling default, defeating the --temp guard completely -- and the bypass
+    shipped in the same file, an hour earlier. Found by attacking the control
+    rather than reading it, which is the only way this class shows up.
+    """
+    extra = list(cfg.get("extra_args") or [])
+    for i, tok in enumerate(extra):
+        val = None
+        if tok in ("--temp", "--temperature") and i + 1 < len(extra):
+            val = extra[i + 1]
+        elif tok.startswith(("--temp=", "--temperature=")):
+            val = tok.split("=", 1)[1]
+        if val is None:
+            continue
+        try:
+            if float(val) == 0:
+                fail(f"passthrough sets {tok} to {val}: temp 0 is banned as a "
+                     "measurement setting here, and routing it through --arg or "
+                     "models.toml extra_args does not make it valid. See the "
+                     "module header.")
+        except ValueError:
+            pass
+
+
 def get_json(url: str, body: dict | list | None = None) -> Any:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data,
@@ -192,8 +222,9 @@ def main() -> None:
     # a decoding regime nobody serves and can invert which setting looks best.
     ap.add_argument("--temp", type=float, default=None,
                     help="sampling temperature; use the model's vendor-recommended "
-                         "value. 0 is REFUSED -- see the header (default: leave to "
-                         "the sampler cascade)")
+                         "value for anything you will act on. 0 warns: valid for "
+                         "reproducibility, never for perf (default: leave to the "
+                         "sampler cascade)")
     ap.add_argument("--top-p", type=float)
     ap.add_argument("--top-k", type=int)
     ap.add_argument("--min-p", type=float)
@@ -214,14 +245,22 @@ def main() -> None:
                          "repeatable, e.g. --arg '--spec-draft-p-min 0.5'")
     args = ap.parse_args()
     if args.temp is not None and args.temp == 0:
-        ap.error("--temp 0 is not a valid measurement setting in this repo: greedy "
-                 "is a different decoding regime, so any tuning conclusion drawn "
-                 "there can point at the wrong setting. Use the model's "
-                 "vendor-recommended sampling and pin --seed for comparability.")
+        # WARN, do not refuse. temp 0 is legitimate for reproducing something
+        # exactly -- it is only invalid as a PERFORMANCE number or a default,
+        # because greedy is a different decoding regime (speculative acceptance
+        # is exact argmax matching rather than the rejection-sampling criterion)
+        # and no real workload runs there.
+        print("[probe] WARNING: --temp 0 is greedy. Fine for reproducing a "
+              "specific output; NOT valid as a perf measurement or a basis for "
+              "a default -- acceptance dynamics differ in kind, so a tuning "
+              "conclusion drawn here can name the wrong setting. Use the "
+              "model's vendor-recommended sampling for anything you will act on.",
+              file=sys.stderr)
     if args.lora_ab and not args.lora:
         ap.error("--lora-ab needs at least one --lora to toggle")
 
     cfg = build_config(args.target, args)
+    reject_banned_flags(cfg, ap.error)
     print(f"[probe] config: { {k: (str(v)[-60:] if isinstance(v, str) else v) for k, v in cfg.items()} }")
 
     p = LlamaServerProvider("gguf-probe", cfg, False)
