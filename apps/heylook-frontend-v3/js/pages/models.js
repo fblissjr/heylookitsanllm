@@ -29,6 +29,9 @@ export default createPage({
     s.optionsPromise = null;    // in-flight fetch of the above
     s.configOpenId = null;      // model id with the config editor expanded (single panel)
     s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
+    // model id -> reason string while the fit meter says FAIL (server
+    // verdict; see onFitGate below). Only ever set for unloaded models.
+    s.fitGates = new Map();
     s.configSaveNote = null;    // {id, text} one-shot: carries the save outcome across the post-save rebuild
 
     buildSkeleton(ctx);
@@ -262,7 +265,9 @@ function buildModelRow(ctx, model) {
   const btn = createEl('button', { class: 'btn btn--sm' }, [
     busy ? (model.loaded ? 'Unloading…' : 'Loading…') : (model.loaded ? 'Unload' : 'Load'),
   ]);
-  btn.disabled = busy;
+  const fitGate = !model.loaded ? s.fitGates.get(model.id) : null;
+  btn.disabled = busy || Boolean(fitGate);
+  if (fitGate) btn.title = fitGate;
   btn.addEventListener('click', () => toggleLoad(ctx, model));
 
   const open = s.configOpenId === model.id;
@@ -273,8 +278,9 @@ function buildModelRow(ctx, model) {
   cfgBtn.addEventListener('click', () => toggleConfig(ctx, model));
 
   // Load/Unload stays the FIRST button in the actions cell -- it is the
-  // primary action, and the E2E helpers address it positionally.
-  return createEl('div', { class: 'model-row' }, [
+  // primary action, and the E2E helpers address it positionally (the fit
+  // gate's in-place button update below relies on the same invariant).
+  return createEl('div', { class: 'model-row', dataset: { modelId: model.id } }, [
     createEl('div', { class: 'model-row__main' }, main),
     createEl('div', { class: 'model-row__actions' }, [btn, cfgBtn]),
   ]);
@@ -284,6 +290,12 @@ async function toggleLoad(ctx, model) {
   const s = ctx.state;
   if (s.loadingIds.has(model.id)) return;
   const wasLoaded = model.loaded;
+  // Belt to the disabled-button suspender: the gate must hold even from a
+  // stale row (e.g. a render raced the fit response).
+  if (!wasLoaded && s.fitGates.get(model.id)) {
+    showError(ctx, `Not loading: ${s.fitGates.get(model.id)}`);
+    return;
+  }
 
   s.loadingIds.add(model.id);
   renderModelList(ctx);
@@ -402,6 +414,22 @@ function buildConfigPanel(ctx, model) {
     },
     onReload: () => reloadModel(ctx, model),
     onReset: () => renderModelList(ctx),
+    // The fit meter's Load gate (design §5: MLX FAIL disables Load with the
+    // reason; gguf's over-working-set is a warn and never gates). Updates the
+    // live row button IN PLACE -- a full re-render here would rebuild the
+    // editor under the user's cursor on every debounced fit response.
+    onFitGate: (reason) => {
+      if (!ctx.alive) return;
+      if (reason) s.fitGates.set(model.id, reason);
+      else s.fitGates.delete(model.id);
+      const row = s.listEl?.querySelector(
+        `.model-row[data-model-id="${CSS.escape(model.id)}"]`);
+      const loadBtn = row?.querySelector('.model-row__actions button');
+      if (loadBtn && !model.loaded && !s.loadingIds.has(model.id)) {
+        loadBtn.disabled = Boolean(reason);
+        loadBtn.title = reason || '';
+      }
+    },
   });
 }
 

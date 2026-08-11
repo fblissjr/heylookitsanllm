@@ -20,6 +20,8 @@ from heylook_llm.config import (
     AdminValidationResult,
     BulkDefaultSamplerRequest,
     configurable_fields,
+    FitRequest,
+    FitResponse,
     ModelImportRequest,
     ModelScanRequest,
     ModelStatusResponse,
@@ -163,6 +165,53 @@ async def get_model_status(model_id: str, request: Request):
     router = request.app.state.router_instance
     status = router.get_model_status(model_id)
     return ModelStatusResponse(**status)
+
+
+@admin_router.post(
+    "/{model_id:path}/fit",
+    summary="Evaluate Memory Fit",
+    description=(
+        "Will this model (with optional candidate config edits) fit memory? "
+        "Server-computed via heylook_llm.ram_fit -- clients must render this, "
+        "never re-derive it. hard_working_set carries the engine asymmetry: "
+        "over the Metal working set is FAIL for MLX, WARN for gguf."
+    ),
+    response_model=FitResponse,
+)
+def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
+    # Sync on purpose: FastAPI runs it on a worker thread, keeping the file
+    # stats + vm_stat/sysctl subprocess calls off the event loop. The only
+    # MLX touched is mx.device_info() (a device query, no stream work) and
+    # ram_fit caches it after the first call.
+    from dataclasses import asdict
+
+    from heylook_llm.ram_fit import fit_for_config
+
+    service = _get_service(request)
+    mc = service.get_config(model_id)
+    if mc is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    # exclude_none: absent and None both mean "use the provider default";
+    # sizing only reads the path fields anyway.
+    config = mc.config.model_dump(exclude_none=True)
+    for key, value in body.config_overrides.items():
+        if value is None:
+            # null = reset-to-default, same spelling as the PATCH contract
+            config.pop(key, None)
+        else:
+            config[key] = value
+
+    # Provider-derived, not layout-guessed: gguf is the one engine that
+    # treats the working set as advisory.
+    hard_working_set = mc.provider != "gguf"
+    report = fit_for_config(config, body.headroom_gb, hard_working_set=hard_working_set)
+    if report.weights_gb == 0.0 and "model_path does not exist" in report.sizing_notes:
+        raise HTTPException(
+            status_code=422,
+            detail={"field": "model_path", "error": "model_path does not exist"},
+        )
+    return FitResponse(**asdict(report))
 
 
 @admin_router.post(

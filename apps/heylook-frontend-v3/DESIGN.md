@@ -33,6 +33,7 @@ carried by the honey-bronze brand pair, never by surface tints.
 | selection glints | `--brand` (honey gold), `--brand-tint` | active nav, chosen rows |
 | actions/links/focus | `--accent` (deep bronze), `--accent-hover`, `--on-accent` | |
 | destructive | `--danger`, `--danger-tint` | |
+| degraded-but-working | `--warn` (amber), `--warn-tint` | fit meter WARN; never for refusals (that's danger) |
 
 Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or
 telemetry. Scale: `--text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /

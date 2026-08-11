@@ -1,8 +1,10 @@
 # tests/unit/test_ram_report.py
-"""Memory pre-flight arithmetic (scripts/ram_report.py).
+"""Memory pre-flight arithmetic (heylook_llm.ram_fit; formerly inline in
+scripts/ram_report.py, which now renders this module -- v1.60.0).
 
-This script is a GATE: dev_server.sh refuses to start a model when it says
-no. A wrong answer here is not a cosmetic reporting bug, it is a refused
+This arithmetic is a GATE twice over: dev_server.sh refuses to start a model
+when it says no, and the admin fit endpoint disables v3's Load button on a
+FAIL. A wrong answer here is not a cosmetic reporting bug, it is a refused
 load -- which is exactly what happened before the reclaimable-RAM fix, on a
 model that then ran with zero swapins and zero swapouts.
 
@@ -12,22 +14,15 @@ Claims (what breaks if a test is deleted):
   under-reports by ~35 GiB on this hardware.
 - reclaimable arithmetic: the gate drifts back toward free+inactive and
   starts refusing loads that fit.
-- fallback: the script stops working off macOS instead of degrading.
+- fallback: the computation stops working off macOS instead of degrading.
+
+(The verdict/asymmetry layer on top is pinned by test_ram_fit.py.)
 """
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
 import pytest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "ram_report",
-    Path(__file__).resolve().parents[2] / "scripts" / "ram_report.py",
-)
-assert _SPEC and _SPEC.loader
-ram_report = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(ram_report)
+from heylook_llm import ram_fit as ram_report
 
 GB = 1024 ** 3
 

@@ -1259,6 +1259,57 @@ class AdminModelListResponse(BaseModel):
     total: int = 0
 
 
+class FitRequest(BaseModel):
+    """Evaluate whether a model (with candidate config edits) fits memory.
+
+    ``config_overrides`` are applied over the STORED config before sizing --
+    the editor can ask about an unsaved candidate. ``null`` on a key means
+    reset-to-default (drop the stored value), matching the PATCH contract.
+    Keys that don't affect sizing are ignored, not rejected: this endpoint
+    answers "does it fit", not "is it valid" (that's /validate).
+    """
+    config_overrides: Dict = Field(default_factory=dict)
+    headroom_gb: float = Field(default=8.0, ge=0, le=256,
+                               description="GiB to leave for KV cache + compute buffers")
+
+
+class FitLineResponse(BaseModel):
+    """One ceiling's row of the fit table."""
+    ceiling: str   # reclaimable_ram | metal_working_set | metal_max_buffer
+    verdict: str   # pass | warn | fail
+    need_gb: float
+    have_gb: float
+    note: str = ""
+
+
+class FitResponse(BaseModel):
+    """Server-computed fit verdict (heylook_llm.ram_fit) -- the UI renders
+    this and NEVER computes fit client-side. ``hard_working_set`` is the
+    provider-derived engine asymmetry: over the Metal working set is FAIL
+    for MLX (refuses above the recommendation) but WARN for gguf
+    (llama.cpp loads past it and degrades into paging)."""
+    weights_gb: float
+    headroom_gb: float
+    reclaimable_gb: float
+    working_set_gb: Optional[float] = None   # None off Metal
+    max_buffer_gb: Optional[float] = None
+    sysctl_wired_mb: Optional[int] = None
+    # Set ONLY while iogpu.wired_limit_mb is at its OS default (0) AND the
+    # working set is exceeded; once raised, the ceiling is a deliberate
+    # choice and the hint would be noise. The UI shows the sysctl line iff
+    # this is non-null.
+    sysctl_suggest_mb: Optional[int] = None
+    kv_headroom_gb: Optional[float] = None   # working set minus weights
+    hard_working_set: bool
+    verdict: str                             # pass | warn | fail (worst line)
+    lines: List[FitLineResponse] = Field(default_factory=list)
+    sizing_notes: List[str] = Field(default_factory=list)
+    # All numbers are measured today (file sizes, device properties, vm_stat).
+    # Flips when a component becomes an approximation (e.g. offload deltas);
+    # the UI must render estimates in a different visual register.
+    estimated: bool = False
+
+
 class SamplerInfo(BaseModel):
     """Named-sampler metadata (bundled registry entry)."""
     name: str

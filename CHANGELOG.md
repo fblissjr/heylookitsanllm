@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.60.0]
+
+### Added
+
+- **Fit endpoint + fit meter** (design doc §5 + §9 ask #2 -- "the heart of
+  it"). The memory ceilings/sizing/verdict logic moved from
+  `scripts/ram_report.py` into `heylook_llm.ram_fit` (the script is now a
+  CLI renderer over the same structured report -- one computation, two
+  faces, `--quiet` contract for dev_server.sh unchanged), and
+  `POST /v1/admin/models/{id}/fit` exposes it: body
+  `{config_overrides?, headroom_gb?}` (candidate unsaved edits; null =
+  reset-to-default, the PATCH spelling), response = weights (whole shard
+  set + sidecars), Metal working set, per-allocation cap, reclaimable RAM
+  (total - anonymous - wired, NOT free+inactive), KV headroom, structured
+  per-ceiling verdict lines, and `hard_working_set` -- the
+  provider-derived engine asymmetry (over the working set is FAIL for MLX,
+  which refuses above the recommendation; WARN for gguf, which loads past
+  it and degrades into paging). The sysctl hint (`sysctl_suggest_mb`) is
+  server-gated: only while `iogpu.wired_limit_mb` is at its OS default.
+  The v3 Models-page config editor renders it as a "Memory fit" section:
+  measured rows in mono, amber warn / red fail verdict, live recompute per
+  field edit (debounced 300 ms, aborted on the next), "fit unavailable" on
+  any failure -- the client NEVER computes fit itself -- and a FAIL
+  verdict disables the row's Load button with the reason (gguf's warn
+  never blocks). All numbers are measured today; the response's
+  `estimated` flag is reserved for the day offload deltas make part of it
+  an approximation. Tests: unit (engine asymmetry, sizing traps, sysctl
+  gating), contract (route shapes, override semantics, read-only
+  guarantee), E2E (meter renders + verdict resolves on the real model).
+
 ## [1.59.0]
 
 ### Added

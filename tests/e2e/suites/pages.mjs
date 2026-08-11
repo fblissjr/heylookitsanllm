@@ -558,6 +558,18 @@ export async function runPagesSuite({ suite, ctx, config }) {
         (el) => el.disabled);
       assert(disabled, `load_time_only field ${f.name} is editable`);
     }
+
+    // The fit meter (v1.60.0): server-computed, renders a weights row and a
+    // verdict. E2E's model is real and loaded-able, so the verdict resolves
+    // (any of the three states -- the machine's RAM is not the check's
+    // business; "fit unavailable" IS a failure, it means the POST broke).
+    await page.waitForSelector('.cfg-fit', { timeout: 5000 });
+    await waitFor(async () => {
+      const v = await textOf(page, '.cfg-fit__verdict');
+      return Boolean(v && v.trim() && !/unavailable/.test(v));
+    }, { timeout: 10000, message: 'fit verdict never resolved (or came back unavailable)' });
+    const weights = await textOf(page, '.cfg-fit__value');
+    assert(/GiB/.test(weights || ''), `weights row missing, got "${weights}"`);
   });
 
   await suite.check('config save PATCHes typed values and null resets a cleared field', async () => {
@@ -627,10 +639,21 @@ export async function runPagesSuite({ suite, ctx, config }) {
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px with the config panel open');
     await ctx.setViewport(1280, 900);
     // Close the panel so later checks see the page in its default state.
-    const row = await findModelRow(page, config.model);
-    const closeBtn = await row.evaluateHandle((r) =>
-      [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Close'));
-    await closeBtn.asElement().click();
+    // Find-and-click retried as one unit: the PREVIOUS check's second save
+    // resolves asynchronously (its check only waits for the request to be
+    // SENT), and the resulting list re-render can detach a handle grabbed
+    // in the gap -- seen once the fit meter widened the rebuild window.
+    await waitFor(async () => {
+      try {
+        const row = await findModelRow(page, config.model);
+        const closeBtn = await row.evaluateHandle((r) =>
+          [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Close'));
+        const el = closeBtn.asElement();
+        if (!el) return false;
+        await el.click();
+        return true;
+      } catch { return false; }
+    }, { timeout: 5000, message: 'Close button never clickable' });
     await waitFor(async () => (await count(page, '.model-config')) === 0,
       { timeout: 5000, message: 'config panel never closed' });
   });

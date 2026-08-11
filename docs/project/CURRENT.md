@@ -9,13 +9,13 @@ fixes (all 10 confirmed findings), v1.57.0 chat model-switch arc (G1+G3),
 v1.57.1 update_deps write-path hardening; a follow-on session shipped
 v1.58.0 models.toml comment preservation (was item 1 here -- DONE:
 `toml_comments.py`, anchor semantics in the CLAUDE.md block, 16 new tests
-+ test_import_reimport green; suite 1450). NEXT, in order:
-1. **Fit endpoint + fit meter** (frontend design doc
-   internal/research/expert_offload_design_frontend.md §5/§9 ask #2):
-   ram_report.py's check_fit/size_config_gb/metal_ceilings behind HTTP with
-   the hard_working_set flag (MLX=FAIL vs gguf=WARN asymmetry is the whole
-   point); the UI is a thin renderer. NEVER compute fit client-side.
-2. Remaining small items: TODO.md "Config-editor / audit follow-ups"
++ test_import_reimport green), v1.59.0 preset inheritance for new
+documents + the chat edit-box sizing fix (owner requests, same day), and
+v1.60.0 the fit endpoint + fit meter (was item 2 -- DONE:
+`heylook_llm.ram_fit` extracted from ram_report.py, POST
+/v1/admin/models/{id}/fit, v3 Memory-fit section with the MLX-FAIL vs
+gguf-WARN asymmetry + Load gating; spec §4 updated). NEXT, in order:
+1. Remaining small items: TODO.md "Config-editor / audit follow-ups"
    (G4/G5/F14 switch polish, server-owned reload route, schema nits).
 Gotchas for the next session: E2E must run unsandboxed and its server
 uses the REAL models.toml (only the DB is isolated) -- intercept any

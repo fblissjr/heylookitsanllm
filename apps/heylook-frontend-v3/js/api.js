@@ -90,6 +90,10 @@ const ROUTES = {
   // default" (the key is removed from models.toml). Response carries
   // reload_required_fields (+ warning when the post-save reload failed).
   adminUpdateModel:  ['PATCH', (id) => `/v1/admin/models/${encodeURIComponent(id)}`, true],
+  // Server-computed memory fit for a model + candidate (unsaved) config
+  // edits. Read-only; the meter renders the response verbatim and NEVER
+  // computes fit client-side (design doc §5).
+  adminModelFit:     ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/fit`, true],
 };
 
 function makeCall(method, buildPath, hasBody) {

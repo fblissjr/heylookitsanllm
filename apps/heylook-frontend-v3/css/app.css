@@ -23,6 +23,8 @@
   --on-accent: oklch(1 0 0);
   --danger: oklch(0.50 0.18 29);
   --danger-tint: oklch(0.962 0.03 29);
+  --warn: oklch(0.55 0.12 75);           /* amber: degraded-but-working (fit meter WARN) */
+  --warn-tint: oklch(0.962 0.04 85);
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -879,6 +881,29 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 .cfg-field__hint { grid-area: hint; }
 .cfg-field__arg { font-family: var(--mono); }
 .cfg-field--fixed .cfg-field__label { color: var(--ink-muted); }
+
+/* Memory fit meter (design doc §5). Measured numbers in plain mono; the
+   verdict is the one element that changes register (amber warn / red fail). */
+.cfg-fit__rows { display: flex; flex-direction: column; gap: 0.15rem; }
+.cfg-fit__row { display: flex; gap: 0.6rem; align-items: baseline; }
+.cfg-fit__label { min-width: 10.5rem; color: var(--ink-muted); font-size: var(--text-sm); }
+.cfg-fit__value { font-family: var(--mono); }
+.cfg-fit__row--danger .cfg-fit__value { color: var(--danger); }
+.cfg-fit__note { padding-left: 11.1rem; }
+.cfg-fit__verdict { min-height: 1.2rem; font-size: var(--text-sm); color: var(--ink-muted); }
+.cfg-fit__verdict--warn {
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-radius: var(--r-ctl);
+  padding: 0.35rem 0.5rem;
+}
+.cfg-fit__verdict--fail {
+  color: var(--danger);
+  background: var(--danger-tint);
+  border-radius: var(--r-ctl);
+  padding: 0.35rem 0.5rem;
+}
+.cfg-fit__sysctl code { font-family: var(--mono); user-select: all; }
 
 .cfg-actions {
   display: flex;

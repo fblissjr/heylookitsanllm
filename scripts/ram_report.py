@@ -9,30 +9,10 @@ Two jobs, because on this hardware they are the same question:
    mmproj and drafter sidecars that land in the same process) and check it
    against every ceiling that can refuse it.
 
-The Metal ceiling is the one that surprises people. On a 192 GiB M2 Ultra the
-GPU's ``max_recommended_working_set_size`` is ~161 GiB, not 192 -- a limit that
-has nothing to do with free RAM, and that ``iogpu.wired_limit_mb`` (default 0)
-can raise. What it MEANS depends on the engine, so this script reports it per
-engine rather than as one verdict:
-
-- **MLX** treats it as hard. server.py sets ``mx.set_wired_limit`` to exactly
-  the recommendation, and MLX refuses any larger value outright.
-- **llama.cpp** wires through the same ``MTLResidencySet`` (on by default;
-  ``GGML_METAL_NO_RESIDENCY=1`` disables, ``GGML_METAL_RESIDENCY_KEEP_ALIVE_S``
-  defaults to 180 s) but checks the recommendation only as a debug-build
-  warning. Past the line the model still loads -- Metal just stops guaranteeing
-  residency and you degrade into paging. A performance warning, not a refusal.
-
-``max_buffer_length`` (~121 GiB) is a separate per-allocation cap; sharded
-GGUFs stay under it naturally, one giant single-file model may not.
-
-Sizing traps this script exists to not repeat:
-
-- A GGUF ``model_path`` points at ONE shard. ``DeepSeek-V4-...-00001-of-00005``
-  is a 5 MB index shard; the set behind it is ~127 GiB. Sizing the named file is
-  wrong by four orders of magnitude.
-- ``mmproj_path`` and ``draft_model_path`` load into the same llama-server
-  process and must be counted.
+All computation lives in ``heylook_llm.ram_fit`` (shared with the admin fit
+endpoint, so this script and the API can never disagree); this file is the
+CLI renderer plus the who-is-holding-RAM report. The engine asymmetry, the
+reclaimable-RAM rationale, and the sizing traps are documented there.
 
 Usage::
 
@@ -48,149 +28,24 @@ the form ``dev_server.sh`` consumes.
 from __future__ import annotations
 
 import argparse
-import glob as _glob
 import os
-import re
 import sys
 import tomllib
 from pathlib import Path
 from typing import Optional
 
-GB = 1024 ** 3
+# Make the package importable when run as a plain script from the repo root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-# llama.cpp shard naming: `<prefix>-00001-of-00005.gguf`. Mirrors
-# model_importer._SHARD_RE -- kept local so this script stays runnable
-# without importing the server package.
-_SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
-
-
-# ---------------------------------------------------------------------------
-# Ceilings
-# ---------------------------------------------------------------------------
-
-def available_gb() -> float:
-    """RAM the OS can hand out WITHOUT reclaiming anything: free + inactive.
-
-    The conservative figure. Reported for context, but it is the wrong number
-    to gate a model load on -- see :func:`reclaimable_gb`.
-    """
-    import psutil
-
-    vm = psutil.virtual_memory()
-    return vm.available / GB
-
-
-def _vm_stat_pages() -> dict[str, int]:
-    """`vm_stat` counters in BYTES. Empty dict off macOS or if it is unreadable."""
-    import re as _re
-    import subprocess
-
-    try:
-        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    if out.returncode != 0:
-        return {}
-    page = 4096
-    m = _re.search(r"page size of (\d+) bytes", out.stdout)
-    if m:
-        page = int(m.group(1))
-    stats: dict[str, int] = {}
-    for line in out.stdout.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        digits = value.strip().rstrip(".").replace(",", "")
-        if digits.isdigit():
-            stats[key.strip().lower()] = int(digits) * page
-    return stats
-
-
-def reclaimable_gb() -> Optional[float]:
-    """RAM a model load can actually reach: total - anonymous - wired.
-
-    This is the number that predicts success, and `free + inactive` is not.
-    Both llama.cpp and MLX load weights through **mmap**, so their pages are
-    clean and file-backed: macOS evicts them on demand and will evict any
-    other clean file page to make room. But it parks recently-touched file
-    pages in the ACTIVE queue, where `free + inactive` cannot see them.
-
-    Measured on this machine right after a 127 GiB model unloaded: psutil
-    reported 125 GiB "available" while 154 GiB was file-backed and only 27 GiB
-    was anonymous. The conservative figure said a 138 GiB load would not fit;
-    it then ran with zero swapins and zero swapouts. Gating on that figure
-    refuses loads that work.
-
-    Anonymous pages are the genuinely unavailable ones -- no backing file, so
-    they can only be compressed or swapped, never dropped. Wired pages cannot
-    even be that. Everything else is negotiable.
-
-    Returns None off macOS, where the caller should fall back to
-    :func:`available_gb`.
-    """
-    stats = _vm_stat_pages()
-    anonymous = stats.get("anonymous pages")
-    wired = stats.get("pages wired down")
-    if anonymous is None or wired is None:
-        return None
-    import psutil
-
-    return (psutil.virtual_memory().total - anonymous - wired) / GB
-
-
-def usable_gb() -> float:
-    """The figure to gate on: reclaimable where measurable, else conservative."""
-    reclaimable = reclaimable_gb()
-    return reclaimable if reclaimable is not None else available_gb()
-
-
-def sysctl_wired_limit_mb() -> Optional[int]:
-    """`iogpu.wired_limit_mb`, the SYSTEM-wide GPU wired ceiling.
-
-    0 means "OS default" (~84% of total on a 192 GiB M2 Ultra). This is the
-    only lever that RAISES the Metal working set -- heylook's own
-    ``mx.set_wired_limit`` at startup consumes that budget for MLX, it does
-    not enlarge it, and it has no effect at all on a llama-server subprocess.
-    Returns None if the OID is unreadable (non-Apple-Silicon, or sandboxed).
-    """
-    import subprocess
-
-    try:
-        out = subprocess.run(
-            ["sysctl", "-n", "iogpu.wired_limit_mb"],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    try:
-        return int(out.stdout.strip())
-    except ValueError:
-        return None
-
-
-def metal_ceilings() -> Optional[dict]:
-    """GPU working-set limits, or None off Metal (or if MLX is unavailable).
-
-    Returned in GiB. These are the limits llama.cpp/MLX actually allocate
-    against; neither is derivable from total RAM.
-    """
-    try:
-        import mlx.core as mx
-
-        info = mx.device_info()
-    except Exception:
-        return None
-    working_set = info.get("max_recommended_working_set_size")
-    if not working_set:
-        return None
-    return {
-        "device": info.get("device_name", "?"),
-        "working_set_gb": working_set / GB,
-        "max_buffer_gb": (info.get("max_buffer_length") or 0) / GB,
-        "sysctl_wired_mb": sysctl_wired_limit_mb(),
-    }
+from heylook_llm.ram_fit import (  # noqa: E402
+    GB,
+    FitReport,
+    available_gb,
+    fit_for_config,
+    metal_ceilings,
+    reclaimable_gb,
+    usable_gb,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -231,64 +86,8 @@ def top_holders(limit: int = 12) -> list[tuple[str, float, int]]:
 
 
 # ---------------------------------------------------------------------------
-# Model sizing
+# Config resolution
 # ---------------------------------------------------------------------------
-
-def _shard_set_bytes(f: Path) -> int:
-    """Bytes of the whole split set ``f`` belongs to, else ``f``'s own size."""
-    m = _SHARD_RE.search(f.name)
-    if m is None:
-        return f.stat().st_size
-    prefix = f.name[: m.start()]
-    return sum(
-        s.stat().st_size
-        for s in f.parent.glob(f"{_glob.escape(prefix)}-*-of-*.gguf")
-    )
-
-
-def is_mlx_config(config: dict) -> bool:
-    """True when this entry loads in-process through MLX.
-
-    Decides whether the Metal working set is a hard ceiling or advisory --
-    a `.gguf` model_path means a llama-server subprocess, anything else
-    (a weights DIR) means MLX. Cheap and layout-based on purpose: no
-    models.toml `provider` field is needed, so `--path` works too.
-    """
-    return not str(config.get("model_path") or "").lower().endswith(".gguf")
-
-
-def size_config_gb(config: dict) -> tuple[float, list[str]]:
-    """Resident weight bytes for a models.toml ``config`` block, plus notes.
-
-    Counts the primary (whole shard set, not the named shard) and every
-    sidecar that loads into the same process.
-    """
-    notes: list[str] = []
-    total = 0
-    primary = Path(config.get("model_path") or "")
-    if primary.is_dir():
-        total += sum(
-            f.stat().st_size
-            for pattern in ("*.safetensors", "*.gguf")
-            for f in primary.rglob(pattern)
-        )
-    elif primary.is_file():
-        shard_bytes = _shard_set_bytes(primary)
-        if _SHARD_RE.search(primary.name):
-            n = len(list(primary.parent.glob("*-of-*.gguf")))
-            notes.append(f"primary is a {n}-shard set ({shard_bytes / GB:.1f} GiB), not the named shard")
-        total += shard_bytes
-    else:
-        return 0.0, ["model_path does not exist"]
-
-    for key, label in (("mmproj_path", "mmproj"), ("draft_model_path", "drafter")):
-        sidecar = Path(config.get(key) or "")
-        if sidecar.is_file():
-            size = _shard_set_bytes(sidecar)
-            total += size
-            notes.append(f"+{label} {sidecar.name} ({size / GB:.1f} GiB)")
-    return total / GB, notes
-
 
 def load_model_config(model_id: str, models_toml: Path) -> Optional[dict]:
     try:
@@ -330,68 +129,39 @@ def config_from_path(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Report
+# Rendering (the CLI face of ram_fit's structured report)
 # ---------------------------------------------------------------------------
 
-def check_fit(size_gb: float, headroom_gb: float, hard_working_set: bool = True) -> tuple[bool, list[str]]:
-    """(fits, one line per ceiling).
-
-    ``hard_working_set`` distinguishes the two engines, which treat the Metal
-    recommendation differently and must not be reported the same way:
-
-    - **MLX (True)**: server.py calls ``mx.set_wired_limit`` at exactly the
-      recommendation, and MLX REFUSES anything above it
-      ("Setting a wired limit larger than the maximum working set size is not
-      allowed"). Over the line is a hard stop.
-    - **llama.cpp (False)**: it wires through the same ``MTLResidencySet``,
-      but ``recommendedMaxWorkingSetSize`` is only a debug-build warning --
-      never a refusal. Over the line the model still loads; Metal just stops
-      guaranteeing residency and you degrade into paging. That is a
-      performance warning, not a refusal, and calling it FAIL would be wrong.
-    """
-    need = size_gb + headroom_gb
-    avail = usable_gb()
-    lines = []
-    ok = True
-
-    ram_ok = need <= avail
-    ok &= ram_ok
-    lines.append(
-        f"  {'PASS' if ram_ok else 'FAIL'}  reclaimable RAM    "
-        f"need {need:6.1f} GiB have {avail:6.1f} GiB"
-    )
-
-    metal = metal_ceilings()
-    if metal:
-        ws_ok = need <= metal["working_set_gb"]
-        ok &= ws_ok or not hard_working_set
-        verdict = ("PASS" if ws_ok else "FAIL") if hard_working_set else ("PASS" if ws_ok else "WARN")
-        engine = "hard limit, MLX" if hard_working_set else "advisory, llama.cpp pages past it"
-        lines.append(
-            f"  {verdict}  Metal working set  "
-            f"need {need:6.1f} GiB have {metal['working_set_gb']:6.1f} GiB  ({engine})"
-        )
-        if not ws_ok and metal.get("sysctl_wired_mb") == 0:
-            # Only actionable while the sysctl is at its default; if someone
-            # already raised it, the ceiling is a deliberate choice and this
-            # hint would just be noise.
-            suggest = int((need + 8) * 1024)
+def render_fit(report: FitReport) -> list[str]:
+    lines: list[str] = []
+    for line in report.lines:
+        verdict = line.verdict.upper()
+        if line.ceiling == "reclaimable_ram":
             lines.append(
-                f"        ^ this ceiling is the OS DEFAULT "
-                f"(iogpu.wired_limit_mb=0). To raise it:\n"
-                f"          sudo sysctl iogpu.wired_limit_mb={suggest}   "
-                f"# resets on reboot; leave the OS real headroom"
+                f"  {verdict:4s}  reclaimable RAM    "
+                f"need {line.need_gb:6.1f} GiB have {line.have_gb:6.1f} GiB"
             )
-        # Per-allocation cap. Not a hard fail: llama.cpp/MLX split weights
-        # across buffers, so exceeding it is a warning to check the layout
-        # (one unsharded file over the cap is the case that actually bites).
-        if size_gb > metal["max_buffer_gb"]:
+        elif line.ceiling == "metal_working_set":
+            engine = ("hard limit, MLX" if report.hard_working_set
+                      else "advisory, llama.cpp pages past it")
+            lines.append(
+                f"  {verdict:4s}  Metal working set  "
+                f"need {line.need_gb:6.1f} GiB have {line.have_gb:6.1f} GiB  ({engine})"
+            )
+            if report.sysctl_suggest_mb:
+                lines.append(
+                    f"        ^ this ceiling is the OS DEFAULT "
+                    f"(iogpu.wired_limit_mb=0). To raise it:\n"
+                    f"          sudo sysctl iogpu.wired_limit_mb={report.sysctl_suggest_mb}   "
+                    f"# resets on reboot; leave the OS real headroom"
+                )
+        elif line.ceiling == "metal_max_buffer":
             lines.append(
                 f"  WARN  Metal max buffer   "
-                f"weights {size_gb:6.1f} GiB exceed the {metal['max_buffer_gb']:.1f} GiB "
+                f"weights {line.need_gb:6.1f} GiB exceed the {line.have_gb:.1f} GiB "
                 f"per-allocation cap -- needs a sharded/split layout"
             )
-    return ok, lines
+    return lines
 
 
 def main() -> int:
@@ -425,14 +195,13 @@ def main() -> int:
         if config is None:
             print(f"{usable_gb():.0f} GiB reclaimable")
             return 0
-        size_gb, _ = size_config_gb(config)
-        fits, _ = check_fit(size_gb, args.headroom, is_mlx_config(config))
-        verdict = "OK" if fits else "FAILED"
+        report = fit_for_config(config, args.headroom)
+        verdict = "OK" if report.fits else "FAILED"
         print(
-            f"RAM pre-flight {verdict}: {label} ~{size_gb:.0f} GiB "
-            f"+ {args.headroom:.0f} GiB headroom, ~{usable_gb():.0f} GiB reclaimable"
+            f"RAM pre-flight {verdict}: {label} ~{report.weights_gb:.0f} GiB "
+            f"+ {args.headroom:.0f} GiB headroom, ~{report.reclaimable_gb:.0f} GiB reclaimable"
         )
-        return 0 if fits else 1
+        return 0 if report.fits else 1
 
     print("Ceilings")
     import psutil
@@ -461,17 +230,16 @@ def main() -> int:
         print(f"  {rss_gb:6.2f} GiB {family}{suffix}")
 
     if config is not None:
-        size_gb, notes = size_config_gb(config)
+        report = fit_for_config(config, args.headroom)
         print(f"\nFit check: {label}")
-        print(f"  weights              {size_gb:6.1f} GiB")
-        for note in notes:
+        print(f"  weights              {report.weights_gb:6.1f} GiB")
+        for note in report.sizing_notes:
             print(f"    {note}")
-        fits, lines = check_fit(size_gb, args.headroom, is_mlx_config(config))
         print(f"  headroom requested   {args.headroom:6.1f} GiB")
-        for line in lines:
+        for line in render_fit(report):
             print(line)
-        print(f"\n  => {'FITS' if fits else 'DOES NOT FIT'}")
-        return 0 if fits else 1
+        print(f"\n  => {'FITS' if report.fits else 'DOES NOT FIT'}")
+        return 0 if report.fits else 1
     return 0
 
 

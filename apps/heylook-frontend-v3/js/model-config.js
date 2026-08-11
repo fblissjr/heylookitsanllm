@@ -19,7 +19,7 @@
 // state lives in model.config; unsaved edits live in the caller's `draft`
 // object so the panel survives the models page's list re-renders.
 
-import { createEl, armedConfirm } from './utils.js';
+import { createEl, armedConfirm, debounce } from './utils.js';
 import { api } from './api.js';
 
 const LIVE_EFFECTS = new Set(['per_request', 'applies_live', 'descriptive']);
@@ -195,6 +195,107 @@ function sectionEl(title, note, rows) {
 }
 
 // ---------------------------------------------------------------------------
+// Memory fit meter (design doc §5 -- "the heart of it"). Every number is the
+// SERVER's (POST /{id}/fit wraps heylook_llm.ram_fit); this renderer never
+// derives fit client-side -- a reimplementation would drift from ram_fit
+// immediately, and on any failure it says "fit unavailable" rather than
+// guessing. hard_working_set carries the engine asymmetry: over the Metal
+// working set is FAIL for MLX (refuses above it) but WARN for gguf
+// (llama.cpp loads past it and degrades into paging).
+
+const gib = (v) => `${v.toFixed(1)} GiB`;
+
+function buildFitMeter({ model, overrides, onGate }) {
+  const rowsEl = createEl('div', { class: 'cfg-fit__rows' });
+  // role=status: the verdict flips live as fields are edited -- announced,
+  // not just shown (DESIGN.md §7).
+  const verdictEl = createEl('div', { class: 'cfg-fit__verdict', role: 'status' });
+  const el = createEl('section', { class: 'cfg-section cfg-fit' }, [
+    createEl('h3', { class: 'cfg-section__title' }, ['Memory fit']),
+    rowsEl, verdictEl,
+  ]);
+
+  const row = (label, value, note) => createEl('div', { class: 'cfg-fit__row' }, [
+    createEl('span', { class: 'cfg-fit__label' }, [label]),
+    createEl('span', { class: 'cfg-fit__value' }, [value]),
+    note ? createEl('span', { class: 'muted small' }, [note]) : null,
+  ]);
+
+  function render(r) {
+    const rows = [row('Weights', gib(r.weights_gb))];
+    for (const note of r.sizing_notes) {
+      rows.push(createEl('div', { class: 'cfg-fit__note muted small' }, [note]));
+    }
+    if (r.working_set_gb != null) {
+      rows.push(row('Metal working set', gib(r.working_set_gb),
+        r.hard_working_set ? 'hard limit — MLX refuses above it'
+          : 'advisory — llama.cpp pages past it'));
+    }
+    if (r.kv_headroom_gb != null) {
+      const kv = row('Headroom for KV', gib(r.kv_headroom_gb));
+      if (r.kv_headroom_gb < 0) kv.classList.add('cfg-fit__row--danger');
+      rows.push(kv);
+    }
+    rows.push(row('Reclaimable RAM', gib(r.reclaimable_gb),
+      'total − anonymous − wired'));
+    rowsEl.replaceChildren(...rows);
+
+    const pieces = [];
+    const ws = r.lines.find((l) => l.ceiling === 'metal_working_set');
+    const ram = r.lines.find((l) => l.ceiling === 'reclaimable_ram');
+    const buf = r.lines.find((l) => l.ceiling === 'metal_max_buffer');
+    if (ram?.verdict === 'fail') {
+      pieces.push(`Won't fit: needs ${gib(ram.need_gb)} (weights + headroom), `
+        + `~${gib(ram.have_gb)} reclaimable.`);
+    }
+    if (ws && ws.verdict !== 'pass') {
+      const over = gib(ws.need_gb - ws.have_gb);
+      pieces.push(ws.verdict === 'fail'
+        ? `Over the Metal working set by ${over} — MLX refuses above it.`
+        : `Over the Metal working set by ${over} — llama.cpp will still load `
+          + `this; Metal stops guaranteeing residency and you degrade into paging.`);
+    }
+    if (buf) pieces.push(`Weights exceed the ${gib(buf.have_gb)} per-allocation cap — ${buf.note}.`);
+
+    verdictEl.className = `cfg-fit__verdict cfg-fit__verdict--${r.verdict}`;
+    verdictEl.replaceChildren(
+      r.verdict === 'pass' ? 'Fits.' : pieces.join(' '),
+      // Server-gated actionability: non-null ONLY over the working set while
+      // iogpu.wired_limit_mb is at its OS default. Present -> show verbatim.
+      ...(r.sysctl_suggest_mb != null ? [createEl('div', { class: 'cfg-fit__sysctl' }, [
+        'Raise it (resets on reboot): ',
+        createEl('code', {}, [`sudo sysctl iogpu.wired_limit_mb=${r.sysctl_suggest_mb}`]),
+      ])] : []),
+    );
+    // Only a FAIL gates Load (gguf's over-WS is a warn by design), and a
+    // loaded model is already past loading -- nothing to gate.
+    onGate?.(r.verdict === 'fail' && !model.loaded
+      ? 'Does not fit memory (see the Configure panel)' : null);
+  }
+
+  let ctl = null;
+  async function refresh() {
+    ctl?.abort();
+    ctl = new AbortController();
+    try {
+      const report = await api.adminModelFit(
+        model.id, { config_overrides: overrides() }, { signal: ctl.signal });
+      render(report);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // 422 = the (candidate) model_path doesn't exist -- name it; anything
+      // else is just "unavailable". NEVER fall back to a client-side guess.
+      verdictEl.className = 'cfg-fit__verdict';
+      verdictEl.textContent = err.status === 422
+        ? 'fit unavailable — model_path does not exist'
+        : 'fit unavailable';
+      rowsEl.replaceChildren();
+      onGate?.(null);
+    }
+  }
+
+  return { el, refresh, scheduleRefresh: debounce(refresh, 300) };
+}
 
 // createModelConfigEditor({ model, fields, draft, initialNote, onError, onSaved, onReload, onReset })
 //
@@ -222,7 +323,12 @@ function sectionEl(title, note, rows) {
 // appending el to the document -- a live region only announces text written
 // into an already-mounted node, so baking the note into the initial DOM
 // would render it silent to assistive tech.
-export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset }) {
+// - onFitGate(reason|null): optional -- the fit meter's Load gate. A non-null
+//           reason means the model FAILS fit (MLX over the working set, or
+//           reclaimable RAM on either provider) and the page should disable
+//           its Load affordance with that reason; null lifts the gate
+//           (including on fit-unavailable -- never block on missing info).
+export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate }) {
   const fields = allFields.filter((f) => !isHidden(f));
   const idPrefix = `mcfg-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   // Editor-local baseline (what dirty is measured against). A copy, updated
@@ -273,9 +379,24 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     if (dirty.length) setNote(pendingNote(dirty));
   };
 
+  // Candidate config for the fit meter: the dirty fields' PARSED values over
+  // the stored config (null = reset, the PATCH spelling). Unparseable drafts
+  // are skipped -- the meter answers for the closest well-formed candidate
+  // rather than going blank on every half-typed number.
+  const fitOverrides = () => {
+    const overrides = {};
+    for (const field of dirtyFields()) {
+      const { value, error } = parseControlValue(field, draft[field.name]);
+      if (!error) overrides[field.name] = value;
+    }
+    return overrides;
+  };
+  const fitMeter = buildFitMeter({ model, overrides: fitOverrides, onGate: onFitGate });
+
   const onEdit = (name, rawValue) => {
     draft[name] = rawValue;
     syncSaveState();
+    fitMeter.scheduleRefresh();
   };
 
   async function save() {
@@ -343,7 +464,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
 
   const rows = (list) => list.map((f) => fieldRow(f, currentRaw(f), idPrefix, onEdit));
 
-  const children = [];
+  const children = [fitMeter.el];
   if (live.length) {
     children.push(sectionEl('Applies immediately', null, rows(live)));
   }
@@ -367,7 +488,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   if (fixed.length) {
     children.push(sectionEl('Fixed for this process', null, rows(fixed)));
   }
-  if (!children.length) {
+  if (children.length === 1) { // only the fit meter -- no editable sections
     children.push(createEl('div', { class: 'muted small' },
       [`No editable options for provider "${model.provider}".`]));
   }
@@ -375,6 +496,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   children.push(createEl('div', { class: 'cfg-actions' }, [saveBtn, resetBtn, reloadBtn, noteEl]));
 
   syncSaveState();
+  fitMeter.refresh(); // first paint; needs no DOM, lands whenever it lands
   // The mount note: the save outcome carried across the rebuild, or the
   // standing server-derived reload reminder. Written by announce() AFTER the
   // caller mounts the element, so the live region actually announces it.
