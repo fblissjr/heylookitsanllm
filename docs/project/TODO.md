@@ -612,7 +612,11 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   caps-gated `toWireContent` with per-message drop disclosure (staged
   attachments still block -- asymmetry commented at both sites); residency
   dots + pre-switch warning (Cancel / Switch anyway; Send with the
-  unconfirmed target commits) + Load button on the chat bar. Still open
+  unconfirmed target commits) + Load button on the chat bar. NB the
+  LOAD-COST half of that warning was removed in v1.62.3 (owner rule:
+  only loss gates, cost is disclosed) -- only incompatible-media
+  warnings gate a switch now; the cost is stated by the dots, the Load
+  button, and a live pre-first-token status on Send. Still open
   from doc §15: G4 context estimate, G5 per-message attribution (waits for
   a `_SCHEMA_VERSION` bump), F14 switch-lock during a pending load.
 - [x] **Fit meter -- DONE v1.60.0** (P2, the frontend design doc's stated

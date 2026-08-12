@@ -1,16 +1,31 @@
 # Current Work
 
-Last updated: 2026-08-11 end of day (v1.54.0-1.57.1 config editor +
-switch arc, then the follow-on session's v1.58.0-1.62.0: toml comments,
-preset inheritance, fit arc, continuation + its review round, reload
-route + observed line -- all on main, unpushed; earlier narrative below
-unchanged)
+Last updated: 2026-08-11 late (v1.54.0-1.57.1 config editor + switch arc,
+the follow-on session's v1.58.0-1.62.0, then a third session's
+v1.62.2-1.62.3: v3 asset caching, the system-prompt override box +
+draft persistence + chip, and the load-cost confirm removed -- all on
+main, unpushed; earlier narrative below unchanged)
 
-HANDOFF (next session start here): main is at v1.62.0, suite 1496
-unit+contract green, E2E chat 43/43 + pages 43/43 live-verified. The
-2026-08-11 arc (eleven commits across two sessions, v1.54.0-1.62.0) is
-COMPLETE except the two small items below -- see the UPDATE blocks for
-what each version shipped. NEXT, in order:
+HANDOFF (next session start here): main is at v1.62.3, suite 1500
+unit+contract green, E2E chat 45/45 + pages 43/43 live-verified. The
+2026-08-11 arc (fourteen commits across three sessions,
+v1.54.0-1.62.3) is COMPLETE except the two small items below -- see the
+UPDATE blocks for what each version shipped.
+
+Two rules settled by the owner in the third session, both now contract
+(spec §4 + CLAUDE.md), because they generalize past the bugs that
+produced them:
+- **Only LOSS gates; cost is disclosed.** Choosing a model is choosing
+  to pay for it, so the load-cost confirm is gone -- a confirm for
+  something inevitable only trains click-through. Say what is
+  happening (residency dots, Load button, a live pre-first-token
+  status) and gate only what destroys something (history media the
+  target cannot read, a prompt about to be replaced).
+- **The system prompt is an OVERRIDE BOX.** A preset owns a prompt and
+  carries it; an EMPTY one makes no claim and changes nothing. Empty
+  never means "set to empty".
+
+NEXT, in order:
 1. **F14 switch-lock + G4 context estimate** (last §15 switch polish;
    TODO.md). F14 is an hour (disable the model select during a pending
    load -- state already tracked). G4 is a half-day: honest context
@@ -28,7 +43,42 @@ uses the REAL models.toml (only the DB is isolated) -- intercept any
 config-writing PATCH; contract tests only run green BATCHED (mock-MLX
 import ordering), use the full-suite command. (The worktree-per-session
 convention was retired 2026-08-11 -- sessions run in the primary
-checkout again.)
+checkout again.) Two more earned in the third session: a v3 UI bug that
+cannot be reproduced with a consistent module set is probably the
+BROWSER CACHE, not the code (v1.62.2 -- and the server must be
+RESTARTED for that fix, since it lives in api.py); and a chat-suite
+check must leave the world as found on EVERY axis, the preset LIST as
+well as the stamp, or it breaks checks three positions downstream.
+
+UPDATE 2026-08-11 late (v1.62.2-1.62.3, third session, all on main):
+
+- **SOLID -- v3 assets no-cache (v1.62.2)**: the /v3 route sent no
+  Cache-Control and starlette's FileResponse has no 304 path, so
+  browsers used HEURISTIC freshness per file -- frequently-edited
+  modules refetched while rarely-edited ones served stale for hours,
+  silently mixing module versions ("presetForNewDoc is not a
+  function"). Pinned by test_v3_assets_are_revalidated. This class is
+  invisible to every suite we have: they load modules from disk, never
+  through a browser cache.
+- **SOLID -- system prompt: override box + draft persistence + chip
+  (v1.62.3, reviewed b7ea7b6)**: a prompt typed before any conversation
+  existed had no owner anywhere (page state only), so a reload ate it
+  while the sampler params beside it survived via settings.js's
+  localStorage -- the asymmetry behind "everything else loads just
+  fine". It then fed real data loss: a Save with the box silently blank
+  stored null over a good preset prompt. Draft now parks in
+  localStorage until adopted; a promptless preset overrides nothing;
+  `.chat__sysprompt-chip` states what is in force, empty case included.
+  Provenance split into two predicates (matchesState = drift,
+  equalsState = identity) so the override rule could not loosen the
+  unstamped inference into a false claim.
+- **Method note worth keeping**: four throwaway puppeteer repros against
+  an isolated server (temp DB, NO model -- presets and conversations
+  are pure DB, so this costs seconds) cleared the storage layer and the
+  redraw before any code changed, and caught two of my own bad tests
+  (a selector matching nothing, a premise that never reached the branch
+  it claimed to test). The E2E-with-a-model run then found two more
+  that static review could not.
 
 UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
 
