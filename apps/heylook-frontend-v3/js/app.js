@@ -39,6 +39,28 @@ mountSettingsDrawer(navDesktop, navBottom);
 let currentPage = null;
 let navToken = 0;
 
+// v3 ships unbundled modules with no content hashes, so the ONE failure a
+// mount error is most likely to be is a cache artifact, not a code bug: a
+// module cached under an older server (before the no-cache headers of
+// v1.62.2) keeps its HEURISTIC freshness -- roughly a tenth of the file's
+// age, which for a long-lived file is days -- and is never re-requested, so
+// a new caller runs against an old module. That is what "X is not a
+// function" means here, and it took a bisect to say so out loud the first
+// time it happened (new chat.js + pre-v1.62.3 preset-bar.js, whose export
+// list had no promptState -> the whole chat page, top bar included, replaced
+// by this note). The distinction the reader needs is that a plain reload
+// does NOT fix it: reload revalidates the document, then serves the stale
+// SUBRESOURCE straight back out of cache. Only a hard reload evicts it.
+function staleModuleHint(err) {
+  const msg = String(err?.message ?? '');
+  const mixedVersions = /is not a (function|constructor)|undefined is not an object/.test(msg);
+  const moduleFetch = /dynamically imported module|Importing a module script failed|Failed to load module/.test(msg);
+  if (!mixedVersions && !moduleFetch) return null;
+  return 'This usually means the browser is serving a stale cached copy of one of the '
+    + 'frontend modules. A normal reload will not clear it -- hard-reload the page '
+    + '(Cmd-Shift-R / Ctrl-Shift-R). If it survives that, it is a real bug.';
+}
+
 async function navigate() {
   const name = (location.hash.replace(/^#\/?/, '') || 'chat').split('/')[0];
   const route = ROUTES[name] || ROUTES.chat;
@@ -72,7 +94,7 @@ async function navigate() {
     currentPage = null;
     main.replaceChildren(createEl('div', { class: 'error-note', role: 'alert' }, [
       `This page failed to load (${err.message}). `,
-      'Navigation still works -- pick another page or reload.',
+      staleModuleHint(err) ?? 'Navigation still works -- pick another page or reload.',
     ]));
   }
 }

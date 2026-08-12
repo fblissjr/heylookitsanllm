@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.4]
+
+### Fixed
+
+- **A mount failure now says when it is a stale browser cache, and that a
+  plain reload will not clear it.** Reported as "the bar at the top of chat,
+  where the model loader is, doesn't show up" -- and it doesn't: a throw
+  anywhere in a page's `setup()` rejects `mount()`, and the router replaces
+  all of `#main` with its error note, so the whole chat page goes with it.
+  The throw was `s.presetBar.promptState is not a function` from
+  `paintSysPromptChip`, the last unguarded call in chat's setup: a new
+  `chat.js` running against a `preset-bar.js` cached from before v1.62.3
+  added `promptState`. This is exactly the mixed-module-version failure the
+  v1.62.2 no-cache headers exist to prevent, but those only bind entries
+  cached from then on -- one stored under an earlier server keeps its
+  heuristic freshness (~10% of the file's age, days for a long-lived file)
+  and is never re-requested. The router now recognises that signature
+  ("X is not a function", module-fetch failures) and says to hard-reload,
+  because a normal reload revalidates the document and then serves the stale
+  SUBRESOURCE right back out of cache. Diagnosis only -- no behaviour
+  change on a healthy load.
+
 ## [1.62.3]
 
 ### Fixed
