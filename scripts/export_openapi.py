@@ -29,7 +29,10 @@ def write_yaml(schema: dict, path: Path) -> int:
     try:
         import yaml
     except ImportError:
-        print("PyYAML not installed. Run: uv add pyyaml", file=sys.stderr)
+        # PyYAML is a dev-group dep (this writer is its only use in the repo),
+        # so the fix is `uv sync`, not `uv add` -- the latter would put it back
+        # in the runtime deps the 1.62.4 audit took it out of.
+        print("PyYAML not installed. Run: uv sync (it is in the dev group)", file=sys.stderr)
         sys.exit(1)
     text = yaml.dump(schema, default_flow_style=False, sort_keys=True, allow_unicode=True)
     path.write_text(text)
