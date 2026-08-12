@@ -105,7 +105,10 @@ export default createPage({
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
       api.listConversations({ signal: ctx.signal }).catch((err) => {
         if (ctx.alive) showStatus(ctx, `Could not load conversations: ${err.message}`, true);
-        return { conversations: [] };
+        // `failed` distinguishes "no conversations" from "we don't know":
+        // the draft-restore below must not fire on a transient network error,
+        // which would drop a stale prompt on top of the error banner.
+        return { conversations: [], failed: true };
       }),
     ]);
     if (!ctx.alive) return;
@@ -124,10 +127,10 @@ export default createPage({
 
     if (s.conversations.length) {
       await selectConversation(ctx, s.conversations[0].id);
-    } else {
-      // No conversation owns a prompt yet -- restore the parked draft so it
-      // survives reloads and page trips (the drawer reads s.systemPrompt when
-      // it first renders, so setting it here is enough).
+    } else if (!convList.failed) {
+      // Genuinely no conversation owns a prompt -- restore the parked draft
+      // so it survives reloads and page trips (the drawer reads
+      // s.systemPrompt when it first renders, so setting it here is enough).
       s.systemPrompt = readDraftPrompt();
       renderMessages(ctx);
     }
@@ -781,6 +784,12 @@ async function selectConversation(ctx, convId) {
   try {
     const conv = await api.getConversation(convId, { signal: ctx.signal });
     if (!ctx.alive || s.activeId !== convId) return;
+    // A conversation owns the prompt from here on, so the parked draft is
+    // unreachable (newConversation with an active doc takes the preset, not
+    // the draft). Drop it rather than let it outlive its moment: a forgotten
+    // draft that survives until the last conversation is deleted would
+    // silently become some future conversation's prompt.
+    writeDraftPrompt(null);
     s.messages = conv.messages ?? [];
     s.systemPrompt = conv.system_prompt ?? null;
     s.appliedPresetId = conv.applied_preset_id ?? null;
@@ -1400,9 +1409,14 @@ function startStream(ctx, continueMsg = null) {
   // up while thinking streams would be a lie).
   const modelId = s.modelSelect.value;
   const cold = s.loadedKnown && modelId && !s.loadedIds.has(modelId);
-  showStatus(ctx, cold
+  // Remembered so teardown can clear THIS line and nothing else: an abort
+  // resolves asynchronously, so a status written after the abort (e.g. the
+  // model-switch disclosure, when the user switches away mid-wait) would
+  // otherwise be wiped by the dying stream's cleanup.
+  stream.waitStatus = cold
     ? `Loading ${modelId}… (the first token follows the load — this can take a while)`
-    : 'Waiting for the first token…');
+    : 'Waiting for the first token…';
+  showStatus(ctx, stream.waitStatus);
 
   const isCurrent = () => s.stream === stream && s.activeId === stream.targetConvId;
   // Idempotent: fires on every delta, does work on the first.
@@ -1471,10 +1485,15 @@ function releaseStream(ctx, stream) {
   s.sendBtn.textContent = 'Send';
   // A wait line must not outlive its stream: a zero-token completion, or a
   // Stop pressed during the load, never reaches firstDelta and would strand
-  // "Loading…" on screen for good. Callers set their own message AFTER this
-  // (handleStreamError, finishStream's save errors), so clearing here can't
-  // eat an error.
-  if (stream.waiting && s.activeId === stream.targetConvId) showStatus(ctx, '');
+  // "Loading…" on screen for good. Clear it only while it is still the line
+  // ON SCREEN -- anything written since (the model-switch disclosure, a retry
+  // notice) belongs to whatever wrote it. Callers set their own message AFTER
+  // this (handleStreamError, finishStream's save errors), so this can't eat
+  // an error either.
+  if (stream.waiting && s.activeId === stream.targetConvId
+      && s.statusEl.textContent === stream.waitStatus) {
+    showStatus(ctx, '');
+  }
 }
 
 async function finishStream(ctx, stream, { content, thinking, usage, timing, aborted }) {

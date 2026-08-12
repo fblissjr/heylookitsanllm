@@ -127,14 +127,30 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // Does the selected preset match the live state (document prompt + the
   // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
   // key order round-trips through the server and can't be trusted.
-  function matchesState(preset) {
-    // A promptless preset makes no claim about the prompt, so it cannot
-    // mismatch on one -- only the sampler half decides.
-    const incoming = presetPrompt(preset);
-    if (incoming && incoming !== (getPrompt() ?? null)) return false;
+  function samplersMatch(preset) {
     const now = snapshotSettings();
     const saved = preset.params ?? {};
     return Object.keys(PARAM_META).every((k) => (now[k] ?? null) === (saved[k] ?? null));
+  }
+
+  // DRIFT sense, for a preset the document explicitly carries: has anything
+  // this preset SPEAKS FOR changed? A promptless preset makes no claim about
+  // the prompt, so editing the prompt cannot make it "(edited)".
+  function matchesState(preset) {
+    const incoming = presetPrompt(preset);
+    if (incoming && incoming !== (getPrompt() ?? null)) return false;
+    return samplersMatch(preset);
+  }
+
+  // IDENTITY sense, for the unstamped fallback in indicatorInfo(): does this
+  // preset account for the document's WHOLE state, prompt included? Strictly
+  // stricter than matchesState on purpose -- the drift sense would let a
+  // promptless preset at default samplers "match" any default conversation,
+  // so the chip would claim provenance for a hand-typed prompt the preset
+  // never carried. Presets that lost their prompt to the v1.62.3 bug are
+  // exactly the ones that would have made that false claim.
+  function equalsState(preset) {
+    return (preset.system_prompt ?? null) === (getPrompt() ?? null) && samplersMatch(preset);
   }
 
   // Would applying overwrite a non-empty document prompt with something
@@ -156,7 +172,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (!doc) return null;
     const stamped = presets.find((p) => p.id === getStamp?.());
     if (stamped) return { name: stamped.name, edited: !matchesState(stamped) };
-    const match = presets.find((p) => matchesState(p));
+    // equalsState, not matchesState: an inferred (unstamped) claim must
+    // account for the prompt too -- see the two comments above.
+    const match = presets.find((p) => equalsState(p));
     return match ? { name: match.name, edited: false } : null;
   }
 
@@ -169,7 +187,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // nothing, so it can neither claim the prompt nor be "modified" from.
   function promptState() {
     const prompt = getPrompt() ?? null;
-    const stamped = presets.find((p) => p.id === getStamp?.());
+    // Same docId guard as indicatorInfo(): a stamp read with no active
+    // document is the PREVIOUS document's (deleting the last conversation
+    // leaves the page's appliedPresetId set), which would label a freshly
+    // typed draft "<old preset> (modified)".
+    const stamped = docId?.() ? presets.find((p) => p.id === getStamp?.()) : null;
     const source = presetPrompt(stamped);
     return {
       prompt,
@@ -252,6 +274,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // saving snapshots the current doc state -- the doc IS this preset now
       if (docId?.()) setStamp?.(saved.id);
       drawer.requestRebuild({ force: true });
+      // Same reason apply() calls it: the document now names this preset, and
+      // the bar chips are outside the drawer the rebuild above repaints.
+      syncIndicator();
       onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
     } catch (err) {
       if (ctx.alive) onStatus(`Preset save failed: ${err.message}`, true);

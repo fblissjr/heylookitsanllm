@@ -360,8 +360,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
    and a hidden chip is indistinguishable from a broken one. Three looks:
    set (brand tint, inherited), empty (quiet -- a fact, not a warning), and
    modified-from-its-preset (a marked edge, the only state carrying a claim
-   the user might want to reconcile). Colors come from tokens so both themes
-   and the forced-colors path follow §7 automatically. */
+   the user might want to reconcile). Every state is spelled out in the chip's
+   TEXT, so none of it rests on colour alone -- which is what keeps it honest
+   under forced-colors, where this file defines no overrides and the system
+   palette replaces these borders outright. */
 .chat__sysprompt-chip--empty {
   background: transparent;
   border-style: dashed;
@@ -755,10 +757,19 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .message-bubble { max-width: 92%; }
   /* §7 touch targets for the bar's Load button + the switch-warning actions. */
   .chat__load-btn,
+  .chat__sysprompt-chip,
   .chat__switch-actions .btn {
     min-height: 44px;
     padding: 0.55rem 0.9rem;
   }
+  /* The bar is a single non-wrapping flex row, so at phone widths the model
+     select plus both chips squeeze the sysprompt chip down to an ellipsis --
+     "No system prompt" collapsing to a sliver defeats the whole reason it is
+     always rendered. Let the row wrap instead: the spacer still pushes the
+     gear to the right of the first line, and the chips take a second line at
+     full width rather than becoming unreadable. */
+  .chat__bar { flex-wrap: wrap; row-gap: 0.4rem; }
+  .chat__sysprompt-chip { max-width: 100%; }
 }
 
 /* ================= page css sections (merged from per-page builds) ================= */

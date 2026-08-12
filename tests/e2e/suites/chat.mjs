@@ -580,6 +580,12 @@ export async function runChatSuite({ suite, ctx, config }) {
     // The old behavior blanked it, and a Save in that window then stored the
     // blank over a good prompt, which is how two presets lost their prompts
     // at once. Data loss, so this is pinned rather than left to inspection.
+    //
+    // Reopen first: the chip check above scrolls the drawer down to the
+    // system-prompt textarea, which puts the preset row under the sticky
+    // header -- every hit-tested click here then fails with "Node is either
+    // not clickable". openDrawer() closes and reopens, resetting the scroll.
+    await openDrawer(page);
     const before = await page.$eval('.sysprompt-input', (el) => el.value);
     assert(before.trim(), 'precondition: this conversation should have a prompt by now');
 
@@ -588,9 +594,15 @@ export async function runChatSuite({ suite, ctx, config }) {
       el.value = '';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await page.$eval('.preset-section .input', (el) => { el.value = ''; });
-    await page.click('.preset-section .input');
-    await page.type('.preset-section .input', 'e2e-promptless');
+    // Set the name directly rather than click+type: the check above leaves
+    // the drawer scrolled to the system-prompt textarea (the chip focuses
+    // it), so a real click on the preset row can hit-test onto another
+    // element -- "Node is either not clickable". The value + input event is
+    // what the field's own listeners consume anyway.
+    await page.$eval('.preset-section .input', (el) => {
+      el.value = 'e2e-promptless';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     await clickByText(page, '.preset-row button', 'Save');
     await waitFor(async () => (await presetOptionValue('e2e-promptless')) !== null,
       { message: 'promptless preset not listed in the select' });
@@ -608,6 +620,30 @@ export async function runChatSuite({ suite, ctx, config }) {
     const after = await page.$eval('.sysprompt-input', (el) => el.value);
     assert(after === before,
       `promptless preset changed the prompt: "${before}" -> "${after}"`);
+
+    // ORDER COUPLING -- leave the world exactly as found, on BOTH axes:
+    //
+    //  (1) the preset LIST. A promptless preset left behind is visible to
+    //      every later check's provenance inference, and the delete check
+    //      downstream asserts the chip goes empty. Delete it here.
+    //  (2) the STAMP. Save AND Apply both write applied_preset_id on the
+    //      active conversation, so this check has re-pointed the chip at
+    //      e2e-promptless; the two chip checks below assert e2e-preset WITH
+    //      "(edited)". Re-apply, then re-drift the panel.
+    await page.select('.preset-row select', await presetOptionValue('e2e-promptless'));
+    const delPromptless = await page.$('.preset-section .btn--ghost');
+    await armedClick(delPromptless);
+    await delPromptless.dispose();
+    await waitFor(async () => (await presetOptionValue('e2e-promptless')) === null,
+      { message: 'promptless preset not cleaned up' });
+
+    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+    await clickByText(page, '.preset-row button', 'Apply');
+    await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
+      { message: 're-applying e2e-preset did not restore temperature' });
+    await setSettingsInput(page, 'Temperature', '');   // drift it again
+    await waitFor(async () => (await driftText(page))?.includes('Differs'),
+      { message: 'panel not drifted off e2e-preset again' });
   });
 
   await suite.check('applied-preset chip shows in the chat bar', async () => {
@@ -678,7 +714,11 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await presetOptionValue('e2e-preset')) === null,
       { message: 'deleted preset still listed' });
     await waitFor(async () => page.$eval('.chat__preset-chip', (el) => el.hidden),
-      { message: 'applied-preset chip did not clear after delete' });
+      // Name what it still claims: the chip can survive a delete either by a
+      // stamp another check left behind or by provenance inference matching
+      // some other preset, and those need different fixes.
+      { message: async () => 'applied-preset chip did not clear after delete; still shows '
+          + JSON.stringify(await page.$eval('.chat__preset-chip', (el) => el.textContent)) });
     // done with the drawer -- close it so #app is interactable again.
     await closeDrawer(page);
   });

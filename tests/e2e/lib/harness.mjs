@@ -32,7 +32,15 @@ export async function waitFor(fn, { timeout = 15000, interval = 100, message } =
     await sleep(interval);
   }
   const suffix = lastErr ? ` (last error: ${lastErr.message})` : '';
-  throw new Error(`${message || 'waitFor'} timed out after ${timeout}ms${suffix}`);
+  // `message` may be a function, evaluated only on failure, so a check can
+  // report the state it actually found (one page query is cheap once, and
+  // pointless on every passing run). Never let that reporting mask the
+  // failure it is describing.
+  let text = message;
+  if (typeof message === 'function') {
+    try { text = await message(); } catch (err) { text = `${message.name || 'message'}() threw: ${err.message}`; }
+  }
+  throw new Error(`${text || 'waitFor'} timed out after ${timeout}ms${suffix}`);
 }
 
 // Prove an ABSENCE: that nothing -- or nothing MORE -- happened.
