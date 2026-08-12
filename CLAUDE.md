@@ -119,15 +119,29 @@ Phase 3b), takes image input + renders image content blocks out of the DuckDB
 store, and has a per-document system-prompt editor + a saved-preset bar (TWO shared
 drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat AND
 notebook -- fix a bug in the shared factory, never in one page's copy).
+The system prompt is an OVERRIDE BOX (owner rule, v1.62.3): a preset OWNS a
+prompt and carries it, but a preset with an EMPTY one makes no claim and
+leaves the document's prompt alone -- empty NEVER means "set it to empty",
+which is what turned one blank Save into two presets losing their prompts.
+Only a carrying preset can arm "Replace prompt?" or count as drift. A prompt
+typed before any conversation exists is parked in localStorage until a
+conversation adopts it (it was page-state-only, so a reload ate it while the
+sampler params beside it survived), and `.chat__sysprompt-chip` states what
+is in force -- including the "No system prompt" case, which is rendered, not
+hidden.
 Since v1.54-1.57: the models page EDITS per-model config (`js/model-config.js`,
 schema-driven off `/v1/admin/model-options` -- a new backend config field
 appears in the UI with no frontend change; `ui:"hidden"` on a field is what
 keeps it out), and chat switches models mid-conversation honestly: history
 media the current model can't take is dropped AT THE WIRE with a per-message
 disclosure while staged attachments still BLOCK (deliberate asymmetry,
-commented at both sites -- do not unify), residency dots + a pre-switch
-warning gate costly switches, and chat now consumes `/v1/admin/models`
-(residency) + `load?warm=true` (its Load button).
+commented at both sites -- do not unify), and chat now consumes
+`/v1/admin/models` (residency) + `load?warm=true` (its Load button). Only
+LOSS gates a switch: load cost is DISCLOSED, never confirmed (owner call,
+v1.62.3) -- residency dots, the Load button, and a live pre-first-token
+status say what is happening. Choosing a model IS choosing to pay for it, so
+a confirm there only trains click-through; the one removed fired hardest with
+NOTHING resident, where its "may evict the resident model" was false.
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the authoritative backend API contract -- update it in the same commit as any
 contract change); orientation + backend coupling: [docs/frontend_v3.md](./docs/frontend_v3.md).

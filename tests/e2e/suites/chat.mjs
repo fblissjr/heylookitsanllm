@@ -3,7 +3,7 @@
 // settings + the localStorage sampler seed, conversation CRUD, and a 390px
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
-import { assert, waitFor } from '../lib/harness.mjs';
+import { assert, waitFor, sleep } from '../lib/harness.mjs';
 import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
 
@@ -554,6 +554,62 @@ export async function runChatSuite({ suite, ctx, config }) {
     await setSettingsInput(page, 'Temperature', '');
   });
 
+  await suite.check('system-prompt chip states what is in force and opens it', async () => {
+    // "What prompt am I running?" must be answerable from the bar, including
+    // the negative answer -- a hidden chip reads the same as a broken one.
+    const label = await page.$eval('.chat__sysprompt-chip', (el) => el.textContent);
+    const prompt = await page.$eval('.sysprompt-input', (el) => el.value);
+    if (prompt.trim()) {
+      assert(label.startsWith('System prompt:'), `chip="${label}" with a prompt set`);
+    } else {
+      assert(label === 'No system prompt', `chip="${label}" with no prompt`);
+    }
+    // click-through: opens the drawer AND lands in the field
+    await closeDrawer(page);
+    await page.evaluate(() => document.querySelector('.chat__sysprompt-chip').click());
+    await page.waitForSelector('.sysprompt-input', { timeout: 5000 });
+    await waitFor(async () => page.evaluate(() =>
+      (document.activeElement?.className ?? '').includes('sysprompt-input')),
+    { message: 'chip click did not focus the system-prompt editor' });
+  });
+
+  await suite.check('a preset carrying no system prompt overrides nothing', async () => {
+    // The prompt is an OVERRIDE box (v1.62.3): a preset OWNS a prompt and
+    // carries it, but an EMPTY one means "does not speak for the prompt" --
+    // applying it must leave the conversation's prompt alone, not blank it.
+    // The old behavior blanked it, and a Save in that window then stored the
+    // blank over a good prompt, which is how two presets lost their prompts
+    // at once. Data loss, so this is pinned rather than left to inspection.
+    const before = await page.$eval('.sysprompt-input', (el) => el.value);
+    assert(before.trim(), 'precondition: this conversation should have a prompt by now');
+
+    // save a promptless preset: clear the box, save, restore the prompt
+    await page.$eval('.sysprompt-input', (el) => {
+      el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.$eval('.preset-section .input', (el) => { el.value = ''; });
+    await page.click('.preset-section .input');
+    await page.type('.preset-section .input', 'e2e-promptless');
+    await clickByText(page, '.preset-row button', 'Save');
+    await waitFor(async () => (await presetOptionValue('e2e-promptless')) !== null,
+      { message: 'promptless preset not listed in the select' });
+
+    await page.$eval('.sysprompt-input', (el, v) => {
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, before);
+
+    await page.select('.preset-row select', await presetOptionValue('e2e-promptless'));
+    // no arming: a promptless preset replaces nothing, so Apply fires at once
+    await clickByText(page, '.preset-row button', 'Apply');
+    await sleep(400);
+    const after = await page.$eval('.sysprompt-input', (el) => el.value);
+    assert(after === before,
+      `promptless preset changed the prompt: "${before}" -> "${after}"`);
+  });
+
   await suite.check('applied-preset chip shows in the chat bar', async () => {
     // The prior check saved+applied e2e-preset, then reset Temperature to
     // cascade -- the panel is drifted, so the chip must carry "(edited)".
@@ -683,11 +739,12 @@ export async function runChatSuite({ suite, ctx, config }) {
   // the suite's original conversation never reaches these generations.
   const THINK_BTN = '.chat__composer button[aria-label="Toggle thinking"]';
 
-  // Switching models can now present a pre-switch warning (G3: an unloaded
-  // target names its load cost; incompatible history names what gets
-  // dropped) with explicit Cancel / Switch anyway -- the switch does not
-  // COMMIT until confirmed, so cap-gated UI deliberately keeps tracking the
-  // old model while the warning is up. Tests that switch act like a user
+  // Switching models can present a pre-switch warning when the switch would
+  // LOSE something: incompatible history media naming what gets dropped.
+  // (Load cost no longer warns -- v1.62.3 made it a disclosure, so a switch
+  // to an unloaded-but-compatible target commits silently.) The switch does
+  // not COMMIT until confirmed, so cap-gated UI deliberately keeps tracking
+  // the old model while the warning is up. Tests that switch act like a user
   // who means it: confirm when asked.
   async function selectModelConfirming(id) {
     await page.select(MODEL_SELECT, id);
@@ -755,9 +812,12 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('model switch warns before committing and Cancel reverts', async () => {
-    // G3: choosing a costly/incompatible model is a decision, not a
-    // discovery -- the warning must appear BEFORE the switch commits, and
-    // Cancel must put the select back on the committed model.
+    // G3: switching to a model that cannot read this conversation is a
+    // decision, not a discovery -- the warning must appear BEFORE the switch
+    // commits, and Cancel must put the select back on the committed model.
+    // NB this suite's conversation is often text-only, in which case there is
+    // nothing to lose and the silent-switch branch below is the real path;
+    // the loss warning itself is exercised by the image checks above.
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const other = models.find((m) => m.id !== config.model);
     if (!other) {
@@ -766,8 +826,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     }
     await page.select(MODEL_SELECT, other.id);
     if ((await count(page, '.chat__switch-warning')) === 0) {
-      // Target was resident and fully compatible: a clean switch commits
-      // silently by design. Restore and pass.
+      // Nothing in this conversation the target cannot read: a clean switch
+      // commits silently by design (residency no longer factors in).
       await selectModelConfirming(config.model);
       return;
     }

@@ -355,6 +355,24 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   white-space: nowrap;
 }
 
+/* System-prompt chip: what prompt is in force. Unlike the preset chip this
+   one is ALWAYS present -- "no system prompt" is an answer the user needs,
+   and a hidden chip is indistinguishable from a broken one. Three looks:
+   set (brand tint, inherited), empty (quiet -- a fact, not a warning), and
+   modified-from-its-preset (a marked edge, the only state carrying a claim
+   the user might want to reconcile). Colors come from tokens so both themes
+   and the forced-colors path follow §7 automatically. */
+.chat__sysprompt-chip--empty {
+  background: transparent;
+  border-style: dashed;
+  color: var(--ink-muted);
+}
+
+.chat__sysprompt-chip--modified {
+  border-color: var(--accent);
+  font-weight: 550;
+}
+
 /* ================= settings drawer (app-shell singleton) ================= */
 
 /* desktop gear: a nav-item pinned to the foot of the sidebar rail */

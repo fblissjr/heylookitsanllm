@@ -19,6 +19,28 @@ import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 
+// A system prompt typed before any conversation exists has no owner: the
+// server has nothing to attach it to, so it lived in page state alone and a
+// reload -- or a trip to another page -- silently ate it. Sampler params in
+// the same window survive, because settings.js parks them in localStorage,
+// which is exactly why "everything else loads fine, just not the prompt".
+// Park the draft the same way until a conversation adopts it (both create
+// paths clear it). The follow-on this prevents is the worse half: with the
+// box silently blank, a Save onto an existing preset name stored null over a
+// good prompt.
+const DRAFT_PROMPT_KEY = 'heylook.v3.chat.draft-prompt';
+
+function readDraftPrompt() {
+  try { return localStorage.getItem(DRAFT_PROMPT_KEY) || null; } catch { return null; }
+}
+
+function writeDraftPrompt(value) {
+  try {
+    if (value) localStorage.setItem(DRAFT_PROMPT_KEY, value);
+    else localStorage.removeItem(DRAFT_PROMPT_KEY);
+  } catch { /* storage full/unavailable -- the draft stays in memory only */ }
+}
+
 export default createPage({
   async setup(ctx) {
     const s = ctx.state;
@@ -39,7 +61,11 @@ export default createPage({
       setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
-      onIndicator: (info) => paintPresetChip(ctx, info),
+      // One funnel for both chips: the bar calls this from syncIndicator
+      // (document switch/create/delete) AND updateDrift (every prompt
+      // keystroke + every sampler change), so neither chip can go stale
+      // without the other noticing.
+      onIndicator: (info) => { paintPresetChip(ctx, info); paintSysPromptChip(ctx); },
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
     });
@@ -99,8 +125,16 @@ export default createPage({
     if (s.conversations.length) {
       await selectConversation(ctx, s.conversations[0].id);
     } else {
+      // No conversation owns a prompt yet -- restore the parked draft so it
+      // survives reloads and page trips (the drawer reads s.systemPrompt when
+      // it first renders, so setting it here is enough).
+      s.systemPrompt = readDraftPrompt();
       renderMessages(ctx);
     }
+    // First paint of the sysprompt chip: the preset-fed funnel above only
+    // runs once the preset list lands (or never, if that fetch fails), and
+    // the chip must state the prompt either way.
+    paintSysPromptChip(ctx);
   },
 });
 
@@ -237,12 +271,33 @@ function buildSkeleton(ctx) {
   });
   s.presetChip.addEventListener('click', () => drawer.openSettings(s.presetChip));
 
+  // System-prompt chip. NOT hidden when there is no prompt: "what am I
+  // running?" has to be answerable at a glance, and an absent chip answers
+  // nothing -- it reads the same whether there is no prompt or the UI simply
+  // failed to show one (the exact ambiguity behind the disappearing-prompt
+  // report). So the empty case says so out loud, and every state opens the
+  // editor with the textarea focused.
+  s.sysPromptChip = createEl('button', {
+    class: 'btn preset-chip chat__sysprompt-chip',
+  });
+  s.sysPromptChip.addEventListener('click', () => {
+    drawer.openSettings(s.sysPromptChip);
+    // open() focuses the close button; move to the field the user asked for.
+    // Scroll too -- the prompt section can sit below the fold on short panels.
+    queueMicrotask(() => {
+      const input = document.querySelector('.sysprompt-input');
+      input?.focus();
+      input?.scrollIntoView({ block: 'nearest' });
+    });
+  });
+
   const thread = createEl('section', { class: 'chat__thread' }, [
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
       s.loadNowBtn,
       s.presetChip,
+      s.sysPromptChip,
       createEl('div', { class: 'chat__bar-spacer' }),
       settingsBtn,
     ]),
@@ -364,6 +419,16 @@ async function loadModelNow(ctx) {
 // trigger the flow on its own -- the toggle disappearing is its own visible
 // signal, and a confirm dialog for a reversible toggle hide trains
 // click-through (it rides along only when a real warning is already showing).
+//
+// Only LOSS gates: content this model cannot read. A cold target is NOT a
+// warning -- changing model means paying for that model, so there is no
+// decision to put behind a button, and the confirm was pure friction on the
+// commonest path (nothing resident yet, where it also claimed an eviction
+// that could not happen). Load cost is DISCLOSED instead, in three
+// non-blocking places: the ○ in the option label, the Load button, and --
+// the one that was actually missing -- a live status while the send waits
+// on the load (sendMessage). Owner call 2026-08-11: state what is
+// happening, do not ask permission for the inevitable.
 function switchWarnings(ctx, from, to) {
   const s = ctx.state;
   const target = s.models.find((m) => m.id === to);
@@ -381,9 +446,6 @@ function switchWarnings(ctx, from, to) {
   if (audio && !caps.includes('audio')) {
     lines.push(`This conversation has ${audio} audio clip${audio === 1 ? '' : 's'}. `
       + 'They will be dropped from every request to this model — it cannot hear them.');
-  }
-  if (s.loadedKnown && !s.loadedIds.has(to)) {
-    lines.push('Not loaded — the first message pays the load (and may evict the resident model).');
   }
   if (lines.length && getSetting('enable_thinking') === true) {
     const fromCaps = s.models.find((m) => m.id === from)?.capabilities ?? [];
@@ -422,7 +484,12 @@ function commitModelSwitch(ctx, to) {
   // _SCHEMA_VERSION bump adds messages.model_id).
   if (s.stream) stopStream(ctx);
   s.committedModelId = to;
-  showStatus(ctx, '');
+  // Say what this costs instead of asking whether to pay it. Silent when the
+  // target is resident or residency is still unknown -- a guess would be
+  // worse than nothing (same rule as the dots).
+  showStatus(ctx, s.loadedKnown && !s.loadedIds.has(to)
+    ? `${to} is not loaded — your first message loads it, or press Load to do it now.`
+    : '');
   if (s.activeId) {
     api.updateConversation(s.activeId, { model_id: to })
       .catch((err) => console.warn('model_id save failed', err));
@@ -487,7 +554,11 @@ function setSystemPrompt(ctx, value) {
   const s = ctx.state;
   const changed = value !== s.systemPrompt;
   s.systemPrompt = value;
-  if (!s.activeId || !changed) return; // no-op PUTs skipped (preset re-apply)
+  if (!s.activeId) {
+    writeDraftPrompt(value); // no conversation owns it yet -- park it
+    return;
+  }
+  if (!changed) return; // no-op PUTs skipped (preset re-apply)
   putSystemPrompt(ctx, s.activeId, value);
 }
 
@@ -523,7 +594,12 @@ function buildPromptSection(ctx) {
   return createPromptSection(ctx, {
     owner: () => s.activeId,
     get: () => s.systemPrompt,
-    set: (v) => { s.systemPrompt = v; },
+    set: (v) => {
+      s.systemPrompt = v;
+      // With no conversation the factory's persist is a deliberate no-op
+      // (builtFor is null) -- park the draft here instead, per keystroke.
+      if (!s.activeId) writeDraftPrompt(v);
+    },
     persist: (v, id) => putSystemPrompt(ctx, id, v),
     onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
   });
@@ -539,6 +615,35 @@ function paintPresetChip(ctx, info) {
   const chip = ctx.state.presetChip;
   chip.hidden = !info;
   chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
+}
+
+// The system-prompt chip: what prompt is in force, where it came from, and
+// whether it still matches that source. Four states, each one a claim the
+// user can check by clicking through to the text itself.
+function paintSysPromptChip(ctx) {
+  const s = ctx.state;
+  const chip = s.sysPromptChip;
+  if (!chip) return;
+  const { prompt, presetName, modified } = s.presetBar.promptState();
+
+  let label;
+  if (!prompt) label = 'No system prompt';
+  else if (!presetName) label = 'System prompt: custom';
+  else label = `System prompt: ${presetName}${modified ? ' (modified)' : ''}`;
+
+  chip.textContent = label;
+  chip.classList.toggle('chat__sysprompt-chip--empty', !prompt);
+  chip.classList.toggle('chat__sysprompt-chip--modified', Boolean(modified));
+  // The full text belongs in the tooltip/accessible name, not the bar -- but
+  // an unbounded prompt would make an unreadable tooltip, so cap the preview
+  // and say it is one.
+  const preview = prompt && prompt.length > 300 ? `${prompt.slice(0, 300)}…` : prompt;
+  chip.title = prompt
+    ? `${label} — click to edit\n\n${preview}`
+    : 'No system prompt is in force — click to write one';
+  chip.setAttribute('aria-label', prompt
+    ? `${label}. Click to edit the system prompt.`
+    : 'No system prompt. Click to write one.');
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +732,9 @@ async function newConversation(ctx) {
       applied_preset_id: preset?.id,
     });
     if (!ctx.alive) return;
+    // The draft (if any) just became this conversation's prompt -- it has a
+    // real owner now, so stop parking it.
+    writeDraftPrompt(null);
     s.conversations.unshift(conv);
     await selectConversation(ctx, conv.id);
     s.rootEl.classList.remove('chat--convs-open');
@@ -1158,6 +1266,7 @@ async function send(ctx) {
         params: snapshotSettings(),  // the panel state this first message was sent with
       });
       if (!ctx.alive) return;
+      writeDraftPrompt(null); // adopted by the conversation this send created
       s.conversations.unshift(conv);
       s.activeId = conv.id;
       s.messages = [];
@@ -1276,19 +1385,41 @@ function startStream(ctx, continueMsg = null) {
     thinking: '',
     contentDirty: false,
     thinkingDirty: false,
+    waiting: true, // no delta yet -- the wait status below is still on screen
     els: { msgEl, contentEl, thinkingBody: thinkingEl.querySelector('.thinking__body'), thinkingEl },
   };
   s.stream = stream;
   s.sendBtn.textContent = 'Stop';
   beforeUnloadGuard.enable();
-  showStatus(ctx, '');
+
+  // The dead air before the first token is the one moment the user cannot
+  // tell a slow model from a hung one -- and on a cold target it is a
+  // multi-GB load, the single longest wait in the app, previously shown as
+  // an empty bubble. Name it. Cleared by the first delta below (thinking
+  // counts: a reasoning model emits thinking first, and leaving "Loading…"
+  // up while thinking streams would be a lie).
+  const modelId = s.modelSelect.value;
+  const cold = s.loadedKnown && modelId && !s.loadedIds.has(modelId);
+  showStatus(ctx, cold
+    ? `Loading ${modelId}… (the first token follows the load — this can take a while)`
+    : 'Waiting for the first token…');
 
   const isCurrent = () => s.stream === stream && s.activeId === stream.targetConvId;
+  // Idempotent: fires on every delta, does work on the first.
+  const firstDelta = () => {
+    if (!stream.waiting) return;
+    stream.waiting = false;
+    if (ctx.alive && isCurrent()) showStatus(ctx, '');
+    // The load just landed, so the dots and the Load button are stale NOW,
+    // not only at completion -- a long generation would otherwise show a
+    // resident model as idle for its whole duration.
+    if (cold && ctx.alive) refreshLoadedIds(ctx);
+  };
 
   streamChat(buildRequestBody(ctx, continueMsg ? { continue_final_message: true } : {}), {
     signal: controller.signal,
-    onToken: (_, full) => { stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
-    onThinking: (_, full) => { stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
+    onToken: (_, full) => { firstDelta(); stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
+    onThinking: (_, full) => { firstDelta(); stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
     onRetryWait: (wait) => {
       if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
     },
@@ -1336,7 +1467,14 @@ function releaseStream(ctx, stream) {
   if (s.stream !== stream) return;
   s.stream = null;
   beforeUnloadGuard.disable();
-  if (ctx.alive) s.sendBtn.textContent = 'Send';
+  if (!ctx.alive) return;
+  s.sendBtn.textContent = 'Send';
+  // A wait line must not outlive its stream: a zero-token completion, or a
+  // Stop pressed during the load, never reaches firstDelta and would strand
+  // "Loading…" on screen for good. Callers set their own message AFTER this
+  // (handleStreamError, finishStream's save errors), so clearing here can't
+  // eat an error.
+  if (stream.waiting && s.activeId === stream.targetConvId) showStatus(ctx, '');
 }
 
 async function finishStream(ctx, stream, { content, thinking, usage, timing, aborted }) {

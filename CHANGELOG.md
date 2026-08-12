@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.3]
+
+### Fixed
+
+- **A system prompt typed before any conversation existed was silently lost.**
+  It lived in page state alone -- nothing on the server owns a prompt until a
+  conversation does -- so a reload, or a trip to another page and back, ate
+  it. The sampler params beside it survived, because `settings.js` parks
+  those in localStorage, which is exactly why the loss read as "everything
+  else loads fine, just not the system prompt". The draft is now parked the
+  same way (`heylook.v3.chat.draft-prompt`) until a conversation adopts it;
+  both create paths clear it. This also cuts the worse half: with the box
+  silently blank, a Save onto an existing preset name stored null OVER a good
+  prompt, which is how two presets lost their prompts at once.
+- **A preset carrying no system prompt no longer blanks the one in use.** The
+  prompt is an OVERRIDE box (owner rule): a preset owns a prompt and carries
+  it onto whatever it is applied to, but an empty one makes no claim and
+  leaves the conversation's prompt -- or the model's own default -- exactly
+  as it was. Empty means "does not speak for the prompt", never "set it to
+  empty". Only a carrying preset can arm "Replace prompt?" or count as drift
+  (`matchesState` ignores the prompt for a promptless preset).
+
+### Added
+
+- **A system-prompt chip in the chat bar** (`.chat__sysprompt-chip`): what
+  prompt is in force, where it came from, and whether it still matches that
+  source -- "No system prompt" / "custom" / "&lt;preset&gt;" / "&lt;preset&gt;
+  (modified)". Always rendered, including the empty case: a hidden chip is
+  indistinguishable from a broken one, and that ambiguity is what let the
+  disappearing prompt go unnoticed. The full text rides the tooltip and
+  accessible name; clicking any state opens the editor focused. Fed by the
+  preset bar's new `promptState()`, kept separate from the whole-document
+  `indicatorInfo()` so a chip that claims to track the prompt cannot flip on
+  a temperature nudge.
+- E2E coverage for all three: the override rule, the chip's states, and its
+  click-through (`tests/e2e/suites/chat.mjs`).
+
+### Changed
+
+- **Load cost is disclosed, never confirmed.** Switching to an unloaded model
+  no longer raises a Cancel / Switch-anyway gate: choosing a model IS choosing
+  to pay for it, so there was no decision to gate, and the confirm fired
+  hardest on the emptiest state -- nothing resident, no conversation -- where
+  its "may evict the resident model" was also false. Only LOSS gates now
+  (history media the target cannot read). In its place: the switch says what
+  it costs, and Send names the wait it previously spent in silence --
+  `Loading <id>…` on a cold target, `Waiting for the first token…` otherwise,
+  cleared by the first content or thinking delta and by stream teardown, so a
+  zero-token completion or a Stop mid-load cannot strand it.
+
 ## [1.62.2]
 
 ### Fixed

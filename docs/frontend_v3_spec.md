@@ -469,17 +469,29 @@ send/switch/stream-start). Stale-response guard: capture `targetConvId` at strea
 design doc, `internal/research/expert_offload_design_frontend.md`):** the select's
 option labels carry residency (`●` resident / `○` idle, from `/v1/admin/models`;
 plain ids until the first successful fetch -- the UI never guesses residency;
-refreshed at mount, after Load, and after each completed generation, never
-polled). Switching runs a PRE-switch check: incompatible history media
-("N images... will be dropped"), an unloaded target's load cost, and -- only
-alongside a real warning -- a thinking-toggle-will-hide note. Warnings render
-inline in the chat status area (never a modal) with Cancel / Switch anyway;
-the switch does NOT commit (model_id write, cap re-gating, drawer rebuild)
-until confirmed, Cancel reverts the select, and a Send with the unconfirmed
-target selected commits it (sending is the strongest confirmation). A clean
-switch (resident + compatible) commits silently. A "Load" button beside the
-select appears for unloaded models and runs the same `load?warm=true` warm
-contract, phases spoken by the status line. **History media is caps-gated at
+refreshed at mount, after Load, after the first delta of a cold send, and
+after each completed generation, never polled). Switching runs a PRE-switch
+check for LOSS only: incompatible history media ("N images... will be
+dropped") and -- only alongside a real warning -- a thinking-toggle-will-hide
+note. Warnings render inline in the chat status area (never a modal) with
+Cancel / Switch anyway; the switch does NOT commit (model_id write, cap
+re-gating, drawer rebuild) until confirmed, Cancel reverts the select, and a
+Send with the unconfirmed target selected commits it (sending is the
+strongest confirmation). A compatible switch commits silently.
+
+**Load cost is disclosed, never gated (owner call 2026-08-11, v1.62.3 --
+supersedes the G3 residency confirm).** Choosing a model IS choosing to pay
+for it, so there is no decision to put behind a button, and the old confirm
+fired hardest on the emptiest state (nothing resident, no conversation) where
+it also claimed an eviction that could not happen. Three non-blocking
+disclosures replace it: the `○` in the option label, the "Load" button beside
+the select (unloaded models only; same `load?warm=true` warm contract, phases
+spoken by the status line), a status line on switching to an unloaded target
+("... is not loaded — your first message loads it"), and a live status for
+the whole pre-first-token wait on Send -- `Loading <id>…` when the target is
+cold, `Waiting for the first token…` otherwise -- cleared by the first
+content OR thinking delta, and by stream teardown so a zero-token completion
+or a Stop mid-load cannot strand it. **History media is caps-gated at
 the wire** (`toWireContent(msg, caps)`): blocks the current model cannot take
 are dropped from requests -- never from the store; switch back and they ride
 again -- with a per-message "N images not sent to this model" disclosure in
@@ -513,7 +525,37 @@ closed under focus. The preset `<select>` is inert (records the selection and
 prefills the save-as name, never writes the document); Apply is an explicit
 button, armed-confirmed ("Replace prompt?") only when it would replace a
 differing non-empty prompt; a live drift line (`role="status"`) reports whether
-the selected preset matches the current prompt + sampler state. An
+the selected preset matches the current prompt + sampler state.
+
+**The prompt is an OVERRIDE BOX (owner rule 2026-08-11, v1.62.3).** A preset
+OWNS a system prompt and carries it onto whatever it is applied to, but a
+preset whose `system_prompt` is empty/null makes NO claim about the prompt:
+applying it leaves the conversation's prompt (or the model's own default)
+exactly as it was, rather than blanking it. Empty means "does not speak for
+the prompt", never "set it to empty". Everything downstream follows from that
+one rule -- only a carrying preset can arm "Replace prompt?", and `matchesState`
+ignores the prompt for a promptless preset, so drift is decided by the sampler
+half alone. It also defuses a data-loss chain: a preset saved while the box was
+blank is inert instead of destructive.
+
+**The system-prompt chip** (`.chat__sysprompt-chip`, beside the applied-preset
+chip) states what is in force, in four states: "No system prompt" (quiet,
+dashed -- always rendered, never hidden, because an absent chip is
+indistinguishable from a broken one and that ambiguity is what let a
+disappearing prompt go unnoticed), "System prompt: custom", "System prompt:
+&lt;preset&gt;", and "&lt;preset&gt; (modified)" once it diverges from the preset it came
+from. The full text (capped at 300 chars) rides the tooltip + accessible name,
+and clicking any state opens the drawer with the textarea focused and scrolled
+into view. It is fed by the preset bar's `promptState()` -- deliberately
+separate from `indicatorInfo()`, which answers the whole-document question:
+a chip claiming to track the prompt must not flip on a temperature nudge.
+
+**A prompt typed before any conversation exists is parked in localStorage**
+(`heylook.v3.chat.draft-prompt`) until a conversation adopts it, and both
+create paths clear it. Without this it lived in page state alone, so a reload
+or a trip to another page silently ate it -- while sampler params in the same
+window survived (settings.js parks those), which is exactly why the loss read
+as "everything else loads fine, just not the system prompt". An
 applied-preset chip (v1.39.6, `.preset-chip`) sits beside each page's model
 select naming the preset the active document is running -- "(edited)" once it
 drifts -- and opens the drawer on click. Provenance is session-local: only

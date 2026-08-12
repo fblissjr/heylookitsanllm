@@ -9,6 +9,11 @@
 //     preset until Save), armed-confirmed ("Replace prompt?") only when it
 //     would replace a differing non-empty prompt -- sampler knobs are
 //     trivially recoverable, the prompt is typed work
+//   - the prompt is an OVERRIDE BOX: a preset OWNS a system prompt and
+//     carries it onto whatever it is applied to, but a preset with NO prompt
+//     changes nothing -- the conversation keeps its own prompt (or the
+//     model's default). Empty means "does not speak for the prompt", never
+//     "set it to empty" (owner rule 2026-08-11) -- see presetPrompt() below
 //   - Save snapshots the current prompt + the whole sampler panel under the
 //     typed name; upsert-by-name is decided against a FRESH list (the local
 //     cache can hide a name the server has -> 409, or list one it no longer
@@ -67,6 +72,18 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
   const selected = () => presets.find((p) => p.id === presetId);
 
+  // A preset's system_prompt is an OVERRIDE, not a value (owner rule
+  // 2026-08-11): the preset OWNS a prompt and carries it onto whatever it is
+  // applied to, but an EMPTY one means "this preset does not speak for the
+  // prompt" -- applying it leaves the document's prompt exactly as it was,
+  // rather than blanking it. Consequences, all deliberate: only a preset that
+  // actually carries a prompt can replace one (so the armed "Replace prompt?"
+  // is the true test of loss), a promptless preset can never eat typed work,
+  // and drift/match ignore the prompt for such a preset because it makes no
+  // claim about it. This is also what defuses the accidental blank Save: a
+  // preset stored with no prompt is inert, not destructive.
+  const presetPrompt = (p) => p?.system_prompt || null;
+
   // The preset a NEW document should start from (owner decision 2026-08-11:
   // the selected preset is the unit of continuity across documents). The
   // explicit bar selection wins; else the active document's stamp, so the
@@ -111,18 +128,22 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
   // key order round-trips through the server and can't be trusted.
   function matchesState(preset) {
-    if ((preset.system_prompt ?? null) !== (getPrompt() ?? null)) return false;
+    // A promptless preset makes no claim about the prompt, so it cannot
+    // mismatch on one -- only the sampler half decides.
+    const incoming = presetPrompt(preset);
+    if (incoming && incoming !== (getPrompt() ?? null)) return false;
     const now = snapshotSettings();
     const saved = preset.params ?? {};
     return Object.keys(PARAM_META).every((k) => (now[k] ?? null) === (saved[k] ?? null));
   }
 
   // Would applying overwrite a non-empty document prompt with something
-  // different? (The one destructive thing Apply can do.)
+  // different? (The one destructive thing Apply can do.) A preset carrying no
+  // prompt overrides nothing, so it is never destructive and never arms.
   function wouldReplacePrompt() {
-    const preset = selected();
+    const incoming = presetPrompt(selected());
     const prompt = getPrompt();
-    return Boolean(preset && prompt && (preset.system_prompt ?? null) !== prompt);
+    return Boolean(incoming && prompt && incoming !== prompt);
   }
 
   // The applied-preset info for the active document. An explicit stamp
@@ -137,6 +158,24 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (stamped) return { name: stamped.name, edited: !matchesState(stamped) };
     const match = presets.find((p) => matchesState(p));
     return match ? { name: match.name, edited: false } : null;
+  }
+
+  // What is in force for the SYSTEM PROMPT specifically, for a page that
+  // surfaces it outside the drawer. Separate from indicatorInfo(), which
+  // answers the whole-document question (prompt + samplers): a user asking
+  // "what prompt am I running, and is it still the preset's?" is not served
+  // by a chip that also flips on a temperature nudge. Only a preset that
+  // CARRIES a prompt counts as its source -- a promptless one overrides
+  // nothing, so it can neither claim the prompt nor be "modified" from.
+  function promptState() {
+    const prompt = getPrompt() ?? null;
+    const stamped = presets.find((p) => p.id === getStamp?.());
+    const source = presetPrompt(stamped);
+    return {
+      prompt,
+      presetName: source ? stamped.name : null,
+      modified: Boolean(source && prompt !== source),
+    };
   }
 
   // Feed the page's chip. Public: pages call it on document switch/create --
@@ -173,13 +212,23 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const preset = selected();
     if (preset) {
       applySettings(preset.params ?? {});
-      setPrompt(preset.system_prompt ?? null);
+      // Override box: carry the prompt when the preset has one, otherwise
+      // leave whatever the conversation (or the model's own default) uses.
+      const incoming = presetPrompt(preset);
+      if (incoming) setPrompt(incoming);
       if (docId?.()) setStamp?.(preset.id);
-      onStatus(`Preset "${preset.name}" applied.`);
+      onStatus(incoming
+        ? `Preset "${preset.name}" applied.`
+        : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`);
     }
     // Force: the Apply button lives in the drawer, so the focus guard would
     // otherwise skip the repaint that shows the applied values.
     drawer.requestRebuild({ force: true });
+    // Explicitly, not via the settings-change listener: that fires from
+    // applySettings BEFORE the prompt and stamp are written above, so relying
+    // on it would paint the chips from pre-apply state (and not fire at all
+    // for a preset carrying no sampler params).
+    syncIndicator();
   }
 
   async function save(name) {
@@ -294,5 +343,5 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     ]);
   }
 
-  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator, presetForNewDoc };
+  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator, presetForNewDoc, promptState };
 }
