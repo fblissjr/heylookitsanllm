@@ -61,7 +61,7 @@ apps/optloop-lib/results.tsv
 apps/optloop-lib/data/
 apps/optloop-lib/repos/
 apps/optloop-lib/uv.lock
-
+start.sh
 # .claude: local-by-default, with the REPO-CONTRACT subset tracked
 # (decided 2026-07-26). Tracked: delegation rule + its two agents, the
 # skills that wrap git-tracked runners (test-suite, dev-server, eval-ab,
