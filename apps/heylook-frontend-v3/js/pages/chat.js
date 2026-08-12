@@ -52,6 +52,7 @@ export default createPage({
     s.appliedPresetId = null;  // which preset this conversation is running
     s.stream = null;      // { controller, targetConvId, content, thinking, els, retries }
     s.editingId = null;
+    s.msgNodes = new Map(); // renderMessages: message key -> { node, sig }
 
     buildSkeleton(ctx);
     // Shared preset bar (preset-bar.js), adapted to the active conversation.
@@ -778,6 +779,7 @@ async function selectConversation(ctx, convId) {
   if (s.stream) stopStream(ctx); // partial still persists to its own conv
   s.activeId = convId;
   s.editingId = null;
+  s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   showStatus(ctx, '');
   renderConvList(ctx);
@@ -831,17 +833,96 @@ async function selectConversation(ctx, convId) {
 // message rendering
 // ---------------------------------------------------------------------------
 
+// Render key + signature. `.message` carries `content-visibility: auto`, so a
+// message that is off-screen only knows its `contain-intrinsic-size` estimate
+// (3rem) until it has been laid out once -- and that measurement lives on the
+// NODE. Rebuilding the list threw every measurement away, collapsing
+// scrollHeight to a fraction of the real one mid-render; every pixel-based
+// scroll after that (restore OR scrollTop = scrollHeight) then aimed at a
+// thread that was about to grow underneath it, which is what dumped a long
+// conversation near the top on send/edit/delete. So nodes are REUSED unless
+// their content actually changed, and the list is reconciled in place.
+function msgKey(msg) {
+  return msg.id ?? `pos:${msg.position}`;
+}
+
+function blockFingerprint(b) {
+  const src = b.source;
+  if (!src) return b.type; // text block: no source to identify
+  return src.type === 'url'
+    ? `${b.type}:${src.url}`
+    : `${b.type}:${src.media_type}:${src.data?.length ?? 0}`;
+}
+
+function msgSignature(ctx, msg, capsKey) {
+  return [
+    msg.role,
+    msg.position,
+    ctx.state.editingId === msg.id ? 'edit' : 'view',
+    capsKey,
+    msg.thinking ?? '',
+    msg.content ?? '',
+    // Media identity only: a text block carries no `source`, and its text is
+    // already covered by msg.content. Fingerprint the source rather than
+    // spelling it out -- a base64 image would put megabytes in this string.
+    (msg.content_blocks ?? []).map(blockFingerprint).join(','),
+  ].join(' ');
+}
+
+// Place `nodes` as the parent's children, moving/keeping existing elements
+// rather than replacing them (see msgSignature: a detach is what loses the
+// laid-out height).
+function reconcileChildren(parent, nodes) {
+  // Drop departing children FIRST. Placing before removing walks a stale node
+  // down the list, moving (= detaching) every node after it -- which loses the
+  // very measurements this is here to keep: one edit-cancel re-laid-out the
+  // whole tail and the list slammed to the bottom.
+  const wanted = new Set(nodes);
+  for (const child of [...parent.childNodes]) {
+    if (!wanted.has(child)) child.remove();
+  }
+  nodes.forEach((node, i) => {
+    const cur = parent.childNodes[i];
+    if (cur !== node) parent.insertBefore(node, cur ?? null);
+  });
+}
+
 function renderMessages(ctx) {
   const s = ctx.state;
   if (!s.activeId) {
+    s.msgNodes = new Map();
     s.messagesInner.replaceChildren(
       createEl('div', { class: 'empty-state' },
         ['Send a message below to start a new conversation.']),
     );
     return;
   }
-  s.messagesInner.replaceChildren(...s.messages.map((msg) =>
-    s.editingId === msg.id ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg)));
+  const prev = s.msgNodes ?? new Map();
+  const next = new Map();
+  // Drop disclosures depend on the current model's caps -- part of the
+  // signature, so a model switch rebuilds exactly the rows it changes.
+  const capsKey = currentCaps(ctx).join('|');
+  // A live stream owns its own row (startStream appends the placeholder, and
+  // for a continuation it removed the message's rendered row in favour of it).
+  // Carry that node through the reconcile instead of dropping it: a render
+  // mid-stream (model switch) used to detach the element the stream was still
+  // painting into.
+  const stream = s.stream?.targetConvId === s.activeId ? s.stream : null;
+  const continued = stream?.continueMsg?.id ?? null;
+  const nodes = s.messages
+    .filter((msg) => continued == null || msg.id !== continued)
+    .map((msg) => {
+      const key = msgKey(msg);
+      const sig = msgSignature(ctx, msg, capsKey);
+      const cached = prev.get(key);
+      const node = cached?.sig === sig ? cached.node
+        : (s.editingId === msg.id ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg));
+      next.set(key, { node, sig });
+      return node;
+    });
+  if (stream?.els?.msgEl) nodes.push(stream.els.msgEl);
+  s.msgNodes = next;
+  reconcileChildren(s.messagesInner, nodes);
 }
 
 function buildThinkingEl(thinking, open = false) {
@@ -1032,7 +1113,16 @@ function buildEditEl(ctx, msg) {
 function scrollMessages(ctx, force = false) {
   const el = ctx.state.messagesEl;
   const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-  if (force || nearBottom) el.scrollTop = el.scrollHeight;
+  if (!force && !nearBottom) return;
+  el.scrollTop = el.scrollHeight;
+  // A row added this tick is still at its `contain-intrinsic-size` estimate,
+  // so scrollHeight reads short and this lands above the real bottom. Re-aim
+  // once the browser has laid the new row out.
+  if (force) {
+    requestAnimationFrame(() => {
+      if (ctx.alive) el.scrollTop = el.scrollHeight;
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

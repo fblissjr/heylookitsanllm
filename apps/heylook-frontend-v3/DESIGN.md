@@ -259,6 +259,21 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   tech by construction instead of by convention. Use this pattern for any new
   binary toggle rendered as an icon button.
 
+- **A long list under `content-visibility: auto` must be reconciled, not
+  rebuilt.** `.message` (and any future virtualised-ish list) only knows its
+  `contain-intrinsic-size` estimate until it has been laid out once, and that
+  measurement lives on the *node*. `replaceChildren`-ing the list throws every
+  measurement away, so `scrollHeight` collapses to a fraction of the truth for
+  the rest of that tick — and any pixel-based scroll computed against it
+  (restore-position OR `scrollTop = scrollHeight`) aims at a list that is about
+  to grow underneath it. That is what dumped chat near the top on every send,
+  edit and delete. `renderMessages` therefore keys nodes by message id, reuses
+  any whose render signature is unchanged, and places them with a reconcile
+  that **removes departing children first** — placing before removing walks a
+  stale node down the list and re-detaches the whole tail, which has the same
+  effect as a rebuild. A forced scroll-to-bottom also re-aims on the next
+  animation frame, because a row added this tick is still an estimate.
+
 Verify phone behavior at an iPhone-class viewport with **touch media emulated**
 (`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it
 never exercises the touch-reveal rules above. claude-in-chrome refuses

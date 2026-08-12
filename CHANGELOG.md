@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.5]
+
+### Fixed
+
+- **Chat no longer jumps to the top of the thread on send, edit or delete.**
+  `renderMessages` rebuilt every row with `replaceChildren`. `.message` carries
+  `content-visibility: auto`, so an off-screen row only knows its
+  `contain-intrinsic-size` estimate (3rem) until it has been laid out once --
+  and that measurement lives on the node. Throwing every node away collapsed
+  the list's `scrollHeight` to a fraction of the real one for the rest of the
+  tick, so every pixel-based scroll after it aimed at a thread that was about
+  to grow underneath: a forced `scrollTop = scrollHeight` after Send landed
+  near the *top* of a long conversation (measured: 658px into a list whose
+  bottom was 9.8k). Rows are now keyed by message id and reused unless their
+  render signature changed (role, position, content, thinking, media blocks,
+  editing state, and the current model's caps -- which own the drop
+  disclosure), and the list is reconciled in place. Two corollaries the fix
+  needed: the reconcile removes departing children *before* placing the rest
+  (placing first walks the stale node down the list and re-detaches the whole
+  tail -- an edit-cancel slammed the view to the bottom), and a forced
+  scroll-to-bottom re-aims on the next animation frame, since a row added this
+  tick is still an estimate. Reuse also means a re-render no longer destroys
+  the row you were interacting with, so focus and armed Delete buttons survive
+  it, and images no longer re-decode. A live stream's row is carried through
+  the reconcile as well, instead of being detached mid-paint by an unrelated
+  re-render (a model switch mid-stream). Design rule: `DESIGN.md` §7.
+
 ## [1.62.4]
 
 ### Changed
