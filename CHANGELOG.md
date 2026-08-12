@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.62.4]
 
+### Changed
+
+- **Dependency audit: one dead entry, one misplaced, one undeclared.**
+  `pytest-mock` is gone -- nothing imported it and nothing took its `mocker`
+  fixture (the suite mocks with `unittest.mock` and the repo's own `mock_mlx`,
+  which the MLX no-module-level-`.start()` rule wants anyway). `pyyaml` moved
+  from the runtime deps to the `dev` group: nothing under `src/` imports it,
+  its one use is `scripts/export_openapi.py`'s `--yaml` writer, and that
+  import is already guarded -- so it was a claim every
+  `pip install heylookitsanllm` paid for and the server never made. (Presence
+  is unchanged either way: uvicorn's `standard` extra pulls PyYAML.) The four
+  CLI-only dev deps that an import audit reads as dead -- `build`, `twine`,
+  `py-spy`, and `rich` (a lazy import inside `scripts/benchmark.py`) -- now
+  say so in place, as does `python-multipart`, which starlette imports on our
+  behalf for `api_multipart.py`.
+
 ### Fixed
+
+- **A bare `pytest` failed at collection with 4 errors.** Two independent
+  causes, both pre-existing. `tests/integration/test_keepalive.py` imported
+  `aiohttp`, the one undeclared dependency in the repo, so it could not run
+  after a clean `uv sync` -- ported to `httpx`, already a dev dep, which also
+  retired its hardcoded `dolphin-mistral` model id (long gone, so the script
+  404'd before reaching the keepalive path it exists to watch; it asks the
+  server now). And `tests/integration/mlx_perf/` and `tests/unit/mlx_perf/`
+  were both packages named `mlx_perf`, which collide under pytest's default
+  prepend import mode -- the `__init__.py` files carried nothing but a
+  docstring and nothing imports either as a package, so they are gone and the
+  test modules (all uniquely named) import cleanly. `testpaths` is now
+  `tests/unit tests/contract`, the suite `/test-suite` runs, so a bare
+  `pytest` no longer sweeps integration's live-server scripts; running those
+  explicitly still works.
 
 - **A mount failure now says when it is a stale browser cache, and that a
   plain reload will not clear it.** Reported as "the bar at the top of chat,

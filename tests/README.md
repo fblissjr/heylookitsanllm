@@ -25,6 +25,10 @@ tests/
 ## Running Tests
 
 ```bash
+# The suite (unit + contract) -- pytest.ini's testpaths, so a bare run is the
+# same thing and never sweeps the live-server scripts under integration/
+uv run pytest -v
+
 # Unit + contract (no server needed)
 uv run pytest tests/unit/ tests/contract/ -v
 
