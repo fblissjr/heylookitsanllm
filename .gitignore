@@ -32,6 +32,7 @@ update-coderef.sh
 # configs
 model.toml
 models.toml
+scripts/update_deps.py
 
 # Runtime data at repo root (SQLite DBs, cache files). Package data at
 # src/heylook_llm/data/ stays tracked; this only catches the /data runtime dir.
