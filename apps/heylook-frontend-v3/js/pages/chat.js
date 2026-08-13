@@ -383,6 +383,13 @@ async function refreshLoadedIds(ctx) {
   }
   fillModelSelect(ctx);
   refreshLoadBtn(ctx);
+  // Provider just became known, and an editor opened before it landed is
+  // missing its Save & Continue button. Re-render so the row catches up here
+  // rather than at whatever unrelated render happens next. Only rows whose
+  // signature moved rebuild -- for a residency fetch that is the open editor
+  // and nothing else -- and the rebuild carries the typed text across, so the
+  // catch-up cannot cost anyone a draft.
+  if (s.activeId) renderMessages(ctx);
 }
 
 function refreshLoadBtn(ctx) {
@@ -878,6 +885,17 @@ function msgSignature(msg, { editing, capsKey, provider }) {
   ].join('\u0000');
 }
 
+// Move an in-progress edit from a row about to be discarded onto its
+// replacement. Silent no-op when the old row was not an editor.
+function carryEditorDraft(fromEl, toEl) {
+  const from = fromEl?.querySelector?.('textarea');
+  const to = toEl?.querySelector?.('textarea');
+  if (!from || !to) return;
+  to.value = from.value;
+  to.selectionStart = from.selectionStart;
+  to.selectionEnd = from.selectionEnd;
+}
+
 // Place `nodes` as the parent's children, moving/keeping existing elements
 // rather than replacing them (see msgSignature: a detach is what loses the
 // laid-out height).
@@ -928,8 +946,14 @@ function renderMessages(ctx) {
       const editing = msg.id != null && msg.id === s.editingId;
       const sig = msgSignature(msg, { editing, capsKey, provider });
       const cached = prev.get(key);
-      const node = cached?.sig === sig ? cached.node
-        : (editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg));
+      let node = cached?.sig === sig ? cached.node : null;
+      if (!node) {
+        node = editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg);
+        // Rebuilding an OPEN editor (its model chrome changed) must not eat
+        // what is in the box -- buildEditEl seeds from msg.content, which is
+        // the SAVED text. Carry the live value + caret over instead.
+        if (editing && cached) carryEditorDraft(cached.node, node);
+      }
       next.set(key, { node, sig });
       return node;
     });

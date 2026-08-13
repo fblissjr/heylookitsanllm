@@ -47,6 +47,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   NUL rather than a space, so a field's tail can't read as the next field's
   head.
 
+### Added
+
+- **`bun run e2e:render` -- a model-free render suite** (`tests/e2e/render.mjs`,
+  opt-in, seconds). It drives the real `/v3` chat page against a stubbed `/v1`,
+  so it needs no server, no model, no Metal and no DB -- which is why it is a
+  separate entry point and not part of `bun run e2e`, whose prerequisites it
+  does not share. Nine checks over the class of bug above: a long thread must
+  not move when the reader did nothing, Send must land at the bottom, edit and
+  cancel must hold position, an id-less row must render as a message, a
+  background residency refresh must reuse every unchanged row, and the render
+  that repairs an open editor must not eat the text in it. Each one was
+  observed FAILING against a deliberately broken copy of the frontend (the
+  pre-fix renderer, a shared model key, the draft-carry removed, the residency
+  re-render removed) -- `E2E_V3_ROOT` exists for exactly that. Nothing else
+  automated can see any of this: it is client-side layout, invisible to server
+  telemetry, and the model-driven suites never scroll a long thread.
+
+### Changed
+
+- **The residency fetch now re-renders the message list.** `refreshLoadedIds`
+  fills `providerById` after first paint, and an editor opened before it landed
+  is missing its Save & Continue button (it fails closed while the provider is
+  unknown) until some unrelated render happens by. It now catches up on the
+  spot. The reason this was not already true is that a rebuild would discard
+  whatever was typed in the box, so the rebuild carries the live value and
+  caret across (`carryEditorDraft`) -- with the signature scoped as above, the
+  open editor is the only row that render touches at all.
+
 ## [1.62.4]
 
 ### Changed

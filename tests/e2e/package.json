@@ -7,7 +7,8 @@
   "scripts": {
     "e2e": "node run.mjs",
     "e2e:chat": "node run.mjs chat",
-    "e2e:pages": "node run.mjs pages"
+    "e2e:pages": "node run.mjs pages",
+    "e2e:render": "node render.mjs"
   },
   "dependencies": {
     "puppeteer-core": "24.10.2"

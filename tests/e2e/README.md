@@ -28,12 +28,31 @@ therefore refused unless you opt in — see `E2E_BASE_URL` below.
 ```bash
 cd tests/e2e
 bun install          # first time only
-bun run e2e          # both suites (chat + pages)
+bun run e2e          # both server-driven suites (chat + pages)
 bun run e2e:chat     # chat suite only
 bun run e2e:pages    # pages suite only
+bun run e2e:render   # render suite -- no server, no model, a few seconds
 ```
 
 Exit code is non-zero if any check fails.
+
+`e2e:render` is a **separate entry point on purpose.** It drives the real `/v3`
+chat page against a *stubbed* `/v1`, so it needs no server, no model, no Metal
+and no DB — none of the prerequisites above apply to it, and folding it into
+`bun run e2e` would make that suite's real requirements look optional. It is
+the only automated check that the message list is RECONCILED rather than
+rebuilt: `.message` carries `content-visibility: auto`, so a row's laid-out
+height lives on the node, and rebuilding the list collapses `scrollHeight` for
+the rest of the tick — every pixel-based scroll computed against it then aims
+at a list about to grow underneath (v1.62.5: Send dumped a long thread near the
+top). Server telemetry cannot see this, and the model-driven suites never
+scroll a long thread.
+
+Point it at another copy of the frontend with `E2E_V3_ROOT=/path/to/copy` —
+that exists so the checks can be shown to fail (restore a pre-fix
+`renderMessages` into a copy and watch them go red). Every check in the suite
+has been observed failing against a deliberately broken copy; one that never
+has is decoration.
 
 Known false positive: after an mlx version bump, the FIRST run pays Metal
 shader JIT compilation and the streaming-cadence guard can read low (seen:
