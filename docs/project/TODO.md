@@ -39,19 +39,25 @@ Cross-session task backlog organized by priority.
   client disconnect has no automated coverage (unit harness can't cancel
   mid-stream realistically); candidate: e2e chat suite kills the tab
   mid-generation and asserts the partial row exists after reload.
-- [ ] **Muse-Glimmer 30B mis-templates on llama.cpp b10323** (P2,
-  gguf-probe territory, found 2026-08-13): the canonical build (b10323,
-  freshly built -- the owner's `$HEYLOOK_LLAMA_SERVER` working-tree binary
-  predates the muse-glimmer arch entirely) loads it, but a normal turn
-  routes ALL output into `reasoning_content` (content empty, "thinking"
-  echoes the prompt) -- REPRODUCES IDENTICALLY on plain
-  `/v1/chat/completions`, so it is engine/template-level, not the generate
-  endpoint (whose Muse matrix otherwise passed: atomic regenerate,
-  continue-in-place, typed user-continue 400, abort semantics).
-  Candidates: `extra_args = ["--reasoning-format", "none"]` on the entry,
-  a chat-template fix in the GGUF, or waiting out upstream's brand-new
-  muse-glimmer template handling. Probe with the gguf-probe skill's
-  thinking on/off diff before changing the entry.
+- [ ] **Muse-Glimmer 30B: llama.cpp's harmony parse not wired for the arch**
+  (P3, WORKAROUND APPLIED 2026-08-13; watch upstream): full diagnosis via
+  gguf-probe + GGUF metadata read. The embedded chat template is CORRECT
+  (harmony-style, ends `<|start|>assistant` -- opens the turn properly; on/
+  off/unset renders identical, `supports_thinking=false` is right). The
+  fault is b10323's response parsing for the days-old muse-glimmer arch:
+  `--reasoning-format auto` swallows the whole output into
+  `reasoning_content` (content empty, prompt echo); `none` bypasses parsing
+  and the model produces REAL text -- generate matrix 6/6 -- but raw
+  harmony channel tokens (`<|start|>assistant to=user<|message|>...<|eot|>`)
+  leak into content. WORKAROUND on the entry: `extra_args =
+  ["--reasoning-format", "none"]` (comment in models.toml). REAL FIX:
+  upstream teaches its harmony parser this arch (gpt-oss went through the
+  same arc) -- rebuild canonical via `uv run python scripts/build_llama.py`
+  on a new b-tag and retest WITHOUT the workaround. Alternative if upstream
+  stalls: heylook's own harmony-channels parser via a gguf template_info --
+  but that cuts against the "never re-parse another engine's split"
+  invariant and only makes sense with format=none (engine not splitting),
+  design it deliberately if at all.
 - [ ] **At-rest encryption for the conversation store** (future state,
   owner ask 2026-08-13): conversations/messages (prompt inputs/outputs)
   sit plaintext in the DuckDB file. VERIFIED on the installed duckdb
