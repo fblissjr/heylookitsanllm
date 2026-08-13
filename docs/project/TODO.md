@@ -4,6 +4,18 @@ Cross-session task backlog organized by priority.
 
 *Last reviewed: 2026-07-26 (llama-server buckets superseded by plan Phase 7)*
 
+## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
+
+- [ ] **Phase 0 hardening** (P1, cheap): loud stream-guards, unsaved-row
+  "Retry" honesty + destructive-op lock, reconcile-on-saga-end re-fetch,
+  thinking-block editing in the message editor (backend already supports it).
+- [ ] **Phase 0.5 iOS hidden-row bug** (P1, needs a device): edited/saved
+  assistant row hidden-until-interaction on iOS Safari; test the
+  `content-visibility: auto` skip-state hypothesis on real WebKit; extend
+  `e2e:render` with the edit-save reconcile sequence.
+- [ ] **Phase 1-2 conversation-scoped generate** (the Phase 3b vehicle):
+  see the plan; do NOT start the Messages bridge migration separately.
+
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
 
 From the coderef/vllm-metal optimization scan + mlx-lm/mlx-vlm delta review
