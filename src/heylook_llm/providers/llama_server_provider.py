@@ -115,27 +115,27 @@ class LlamaServerProvider(BaseProvider):
     DEFAULT_BUILD = Path.home() / ".heylook" / "llama.cpp" / "build" / "bin" / "llama-server"
 
     def _resolve_binary(self) -> Path:
-        """server_binary > $HEYLOOK_LLAMA_SERVER > the binary we built ourselves.
+        """server_binary > $HEYLOOK_LLAMA_SERVER > the canonical build.
 
-        The last fallback exists because the other two are both fragile in
-        ways that bite silently. A server_binary in models.toml survives a
-        reimport (the CLI merges by default now) but is per-model and gone
-        under `--fresh`; and an exported env var goes stale the moment a
-        newer binary is built, pointing a working server at an old build
-        with nothing to say so.
-
-        Falling back to the canonical build location is safe precisely because
-        nothing else writes there -- if the file is not there, nothing has
-        been built and the error below is still the right answer. This does
-        soften the older "one of the two is REQUIRED" rule, deliberately: that
-        rule predates there being a canonical location.
+        The canonical build (DEFAULT_BUILD -- written ONLY by
+        scripts/build_llama.py, updated with one command) is the intended
+        single source (owner rule 2026-08-13: one llama-server build, no
+        silent shadowing). The two overrides remain as escape hatches for
+        experiments -- but they are LOUD now: both rot silently otherwise
+        (an exported env var keeps pointing at an old build after a newer
+        one lands; exactly that shadowed a fresh canonical build on
+        2026-08-13, and the load failure on a new model arch was the first
+        anyone heard of it). An override WARNS at every spawn, naming its
+        source and the canonical build it beats, so it can never again be
+        the thing nobody remembers is set.
         """
-        candidate = self.config.get("server_binary") or os.environ.get("HEYLOOK_LLAMA_SERVER")
+        candidate = self.config.get("server_binary")
+        source = "models.toml server_binary"
+        if not candidate:
+            candidate = os.environ.get("HEYLOOK_LLAMA_SERVER")
+            source = "$HEYLOOK_LLAMA_SERVER"
         if not candidate and self.DEFAULT_BUILD.is_file():
-            logging.info(
-                f"[GGUF] no server_binary or $HEYLOOK_LLAMA_SERVER set; using "
-                f"the local build at {self.DEFAULT_BUILD}"
-            )
+            logging.info(f"[GGUF] using the canonical build at {self.DEFAULT_BUILD}")
             return self.DEFAULT_BUILD
         if not candidate:
             raise RuntimeError(
@@ -151,6 +151,9 @@ class LlamaServerProvider(BaseProvider):
                 f"(cmake --build ... --target llama-server) or fix "
                 f"server_binary / $HEYLOOK_LLAMA_SERVER."
             )
+        shadow = (f" -- OVERRIDING the canonical build at {self.DEFAULT_BUILD}"
+                  if self.DEFAULT_BUILD.is_file() else "")
+        logging.warning(f"[GGUF] llama-server binary from {source}: {path}{shadow}")
         return path
 
     @staticmethod

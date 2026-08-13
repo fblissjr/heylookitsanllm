@@ -608,3 +608,54 @@ class TestContinuationGuards:
         payload = self._payload(req)
         assert p._continuation_echo_chars(req, payload) == 0
         assert isinstance(payload["messages"][-1]["content"], list)  # untouched
+
+
+class TestBinaryResolution:
+    """The canonical build is the ONE intended source; overrides are escape
+    hatches and must be LOUD -- on 2026-08-13 a stale $HEYLOOK_LLAMA_SERVER
+    silently shadowed a freshly built canonical binary (predating a new model
+    arch), and nothing said so until the load failed."""
+
+    def _with_canonical(self, tmp_path, monkeypatch):
+        canonical = tmp_path / "canonical" / "llama-server"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("#!/bin/true\n")
+        monkeypatch.setattr(LlamaServerProvider, "DEFAULT_BUILD", canonical)
+        return canonical
+
+    def test_canonical_build_used_when_nothing_overrides(self, tmp_path, monkeypatch, caplog):
+        canonical = self._with_canonical(tmp_path, monkeypatch)
+        monkeypatch.delenv("HEYLOOK_LLAMA_SERVER", raising=False)
+        p = make_provider()
+        assert p._resolve_binary() == canonical
+
+    def test_env_override_warns_about_shadowing(self, tmp_path, monkeypatch, caplog):
+        import logging as _logging
+        canonical = self._with_canonical(tmp_path, monkeypatch)
+        override = tmp_path / "elsewhere" / "llama-server"
+        override.parent.mkdir(parents=True)
+        override.write_text("#!/bin/true\n")
+        monkeypatch.setenv("HEYLOOK_LLAMA_SERVER", str(override))
+        p = make_provider()
+        with caplog.at_level(_logging.WARNING):
+            resolved = p._resolve_binary()
+        assert resolved == override
+        warnings = [r for r in caplog.records if r.levelno >= _logging.WARNING
+                    and "HEYLOOK_LLAMA_SERVER" in r.getMessage()]
+        assert warnings, "an env-var override shadowing the canonical build must WARN"
+        assert any(str(canonical) in r.getMessage() for r in warnings), \
+            "the warning must NAME the canonical build being shadowed"
+
+    def test_server_binary_override_warns_with_its_source(self, tmp_path, monkeypatch, caplog):
+        import logging as _logging
+        self._with_canonical(tmp_path, monkeypatch)
+        override = tmp_path / "per-model" / "llama-server"
+        override.parent.mkdir(parents=True)
+        override.write_text("#!/bin/true\n")
+        monkeypatch.delenv("HEYLOOK_LLAMA_SERVER", raising=False)
+        p = make_provider(server_binary=str(override))
+        with caplog.at_level(_logging.WARNING):
+            assert p._resolve_binary() == override
+        assert any("server_binary" in r.getMessage() for r in caplog.records
+                   if r.levelno >= _logging.WARNING), \
+            "a models.toml server_binary override must WARN naming its source"

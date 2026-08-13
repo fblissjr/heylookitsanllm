@@ -73,14 +73,20 @@ escapes it, magnitude unknown and n=1. `--spec-type` is a SPAWN flag while `lora
 per-REQUEST, so one process cannot suit both kinds of traffic -- but that tradeoff only
 matters if spec decode is a win at all, which is not in evidence. gemma drafters are SIDECAR `mtp-*.gguf` (auto-paired by the
 importer into draft_model_path -- llama's own `-hf` sibling discovery does NOT work for
-local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; binary from `server_binary` /
-`$HEYLOOK_LLAMA_SERVER`, else it FALLS BACK to the canonical local build (fixed
-dir under home); only if none of the three exists does load fail loudly. CLI
+local files), Qwen3.6's MTP is EMBEDDED in the main GGUF; the llama-server BINARY
+is the canonical local build (fixed dir under home, written only by
+scripts/build_llama.py -- ONE build, one source, owner rule 2026-08-13; update =
+re-run the build script). `server_binary` / `$HEYLOOK_LLAMA_SERVER` remain as
+escape hatches for experiments but WARN AT EVERY SPAWN naming the canonical
+build they shadow -- the silent-rot mode (an exported var pointing at a stale
+working-tree binary while a fresh canonical build sits unused) shadowed exactly
+that on 2026-08-13 and is retired: the owner's shell export is gone, and any
+re-introduction announces itself. Only if no binary exists anywhere does load
+fail loudly. CLI
 `heylookllm import` MERGES with an existing models.toml by default (existing entries +
 top-level keys go right back out verbatim, comments re-injected via toml_comments;
 scans only APPEND new ids; `--fresh` = old wholesale rewrite) -- so a hand-written
-`server_binary` now survives reimport; the env var still rots silently (keeps
-pointing at an old build after you build a new one). llama-server is BUILT by
+`server_binary` survives reimport. llama-server is BUILT by
 `scripts/build_llama.py` (the only thing that clones/builds it; `uv sync` cannot -- it
 is C++, not a uv package; newest `b<N>` release tag by default, and llama.cpp's
 releases ARE those tags -- `--rev` for anything else; it never touches

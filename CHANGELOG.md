@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.66.1]
+
+### Changed
+
+- **One llama-server build, no silent shadowing** (owner rule): the
+  canonical build (`scripts/build_llama.py`'s fixed home-dir output) is the
+  single intended binary source. The `server_binary` / `$HEYLOOK_LLAMA_SERVER`
+  overrides remain as escape hatches but now WARN at every spawn, naming
+  their source and the canonical build they shadow -- a stale exported env
+  var silently beat a freshly built canonical binary and the first symptom
+  was a load failure on a new model architecture. Pinned by
+  TestBinaryResolution (shown red first).
+
 ## [1.66.0]
 
 ### Changed
