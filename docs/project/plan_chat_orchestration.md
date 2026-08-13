@@ -172,6 +172,19 @@ Contract points:
 
 ## Phase 2 -- the client thins down
 
+STATUS: SHIPPED v1.66.0. chat.js generates through `/generate` for all
+four flows (send / regenerate / edit-regenerate / continue); Stop is the
+server DELETE; teardown/switch aborts the fetch onto the server's
+disconnect persistence; the mirror hides tails visually and ADOPTS the
+store at stream end (a failed/empty generation restores the tail). The
+pendingSave latch and the unsaved-row producer are gone (the machinery
+stays for rendering resilience). Verified: e2e:render 23/23 unchanged
+through the cutover; live chat suite 45/45 (three checks rewritten off
+the old wire -- sampler state asserted in conv.params + a sampler-free
+generate wire); live gguf matrix 7/7 on DeepSeek V4 Flash incl. pre-split
+thinking persistence and abort-partial. Muse-Glimmer surfaced an
+engine-level template issue (TODO), not an orchestration one.
+
 chat.js drops `buildRequestBody`/`toWireContent`/position math for
 generation; `s.messages` becomes a render cache of the last server
 response, refreshed from generate-stream final frames and mutation

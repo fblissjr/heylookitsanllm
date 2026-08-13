@@ -30,10 +30,28 @@ Cross-session task backlog organized by priority.
   drop buildRequestBody/toWireContent/position math; render-suite stubs
   move to the new endpoint. Do NOT start the Messages bridge migration
   separately -- this endpoint IS 3b's first consumer.
+- [x] **Phase 2 client cutover -- DONE v1.66.0**: chat generates via
+  `/generate` (streamGenerate parser in streaming.js; Stop = DELETE;
+  teardown = fetch abort + server disconnect-persist). Verified: render
+  23/23 unchanged through the cutover, live chat suite 45/45 (three checks
+  rewritten off the old wire), gguf matrix 7/7 on DeepSeek V4 Flash.
 - [ ] **Disconnect-persistence test** (P2): the detached-task persist on
   client disconnect has no automated coverage (unit harness can't cancel
   mid-stream realistically); candidate: e2e chat suite kills the tab
   mid-generation and asserts the partial row exists after reload.
+- [ ] **Muse-Glimmer 30B mis-templates on llama.cpp b10323** (P2,
+  gguf-probe territory, found 2026-08-13): the canonical build (b10323,
+  freshly built -- the owner's `$HEYLOOK_LLAMA_SERVER` working-tree binary
+  predates the muse-glimmer arch entirely) loads it, but a normal turn
+  routes ALL output into `reasoning_content` (content empty, "thinking"
+  echoes the prompt) -- REPRODUCES IDENTICALLY on plain
+  `/v1/chat/completions`, so it is engine/template-level, not the generate
+  endpoint (whose Muse matrix otherwise passed: atomic regenerate,
+  continue-in-place, typed user-continue 400, abort semantics).
+  Candidates: `extra_args = ["--reasoning-format", "none"]` on the entry,
+  a chat-template fix in the GGUF, or waiting out upstream's brand-new
+  muse-glimmer template handling. Probe with the gguf-probe skill's
+  thinking on/off diff before changing the entry.
 - [ ] **At-rest encryption for the conversation store** (future state,
   owner ask 2026-08-13): conversations/messages (prompt inputs/outputs)
   sit plaintext in the DuckDB file. VERIFIED on the installed duckdb

@@ -134,8 +134,12 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   the request from the store, Messages SSE + `heylook_saved` authoritative
   rows, 409 arbitration, persistence on completion/abort/disconnect,
   truncation commits only with its replacement row (new atomic db ops).
-  17 contract tests; spec §4. HALF-BAKED until Phase 2: v3 still speaks
-  the old client-orchestrated flow; disconnect-persist untested (TODO).
+  17 contract tests; spec §4. Phase 2 (v1.66.0) cut the client over:
+  chat generates via /generate, Stop = DELETE, mirror adopts the store at
+  stream end. render 23/23 through the cutover; live suite 45/45; gguf
+  matrix 7/7 on DeepSeek V4 Flash. OPEN: disconnect-persist has no
+  automated test (TODO); Muse-Glimmer mis-templates at the engine level
+  (TODO); notebook/explore still on /v1/chat/completions (rest of 3b).
 - Also: worktree-per-session convention retired (owner call); editable
   install re-pointed at the primary; DuckDB store cleared by the owner
   (fresh state is intentional, not a bug).

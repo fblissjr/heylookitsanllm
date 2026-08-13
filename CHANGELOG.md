@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.66.0]
+
+### Changed
+
+- **v3 chat generates through the conversation endpoint** (plan Phase 2, the
+  client half of 1.65.0): send/regenerate/edit-regenerate/continue now call
+  `POST /v1/conversations/{id}/generate` (Messages SSE grammar parsed by the
+  new `streamGenerate` in streaming.js) instead of client-orchestrated
+  truncate -> `/v1/chat/completions` -> persist. The client no longer builds
+  request bodies, converts stored blocks to wire parts, or does position
+  arithmetic for generation -- the mirror hides tails visually and adopts
+  the store at stream end, so a failed or empty generation gets the rows
+  back. Stop = `DELETE .../generate` (server aborts + persists the partial;
+  the stream still delivers the saved rows); teardown and switches abort
+  the fetch and lean on the server's disconnect persistence. The v1.64
+  pendingSave latch is gone (no client-save window exists anymore).
+  Explore/notebook stay on `/v1/chat/completions`. E2E: render suite green
+  through the cutover unchanged (23/23 -- the Phase 0 net held); live chat
+  suite 45/45 with three checks rewritten off the old wire (sampler state
+  is asserted in the conversation's params + a sampler-free generate wire,
+  and the stop test raises its budget through the panel so it reaches the
+  store). Live gguf matrix verified on DeepSeek V4 Flash (append /
+  regenerate / continue-in-place / user-role-continue typed 400 / abort
+  persists partial / pre-split thinking persisted).
+
 ## [1.65.0]
 
 ### Added

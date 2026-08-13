@@ -147,7 +147,32 @@ function makeStubStore({ unsaved = false } = {}) {
     if (url.endsWith('/v1/admin/model-options')) return { fields: [] };
     return {};
   };
-  return { messages, handle };
+
+  // The generate endpoint's stub half (Phase 2 wire): append a canned
+  // assistant turn to the store exactly as the server would, and return the
+  // Messages-grammar SSE ending in heylook_saved with the stored row.
+  const genReply = (postData) => {
+    let mode = 'append';
+    try { mode = JSON.parse(postData || '{}').mode ?? 'append'; } catch { /* keep default */ }
+    const row = {
+      id: `mgen${nextId++}`, role: 'assistant', content: 'stub reply',
+      thinking: null, content_blocks: null,
+      position: (messages[messages.length - 1]?.position ?? -1) + 1,
+    };
+    messages.push(row);
+    const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+    return [
+      ev('message_start', { type: 'message_start', message: { id: row.id, content: [] } }),
+      ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+      ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'stub reply' } }),
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+      ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } }),
+      ev('message_stop', { type: 'message_stop', performance: {} }),
+      ev('heylook_saved', { type: 'heylook_saved', conversation_id: 'c1', mode, end_reason: 'complete', messages: [row], dropped_media: { images: 0, audio: 0 }, timing: {} }),
+    ].join('');
+  };
+
+  return { messages, handle, genReply };
 }
 
 // A page with the stub API wired in.
@@ -182,13 +207,21 @@ async function openChat(browser, base, {
     const url = req.url();
     if (!url.includes('/v1/')) return req.continue();
     reqs.push({ method: req.method(), url, postData: req.postData() });
-    if (url.includes('/chat/completions')) {
-      const sse = ['data: {"choices":[{"delta":{"content":"stub reply"}}]}', 'data: [DONE]', '']
-        .join('\n\n');
-      const respond = () => req.respond({ status: 200, contentType: 'text/event-stream', body: sse });
-      if (sseDelayMs) setTimeout(respond, sseDelayMs);
-      else respond();
-      return;
+    // Conversation-scoped generation (Phase 2 wire): typed-event SSE. The
+    // store mutation happens at RESPOND time so a delayed stream mutates
+    // when the "server" answers, not when the request leaves.
+    if (url.includes('/generate')) {
+      if (req.method() === 'POST') {
+        const respond = () => req.respond({
+          status: 200, contentType: 'text/event-stream',
+          body: store.genReply(req.postData()),
+        });
+        if (sseDelayMs) setTimeout(respond, sseDelayMs);
+        else respond();
+        return;
+      }
+      // DELETE (Stop) -- nothing tracked in the stub; say "nothing active"
+      return req.respond({ status: 404, contentType: 'application/json', body: '{}' });
     }
     const body = JSON.stringify(store.handle(url, req.method(), req.postData()));
     const send = () => req.respond({ status: 200, contentType: 'application/json', body });

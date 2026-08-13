@@ -1,20 +1,27 @@
 // Chat: conversations sidebar + streaming thread. Markdown render path only
 // (marked + DOMPurify via renderMarkdown -- no other text->HTML path).
 //
-// Invariants:
-// - Edit / regenerate / delete all use position-based truncation:
-//   DELETE /messages?after=P removes every message with position > P.
-// - Stream callbacks are keyed to the stream object AND target conversation;
-//   switching conversations aborts the stream, but the partial assistant
-//   message is still persisted to the conversation it belonged to.
-// - Abort (Stop button) is normal completion: partial content is saved.
+// Invariants (Phase 2, plan_chat_orchestration.md -- the server-side saga):
+// - GENERATION goes through POST /v1/conversations/{id}/generate: the server
+//   builds the request from the store, anchors truncation by message id,
+//   persists everything (completion, Stop, disconnect), and ends the stream
+//   with the authoritative rows. The client's post-stream state is
+//   resyncMessages (adoption), never position arithmetic.
+// - Regenerate / edit-regenerate / continue truncate NOTHING client-side:
+//   the mirror drops the tail visually; the server commits its truncation
+//   only together with the row it produced, so a failed or empty generation
+//   gets the rows back at the end-of-stream reconcile.
+// - Plain DELETE (message delete) stays client CRUD via ?after=P truncation.
+// - Stop button = DELETE /{id}/generate (server aborts + persists partial;
+//   the fetch stays open to receive the saved rows). Teardown/switch =
+//   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
-import { streamChat } from '../streaming.js';
+import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
+import { snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -487,13 +494,13 @@ function commitModelSwitch(ctx, to) {
   const s = ctx.state;
   // Stop an in-flight stream BEFORE model_id changes hands, so the old
   // model stops generating the moment the user switches away. NB this is
-  // an abort, not a settled handoff: the partial still persists
-  // asynchronously into this same conversation after model_id is
+  // an abort, not a settled handoff: the partial still persists (server
+  // disconnect path) into this same conversation after model_id is
   // rewritten, and messages carry no model column -- so a reader of
   // conversation.model_id still misattributes it. True per-message
   // attribution is G5 in the switching design (deferred until a
   // _SCHEMA_VERSION bump adds messages.model_id).
-  if (s.stream) stopStream(ctx);
+  if (s.stream) abortStream(ctx);
   s.committedModelId = to;
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
@@ -627,18 +634,11 @@ function showStatus(ctx, text, isError = false) {
 // window of a cold load when nothing visibly streams. role="status" on the
 // line makes this audible to AT as well as visible.
 function refuseWhileStreaming(ctx) {
-  if (ctx.state.stream) {
-    showStatus(ctx, 'A response is still streaming — wait for it to finish, or press Stop.');
-    return true;
-  }
-  // The window between the stream releasing and its persistence settling
-  // (finishStream's pendingSave latch): destructive ops here would truncate
-  // around a row that is mid-flight to the store.
-  if (ctx.state.pendingSave) {
-    showStatus(ctx, 'Saving the response — one moment.');
-    return true;
-  }
-  return false;
+  if (!ctx.state.stream) return false;
+  // (The v1.64 pendingSave latch is gone with Phase 2: the server persists
+  // BEFORE its stream ends, so there is no client-save window to guard.)
+  showStatus(ctx, 'A response is still streaming — wait for it to finish, or press Stop.');
+  return true;
 }
 
 // While an unsaved (id-less) row exists, the client's positions are
@@ -796,7 +796,7 @@ async function deleteConversation(ctx, convId) {
   if (!ctx.alive) return;
   s.conversations = s.conversations.filter((c) => c.id !== convId);
   if (s.activeId === convId) {
-    stopStream(ctx);
+    abortStream(ctx);
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
@@ -813,7 +813,7 @@ async function deleteConversation(ctx, convId) {
 async function selectConversation(ctx, convId) {
   const s = ctx.state;
   if (s.activeId === convId && s.messages.length) return;
-  if (s.stream) stopStream(ctx); // partial still persists to its own conv
+  if (s.stream) abortStream(ctx); // partial still persists to its own conv (server disconnect path)
   s.activeId = convId;
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
@@ -1191,18 +1191,21 @@ function buildEditEl(ctx, msg) {
       if (s.activeId !== convId) return; // switched away mid-save: edit saved, nothing destructive
       s.editingId = null;
       if (regenerateAfter) {
-        await truncateAfter(ctx, msg.position, convId);
-        if (!ctx.alive || s.activeId !== convId) return;
+        // Everything after the edited message goes (visually -- the server
+        // owns the real truncation). Anchor on the row after it when one
+        // exists; with the edited row last, a plain append generates fresh.
+        const nextMsg = s.messages.find((m) => m.position > msg.position);
+        s.messages = s.messages.filter((m) => m.position <= msg.position);
         renderMessages(ctx);
-        startStream(ctx);
+        startStream(ctx, nextMsg
+          ? { mode: 'regenerate', messageId: nextMsg.id }
+          : { mode: 'append' });
       } else if (continueAfter) {
-        // Continue FROM the edited text: everything after this message goes
-        // (it belongs to the pre-edit tail), then the model finishes the
-        // message itself -- prefill semantics, current model + settings.
-        await truncateAfter(ctx, msg.position, convId);
-        if (!ctx.alive || s.activeId !== convId) return;
+        // Continue FROM the edited text: prefill semantics on the server,
+        // which merges the continuation back onto this very row.
+        s.messages = s.messages.filter((m) => m.position <= msg.position);
         renderMessages(ctx);
-        startStream(ctx, msg);
+        startStream(ctx, { mode: 'continue', messageId: msg.id, continueMsg: msg });
       } else {
         renderMessages(ctx);
       }
@@ -1319,21 +1322,17 @@ async function truncateAfter(ctx, position, convId) {
   s.messages = s.messages.filter((m) => m.position <= position);
 }
 
-async function regenerate(ctx, msg) {
+function regenerate(ctx, msg) {
   const s = ctx.state;
   if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
-  const convId = s.activeId; // anchor the truncation before any await
-  try {
-    await truncateAfter(ctx, msg.position - 1, convId);
-    if (!ctx.alive || s.activeId !== convId) return;
-    renderMessages(ctx);
-    scrollMessages(ctx, true);
-    startStream(ctx);
-  } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Regenerate failed: ${err.message}`, true);
-    // the truncate may have half-applied -- adopt the server's actual rows
-    if (ctx.alive) resyncMessages(ctx, convId);
-  }
+  // No client-side truncation: the server anchors on the message ID and
+  // commits its truncation only together with the replacement row. The
+  // mirror drops the tail VISUALLY; if the generation fails or produces
+  // nothing, the end-of-stream reconcile brings the rows back.
+  s.messages = s.messages.filter((m) => m.position < msg.position);
+  renderMessages(ctx);
+  scrollMessages(ctx, true);
+  startStream(ctx, { mode: 'regenerate', messageId: msg.id });
 }
 
 async function deleteMessage(ctx, msg) {
@@ -1517,10 +1516,11 @@ async function send(ctx) {
   }
   // Attachments staged on a capable model must not ride to a model that
   // lost the cap on switch -- fail loudly, keep them staged for a re-pick.
-  // DELIBERATE ASYMMETRY with history media (toWireContent): staged media is
-  // something the user just chose and can trivially un-choose, so BLOCK;
-  // history is work already done, and refusing to talk until it's deleted
-  // punishes the wrong thing, so history DROPS with disclosure instead.
+  // DELIBERATE ASYMMETRY with history media (dropped server-side by the
+  // generate endpoint, disclosed per-message by buildMessageEl): staged
+  // media is something the user just chose and can trivially un-choose, so
+  // BLOCK; history is work already done, and refusing to talk until it's
+  // deleted punishes the wrong thing, so history DROPS with disclosure.
   // Do not "fix" one site to match the other.
   const caps = currentCaps(ctx);
   if (images.length && !caps.includes('vision')) {
@@ -1577,77 +1577,39 @@ async function send(ctx) {
       }
     }
 
+    // The user turn posts as plain CRUD (immediate render, loud failure);
+    // the generate call then builds its prompt from the store, which
+    // includes this row. (The endpoint could persist it too -- deliberately
+    // unused so the typed text is on screen and saved before any
+    // generation concern can interfere.)
     const msg = await api.addMessage(s.activeId, { role: 'user', content });
     if (!ctx.alive) return;
     s.messages.push(msg);
     renderMessages(ctx);
     scrollMessages(ctx, true);
-    startStream(ctx);
+    startStream(ctx, { mode: 'append' });
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Send failed: ${err.message}`, true);
   }
 }
 
-// Wire shape for generation: v3 currently speaks the OpenAI chat-completions
-// format, so stored image blocks convert to image_url parts (data URLs) and
-// audio blocks to input_audio parts (RAW base64 -- a data URL here is
-// rejected server-side). When v3 migrates to /v1/messages (Phase 3b) the
-// stored blocks ARE the wire shape and this conversion disappears.
-//
-// `caps` gates HISTORY media: blocks the current model cannot take are
-// DROPPED from the wire (never from the store -- switch back and they ride
-// again), with a per-message disclosure in the transcript. Deliberate
-// asymmetry with send()'s staged-attachment BLOCK -- see the comment there.
-// Without this, a vision conversation switched to a text-only model shipped
-// image parts unconditionally and failed raw on send: the switch was
-// nominally allowed but the conversation was bricked.
-function toWireContent(msg, caps) {
-  if (!hasMediaBlocks(msg)) return msg.content;
-  const parts = [];
-  for (const b of msg.content_blocks) {
-    if (b.type === 'image') {
-      if (!caps.includes('vision')) continue;
-      parts.push({ type: 'image_url', image_url: { url: blockSourceUrl(b) } });
-    } else if (b.type === 'audio') {
-      if (!caps.includes('audio')) continue;
-      const input_audio = b.source.type === 'url'
-        ? { url: b.source.url }
-        : {
-          data: b.source.data,
-          format: (b.source.media_type ?? '').split('/')[1] || undefined,
-        };
-      parts.push({ type: 'input_audio', input_audio });
-    } else {
-      parts.push({ type: 'text', text: b.text ?? '' });
-    }
-  }
-  // Every block dropped and no text: fall back to the flattened text (may be
-  // ''), not an empty parts array the server would reject.
-  return parts.length ? parts : (msg.content ?? '');
-}
+// The request body no longer exists client-side (Phase 2): the server
+// builds it from the store -- system prompt, sampler bag (cap-gated), rows
+// with history media dropped-and-counted for the target model. The
+// per-message drop DISCLOSURE stays client-rendered (buildMessageEl), off
+// the same capabilities, so the transcript states what the server omits.
 
-function buildRequestBody(ctx, extra = {}) {
-  const s = ctx.state;
-  const caps = currentCaps(ctx);
-  const messages = [];
-  if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
-  for (const m of s.messages) messages.push({ role: m.role, content: toWireContent(m, caps) });
-  // caps filter: cap-gated keys (enable_thinking, vision_tokens) set on a
-  // capable model must not ride requests to a model that lacks the cap
-  return { model: s.modelSelect.value, messages, ...samplerParams(caps), ...extra };
-}
-
-function startStream(ctx, continueMsg = null) {
+function startStream(ctx, opts = {}) {
   const s = ctx.state;
   if (s.stream || !s.activeId) return;
+  const { mode = 'append', messageId = null, continueMsg = null } = opts;
 
   const controller = ctx.linkedController();
 
   // Streaming placeholder message. A CONTINUATION streams into the tail of
-  // an EXISTING message (continueMsg, the last one after truncation): the
-  // placeholder is seeded with its content, replaces its rendered element,
-  // and finishStream PUTs the combined text back onto the same row instead
-  // of appending a new one.
+  // an EXISTING message (continueMsg, the anchor): the placeholder is
+  // seeded with its content and replaces its rendered element; the SERVER
+  // merges the combined text back onto that same row.
   const baseContent = continueMsg?.content ?? '';
   const role = continueMsg?.role ?? 'assistant';
   const contentEl = createEl('div', { class: 'message-content' });
@@ -1708,7 +1670,7 @@ function startStream(ctx, continueMsg = null) {
     if (cold && ctx.alive) refreshLoadedIds(ctx);
   };
 
-  streamChat(buildRequestBody(ctx, continueMsg ? { continue_final_message: true } : {}), {
+  streamGenerate(stream.targetConvId, { mode, message_id: messageId }, {
     signal: controller.signal,
     onToken: (_, full) => { firstDelta(); stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
@@ -1716,13 +1678,24 @@ function startStream(ctx, continueMsg = null) {
       if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
     },
     onComplete: (result) => {
-      finishStream(ctx, stream, result);
+      finishGenerate(ctx, stream, result);
       // A send can load the target AND evict the previous resident
       // (max_loaded_models=1) -- completion is when the residency dots and
       // the Load button go stale, so refresh them here rather than polling.
       if (ctx.alive) refreshLoadedIds(ctx);
     },
-    onError: (err) => handleStreamError(ctx, stream, err),
+    onError: (err) => {
+      // In-band typed error: the stream is still alive and heylook_saved
+      // may still follow (a partial persists) -- surface it, let
+      // onComplete do the cleanup. Transport/HTTP errors end the stream
+      // with no onComplete, so they clean up here.
+      if (err.inBand) {
+        stream.inBandError = err;
+        if (ctx.alive && isCurrent()) showStatus(ctx, `Generation failed: ${err.message}`, true);
+        return;
+      }
+      handleStreamError(ctx, stream, err);
+    },
   });
 }
 
@@ -1748,7 +1721,18 @@ function paintStream(ctx) {
   scrollMessages(ctx);
 }
 
+// The Stop button: SERVER-side abort. The partial persists on the server
+// and the open stream still delivers the saved rows, so the fetch is left
+// alone -- aborting it would throw that final state away.
 function stopStream(ctx) {
+  const stream = ctx.state.stream;
+  if (stream) stopGenerate(stream.targetConvId);
+}
+
+// Teardown / conversation switch / model switch: kill the fetch. The
+// server's disconnect path persists the partial (detached task), and the
+// next select of that conversation re-fetches whatever it saved.
+function abortStream(ctx) {
   ctx.state.stream?.controller.abort();
 }
 
@@ -1766,7 +1750,7 @@ function releaseStream(ctx, stream) {
   // "Loading…" on screen for good. Clear it only while it is still the line
   // ON SCREEN -- anything written since (the model-switch disclosure, a retry
   // notice) belongs to whatever wrote it. Callers set their own message AFTER
-  // this (handleStreamError, finishStream's save errors), so this can't eat
+  // this (handleStreamError, finishGenerate's status line), so this can't eat
   // an error either.
   if (stream.waiting && s.activeId === stream.targetConvId
       && s.statusEl.textContent === stream.waitStatus) {
@@ -1774,92 +1758,38 @@ function releaseStream(ctx, stream) {
   }
 }
 
-async function finishStream(ctx, stream, { content, thinking, usage, timing, aborted }) {
+// The server persisted everything before the stream ended (or its
+// disconnect path is doing it) -- the client's job is display + adoption.
+// No client persistence, no pendingSave window, no unsaved fallback row:
+// the whole class of "the mirror wrote something the store didn't get"
+// cannot occur on this path anymore.
+async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, saved }) {
   const s = ctx.state;
   releaseStream(ctx, stream);
-
-  // releaseStream just nulled s.stream, but the persistence below is still
-  // in flight -- without this latch, a Regenerate clicked the instant the
-  // button flips back to Send truncates the thread WHILE the partial save
-  // is pending, and the late POST appends a ghost row after the truncation.
-  // refuseWhileStreaming reads it, so every destructive action stays loudly
-  // blocked for the (usually sub-second) save window.
-  s.pendingSave = true;
-
-  // Persist to the conversation the stream belonged to, even if the user
-  // switched away or the page is tearing down mid-stream.
-  let saved = null;
-  if (stream.continueMsg) {
-    // Continuation: the text belongs to the EXISTING message -- PUT the
-    // combined result back onto it, never a new row. An abort mid-way still
-    // persists the partial continuation, same contract as a normal stream.
-    const msg = stream.continueMsg;
-    const combinedContent = stream.baseContent + content;
-    const combinedThinking = [msg.thinking, thinking].filter(Boolean).join('') || undefined;
-    if (content || thinking) {
-      try {
-        saved = await api.updateMessage(stream.targetConvId, msg.id, {
-          content: combinedContent, thinking: combinedThinking,
-        });
-      } catch (err) {
-        if (ctx.alive) showStatus(ctx, `Could not save continuation: ${err.message}`, true);
-      }
-      // Local state either way -- an unsaved continuation staying on screen
-      // beats vanishing text (same rule as the append path below).
-      msg.content = saved?.content ?? combinedContent;
-      if (saved?.content_blocks) msg.content_blocks = saved.content_blocks;
-      if (combinedThinking) msg.thinking = saved?.thinking ?? combinedThinking;
-    }
-  } else if (content || thinking) {
-    try {
-      saved = await api.addMessage(stream.targetConvId, {
-        role: 'assistant',
-        content,
-        thinking: thinking || undefined,
-      });
-    } catch (err) {
-      if (ctx.alive) showStatus(ctx, `Could not save response: ${err.message}`, true);
-    }
-  }
-
-  s.pendingSave = false;
 
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
 
   stream.els.msgEl.remove();
-  if (!stream.continueMsg) {
-    if (saved) {
-      s.messages.push(saved);
-    } else if (content || thinking) {
-      // save failed -- keep it on screen unsaved rather than vanishing text
-      s.messages.push({ id: null, role: 'assistant', content, thinking,
-        position: (s.messages[s.messages.length - 1]?.position ?? -1) + 1 });
-    }
-  }
-  renderMessages(ctx);
+  // Adopt the store wholesale. saved.messages carries the rows, but one GET
+  // keeps a single adoption path and also covers the endings that have no
+  // saved event: transport death (the server persisted via its disconnect
+  // task) and in-band errors. On a failed/empty generation this is also
+  // what brings back the tail the regenerate/continue mirror hid.
+  await resyncMessages(ctx, stream.targetConvId);
   scrollMessages(ctx);
 
-  if (aborted) {
+  const endReason = saved?.end_reason;
+  if (aborted || endReason === 'aborted') {
     showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
-  } else if (usage) {
-    const parts = [`${usage.completion_tokens ?? '?'} tokens`];
+  } else if (endReason === 'error' || stream.inBandError) {
+    // the in-band error status line stands; a partial (if any) is saved
+  } else if (usage || saved) {
+    const timing = saved?.timing;
+    const parts = [`${usage?.output_tokens ?? '?'} tokens`];
     if (timing?.peak_memory_gb != null) parts.push(`${timing.peak_memory_gb.toFixed(2)} GB peak`);
     if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
     if (timing?.draft_acceptance != null) parts.push(`draft ${(timing.draft_acceptance * 100).toFixed(0)}%`);
     showStatus(ctx, parts.join(' · '));
-  }
-
-  // End-of-saga reconcile: adopt the store's rows now that persistence has
-  // settled. On the happy path this repaints nothing (identical rows reuse
-  // their nodes); what it buys is that any divergence this saga introduced
-  // dies here instead of compounding into the next position-anchored op.
-  // SKIP when the save FAILED: a failed continuation's combined text lives
-  // only in local state on a REAL row id, so adoption would revert it --
-  // vanishing text, the exact outcome the unsaved-row path exists to
-  // prevent (a failed append is covered either way: its id-less row both
-  // survives adoption and locks the thread).
-  if (!(content || thinking) || saved != null) {
-    await resyncMessages(ctx, stream.targetConvId);
   }
 }
 
@@ -1870,4 +1800,8 @@ function handleStreamError(ctx, stream, err) {
   stream.els.msgEl.remove();
   renderMessages(ctx);
   showStatus(ctx, `Generation failed: ${err.message}`, true);
+  // A transport death mid-generation: the server's disconnect path may
+  // still have persisted a partial -- adopt whatever it saved (also
+  // restores a tail hidden by a regenerate/continue mirror).
+  resyncMessages(ctx, stream.targetConvId);
 }

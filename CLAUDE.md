@@ -119,9 +119,14 @@ drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
 JS, no build, served at `/v3`. 6 pages (chat, notebook, models, perf, explore, jspace);
-chat streams over `/v1/chat/completions` today (Messages migration is plan
-Phase 3b), takes image input + renders image content blocks out of the DuckDB
-store, and has a per-document system-prompt editor + a saved-preset bar (TWO shared
+chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
+server builds the request FROM THE STORE and owns persistence incl. abort +
+disconnect; Messages SSE grammar + a final `heylook_saved` event with the
+authoritative rows; the client's post-stream state is ADOPTION, never
+position arithmetic -- notebook/explore still speak `/v1/chat/completions`
+until the rest of Phase 3b), takes image input + renders image content blocks
+out of the DuckDB store, and has a per-document system-prompt editor + a
+saved-preset bar (TWO shared
 drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat AND
 notebook -- fix a bug in the shared factory, never in one page's copy).
 The system prompt is an OVERRIDE BOX (owner rule, v1.62.3): a preset OWNS a

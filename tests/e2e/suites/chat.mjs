@@ -379,12 +379,22 @@ export async function runChatSuite({ suite, ctx, config }) {
 
   // ---- stop = partial saved (needs a long generation) --------------------
   await suite.check('stop mid-stream saves the partial reply', async () => {
-    await ctx.open('#/chat', { max_tokens: STOP_TEST_MAX_TOKENS });
+    await ctx.open('#/chat');
     await page.select(MODEL_SELECT, config.model);
-    // open the existing conversation (first in the list)
-    await waitFor(async () => (await count(page, '.conv-item')) >= 1, { message: 'conv list' });
-    await page.click('.conv-item');
-    await waitFor(async () => (await userCount(page)) >= 1, { message: 'messages loaded' });
+    // Phase 2: generation params come from the CONVERSATION's params bag
+    // (the server builds the request from the store), so the budget must be
+    // raised through the panel on a fresh conversation -- a localStorage
+    // seed alone never reaches the store (same trap documented on the
+    // thinking-block check below). Big enough that a fast model is still
+    // mid-stream when Stop lands.
+    const convId = await newFreshConversation(page);
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', '4000');
+    await closeDrawer(page);
+    await waitFor(async () => page.evaluate(async (id) => {
+      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
+      return (conv.params ?? {}).max_tokens === 4000;
+    }, convId), { message: 'max_tokens params PUT never landed server-side' });
     await sendText(page, 'Write a long detailed paragraph about the ocean.');
     // wait until partial content is visibly streaming
     await waitFor(async () => {
@@ -401,6 +411,20 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(/partial/i.test(status), `expected partial-saved status, got "${status}"`);
     const reply = await lastAssistantText(page);
     assert(reply.length > 0, 'partial reply not on screen');
+    // Contain the 4000: it lives in THIS conversation's params AND the
+    // panel cache, and this conversation stays the newest for a while --
+    // hydration would push 4000 into every later check (and a fresh
+    // conversation would snapshot it). Restore the suite's default seed
+    // value (browser.mjs open() seeds max_tokens=24), NOT '' -- an empty
+    // value means backend-cascade, whose budget is model-sized and blows
+    // the waitIdle windows of later thinking checks.
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', '24');
+    await closeDrawer(page);
+    await waitFor(async () => page.evaluate(async (id) => {
+      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
+      return (conv.params ?? {}).max_tokens === 24;
+    }, convId), { message: 'max_tokens never restored on the stop-test conversation' });
   });
 
   await suite.check('partial reply persisted across reload', async () => {
@@ -906,40 +930,45 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'false',
       'thinking toggle already pressed at the start of this check');
 
-    // Capture every POST to /v1/chat/completions this send makes -- streamChat
-    // retries once on a 503 model_overloaded, so the request actually SENT is
-    // the LAST one captured, not necessarily the first.
-    const offBodies = [];
-    const captureOff = (req) => {
-      if (req.method() === 'POST' && req.url().includes('/v1/chat/completions')) offBodies.push(req.postData());
-    };
-    page.on('request', captureOff);
+    // Phase 2 contract: sampler state reaches generation through the
+    // CONVERSATION's params bag (the toggle -> settings change ->
+    // bindDocumentParams PUT), and the server builds the request from the
+    // store. The wire carries no sampler keys at all -- assert the
+    // persisted params instead of a request body.
+    const convParams = () => page.evaluate(async (id) => {
+      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
+      return conv.params ?? {};
+    }, convId);
     await sendText(page, 'Say hi in one word.');
     await waitFor(async () => (await conversationStateById(page, convId)).userCount === 1,
       { message: 'off-toggle user message never persisted' });
     await waitIdle(page);
-    page.off('request', captureOff);
-    assert(offBodies.length > 0, 'no /v1/chat/completions request captured with thinking off');
-    const offBody = JSON.parse(offBodies.at(-1));
-    assert(!('enable_thinking' in offBody), `enable_thinking present while toggle is off: ${JSON.stringify(offBody.enable_thinking)}`);
+    assert((await convParams()).enable_thinking !== true,
+      'enable_thinking stored true while the toggle is off');
 
     await page.click(THINK_BTN);
     await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true',
       { message: 'thinking toggle did not flip to pressed' });
+    // the PUT is debounced -- wait for the store to show it before sending
+    await waitFor(async () => (await convParams()).enable_thinking === true,
+      { message: 'on-toggle params PUT never landed server-side' });
 
-    const onBodies = [];
-    const captureOn = (req) => {
-      if (req.method() === 'POST' && req.url().includes('/v1/chat/completions')) onBodies.push(req.postData());
+    // The generate wire itself must stay sampler-free: nothing cap-gated
+    // can ride it, which is the structural close of the old leak class.
+    const genBodies = [];
+    const captureGen = (req) => {
+      if (req.method() === 'POST' && req.url().includes('/generate')) genBodies.push(req.postData());
     };
-    page.on('request', captureOn);
+    page.on('request', captureGen);
     await sendText(page, 'Say hi in one word again.');
     await waitFor(async () => (await conversationStateById(page, convId)).userCount === 2,
       { message: 'on-toggle user message never persisted' });
     await waitIdle(page);
-    page.off('request', captureOn);
-    assert(onBodies.length > 0, 'no /v1/chat/completions request captured with thinking on');
-    const onBody = JSON.parse(onBodies.at(-1));
-    assert(onBody.enable_thinking === true, `enable_thinking not true while toggle is on: ${JSON.stringify(onBody.enable_thinking)}`);
+    page.off('request', captureGen);
+    assert(genBodies.length > 0, 'no /generate request captured with thinking on');
+    const genBody = JSON.parse(genBodies.at(-1));
+    assert(!('enable_thinking' in genBody) && !(genBody.overrides && 'enable_thinking' in genBody.overrides),
+      `enable_thinking rode the generate wire: ${genBodies.at(-1)}`);
 
     // toggle back off so it doesn't leak into later checks
     await page.click(THINK_BTN);
@@ -959,7 +988,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     // The settings cache legitimately KEEPS enable_thinking/vision_tokens
     // when the panel hides their controls (switch back and they return);
     // what must not happen is those values riding a request to a model
-    // that lacks the cap (samplerParams(caps) filter, v1.39.10).
+    // that lacks the cap. Phase 2 moved the gate SERVER-side
+    // (conversation_generate_api._CAP_GATED, unit-pinned): the client wire
+    // carries no sampler keys at all. This check pins that structural
+    // property on the wire the browser actually sends.
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const negative = models.find((m) => m.id !== config.model && !(m.capabilities ?? []).includes('thinking'));
     if (!negative) {
@@ -980,12 +1012,12 @@ export async function runChatSuite({ suite, ctx, config }) {
       { message: 'thinking toggle did not arm' });
 
     await page.select(MODEL_SELECT, negative.id);
-    // Intercept + ABORT the completion request: only the request SHAPE is
+    // Intercept + ABORT the generate request: only the request SHAPE is
     // under test -- the (unloaded) negative model must never actually load.
     await page.setRequestInterception(true);
     const bodies = [];
     const intercept = (req) => {
-      if (req.method() === 'POST' && req.url().includes('/v1/chat/completions')) {
+      if (req.method() === 'POST' && req.url().includes('/generate')) {
         bodies.push(req.postData());
         req.abort();
       } else {
@@ -995,16 +1027,15 @@ export async function runChatSuite({ suite, ctx, config }) {
     page.on('request', intercept);
     try {
       await sendText(page, 'Hello.');
-      await waitFor(async () => bodies.length > 0, { message: 'no completion request captured' });
+      await waitFor(async () => bodies.length > 0, { message: 'no generate request captured' });
     } finally {
       page.off('request', intercept);
       await page.setRequestInterception(false);
     }
     const body = JSON.parse(bodies.at(-1));
-    assert(!('enable_thinking' in body),
-      `enable_thinking rode a request to non-thinking ${negative.id}: ${JSON.stringify(body.enable_thinking)}`);
-    if (!(negative.capabilities ?? []).includes('vision')) {
-      assert(!('vision_tokens' in body), `vision_tokens rode a request to non-vision ${negative.id}`);
+    for (const key of ['enable_thinking', 'vision_tokens', 'temperature', 'max_tokens']) {
+      assert(!(key in body) && !(body.overrides && key in body.overrides),
+        `${key} rode the generate wire to ${negative.id}: ${bodies.at(-1)}`);
     }
     // the aborted stream surfaces as a failed generation on this throwaway
     // conversation -- expected; wait for the composer to release
