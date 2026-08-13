@@ -53,7 +53,9 @@ Cross-session task backlog organized by priority.
   ["--reasoning-format", "none"]` (comment in models.toml). REAL FIX:
   upstream teaches its harmony parser this arch (gpt-oss went through the
   same arc) -- rebuild canonical via `uv run python scripts/build_llama.py`
-  on a new b-tag and retest WITHOUT the workaround. Alternative if upstream
+  on a new b-tag and retest WITHOUT the workaround. Checked and still
+  broken as of b10416 (2026-08-13 canonical build; behavior byte-identical
+  to b10323; DeepSeek smoke-checked healthy on the same build). Alternative if upstream
   stalls: heylook's own harmony-channels parser via a gguf template_info --
   but that cuts against the "never re-parse another engine's split"
   invariant and only makes sense with format=none (engine not splitting),
