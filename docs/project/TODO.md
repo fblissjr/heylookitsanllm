@@ -6,15 +6,32 @@ Cross-session task backlog organized by priority.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
-- [ ] **Phase 0 hardening** (P1, cheap): loud stream-guards, unsaved-row
-  "Retry" honesty + destructive-op lock, reconcile-on-saga-end re-fetch,
-  thinking-block editing in the message editor (backend already supports it).
-- [ ] **Phase 0.5 iOS hidden-row bug** (P1, needs a device): edited/saved
-  assistant row hidden-until-interaction on iOS Safari; test the
-  `content-visibility: auto` skip-state hypothesis on real WebKit; extend
-  `e2e:render` with the edit-save reconcile sequence.
+- [x] **Phase 0 hardening -- DONE v1.64.0**: loud stream-guards (+ a
+  `pendingSave` latch closing the Stop-then-act window between stream
+  release and the partial save landing), unsaved-row "Retry save"/"Discard"
+  honesty + destructive-op-and-send lock, reconcile-on-saga-end re-fetch
+  (unsaved rows survive adoption), thinking-block editing in the message
+  editor. All guarded by `e2e:render` (23 checks, each new one shown red
+  against a pre-fix tree first), incl. an iPhone-emulation boot (viewport +
+  touch + hover:none via CDP) for touch reachability.
+- [ ] **Phase 0.5 iOS hidden-row bug** (P1, needs the owner's device):
+  edited/saved assistant row hidden-until-interaction on iOS Safari; test
+  the `content-visibility: auto` skip-state hypothesis on real WebKit. The
+  Chrome half is pinned ("a saved edit leaves the row painted" in
+  `e2e:render`); emulation cannot see WebKit paint, so this stays open
+  until tried on the phone.
 - [ ] **Phase 1-2 conversation-scoped generate** (the Phase 3b vehicle):
   see the plan; do NOT start the Messages bridge migration separately.
+- [ ] **At-rest encryption for the conversation store** (future state,
+  owner ask 2026-08-13): conversations/messages (prompt inputs/outputs)
+  sit plaintext in the DuckDB file. VERIFIED on the installed duckdb
+  1.5.5: native encryption works -- `ATTACH 'file' (ENCRYPTION_KEY ...)`
+  round-trips and a key-less open is refused. Vehicle when picked up:
+  connect-then-ATTACH in db.py, key from a bootstrap env var or the macOS
+  Keychain (`security find-generic-password`); turning it on is a fresh
+  start or one-time manual copy per the no-migration policy. Note
+  FileVault already covers the disk at rest; this adds protection against
+  same-user file reads.
 
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
 

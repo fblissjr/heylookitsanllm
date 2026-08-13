@@ -621,6 +621,36 @@ function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);
 }
 
+// Phase 0 loud guards (plan_chat_orchestration.md). A user action refused
+// because of a live stream must SAY so: the silent returns these replace were
+// indistinguishable from a broken button, worst during the pre-first-token
+// window of a cold load when nothing visibly streams. role="status" on the
+// line makes this audible to AT as well as visible.
+function refuseWhileStreaming(ctx) {
+  if (ctx.state.stream) {
+    showStatus(ctx, 'A response is still streaming — wait for it to finish, or press Stop.');
+    return true;
+  }
+  // The window between the stream releasing and its persistence settling
+  // (finishStream's pendingSave latch): destructive ops here would truncate
+  // around a row that is mid-flight to the store.
+  if (ctx.state.pendingSave) {
+    showStatus(ctx, 'Saving the response — one moment.');
+    return true;
+  }
+  return false;
+}
+
+// While an unsaved (id-less) row exists, the client's positions are
+// known-divergent from the store: a send would mint a colliding server
+// position, and any position-anchored mutation can truncate the wrong tail
+// SERVER-side. Refuse loudly until Retry or Discard resolves the row.
+function refuseWhileUnsaved(ctx) {
+  if (!ctx.state.messages.some((m) => m.id == null)) return false;
+  showStatus(ctx, 'A message is not saved yet — use its Retry save or Discard button first.', true);
+  return true;
+}
+
 // The bar chip's one renderer (fed by the preset bar's onIndicator).
 function paintPresetChip(ctx, info) {
   const chip = ctx.state.presetChip;
@@ -886,14 +916,18 @@ function msgSignature(msg, { editing, capsKey, provider }) {
 }
 
 // Move an in-progress edit from a row about to be discarded onto its
-// replacement. Silent no-op when the old row was not an editor.
+// replacement. Silent no-op when the old row was not an editor. Pairwise:
+// an editor can hold two textareas now (thinking + response), and both are
+// built from the same message, so the counts match by construction.
 function carryEditorDraft(fromEl, toEl) {
-  const from = fromEl?.querySelector?.('textarea');
-  const to = toEl?.querySelector?.('textarea');
-  if (!from || !to) return;
-  to.value = from.value;
-  to.selectionStart = from.selectionStart;
-  to.selectionEnd = from.selectionEnd;
+  const from = [...(fromEl?.querySelectorAll?.('textarea') ?? [])];
+  const to = [...(toEl?.querySelectorAll?.('textarea') ?? [])];
+  if (!from.length || from.length !== to.length) return;
+  from.forEach((f, i) => {
+    to[i].value = f.value;
+    to[i].selectionStart = f.selectionStart;
+    to[i].selectionEnd = f.selectionEnd;
+  });
 }
 
 // Place `nodes` as the parent's children, moving/keeping existing elements
@@ -1020,6 +1054,13 @@ function buildMessageEl(ctx, msg) {
     children.push(createEl('div', { class: 'message-drop-note muted small' },
       [`${dropped.join(' and ')} not sent to this model`]));
   }
+  // Unsaved fallback row: say so ON the row, always visible (not
+  // hover-gated -- the state must be legible on touch). While it exists,
+  // send and every position-anchored op refuse loudly (refuseWhileUnsaved).
+  if (msg.id == null) {
+    children.push(createEl('div', { class: 'message-unsaved-note small', role: 'status' },
+      ['Not saved — this text exists only on this screen. Retry save or Discard it.']));
+  }
   children.push(buildActions(ctx, msg));
 
   return createEl('div', { class: `message message--${msg.role}` }, children);
@@ -1036,11 +1077,25 @@ function buildActions(ctx, msg) {
   if (msg.content) {
     actions.push(btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})));
   }
+  // Unsaved fallback row (its save failed; the store never had it). The only
+  // safe exits are client-side: re-POST it or discard it locally. The normal
+  // actions are position-anchored server ops and stay off it -- Edit's save
+  // would PUT to /messages/null, Delete/Regenerate would truncate against a
+  // position the server never assigned.
+  if (msg.id == null) {
+    actions.push(btn('Retry save', () => retrySave(ctx, msg)));
+    actions.push(armedConfirm(
+      createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Discard']),
+      () => discardUnsaved(ctx, msg),
+    ));
+    return createEl('div', { class: 'message__actions' }, actions);
+  }
   // Editing is text-only: the editor would replace content and silently drop
   // the media blocks. Image/audio messages get delete/regenerate, not edit.
   if (!hasMediaBlocks(msg)) {
     actions.push(btn('Edit', () => {
-      if (ctx.state.stream) return; // renderMessages would orphan the stream placeholder
+      // loud, not silent: renderMessages would orphan the stream placeholder
+      if (refuseWhileStreaming(ctx)) return;
       ctx.state.editingId = msg.id;
       renderMessages(ctx);
     }));
@@ -1055,35 +1110,83 @@ function buildActions(ctx, msg) {
   return createEl('div', { class: 'message__actions' }, actions);
 }
 
+// Re-POST an unsaved row. On success the server row replaces it in place --
+// its key changes from pos:N to the real id, so the node rebuilds saved.
+async function retrySave(ctx, msg) {
+  const s = ctx.state;
+  if (refuseWhileStreaming(ctx)) return;
+  const convId = s.activeId;
+  try {
+    const saved = await api.addMessage(convId, {
+      role: msg.role, content: msg.content, thinking: msg.thinking || undefined,
+    });
+    if (!ctx.alive || s.activeId !== convId) return;
+    const i = s.messages.indexOf(msg);
+    if (i !== -1) s.messages[i] = saved; else s.messages.push(saved);
+    renderMessages(ctx);
+    showStatus(ctx, 'Message saved.');
+  } catch (err) {
+    if (ctx.alive) showStatus(ctx, `Save failed again: ${err.message}`, true);
+  }
+}
+
+function discardUnsaved(ctx, msg) {
+  const s = ctx.state;
+  const i = s.messages.indexOf(msg);
+  if (i !== -1) s.messages.splice(i, 1);
+  renderMessages(ctx);
+  showStatus(ctx, 'Unsaved message discarded.');
+}
+
 function buildEditEl(ctx, msg) {
   const s = ctx.state;
-  const textarea = createEl('textarea', { value: msg.content });
+  const textarea = createEl('textarea', { value: msg.content, 'aria-label': 'Edit message' });
   // Size to the message, not a fixed pixel cap: long messages were getting a
   // barely-readable slit. Cap at ~60% of the viewport so the buttons stay on
   // screen; past that the textarea scrolls internally.
   const growCap = () => Math.max(400, Math.round(window.innerHeight * 0.6));
   textarea.addEventListener('input', () => autoGrow(textarea, growCap()));
+  // Thinking is editable alongside content (owner ask 2026-08-13; the
+  // backend always accepted MessageUpdate.thinking -- only the editor was
+  // missing). Offered only when the message HAS thinking; capped shorter
+  // than content so the response stays reachable under a long trace.
+  const thinkCap = () => Math.max(160, Math.round(window.innerHeight * 0.3));
+  let thinkArea = null;
+  if (msg.role === 'assistant' && msg.thinking) {
+    thinkArea = createEl('textarea', {
+      class: 'message-edit__thinking', value: msg.thinking,
+      'aria-label': 'Edit thinking',
+    });
+    thinkArea.addEventListener('input', () => autoGrow(thinkArea, thinkCap()));
+  }
   const cancel = () => { s.editingId = null; renderMessages(ctx); };
 
   const save = async (regenerateAfter, continueAfter = false) => {
     // The truncate-then-stream branches are destructive; with a stream
     // already running they mangle the thread (the truncation commits, the
     // new stream silently no-ops, the old one paints into a detached node).
-    // Same guard regenerate() and deleteMessage() carry.
-    if ((regenerateAfter || continueAfter) && s.stream) return;
+    // Same guards regenerate() and deleteMessage() carry -- loud, not silent.
+    if ((regenerateAfter || continueAfter)
+        && (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx))) return;
     // Everything below is anchored to the conversation the edit belongs to,
     // captured NOW: s.activeId read after an await can be a different
     // conversation (switch mid-PUT), and deleteMessagesAfter against it
     // would irreversibly truncate the wrong thread.
     const convId = s.activeId;
     const next = textarea.value;
+    const changes = {};
+    if (next !== msg.content) changes.content = next;
+    // empty = clear: the PUT sends null so the row's thinking column clears
+    // rather than storing an empty string that still renders a block
+    if (thinkArea && thinkArea.value !== msg.thinking) changes.thinking = thinkArea.value || null;
     try {
-      if (next !== msg.content) {
-        const updated = await api.updateMessage(convId, msg.id, { content: next });
+      if (Object.keys(changes).length) {
+        const updated = await api.updateMessage(convId, msg.id, changes);
         if (!ctx.alive) return;
-        // keep content AND content_blocks in sync with the server's view
+        // keep content, blocks AND thinking in sync with the server's view
         msg.content = updated.content;
         msg.content_blocks = updated.content_blocks;
+        msg.thinking = updated.thinking;
       }
       if (s.activeId !== convId) return; // switched away mid-save: edit saved, nothing destructive
       s.editingId = null;
@@ -1105,6 +1208,8 @@ function buildEditEl(ctx, msg) {
       }
     } catch (err) {
       if (ctx.alive) showStatus(ctx, `Save failed: ${err.message}`, true);
+      // the PUT/truncate saga may have half-applied -- adopt server truth
+      if (ctx.alive) resyncMessages(ctx, convId);
     }
   };
 
@@ -1135,15 +1240,25 @@ function buildEditEl(ctx, msg) {
     buttons.push(saveContinue);
   }
 
+  const editChildren = [];
+  if (thinkArea) {
+    // visible captions, not placeholder text: with two boxes open the user
+    // must be able to tell which is which at a glance
+    editChildren.push(createEl('div', { class: 'message-edit__label muted small' }, ['Thinking']));
+    editChildren.push(thinkArea);
+    editChildren.push(createEl('div', { class: 'message-edit__label muted small' }, ['Response']));
+  }
+  editChildren.push(textarea, createEl('div', { class: 'message-edit__buttons' }, buttons));
   const el = createEl('div', { class: `message message--${msg.role}` }, [
-    createEl('div', { class: 'message-edit' }, [
-      textarea,
-      createEl('div', { class: 'message-edit__buttons' }, buttons),
-    ]),
+    createEl('div', { class: 'message-edit' }, editChildren),
   ]);
   // rAF, not microtask: the initial grow needs layout to have happened, or
   // scrollHeight reads short and the editor opens as a slit.
-  requestAnimationFrame(() => { autoGrow(textarea, growCap()); textarea.focus(); });
+  requestAnimationFrame(() => {
+    if (thinkArea) autoGrow(thinkArea, thinkCap());
+    autoGrow(textarea, growCap());
+    textarea.focus();
+  });
   return el;
 }
 
@@ -1166,6 +1281,33 @@ function scrollMessages(ctx, force = false) {
 // message mutations (position-based truncation)
 // ---------------------------------------------------------------------------
 
+// Phase 0 reconcile (plan_chat_orchestration.md): adopt the server's rows
+// wholesale after a saga settles (stream persistence done, or a mutation
+// failed part-way). The mirror has no other reconciliation point -- the
+// select guard deliberately skips re-fetching the active conversation -- so
+// without this, small divergences accumulate until a position-anchored op
+// truncates the wrong tail. Unchanged rows keep their nodes (signature
+// reuse), so a clean reconcile repaints nothing. Unsaved (id-less) rows
+// survive adoption: the server doesn't have them, and vanishing text is
+// worse than divergence (they also lock destructive ops via
+// refuseWhileUnsaved, so surviving is safe).
+async function resyncMessages(ctx, convId) {
+  const s = ctx.state;
+  let conv;
+  try {
+    conv = await api.getConversation(convId, { signal: ctx.signal });
+  } catch {
+    return; // best-effort: the next saga end (or a reselect) retries
+  }
+  if (!ctx.alive || s.activeId !== convId || s.stream) return;
+  const serverRows = conv.messages ?? [];
+  const unsaved = s.messages.filter((m) => m.id == null);
+  let nextPos = (serverRows[serverRows.length - 1]?.position ?? -1) + 1;
+  for (const m of unsaved) m.position = nextPos++;
+  s.messages = [...serverRows, ...unsaved];
+  renderMessages(ctx);
+}
+
 async function truncateAfter(ctx, position, convId) {
   const s = ctx.state;
   // convId is the conversation this truncation was DECIDED against, captured
@@ -1179,7 +1321,7 @@ async function truncateAfter(ctx, position, convId) {
 
 async function regenerate(ctx, msg) {
   const s = ctx.state;
-  if (s.stream) return;
+  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
   const convId = s.activeId; // anchor the truncation before any await
   try {
     await truncateAfter(ctx, msg.position - 1, convId);
@@ -1189,12 +1331,14 @@ async function regenerate(ctx, msg) {
     startStream(ctx);
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Regenerate failed: ${err.message}`, true);
+    // the truncate may have half-applied -- adopt the server's actual rows
+    if (ctx.alive) resyncMessages(ctx, convId);
   }
 }
 
 async function deleteMessage(ctx, msg) {
   const s = ctx.state;
-  if (s.stream) return;
+  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
   const convId = s.activeId; // anchor the truncation before any await
   try {
     await truncateAfter(ctx, msg.position - 1, convId);
@@ -1202,6 +1346,7 @@ async function deleteMessage(ctx, msg) {
     renderMessages(ctx);
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Delete failed: ${err.message}`, true);
+    if (ctx.alive) resyncMessages(ctx, convId);
   }
 }
 
@@ -1352,7 +1497,13 @@ async function send(ctx) {
   const text = s.textarea.value.trim();
   const images = s.pendingImages;
   const audio = s.pendingAudio;
-  if ((!text && !images.length && !audio.length) || s.stream) return;
+  if (!text && !images.length && !audio.length) return;
+  // Loud, not silent: Enter during a stream (the button already reads Stop)
+  // or while a row is unsaved must say why nothing was sent. The unsaved
+  // case is load-bearing -- a send would mint a server position colliding
+  // with the unsaved row's guessed one, and the request body would carry
+  // text the store doesn't have.
+  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
   if (!s.modelSelect.value) {
     showStatus(ctx, 'No models available.', true);
     return;
@@ -1627,6 +1778,14 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
   const s = ctx.state;
   releaseStream(ctx, stream);
 
+  // releaseStream just nulled s.stream, but the persistence below is still
+  // in flight -- without this latch, a Regenerate clicked the instant the
+  // button flips back to Send truncates the thread WHILE the partial save
+  // is pending, and the late POST appends a ghost row after the truncation.
+  // refuseWhileStreaming reads it, so every destructive action stays loudly
+  // blocked for the (usually sub-second) save window.
+  s.pendingSave = true;
+
   // Persist to the conversation the stream belonged to, even if the user
   // switched away or the page is tearing down mid-stream.
   let saved = null;
@@ -1663,6 +1822,8 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
     }
   }
 
+  s.pendingSave = false;
+
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
 
   stream.els.msgEl.remove();
@@ -1686,6 +1847,19 @@ async function finishStream(ctx, stream, { content, thinking, usage, timing, abo
     if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
     if (timing?.draft_acceptance != null) parts.push(`draft ${(timing.draft_acceptance * 100).toFixed(0)}%`);
     showStatus(ctx, parts.join(' · '));
+  }
+
+  // End-of-saga reconcile: adopt the store's rows now that persistence has
+  // settled. On the happy path this repaints nothing (identical rows reuse
+  // their nodes); what it buys is that any divergence this saga introduced
+  // dies here instead of compounding into the next position-anchored op.
+  // SKIP when the save FAILED: a failed continuation's combined text lives
+  // only in local state on a REAL row id, so adoption would revert it --
+  // vanishing text, the exact outcome the unsaved-row path exists to
+  // prevent (a failed append is covered either way: its id-less row both
+  // survives adoption and locks the thread).
+  if (!(content || thinking) || saved != null) {
+    await resyncMessages(ctx, stream.targetConvId);
   }
 }
 

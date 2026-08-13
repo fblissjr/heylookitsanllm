@@ -122,6 +122,14 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   sharing /load's body; v3 "Reload now" uses it. Fit meter shows
   "Resident now" (measured after load) for loaded models -- §5's loop
   closer.
+- **SOLID -- chat-reliability Phase 0 (v1.64.0, plan
+  `plan_chat_orchestration.md`)**: loud refusals (stream + pendingSave
+  latch + unsaved-row lock), unsaved-row Retry save/Discard, reconcile at
+  every saga end, thinking-block editing. `e2e:render` grew 8->23 checks
+  (stateful stub store, red-first, iPhone-emulation boot). OPEN: the iOS
+  hidden-row repro needs the owner's device (plan Phase 0.5); Phases 1-2
+  (conversation-scoped generate) are the 3b vehicle. File logging went
+  opt-in in v1.63.0 (default `off`; llama-server log joined the switch).
 - Also: worktree-per-session convention retired (owner call); editable
   install re-pointed at the primary; DuckDB store cleared by the owner
   (fresh state is intentional, not a bug).

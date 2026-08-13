@@ -610,6 +610,21 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .message-edit { display: flex; flex-direction: column; gap: 0.4rem; width: 100%; }
 .message-edit textarea { width: 100%; min-height: 4rem; resize: vertical; font-size: var(--text-body); }
 .message-edit__buttons { display: flex; gap: 0.4rem; justify-content: flex-end; }
+/* Two-box editor (thinking + response): captions tell them apart; the
+   thinking box is visually secondary (mono, like the rendered block). */
+.message-edit__label { text-transform: uppercase; letter-spacing: 0.04em; }
+.message-edit__thinking { font-family: var(--mono); font-size: var(--text-sm); min-height: 3rem; }
+
+/* Unsaved fallback row (its save failed): always visible -- never
+   hover-gated, the state must be legible on touch (DESIGN.md §7). */
+.message-unsaved-note {
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-radius: var(--r-ctl);
+  padding: 0.15rem 0.5rem;
+  width: fit-content;
+}
+.message--user .message-unsaved-note { margin-left: auto; }
 
 .chat__status {
   font-family: var(--mono);

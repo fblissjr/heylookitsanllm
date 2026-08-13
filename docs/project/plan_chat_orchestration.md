@@ -71,6 +71,13 @@ repro, not more code-reading (Phase 0.5 below).
 
 ## Phase 0 -- immediate hardening (cheap, diagnostic, ships now)
 
+STATUS: SHIPPED v1.64.0 (all four items + a fifth found during
+implementation: a `pendingSave` latch in finishStream, because
+`releaseStream` nulls `s.stream` before the partial save resolves, so the
+stream-guard alone left the Stop-then-act window open). Verified red-first
+via `e2e:render` (23 checks incl. an iPhone-emulation boot). Real-device
+iOS remains Phase 0.5.
+
 Independent of the endpoint; each item kills a live confusion source.
 
 1. **Loud guards.** Every silent `if (s.stream) return` on a user action

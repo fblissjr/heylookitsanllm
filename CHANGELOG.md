@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.64.0]
+
+### Added
+
+- **v3 chat: thinking blocks are editable.** The message editor grows a
+  second, labelled textarea when the message carries thinking; Save PUTs
+  both (empty clears the column). The backend always accepted it -- only
+  the editor was missing.
+- **v3 chat: unsaved-row honesty.** When persisting a response fails, the
+  kept-on-screen row now says so (always-visible note, warn-tinted) and
+  offers exactly two exits: Retry save (re-POSTs, row becomes real) and
+  Discard (armed, local). While one exists, send and every
+  position-anchored op (edit-regenerate, regenerate, delete) refuse loudly
+  -- the client's positions are known-divergent and a send would mint a
+  colliding server position.
+
+### Fixed
+
+- **v3 chat: refusals are loud.** Edit/Regenerate/Delete/Save &
+  Regenerate/Enter-to-send during a live stream said nothing and did
+  nothing -- indistinguishable from a broken button, worst during the
+  pre-first-token wait of a cold load. They now state why in the status
+  line.
+- **v3 chat: the Stop-then-act window is closed.** The stream releases
+  before its partial save lands; a Regenerate clicked in that gap truncated
+  the thread and the late POST appended a ghost row. A pendingSave latch
+  keeps destructive ops loudly blocked until persistence settles.
+- **v3 chat: the mirror reconciles.** On stream completion (and after any
+  failed edit/regenerate/delete saga) the client re-fetches the
+  conversation and adopts the server's rows -- divergence dies at the saga
+  boundary instead of compounding into the next position-anchored
+  truncation. Unchanged rows keep their DOM nodes; unsaved rows survive
+  adoption.
+- `tests/e2e` render suite: stub /v1 became a stateful mini-store and the
+  suite grew from 8 to 23 checks (all new ones shown red against a pre-fix
+  tree first), including an iPhone-emulation boot (viewport + touch +
+  hover:none via CDP) pinning touch reachability of the new affordances,
+  and a Chrome-side pin for the iOS hidden-row report (plan Phase 0.5).
+
 ## [1.63.0]
 
 ### Changed
