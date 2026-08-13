@@ -27,19 +27,15 @@ Honesty notes:
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-HOME_SUBDIR = (".heylook", "llama.cpp")  # keep in sync with build_llama.py
-
-
-def checkout_dir() -> Path:
-    env = os.environ.get("HEYLOOK_LLAMA_CPP_DIR")
-    if env:
-        return Path(env).expanduser().resolve()
-    return Path.home().joinpath(*HOME_SUBDIR).resolve()
+# THE checkout resolver lives in build_llama.py -- import it rather than
+# re-implementing (a drifted copy would silently resolve a stale checkout
+# whose converter predates the target arch; review finding 2026-08-13).
+sys.path.insert(0, str(Path(__file__).parent))
+from build_llama import llama_dir  # noqa: E402
 
 
 def run_convert(checkout: Path, src: Path, outfile: Path, outtype: str,
@@ -82,10 +78,14 @@ def main() -> None:
     if not (src / "config.json").is_file():
         sys.exit(f"{src} has no config.json -- point at the HF checkpoint dir")
     name = args.name or src.name
-    dest = Path(args.dest).expanduser().resolve() if args.dest \
-        else Path("modelzoo") / f"{name}-GGUF"
+    # ALWAYS resolve: the converter subprocess runs with cwd=checkout, so a
+    # relative dest would silently write the multi-GB output into the
+    # llama.cpp tree while this script printed the repo-side path (review
+    # finding 2026-08-13 -- the default branch was the unresolved one).
+    dest = (Path(args.dest).expanduser() if args.dest
+            else Path("modelzoo") / f"{name}-GGUF").resolve()
     dest.mkdir(parents=True, exist_ok=True)
-    checkout = checkout_dir()
+    checkout = llama_dir(None)
 
     run_convert(checkout, src, dest / f"{name}-{args.outtype.upper()}.gguf",
                 args.outtype, mmproj=False)

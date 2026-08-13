@@ -496,7 +496,7 @@ async def _stream_messages(
     # Resolve abort event from provider (if MLX provider with abort support)
     # abort_event is the per-request signal passed in by the route.
 
-    from heylook_llm.streaming_utils import KeepaliveMarker, async_generator_with_abort
+    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
 
     # message_start
     yield translator.message_start_event()
@@ -504,12 +504,9 @@ async def _stream_messages(
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
-            # Keepalive sentinel -> SSE comment, BEFORE any field access (it
-            # has none of GenerationChunk's fields). api.py always guarded;
-            # this loop never did -- pre-existing hole found 2026-08-13
-            # while wiring the same guard into the generate endpoint.
-            if isinstance(chunk, KeepaliveMarker):
-                yield ": keepalive\n\n"
+            ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
+            if ka:
+                yield ka
                 continue
             # Capture provider metadata
             chunk_finish = getattr(chunk, "finish_reason", None)

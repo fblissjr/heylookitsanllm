@@ -50,6 +50,7 @@ from typing import AsyncGenerator, Literal, cast
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from heylook_llm import db
 from heylook_llm.capabilities import effective_capabilities
@@ -197,10 +198,6 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
     router = request.app.state.router_instance
     request_start_time = time.time()
 
-    conv = await db.get_conversation(conn, conv_id)
-    if conv is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
     if conv_id in _ACTIVE:
         return JSONResponse(
             status_code=409,
@@ -211,12 +208,21 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 "code": "generation_in_progress",
             }},
         )
-    # Claim BEFORE the awaits below -- the check above plus this assignment
-    # run without yielding, so a concurrent POST cannot interleave.
+    # Claim BEFORE the row snapshot, not merely before the provider awaits
+    # (second review, 2026-08-13): with the claim first, any message write
+    # that passed the CRUD gate earlier has already committed before our
+    # snapshot read -- the store's single FIFO writer serializes it -- and
+    # any later write 409s. Snapshot-before-claim left an interleaving where
+    # a row landed between the two and was destroyed by the positional
+    # commit: the exact phone+desktop hole the gate exists to close.
     abort_event = AbortEvent()
     _ACTIVE[conv_id] = abort_event
 
     try:
+        conv = await db.get_conversation(conn, conv_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
         model_id = body.overrides.get("model") or conv.get("model_id") \
             or getattr(router.app_config, "default_model", None)
         if not model_id:
@@ -320,16 +326,24 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         # The stream generator's finally owns the _ACTIVE release -- but a
         # generator that is CANCELLED before its first step runs no code at
         # all (client aborts the fetch in the dispatch window), which would
-        # leak the claim and 409-lock the conversation forever. The watchdog
-        # covers exactly that: if the stream never marked itself started,
-        # release the claim -- guarded on identity so it can never pop a
-        # NEWER generation's claim (review finding 2026-08-13).
+        # leak the claim -- and since v1.67.0 a held claim also 409s every
+        # message write, so a leak is a frozen conversation, not just a
+        # blocked Stop. TWO releases close it (second review 2026-08-13):
+        # the response's BackgroundTask runs on Starlette's cleanup path
+        # even when the client disconnected (deterministic, prompt), and
+        # the 60s watchdog stays as the belt for any path that skips both.
+        # Every release is identity-guarded so none can pop a NEWER
+        # generation's claim.
         started = {"flag": False}
 
-        def _watchdog():
-            if not started["flag"] and _ACTIVE.get(conv_id) is abort_event:
-                logger.warning(f"[CONV-GEN {conv_id[:8]}] stream never started -- releasing claim")
+        def _release_claim(source: str):
+            if _ACTIVE.get(conv_id) is abort_event:
+                logger.warning(f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
                 _ACTIVE.pop(conv_id, None)
+
+        def _watchdog():
+            if not started["flag"]:
+                _release_claim("watchdog (stream never started)")
         asyncio.get_running_loop().call_later(60, _watchdog)
 
         return StreamingResponse(
@@ -343,6 +357,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 perf_ctx=perf_ctx, started=started,
             ),
             media_type="text/event-stream",
+            background=BackgroundTask(_release_claim, "response cleanup"),
         )
     except BaseException:
         # Any failure before the stream starts releases the claim; the
@@ -402,7 +417,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
         message_id, model_id,
         thinking_parser=select_reasoning_parser(provider.template_info(), **parser_args))
 
-    from heylook_llm.streaming_utils import KeepaliveMarker, async_generator_with_abort
+    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
 
     yield translator.message_start_event()
 
@@ -435,13 +450,9 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
             async for chunk in async_generator_with_abort(
                     generator, http_request, abort_event,
                     log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
-                # The abort wrapper yields a keepalive sentinel every ~5s
-                # while the FIFO gate or a long prefill holds the first
-                # token back -- it has none of GenerationChunk's fields, so
-                # it must become an SSE comment BEFORE anything touches it
-                # (same guard as api.py's loop; review finding 2026-08-13).
-                if isinstance(chunk, KeepaliveMarker):
-                    yield ": keepalive\n\n"
+                ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
+                if ka:
+                    yield ka
                     continue
                 chunk_finish = getattr(chunk, "finish_reason", None)
                 if chunk_finish:

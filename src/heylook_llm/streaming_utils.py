@@ -71,6 +71,17 @@ class KeepaliveMarker:
 
 KEEPALIVE_MARKER = KeepaliveMarker()
 
+# The ONE wire spelling of the marker. Every SSE consume loop must guard
+# with keepalive_sse() BEFORE touching chunk fields -- the marker has none
+# of GenerationChunk's, and forgetting the guard is a proven failure mode
+# (/v1/messages carried the crash from its creation until 2026-08-13).
+KEEPALIVE_SSE = ": keepalive\n\n"
+
+
+def keepalive_sse(chunk) -> str | None:
+    """Marker -> its SSE comment, or None for a real chunk."""
+    return KEEPALIVE_SSE if isinstance(chunk, KeepaliveMarker) else None
+
 
 async def async_generator_with_abort(
     sync_gen,

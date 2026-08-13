@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.67.1]
+
+### Fixed
+
+Ten findings from the second review pass (scope: everything after the first
+review's snapshot -- i.e. the first review's own fixes plus the conversion
+tooling):
+
+- The generate route claims the conversation BEFORE snapshotting its rows:
+  snapshot-before-claim left an interleaving where a message written
+  between the two was destroyed by the positional commit -- the exact
+  phone+desktop hole the CRUD gate was built to close. With claim-first,
+  the store's single FIFO writer guarantees every pre-claim write is in
+  the snapshot and every post-claim write 409s.
+- The never-started-stream claim leak now has a deterministic release (a
+  StreamingResponse BackgroundTask on Starlette's cleanup path, identity-
+  guarded) with the 60s watchdog demoted to a belt -- a held claim now
+  freezes message CRUD too, so the window mattered much more than before.
+- send() restores the composer (text + staged attachments) when the
+  user-message POST fails -- the new mid-generation 409 was destroying
+  typed content client-side.
+- Deleting the actively-streaming conversation works again: the call site
+  stops the generation first and retries once past the claim's release.
+- Stop no longer aborts a completed stream mid-delivery of its saved rows:
+  the 404-means-abort-locally rule now applies only before any event has
+  arrived (the retry/dispatch window it was built for).
+- The pending sampler-params PUT is FLUSHED before every generate:
+  overrides carry set values past the debounce window, but a CLEARED
+  panel value is expressed by absence, which overrides cannot spell.
+- The no-heylook_saved recovery retries with backoff (the detached
+  disconnect-persist can lose a DB-writer race beyond any fixed delay)
+  and closes its status line instead of leaving an error stranded.
+- The keepalive marker's wire spelling lives once in streaming_utils
+  (keepalive_sse), consumed by all three SSE loops.
+- convert_gguf.py resolves its DEFAULT dest (the converter subprocess runs
+  with cwd=checkout, so the relative default silently wrote the multi-GB
+  output into the llama.cpp tree while printing the repo-side path) and
+  imports build_llama's checkout resolver instead of carrying a copy.
+
 ## [1.67.0]
 
 ### Fixed

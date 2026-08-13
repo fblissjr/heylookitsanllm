@@ -996,15 +996,16 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Per-request abort event passed in by the route (set on client disconnect
     # to cancel THIS request's generation only).
 
-    from heylook_llm.streaming_utils import async_generator_with_abort, KeepaliveMarker
+    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
 
     # Generation failure mid-stream: HTTP status is already sent, so the
     # provider's typed exception is translated into an OpenAI-style error
     # payload -- never delivered as an assistant content delta.
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
-            if isinstance(chunk, KeepaliveMarker):
-                yield ": keepalive\n\n"
+            ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
+            if ka:
+                yield ka
                 continue
 
             # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)

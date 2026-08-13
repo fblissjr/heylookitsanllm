@@ -103,11 +103,12 @@ export default createPage({
     // per-document binding: a panel change persists to the active conversation's
     // `params`; hydrate on select is silent so this only fires on real edits +
     // preset applies.
-    ctx.onTeardown(bindDocumentParams({
+    s.paramsBinder = bindDocumentParams({
       activeId: () => ctx.state.activeId,
       updateDoc: (id, body) => api.updateConversation(id, body),
       onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
-    }));
+    });
+    ctx.onTeardown(s.paramsBinder);
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -787,11 +788,29 @@ async function newConversation(ctx) {
 
 async function deleteConversation(ctx, convId) {
   const s = ctx.state;
+  // Deleting the conversation that is actively STREAMING: the CRUD gate
+  // 409s while the claim is held, so stop it first -- server-side abort
+  // (persists the partial, releases the claim) plus local fetch abort --
+  // and give the unwind a moment before retrying once.
+  if (s.stream?.targetConvId === convId) {
+    stopGenerate(convId);
+    abortStream(ctx);
+  }
   try {
     await api.deleteConversation(convId);
   } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Delete failed: ${err.message}`, true);
-    return;
+    if (err.status === 409) {
+      await new Promise((r) => setTimeout(r, 600));
+      try {
+        await api.deleteConversation(convId);
+      } catch (err2) {
+        if (ctx.alive) showStatus(ctx, `Delete failed: ${err2.message}`, true);
+        return;
+      }
+    } else {
+      if (ctx.alive) showStatus(ctx, `Delete failed: ${err.message}`, true);
+      return;
+    }
   }
   if (!ctx.alive) return;
   s.conversations = s.conversations.filter((c) => c.id !== convId);
@@ -1590,7 +1609,17 @@ async function send(ctx) {
     scrollMessages(ctx, true);
     startStream(ctx, { mode: 'append' });
   } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Send failed: ${err.message}`, true);
+    if (!ctx.alive) return;
+    // The message did NOT reach the store -- put the composer back exactly
+    // as it was. Without this, the new mid-generation 409 (another device
+    // streaming into this conversation) destroyed the typed text and
+    // staged attachments client-side (review finding 2026-08-13).
+    s.textarea.value = text;
+    autoGrow(s.textarea);
+    s.pendingImages = images;
+    s.pendingAudio = audio;
+    renderAttachStrip(ctx);
+    showStatus(ctx, `Send failed: ${err.message}`, true);
   }
 }
 
@@ -1674,14 +1703,17 @@ function startStream(ctx, opts = {}) {
   // The stored conversation is the request's BASE, but the panel is the
   // user's live intent and its writes to the store are asynchronous
   // (debounced params PUT, fire-and-forget model PUT) -- a Send inside
-  // that window would generate with stale store values. Overrides close
-  // the race: current model + panel snapshot ride every generate, layered
-  // over the stored params server-side (same allowlist + cap gates).
+  // that window would generate with stale store values. Two halves close
+  // the race: overrides carry the SET panel values + current model, and
+  // the debounced params PUT is FLUSHED first, because a CLEARED value is
+  // expressed by absence and only the PUT can spell that (overrides
+  // cannot un-set a stored key).
   const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) };
-  streamGenerate(stream.targetConvId, { mode, message_id: messageId, overrides }, {
+  const launch = () => streamGenerate(stream.targetConvId, { mode, message_id: messageId, overrides }, {
     signal: controller.signal,
-    onToken: (_, full) => { firstDelta(); stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
-    onThinking: (_, full) => { firstDelta(); stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
+    onToken: (_, full) => { firstDelta(); stream.sawEvent = true; stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
+    onThinking: (_, full) => { firstDelta(); stream.sawEvent = true; stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
+    onSaved: () => { stream.sawEvent = true; },
     onRetryWait: (wait) => {
       if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
     },
@@ -1705,6 +1737,13 @@ function startStream(ctx, opts = {}) {
       handleStreamError(ctx, stream, err);
     },
   });
+  // Flush the pending params PUT, then launch (usually an instant resolve).
+  // Guarded: a teardown/switch during the flush must not launch a stream
+  // for a page state that no longer exists.
+  Promise.resolve(s.paramsBinder?.flush?.()).then(
+    () => { if (ctx.alive && s.stream === stream) launch(); },
+    () => { if (ctx.alive && s.stream === stream) launch(); },
+  );
 }
 
 // Throttled painter (one per mount, created in setup): renders only the
@@ -1739,7 +1778,15 @@ function stopStream(ctx) {
   const stream = ctx.state.stream;
   if (!stream) return;
   stopGenerate(stream.targetConvId).then((status) => {
-    if (status === 404 && ctx.state.stream === stream) stream.controller.abort();
+    // 404 = nothing active server-side. Abort locally ONLY if this stream
+    // has produced no events yet (the 503-retry sleep / dispatch window).
+    // Once events flowed, a 404 means the server already FINISHED and
+    // released its claim while the tail -- including heylook_saved -- is
+    // still in flight to us; aborting then would report a completed
+    // generation as "Stopped" and drop the saved rows (review 2026-08-13).
+    if (status === 404 && ctx.state.stream === stream && !stream.sawEvent) {
+      stream.controller.abort();
+    }
   });
 }
 
@@ -1809,15 +1856,23 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   // A stream that ended WITHOUT its heylook_saved is not success (spec §4:
   // that event is always last) -- the transport died and the server is
   // persisting via its detached disconnect task, which the resync above may
-  // have raced. Say so, and adopt again after that task has had time to
-  // commit, so the streamed text cannot silently vanish from screen.
+  // have raced. Adopt again with backoff (the task can lose a DB-writer
+  // race well past any single fixed delay), then close the loop on the
+  // status line. A new stream supersedes the remaining retries -- its own
+  // saga end re-adopts everything anyway.
   if (!saved && !aborted && (content || thinking) && !stream.inBandError) {
     showStatus(ctx, 'The stream ended without a save confirmation — recovering…', true);
-    setTimeout(() => {
-      if (ctx.alive && s.activeId === stream.targetConvId && !s.stream) {
-        resyncMessages(ctx, stream.targetConvId);
+    const retry = (delay, attemptsLeft) => setTimeout(async () => {
+      if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;
+      await resyncMessages(ctx, stream.targetConvId);
+      if (!ctx.alive || s.activeId !== stream.targetConvId) return;
+      if (attemptsLeft > 0) {
+        retry(delay * 2.5, attemptsLeft - 1);
+      } else if (s.statusEl.textContent.includes('recovering')) {
+        showStatus(ctx, 'Recovered what the server saved.');
       }
-    }, 1500);
+    }, delay);
+    retry(1000, 2);
   }
 }
 

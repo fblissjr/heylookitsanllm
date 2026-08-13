@@ -139,15 +139,33 @@ export function samplerParams(caps = null) {
 // to the one the edit was for.
 export function bindDocumentParams({ activeId, updateDoc, onError, delay = 400 }) {
   let timer = null;
-  return onSettingsChange(() => {
+  let pending = false;
+  // Fire the debounced PUT NOW. Exposed as .flush on the returned teardown
+  // so a generate can settle the store first: overrides carry SET panel
+  // values past the debounce window, but a CLEARED value is expressed by
+  // absence, which overrides cannot spell -- only the params PUT can
+  // (review finding 2026-08-13: reset temperature + fast Send still
+  // generated at the stored value).
+  const flush = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!pending) return Promise.resolve();
+    pending = false;
+    const id = activeId();
+    if (!id) return Promise.resolve();
+    return Promise.resolve(updateDoc(id, { params: snapshotSettings() }))
+      .catch(onError || (() => {}));
+  };
+  const unsub = onSettingsChange(() => {
     const id = activeId();
     if (!id) return;
+    pending = true;
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      Promise.resolve(updateDoc(id, { params: snapshotSettings() }))
-        .catch(onError || (() => {}));
-    }, delay);
+    timer = setTimeout(flush, delay);
   });
+  const teardown = () => { clearTimeout(timer); unsub(); };
+  teardown.flush = flush;
+  return teardown;
 }
 
 // Load a document's stored params into the panel WITHOUT firing listeners, so
