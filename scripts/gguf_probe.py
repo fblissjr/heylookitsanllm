@@ -248,6 +248,12 @@ def main() -> None:
                     help="raw llama-server flag+value as ONE quoted string, "
                          "repeatable, e.g. --arg '--spec-draft-p-min 0.5'")
     args = ap.parse_args()
+    # The probe EXISTS to diagnose llama-server -- capture its subprocess
+    # log unconditionally. Without this, the in-process observability
+    # default ('off' since v1.63.0) routes llama-server output to DEVNULL
+    # and the probe's own log-scrape reporting silently dies.
+    from heylook_llm import observability
+    observability.configure("standard", Path("logs"))
     if args.temp is not None and args.temp == 0:
         # WARN, do not refuse. temp 0 is legitimate for reproducing something
         # exactly -- it is only invalid as a PERFORMANCE number or a default,

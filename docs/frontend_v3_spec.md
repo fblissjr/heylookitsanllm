@@ -321,9 +321,20 @@ truncate→stream→persist sequences):**
     all persist (disconnect via a detached task — a phone locking mid-stream
     loses nothing). Errors before any output persist nothing.
   - Arbitration: one active generation per conversation — a second POST gets
-    409 `{error:{code:"generation_in_progress"}}`.
+    409 `{error:{code:"generation_in_progress"}}`. While one is active,
+    MESSAGE mutations on the conversation (POST/PUT messages, DELETE
+    ?after, conversation DELETE) also 409 (v1.67.0): the generation's
+    commit truncates by position in its own transaction, and rows appended
+    mid-stream by another client would be silently destroyed at that
+    commit. Metadata PUTs (title/prompt/params) stay open.
+  - v3 sends `overrides: {model, ...panel snapshot}` on every generate
+    (v1.67.0): the store is the request's BASE, but panel writes to it are
+    debounced/async — overrides carry the user's live intent past that
+    window. A client with no such window can omit them.
 - `DELETE /{id}/generate` → aborts the active generation (partial persists;
-  the Stop button's server-side spelling). 404 when none is active.
+  the Stop button's server-side spelling). 404 when none is active — on
+  404 the v3 client aborts its fetch locally instead (covers the
+  503-retry sleep and the pre-claim dispatch window).
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
 `POST /` `{title,content,system_prompt?,model_id?,params?,applied_preset_id?}` (`applied_preset_id`

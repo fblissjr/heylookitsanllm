@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.67.0]
+
+### Fixed
+
+Ten findings from the day's adversarial code review of the chat-orchestration
+work (9 confirmed, 1 hardened), each red-first where a unit seam existed:
+
+- Two `_ACTIVE`-claim leaks that could 409-lock a conversation until
+  restart: the MODEL_BUSY 503 path RETURNS (skipping the exception
+  release) — now pops explicitly, test-pinned; and a stream generator
+  cancelled before its first step runs no code at all — a 60s
+  identity-guarded watchdog releases a claim whose stream never started.
+- The generate loop (and `/v1/messages`' loop — same pre-existing hole)
+  crashed on the keepalive sentinel the abort wrapper yields during long
+  prefills or FIFO-gate waits; both now emit `: keepalive` comments like
+  the OpenAI route always did.
+- Message CRUD now 409s while a generation streams into the conversation:
+  its atomic commit truncates by position, and rows appended mid-stream by
+  a second client were silently destroyed at commit (the phone+desktop
+  case). Metadata PUTs stay open.
+- v3 sends `overrides: {model, ...panel snapshot}` on every generate — the
+  panel's writes to the store are debounced/fire-and-forget, so a fast
+  Send could generate with stale params or the previous model.
+- `send()` re-checks the active conversation after its user-message POST —
+  a switch mid-flight pushed the row into the other conversation's mirror
+  and generated there.
+- Stop now works during the 503-busy retry window: DELETE answering 404
+  (nothing active server-side) makes the client abort locally instead of
+  letting the retry launch a generation the user stopped.
+- A stream ending without `heylook_saved` is no longer treated as success:
+  the client says so and re-adopts after the server's disconnect persist
+  has had time to commit.
+- The llama-server no-log message no longer claims `observability_level=off`
+  as the DB truth (during pre-warm the in-process cache is still the
+  default); gguf-probe now always captures llama-server logs.
+- The server-side cap gate (`_CAP_GATED`) got its missing unit tests —
+  stored params AND overrides, capable and incapable models.
+
 ## [1.66.1]
 
 ### Changed

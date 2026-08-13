@@ -34,12 +34,22 @@ from heylook_llm.providers.base import BaseProvider, GenerationChunk
 
 
 TEST_MODELS = {
-    "models": [{
-        "id": "fake-model",
-        "provider": "mlx",
-        "enabled": True,
-        "config": {"model_path": "/fake/model", "vision": False},
-    }],
+    "models": [
+        {
+            "id": "fake-model",
+            "provider": "mlx",
+            "enabled": True,
+            "config": {"model_path": "/fake/model", "vision": False},
+        },
+        {
+            # thinking + vision caps, for the cap-gating tests
+            "id": "fake-capable",
+            "provider": "mlx",
+            "enabled": True,
+            "config": {"model_path": "/fake/capable", "vision": True,
+                       "enable_thinking": True},
+        },
+    ],
     "default_model": "fake-model",
     "max_loaded_models": 1,
 }
@@ -341,3 +351,83 @@ class TestWireShape:
                                                                        "temperature": 0.9}})
         assert res.status_code == 200
         assert provider.last_request.temperature == 0.9
+
+
+@pytest.mark.unit
+class TestCapGating:
+    """The server-side twin of v3's old samplerParams(caps) filter
+    (_CAP_GATED): cap-gated keys stored on a conversation -- or sent as
+    overrides -- must not reach a provider whose model lacks the cap.
+    Added 2026-08-13: the e2e suite pins only that the WIRE is sampler-free;
+    nothing pinned the gate itself (review finding)."""
+
+    @pytest.mark.asyncio
+    async def test_cap_gated_params_dropped_for_incapable_model(self, ctx):
+        client, store, provider = ctx
+        # fake-model: vision False, no enable_thinking -> no thinking/vision caps
+        conv = await db.create_conversation(
+            store, title="t", model_id="fake-model",
+            params={"enable_thinking": True, "vision_tokens": 512, "temperature": 0.5})
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "hi"})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req is not None
+        assert req.enable_thinking is None, "enable_thinking leaked to a non-thinking model"
+        assert req.vision_tokens is None, "vision_tokens leaked to a non-vision model"
+        assert req.temperature == 0.5  # ungated keys still flow
+
+    @pytest.mark.asyncio
+    async def test_cap_gated_params_pass_for_capable_model(self, ctx):
+        client, store, provider = ctx
+        conv = await db.create_conversation(
+            store, title="t", model_id="fake-capable",
+            params={"enable_thinking": True, "vision_tokens": 512})
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "hi"})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req is not None
+        assert req.enable_thinking is True
+        assert req.vision_tokens == 512
+
+    @pytest.mark.asyncio
+    async def test_overrides_are_cap_gated_too(self, ctx):
+        client, store, provider = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "hi",
+                                      "overrides": {"enable_thinking": True, "temperature": 0.7}})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req is not None
+        assert req.enable_thinking is None, "an override bypassed the cap gate"
+        assert req.temperature == 0.7
+
+
+@pytest.mark.unit
+class TestClaimLeaks:
+    @pytest.mark.asyncio
+    async def test_busy_503_releases_the_claim(self, ctx):
+        """The MODEL_BUSY 503 RETURNS (no raise), skipping the
+        except-BaseException release -- the explicit pop on that path is
+        what this pins (review finding 2026-08-13: leak = permanent 409)."""
+        client, store, provider = ctx
+        conv, _ = await make_conv(store, ("user", "q1"))
+
+        def busy():
+            raise RuntimeError("MODEL_BUSY")
+        provider.check_capacity = busy
+        try:
+            res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                    json={"mode": "append"})
+            assert res.status_code == 503
+            assert conv["id"] not in _ACTIVE, "the 503 path leaked the _ACTIVE claim"
+            # and the conversation is immediately usable again
+            del provider.check_capacity
+            res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                    json={"mode": "append"})
+            assert res.status_code == 200
+        finally:
+            if "check_capacity" in provider.__dict__:
+                del provider.check_capacity

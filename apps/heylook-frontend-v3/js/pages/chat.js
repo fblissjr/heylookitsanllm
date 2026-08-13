@@ -21,7 +21,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -1582,8 +1582,9 @@ async function send(ctx) {
     // includes this row. (The endpoint could persist it too -- deliberately
     // unused so the typed text is on screen and saved before any
     // generation concern can interfere.)
-    const msg = await api.addMessage(s.activeId, { role: 'user', content });
-    if (!ctx.alive) return;
+    const convId = s.activeId; // anchor: a switch mid-POST must not leak into another conv
+    const msg = await api.addMessage(convId, { role: 'user', content });
+    if (!ctx.alive || s.activeId !== convId) return; // saved to its conv; reselect re-fetches it
     s.messages.push(msg);
     renderMessages(ctx);
     scrollMessages(ctx, true);
@@ -1670,7 +1671,14 @@ function startStream(ctx, opts = {}) {
     if (cold && ctx.alive) refreshLoadedIds(ctx);
   };
 
-  streamGenerate(stream.targetConvId, { mode, message_id: messageId }, {
+  // The stored conversation is the request's BASE, but the panel is the
+  // user's live intent and its writes to the store are asynchronous
+  // (debounced params PUT, fire-and-forget model PUT) -- a Send inside
+  // that window would generate with stale store values. Overrides close
+  // the race: current model + panel snapshot ride every generate, layered
+  // over the stored params server-side (same allowlist + cap gates).
+  const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) };
+  streamGenerate(stream.targetConvId, { mode, message_id: messageId, overrides }, {
     signal: controller.signal,
     onToken: (_, full) => { firstDelta(); stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
@@ -1723,10 +1731,16 @@ function paintStream(ctx) {
 
 // The Stop button: SERVER-side abort. The partial persists on the server
 // and the open stream still delivers the saved rows, so the fetch is left
-// alone -- aborting it would throw that final state away.
+// alone -- aborting it would throw that final state away. EXCEPT when the
+// server answers 404 (nothing active): the stream is in a client-side-only
+// phase -- the 503-busy retry sleep, or the dispatch window before the
+// claim -- and only a local abort actually stops it.
 function stopStream(ctx) {
   const stream = ctx.state.stream;
-  if (stream) stopGenerate(stream.targetConvId);
+  if (!stream) return;
+  stopGenerate(stream.targetConvId).then((status) => {
+    if (status === 404 && ctx.state.stream === stream) stream.controller.abort();
+  });
 }
 
 // Teardown / conversation switch / model switch: kill the fetch. The
@@ -1790,6 +1804,20 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
     if (timing?.draft_acceptance != null) parts.push(`draft ${(timing.draft_acceptance * 100).toFixed(0)}%`);
     showStatus(ctx, parts.join(' · '));
+  }
+
+  // A stream that ended WITHOUT its heylook_saved is not success (spec §4:
+  // that event is always last) -- the transport died and the server is
+  // persisting via its detached disconnect task, which the resync above may
+  // have raced. Say so, and adopt again after that task has had time to
+  // commit, so the streamed text cannot silently vanish from screen.
+  if (!saved && !aborted && (content || thinking) && !stream.inBandError) {
+    showStatus(ctx, 'The stream ended without a save confirmation — recovering…', true);
+    setTimeout(() => {
+      if (ctx.alive && s.activeId === stream.targetConvId && !s.stream) {
+        resyncMessages(ctx, stream.targetConvId);
+      }
+    }, 1500);
   }
 }
 

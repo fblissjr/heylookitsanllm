@@ -39,23 +39,23 @@ Cross-session task backlog organized by priority.
   client disconnect has no automated coverage (unit harness can't cancel
   mid-stream realistically); candidate: e2e chat suite kills the tab
   mid-generation and asserts the partial row exists after reload.
-- [ ] **Muse-Glimmer 30B: llama.cpp's harmony parse not wired for the arch**
-  (P3, WORKAROUND APPLIED 2026-08-13; watch upstream): full diagnosis via
-  gguf-probe + GGUF metadata read. The embedded chat template is CORRECT
-  (harmony-style, ends `<|start|>assistant` -- opens the turn properly; on/
-  off/unset renders identical, `supports_thinking=false` is right). The
-  fault is b10323's response parsing for the days-old muse-glimmer arch:
-  `--reasoning-format auto` swallows the whole output into
-  `reasoning_content` (content empty, prompt echo); `none` bypasses parsing
-  and the model produces REAL text -- generate matrix 6/6 -- but raw
-  harmony channel tokens (`<|start|>assistant to=user<|message|>...<|eot|>`)
-  leak into content. WORKAROUND on the entry: `extra_args =
-  ["--reasoning-format", "none"]` (comment in models.toml). REAL FIX:
-  upstream teaches its harmony parser this arch (gpt-oss went through the
-  same arc) -- rebuild canonical via `uv run python scripts/build_llama.py`
-  on a new b-tag and retest WITHOUT the workaround. Checked and still
-  broken as of b10416 (2026-08-13 canonical build; behavior byte-identical
-  to b10323; DeepSeek smoke-checked healthy on the same build). Alternative if upstream
+- [x] **Muse-Glimmer 30B -- RESOLVED 2026-08-13 (the parse was never
+  broken)**: the "all output in reasoning_content, content empty" report
+  was an always-reasoning model given a 100-token budget -- it burned it
+  all in the harmony ANALYSIS channel and never reached the final channel.
+  With a real budget, llama.cpp b10353+ parses it perfectly (the model
+  card confirms; we're on b10416). Entry corrected: `supports_thinking =
+  true` (it reasons every turn; template ignores enable_thinking), the
+  since-withdrawn `--reasoning-format none` workaround REMOVED, and
+  `--chat-template-file` points at the fixed HF template downloaded beside
+  the weights (this GGUF predates the card's template fix -- 7167 vs 9992
+  chars; the fix normalizes "Reasoning effort"->"Reasoning strength" in
+  system prompts; drop the flag after re-downloading the GGUF). Vendor
+  sampling temp 1.0 / top-p 0.95 / top-k 64; never stop on `<|eom|>`.
+  Generate matrix 7/7 incl. thinking persistence and analysis-only abort
+  partials. LESSON, again: starved budgets mislead about CORRECTNESS, not
+  just perf -- an empty content with a fat reasoning_content means "ran
+  out mid-think", not "parser broken". Alternative if upstream
   stalls: heylook's own harmony-channels parser via a gguf template_info --
   but that cuts against the "never re-parse another engine's split"
   invariant and only makes sense with format=none (engine not splitting),

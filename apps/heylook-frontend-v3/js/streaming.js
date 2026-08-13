@@ -246,10 +246,14 @@ export async function streamGenerate(convId, body, {
 // The Stop button's server-side spelling: abort the active generation for
 // this conversation. The partial persists server-side and the ongoing SSE
 // stream still ends with its heylook_saved event -- so the caller keeps
-// reading rather than aborting the fetch. 404 (nothing active) is fine.
+// reading rather than aborting the fetch. Returns the HTTP status (null on
+// network failure): 404 means the server has NOTHING active -- the caller
+// is in a client-side-only phase (the 503 retry sleep, or pre-claim) and
+// must abort locally instead, or the retry launches a generation the user
+// explicitly stopped (review finding 2026-08-13).
 export function stopGenerate(convId) {
   return fetch(`/v1/conversations/${convId}/generate`, {
     method: 'DELETE',
     headers: { 'X-Request-ID': requestId() },
-  }).catch(() => {});
+  }).then((res) => res.status).catch(() => null);
 }

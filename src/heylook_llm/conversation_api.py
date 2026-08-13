@@ -16,6 +16,24 @@ from heylook_llm.db import get_db as _get_db
 
 logger = logging.getLogger(__name__)
 
+
+def _refuse_while_generating(conv_id: str) -> None:
+    """409 message mutations while a generation streams into this conversation.
+
+    The generate endpoint's commit deletes `position > commit_after` in the
+    same transaction that writes its row -- rows another client appends
+    mid-generation would be silently destroyed at that commit (review
+    finding 2026-08-13; the phone+desktop case). The server is the
+    arbiter now: mutate after the stream ends, or stop it first.
+    Metadata PUTs (title/prompt/params) stay open -- they are not
+    position-destructive and don't touch the pending commit.
+    """
+    from heylook_llm.conversation_generate_api import _ACTIVE
+    if conv_id in _ACTIVE:
+        raise HTTPException(status_code=409, detail=(
+            "A generation is streaming into this conversation -- wait for it "
+            "or stop it (DELETE .../generate) before mutating messages"))
+
 conversation_router = APIRouter(
     prefix="/v1/conversations",
     tags=["Conversations"],
@@ -131,6 +149,7 @@ async def update_conversation(conv_id: str, request: Request, body: Conversation
     description="Delete a conversation and all its messages.",
 )
 async def delete_conversation(conv_id: str, request: Request):
+    _refuse_while_generating(conv_id)
     conn = _get_db(request)
     deleted = await db.delete_conversation(conn, conv_id)
     if not deleted:
@@ -149,6 +168,7 @@ async def delete_conversation(conv_id: str, request: Request):
     status_code=201,
 )
 async def append_message(conv_id: str, request: Request, body: MessageCreate):
+    _refuse_while_generating(conv_id)
     conn = _get_db(request)
     try:
         msg = await db.append_message(
@@ -167,6 +187,7 @@ async def append_message(conv_id: str, request: Request, body: MessageCreate):
     description="Update a message's content or thinking.",
 )
 async def update_message(conv_id: str, msg_id: str, request: Request, body: MessageUpdate):
+    _refuse_while_generating(conv_id)
     conn = _get_db(request)
     kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"content", "thinking"}}
     try:
@@ -184,6 +205,7 @@ async def update_message(conv_id: str, msg_id: str, request: Request, body: Mess
     description="Delete all messages after the given position.",
 )
 async def truncate_messages(conv_id: str, request: Request, after: int):
+    _refuse_while_generating(conv_id)
     conn = _get_db(request)
     count = await db.truncate_messages_after(conn, conv_id, after)
     return {"deleted": count, "after_position": after}

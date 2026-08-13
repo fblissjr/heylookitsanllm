@@ -246,8 +246,13 @@ class LlamaServerProvider(BaseProvider):
         if observability.current_level() == "off":
             self._log_handle = None
             log_stdout = subprocess.DEVNULL
-            log_ref = ("output not captured (observability_level=off; raise it "
-                       "via /v1/admin/config and reload to capture llama-server logs)")
+            # Say "was off AT SPAWN", not "observability_level=off": during
+            # router pre-warm the in-process cache still holds the pre-
+            # configure default, so the DB setting may already be higher --
+            # claiming its value here would be false (review 2026-08-13).
+            log_ref = ("output not captured (file logging was off when this "
+                       "model spawned; ensure observability_level>off and "
+                       "reload to capture llama-server logs)")
         else:
             log_dir = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
             log_dir.mkdir(parents=True, exist_ok=True)
