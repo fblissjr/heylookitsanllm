@@ -967,8 +967,13 @@ export async function runChatSuite({ suite, ctx, config }) {
     page.off('request', captureGen);
     assert(genBodies.length > 0, 'no /generate request captured with thinking on');
     const genBody = JSON.parse(genBodies.at(-1));
-    assert(!('enable_thinking' in genBody) && !(genBody.overrides && 'enable_thinking' in genBody.overrides),
-      `enable_thinking rode the generate wire: ${genBodies.at(-1)}`);
+    // v1.67.0 contract: the TOP-LEVEL body stays sampler-free; the panel's
+    // live intent rides in `overrides` (closes the debounced-PUT race), so
+    // with the toggle ON, overrides MUST carry enable_thinking true.
+    assert(!('enable_thinking' in genBody),
+      `enable_thinking rode the top-level generate body: ${genBodies.at(-1)}`);
+    assert(genBody.overrides?.enable_thinking === true,
+      `overrides did not carry the live toggle state: ${genBodies.at(-1)}`);
 
     // toggle back off so it doesn't leak into later checks
     await page.click(THINK_BTN);
@@ -1033,10 +1038,20 @@ export async function runChatSuite({ suite, ctx, config }) {
       await page.setRequestInterception(false);
     }
     const body = JSON.parse(bodies.at(-1));
+    // v1.67.0 contract: sampler keys never ride top-level; the panel
+    // snapshot rides in `overrides`, CLIENT-cap-filtered for the selected
+    // model -- so on a non-thinking/non-vision target the gated keys must
+    // be absent even from overrides (and the server gate behind that is
+    // unit-pinned in test_conversation_generate.py::TestCapGating).
     for (const key of ['enable_thinking', 'vision_tokens', 'temperature', 'max_tokens']) {
-      assert(!(key in body) && !(body.overrides && key in body.overrides),
-        `${key} rode the generate wire to ${negative.id}: ${bodies.at(-1)}`);
+      assert(!(key in body), `${key} rode the top-level generate body: ${bodies.at(-1)}`);
     }
+    for (const key of ['enable_thinking', 'vision_tokens']) {
+      assert(!(body.overrides && key in body.overrides),
+        `cap-gated ${key} rode overrides to ${negative.id}: ${bodies.at(-1)}`);
+    }
+    assert(body.overrides?.model === negative.id,
+      `overrides.model should pin the selected target: ${bodies.at(-1)}`);
     // the aborted stream surfaces as a failed generation on this throwaway
     // conversation -- expected; wait for the composer to release
     await waitIdle(page);
