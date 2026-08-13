@@ -39,9 +39,9 @@ _LEVEL_ORDER: dict[str, int] = {"off": 0, "minimal": 1, "standard": 2, "debug": 
 
 _STREAMS: dict[str, str] = {"metrics": "metrics.jsonl", "events": "events.jsonl"}
 
-# In-process cached config. Defaults are safe (minimal, ./logs) so a call before
-# configure() still behaves sanely rather than crashing.
-_level: str = "minimal"
+# In-process cached config. Defaults match the schema default (off, ./logs):
+# a call before configure() writes nothing -- file logging is opt-in.
+_level: str = "off"
 _log_dir: Path = Path("logs")
 _retention_days: int = 30
 
@@ -54,7 +54,9 @@ _last_rotate_ts: float = 0.0
 def configure(level: str, log_dir: Path | str, retention_days: int = 30) -> None:
     """Set the active verbosity + log directory + retention (startup / on change)."""
     global _level, _log_dir, _retention_days
-    _level = level if level in _LEVEL_ORDER else "minimal"
+    # An unknown level degrades to SILENT, matching the opt-in default --
+    # never to a level that writes files nobody asked for.
+    _level = level if level in _LEVEL_ORDER else "off"
     _log_dir = Path(log_dir)
     _retention_days = int(retention_days)
 

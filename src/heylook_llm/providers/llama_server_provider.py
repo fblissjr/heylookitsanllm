@@ -38,6 +38,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Generator, Optional
 
+from .. import observability
 from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
@@ -235,11 +236,23 @@ class LlamaServerProvider(BaseProvider):
         port = int(self.config.get("port") or 0) or self._free_port()
         args = self._build_args(binary, port)
 
-        log_dir = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
-        log_dir.mkdir(parents=True, exist_ok=True)
-        safe_id = "".join(c if c.isalnum() or c in "-_." else "_" for c in self.model_id)
-        log_path = log_dir / f"llama_server_{safe_id}.log"
-        self._log_handle = open(log_path, "ab")
+        # Subprocess output honors the file-logging master switch: at
+        # observability_level=off (the default) NOTHING is written under
+        # logs/ -- this was the one writer that ignored the switch, and it
+        # sprinkled logs/ dirs wherever the server happened to be started.
+        if observability.current_level() == "off":
+            self._log_handle = None
+            log_stdout = subprocess.DEVNULL
+            log_ref = ("output not captured (observability_level=off; raise it "
+                       "via /v1/admin/config and reload to capture llama-server logs)")
+        else:
+            log_dir = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            safe_id = "".join(c if c.isalnum() or c in "-_." else "_" for c in self.model_id)
+            log_path = log_dir / f"llama_server_{safe_id}.log"
+            self._log_handle = open(log_path, "ab")
+            log_stdout = self._log_handle
+            log_ref = f"see {log_path}"
 
         # llama-server reads LLAMA_ARG_* from the environment for most flags.
         # A CLI arg WINS over its env var (llama.cpp warns and overrides), so
@@ -260,7 +273,7 @@ class LlamaServerProvider(BaseProvider):
         logging.info(f"[GGUF] Spawning llama-server for '{self.model_id}': {' '.join(args)}")
         self._proc = subprocess.Popen(
             args,
-            stdout=self._log_handle,
+            stdout=log_stdout,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             start_new_session=True,  # own process group: unload kills the whole tree
@@ -276,7 +289,7 @@ class LlamaServerProvider(BaseProvider):
                 self._cleanup_handles()
                 raise RuntimeError(
                     f"llama-server exited with code {rc} while loading "
-                    f"'{self.model_id}' -- see {log_path}"
+                    f"'{self.model_id}' -- {log_ref}"
                 )
             try:
                 with urllib.request.urlopen(self._base_url + "/health", timeout=5) as resp:
@@ -291,7 +304,7 @@ class LlamaServerProvider(BaseProvider):
                 self.unload()
                 raise RuntimeError(
                     f"llama-server for '{self.model_id}' not ready after "
-                    f"{timeout_s:.0f}s -- see {log_path}"
+                    f"{timeout_s:.0f}s -- {log_ref}"
                 )
             time.sleep(0.5)
 

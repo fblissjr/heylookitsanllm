@@ -16,7 +16,8 @@ from heylook_llm.settings import SettingsSchema, resolve_settings, resolve_setti
 class TestDefaults:
     def test_empty_yields_documented_defaults(self):
         s = resolve_settings({})
-        assert s.observability_level == "minimal"
+        # off = file logging is opt-in (owner rule 2026-08-13)
+        assert s.observability_level == "off"
         assert s.observability_retention_days == 30
 
 
@@ -54,7 +55,7 @@ class TestSafeResolution:
 
     def test_safe_bad_value_falls_back(self):
         s, err = resolve_settings_safe({"observability_level": "loud"})
-        assert s.observability_level == "minimal"  # default
+        assert s.observability_level == "off"  # default
         assert err is not None and "observability_level" in err
 
 

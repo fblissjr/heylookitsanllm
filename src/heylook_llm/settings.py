@@ -37,7 +37,10 @@ class SettingsSchema(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    observability_level: Literal["off", "minimal", "standard", "debug"] = "minimal"
+    # File logging is OPT-IN (owner rule 2026-08-13): the default writes no
+    # files under logs/ at all. Raise the level via /v1/admin/config (or the
+    # admin UI) when you want telemetry/diagnostics captured.
+    observability_level: Literal["off", "minimal", "standard", "debug"] = "off"
     observability_retention_days: int = Field(default=30, ge=0)
     # Cap on MLX's buffer cache (GB). The allocator keeps freed buffers for
     # reuse and never returns them to the OS, so server RSS pins at the

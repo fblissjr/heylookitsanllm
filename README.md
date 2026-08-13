@@ -32,7 +32,7 @@ Built on Apple MLX for text and vision, with GGUF models served through a manage
 - **Batch Processing**: 2-4x throughput for multi-prompt workloads
 - **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
 - **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
-- **Observability**: Disk-backed JSONL telemetry under `logs/` -- per-request metrics (tokens, tok/s, TTFT, peak memory, cache, engine path), errors (type + stage + cause chain), model load/unload, and periodic resource snapshots. **Never prompt or response text; everything is written to local files only -- nothing is transmitted anywhere.** One control knob: `observability_level` (`off`/`minimal`/`standard`/`debug`, default `minimal`), settable via `POST /v1/admin/config` -- `off` disables all of it. Streams and levels are self-describing: read logs/*.jsonl and GET /v1/admin/config.
+- **Observability**: Disk-backed JSONL telemetry under `logs/` -- per-request metrics (tokens, tok/s, TTFT, peak memory, cache, engine path), errors (type + stage + cause chain), model load/unload, and periodic resource snapshots. **Never prompt or response text; everything is written to local files only -- nothing is transmitted anywhere.** One control knob: `observability_level` (`off`/`minimal`/`standard`/`debug`, default `off` -- file logging is opt-in), settable via `POST /v1/admin/config`. Streams and levels are self-describing: read logs/*.jsonl and GET /v1/admin/config.
 
 ## Web UI
 

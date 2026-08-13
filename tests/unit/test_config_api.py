@@ -36,7 +36,7 @@ class TestConfigEndpoints:
         res = await client.get("/v1/admin/config")
         assert res.status_code == 200
         body = res.json()
-        assert body["effective"]["observability_level"] == "minimal"
+        assert body["effective"]["observability_level"] == "off"
         assert body["effective"]["observability_retention_days"] == 30
         assert body["stored"] == {}
 
@@ -66,10 +66,10 @@ class TestConfigEndpoints:
 
     @pytest.mark.asyncio
     async def test_reset_restores_default(self, client):
-        await client.put("/v1/admin/config", json={"observability_level": "off"})
+        await client.put("/v1/admin/config", json={"observability_level": "debug"})
         res = await client.delete("/v1/admin/config/observability_level")
         assert res.status_code == 200
-        assert res.json()["effective"]["observability_level"] == "minimal"
+        assert res.json()["effective"]["observability_level"] == "off"
         assert res.json()["stored"] == {}
 
     @pytest.mark.asyncio
@@ -93,7 +93,7 @@ class TestConfigEndpoints:
         await client.put("/v1/admin/config", json={"observability_level": "debug"})
         assert observability.current_level() == "debug"
         await client.delete("/v1/admin/config/observability_level")
-        assert observability.current_level() == "minimal"
+        assert observability.current_level() == "off"
 
 
 @pytest.mark.unit

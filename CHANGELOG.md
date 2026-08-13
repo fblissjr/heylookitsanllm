@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.63.0]
+
+### Changed
+
+- **File logging is off by default.** `observability_level` now defaults to
+  `off` (was `minimal`): a fresh server writes nothing under `logs/` until
+  the level is raised via `/v1/admin/config`. The knob was already the
+  master switch for the spine and memory.py's streams; the llama-server
+  subprocess log (`logs/llama_server_<id>.log`) was the one writer that
+  ignored it and is now gated by the same switch (checked at spawn --
+  raise the level and reload the model to capture output; load-failure
+  messages say so instead of pointing at a file that was never written).
+  An unrecognized level value now degrades to `off`, not `minimal`, so a
+  bad stored value can never turn file logging on by accident. Rationale:
+  `logs/` resolves relative to the working directory, so an on-by-default
+  level sprinkled log dirs wherever the server happened to be started.
+
 ## [1.62.7]
 
 ### Fixed
