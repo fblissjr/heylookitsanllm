@@ -47,8 +47,15 @@ def run_convert(checkout: Path, src: Path, outfile: Path, outtype: str,
     convert = checkout / "convert_hf_to_gguf.py"
     if not convert.is_file():
         sys.exit(f"no converter at {convert} -- run scripts/build_llama.py first")
+    # --no-project: the converter must NOT inherit the repo venv -- the
+    # repo pins transformers (deliberately, contract-tested), and a new
+    # checkpoint's tokenizer_class can postdate that pin (Muse-Glimmer's
+    # "TokenizersBackend" did, 2026-08-13). The converter's world is
+    # llama.cpp's, not heylook's: current transformers, its own gguf-py.
     cmd = [
-        "uv", "run", "--with", "torch", "--with", "sentencepiece",
+        "uv", "run", "--no-project",
+        "--with", "torch", "--with", "transformers",
+        "--with", "sentencepiece", "--with", "safetensors",
         "python", str(convert), str(src),
         "--outfile", str(outfile), "--outtype", outtype,
     ]
