@@ -32,9 +32,8 @@ update-coderef.sh
 # configs
 model.toml
 models.toml
-scripts/update_deps.py
 
-# Runtime data at repo root (SQLite DBs, cache files). Package data at
+# Runtime data at repo root (DuckDB stores, cache files). Package data at
 # src/heylook_llm/data/ stays tracked; this only catches the /data runtime dir.
 # Pattern note: /data/* lets git re-enter the dir so the .gitkeep exception works;
 # /data/ without the star short-circuits recursion and the negation never fires.

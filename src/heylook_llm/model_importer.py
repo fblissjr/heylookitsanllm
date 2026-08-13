@@ -11,6 +11,7 @@ import glob
 import logging
 import os
 import re
+import tomllib
 import tomli_w
 from pathlib import Path
 from typing import Any, Optional
@@ -671,6 +672,44 @@ class ModelImporter:
 
         return lines
 
+    def write_merged(self, top_level: dict, existing_models: list[dict],
+                     new_models: list[dict], output_file: str,
+                     old_text: str) -> str:
+        """Reimport = the file you had, plus what the scan found.
+
+        Existing entries and top-level keys round-trip VERBATIM (values via
+        tomli_w; comments re-injected by merge_comments, the same machinery
+        as admin writes) -- a reimport must never eat a hand-tuned
+        server_binary, sampler, or top-level setting. Refreshing one entry
+        from a rescan is the admin PUT flow, deliberately not this path.
+        """
+        from heylook_llm.toml_comments import merge_comments
+
+        def _strip_none(value):
+            if isinstance(value, dict):
+                return {k: _strip_none(v) for k, v in value.items() if v is not None}
+            if isinstance(value, list):
+                return [_strip_none(v) for v in value if v is not None]
+            return value
+
+        # Scalars before tables so tomli_w cannot emit a top-level key after
+        # a table header (which would re-parse into the wrong table).
+        scalars = {k: v for k, v in top_level.items() if not isinstance(v, dict)}
+        tables = {k: v for k, v in top_level.items() if isinstance(v, dict)}
+        doc: dict[str, Any] = dict(scalars)
+        all_models = existing_models + new_models
+        doc.setdefault("default_model", all_models[0]["id"] if all_models else "none")
+        doc.setdefault("max_loaded_models", 1)
+        doc.update(tables)
+        doc["models"] = [_strip_none(m) for m in all_models]
+
+        fresh = tomli_w.dumps(doc)
+        merged = merge_comments(old_text, fresh)
+        with open(output_file, "w") as f:
+            f.write(merged)
+        logging.info(f"Wrote configuration to {output_file}")
+        return merged
+
 
 def import_models(args: Any) -> None:
     """CLI handler for model import."""
@@ -695,6 +734,30 @@ def import_models(args: Any) -> None:
         chat_template_override=getattr(args, 'chat_template', None),
     )
 
+    # Merge-preserve by default: whatever the existing output file says goes
+    # right back out -- hand-tuned entries (server_binary, draft_model_path,
+    # samplers) and top-level settings must survive a reimport; the scan only
+    # ADDS. Seeding existing_ids here is what makes the scanners skip
+    # already-configured models. --fresh restores the old wholesale rewrite.
+    output_file = args.output or "models.toml"
+    existing_top: dict[str, Any] = {}
+    existing_models: list[dict] = []
+    existing_text = ""
+    out_path = Path(output_file)
+    if out_path.exists() and not getattr(args, "fresh", False):
+        existing_text = out_path.read_text()
+        try:
+            existing = tomllib.loads(existing_text)
+        except tomllib.TOMLDecodeError as e:
+            raise SystemExit(
+                f"{output_file} exists but does not parse ({e}); fix it or "
+                f"pass --fresh to regenerate from scratch."
+            )
+        existing_models = list(existing.get("models", []))
+        existing_top = {k: v for k, v in existing.items() if k != "models"}
+        importer.existing_ids.update(
+            str(m["id"]) for m in existing_models if m.get("id"))
+
     models = []
 
     if args.folder:
@@ -707,8 +770,18 @@ def import_models(args: Any) -> None:
         models.extend(cache_models)
         logging.info(f"Found {len(cache_models)} models in HF cache")
 
+    # Belt and suspenders next to the scanners' own existing_ids check: an
+    # already-configured id must never re-enter through any scan path.
+    if existing_models:
+        configured = {str(m["id"]) for m in existing_models if m.get("id")}
+        models = [m for m in models if str(m.get("id")) not in configured]
+
     if not models:
-        logging.warning("No models found!")
+        if existing_models:
+            print(f"\nNo new models found; {output_file} left untouched "
+                  f"({len(existing_models)} configured entries).")
+        else:
+            logging.warning("No models found!")
         return
 
     # (Interactive per-model customization retired 2026-07-28 with config_tui:
@@ -724,10 +797,13 @@ def import_models(args: Any) -> None:
             for key, value in registry.get(args.sampler).items():
                 print(f"  {key:<25} = {value}")
 
-    output_file = args.output or "models.toml"
-    importer.generate_toml(models, output_file)
+    if existing_models or existing_top:
+        importer.write_merged(existing_top, existing_models, models,
+                              output_file, existing_text)
+    else:
+        importer.generate_toml(models, output_file)
 
-    print(f"\nFound {len(models)} models:")
+    print(f"\nFound {len(models)} new models:")
     for model in models:
         print(f"  - {model['id']} ({model['provider']})")
 
@@ -738,10 +814,9 @@ def import_models(args: Any) -> None:
 
     print(f"\nConfiguration written to: {output_file}")
 
-    if args.merge:
-        print("\nTo merge with existing models.toml, review the file and copy desired entries.")
-    else:
-        print("\nTo use this configuration, rename to models.toml or copy desired entries.")
+    if existing_models:
+        print(f"\nKept {len(existing_models)} existing entries and top-level "
+              f"settings as-is (--fresh regenerates from scratch).")
 
     if not getattr(args, 'sampler', None):
         from heylook_llm.samplers import get_sampler_registry

@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.6]
+
+### Changed
+
+- **Dependency management is plain uv now.** `pyproject.toml` is a
+  hand-maintained manifest of published releases ("current as of" floors;
+  `uv.lock` pins the exact versions), and the channel/pin updater
+  (`scripts/update_deps.py`, with its `[tool.heylook.deps]` /
+  `[tool.uv.sources]` machinery) is gone -- updates are
+  `uv lock --upgrade[-package X] && uv sync`. Running an upstream's git
+  commit is a machine-local working-tree experiment (a `[tool.uv.sources]`
+  entry, or a one-off `uv run --with`), never committed: uv honors no
+  gitignored home for source pins (`override-dependencies` in `uv.toml` is
+  silently ignored; verified on uv 0.11.32) and pins propagate into
+  `uv.lock`, so the new pre-commit guard blocks committing either file while
+  it carries one.
+- **`heylookllm import` merges by default.** An existing output file keeps
+  every entry and top-level setting verbatim (comments re-injected via the
+  same toml_comments machinery as admin writes); scans only append newly
+  found models, an already-configured id can never re-enter through a scan,
+  and an unparseable existing file refuses instead of clobbering. Hand edits
+  like a per-model `server_binary` now survive reimport. `--fresh` restores
+  the wholesale rewrite; `--merge` (which only printed advice) is gone.
+- Dependency floors raised to the releases in use (`mlx>=0.32.0`,
+  `mlx-lm>=0.31.3`, `mlx-vlm>=0.6.13`); `torch` relaxed from `==2.13.0` to
+  `>=2.13.0` (uv.lock still carries the exact version).
+
+### Added
+
+- `scripts/build_llama.py`: clones and builds llama-server at the newest
+  `b<N>` release tag by default (llama.cpp's releases ARE those tags; no
+  semver), `--rev` for any other tag/branch/SHA, plus `--status`,
+  `--rebuild`, `--clean`, and `--openmp` with the resolved-flag readback
+  that refuses a silently-downgraded OpenMP build. Writes the
+  `heylook-build.json` manifest; never touches pyproject/uv.lock. Replaces
+  the build half of the retired updater; the provider's zero-config fallback
+  location is unchanged and now pinned by a literal in its test.
+- `scripts/guard_stable_channel.sh`, wired into the pre-commit hook: blocks
+  committing `pyproject.toml`/`uv.lock` while they carry a git pin. Checks
+  staged blobs (a clean commit from a pinned worktree passes), fails closed
+  (a broken read blocks the commit rather than silently passing), and
+  matches with bash rather than PATH grep. `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`
+  is the deliberate-exception escape hatch.
+
 ## [1.62.5]
 
 ### Fixed

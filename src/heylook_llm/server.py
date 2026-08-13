@@ -121,9 +121,12 @@ def main():
              "chat_template.jinja is present; pass this flag to override.",
     )
     import_parser.add_argument(
-        "--merge",
+        "--fresh",
         action="store_true",
-        help="Show instructions for merging with existing models.toml",
+        help="Regenerate the output file from scratch. By default an existing "
+             "file keeps every entry and top-level setting it already has "
+             "(hand edits like server_binary survive) and the scan only "
+             "appends newly found models.",
     )
     import_parser.add_argument(
         "--log-level",

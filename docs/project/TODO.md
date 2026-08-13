@@ -649,7 +649,7 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   top-level `description`/`tags` not clearable via null (asymmetric with
   config nulls); admin `/import` still log-skips invalid entries while the
   CLI importer refuses loudly; `$HEYLOOK_LLAMA_SERVER` pointing at an older
-  build than the update_deps one gets no staleness warning; consider
+  build than the default-location one gets no staleness warning; consider
   `-t`/`--threads` field (design doc's trigger -- experts-on-CPU landed)
   and widening `n_gpu_layers` to accept `auto`/`all` (b10362 idiom);
   `num_draft_tokens`/`prefill_step_size` effect-class re-read now that

@@ -218,3 +218,119 @@ class TestReimportUpdates:
         assert [c.id for c in imported] == ["model-c"]
         ids = {c.id for c in service.list_configs()}
         assert ids == {"existing", "model-c"}
+
+
+# ---------------------------------------------------------------------------
+# CLI bulk import (`heylookllm import`): merge-preserve semantics (v1.62.6).
+#
+# The admin flow above has PUT semantics on purpose (explicit per-model
+# refresh). The CLI bulk path is the opposite contract: whatever the existing
+# file says goes right back out -- hand-tuned entries (server_binary,
+# samplers) and top-level settings survive, scans only APPEND new ids, and
+# --fresh is the only way to get the old wholesale rewrite.
+# ---------------------------------------------------------------------------
+
+import tomllib
+from types import SimpleNamespace
+
+from heylook_llm.model_importer import ModelImporter, import_models
+
+
+def _cli_args(output, fresh=False):
+    return SimpleNamespace(
+        folder="scan-me", hf_cache=False, output=str(output),
+        sampler=None, override=None, chat_template=None, fresh=fresh,
+    )
+
+
+HAND_TUNED = """\
+# top-of-file note
+default_model = "existing"
+max_loaded_models = 2
+idle_unload_seconds = 300
+
+[[models]]
+id = "existing"
+provider = "gguf"
+enabled = true
+# hand-tuned: custom binary
+[models.config]
+model_path = "weights/existing.gguf"
+server_binary = "custom/llama-server"
+"""
+
+
+def _scan_stub(entries):
+    # Bypasses the scanners' own existing_ids bookkeeping ON PURPOSE: the
+    # post-scan filter in import_models must hold even if a scanner forgets
+    # to check.
+    def scan(self, path):
+        return [dict(e) for e in entries]
+    return scan
+
+
+NEW_MODEL = {"id": "brand-new", "provider": "mlx", "enabled": True,
+             "config": {"model_path": "weights/new"}}
+
+
+class TestCliImportMergePreserve:
+    def test_reimport_puts_existing_values_right_back(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(HAND_TUNED)
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([NEW_MODEL]))
+
+        import_models(_cli_args(cfg))
+
+        text = cfg.read_text()
+        data = tomllib.loads(text)
+        by_id = {m["id"]: m for m in data["models"]}
+        assert by_id["existing"]["config"]["server_binary"] == "custom/llama-server"
+        assert data["idle_unload_seconds"] == 300
+        assert data["max_loaded_models"] == 2
+        assert data["default_model"] == "existing"
+        assert "brand-new" in by_id
+        # comments ride the same toml_comments machinery as admin writes
+        assert "# hand-tuned: custom binary" in text
+
+    def test_a_configured_id_cannot_reenter_through_a_scan(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(HAND_TUNED)
+        rescan = {"id": "existing", "provider": "gguf", "enabled": True,
+                  "config": {"model_path": "weights/rescanned.gguf"}}
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([rescan]))
+
+        import_models(_cli_args(cfg))
+
+        data = tomllib.loads(cfg.read_text())
+        assert len(data["models"]) == 1
+        entry = data["models"][0]
+        assert entry["config"]["model_path"] == "weights/existing.gguf"
+        assert entry["config"]["server_binary"] == "custom/llama-server"
+
+    def test_no_new_models_leaves_file_byte_identical(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(HAND_TUNED)
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([]))
+
+        import_models(_cli_args(cfg))
+
+        assert cfg.read_text() == HAND_TUNED
+
+    def test_fresh_regenerates_from_scratch(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(HAND_TUNED)
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([NEW_MODEL]))
+
+        import_models(_cli_args(cfg, fresh=True))
+
+        data = tomllib.loads(cfg.read_text())
+        assert [m["id"] for m in data["models"]] == ["brand-new"]
+
+    def test_unparseable_existing_file_refuses_instead_of_clobbering(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text("default_model = [broken\n")
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([NEW_MODEL]))
+
+        with pytest.raises(SystemExit):
+            import_models(_cli_args(cfg))
+        assert cfg.read_text() == "default_model = [broken\n"

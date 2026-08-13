@@ -174,6 +174,10 @@ UPDATE 2026-08-11 (v1.54.0-1.57.1, merged to main same day):
   rollback when the follow-up `uv lock` fails; first write-path tests.
   The primary's stray 7-package relock (incl. transformers 5.15.0) was
   committed as a NAMED act after the full suite passed under it.
+  (Superseded v1.62.6: update_deps.py retired -- pyproject is a plain
+  hand-maintained manifest, `scripts/build_llama.py` carries the llama.cpp
+  build, `scripts/guard_stable_channel.sh` keeps git pins uncommitted, and
+  `heylookllm import` is merge-preserving so hand edits survive reimport.)
 - **Left**: see the HANDOFF block above + TODO.md
   "Config-editor / audit follow-ups". Final state: suite 1434 green,
   E2E pages 43/43 + chat 41/41.

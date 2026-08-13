@@ -1,6 +1,6 @@
 # scripts/
 
-Last updated: 2026-08-10
+Last updated: 2026-08-12
 
 Standalone developer/ops scripts. All are run with `uv run` (PEP 723 headers
 provision their own deps where noted, so they don't add anything to the project
@@ -10,7 +10,8 @@ would just create churn.
 
 | Script | What it does | Run |
 | --- | --- | --- |
-| `update_deps.py` | **Upstream updater -- the only thing that moves an upstream.** Three are in scope: mlx-lm, mlx-vlm (Python, via uv) and llama.cpp (C++ -- cloned and **built** here into `llama-server`). Each runs on a `stable` or `latest` channel declared in `[tool.heylook.deps]`; the script resolves the channel, writes the resolved pin back to `pyproject.toml`, and relocks. **No default set:** a bare run only reports the current pins; you name what moves, it prints a plan with a compare link, and it asks before writing or building. | `uv run scripts/update_deps.py [pkgs...\|--all] [--channel stable\|latest] [-y] [--pin] [--branch B] [--dry-run]` |
+| `build_llama.py` | **Clones and builds llama-server** (llama.cpp) -- the one dependency `uv sync` cannot install, because it is a C++ binary. Newest `b<N>` release tag by default (`--rev` for anything else, `--status` to report, `--rebuild` after an Xcode bump). Never touches pyproject/uv.lock. Build settings and their rationale: below. | `uv run scripts/build_llama.py [--rev REV] [--status] [--rebuild] [--clean] [--openmp] [--lto] [--ui]` |
+| `guard_stable_channel.sh` | **Pre-commit guard** (wired into the git hook): blocks committing `pyproject.toml`/`uv.lock` while they carry a git pin (a `[tool.uv.sources]` rev, a git-sourced lock entry). See "Dependencies" below. | runs from the hook; manual: `scripts/guard_stable_channel.sh` |
 | `dev_server.sh` | Spawns an **isolated** heylookllm server for live verification (temp DB, RAM pre-flight, server-owned load+warm readiness). Same warm contract as `tests/e2e`. The `dev-server` skill wraps this. | `scripts/dev_server.sh start\|stop\|status [--port N] [--model ID]` |
 | `gguf_probe.py` | Direct llama-server diagnostics for one GGUF model, BELOW `dev_server.sh` (no FastAPI/DB): /props modalities, thinking-template on/off diff, one-shot gen w/ tps + draft acceptance, LoRA attach + off/on A/B, auto-teardown. Sidecar pairing via the importer's pickers. The `gguf-probe` skill wraps this. | `uv run python scripts/gguf_probe.py <model-dir> [--spec-type draft-mtp] [--lora A.gguf --lora-ab]` |
 | `ram_report.py` | **Memory pre-flight.** What is holding RAM (rolled up by app) and the ceilings that actually refuse a load: available RAM, the Metal working-set limit (~161 GB of 192 on an M2 Ultra -- well below total), and the per-allocation buffer cap. With `--model`/`--path` it sizes the model the way it is really loaded (whole shard SET, plus mmproj/drafter sidecars) and checks it against each. `dev_server.sh` calls it in `--quiet` form. | `uv run python scripts/ram_report.py [--model ID \| --path DIR] [--headroom N] [--quiet]` |
@@ -19,71 +20,34 @@ would just create churn.
 | `jspace_convert_lens.py` | Converts a Jacobian-lens `.pt` into an mx-safetensors lens for the j-space feature. Self-contained deps via its PEP 723 header (torch, safetensors, jlens). | `uv run scripts/jspace_convert_lens.py ...` |
 | `syntax_check.py` | Fast `ast.parse` sweep over the source tree -- a cheap pre-flight for syntax errors. | `uv run python scripts/syntax_check.py` |
 
-## Updating upstreams (common workflows)
+## Dependencies
+
+Dependency updates are plain uv -- there is no updater script, no CI, no
+dependabot:
 
 ```bash
-# Report the current pins. Changes nothing, hits no network.
-uv run scripts/update_deps.py
-
-# Preview only -- resolves revs, writes nothing, clones nothing, builds nothing
-uv run scripts/update_deps.py --all --dry-run
-
-# Move one package (prints the plan, asks before it lands)
-uv run scripts/update_deps.py mlx-lm
-
-# Build llama-server at the newest release tag (or at HEAD if its channel is
-# `latest`), pin what it built, print the export line
-uv run scripts/update_deps.py llama.cpp
-
-# Put llama.cpp on tip-of-master from here on, and build it now
-uv run scripts/update_deps.py llama.cpp --channel latest
-
-# Rebuild the ALREADY-pinned rev (new Xcode, changed flags, --clean)
-uv run scripts/update_deps.py llama.cpp --rebuild
-
-# Put the whole project on published releases, floors raised to match
-uv run scripts/update_deps.py --all --channel stable --pin
+uv lock --upgrade && uv sync              # everything, newest releases
+uv lock --upgrade-package mlx-lm && uv sync   # one package
 ```
 
-### Updating a dependency is a deliberate act
+The committed `pyproject.toml`/`uv.lock` always point at published releases,
+so a clone gets releases, never someone's experiment. Pinning a dependency to
+a git commit (a `[tool.uv.sources]` entry) is a machine-local, working-tree
+choice: `guard_stable_channel.sh` blocks committing it, because uv honors no
+gitignored file for source pins and every pin propagates into `uv.lock`.
+`HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is the deliberate-exception escape hatch
+(e.g. a reviewed, intentional git dependency).
 
-Pulling a new rev runs code nobody here has read -- on the `latest` channel,
-literally whatever was pushed to a branch since the last pin. So nothing moves
-that you did not name. A bare run reports and exits. Naming packages (or
-`--all`) resolves the targets, prints a plan with a GitHub compare link per
-package and a note saying when a bump pins unreviewed code, and then asks.
-`-y/--yes` skips the prompt and is **required** when stdin is not a terminal,
-so an automated caller cannot drift the pins by accident. Resolution happens
-for every named package before anything is applied, so a multi-package run
-cannot half-land before you have seen the whole plan.
+## llama.cpp is built, not installed
 
-This script is the only thing in the repo that changes a dependency version:
-there is no CI, no dependabot, no renovate, and `setup.sh` only runs `uv sync`
-(which installs the lock, it does not move it).
+`uv sync` installs the Python packages but **cannot build a C++ binary**, so
+llama-server comes from an explicit `uv run scripts/build_llama.py` (or any
+binary you point `$HEYLOOK_LLAMA_SERVER` / models.toml `server_binary` at --
+Homebrew's `llama.cpp` and upstream's prebuilt release binaries both work).
+llama.cpp has no semver: upstream tags every merge to master as `b<N>`, and
+that tag IS the release; the script builds the newest one by default.
 
-### Channels
-
-`[tool.heylook.deps]` in `pyproject.toml` says where each upstream comes from:
-`stable` (PyPI for the Python packages, newest `b<N>` release tag for
-llama.cpp) or `latest` (tip of the tracked branch, pinned to the exact commit).
-`channel` is the project default, `overrides` is per package, and `--channel`
-changes and **persists** the decision -- a file claiming `stable` while a git
-SHA is pinned would be a lie. mlx-lm/mlx-vlm are held on `latest` on purpose
-(see `docs/architecture/ecosystem_strategy.md`: mlx-lm is release-starved, so
-fixes arrive as commits, not releases).
-
-Why this exists instead of a one-liner: uv can pin a git commit in `uv.lock`
-(`uv lock --upgrade-package <pkg>`) but leaves the source **floating** in
-`pyproject.toml`. This project's policy is to always keep an explicit `rev`
-pinned in both, and `update_deps.py` is the only thing that does that. It
-replaced the old `update-packages.sh` (removed 2026-07-24), which only
-refreshed the lock.
-
-### llama.cpp is built, not installed
-
-`uv sync` installs the Python packages but **cannot build a C++ binary**, so a
-llama.cpp bump is always an explicit run of this script -- never a side effect
-of sync. The script clones (blobless, so it stays small while any rev is still
+The script clones (blobless, so it stays small while any rev is still
 checkoutable), refuses to check out over a dirty tree, builds, verifies the
 binary, and writes a `heylook-build.json` manifest next to it recording the
 rev, the resolved cmake config and a `sha256` of the binary.
@@ -94,13 +58,12 @@ initialising, updating, or remembering. The checkout goes to a fixed directory
 under your home directory (`.heylook/llama.cpp`) -- outside the repo, so a
 multi-GB build tree can never be committed, packaged into an sdist or wheel, or
 shipped to anyone. It is the same path on every machine, so docs and error
-messages can name it. `dir` in `[tool.heylook.llama-cpp]` moves it (relative
-paths resolve against the repo root, if you *want* it in-tree);
-`$HEYLOOK_LLAMA_CPP_DIR` overrides both.
+messages can name it, and the server's binary fallback finds a build there
+with zero config. `--dir` or `$HEYLOOK_LLAMA_CPP_DIR` move it.
 
-The script does **not** touch `$HEYLOOK_LLAMA_SERVER` -- it prints the export
-line, and warns if that variable currently points somewhere else (in which case
-the server keeps using the old binary, not the new build).
+The script does **not** touch `$HEYLOOK_LLAMA_SERVER` -- it prints a note if
+that variable currently points somewhere else (in which case the server keeps
+using the old binary, not the new build).
 
 Build settings, and why. The governing fact is that on Metal the arithmetic
 runs in GPU shaders, so anything that only speeds up the CPU-side glue

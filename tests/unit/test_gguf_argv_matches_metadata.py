@@ -194,9 +194,9 @@ def test_n_max_bound_and_emitter_agree():
 
 
 @pytest.mark.unit
-def test_binary_fallback_matches_where_the_updater_builds():
+def test_binary_fallback_matches_where_build_llama_builds():
     """The provider's last-resort binary path and the path
-    `scripts/update_deps.py` builds to must be the same directory.
+    `scripts/build_llama.py` builds to must be the same directory.
 
     They live in different files with no import between them (the script is a
     standalone PEP 723 tool, deliberately not importable from the package), so
@@ -205,21 +205,17 @@ def test_binary_fallback_matches_where_the_updater_builds():
     looks like "no binary configured" rather than "these two disagree".
     """
     import re
+    from pathlib import Path as P
     from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 
-    script = (
-        __import__("pathlib").Path(__file__).resolve().parents[2]
-        / "scripts" / "update_deps.py"
-    ).read_text()
-    m = re.search(r'LLAMA_HOME_SUBDIR\s*=\s*\(([^)]*)\)', script)
-    assert m, "update_deps.py no longer declares LLAMA_HOME_SUBDIR"
-    parts = [p.strip().strip('"\'') for p in m.group(1).split(",") if p.strip()]
-
     fallback = LlamaServerProvider.DEFAULT_BUILD
-    # .../<subdir parts>/build/bin/llama-server
-    assert fallback.name == "llama-server"
-    assert fallback.parent.name == "bin" and fallback.parent.parent.name == "build"
+    assert fallback == P.home() / ".heylook" / "llama.cpp" / "build" / "bin" / "llama-server"
+
+    script = (P(__file__).resolve().parents[2] / "scripts" / "build_llama.py").read_text()
+    m = re.search(r'HOME_SUBDIR\s*=\s*\(([^)]*)\)', script)
+    assert m, "build_llama.py no longer declares HOME_SUBDIR"
+    parts = [p.strip().strip('"\'') for p in m.group(1).split(",") if p.strip()]
     assert list(fallback.parent.parent.parent.parts[-len(parts):]) == parts, (
-        f"provider falls back to {fallback}, but update_deps.py builds to "
+        f"provider falls back to {fallback}, but build_llama.py builds to "
         f"{'/'.join(parts)}/build/bin/llama-server"
     )
