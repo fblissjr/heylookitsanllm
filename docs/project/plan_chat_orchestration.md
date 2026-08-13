@@ -116,6 +116,18 @@ half of the behavior is pinned; iOS itself stays a manual check
 
 ## Phase 1 -- the missing layer: conversation-scoped generation
 
+STATUS: BACKEND SHIPPED v1.65.0 (`conversation_generate_api.py` + the two
+atomic commit ops in db.py; 17 contract tests; spec §4). Decisions taken
+per the recommendations below: 409 + explicit Stop (no cancel-and-replace);
+Stop = DELETE /{id}/generate (server aborts + persists partial); append
+does NOT create the conversation (open question 3 stays open until the
+Phase 2 client shows whether the pre-create flow wants it). Beyond the
+plan: the truncation COMMITS only together with the produced row (one
+transaction), so a failed/empty generation leaves the thread untouched.
+NOT yet exercised: disconnect-persistence has no automated test (needs
+real concurrency; noted in the test file); perf parity recorded via
+_record_perf. Phase 2 (client cutover) is next.
+
 One new endpoint family, designed once with the Messages migration
 (plan_2026-07 Wave 3 / Phase 3b) so the SSE grammar and extension
 namespace are decided a single time:

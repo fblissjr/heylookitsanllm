@@ -234,6 +234,10 @@ app.include_router(admin_ops_router)
 from heylook_llm.conversation_api import conversation_router
 app.include_router(conversation_router)
 
+# Conversation-scoped generation (the server-side saga; same tag)
+from heylook_llm.conversation_generate_api import generate_router
+app.include_router(generate_router)
+
 # Import and include Notebook API router
 from heylook_llm.notebook_api import notebook_router
 app.include_router(notebook_router)

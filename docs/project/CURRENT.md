@@ -127,9 +127,15 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   latch + unsaved-row lock), unsaved-row Retry save/Discard, reconcile at
   every saga end, thinking-block editing. `e2e:render` grew 8->23 checks
   (stateful stub store, red-first, iPhone-emulation boot). OPEN: the iOS
-  hidden-row repro needs the owner's device (plan Phase 0.5); Phases 1-2
-  (conversation-scoped generate) are the 3b vehicle. File logging went
-  opt-in in v1.63.0 (default `off`; llama-server log joined the switch).
+  hidden-row repro needs the owner's device (plan Phase 0.5). File logging
+  went opt-in in v1.63.0 (default `off`; llama-server log joined the switch).
+- **SOLID -- conversation-scoped generate, backend half (v1.65.0, plan
+  Phase 1)**: POST/DELETE /v1/conversations/{id}/generate -- server builds
+  the request from the store, Messages SSE + `heylook_saved` authoritative
+  rows, 409 arbitration, persistence on completion/abort/disconnect,
+  truncation commits only with its replacement row (new atomic db ops).
+  17 contract tests; spec §4. HALF-BAKED until Phase 2: v3 still speaks
+  the old client-orchestrated flow; disconnect-persist untested (TODO).
 - Also: worktree-per-session convention retired (owner call); editable
   install re-pointed at the primary; DuckDB store cleared by the owner
   (fresh state is intentional, not a bug).

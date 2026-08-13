@@ -583,6 +583,117 @@ async def truncate_messages_after(
 
 
 # ---------------------------------------------------------------------------
+# Generation commits (conversation-scoped generate endpoint)
+# ---------------------------------------------------------------------------
+# The server-side generation saga commits its DESTRUCTIVE truncation only
+# together with the row it produced, in one transaction -- a failed or empty
+# generation leaves the conversation untouched. This is the invariant the
+# client-orchestrated flow could never offer (its DELETE ?after and POST were
+# separate HTTP calls, and a failure between them stranded a truncated
+# thread). Holds no prompt/response beyond what the messages table already
+# stores by design.
+
+
+async def replace_tail_with_message(
+    db: Store,
+    conv_id: str,
+    after_position: int,
+    *,
+    role: str,
+    content: str | list[dict] = "",
+    thinking: str | None = None,
+) -> dict | None:
+    """Atomically delete position > after_position and append one message.
+
+    Returns the appended message, or None if the conversation is gone.
+    With after_position = the current last position this is a plain atomic
+    append (nothing to truncate).
+    """
+    blocks = normalize_blocks(content)
+    msg_id = new_id()
+    now = _now_iso()
+
+    def op(conn):
+        if conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone() is None:
+            return None
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
+            (conv_id, after_position),
+        )
+        position = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
+            (conv_id,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conv_id, role, orjson.dumps(blocks).decode(), thinking, position, now, now),
+        )
+        _touch_conversation(conn, conv_id, now)
+        return position
+
+    position = await db.run(op)
+    if position is None:
+        return None
+    return {
+        "id": msg_id,
+        "role": role,
+        "content": flatten_blocks(blocks),
+        "content_blocks": blocks,
+        "thinking": thinking,
+        "position": position,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+async def replace_tail_with_update(
+    db: Store,
+    conv_id: str,
+    after_position: int,
+    msg_id: str,
+    *,
+    content: str | list[dict],
+    thinking: str | None = None,
+) -> dict | None:
+    """Atomically delete position > after_position and update the anchor row.
+
+    The continuation commit: the anchor (at after_position) absorbs the
+    combined text; everything after it goes in the same transaction.
+    ``thinking`` is written only when not None (a continuation never clears
+    prior thinking). Returns the updated message, or None if it is gone.
+    """
+    blocks = normalize_blocks(content)
+    now = _now_iso()
+
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_MSG_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
+            (msg_id, conv_id),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
+            (conv_id, after_position),
+        )
+        col_updates: dict = {"content_blocks": orjson.dumps(blocks).decode()}
+        if thinking is not None:
+            col_updates["thinking"] = thinking
+        set_clause = ", ".join(f"{k}=?" for k in col_updates)
+        conn.execute(
+            f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?",
+            list(col_updates.values()) + [now, msg_id],
+        )
+        _touch_conversation(conn, conv_id, now)
+        raw = dict(zip(_MSG_NAMES, row))
+        raw.update(col_updates, updated_at=now)
+        return _message_row_to_dict(_MSG_NAMES, [raw[k] for k in _MSG_NAMES])
+
+    return await db.run(op)
+
+
+# ---------------------------------------------------------------------------
 # Notebook CRUD
 # ---------------------------------------------------------------------------
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.65.0]
+
+### Added
+
+- **Conversation-scoped generation** (`POST /v1/conversations/{id}/generate`,
+  plan_chat_orchestration.md Phase 1): the server-side saga. The server
+  builds the provider request from the stored conversation (system prompt,
+  sampler params with cap gating, model, rows with media dropped-and-counted
+  for the target model's capabilities), anchors truncation by message id,
+  streams the Messages SSE grammar (this endpoint is the Phase 3b
+  migration's first consumer), owns persistence — completion, abort, and
+  client disconnect all persist, via a detached task in the disconnect case
+  — and emits the authoritative stored rows as a final `heylook_saved`
+  event. Three modes: append (optionally persisting a new user turn first),
+  regenerate, continue (prefill; merges onto the anchor row). Destructive
+  truncation COMMITS only together with the row it produced
+  (`db.replace_tail_with_message` / `replace_tail_with_update`, one
+  transaction each), so a failed or empty generation leaves the thread
+  untouched — an invariant the client-orchestrated flow could not offer.
+  One active generation per conversation (409 otherwise);
+  `DELETE .../generate` aborts it (partial persists). Spec §4 updated;
+  17 new contract tests. The v3 client cutover (Phase 2) follows.
+
 ## [1.64.0]
 
 ### Added

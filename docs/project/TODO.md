@@ -20,18 +20,49 @@ Cross-session task backlog organized by priority.
   Chrome half is pinned ("a saved edit leaves the row painted" in
   `e2e:render`); emulation cannot see WebKit paint, so this stays open
   until tried on the phone.
-- [ ] **Phase 1-2 conversation-scoped generate** (the Phase 3b vehicle):
-  see the plan; do NOT start the Messages bridge migration separately.
+- [x] **Phase 1 backend -- DONE v1.65.0**: `POST/DELETE
+  /v1/conversations/{id}/generate` (append/regenerate/continue, Messages
+  SSE + `heylook_saved` final event, per-conversation 409 arbitration,
+  server-owned persistence incl. disconnect, truncation commits only with
+  its replacement row). 17 contract tests; spec §4 updated.
+- [ ] **Phase 2 client cutover** (P1, next): chat.js send/regenerate/
+  continue -> `/generate`; new SSE-grammar parser beside streaming.js;
+  drop buildRequestBody/toWireContent/position math; render-suite stubs
+  move to the new endpoint. Do NOT start the Messages bridge migration
+  separately -- this endpoint IS 3b's first consumer.
+- [ ] **Disconnect-persistence test** (P2): the detached-task persist on
+  client disconnect has no automated coverage (unit harness can't cancel
+  mid-stream realistically); candidate: e2e chat suite kills the tab
+  mid-generation and asserts the partial row exists after reload.
 - [ ] **At-rest encryption for the conversation store** (future state,
   owner ask 2026-08-13): conversations/messages (prompt inputs/outputs)
   sit plaintext in the DuckDB file. VERIFIED on the installed duckdb
   1.5.5: native encryption works -- `ATTACH 'file' (ENCRYPTION_KEY ...)`
-  round-trips and a key-less open is refused. Vehicle when picked up:
-  connect-then-ATTACH in db.py, key from a bootstrap env var or the macOS
-  Keychain (`security find-generic-password`); turning it on is a fresh
-  start or one-time manual copy per the no-migration policy. Note
-  FileVault already covers the disk at rest; this adds protection against
-  same-user file reads.
+  round-trips and a key-less open is refused. Vehicle when picked up
+  (owner direction 2026-08-13): connect-then-ATTACH in db.py, key held
+  ONLY in 1Password and fetched at server start via `op read` (the owner's
+  gemini-bridge pattern in fb-claude-skills) -- the Touch ID popup at
+  launch is the human-in-the-loop: with the server down, ANY attempt to
+  read the key (Claude included) fires a popup the owner can deny, which
+  the silent-same-user Keychain cannot offer. One fingerprint per server
+  start; launchd auto-start becomes impossible (a boot service cannot
+  fingerprint); a down 1Password agent blocks start, fail-loud. iOS Safari
+  is UNAFFECTED -- the server holds the key and decrypts, the phone never
+  touches 1Password. Per-ACCESS fingerprinting was considered and
+  rejected: approvals render on the Mac (stalls every phone read) and the
+  server must see plaintext to build prompts at all -- an LLM chat server
+  is structurally a plaintext-processing machine while it runs. Turning
+  encryption on is a fresh start or one-time manual copy per the
+  no-migration policy.
+  THREAT-MODEL BOUNDARY (do not oversell, discussed 2026-08-13): this
+  protects the FILE at rest -- backups, cloud sync of the raw .duckdb,
+  other user accounts, copied disk images (FileVault covers only the
+  powered-off disk). It does NOT protect against any live process running
+  as the owner: the key must be readable at server start, and the running
+  server serves decrypted conversations over the loopback API, whose
+  conversation routes carry no auth and whose opt-in API key exempts
+  loopback by default. "An agent with my shell can't read it" requires
+  harness-side sandbox deny rules + enforced API auth, not encryption.
 
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
 

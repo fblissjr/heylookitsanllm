@@ -282,7 +282,48 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   in the strip, `<audio controls>` rendering, stored `audio` blocks
   converted to `input_audio` parts at send).
 - `DELETE /{id}/messages?after={pos}` → deletes `position > pos` (position-based truncation drives
-  regenerate/edit-regenerate/delete-cascade).
+  regenerate/edit-regenerate/delete-cascade — LEGACY once the client moves to
+  `/generate` below; the CRUD stays for edits/deletes without generation).
+
+**Conversation-scoped generation (added v1.65.0 — plan_chat_orchestration.md
+Phase 1; the server-side saga that replaces the client-orchestrated
+truncate→stream→persist sequences):**
+- `POST /{id}/generate` `{mode:"append"|"regenerate"|"continue",
+  message_id?, user_content?, overrides?}` → SSE stream.
+  - The server builds the provider request FROM THE STORE: the conversation's
+    `system_prompt`, `params` (sampler bag, cap-gated keys dropped for the
+    target model), `model_id`, and message rows (media blocks the model can't
+    take are dropped at the wire and counted — the server-side twin of the
+    client's toWireContent).
+  - `append`: optional `user_content` (string or block list) persists as a
+    new user turn first, then a fresh assistant turn generates.
+  - `regenerate`: `message_id` anchors — everything from the anchor onward is
+    excluded from the prompt, and the truncation COMMITS atomically with the
+    replacement row only. A failed/empty generation leaves the thread
+    untouched.
+  - `continue`: prefill semantics — the anchor rides as the final message
+    (`continue_final_message:true`; user-role is MLX-only, provider 400s
+    in-band otherwise) and the continuation merges back onto the anchor row,
+    again committing truncation + update together.
+  - `overrides` layers one-shot sampler values over `params` (same allowlist
+    + cap gates) and may carry `model` to generate with a non-stamped model.
+  - Wire: Messages SSE grammar (`message_start` / `content_block_start|delta|
+    stop` / `message_delta` / `message_stop`, same translator as
+    `/v1/messages`) plus ONE namespaced extension event, always LAST:
+    `event: heylook_saved` `data: {type, conversation_id, mode,
+    end_reason:"complete"|"aborted"|"error", messages:[<full stored rows>],
+    dropped_media:{images,audio}, timing:{peak_memory_gb, kv_cache_bytes,
+    queue_wait_ms, draft_acceptance}}` — the client's post-stream state is
+    ASSIGNMENT from `messages`, never position arithmetic. In-band typed
+    `error` events precede it on failure (invalid_request_error /
+    api_error, same grammar as `/v1/messages`).
+  - Persistence is server-owned: completion, abort, AND client disconnect
+    all persist (disconnect via a detached task — a phone locking mid-stream
+    loses nothing). Errors before any output persist nothing.
+  - Arbitration: one active generation per conversation — a second POST gets
+    409 `{error:{code:"generation_in_progress"}}`.
+- `DELETE /{id}/generate` → aborts the active generation (partial persists;
+  the Stop button's server-side spelling). 404 when none is active.
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
 `POST /` `{title,content,system_prompt?,model_id?,params?,applied_preset_id?}` (`applied_preset_id`
