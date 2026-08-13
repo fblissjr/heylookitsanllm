@@ -99,3 +99,14 @@ max working set size" warning. That is the ceiling that actually refuses loads
 on this box (see `ram_report.py`), and a 138 GiB model against a ~161 GiB
 working set is close enough that the warning earns its keep. No throughput to
 gain, real diagnostics to lose.
+
+## convert_gguf.py
+
+Wrapper around the canonical checkout's `convert_hf_to_gguf.py`: local HF
+safetensors -> GGUF text model (default `q8_0`, near-lossless, no
+llama-quantize step) + `--mmproj` perception encoder at f16. torch rides a
+`uv run --with` overlay -- nothing touches the repo venv. A brand-new
+architecture may need the checkout at master
+(`uv run python scripts/build_llama.py --rev master`) -- converter classes
+land in llama.cpp's Python side separately from the C++ inference side.
+Verify output with `scripts/gguf_probe.py` before registering it.
