@@ -334,3 +334,60 @@ class TestCliImportMergePreserve:
         with pytest.raises(SystemExit):
             import_models(_cli_args(cfg))
         assert cfg.read_text() == "default_model = [broken\n"
+
+    def test_default_model_derivation_skips_idless_entries(self, tmp_path, monkeypatch):
+        # An id-less entry is already invalid to the server, but deriving a
+        # default_model from it must not crash the import with a KeyError.
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(
+            "[[models]]\n"
+            'provider = "mlx"\n'
+            "enabled = false\n"
+        )
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([NEW_MODEL]))
+
+        import_models(_cli_args(cfg))
+
+        data = tomllib.loads(cfg.read_text())
+        assert data["default_model"] == "brand-new"
+        assert len(data["models"]) == 2
+
+    def test_exotic_top_level_keys_round_trip_in_shape(self, tmp_path, monkeypatch):
+        # Keys outside the models.toml schema still round-trip: values always,
+        # and an array-of-tables keeps its [[section]] form instead of being
+        # mangled into an inline array.
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(
+            'default_model = "existing"\n'
+            "extra_scalar = 7\n"
+            "\n"
+            "[[notify]]\n"
+            'url = "http://a"\n'
+            "\n"
+            "[[notify]]\n"
+            'url = "http://b"\n'
+            "[notify.headers]\n"
+            'x = "y"\n'
+            "\n"
+            "[custom_table]\n"
+            "a = 1\n"
+            "\n"
+            "[[models]]\n"
+            'id = "existing"\n'
+            'provider = "mlx"\n'
+            "enabled = true\n"
+        )
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([NEW_MODEL]))
+
+        import_models(_cli_args(cfg))
+
+        text = cfg.read_text()
+        data = tomllib.loads(text)
+        assert data["extra_scalar"] == 7
+        assert data["custom_table"] == {"a": 1}
+        assert data["notify"] == [
+            {"url": "http://a"},
+            {"url": "http://b", "headers": {"x": "y"}},
+        ]
+        assert text.count("[[notify]]") == 2
+        assert "[notify.headers]" in text

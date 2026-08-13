@@ -692,18 +692,41 @@ class ModelImporter:
                 return [_strip_none(v) for v in value if v is not None]
             return value
 
+        def _renders_as_sections(value) -> bool:
+            # A non-empty list of dicts came from [[key]] sections; tomli_w
+            # would re-render it as an inline array (valid, value-identical,
+            # but a shape change that also orphans any comments on the old
+            # sections), so those keys get section-rendered by hand below.
+            return (isinstance(value, list) and bool(value)
+                    and all(isinstance(i, dict) for i in value))
+
+        aots = {k: v for k, v in top_level.items() if _renders_as_sections(v)}
         # Scalars before tables so tomli_w cannot emit a top-level key after
         # a table header (which would re-parse into the wrong table).
-        scalars = {k: v for k, v in top_level.items() if not isinstance(v, dict)}
+        scalars = {k: v for k, v in top_level.items()
+                   if k not in aots and not isinstance(v, dict)}
         tables = {k: v for k, v in top_level.items() if isinstance(v, dict)}
         doc: dict[str, Any] = dict(scalars)
         all_models = existing_models + new_models
-        doc.setdefault("default_model", all_models[0]["id"] if all_models else "none")
+        # First entry that HAS an id: an id-less entry is already invalid to
+        # the server, but deriving a default from it must not crash the import.
+        doc.setdefault("default_model",
+                       next((str(m["id"]) for m in all_models if m.get("id")),
+                            "none"))
         doc.setdefault("max_loaded_models", 1)
         doc.update(tables)
         doc["models"] = [_strip_none(m) for m in all_models]
 
         fresh = tomli_w.dumps(doc)
+        # Re-render array-of-tables keys as proper [[key]] sections (appended
+        # after every top-level scalar, so nothing re-parses into them).
+        # tomli_w renders {key: item} as "[key]\n<body>" with nested tables as
+        # [key.sub] -- wrapping the header line yields the AoT element form.
+        # merge_comments passes non-model text through, so the shape survives.
+        for key, items in aots.items():
+            for item in items:
+                head, _, rest = tomli_w.dumps({key: _strip_none(item)}).partition("\n")
+                fresh += f"[{head}]\n{rest}"
         merged = merge_comments(old_text, fresh)
         with open(output_file, "w") as f:
             f.write(merged)
