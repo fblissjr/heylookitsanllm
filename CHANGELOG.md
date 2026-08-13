@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reconcile as well, instead of being detached mid-paint by an unrelated
   re-render (a model switch mid-stream). Design rule: `DESIGN.md` §7.
 
+- **Row reuse, second pass (code review).** Three corrections to the above.
+  Model-dependent chrome is now scoped to the rows that carry it -- caps reach
+  a row only if it HAS media (they decide the drop disclosure), provider only
+  an open editor (Save & Continue is MLX-only). Keying every row on the current
+  model instead invalidated the whole list the first time anything re-rendered
+  after the residency fetch landed, rebuilding every node and reproducing the
+  original jump on the first send after load (measured: 1446px into a list
+  whose bottom was 15.7k). Second, `editingId === msg.id` matched null to null,
+  so an id-less row -- the shape `finishStream` pushes when saving the reply
+  fails -- rendered as an open editor whose Save would PUT to
+  `/messages/null`; the test is now `msg.id != null && ...` (the bug predates
+  the rewrite, which inherited it at both sites). Third, the signature joins on
+  NUL rather than a space, so a field's tail can't read as the next field's
+  head.
+
 ## [1.62.4]
 
 ### Changed

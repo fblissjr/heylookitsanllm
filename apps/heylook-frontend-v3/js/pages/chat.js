@@ -854,19 +854,28 @@ function blockFingerprint(b) {
     : `${b.type}:${src.media_type}:${src.data?.length ?? 0}`;
 }
 
-function msgSignature(ctx, msg, capsKey) {
+// Model-dependent chrome is scoped to the rows that actually carry it: caps
+// reach a row only if it HAS media (they decide the drop disclosure), provider
+// only an open editor (Save & Continue is MLX-only). Putting either in every
+// row's signature invalidates the whole list the moment residency lands or the
+// model changes -- rebuilding every node, which is the full detach this design
+// exists to avoid.
+function msgSignature(msg, { editing, capsKey, provider }) {
   return [
     msg.role,
     msg.position,
-    ctx.state.editingId === msg.id ? 'edit' : 'view',
-    capsKey,
+    editing ? `edit:${provider}` : 'view',
+    hasMediaBlocks(msg) ? capsKey : '',
     msg.thinking ?? '',
     msg.content ?? '',
     // Media identity only: a text block carries no `source`, and its text is
     // already covered by msg.content. Fingerprint the source rather than
     // spelling it out -- a base64 image would put megabytes in this string.
     (msg.content_blocks ?? []).map(blockFingerprint).join(','),
-  ].join(' ');
+    // NUL-joined, not space-joined: content and thinking both contain spaces,
+    // so a space separator lets one field's tail read as the next field's head
+    // -- two different messages, one signature, a stale row reused.
+  ].join('\u0000');
 }
 
 // Place `nodes` as the parent's children, moving/keeping existing elements
@@ -899,9 +908,8 @@ function renderMessages(ctx) {
   }
   const prev = s.msgNodes ?? new Map();
   const next = new Map();
-  // Drop disclosures depend on the current model's caps -- part of the
-  // signature, so a model switch rebuilds exactly the rows it changes.
   const capsKey = currentCaps(ctx).join('|');
+  const provider = s.providerById?.get(s.modelSelect.value) ?? '?';
   // A live stream owns its own row (startStream appends the placeholder, and
   // for a continuation it removed the message's rendered row in favour of it).
   // Carry that node through the reconcile instead of dropping it: a render
@@ -913,10 +921,15 @@ function renderMessages(ctx) {
     .filter((msg) => continued == null || msg.id !== continued)
     .map((msg) => {
       const key = msgKey(msg);
-      const sig = msgSignature(ctx, msg, capsKey);
+      // `id != null` first: an unsaved row carries id null, and a bare
+      // `editingId === msg.id` matches null-to-null -- which rendered the
+      // save-failure fallback row as an open editor whose Save would PUT to
+      // /messages/null.
+      const editing = msg.id != null && msg.id === s.editingId;
+      const sig = msgSignature(msg, { editing, capsKey, provider });
       const cached = prev.get(key);
       const node = cached?.sig === sig ? cached.node
-        : (s.editingId === msg.id ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg));
+        : (editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg));
       next.set(key, { node, sig });
       return node;
     });
