@@ -12,7 +12,9 @@ recording exactly what was built.
 By default it builds the newest release. llama.cpp has no semver: upstream
 tags every merge to master as `b<N>`, and that tag IS the release. `--rev`
 takes any tag/branch/SHA instead; `--rebuild` rebuilds whatever the last
-build used (new Xcode, changed flags).
+build used (new Xcode, changed flags). A BRANCH name means the fetched remote
+branch (`origin/master`), never the local one -- fetch does not advance local
+branches, so the obvious reading builds whatever the clone had at clone time.
 
 The checkout + build tree land in a fixed directory under your home
 (`.heylook/llama.cpp`) -- outside the repo, so multi-GB upstream source can
@@ -25,7 +27,7 @@ Examples:
   uv run scripts/build_llama.py                # newest release, build it
   uv run scripts/build_llama.py --status       # what is built now; no network
   uv run scripts/build_llama.py --rev b10362   # a specific release
-  uv run scripts/build_llama.py --rev master   # tip of master (unreviewed code)
+  uv run scripts/build_llama.py --rev master   # tip of ORIGIN/master (unreviewed)
   uv run scripts/build_llama.py --rebuild --clean
 """
 
@@ -134,6 +136,49 @@ def ensure_checkout(path: Path) -> None:
     run(["git", "clone", "--filter=blob:none", GIT_URL, str(path)])
 
 
+def _ref_exists(path: Path, ref: str) -> bool:
+    """Does `ref` name a commit in this clone? Never raises."""
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--verify", "--quiet",
+         f"{ref}^{{commit}}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+
+def resolve_fetched_rev(path: Path, rev: str) -> str:
+    """Map a BRANCH name onto its remote-tracking ref; pass anything else through.
+
+    `git fetch` updates `origin/<branch>` and deliberately does NOT move the
+    local branch of the same name. So `git checkout --detach master` after a
+    fetch checks out wherever local `master` was left -- which, in a clone
+    nobody ever runs `git pull` in, is whenever it was first cloned.
+
+    That is not hypothetical: the 2026-08-14 build was made with
+    `--rev master` and compiled 4-day-old source while local `master` sat at
+    b10358 and `origin/master` had moved on, and the manifest recorded
+    `rev: "master"` with no hint of the gap. Exactly the silent-rot shape the
+    canonical-build rule exists to prevent.
+
+    Tags (`b10472`) and SHAs are passed through untouched -- `origin/b10472`
+    does not exist, so the lookup simply fails and the caller gets what it
+    asked for. An already-qualified `origin/master` passes through the same
+    way. The default no-`--rev` path never reaches the ambiguous case at all:
+    it passes a concrete tag from ls-remote.
+    """
+    remote = f"origin/{rev}"
+    if not _ref_exists(path, remote):
+        return rev
+    if _ref_exists(path, rev):
+        local = run(["git", "-C", str(path), "rev-parse", "--short", rev],
+                    capture=True)
+        tracking = run(["git", "-C", str(path), "rev-parse", "--short", remote],
+                       capture=True)
+        if local != tracking:
+            print(f"  {rev!r} is a branch: building {remote} ({tracking}), not "
+                  f"the local branch ({local}), which fetch never advances")
+    return remote
+
+
 def checkout_rev(path: Path, rev: str) -> str:
     """Detach onto `rev`. Refuses over TRACKED modifications. Returns the SHA.
 
@@ -145,7 +190,9 @@ def checkout_rev(path: Path, rev: str) -> str:
         die(f"{path} has uncommitted changes to TRACKED files -- refusing to "
             f"check out {rev} over them. Commit or stash first:\n{dirty}")
     run(["git", "-C", str(path), "fetch", "--tags", "--force", "origin"])
-    run(["git", "-C", str(path), "checkout", "--detach", rev])
+    # AFTER the fetch: the remote-tracking ref has to exist to be resolvable.
+    run(["git", "-C", str(path), "checkout", "--detach",
+         resolve_fetched_rev(path, rev)])
     return run(["git", "-C", str(path), "rev-parse", "HEAD"], capture=True)
 
 

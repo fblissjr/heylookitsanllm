@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.71.1]
+
+### Fixed
+
+- `scripts/build_llama.py --rev <branch>` built the LOCAL branch, which a
+  fetch never advances -- so `--rev master` compiled whatever the clone held
+  at clone time, forever, while the manifest recorded `rev: "master"` with no
+  hint of the gap. The 2026-08-14 llama-server build was made this way and
+  compiled 4-day-old source. A branch name now resolves to its remote-tracking
+  ref and the substitution is announced with both SHAs; tags, SHAs and an
+  already-qualified `origin/<branch>` pass through untouched (`origin/b10472`
+  does not exist, so the lookup simply fails). The default no-`--rev` path was
+  never affected -- it passes a concrete tag from ls-remote.
+
 ## [1.71.0]
 
 ### Added
