@@ -98,14 +98,27 @@ function makeMessages({ unsaved = false } = {}) {
 
 // Stateful stub store. `handle` mutates `messages` the way the real store
 // would, so post-saga reconciliation reads back a consistent thread.
-function makeStubStore({ unsaved = false, caps = [] } = {}) {
+function makeStubStore({ unsaved = false, caps = [], secondModel = null } = {}) {
   const messages = makeMessages({ unsaved });
   let nextId = messages.length;
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
-    if (url.endsWith('/v1/models')) return { data: [{ id: 'test-model', capabilities: caps }] };
+    if (url.endsWith('/v1/models')) {
+      const data = [{ id: 'test-model', capabilities: caps }];
+      if (secondModel) data.push({ id: secondModel.id, capabilities: secondModel.caps });
+      return { data };
+    }
     if (url.endsWith('/v1/conversations') && method === 'GET') {
-      return { conversations: [{ id: 'c1', title: 'render suite', model_id: 'test-model' }] };
+      const convs = [{ id: 'c1', title: 'render suite', model_id: 'test-model' }];
+      if (secondModel) convs.push({ id: 'c2', title: 'other model', model_id: secondModel.id });
+      return { conversations: convs };
+    }
+    // A second conversation living on a DIFFERENT model, so the capability-
+    // driven chrome can be checked across a conversation switch (not just a
+    // model-select switch -- the two take different code paths).
+    if (secondModel && url.includes('/v1/conversations/c2')) {
+      return { id: 'c2', title: 'other model', model_id: secondModel.id,
+        system_prompt: null, applied_preset_id: null, params: {}, messages };
     }
     if (url.includes('/v1/conversations/c1/messages')) {
       if (method === 'POST') {
@@ -141,7 +154,9 @@ function makeStubStore({ unsaved = false, caps = [] } = {}) {
     }
     if (url.endsWith('/v1/presets')) return { presets: [] };
     if (url.endsWith('/v1/admin/models')) {
-      return { models: [{ id: 'test-model', loaded: true, provider: 'mlx' }] };
+      const models = [{ id: 'test-model', loaded: true, provider: 'mlx' }];
+      if (secondModel) models.push({ id: secondModel.id, loaded: true, provider: 'mlx' });
+      return { models };
     }
     if (url.endsWith('/v1/capabilities')) return { samplers: [], server_version: 'stub' };
     if (url.endsWith('/v1/admin/model-options')) return { fields: [] };
@@ -187,11 +202,12 @@ function makeStubStore({ unsaved = false, caps = [] } = {}) {
 //   needs the text-only default.
 async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
+  secondModel = null,
 } = {}) {
   const page = await browser.newPage();
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
-  const store = makeStubStore({ unsaved, caps });
+  const store = makeStubStore({ unsaved, caps, secondModel });
   const reqs = [];
 
   if (mobile) {
@@ -316,17 +332,34 @@ const dropFile = (page, { name = 'shot.png', type = 'image/png', leaveInstead = 
     };
   `), name, type, leaveInstead);
 
+// Paste, dispatched where Chrome ACTUALLY targets one. This helper takes a
+// real mouse click on a message first, because that is the scenario the
+// feature claims to support, and then dispatches at document.activeElement --
+// which that click leaves on document.body, OUTSIDE the chat root. Dispatching
+// at .chat__messages instead (the first version of this helper) passes with
+// the listener mounted on a node no real paste ever reaches; the returned
+// targetOutsideRoot is asserted so the check cannot quietly degrade to that.
+//
 // ClipboardEvent's constructor takes clipboardData in Chrome, but define it
 // defensively -- a null clipboardData makes the handler bail, which would pass
 // the "nothing staged" checks for entirely the wrong reason.
-const pasteFile = (page, { name = 'shot.png', type = 'image/png', target = '.chat__messages' } = {}) =>
-  page.evaluate(new Function('name', 'type', 'sel', `
+async function pasteFile(page, { name = 'shot.png', type = 'image/png', withText = false } = {}) {
+  await page.click('.chat__messages .message');
+  return page.evaluate(new Function('name', 'type', 'withText', `
     ${mkFile}
+    if (withText) dt.items.add('some text', 'text/plain');
     const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
     if (!ev.clipboardData) Object.defineProperty(ev, 'clipboardData', { value: dt });
-    document.querySelector(sel).dispatchEvent(ev);
-    return { carried: Boolean(ev.clipboardData?.files?.length) };
-  `), name, type, target);
+    const target = document.activeElement;
+    target.dispatchEvent(ev);
+    return {
+      carried: Boolean(ev.clipboardData?.files?.length),
+      targetTag: target.tagName,
+      targetOutsideRoot: !document.querySelector('.chat').contains(target),
+      defaultPrevented: ev.defaultPrevented,
+    };
+  `), name, type, withText);
+}
 
 const thumbCount = (page) => page.evaluate(
   () => document.querySelectorAll('.chat__attach .attach-thumb').length);
@@ -706,9 +739,12 @@ async function main() {
         { timeout: 3000, message: 'dropped image never reached the attach strip' });
     });
 
-    await suite.check('pasting an image outside the composer stages it', async () => {
+    await suite.check('pasting after clicking in the thread stages the image', async () => {
       const r = await pasteFile(vis.page);
       assert(r.carried, 'the synthetic paste carried no files -- the check would be vacuous');
+      assert(r.targetOutsideRoot,
+        `paste targeted ${r.targetTag}, INSIDE the chat root -- a real paste does not land there, `
+        + 'so this check would pass with the listener on the wrong node');
       await waitFor(async () => (await thumbCount(vis.page)) === 2,
         { timeout: 3000, message: 'pasted image never reached the attach strip' });
     });
@@ -719,6 +755,37 @@ async function main() {
       await settle(vis.page);
       const after = await thumbCount(vis.page);
       assert(after === before, `a text/plain drop changed the strip (${before} -> ${after})`);
+    });
+
+    await suite.check('a drop carrying nothing attachable says so', async () => {
+      const before = await thumbCount(vis.page);
+      await dropFile(vis.page, { name: 'paper.pdf', type: 'application/pdf' });
+      await waitFor(async () => (await statusText(vis.page)).includes('Nothing attachable'),
+        { timeout: 3000, message: 'an unattachable drop vanished without a word' });
+      assert((await thumbCount(vis.page)) === before, 'an unattachable drop changed the strip');
+    });
+
+    // Deterministic, not a timing gamble: addPendingFiles awaits a FileReader,
+    // so a send dispatched in the SAME synchronous block always lands first and
+    // always replaces the pending array out from under the in-flight read.
+    // Thumb count cannot distinguish the two behaviors (the orphaned push
+    // renders nothing either way) -- the status line is the only observable
+    // that separates "discarded, and said so" from "vanished".
+    await suite.check('a send during the attachment read does not lose it silently', async () => {
+      await vis.page.evaluate(() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array(1024)], 'race.png', { type: 'image/png' }));
+        const ta = document.querySelector('.chat__composer textarea');
+        ta.value = 'text with a racing attachment';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.chat__thread').dispatchEvent(
+          new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+        [...document.querySelectorAll('.chat__composer button')]
+          .find((b) => b.textContent === 'Send').click();
+      });
+      await waitFor(async () => (await statusText(vis.page)).includes('discarded'),
+        { timeout: 3000, interval: 25,
+          message: async () => `the racing attachment vanished without a word (status: "${await statusText(vis.page)}")` });
     });
 
     await suite.check('no uncaught page errors (attach staging)', () => {
@@ -736,10 +803,50 @@ async function main() {
       const n = await thumbCount(txt.page);
       assert(n === 0, `a text-only model staged ${n} image(s)`);
     });
+
+    // A clipboard payload can carry text AND an image. Cancelling the paste on
+    // a model that refuses the image would eat the text too, leaving an error
+    // and an empty composer.
+    await suite.check('a refused paste does not swallow the text half', async () => {
+      const r = await pasteFile(txt.page, { withText: true });
+      assert(r.carried, 'the synthetic paste carried no files -- the check would be vacuous');
+      assert(!r.defaultPrevented,
+        'the paste was cancelled on a model that stages nothing -- the text was eaten too');
+      assert((await thumbCount(txt.page)) === 0, 'a text-only model staged an image');
+    });
     await suite.check('no uncaught page errors (text-only drop)', () => {
       assert(txt.pageErrors.length === 0, `page errors: ${txt.pageErrors.join(' | ')}`);
     });
     await txt.page.close();
+
+    // ---- boot 8: the overlay label must survive a CONVERSATION switch -----
+    // Distinct code path from the model-select switch: selectConversation used
+    // to refresh the capability-gated chrome BEFORE moving the select, so the
+    // label described the conversation being left.
+    const two = await openChat(browser, base,
+      { caps: ['vision'], secondModel: { id: 'text-model', caps: [] } });
+
+    await suite.check('the drop label follows a conversation switch', async () => {
+      const dropLabel = () => two.page.evaluate(
+        () => document.querySelector('.chat__thread').dataset.dropLabel);
+      await waitFor(async () => (await dropLabel()) === 'Drop images to attach',
+        { timeout: 3000, message: async () => `opened on the vision conversation but the label reads "${await dropLabel()}"` });
+      const switched = await two.page.evaluate(() => {
+        const row = [...document.querySelectorAll('.conv-item')]
+          .find((el) => el.textContent.includes('other model'));
+        if (!row) return false;
+        row.querySelector('.conv-item__title').click();
+        return true;
+      });
+      assert(switched, 'could not find the second conversation row');
+      await waitFor(async () => (await dropLabel()) === 'This model takes text only',
+        { timeout: 3000, message: async () => `after switching to the text-only conversation the label still reads "${await dropLabel()}"` });
+    });
+
+    await suite.check('no uncaught page errors (conversation switch)', () => {
+      assert(two.pageErrors.length === 0, `page errors: ${two.pageErrors.join(' | ')}`);
+    });
+    await two.page.close();
   } finally {
     await browser.close();
     server.close();

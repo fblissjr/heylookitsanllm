@@ -1,6 +1,6 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-08-17 (chat attachments grew a third input: drag-and-drop
+Last updated: 2026-08-17 (v1.72.0-.1; chat attachments grew a third input: drag-and-drop
 onto the thread, with a drop overlay whose label names what THIS model accepts.
 Picker, paste and drop now funnel through one `addFiles` -> `addPendingFiles`
 routine, so paste can stage audio (it was image-only) and every input is gated
@@ -9,8 +9,18 @@ clicking in the thread used to land nowhere -- and reads `clipboardData.files`
 with an `items` fallback for Safari. Cap gating moved to STAGING time: a drop or
 paste onto a model without the cap refuses loudly and stages nothing; the
 send-side block stays, but its case is now only "staged on a capable model, then
-switched away". Guarded by six checks in `tests/e2e/render.mjs`, all shown red
-against the pre-change tree. Previously 2026-08-11: per-model config editor -- the Models page grew a
+switched away". v1.72.1 fixed five review findings on top, one of them the headline
+case: paste listened on the chat ROOT, but clicking a message leaves focus on
+`document.body` (an ancestor of that root), so it never arrived -- and the
+check covering it dispatched at `.chat__messages` and passed anyway. Paste now
+listens on `document`; the check clicks for real and dispatches at
+`document.activeElement`, asserting that target is outside the chat root. Also
+fixed: capability chrome refreshed before `modelSelect.value` moved (so the
+overlay described the conversation being LEFT), `preventDefault` before the cap
+check (a text+image clipboard payload lost its text at a text-only model), the
+pending array orphaned across the FileReader await by a concurrent send, and a
+silent discard of drops carrying nothing attachable. Guarded by 36 checks in
+`tests/e2e/render.mjs`, each new one shown red against the tree it fixes. Previously 2026-08-11: per-model config editor -- the Models page grew a
 schema-driven Configure panel consuming the v1.52-1.53 admin surface --
 `GET /v1/admin/model-options` (field type/bounds/enum/default + the six-class
 `effect` metadata + `arg`/`ui`/`shape`/`reason` hints) and

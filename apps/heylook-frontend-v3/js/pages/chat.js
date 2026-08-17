@@ -316,7 +316,7 @@ function buildSkeleton(ctx) {
   // Mobile: tapping the visible thread (outside the conversations pane + toggle)
   // dismisses the slide-in pane.
   dismissPaneOnOutsideClick(s.rootEl, 'chat--convs-open', '.chat__convs', '.chat__convs-toggle');
-  wirePasteAttach(ctx, s.rootEl);
+  wirePasteAttach(ctx);
   wireDropAttach(ctx, thread);
   ctx.el.append(s.rootEl);
 }
@@ -857,11 +857,16 @@ async function selectConversation(ctx, convId) {
     s.systemPrompt = conv.system_prompt ?? null;
     s.appliedPresetId = conv.applied_preset_id ?? null;
     hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
-    refreshThinkBtn(ctx);    // silent hydrate skips onSettingsChange -- sync directly
-    refreshAttachBtn(ctx);
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
+    // AFTER the select moves, never before: both read currentCaps(), which
+    // reads modelSelect.value, so running them first describes the model we
+    // just navigated AWAY from. That staleness was invisible while it only
+    // mis-set a hidden attribute; the drop overlay makes it a visible promise
+    // ("Drop images to attach" over a model that refuses the drop).
+    refreshThinkBtn(ctx);    // silent hydrate skips onSettingsChange -- sync directly
+    refreshAttachBtn(ctx);
     // Programmatic selection IS the committed model -- a restore never runs
     // the pre-switch warning flow (the conversation already lives there).
     s.committedModelId = s.modelSelect.value || null;
@@ -1422,22 +1427,41 @@ function clipboardFiles(e) {
     .filter(Boolean);
 }
 
-// Paste-to-attach, scoped to the whole chat page rather than the composer:
-// a paste after clicking anywhere in the thread used to land nowhere. It must
-// still never steal a paste aimed at another field (the conversation rename
-// input lives inside this root), and it only calls preventDefault once it has
-// actually taken files, so an ordinary text paste is untouched.
-function wirePasteAttach(ctx, root) {
-  root.addEventListener('paste', (e) => {
+// Would any of these files actually be staged, or will every kind be refused
+// for want of a capability? Paste needs to know BEFORE cancelling the default.
+function willStageAny(ctx, files) {
+  const caps = currentCaps(ctx);
+  return Object.values(ATTACH_KINDS).some((k) => caps.includes(k.cap)
+    && files.some((f) => f.type.startsWith(k.mime)));
+}
+
+// Paste-to-attach, on DOCUMENT rather than the chat root. Clicking a message
+// leaves focus on document.body -- verified, not assumed -- and body is an
+// ANCESTOR of the chat root, so a paste targeted there never reaches a
+// listener mounted on the page. A root-scoped listener therefore only worked
+// when a form field or a selection inside the thread held focus, which is the
+// case that already worked via the composer. Document scope is what makes
+// "click in the thread, then paste" actually reach here.
+//
+// Two guards earn their place at that scope:
+//  - a paste aimed at any OTHER editable is left alone (the conversation
+//    rename input, and the drawer's system-prompt box, which is a body child
+//    outside #app and would otherwise be intercepted).
+//  - preventDefault only when something will really be staged. A clipboard
+//    payload can carry text AND an image (Excel, Word, most web pages);
+//    cancelling on a model that refuses the image would eat the text too and
+//    leave the user an error and an empty composer.
+function wirePasteAttach(ctx) {
+  document.addEventListener('paste', (e) => {
     const t = e.target;
     const editable = t?.isContentEditable
       || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName ?? '');
     if (editable && t !== ctx.state.textarea) return;
     const files = attachableFiles(clipboardFiles(e));
     if (!files.length) return;
-    e.preventDefault();
-    addFiles(ctx, files);
-  });
+    if (willStageAny(ctx, files)) e.preventDefault();
+    addFiles(ctx, files);   // refuses loudly when it cannot stage
+  }, { signal: ctx.signal });
 }
 
 // Drag-and-drop staging. Desktop-only by nature; the phone paths (attach
@@ -1489,6 +1513,19 @@ function wireDropAttach(ctx, el) {
 
 function addFiles(ctx, files) {
   const all = [...files];
+  // A drop of a PDF, a .txt or a folder (File.type is '') matches no kind and
+  // would otherwise vanish -- indistinguishable from a broken drop target.
+  // Same principle as the capability refusal below: silence is the worst
+  // answer available.
+  if (all.length && !attachableFiles(all).length) {
+    const caps = currentCaps(ctx);
+    const takes = Object.values(ATTACH_KINDS)
+      .filter((k) => caps.includes(k.cap)).map((k) => `${k.label}s`);
+    showStatus(ctx, takes.length
+      ? `Nothing attachable there -- ${takes.join(' or ')} only.`
+      : 'This model takes text only.', true);
+    return;
+  }
   for (const kind of Object.values(ATTACH_KINDS)) {
     addPendingFiles(ctx, all.filter((f) => f.type.startsWith(kind.mime)), kind);
   }
@@ -1507,12 +1544,22 @@ async function addPendingFiles(ctx, files, kind) {
     showStatus(ctx, `This model does not take ${kind.label}s -- pick a model that does.`, true);
     return;
   }
-  const pending = ctx.state[kind.stateKey];
+  const pendingAtStart = ctx.state[kind.stateKey];
   const reads = await Promise.all([...files]
     .map((f) => fileToDataUrl(f)
       .then((dataUrl) => kind.toEntry(f, dataUrl))
       .catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) return;
+  // send() and clearPendingAttachments REPLACE these arrays rather than
+  // emptying them, so a send (or a conversation switch) during the read leaves
+  // us holding an orphan: pushing into it would render nothing and lose the
+  // file without a word. Drag-and-drop makes multi-megabyte reads routine, so
+  // this window is no longer theoretical.
+  const pending = ctx.state[kind.stateKey];
+  if (pending !== pendingAtStart) {
+    showStatus(ctx, `Attachment discarded -- the composer was cleared while it was still loading.`, true);
+    return;
+  }
   const usable = reads.filter(Boolean);
   if (!usable.length) return;
   const room = Math.max(kind.max - pending.length, 0);

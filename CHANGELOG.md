@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.1]
+
+### Fixed
+
+Five review findings against v1.72.0. One was a functional bug in the headline
+change, and its check passed anyway:
+
+- **Paste after clicking in the thread still did nothing** -- the case v1.72.0
+  claimed to fix. The listener sat on the chat root, but clicking a message
+  leaves focus on `document.body`, which is an *ancestor* of that root, so the
+  event never reached it. Root scope only ever worked when a field or a
+  selection inside the thread held focus, which is what already worked. Moved
+  to `document` (with `ctx.signal` for teardown); the guard that leaves other
+  editables alone now also protects the drawer's system-prompt box, a body
+  child outside `#app`.
+- **The check that covered it was vacuous.** It dispatched the synthetic
+  `ClipboardEvent` at `.chat__messages`, proving only that *some* ancestor
+  listened. It now takes a real mouse click first and dispatches at
+  `document.activeElement`, asserting that target is outside the chat root --
+  so it cannot silently degrade back to testing the wrong node.
+- **The drop overlay described the previous conversation's model.**
+  `selectConversation` refreshed the capability-gated chrome *before* moving
+  the model select, and both read `currentCaps()` off it. Switching from a
+  vision conversation to a text-only one left the overlay promising "Drop
+  images to attach" over a model that refuses the drop. The ordering bug was
+  pre-existing (it already mis-set the attach button and the picker's accept
+  list) but harmless while nothing visible rode it.
+- **A refused paste ate the text half of the clipboard.** `preventDefault` ran
+  as soon as attachable files were found, before the capability check. A
+  payload carrying both text and an image -- what Excel, Word and most web
+  pages put on the clipboard -- lost its text at a text-only model, leaving an
+  error and an empty composer. The paste is now cancelled only when something
+  will actually stage.
+- **An attachment could vanish silently mid-read.** `addPendingFiles` captured
+  the pending array before awaiting the `FileReader`, but `send()` and
+  `clearPendingAttachments` *replace* those arrays rather than emptying them.
+  Sending (or switching conversations) during the read left the result pushed
+  into an orphan and rendered from the new one. Drag-and-drop makes
+  multi-megabyte reads routine, so the window stopped being theoretical. Now
+  detected by identity and disclosed.
+- **A drop carrying nothing attachable said nothing.** A PDF, a `.txt` or a
+  folder (whose `File.type` is empty) matched no kind and disappeared, looking
+  exactly like a broken drop target.
+
+### Testing
+
+- `tests/e2e/render.mjs` is at 36 checks. Four of the five fixes have a check
+  shown red against the v1.72.0 tree via `E2E_V3_ROOT`, each failing with the
+  message that names the bug. The fifth (the swallowed text half) passes
+  vacuously there -- the pre-fix listener never ran at all -- so it was
+  additionally shown red under a targeted mutation that restores the
+  unconditional `preventDefault`.
+- The race check is deterministic rather than timed: `addPendingFiles` awaits a
+  `FileReader`, so a send dispatched in the same synchronous block always wins.
+  Confirmed stable over repeated runs.
+
 ## [1.72.0]
 
 ### Added

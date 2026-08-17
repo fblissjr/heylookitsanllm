@@ -179,7 +179,22 @@ routine, which is where the cap gate, the count cap and the aria-live
 announcement live; adding a fourth input means calling addFiles, never
 re-deriving any of that beside it (paste was image-only for exactly as long as
 it had its own copy). Only the picker has an `accept` list, so that routine is
-also the backstop for everything that has no accept list to respect. Drag/drop
+also the backstop for everything that has no accept list to respect. PASTE
+LISTENS ON `document`, not on the page root, and that is not a preference:
+clicking a message leaves focus on `document.body`, which is an ANCESTOR of the
+chat root, so a root-scoped listener never sees the event -- it only ever
+fired when a field or an in-thread selection held focus, i.e. the case that
+already worked. Any "paste anywhere" feature has this shape; verify the target
+rather than the listener (a synthetic event dispatched at a convenient node
+proves nothing, which is how v1.72.0 shipped this broken WITH a passing check).
+Document scope is also why the other-editable guard is load-bearing -- the
+drawer's system-prompt box is a body child OUTSIDE `#app`. And `preventDefault`
+waits until something will really stage: a clipboard payload carries text AND
+an image, so cancelling on a refusal eats the text too.
+Capability-gated chrome (attach button, picker accept list, thinking toggle,
+drop-overlay label) is refreshed AFTER `modelSelect.value` moves, never before
+-- it all reads `currentCaps()` off that select, and `selectConversation` had
+the order backwards, so every one of them described the conversation being left. Drag/drop
 is desktop-only ON PURPOSE and is not a §7 violation: it duplicates paths that
 exist on the phone rather than being the sole route to anything.
 Chat also has a per-document system-prompt editor + a saved-preset bar (TWO shared
