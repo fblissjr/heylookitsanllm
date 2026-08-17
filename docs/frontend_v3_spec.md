@@ -473,6 +473,14 @@ post-save config-reload failure. A value TOML can't store returns 400, not 500.
 CAUTION for harnesses: the PATCH rewrites models.toml through `tomli_w`, which drops
 every comment in the file — E2E checks must intercept it, never let it land (the E2E
 server isolates only the DB, not models.toml).
+`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`; **409** when the entry is a
+DISABLED override for a file discovery still finds — deleting it would delete the only
+record of the "off" decision and the next scan would serve the model again, enabled. The
+detail text is the explanation; render it (v1.69.1 — it was an uncaught 500 before).
+Every mutating admin route runs in the server's threadpool, not on the event loop: each
+one re-runs the `[scan]` discovery walk (twice, counting the reload), so an `async`
+handler would freeze in-flight SSE streams for its duration. Expect these calls to take
+as long as a scan takes; other requests keep flowing meanwhile.
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,

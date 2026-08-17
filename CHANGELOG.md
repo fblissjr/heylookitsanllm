@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.69.1]
+
+### Fixed
+
+- The mutating admin routes no longer run discovery ON the event loop. Each of
+  them does a models.toml read/modify/write plus `model_registry.discover` --
+  a recursive walk of the `[scan]` folders with GGUF header reads, unbounded
+  in principle -- and they were `async def` handlers that never await, so that
+  work sat on the loop and froze every in-flight SSE generation stream for its
+  duration. One mutation runs the walk twice -- once in `ModelService`
+  (materializing an entry, or the delete guard), once in the reload -- so this
+  was not theoretical. `update_model_config`,
+  `toggle_model`, `add_model_config`, `_import_models`,
+  `_bulk_set_default_sampler`, `_scan_for_models` and `reload_models` are now
+  plain `def` (FastAPI runs them in its threadpool); `remove_model_config` has
+  to await its unload, so its blocking tail goes to `asyncio.to_thread`
+  instead. Same reasoning, same scan, as
+  `MemoryManager._maybe_rescan_models`, which already pushed it to an
+  executor. Guarded by `tests/unit/test_admin_offloop.py`, which counts how
+  many times an idle task gets to run during each request -- with a control
+  test proving the heartbeat can starve.
+
+  The read path is unchanged and stays as it was: `list_configs`/`get_config`
+  are models.toml-only, and the admin list route reads the router's merged
+  snapshot rather than rescanning.
+
+- `DELETE /v1/admin/models/{id}` returns 409 instead of 500 when the entry is
+  a disabled override for a file discovery still finds. The refusal exists to
+  explain that deleting the entry would silently re-enable the model, and an
+  uncaught `ValueError` turned that explanation into "Internal Server Error".
+
 ## [1.69.0]
 
 ### Added

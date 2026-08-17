@@ -79,7 +79,12 @@ def _resolve_config(request: Request, model_id: str):
 
 
 def _safe_reload_config(request: Request) -> str | None:
-    """Reload router config, returning a warning string on failure instead of raising."""
+    """Reload router config, returning a warning string on failure instead of raising.
+
+    BLOCKING, and by more than a file read: reload_config re-runs discovery
+    (model_registry.discover) as well as re-parsing models.toml. Every caller
+    must already be off the event loop -- see the threadpool banner below.
+    """
     try:
         request.app.state.router_instance.reload_config()
         return None
@@ -133,6 +138,31 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None) -> AdminMod
 # Order: fixed paths -> sub-resource paths -> catch-all paths
 # =============================================================================
 
+# =============================================================================
+# Why the mutating handlers below are `def`, not `async def`
+#
+# Each one does blocking work: a models.toml read/modify/write, and discovery
+# (model_registry.discover -- a recursive walk of the [scan] folders plus GGUF
+# header reads, unbounded in principle). An `async def` that never awaits runs
+# that work ON the event loop, which freezes every in-flight SSE generation
+# stream for its whole duration. A plain `def` hands the handler to FastAPI's
+# threadpool instead; a handler that genuinely must await (remove_model_config)
+# wraps the blocking calls in asyncio.to_thread. Same reasoning, same scan, as
+# MemoryManager._maybe_rescan_models (memory.py), which pushes it to an executor
+# so a periodic rescan doesn't stall streams.
+#
+# Note a single mutation runs the walk TWICE -- once in ModelService (to
+# materialize a discovered model into an entry, or for the delete guard), once
+# in the reload -- so this is not a theoretical stall. Kept as two scans on
+# purpose: sharing one snapshot across the write and the reload would mean
+# materializing an entry from a scan the reload no longer agrees with, and the
+# staleness would land exactly where entries get WRITTEN. Both are off the loop
+# now, so the cost is admin-request latency, not stalled streams.
+#
+# Read routes stay `async def`: they are models.toml-only or read the router's
+# already-merged snapshot, and never scan (see _served_configs).
+# =============================================================================
+
 # --- List (fixed path, no conflict) ---
 
 @admin_router.get(
@@ -158,7 +188,7 @@ async def list_model_configs(request: Request):
     response_model=AdminModelResponse,
     status_code=201,
 )
-async def add_model_config(request: Request, body: dict):
+def add_model_config(request: Request, body: dict):
     service = _get_service(request)
     router = request.app.state.router_instance
     try:
@@ -240,7 +270,7 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
     description="Toggle a model's enabled/disabled state.",
     response_model=AdminModelResponse,
 )
-async def toggle_model(model_id: str, request: Request):
+def toggle_model(model_id: str, request: Request):
     service = _get_service(request)
     router = request.app.state.router_instance
     try:
@@ -406,7 +436,7 @@ async def get_model_config(model_id: str, request: Request):
     summary="Update Model Config",
     description="Update specific fields of a model's configuration. Returns which fields require reload.",
 )
-async def update_model_config(model_id: str, request: Request, updates: ModelUpdateRequest):
+def update_model_config(model_id: str, request: Request, updates: ModelUpdateRequest):
     service = _get_service(request)
     router = request.app.state.router_instance
     try:
@@ -439,7 +469,11 @@ async def update_model_config(model_id: str, request: Request, updates: ModelUpd
 @admin_router.delete(
     "/{model_id:path}",
     summary="Remove Model Config",
-    description="Remove a model from configuration. Model files stay on disk.",
+    description=(
+        "Remove a model from configuration. Model files stay on disk. 409 when "
+        "the entry is a DISABLED override for a file discovery still finds -- "
+        "deleting it would silently re-enable the model."
+    ),
 )
 async def remove_model_config(model_id: str, request: Request):
     import asyncio
@@ -455,10 +489,21 @@ async def remove_model_config(model_id: str, request: Request):
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    if not service.remove_config(model_id):
+    # to_thread, not a sync handler: this route has to await the unload above,
+    # so the blocking tail (remove_config runs discovery for the disabled-
+    # override guard, then the reload runs it again) goes to a thread by hand.
+    try:
+        removed = await asyncio.to_thread(service.remove_config, model_id)
+    except ValueError as e:
+        # The disabled-override guard. It refuses because deleting the entry
+        # would silently RE-ENABLE a still-discovered model -- a conflict the
+        # caller can act on, and its message is the whole point, so it must not
+        # surface as a bare 500 with the text swallowed.
+        raise HTTPException(status_code=409, detail=str(e))
+    if not removed:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
-    warning = _safe_reload_config(request)
+    warning = await asyncio.to_thread(_safe_reload_config, request)
     result: dict = {"status": "removed", "model_id": model_id}
     if warning:
         result["warning"] = warning
@@ -489,8 +534,8 @@ async def _discovered_models(request: Request):
         raise HTTPException(status_code=500, detail=f"Discovery snapshot failed: {e}")
 
 
-async def _scan_for_models(request: Request, scan_request: ModelScanRequest):
-    """Scan filesystem for importable models."""
+def _scan_for_models(request: Request, scan_request: ModelScanRequest):
+    """Scan filesystem for importable models (threadpool: the walk blocks)."""
     service = _get_service(request)
     try:
         results = service.scan_paths(
@@ -505,7 +550,7 @@ async def _scan_for_models(request: Request, scan_request: ModelScanRequest):
         raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
 
 
-async def _import_models(request: Request, import_request: ModelImportRequest):
+def _import_models(request: Request, import_request: ModelImportRequest):
     """Import scanned models with configuration."""
     service = _get_service(request)
     router = request.app.state.router_instance
@@ -551,7 +596,7 @@ async def _list_samplers(request: Request):
     return SamplerListResponse(samplers=samplers)
 
 
-async def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest):
+def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest):
     """Record a named sampler as default_sampler on multiple models."""
     service = _get_service(request)
     router = request.app.state.router_instance
@@ -749,8 +794,13 @@ async def get_model_options():
         "the new model list."
     ),
 )
-async def reload_models(request: Request):
-    """Reload model configuration without restarting."""
+def reload_models(request: Request):
+    """Reload model configuration without restarting.
+
+    Sync handler (threadpool): clear_cache drains and unloads every provider
+    and reload_config re-runs discovery -- both would freeze in-flight streams
+    from the event loop.
+    """
     router = request.app.state.router_instance
     try:
         router.clear_cache()
