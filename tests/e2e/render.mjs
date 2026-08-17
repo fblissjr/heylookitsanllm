@@ -98,12 +98,12 @@ function makeMessages({ unsaved = false } = {}) {
 
 // Stateful stub store. `handle` mutates `messages` the way the real store
 // would, so post-saga reconciliation reads back a consistent thread.
-function makeStubStore({ unsaved = false } = {}) {
+function makeStubStore({ unsaved = false, caps = [] } = {}) {
   const messages = makeMessages({ unsaved });
   let nextId = messages.length;
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
-    if (url.endsWith('/v1/models')) return { data: [{ id: 'test-model' }] };
+    if (url.endsWith('/v1/models')) return { data: [{ id: 'test-model', capabilities: caps }] };
     if (url.endsWith('/v1/conversations') && method === 'GET') {
       return { conversations: [{ id: 'c1', title: 'render suite', model_id: 'test-model' }] };
     }
@@ -182,13 +182,16 @@ function makeStubStore({ unsaved = false } = {}) {
 //   pre-first-token window to probe the loud guards in.
 // - mobile emulates an iPhone (viewport + touch + hover:none/pointer:coarse
 //   via CDP -- puppeteer's emulateMediaFeatures whitelist rejects hover).
+// - caps is the stub model's capability list. Attachment staging is gated on
+//   it, so the drop/paste checks need a vision model and the refusal check
+//   needs the text-only default.
 async function openChat(browser, base, {
-  residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false,
+  residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
 } = {}) {
   const page = await browser.newPage();
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
-  const store = makeStubStore({ unsaved });
+  const store = makeStubStore({ unsaved, caps });
   const reqs = [];
 
   if (mobile) {
@@ -284,6 +287,49 @@ async function send(page, text) {
   await new Promise((r) => setTimeout(r, 600));
   await settle(page);
 }
+
+// Build a DataTransfer carrying one file, in page context. `items.add` is what
+// populates `types` with 'Files' -- the signal both the drop and paste paths
+// gate on -- and `files` alongside it.
+//
+// Drop and paste are event-only affordances: no click can reach them, so these
+// synthetic events are the only automated check that they reach addFiles at
+// all. Each helper reports whether the event really carried a file, so a check
+// cannot pass because the handler bailed early on an empty one.
+const mkFile = `const dt = new DataTransfer();
+  dt.items.add(new File([new Uint8Array([1, 2, 3, 4])], name, { type }));`;
+
+const dropFile = (page, { name = 'shot.png', type = 'image/png', leaveInstead = false } = {}) =>
+  page.evaluate(new Function('name', 'type', 'leave', `
+    ${mkFile}
+    const el = document.querySelector('.chat__thread');
+    const fire = (kind) => el.dispatchEvent(
+      new DragEvent(kind, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    fire('dragenter');
+    fire('dragover');
+    const overlaid = el.classList.contains('chat__thread--dragover');
+    fire(leave ? 'dragleave' : 'drop');
+    return {
+      overlaid,
+      stillOverlaid: el.classList.contains('chat__thread--dragover'),
+      carried: dt.files.length === 1,
+    };
+  `), name, type, leaveInstead);
+
+// ClipboardEvent's constructor takes clipboardData in Chrome, but define it
+// defensively -- a null clipboardData makes the handler bail, which would pass
+// the "nothing staged" checks for entirely the wrong reason.
+const pasteFile = (page, { name = 'shot.png', type = 'image/png', target = '.chat__messages' } = {}) =>
+  page.evaluate(new Function('name', 'type', 'sel', `
+    ${mkFile}
+    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    if (!ev.clipboardData) Object.defineProperty(ev, 'clipboardData', { value: dt });
+    document.querySelector(sel).dispatchEvent(ev);
+    return { carried: Boolean(ev.clipboardData?.files?.length) };
+  `), name, type, target);
+
+const thumbCount = (page) => page.evaluate(
+  () => document.querySelectorAll('.chat__attach .attach-thumb').length);
 
 async function main() {
   const { server, base } = await serveV3();
@@ -633,6 +679,67 @@ async function main() {
       assert(mob.pageErrors.length === 0, `page errors: ${mob.pageErrors.join(' | ')}`);
     });
     await mob.page.close();
+
+    // ---- boot 7: drag/drop + paste attachment staging ---------------------
+    // The composer's picker is the only attach path a click can reach; drop
+    // and paste are event-only, so this is the only automated check that they
+    // reach addFiles at all.
+    const vis = await openChat(browser, base, { caps: ['vision'] });
+
+    await suite.check('dragging files over the thread shows the drop overlay', async () => {
+      const r = await dropFile(vis.page, { leaveInstead: true });
+      assert(r.overlaid, 'no drop overlay while dragging files over the thread');
+      assert(!r.stillOverlaid, 'the drop overlay survived dragleave');
+    });
+
+    await suite.check('the drop overlay names what the model accepts', async () => {
+      const label = await vis.page.evaluate(
+        () => document.querySelector('.chat__thread').dataset.dropLabel);
+      assert(label === 'Drop images to attach', `drop label reads "${label}"`);
+    });
+
+    await suite.check('dropping an image stages it', async () => {
+      const r = await dropFile(vis.page);
+      assert(r.carried, 'the synthetic drop carried no files -- the check would be vacuous');
+      assert(!r.stillOverlaid, 'the drop overlay survived the drop');
+      await waitFor(async () => (await thumbCount(vis.page)) === 1,
+        { timeout: 3000, message: 'dropped image never reached the attach strip' });
+    });
+
+    await suite.check('pasting an image outside the composer stages it', async () => {
+      const r = await pasteFile(vis.page);
+      assert(r.carried, 'the synthetic paste carried no files -- the check would be vacuous');
+      await waitFor(async () => (await thumbCount(vis.page)) === 2,
+        { timeout: 3000, message: 'pasted image never reached the attach strip' });
+    });
+
+    await suite.check('a non-image drop stages nothing', async () => {
+      const before = await thumbCount(vis.page);
+      await dropFile(vis.page, { name: 'notes.txt', type: 'text/plain' });
+      await settle(vis.page);
+      const after = await thumbCount(vis.page);
+      assert(after === before, `a text/plain drop changed the strip (${before} -> ${after})`);
+    });
+
+    await suite.check('no uncaught page errors (attach staging)', () => {
+      assert(vis.pageErrors.length === 0, `page errors: ${vis.pageErrors.join(' | ')}`);
+    });
+    await vis.page.close();
+
+    // Text-only model: refusing at STAGING time is the point -- a silently
+    // staged image the send guard rejects later is the behavior this replaced.
+    const txt = await openChat(browser, base);
+    await suite.check('a drop onto a text-only model refuses loudly and stages nothing', async () => {
+      await dropFile(txt.page);
+      await waitFor(async () => (await statusText(txt.page)).includes('does not take images'),
+        { timeout: 3000, message: 'a drop onto a text-only model said nothing' });
+      const n = await thumbCount(txt.page);
+      assert(n === 0, `a text-only model staged ${n} image(s)`);
+    });
+    await suite.check('no uncaught page errors (text-only drop)', () => {
+      assert(txt.pageErrors.length === 0, `page errors: ${txt.pageErrors.join(' | ')}`);
+    });
+    await txt.page.close();
   } finally {
     await browser.close();
     server.close();

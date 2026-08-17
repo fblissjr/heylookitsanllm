@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.0]
+
+### Added
+
+- **Drag-and-drop image (and audio) attach in v3 chat.** Dropping files onto the
+  message thread stages them exactly as the attach button does. While a file
+  drag is over the thread, a dashed overlay names what the *current* model
+  accepts ("Drop images to attach" / "Drop images or audio to attach" / "This
+  model takes text only"), so the answer arrives before the drop, not after.
+  Three things that break naive drop handling are handled deliberately and
+  commented: `dragenter`/`dragover` both `preventDefault` (otherwise the drop
+  never fires and the browser navigates away to the file, taking the page and
+  any unsent message with it); `dragleave` is depth-counted, since it also
+  fires when the pointer crosses into a child element and a boolean flag makes
+  the overlay flicker; and the handlers gate on `dataTransfer.types` carrying
+  `Files`, so dragging selected text inside the page does not light up the
+  overlay. A drop landing just *outside* the thread is swallowed at the window
+  for the same navigate-away reason.
+
+### Changed
+
+- **Picker, paste and drop now share one staging routine.** All three funnel
+  through `addFiles` -> `addPendingFiles`, which owns the capability gate, the
+  count cap and the aria-live announcement. Paste had its own copy and had
+  drifted: it staged images only, so pasting an audio clip into an
+  audio-capable gguf model silently did nothing.
+- **Paste is scoped to the chat page rather than the composer textarea.** A
+  paste after clicking anywhere in the thread previously landed nowhere. It
+  still never intercepts a paste aimed at another field, and still only calls
+  `preventDefault` once it has actually taken files, so ordinary text paste is
+  untouched.
+- **Paste reads `clipboardData.files` with an `items` fallback.** Safari has
+  historically populated one and not the other; reading both removes the guess.
+- **Capabilities are checked at staging time, not only at send.** Dropping or
+  pasting an image onto a model without the vision cap now refuses immediately
+  with a status line and stages nothing. The send-side block remains, but its
+  case is now only "staged on a capable model, then switched away" — which is
+  what its comment always described. Staging a blob the user must later hunt
+  down and clear is worse than a straight no.
+
+### Testing
+
+- Six checks added to `tests/e2e/render.mjs` (the model-free, server-free
+  render suite): the overlay appears and clears, its label tracks the model,
+  drop and paste each stage a file, a `text/plain` drop stages nothing, and a
+  drop onto a text-only model refuses loudly. Drop and paste are event-only
+  affordances that no click can reach, so these are the only automated checks
+  that they reach the staging path at all. Each helper asserts the synthetic
+  event really carried a file, so a check cannot pass because the handler
+  bailed early. All were shown red against the pre-change tree via
+  `E2E_V3_ROOT`; the MIME-filter check was additionally shown red under a
+  deliberate mutation of the split it guards.
+
 ## [1.71.2]
 
 ### Fixed

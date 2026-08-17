@@ -220,10 +220,12 @@ function buildSkeleton(ctx) {
       send(ctx);
     }
   });
-  // Attachments: images and (gguf models) audio, via picker or paste.
+  // Attachments: images and (gguf models) audio, via picker, paste or drop.
   // The button is capability-gated like the thinking toggle -- hidden until
   // refreshAttachBtn sees a model with the vision and/or audio cap, and the
-  // picker's accept list mirrors exactly what the model can take.
+  // picker's accept list mirrors exactly what the model can take. All three
+  // inputs funnel through addFiles -> addPendingFiles (one routine, so a cap
+  // or limit fix lands once and can't be half-applied to one of them).
   s.pendingImages = [];
   s.pendingAudio = [];
   s.fileInput = createEl('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
@@ -251,16 +253,6 @@ function buildSkeleton(ctx) {
     setSetting('enable_thinking', getSetting('enable_thinking') === true ? null : true);
   });
   ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
-  s.textarea.addEventListener('paste', (e) => {
-    const files = [...(e.clipboardData?.items ?? [])]
-      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
-      .map((it) => it.getAsFile())
-      .filter(Boolean);
-    if (files.length) {
-      e.preventDefault();
-      addPendingFiles(ctx, files, ATTACH_KINDS.image);
-    }
-  });
   s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
   s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
   s.sendBtn.addEventListener('click', () => (s.stream ? stopStream(ctx) : send(ctx)));
@@ -319,10 +311,13 @@ function buildSkeleton(ctx) {
     createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.thinkBtn, s.fileInput, s.textarea, s.sendBtn]),
   ]);
 
+  s.threadEl = thread;
   s.rootEl = createEl('div', { class: 'chat' }, [convPane, thread]);
   // Mobile: tapping the visible thread (outside the conversations pane + toggle)
   // dismisses the slide-in pane.
   dismissPaneOnOutsideClick(s.rootEl, 'chat--convs-open', '.chat__convs', '.chat__convs-toggle');
+  wirePasteAttach(ctx, s.rootEl);
+  wireDropAttach(ctx, thread);
   ctx.el.append(s.rootEl);
 }
 
@@ -552,6 +547,16 @@ function refreshAttachBtn(ctx) {
     : audio ? 'Attach audio' : 'Attach images';
   s.attachBtn.title = label;
   s.attachBtn.setAttribute('aria-label', label);
+  // The drop overlay's text (CSS reads it via content: attr()). It names what
+  // THIS model takes, including the text-only case -- an overlay that says
+  // "drop images" over a model that can't read them would be a lie the user
+  // only discovers after dropping.
+  if (s.threadEl) {
+    s.threadEl.dataset.dropLabel = vision && audio ? 'Drop images or audio to attach'
+      : audio ? 'Drop audio to attach'
+        : vision ? 'Drop images to attach'
+          : 'This model takes text only';
+  }
 }
 
 function currentCaps(ctx) {
@@ -1390,14 +1395,97 @@ function fileToDataUrl(file) {
 // discipline: a cap/guard fix lands once, never in a per-kind twin).
 const ATTACH_KINDS = {
   image: {
-    mime: 'image/', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
+    mime: 'image/', cap: 'vision', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
     label: 'image', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type }),
   },
   audio: {
-    mime: 'audio/', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
+    mime: 'audio/', cap: 'audio', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
     label: 'audio clip', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type, name: f.name }),
   },
 };
+
+// Anything file-shaped a paste or a drop could carry that we would stage.
+function attachableFiles(files) {
+  const kinds = Object.values(ATTACH_KINDS);
+  return [...files].filter((f) => kinds.some((k) => f.type.startsWith(k.mime)));
+}
+
+// Safari has historically populated `items` but not `files` on a paste, so
+// read both rather than picking one and being wrong on one browser.
+function clipboardFiles(e) {
+  const dt = e.clipboardData;
+  if (!dt) return [];
+  if (dt.files?.length) return [...dt.files];
+  return [...(dt.items ?? [])]
+    .filter((it) => it.kind === 'file')
+    .map((it) => it.getAsFile())
+    .filter(Boolean);
+}
+
+// Paste-to-attach, scoped to the whole chat page rather than the composer:
+// a paste after clicking anywhere in the thread used to land nowhere. It must
+// still never steal a paste aimed at another field (the conversation rename
+// input lives inside this root), and it only calls preventDefault once it has
+// actually taken files, so an ordinary text paste is untouched.
+function wirePasteAttach(ctx, root) {
+  root.addEventListener('paste', (e) => {
+    const t = e.target;
+    const editable = t?.isContentEditable
+      || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName ?? '');
+    if (editable && t !== ctx.state.textarea) return;
+    const files = attachableFiles(clipboardFiles(e));
+    if (!files.length) return;
+    e.preventDefault();
+    addFiles(ctx, files);
+  });
+}
+
+// Drag-and-drop staging. Desktop-only by nature; the phone paths (attach
+// button -> photo library, paste) are unaffected, so this adds an affordance
+// without becoming a hover-only one. Three things break a naive version:
+//   - dragenter AND dragover must preventDefault, or `drop` never fires and
+//     the browser navigates away to the file, taking the page with it.
+//   - dragleave fires when the pointer crosses into a CHILD element, so a
+//     boolean "is dragging" flag makes the overlay flicker. Count depth.
+//   - a drag of selected text within the page is not a file drag; without the
+//     types check the overlay lights up on ordinary text selection drags.
+function wireDropAttach(ctx, el) {
+  const isFileDrag = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+  const setOver = (on) => el.classList.toggle('chat__thread--dragover', on);
+  let depth = 0;
+
+  el.addEventListener('dragenter', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    depth += 1;
+    setOver(true);
+  });
+  el.addEventListener('dragover', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  });
+  el.addEventListener('dragleave', (e) => {
+    if (!isFileDrag(e)) return;
+    depth = Math.max(depth - 1, 0);
+    if (!depth) setOver(false);
+  });
+  el.addEventListener('drop', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    depth = 0;
+    setOver(false);
+    addFiles(ctx, e.dataTransfer?.files ?? []);
+  });
+
+  // A file dropped just OUTSIDE the target still navigates the browser to it,
+  // discarding an unsent message and every staged attachment. Swallow those at
+  // the window. Registered with ctx.signal so they die with the page -- these
+  // are the only listeners here that outlive the chat DOM.
+  const swallow = (e) => { if (isFileDrag(e)) e.preventDefault(); };
+  window.addEventListener('dragover', swallow, { signal: ctx.signal });
+  window.addEventListener('drop', swallow, { signal: ctx.signal });
+}
 
 function addFiles(ctx, files) {
   const all = [...files];
@@ -1407,6 +1495,18 @@ function addFiles(ctx, files) {
 }
 
 async function addPendingFiles(ctx, files, kind) {
+  if (!files.length) return;
+  // Refuse at STAGING time. The send-side guard is for a DIFFERENT case --
+  // media staged on a capable model, then a switch that loses the cap, where
+  // "remove them or switch models" is the right words. Here nothing is staged
+  // yet, so accepting a blob the user must then hunt down and clear is
+  // strictly worse than saying no now. This is also the backstop for a picker
+  // bypassed via "All files", and for paste/drop, which have no accept list
+  // to bypass in the first place.
+  if (!currentCaps(ctx).includes(kind.cap)) {
+    showStatus(ctx, `This model does not take ${kind.label}s -- pick a model that does.`, true);
+    return;
+  }
   const pending = ctx.state[kind.stateKey];
   const reads = await Promise.all([...files]
     .map((f) => fileToDataUrl(f)

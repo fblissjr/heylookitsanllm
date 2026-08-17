@@ -172,9 +172,17 @@ server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
 position arithmetic -- notebook/explore still speak `/v1/chat/completions`
-until the rest of Phase 3b), takes image input + renders image content blocks
-out of the DuckDB store, and has a per-document system-prompt editor + a
-saved-preset bar (TWO shared
+until the rest of Phase 3b), takes image (and gguf audio) input + renders
+image content blocks out of the DuckDB store. THREE attach inputs -- picker,
+paste, drop (v1.72.0) -- funnel through ONE `addFiles` -> `addPendingFiles`
+routine, which is where the cap gate, the count cap and the aria-live
+announcement live; adding a fourth input means calling addFiles, never
+re-deriving any of that beside it (paste was image-only for exactly as long as
+it had its own copy). Only the picker has an `accept` list, so that routine is
+also the backstop for everything that has no accept list to respect. Drag/drop
+is desktop-only ON PURPOSE and is not a §7 violation: it duplicates paths that
+exist on the phone rather than being the sole route to anything.
+Chat also has a per-document system-prompt editor + a saved-preset bar (TWO shared
 drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat AND
 notebook -- fix a bug in the shared factory, never in one page's copy).
 The system prompt is an OVERRIDE BOX (owner rule, v1.62.3): a preset OWNS a
@@ -193,7 +201,12 @@ appears in the UI with no frontend change; `ui:"hidden"` on a field is what
 keeps it out), and chat switches models mid-conversation honestly: history
 media the current model can't take is dropped AT THE WIRE with a per-message
 disclosure while staged attachments still BLOCK (deliberate asymmetry,
-commented at both sites -- do not unify), and chat now consumes
+commented at both sites -- do not unify). Since v1.72.0 the cap is checked at
+STAGING time too, so that send-side block's ONLY remaining case is media staged
+on a capable model and then switched away -- a drop or paste onto a model
+without the cap now refuses immediately and stages nothing, because a staged
+blob the user must later hunt down and clear is worse than a straight no.
+Chat also consumes
 `/v1/admin/models` (residency) + `load?warm=true` (its Load button). Only
 LOSS gates a switch: load cost is DISCLOSED, never confirmed (owner call,
 v1.62.3) -- residency dots, the Load button, and a live pre-first-token

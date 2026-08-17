@@ -217,6 +217,15 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   and `.notebook-item__delete` now match it. Prefer this to `dblclick`, which
   iOS Safari maps to zoom (conversation rename kept a reveal-on-touch "Ren"
   button for this reason).
+- **A pointer-only affordance is allowed only when it duplicates a path that
+  already works on touch.** Chat's drag-and-drop attach (v1.72.0) has no touch
+  equivalent and needs none: the attach button (which opens the iPhone photo
+  library) and paste both remain, and dropping does nothing they cannot. This
+  is not an exception to the hover rule above — that rule is about an
+  affordance being *unreachable* on the phone, and nothing here is reachable
+  only by dragging. Before adding another pointer-only interaction, name the
+  phone path that already reaches the same outcome; if there isn't one, the
+  interaction is not ready.
 - **The settings entry point is device-specific, one drawer.** Desktop = a gear
   `nav-item` at the foot of the sidebar rail; phone = a trailing `⚙` item in
   `#bottom-nav` (`.drawer-gear-bottom`). **Not a floating FAB** — a page with a

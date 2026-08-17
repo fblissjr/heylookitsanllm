@@ -1,6 +1,16 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-08-11 (per-model config editor: the Models page grew a
+Last updated: 2026-08-17 (chat attachments grew a third input: drag-and-drop
+onto the thread, with a drop overlay whose label names what THIS model accepts.
+Picker, paste and drop now funnel through one `addFiles` -> `addPendingFiles`
+routine, so paste can stage audio (it was image-only) and every input is gated
+once. Paste moved off the composer textarea to the page root -- a paste after
+clicking in the thread used to land nowhere -- and reads `clipboardData.files`
+with an `items` fallback for Safari. Cap gating moved to STAGING time: a drop or
+paste onto a model without the cap refuses loudly and stages nothing; the
+send-side block stays, but its case is now only "staged on a capable model, then
+switched away". Guarded by six checks in `tests/e2e/render.mjs`, all shown red
+against the pre-change tree. Previously 2026-08-11: per-model config editor -- the Models page grew a
 schema-driven Configure panel consuming the v1.52-1.53 admin surface --
 `GET /v1/admin/model-options` (field type/bounds/enum/default + the six-class
 `effect` metadata + `arg`/`ui`/`shape`/`reason` hints) and

@@ -507,6 +507,28 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  position: relative;   /* containing block for the drag-and-drop overlay */
+}
+
+/* Drop-to-attach overlay. A pseudo-element, not a child node: the thread is a
+   flex column and a real child would take part in its layout. The label comes
+   from data-drop-label (set by refreshAttachBtn) so it names what the CURRENT
+   model accepts. pointer-events: none is load-bearing -- an overlay that takes
+   the pointer swallows the drop it is advertising. */
+.chat__thread--dragover::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  inset: 0.5rem;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--r-big);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--ink);
+  font-size: var(--text-body);
 }
 
 .chat__bar {
