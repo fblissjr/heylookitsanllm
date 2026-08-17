@@ -608,10 +608,15 @@ def sampler_summary_from_request(request: Any) -> dict:
     invariant violation; this function is the canonical way to produce the
     sampler_summary field for a request event.
     """
+    # Content-free by construction (knob names and their values, never text),
+    # so a knob that changes generation belongs here. reasoning_effort was
+    # missed on the way in: two requests at "low" and "xhigh" produced
+    # identical summaries while their token counts and latency differed by a
+    # lot, and the one field that explained the difference was the absent one.
     fields = (
         "temperature", "top_p", "top_k", "min_p",
         "repetition_penalty", "repetition_context_size", "presence_penalty",
-        "max_tokens", "enable_thinking", "seed",
+        "max_tokens", "enable_thinking", "reasoning_effort", "seed",
         "preset",
     )
     result: dict[str, Any] = {}

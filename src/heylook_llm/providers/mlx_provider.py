@@ -192,10 +192,12 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     # add_generation_prompt must be False with it -- transformers refuses
     # the combination).
     template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
-    # Only alongside thinking-on: templates read reasoning_effort inside their
-    # thinking branch. transformers forwards unknown kwargs as template
-    # variables, so a model whose template ignores it is unaffected.
-    if reasoning_effort and enable_thinking:
+    # Whenever set, NOT gated on thinking: gpt-oss/harmony reads
+    # reasoning_effort unconditionally and has no enable_thinking, so a gate
+    # here makes the knob unreachable for that whole family. transformers
+    # forwards unknown kwargs as template variables, so a template that
+    # ignores it is unaffected.
+    if reasoning_effort:
         template_kwargs["reasoning_effort"] = reasoning_effort
     if continue_final_message:
         template_kwargs["continue_final_message"] = True
@@ -339,7 +341,7 @@ class UnifiedTextStrategy:
             # lose reasoning_effort the same way it loses enable_thinking.
             # In base_kwargs it would survive the retry and fail it again.
             template_kwargs = {"enable_thinking": enable_thinking}
-            if reasoning_effort and enable_thinking:
+            if reasoning_effort:
                 template_kwargs["reasoning_effort"] = reasoning_effort
 
             try:
@@ -491,9 +493,13 @@ class VLMVisionStrategy:
             self._batch_vision_processor = BatchVisionProcessor(max_workers=4)
 
         # Prepare VLM inputs: extract images, format prompt with chat template
+        # reasoning_effort rides the VISION path too. Without it the setting
+        # worked on a text turn and silently reverted to the template default
+        # the moment an image was attached -- same model, same conversation.
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
             request.messages, processor, model.config, model,
             enable_thinking=_resolve_enable_thinking(effective_request),
+            reasoning_effort=effective_request.get("reasoning_effort"),
         )
 
         num_images = len(images) if images else 0
@@ -625,12 +631,14 @@ class VLMVisionStrategy:
             pre_filled_cache=request_cache,
         )
 
-    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None, enable_thinking=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
+    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None,
+                                     enable_thinking=None, reasoning_effort=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
             vlm_apply_chat_template, model=model, enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
         )
 
 
@@ -703,6 +711,7 @@ class DiffusionStrategy:
             request.messages, processor, model.config, self._batch_vision_processor,
             vlm_apply_chat_template, model=model,
             enable_thinking=_resolve_enable_thinking(effective_request),
+            reasoning_effort=effective_request.get("reasoning_effort"),
         )
 
         inputs = vlm_prepare_inputs(

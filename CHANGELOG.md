@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.71.2]
+
+### Fixed
+
+Thirteen review findings against v1.71.0/v1.71.1. The knob shipped
+substantially unreachable:
+
+- **v3 chat dropped it entirely.** `_SAMPLER_KEYS` in
+  `conversation_generate_api` was a hand-maintained copy of
+  `samplers.REQUEST_SAMPLER_FIELDS`, and only the cascade was updated -- so the
+  one surface that generates server-side accepted the setting, stored it on the
+  conversation, sent it, and discarded it. Now derived from the shared tuple.
+- **The harmony family could never receive it.** Both providers gated on
+  `enable_thinking`, on the assumption that every template reads
+  reasoning_effort inside a thinking branch. gpt-oss refutes it: its template
+  reads reasoning_effort unconditionally and has no enable_thinking at all.
+  Sent whenever set now.
+- **The MLX vision path never forwarded it** -- depth worked on a text turn and
+  silently reverted to the template default the moment an image was attached.
+- **`reasoning_effort` is now its own capability**, not `thinking`. The two
+  come apart in both directions (Qwen3.5 reads enable_thinking only, gpt-oss
+  reasoning_effort only). MLX probes the template precisely; gguf rides
+  `supports_thinking` because the template lives inside GGUF metadata.
+- The Messages API could not express it (`MessageCreateRequest` +
+  `to_chat_request`), which Phase 3b would have propagated.
+- `sampler_summary_from_request` omitted it, so two requests at different
+  depths logged byte-identical sampler summaries.
+- The `Literal` union was spelled three times; now one `ReasoningEffort` alias.
+- MLX had zero tests for any of this; added, including the TypeError-retry
+  interaction the call-site comment reasons about.
+
+Two regressions from the v1.71.1 build-script fix, both self-inflicted:
+
+- `--rebuild` routed the manifest's symbolic `rev` through the new branch
+  resolution, so rebuilding a `master` build compiled NEWER upstream source
+  instead of re-linking the same source. It uses the recorded `sha` now.
+- `--rev HEAD` resolved to `origin/HEAD` -- every clone has that ref -- turning
+  "build what is checked out" into "build the remote default branch tip".
+  HEAD is excluded by name.
+
+Also: `heylookllm import --help` lost its paragraph break to argparse's
+default reflow (needs `RawDescriptionHelpFormatter`), and the v3 spec stamped
+`reasoning_effort` as v1.70.0 while everything else said 1.71.0.
+
 ## [1.71.1]
 
 ### Fixed

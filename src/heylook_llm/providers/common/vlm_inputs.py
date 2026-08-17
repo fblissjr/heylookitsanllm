@@ -38,6 +38,7 @@ def prepare_vlm_inputs_parallel(
     vlm_apply_chat_template_fn,
     model=None,
     enable_thinking=None,
+    reasoning_effort=None,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
@@ -121,6 +122,7 @@ def prepare_vlm_inputs_parallel(
         formatted_prompt = vlm_apply_chat_template_fn(
             processor, config, safe_messages, num_images=len(images),
             enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
         )
     except Exception as e:
         logging.error(f"Chat template error: {e}")

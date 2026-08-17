@@ -110,8 +110,12 @@ committed or packaged and there is nothing to `submodule init`. Audio input
 load) -- the 400 guard lives in MLXProvider.create_chat_completion.
 THINKING DEPTH: `reasoning_effort` (v1.71.0) is a CHAT-TEMPLATE VARIABLE, not a sampler
 knob -- it rides `chat_template_kwargs` beside `enable_thinking` (gguf) / apply_chat_template
-kwargs (MLX), and is DROPPED when thinking is off because every template reads it inside
-its thinking branch. The accepted SET IS PER MODEL (Qwen3.8: xhigh|medium|low and it RAISES
+kwargs (MLX). Sent WHENEVER SET, never gated on enable_thinking: gpt-oss/harmony reads it
+unconditionally and has no enable_thinking at all, so a gate made it unreachable for the
+one family the docs name as taking low|medium|high. Its CAPABILITY is separate from
+`thinking` for the same reason (Qwen3.5 reads one, gpt-oss the other): MLX probes the
+template file precisely, gguf rides `supports_thinking` because the template is inside
+GGUF metadata. The accepted SET IS PER MODEL (Qwen3.8: xhigh|medium|low and it RAISES
 otherwise; harmony: low|medium|high), so the schema Literal is their union and a wrong-for-
 this-model value reaches the template -- where llama-server turns a raised jinja exception
 into a 500. Absent = send nothing, leaving the template default (xhigh on Qwen3.8, which is

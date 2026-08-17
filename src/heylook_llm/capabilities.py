@@ -39,6 +39,20 @@ def template_supports_thinking(model_path: str) -> bool:
         return False
 
 
+def template_supports_reasoning_effort(model_path: str) -> bool:
+    """Whether the model's template reads ``reasoning_effort``.
+
+    Separate from the thinking capability on purpose: harmony models read
+    reasoning_effort and never mention enable_thinking, so a UI gating depth
+    on `thinking` hides it exactly where it is the only control that works.
+    """
+    try:
+        from heylook_llm.providers.common.template_info import read_template_info
+        return read_template_info(Path(model_path), None).supports_reasoning_effort
+    except Exception:
+        return False
+
+
 def infer_model_capabilities(model_config) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
@@ -64,6 +78,15 @@ def infer_model_capabilities(model_config) -> list[str]:
         ):
             capabilities.append("thinking")
 
+        # Depth is probed PRECISELY here: the template file is readable, so
+        # emit the cap only when it actually reads reasoning_effort. Note this
+        # is NOT implied by thinking -- Qwen3.5 reads enable_thinking and not
+        # reasoning_effort, gpt-oss the reverse.
+        if getattr(config, "model_path", None) and template_supports_reasoning_effort(
+            str(config.model_path)
+        ):
+            capabilities.append("reasoning_effort")
+
         # MLX models support hidden states extraction
         capabilities.append("hidden_states")
 
@@ -77,6 +100,14 @@ def infer_model_capabilities(model_config) -> list[str]:
         modalities = getattr(config, "modalities", None) or []
         if getattr(config, "mmproj_path", None) or "vision" in modalities:
             capabilities.append("vision")
+        # Depth on gguf rides supports_thinking, which is BEST-EFFORT rather
+        # than probed: the template lives inside GGUF metadata, so there is no
+        # cheap file to scan the way the MLX branch does. A thinking-capable
+        # GGUF whose template ignores reasoning_effort therefore shows the
+        # control and the kwarg goes unread -- the alternative was hiding it on
+        # Qwen3.8, the model the knob exists for.
+        if getattr(config, "supports_thinking", False):
+            capabilities.append("reasoning_effort")
         if "audio" in modalities:
             # gguf only: MLX strips audio towers at load, so the mlx branch
             # above must never emit this cap even when the model declares

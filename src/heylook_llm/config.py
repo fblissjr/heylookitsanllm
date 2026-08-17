@@ -52,6 +52,14 @@ class ChatMessage(BaseModel):
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
 
+# Thinking-depth vocabulary, declared ONCE. The union of the families that
+# read it: Qwen3.8 takes xhigh|medium|low, harmony takes low|medium|high. It
+# WILL grow (vendors keep inventing spellings), and three separate Literals
+# would let the request schema and the model-config schema drift apart -- a
+# value requests accept and PATCH 422s on.
+ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+
+
 class ChatRequest(BaseModel):
     model: Optional[str] = None
     messages: List[ChatMessage]
@@ -91,7 +99,7 @@ class ChatRequest(BaseModel):
     # template, and llama-server surfaces a raised jinja exception as a 500.
     # Absent = don't pass the kwarg at all, so the template's own default
     # applies (xhigh on Qwen3.8).
-    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
+    reasoning_effort: Optional[ReasoningEffort] = Field(
         default=None,
         description="Thinking depth when thinking is on. Valid values are "
                     "MODEL-SPECIFIC (Qwen3.8: xhigh|medium|low; harmony "
@@ -458,7 +466,7 @@ class MLXModelConfig(BaseModel):
         default=False, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default for the request field of the same name. Per-request
     # because it is a template variable resolved at prompt-build time.
-    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
+    reasoning_effort: Optional[ReasoningEffort] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Per-model default visual token budget per image (request vision_tokens
     # overrides; None = the processor's own default). Mapped per family by
@@ -888,7 +896,7 @@ class GGUFModelConfig(BaseModel):
     # the same name. Reaches llama-server as a chat_template_kwargs entry, so
     # the accepted set is whatever THIS model's embedded template accepts --
     # see ChatRequest.reasoning_effort for why the Literal is a union.
-    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
+    reasoning_effort: Optional[ReasoningEffort] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
 

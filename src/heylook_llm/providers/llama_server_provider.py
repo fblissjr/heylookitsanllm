@@ -411,12 +411,17 @@ class LlamaServerProvider(BaseProvider):
         if enable_thinking is not None:
             # must be a JSON bool -- llama-server rejects string values
             template_kwargs["enable_thinking"] = bool(enable_thinking)
-        # Only when thinking is actually ON: every template that reads
-        # reasoning_effort reads it INSIDE its thinking branch, so sending it
-        # with thinking off is at best inert and at worst an unread variable
-        # the next template revision starts acting on.
+        # Sent whenever set, NOT gated on enable_thinking. The gate this
+        # replaces assumed every template reads reasoning_effort inside a
+        # thinking branch; gpt-oss/harmony refutes that -- its template reads
+        # reasoning_effort UNCONDITIONALLY (defaulting to "medium") and has no
+        # enable_thinking at all, so gating made the knob unreachable for the
+        # exact family the docs name as taking low|medium|high. A template
+        # that does not read the variable simply ignores it (jinja forwards
+        # unknown kwargs as template variables), so the gate cost reachability
+        # and bought nothing.
         reasoning_effort = merged.get("reasoning_effort")
-        if reasoning_effort and enable_thinking:
+        if reasoning_effort:
             template_kwargs["reasoning_effort"] = str(reasoning_effort)
         if template_kwargs:
             payload["chat_template_kwargs"] = template_kwargs

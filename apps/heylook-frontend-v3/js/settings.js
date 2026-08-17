@@ -24,7 +24,7 @@ export const PARAM_META = {
   // rejects a value the request schema does not know. 'auto' = send nothing,
   // leaving the template's own default -- xhigh on Qwen3.8, which is why the
   // control exists at all.
-  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'thinking' },
+  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'reasoning_effort' },
   // Target visual tokens per image; the backend snaps to what the model's
   // processor supports (gemma-4 buckets 70..1120, qwen continuous).
   vision_tokens:           { label: 'Vision tokens / image', type: 'number', min: 16, max: 16384, step: 1, section: 'advanced', requiresCap: 'vision' },

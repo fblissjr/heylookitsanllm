@@ -57,6 +57,7 @@ from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.db import get_db as _get_db
 from heylook_llm.messages_api import StreamingEventTranslator
+from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.perf_collector import (
     ChunkTelemetry,
@@ -91,13 +92,15 @@ _ACTIVE: dict[str, AbortEvent] = {}
 # Sampler-bag keys that may reach ChatRequest from conv.params / overrides.
 # An allowlist, not passthrough: params is the sampler bag by contract, but a
 # stray key must never become a ChatRequest field by accident.
-_SAMPLER_KEYS = (
-    "temperature", "top_p", "top_k", "min_p", "repetition_penalty",
-    "repetition_context_size", "presence_penalty", "max_tokens", "seed",
-    "enable_thinking", "vision_tokens", "sampler",
-)
+# DERIVED, not hand-listed. This was a copy of samplers.REQUEST_SAMPLER_FIELDS
+# that drifted the moment a field was added to one and not the other:
+# reasoning_effort landed in the cascade and NOT here, so v3 chat -- the only
+# surface that generates server-side -- accepted the setting, stored it on the
+# conversation, sent it, and silently dropped it (2026-08-17).
+_SAMPLER_KEYS = REQUEST_SAMPLER_FIELDS + ("sampler",)
 # Cap-gated keys (the server-side twin of v3's PARAM_META requiresCap).
-_CAP_GATED = {"enable_thinking": "thinking", "vision_tokens": "vision"}
+_CAP_GATED = {"enable_thinking": "thinking", "vision_tokens": "vision",
+              "reasoning_effort": "reasoning_effort"}
 
 
 class GenerateRequest(BaseModel):

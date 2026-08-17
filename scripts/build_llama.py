@@ -165,6 +165,12 @@ def resolve_fetched_rev(path: Path, rev: str) -> str:
     way. The default no-`--rev` path never reaches the ambiguous case at all:
     it passes a concrete tag from ls-remote.
     """
+    # HEAD is excluded BY NAME: `git clone` always writes refs/remotes/origin/
+    # HEAD, so the lookup below would succeed and silently swap "what this
+    # checkout has" for "tip of the remote default branch" -- the opposite of
+    # what --rev HEAD asks for, and arbitrarily newer code.
+    if rev == "HEAD":
+        return rev
     remote = f"origin/{rev}"
     if not _ref_exists(path, remote):
         return rev
@@ -434,7 +440,14 @@ def main() -> None:
 
     if args.rebuild:
         manifest = read_manifest(path / "build")
-        rev = manifest.get("rev") or die("--rebuild needs an existing build manifest")
+        # The recorded SHA, not the recorded symbolic rev. --rebuild means
+        # "same source, new toolchain/flags"; a manifest that says
+        # rev: "master" would otherwise resolve to origin/master and rebuild
+        # whatever upstream merged since -- handing back a DIFFERENT
+        # llama-server than the one being rebuilt. Fall back to the symbolic
+        # name only for manifests written before the sha was recorded.
+        rev = (manifest.get("sha") or manifest.get("rev")
+               or die("--rebuild needs an existing build manifest"))
     else:
         rev = args.rev or latest_release_tag()
 

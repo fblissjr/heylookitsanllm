@@ -713,27 +713,48 @@ class TestReasoningEffort:
     """
 
     @staticmethod
-    def _payload(**body):
-        provider = LlamaServerProvider.__new__(LlamaServerProvider)
-        provider.config = {"model_path": "/x.gguf"}
-        provider.model_id = "test-gguf"
-        return provider._build_payload(req(**body))
+    def _payload(config=None, **body):
+        # make_provider, not __new__: __new__ skips __init__, so any attribute
+        # _build_payload starts reading would fail these as AttributeError
+        # rather than as a real assertion.
+        return make_provider(**(config or {}))._build_payload(req(**body))
 
-    def test_effort_rides_chat_template_kwargs_with_thinking_on(self):
+    def test_effort_rides_chat_template_kwargs(self):
         kw = self._payload(enable_thinking=True, reasoning_effort="low",
                            max_tokens=32)["chat_template_kwargs"]
         assert kw == {"enable_thinking": True, "reasoning_effort": "low"}
 
-    def test_effort_is_dropped_when_thinking_is_off(self):
-        # Every template that reads reasoning_effort reads it inside its
-        # thinking branch; sending it with thinking off is inert at best.
+    def test_effort_is_sent_even_with_thinking_off(self):
+        """NOT gated on enable_thinking. gpt-oss/harmony reads
+        reasoning_effort unconditionally and has no enable_thinking at all, so
+        gating made the knob unreachable for the one family the docs name as
+        taking low|medium|high. A template that ignores the variable is
+        unaffected -- jinja forwards unknown kwargs as template variables."""
         kw = self._payload(enable_thinking=False, reasoning_effort="low",
-                           max_tokens=32).get("chat_template_kwargs")
-        assert kw == {"enable_thinking": False}
+                           max_tokens=32)["chat_template_kwargs"]
+        assert kw == {"enable_thinking": False, "reasoning_effort": "low"}
+
+    def test_effort_alone_still_reaches_the_template(self):
+        """The harmony shape: depth set, thinking never mentioned."""
+        kw = self._payload(reasoning_effort="high", max_tokens=32)["chat_template_kwargs"]
+        assert kw["reasoning_effort"] == "high"
 
     def test_absent_effort_leaves_the_templates_own_default(self):
         kw = self._payload(enable_thinking=True, max_tokens=32)["chat_template_kwargs"]
         assert "reasoning_effort" not in kw
+
+    def test_model_level_default_reaches_the_payload(self):
+        """The third route the CHANGELOG claims (per request / per preset /
+        per model). It depends on the single line added to
+        EFFECTIVE_SAMPLER_KEYS, so it can regress silently."""
+        kw = self._payload({"reasoning_effort": "medium"},
+                           enable_thinking=True, max_tokens=32)["chat_template_kwargs"]
+        assert kw["reasoning_effort"] == "medium"
+
+    def test_request_beats_the_model_level_default(self):
+        kw = self._payload({"reasoning_effort": "medium"},
+                           reasoning_effort="low", max_tokens=32)["chat_template_kwargs"]
+        assert kw["reasoning_effort"] == "low"
 
     def test_a_typo_is_rejected_before_it_reaches_the_template(self):
         # llama-server surfaces a raised jinja exception as a 500, so a bad

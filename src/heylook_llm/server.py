@@ -87,6 +87,10 @@ def main():
             "Import remains the route for a model that lives somewhere you do "
             "not want watched, and for pinning an entry you intend to hand-edit."
         ),
+        # Default HelpFormatter reflows and collapses the blank line, which
+        # merges "what it does" into "you probably don't need this" -- the
+        # separation IS the point of the description.
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     import_parser.add_argument(
         "--folder", type=str, help="Path to folder containing models to import"

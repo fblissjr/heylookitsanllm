@@ -8,6 +8,7 @@ from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
+from heylook_llm.config import ReasoningEffort
 from heylook_llm.schema.content_blocks import InputContentBlock, TextBlock
 
 
@@ -70,6 +71,16 @@ class MessageCreateRequest(BaseModel):
     # Thinking mode (Qwen3 models)
     thinking: Optional[bool] = Field(
         default=None, description="Enable thinking mode for models that support it (e.g. Qwen3)"
+    )
+    # Same vocabulary as ChatRequest.reasoning_effort -- shared alias, so the
+    # two APIs cannot drift into accepting different value sets. Phase 3b is
+    # migrating v3 onto this API, so a knob missing here is a control the next
+    # surface to migrate silently loses.
+    reasoning_effort: Optional[ReasoningEffort] = Field(
+        default=None,
+        description="Thinking depth when thinking is on. Values are "
+                    "MODEL-SPECIFIC (Qwen3.8: xhigh|medium|low; harmony: "
+                    "low|medium|high). Absent = the template's own default.",
     )
 
     # Logprobs

@@ -157,7 +157,10 @@ backend):**
   per-param null-branching + full-panel-rebuild-on-reset.
 - Params: temperature, max_tokens, top_p, top_k (core); min_p, repetition_penalty, repetition_context_size,
   presence_penalty, seed (advanced); enable_thinking (advanced checkbox, shown only if model caps include
-  `thinking`; unchecking sets `null` not `false`); vision_tokens (advanced number, shown only if model caps
+  `thinking`; unchecking sets `null` not `false`); reasoning_effort (advanced SELECT, v1.71.1, shown only if
+  model caps include `reasoning_effort` — a capability distinct from `thinking`, because the two come apart:
+  Qwen3.5's template reads enable_thinking and never reasoning_effort, gpt-oss/harmony the exact reverse.
+  Empty option = send nothing, leaving the template's own default); vision_tokens (advanced number, shown only if model caps
   include `vision`; target visual tokens per image, backend snaps to the model's own processor support —
   gemma-4 buckets 70/140/280/560/1120, qwen continuous pixel budget; null = processor default).
 
@@ -506,15 +509,20 @@ the resolved path), the latter that it has an entry. Since v1.69.0 those differ,
 Import button must gate on `served` -- gating on `already_configured` offered Import for
 models running in the list above it.
 
-`ChatRequest.reasoning_effort` (v1.70.0) is thinking DEPTH: `low|medium|high|xhigh`,
+`ChatRequest.reasoning_effort` (v1.71.0) is thinking DEPTH: `low|medium|high|xhigh`,
 sent as a chat-template kwarg beside `enable_thinking` and dropped when thinking is off
 (every template that reads it reads it inside its thinking branch). The accepted set is
 MODEL-SPECIFIC — Qwen3.8 takes `xhigh|medium|low` and raises on anything else, harmony
 models take `low|medium|high` — so the schema Literal is their union and a value this
 model rejects surfaces as a template error. Absent = don't send the kwarg, leaving the
 template's own default (`xhigh` on Qwen3.8, which is why the control exists). v3 renders
-it as a `thinking`-gated select in the sampler panel; `samplerParams(caps)` drops it at
-the wire for models without the capability, like every other gated key.
+it as a `reasoning_effort`-gated select in the sampler panel; `samplerParams(caps)` drops
+it at the wire for models without the capability, like every other gated key. That
+capability is NOT implied by `thinking`: MLX probes the template file directly (precise),
+while gguf rides `supports_thinking` because the template lives inside GGUF metadata with
+no cheap file to scan (best-effort — a thinking-capable GGUF whose template ignores the
+variable shows the control and the kwarg goes unread). Sent whenever set, NOT gated on
+thinking being on: harmony reads it unconditionally and has no enable_thinking at all.
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
