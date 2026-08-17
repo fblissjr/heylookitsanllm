@@ -594,15 +594,20 @@ class GGUFModelConfig(BaseModel):
     and reports template_info() = None.
 
     Chat templating defaults to the jinja EMBEDDED IN THE GGUF, which means
-    whoever quantized the file chose the prompt format: publishers ship
-    materially different templates for the same weights (measured on
-    Qwen3.8-27B -- ggml-org embeds Qwen's official template byte-identically
-    while unsloth embeds a patched one that adds a `developer` role, merges
-    leading system messages, and DELETES three `raise_exception` guards).
-    Those exceptions are not cosmetic: a raised jinja exception surfaces as a
-    500 from llama-server, so the strict template hard-fails on message
-    arrays the permissive one renders. ``chat_template_path`` is the override,
-    so picking a quant no longer silently picks a prompt format.
+    whoever quantized the file chose the prompt format, and publishers ship
+    materially different templates for the same weights. ``chat_template_path``
+    is the override, so picking a quant no longer silently picks a format.
+
+    Measured on Qwen3.8-27B (live, both templates, 2026-08-17): ggml-org
+    embeds Qwen's official template byte-identically (8952 bytes); unsloth
+    embeds a patched one (9993) adding a `developer` role and MERGING up to
+    two leading system messages. The observable difference is narrow but real
+    -- two leading system messages render under unsloth and are a 500 under
+    official ("System message must be at the beginning"), because a raised
+    jinja exception surfaces as a 500 from llama-server. Both templates still
+    reject a system message that appears MID-conversation, so the permissive
+    one is not permissive in general; do not assume a shape works without
+    trying it.
     """
     model_config = ConfigDict(extra="forbid")
 

@@ -54,12 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (llama-server `--chat-template-file`). Until now the template baked in at
   quantization time was the only one reachable, so choosing a quant publisher
   silently chose the prompt format -- and publishers differ materially on the
-  same weights. Measured on Qwen3.8-27B: ggml-org embeds Qwen's official
-  template byte-identically, while unsloth embeds a patched one that adds a
-  `developer` role, merges leading system messages, and removes three
-  `raise_exception` guards. A raised jinja exception surfaces as a 500 from
-  llama-server, so the strict template hard-fails on message arrays the
-  permissive one renders.
+  same weights. Verified live on Qwen3.8-27B against both templates: ggml-org
+  embeds Qwen's official template byte-identically (8952 bytes); unsloth
+  embeds a patched one (9993) adding a `developer` role and merging up to two
+  leading system messages. Two leading system messages render under unsloth
+  and are a 500 under official ("System message must be at the beginning"),
+  since a raised jinja exception surfaces as a 500 from llama-server. Both
+  still reject a system message appearing mid-conversation.
 
   Classified `requires_reload`, which is the honest class: llama-server takes
   the template at spawn, so there is no per-request or per-preset form of it.

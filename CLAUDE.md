@@ -35,10 +35,13 @@ picks your prompt format and `chat_template_source` (MLX-only, template_info.py)
 NOT reach this provider -- `chat_template_path` (v1.68.0, `--chat-template-file`) is the
 override, requires_reload because llama-server takes it at SPAWN, which is also why no
 per-request/per-preset form exists (per-request lever = `chat_template_kwargs`).
-Publishers differ on the SAME weights and it is not cosmetic: measured on Qwen3.8-27B,
-ggml-org embeds Qwen's official template byte-identically while unsloth's deletes three
-`raise_exception` guards -- and a raised jinja exception is a 500 from llama-server, so
-the strict template hard-fails on message arrays the permissive one renders.
+Publishers differ on the SAME weights and it is not cosmetic (measured live on
+Qwen3.8-27B, both templates, 2026-08-17): ggml-org embeds Qwen's official template
+byte-identically (8952 bytes), unsloth a patched one (9993) adding a `developer` role
+and MERGING up to two leading system messages -- two leading system messages render
+under unsloth and are a 500 under official, because a raised jinja exception is a 500
+from llama-server. Both still reject a system message appearing MID-conversation, so
+"unsloth's is permissive" is false in general -- try the shape, do not assume it.
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in and should stay OFF unless you have
 checked it a win on YOUR model at YOUR context. NO PERFORMANCE NUMBERS IN TRACKED DOCS
