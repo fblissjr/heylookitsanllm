@@ -810,30 +810,37 @@ def import_models(args: Any) -> None:
     # "merge by resolved model_path" rule the Phase 6 registry substrate is
     # specified around (plan_2026-07.md item 1) -- adopting it here early
     # keeps a re-import from corrupting models.toml before that lands.
-    def _identity(path: str) -> str:
-        try:
-            return str(Path(path).expanduser().resolve())
-        except (OSError, RuntimeError):
-            return path  # unresolvable: fall back to the literal spelling
+    # NOT gated on `if existing_models`: a FRESH import needs intra-batch
+    # dedup too. --folder and --hf-cache can both reach one file, and
+    # scan_hf_cache rewrites the id to `org/name` AFTER the directory-name id
+    # was registered in existing_ids -- so the two ids never collide and both
+    # entries get written, on a first import as readily as a re-import.
+    from heylook_llm.model_registry import path_identity
 
-    if existing_models:
-        configured = {str(m["id"]) for m in existing_models if m.get("id")}
-        configured_paths = {
-            _identity(str(p)) for m in existing_models
-            if (p := (m.get("config") or {}).get("model_path"))
-        }
-        kept = []
-        for m in models:
-            path = (m.get("config") or {}).get("model_path")
-            if str(m.get("id")) in configured:
-                continue
-            if path and _identity(str(path)) in configured_paths:
-                logging.info(
-                    "skipping %s: already configured under a different id "
-                    "(same file after symlink resolution)", m.get("id"))
-                continue
-            kept.append(m)
-        models = kept
+    configured = {str(m["id"]) for m in existing_models if m.get("id")}
+    configured_paths = {
+        path_identity(str(p)) for m in existing_models
+        if (p := (m.get("config") or {}).get("model_path"))
+    }
+    kept = []
+    for m in models:
+        path = (m.get("config") or {}).get("model_path")
+        model_id = str(m.get("id"))
+        if model_id in configured:
+            continue
+        identity = path_identity(str(path)) if path else None
+        if identity and identity in configured_paths:
+            logging.info(
+                "skipping %s: already configured under a different id "
+                "(same file after symlink resolution)", model_id)
+            continue
+        # Extend BOTH sets as entries are accepted, so the batch dedupes
+        # against ITSELF and not only against what is already written down.
+        configured.add(model_id)
+        if identity:
+            configured_paths.add(identity)
+        kept.append(m)
+    models = kept
 
     if not models:
         if existing_models:

@@ -183,7 +183,11 @@ class LlamaServerProvider(BaseProvider):
         # is whatever the quantizer baked in. See GGUFModelConfig's docstring
         # for why that is a real choice and not a formality.
         if cfg.get("chat_template_path"):
-            args += ["--chat-template-file", cfg["chat_template_path"]]
+            # expanduser: `~` is an accepted spelling on this config surface
+            # (server_binary expands it), and llama-server gets argv directly
+            # with no shell, so an unexpanded `~` would reach it literally.
+            args += ["--chat-template-file",
+                     str(Path(cfg["chat_template_path"]).expanduser())]
         if cfg.get("draft_model_path"):
             args += ["-md", cfg["draft_model_path"]]
         if cfg.get("spec_type"):
@@ -253,7 +257,7 @@ class LlamaServerProvider(BaseProvider):
         # A missing file must not degrade to the embedded template either --
         # that would silently serve a different prompt format than configured.
         template = self.config.get("chat_template_path")
-        if template and not Path(template).is_file():
+        if template and not Path(template).expanduser().is_file():
             raise FileNotFoundError(
                 f"[GGUF] {self.model_id}: chat_template_path points at "
                 f"{template}, which is not a readable file. Fix the path or "

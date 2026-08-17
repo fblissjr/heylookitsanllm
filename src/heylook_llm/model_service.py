@@ -370,13 +370,15 @@ class ModelService:
         alone invited duplicate entries pointing at the same weights).
         Paths are resolved so symlinked spellings compare equal.
         """
+        from heylook_llm.model_registry import path_identity
+
         ids: set[str] = set()
         paths: set[str] = set()
         for m in self.list_configs():
             ids.add(m.id)
             model_path = getattr(m.config, "model_path", "")
             if model_path:
-                paths.add(str(Path(model_path).expanduser().resolve()))
+                paths.add(path_identity(model_path))
         return ids, paths
 
     def scan_paths(
@@ -522,21 +524,25 @@ class ModelService:
     # --- Config CRUD ---
 
     def list_configs(self) -> list[ModelConfig]:
-        """List all model configs (including disabled AND discovered).
+        """List all model configs WRITTEN DOWN (including disabled).
 
-        Discovery has to be folded in HERE too, not just in the router: this
-        backs ``GET /v1/admin/models``, which is what the v3 models page
-        renders. Reading models.toml alone would make a discovered model
-        servable and listed by ``/v1/models`` while being invisible in the UI
-        that manages models -- the two surfaces would disagree about what
-        exists. Read-only, exactly like the router's merge; nothing is
-        written (see _materialize_discovered for the write path).
+        Deliberately models.toml only -- do NOT fold discovery in here. Two
+        reasons, both found by review after an earlier version did:
+
+        1. This feeds ``_configured_identity``, which is what marks a scanned
+           model ``already_configured``. Including discovered models marks
+           every one of them configured, which silently empties
+           ``GET /v1/admin/models/discovered`` -- the C3 feature -- forever.
+        2. Rescanning per call makes the admin surface disagree with the
+           router in the WORSE direction: it would list a model downloaded
+           after startup that ``router.get_provider`` cannot resolve, so the
+           v3 Load button 400s.
+
+        The admin list route composes ``router.app_config.models`` instead --
+        one snapshot, so everything listed is loadable. See admin_api.
         """
-        from heylook_llm.model_registry import discover, merge_discovered
-
-        raw = self._read_toml()
-        data = merge_discovered(raw, discover(raw))
         configs = []
+        data = self._read_toml()
         for model_data in data.get("models", []):
             try:
                 configs.append(ModelConfig(**model_data))
@@ -547,32 +553,21 @@ class ModelService:
         return configs
 
     def get_config(self, model_id: str) -> ModelConfig | None:
-        """Get a single model's config by ID (constructs only the one entry --
-        constructing all N triggers each model's derive-at-load detection).
+        """Get a WRITTEN-DOWN model's config by ID (constructs only the one
+        entry -- constructing all N triggers each model's derive-at-load
+        detection).
 
-        models.toml is checked FIRST and returns without scanning: the common
-        case is a configured model, and discovery costs a filesystem walk.
-        Only an id that is not written down is worth a scan for.
+        models.toml only, for the same two reasons as list_configs: a
+        per-request filesystem walk on the event loop, and answering for
+        models the router's snapshot cannot load. Admin routes fall back to
+        ``router.app_config`` for the discovered case.
         """
-        raw = self._read_toml()
-        for model_data in raw.get("models", []):
+        for model_data in self._read_toml().get("models", []):
             if model_data.get("id") == model_id:
                 try:
                     return ModelConfig(**model_data)
                 except Exception as e:
                     logger.warning(f"Invalid model config '{model_id}': {e}")
-                    return None
-
-        from heylook_llm.model_registry import discover, merge_discovered
-
-        explicit = len(raw.get("models") or [])
-        merged = merge_discovered(raw, discover(raw))
-        for model_data in (merged.get("models") or [])[explicit:]:
-            if model_data.get("id") == model_id:
-                try:
-                    return ModelConfig(**model_data)
-                except Exception as e:
-                    logger.warning(f"Invalid discovered config '{model_id}': {e}")
                     return None
         return None
 
@@ -638,12 +633,29 @@ class ModelService:
         # would write an entry that shadows a different model.
         merged = merge_discovered(data, discover(data))
         for entry in (merged.get("models") or [])[existing:]:
-            if str(entry.get("id")) == str(model_id):
-                data.setdefault("models", []).append(copy.deepcopy(entry))
-                logging.info(
-                    "[registry] materializing discovered model %r into "
-                    "models.toml so the edit has somewhere to live", model_id)
-                return True
+            if str(entry.get("id")) != str(model_id):
+                continue
+            # THIN entry: identity only. Everything else the scanner derived
+            # (modalities, supports_thinking, mmproj_path, draft_model_path)
+            # is re-derived at load, and _create_mlx_entry states the rule --
+            # "Materializing any of these is a copy that rots when the model
+            # dir changes in place." Freezing them here would be worse than
+            # elsewhere, because the merge makes an explicit entry AUTHORITATIVE:
+            # re-quantize in place or drop in a new mmproj and the stale copy
+            # silently overrides fresh detection. The caller writes the one
+            # field it is actually setting.
+            src = entry.get("config") or {}
+            thin = {
+                "id": entry.get("id"),
+                "provider": entry.get("provider"),
+                "enabled": entry.get("enabled", True),
+                "config": {"model_path": src.get("model_path")},
+            }
+            data.setdefault("models", []).append(copy.deepcopy(thin))
+            logger.info(
+                "[registry] materializing discovered model %r into models.toml "
+                "so the edit has somewhere to live", model_id)
+            return True
         return False
 
     def update_config(
@@ -733,10 +745,29 @@ class ModelService:
         model would be a no-op that reads as a success, because the next scan
         serves it straight back. Disable it (``toggle_enabled``, which does
         materialize) or take it out of the scan folder.
+
+        Raises when the entry is a DISABLED override for a file discovery
+        still finds. Deleting that entry does not remove the model -- it
+        deletes the only record of the "off" decision, and the next scan
+        serves it again ENABLED. A delete that silently un-disables is worse
+        than the no-op this method already refuses.
         """
         with self._lock:
             data = self._read_toml()
             models = data.get("models", [])
+            target = next((m for m in models if m.get("id") == model_id), None)
+            if target is not None and not target.get("enabled", True):
+                probe = {k: v for k, v in data.items() if k != "models"}
+                probe["models"] = [m for m in models if m.get("id") != model_id]
+                from heylook_llm.model_registry import discover, merge_discovered
+                after = merge_discovered(probe, discover(probe))
+                if any(m.get("id") == model_id for m in after.get("models", [])):
+                    raise ValueError(
+                        f"'{model_id}' is a disabled override for a file that "
+                        f"discovery still finds; removing this entry would "
+                        f"re-enable it. Take it out of the scan folders, or "
+                        f"leave the entry in place to keep it off."
+                    )
             original_len = len(models)
             models = [m for m in models if m.get("id") != model_id]
 

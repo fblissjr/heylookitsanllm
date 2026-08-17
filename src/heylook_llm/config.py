@@ -937,14 +937,24 @@ class ModelConfig(BaseModel):
         return data
 
 class ScanConfig(BaseModel):
-    """Watch-folder config for periodic model discovery (C3).
+    """Watch-folder config: what the model store contributes to the registry.
 
-    Discovery is passive: ``MemoryManager.tick()`` rescans the configured
-    folders and optionally the HuggingFace cache every
-    ``scan_interval_seconds``. Discovered-but-not-imported models are
-    surfaced via ``GET /v1/admin/models/discovered``. There is NO
-    auto-import -- the frontend Models page (C5) presents an Add button
-    that hits the existing ``POST /v1/admin/models/import`` path.
+    Since v1.69.0 these folders are the REGISTRY, not just a notification
+    feed: ``model_registry`` folds everything found here into the served set
+    at router load, so a model under a scan folder is servable with no
+    models.toml entry. Nothing is written -- models.toml stays override-only,
+    and an entry there always wins (see model_registry for the merge rule).
+
+    ``scan_interval_seconds = 0`` disables scanning entirely: no periodic
+    rescan (``MemoryManager.tick()``) AND no load-time discovery. Setting it
+    to 0 must not leave load-time discovery running, or the documented off
+    switch would instead silently serve every model under the folders.
+
+    ``MemoryManager.tick()`` additionally maintains the passive
+    discovered-but-not-configured cache behind
+    ``GET /v1/admin/models/discovered`` -- still useful for "what is here
+    that I have not customized", now that being discovered is enough to be
+    served.
     """
     folders: List[str] = Field(default_factory=list)
     watch_hf_cache: bool = False

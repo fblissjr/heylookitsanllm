@@ -56,6 +56,28 @@ def _get_loaded_model_ids(request: Request) -> set[str]:
     return set(router.get_loaded_models().keys())
 
 
+def _served_configs(request: Request) -> list:
+    """Every model the ROUTER can serve -- models.toml plus discovery.
+
+    The router's ``app_config`` is the merged snapshot built at startup and
+    refreshed on reload, so it already contains discovered models. Reading it
+    (rather than rescanning per request) is what keeps this surface honest:
+    everything listed here resolves in ``router.get_provider``, so the v3
+    Load button cannot 404 on a row the page just drew. It also keeps the
+    recursive filesystem walk off the event loop -- these routes are async and
+    never await, so a seconds-scale scan here freezes in-flight SSE streams.
+    """
+    return list(request.app.state.router_instance.app_config.models)
+
+
+def _resolve_config(request: Request, model_id: str):
+    """A model's config whether it is written down or only discovered."""
+    written = _get_service(request).get_config(model_id)
+    if written is not None:
+        return written
+    return next((m for m in _served_configs(request) if m.id == model_id), None)
+
+
 def _safe_reload_config(request: Request) -> str | None:
     """Reload router config, returning a warning string on failure instead of raising."""
     try:
@@ -120,10 +142,9 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None) -> AdminMod
     response_model=AdminModelListResponse,
 )
 async def list_model_configs(request: Request):
-    service = _get_service(request)
     router = request.app.state.router_instance
     loaded_ids = _get_loaded_model_ids(request)
-    configs = service.list_configs()
+    configs = _served_configs(request)
     models = [_model_config_to_response(c, loaded_ids, router) for c in configs]
     return AdminModelListResponse(models=models, total=len(models))
 
@@ -187,8 +208,7 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
 
     from heylook_llm.ram_fit import fit_for_config
 
-    service = _get_service(request)
-    mc = service.get_config(model_id)
+    mc = _resolve_config(request, model_id)
     if mc is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 
@@ -372,9 +392,8 @@ async def unload_model(model_id: str, request: Request):
     response_model=AdminModelResponse,
 )
 async def get_model_config(model_id: str, request: Request):
-    service = _get_service(request)
     router = request.app.state.router_instance
-    config = service.get_config(model_id)
+    config = _resolve_config(request, model_id)
     if not config:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 

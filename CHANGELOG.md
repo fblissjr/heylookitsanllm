@@ -24,9 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `modelzoo/<vendor>` symlinks make one file reachable by two spellings that
   share no prefix.
 
-  Discovery is best-effort -- a scan that raises is logged and dropped, and
-  the server comes up on models.toml alone. Cost on a 30-model store is about
-  1.1s warm, 2.8s cold, paid once per load.
+  Discovery is best-effort and isolated per folder -- a scan that raises is
+  logged and skipped for that source only, and the server comes up on
+  models.toml alone. It runs at router load (startup and `reload_config`) and
+  on the rare admin write that materializes an entry; the read surfaces serve
+  from the router's snapshot rather than rescanning, which is what keeps a
+  recursive filesystem walk off the event loop. `scan_interval_seconds = 0`
+  disables it, matching what `ScanConfig` documents and `MemoryManager`
+  already honored.
 
 - Admin edits materialize on write: `update_config`, `toggle_enabled`, and
   `bulk_set_default_sampler` create a real entry when handed a

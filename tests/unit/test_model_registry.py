@@ -71,14 +71,42 @@ class TestMergeDiscovered:
         assert len(merged["models"]) == 1
         assert "already used by a different" in caplog.text
 
-    def test_no_discoveries_returns_the_input_untouched(self, store):
+    def test_no_discoveries_preserves_the_written_entries(self, store):
+        """Equal contents, not identity: the merge always returns a fresh dict
+        carrying a `models` key (see test_scan_only_config_still_yields_a_models_key)."""
         cfg = {"models": [entry("configured", store / "a.gguf")]}
-        assert merge_discovered(cfg, []) is cfg
+        merged = merge_discovered(cfg, [])
+        assert merged["models"] == cfg["models"]
 
     def test_inputs_are_not_mutated(self, store):
         cfg = {"models": [entry("configured", store / "a.gguf")]}
         merge_discovered(cfg, [entry("found", store / "b.gguf")])
         assert len(cfg["models"]) == 1, "merge mutated the caller's config"
+
+    def test_scan_only_config_still_yields_a_models_key(self):
+        """AppConfig.models is REQUIRED, so an absent key is a dead server.
+
+        The config shape that hits this is the one this design promotes: a
+        models.toml carrying only [scan]. Empty folder, unmounted volume, or
+        a failed scan all arrive here with discovered=[].
+        """
+        from heylook_llm.config import AppConfig
+
+        cfg = {"scan": {"folders": ["/nope"]}, "default_model": "none"}
+        merged = merge_discovered(cfg, [])
+        assert "models" in merged
+        AppConfig(**merged)  # must not raise
+
+    def test_two_discoveries_of_one_file_are_served_once(self, store):
+        """Dedup must apply within the batch, not only against models.toml.
+
+        scan_hf_cache rewrites the id to `org/name` after the directory-name
+        id is registered, and scan_directory follows symlinks -- so one file
+        legitimately arrives twice under different ids.
+        """
+        blob = store / "same.gguf"
+        merged = merge_discovered({"models": []}, [entry("a", blob), entry("b", blob)])
+        assert [m["id"] for m in merged["models"]] == ["a"]
 
 
 @pytest.mark.unit
@@ -95,7 +123,30 @@ class TestDiscoverIsBestEffort:
 
         monkeypatch.setattr(mi.ModelImporter, "scan_directory", boom)
         assert discover({"scan": {"folders": ["/nope"]}}) == []
-        assert "discovery scan failed" in caplog.text
+        assert "failed" in caplog.text
+
+    def test_one_bad_folder_does_not_discard_the_healthy_ones(
+            self, tmp_path, monkeypatch):
+        """Per-source isolation: an unmounted volume must cost only itself."""
+        import heylook_llm.model_importer as mi
+        good = entry("survivor", tmp_path / "ok.gguf")
+
+        def selective(self, path):
+            if "broken" in str(path):
+                raise OSError("unmounted")
+            return [dict(good)]
+
+        monkeypatch.setattr(mi.ModelImporter, "scan_directory", selective)
+        found = discover({"scan": {"folders": ["/broken", "/healthy"]}})
+        assert [e["id"] for e in found] == ["survivor"]
+
+    def test_interval_zero_disables_discovery(self, monkeypatch):
+        """The documented off switch must actually switch discovery off."""
+        import heylook_llm.model_importer as mi
+        monkeypatch.setattr(
+            mi.ModelImporter, "scan_directory",
+            lambda self, path: pytest.fail("scanned despite interval 0"))
+        assert discover({"scan": {"folders": ["/x"], "scan_interval_seconds": 0}}) == []
 
 
 @pytest.mark.unit
@@ -166,6 +217,40 @@ class TestMaterializeOnWrite:
         with pytest.raises(ValueError, match="not found"):
             svc.toggle_enabled("ghost")
 
+    def test_materialized_entry_is_thin(self, tmp_path, store, monkeypatch):
+        """Only identity + the edited field. Derived facts re-derive at load.
+
+        Freezing modalities/mmproj_path here is worse than elsewhere: the
+        merge makes an explicit entry AUTHORITATIVE, so a stale copy silently
+        overrides fresh detection after an in-place re-quantize.
+        """
+        blob = store / "found.gguf"
+        blob.write_text("x")
+        svc, cfg = self._service(tmp_path, store)
+        self._stub_scan(monkeypatch, [dict(
+            entry("found", blob), config={
+                "model_path": str(blob), "modalities": ["text", "vision"],
+                "supports_thinking": True, "mmproj_path": str(store / "mm.gguf")})])
+
+        svc.toggle_enabled("found")
+
+        import tomllib
+        written = tomllib.loads(cfg.read_text())["models"][0]
+        assert set(written["config"]) == {"model_path"}, written["config"]
+        assert written["enabled"] is False
+
+    def test_deleting_a_disabled_override_is_refused(
+            self, tmp_path, store, monkeypatch):
+        """Otherwise the delete silently RE-ENABLES the model."""
+        blob = store / "found.gguf"
+        blob.write_text("x")
+        svc, _ = self._service(tmp_path, store)
+        self._stub_scan(monkeypatch, [entry("found", blob)])
+        svc.toggle_enabled("found")  # materializes enabled = false
+
+        with pytest.raises(ValueError, match="re-enable"):
+            svc.remove_config("found")
+
 
 @pytest.mark.unit
 class TestAdminSurfaceSeesDiscovered:
@@ -191,22 +276,30 @@ class TestAdminSurfaceSeesDiscovered:
         monkeypatch.setattr(mi.ModelImporter, "scan_directory",
                             lambda self, path: [dict(e) for e in entries])
 
-    def test_list_configs_includes_discovered(self, tmp_path, store, monkeypatch):
+    def test_list_configs_is_written_down_only(self, tmp_path, store, monkeypatch):
+        """It feeds _configured_identity; folding discovery in here marks every
+        scanned model already_configured and permanently empties
+        GET /v1/admin/models/discovered."""
         blob = store / "found.gguf"
         blob.write_text("x")
         svc = self._service(tmp_path, store)
         self._stub_scan(monkeypatch, [entry("found", blob)])
 
-        assert [c.id for c in svc.list_configs()] == ["found"]
+        assert [c.id for c in svc.list_configs()] == []
+        assert svc.get_config("found") is None
 
-    def test_get_config_finds_a_discovered_model(self, tmp_path, store, monkeypatch):
+    def test_discovered_endpoint_still_sees_unconfigured_models(
+            self, tmp_path, store, monkeypatch):
+        """The C3 cache drops anything already_configured -- so a discovered
+        model must NOT be reported as configured."""
         blob = store / "found.gguf"
         blob.write_text("x")
         svc = self._service(tmp_path, store)
         self._stub_scan(monkeypatch, [entry("found", blob)])
 
-        got = svc.get_config("found")
-        assert got is not None and got.id == "found"
+        scanned = svc.scan_paths(paths=[str(store)], scan_hf=False)
+        assert [s.id for s in scanned] == ["found"]
+        assert scanned[0].already_configured is False
 
     def test_listing_does_not_write(self, tmp_path, store, monkeypatch):
         blob = store / "found.gguf"

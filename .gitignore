@@ -32,6 +32,11 @@ update-coderef.sh
 # configs
 model.toml
 models.toml
+# _write_toml keeps a copy alongside, and every admin write makes one --
+# including a plain enable/disable toggle since discovery-as-registry gave
+# those a reason to write. It is a byte-for-byte copy of models.toml (local
+# model paths, hand-tuned server_binary), so it must never be stageable.
+models.toml.bak
 
 # Runtime data at repo root (DuckDB stores, cache files). Package data at
 # src/heylook_llm/data/ stays tracked; this only catches the /data runtime dir.
