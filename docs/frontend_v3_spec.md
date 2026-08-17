@@ -369,8 +369,18 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
-`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,
+`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
 stale_reload_fields}], total}`.
+`source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
+(found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
+discovered model's `config` is not empty — it carries what the scanner assigned
+(`model_path`, `mmproj_path`, `modalities`, `supports_thinking`), so on the wire it looks
+exactly like a hand-written entry storing those keys. The difference is that those values
+are re-derived every load, and that the first save materialises an entry. v3 renders it as a `no entry` token on the row and a
+disclosure above the config editor, because the first save on a discovered model WRITES
+its entry. The list itself comes from the router's merged snapshot, so everything listed
+is loadable -- a rescan-per-request would advertise models the loaded router cannot
+serve.
 `config` is the model's STORED keys only (`exclude_unset`, 2026-08-11) — absent IS how a
 default is spelled in models.toml, and the config editor + the row's non-default summary
 chip depend on telling "explicitly set" from "inherited default". The resolved dump it
@@ -383,6 +393,14 @@ saved value differs from what the loaded process was built with (always `[]` whe
 loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
+`GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,watch_hf_cache,
+scan_interval_seconds,models_served,warning?}`. The `[scan]` table from models.toml --
+the watch folders discovery serves from. PUT takes any subset (absent = leave alone),
+writes models.toml (comments survive), then reloads the router, and answers with
+`models_served` so the UI can name the consequence rather than say "Saved".
+`scan_interval_seconds = 0` disables discovery entirely -- no periodic rescan AND no
+load-time discovery. This is the primary "add models" flow; scan+import is the fallback
+for a folder you do not want watched.
 `POST /{id}/fit` (added v1.60.0) body `{config_overrides?:{key: value|null}, headroom_gb?:8}` →
 `{weights_gb, headroom_gb, reclaimable_gb, working_set_gb?, max_buffer_gb?,
 sysctl_wired_mb?, sysctl_suggest_mb?, kv_headroom_gb?, hard_working_set,
@@ -481,6 +499,12 @@ Every mutating admin route runs in the server's threadpool, not on the event loo
 one re-runs the `[scan]` discovery walk (twice, counting the reload), so an `async`
 handler would freeze in-flight SSE streams for its duration. Expect these calls to take
 as long as a scan takes; other requests keep flowing meanwhile.
+
+`POST /v1/admin/models/scan` results carry `served` (v1.70.0) alongside
+`already_configured`: the former means the router serves that file already (matched on
+the resolved path), the latter that it has an entry. Since v1.69.0 those differ, and the
+Import button must gate on `served` -- gating on `already_configured` offered Import for
+models running in the list above it.
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,

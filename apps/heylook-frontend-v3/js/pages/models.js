@@ -33,6 +33,8 @@ export default createPage({
     // verdict; see onFitGate below). Only ever set for unloaded models.
     s.fitGates = new Map();
     s.configSaveNote = null;    // {id, text} one-shot: carries the save outcome across the post-save rebuild
+    s.scanConfig = null;        // [scan] table as the server has it
+    s.savingFolders = false;
 
     buildSkeleton(ctx);
     // No sampler/page settings here -- register so the drawer still offers the
@@ -49,6 +51,9 @@ export default createPage({
         renderModelList(ctx);
       })
       .catch(() => { s.optionsPromise = null; });
+    // Non-fatal, like the option schema: the watch-folder editor is a
+    // convenience over models.toml, and the model list must render without it.
+    loadWatchFolders(ctx);
     await fetchModels(ctx);
   },
 });
@@ -100,6 +105,24 @@ function buildSkeleton(ctx) {
 function buildScanControls(ctx) {
   const s = ctx.state;
 
+  // WATCH FOLDERS -- server config ([scan].folders in models.toml), not a
+  // browser preference. Everything under one of these is served with no
+  // entry, so this list is the primary way to add models; the one-off scan
+  // below is for a folder you do NOT want watched. It used to be a
+  // localStorage string that only ever fed a throwaway scan.
+  s.foldersInput = createEl('textarea', {
+    id: 'scan-folders',
+    class: 'input',
+    rows: '3',
+    placeholder: 'modelzoo\nmodelzoo/gguf',
+  });
+  s.foldersHf = createEl('input', { id: 'watch-hf', type: 'checkbox' });
+  s.foldersSaveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save watch folders']);
+  s.foldersSaveBtn.addEventListener('click', () => saveWatchFolders(ctx));
+  // role=status: the saved-count line is the only feedback that a folder took
+  // effect, and it must reach a screen reader (DESIGN.md §7).
+  s.foldersNote = createEl('div', { class: 'muted small', role: 'status' }, ['']);
+
   s.pathsInput = createEl('input', {
     id: 'scan-paths',
     type: 'text',
@@ -113,7 +136,24 @@ function buildScanControls(ctx) {
 
   return createEl('div', { class: 'scan-controls' }, [
     createEl('div', { class: 'scan-controls__row' }, [
-      createEl('label', { for: 'scan-paths' }, ['Folders to scan']),
+      createEl('label', { for: 'scan-folders' }, ['Watch folders (served automatically)']),
+      s.foldersInput,
+    ]),
+    createEl('div', { class: 'scan-controls__row scan-controls__row--check' }, [
+      s.foldersHf,
+      createEl('label', { for: 'watch-hf' }, ['Also watch the HuggingFace cache']),
+    ]),
+    createEl('div', { class: 'scan-controls__row' }, [s.foldersSaveBtn, s.foldersNote]),
+    createEl('div', { class: 'muted small' }, [
+      'One per line, read on the SERVER. Every model under a watch folder is '
+      + 'served without a models.toml entry — write an entry only to change '
+      + 'something (rename it, pin a chat template, turn it off).',
+    ]),
+
+    createEl('hr', { class: 'scan-controls__sep' }),
+
+    createEl('div', { class: 'scan-controls__row' }, [
+      createEl('label', { for: 'scan-paths' }, ['One-off scan (not watched)']),
       s.pathsInput,
     ]),
     createEl('div', { class: 'scan-controls__row scan-controls__row--check' }, [
@@ -121,10 +161,55 @@ function buildScanControls(ctx) {
       createEl('label', { for: 'scan-hf' }, ['Also scan the HuggingFace cache']),
     ]),
     createEl('div', { class: 'muted small' }, [
-      'Comma- or newline-separated. Paths are read on the SERVER, so a relative '
-      + 'one resolves against the server\'s working directory, not the browser\'s.',
+      'Comma- or newline-separated. Use this to import a model from somewhere '
+      + 'you do not want watched; a watched folder needs no import.',
     ]),
   ]);
+}
+
+async function loadWatchFolders(ctx) {
+  const s = ctx.state;
+  try {
+    const cfg = await api.adminScanConfig({ signal: ctx.signal });
+    if (!ctx.alive) return;
+    s.scanConfig = cfg;
+    s.foldersInput.value = (cfg.folders || []).join('\n');
+    s.foldersHf.checked = Boolean(cfg.watch_hf_cache);
+    if (cfg.scan_interval_seconds === 0) {
+      s.foldersNote.textContent = 'Discovery is off (scan_interval_seconds = 0).';
+    }
+  } catch (err) {
+    if (ctx.alive) s.foldersNote.textContent = `Could not read watch folders: ${err.message}`;
+  }
+}
+
+async function saveWatchFolders(ctx) {
+  const s = ctx.state;
+  if (s.savingFolders) return;
+  s.savingFolders = true;
+  s.foldersSaveBtn.disabled = true;
+  s.foldersNote.textContent = 'Saving…';
+  try {
+    const folders = s.foldersInput.value.split('\n').map((f) => f.trim()).filter(Boolean);
+    const cfg = await api.adminSetScanConfig({
+      folders,
+      watch_hf_cache: s.foldersHf.checked,
+    });
+    if (!ctx.alive) return;
+    s.scanConfig = cfg;
+    // models_served is the POINT of the edit -- naming the consequence beats
+    // "Saved", which says nothing about whether the folder found anything.
+    s.foldersNote.textContent = cfg.warning
+      ? cfg.warning
+      : `Saved — ${cfg.models_served} models served.`;
+    clearError(ctx);
+    await fetchModels(ctx, { keepStatus: true });
+  } catch (err) {
+    if (ctx.alive) s.foldersNote.textContent = `Save failed: ${err.message}`;
+  }
+  if (!ctx.alive) return;
+  s.savingFolders = false;
+  s.foldersSaveBtn.disabled = false;
 }
 
 const SCAN_PATHS_KEY = 'heylook-v3-scan-paths';
@@ -195,8 +280,8 @@ function renderModelList(ctx) {
   if (!s.models.length) {
     s.listEl.replaceChildren(
       createEl('div', { class: 'empty-state' }, [
-        'models.toml has no entries yet. Use "Find models" below to scan a folder '
-        + 'or the HuggingFace cache.',
+        'No models yet. Add a watch folder below — everything under one is '
+        + 'served without a models.toml entry.',
       ]),
     );
     return;
@@ -206,6 +291,16 @@ function renderModelList(ctx) {
   for (const m of s.models) {
     children.push(buildModelRow(ctx, m));
     if (s.configOpenId === m.id) {
+      // Disclosure, not a confirm: saving a discovered model's first setting
+      // creates its models.toml entry. Nothing is lost by that -- it is how
+      // an override comes into existence -- so it gets stated, not gated.
+      if (m.source === 'discovered') {
+        children.push(createEl('div', { class: 'config-panel__note muted small' }, [
+          'Found by a watch folder, so it has no models.toml entry yet. '
+          + 'Saving a setting here creates one; everything else keeps being '
+          + 'detected at load.',
+        ]));
+      }
       const panel = buildConfigPanel(ctx, m);
       children.push(panel.el);
       panelAnnounce = panel.announce;
@@ -228,6 +323,12 @@ function modelMetaLine(model) {
   }
   if (model.tags?.length) parts.push(model.tags.join(', '));
   if (!model.enabled) parts.push('disabled');
+  // A discovered model is served exactly like any other -- this is NOT a
+  // warning, and it must not read as one. It is here because the config
+  // panel behaves differently (the first save writes an entry) and because
+  // "why does this have no stored settings" is otherwise unanswerable: an
+  // entry with every field defaulted serializes identically to no entry.
+  if (model.source === 'discovered') parts.push('no entry');
   return parts.join(' · ');
 }
 
@@ -508,12 +609,20 @@ function renderScanResults(ctx) {
     return;
   }
 
-  const newOnes = s.scanResults.filter((r) => !r.already_configured);
-  const configuredCount = s.scanResults.length - newOnes.length;
+  // `served`, NOT `already_configured`. Since v1.69.0 a model under a watch
+  // folder is SERVED with no models.toml entry, so it reports
+  // already_configured=false while importing it would change nothing you can
+  // call -- this panel offered an Import button for models running in the
+  // list above it. `served` is the server's answer to "would this do
+  // anything", matched on the resolved path so a symlinked spelling counts.
+  const newOnes = s.scanResults.filter((r) => !r.served);
+  const servedCount = s.scanResults.length - newOnes.length;
 
   const children = [];
-  if (configuredCount > 0) {
-    children.push(createEl('div', { class: 'muted small' }, [`${configuredCount} already configured.`]));
+  if (servedCount > 0) {
+    children.push(createEl('div', { class: 'muted small' }, [
+      `${servedCount} already served — in models.toml, or found by a watch folder.`,
+    ]));
   }
   if (!newOnes.length) {
     children.push(createEl('div', { class: 'empty-state' }, ['No new models found.']));

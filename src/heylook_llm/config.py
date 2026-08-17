@@ -1191,6 +1191,44 @@ class StreamChunk(BaseModel):
 # Admin API Models (Model Management)
 # =============================================================================
 
+class ScanConfigRequest(BaseModel):
+    """PUT body for ``[scan]``. Every field optional -- absent = leave alone.
+
+    Not a settings-table concern: these folders decide what the server
+    SERVES (model_registry), so they live in models.toml beside the models,
+    not in the DuckDB `settings` table that holds operational preferences.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    folders: Optional[List[str]] = Field(
+        default=None,
+        description="Directories to discover models from. Tilde paths are "
+                    "expanded by the scanner. Order preserved, duplicates "
+                    "dropped.",
+    )
+    watch_hf_cache: Optional[bool] = Field(default=None)
+    scan_interval_seconds: Optional[int] = Field(
+        default=None, ge=0,
+        description="0 disables scanning entirely -- no periodic rescan AND "
+                    "no load-time discovery.",
+    )
+
+
+class ScanConfigResponse(BaseModel):
+    """``[scan]`` as saved, plus what it currently adds up to."""
+    folders: List[str] = Field(default_factory=list)
+    watch_hf_cache: bool = False
+    scan_interval_seconds: int = 900
+    models_served: int = Field(
+        default=0,
+        description="Models the router serves after this change (models.toml "
+                    "entries plus discovered) -- the observable consequence "
+                    "of editing the folder list.",
+    )
+    warning: Optional[str] = Field(
+        default=None, description="Saved, but the router reload failed.")
+
+
 class ScannedModelResponse(BaseModel):
     """A model discovered during filesystem scan.
 
@@ -1206,6 +1244,14 @@ class ScannedModelResponse(BaseModel):
     vision: bool = Field(default=False, description="Whether model supports vision (shadow of `modalities`)")
     quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")
     already_configured: bool = Field(default=False, description="True if ID already exists in models.toml")
+    served: bool = Field(
+        default=False,
+        description="The router already serves this file (via [scan] "
+                    "discovery). Distinct from already_configured, which "
+                    "means it has a models.toml entry -- since v1.69.0 a "
+                    "model can be served with no entry, so importing it "
+                    "would change nothing.",
+    )
     tags: List[str] = Field(default_factory=list)
     description: str = ""
     modalities: List[str] = Field(
@@ -1318,6 +1364,14 @@ class AdminModelResponse(BaseModel):
     # process was built with (router.stale_reload_fields -- server-derived,
     # so a UI's "reload to apply" marker survives remounts and other tabs).
     # Always [] for unloaded models.
+    source: Literal["config", "discovered"] = Field(
+        default="config",
+        description="Where this model comes from. 'config' = a models.toml "
+                    "[[models]] entry. 'discovered' = found under "
+                    "[scan].folders with no entry -- it is served all the "
+                    "same, but it has no stored config, and the first edit "
+                    "writes an entry for it.",
+    )
     stale_reload_fields: List[str] = Field(default_factory=list)
 
 

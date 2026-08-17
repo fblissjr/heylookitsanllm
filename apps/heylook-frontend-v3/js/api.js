@@ -85,6 +85,13 @@ const ROUTES = {
   adminReloadModel:  ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/reload${warm ? '?warm=true' : ''}`],
   adminScan:         ['POST', () => '/v1/admin/models/scan', true],
   adminImport:       ['POST', () => '/v1/admin/models/import', true],
+  // The [scan] watch folders -- what the server DISCOVERS models from. Since
+  // v1.69.0 a model under one of these is served with no models.toml entry,
+  // so this list is the primary way to add models; import is the fallback for
+  // a model that lives somewhere else. PUT reloads the router and answers
+  // with models_served, the observable consequence of the edit.
+  adminScanConfig:   ['GET', () => '/v1/admin/models/scan-config'],
+  adminSetScanConfig:['PUT', () => '/v1/admin/models/scan-config', true],
   // The per-provider option schema (field type/bounds/enum/default + the
   // `effect` class saying WHEN a change takes effect). NOT under
   // /v1/admin/models -- that router's {model_id:path} would eat the path.

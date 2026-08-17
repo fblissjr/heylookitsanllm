@@ -29,6 +29,8 @@ from heylook_llm.config import (
     ModelValidateRequest,
     SamplerInfo,
     SamplerListResponse,
+    ScanConfigRequest,
+    ScanConfigResponse,
     ScannedModelListResponse,
 )
 from heylook_llm.model_service import ModelService
@@ -93,8 +95,32 @@ def _safe_reload_config(request: Request) -> str | None:
         return f"Config saved but runtime reload failed: {e}. Changes will apply on next restart."
 
 
-def _model_config_to_response(mc, loaded_ids: set[str], router=None) -> AdminModelResponse:
+def _written_down_ids(request: Request) -> set[str]:
+    """Ids with an actual models.toml entry (as opposed to discovered ones).
+
+    One cheap TOML read, shared across a whole list render rather than paid
+    per row.
+    """
+    return {c.id for c in _get_service(request).list_configs()}
+
+
+def _model_config_to_response(mc, loaded_ids: set[str], router=None,
+                              written_ids: set[str] | None = None) -> AdminModelResponse:
     """Convert a ModelConfig to an AdminModelResponse.
+
+    ``source`` distinguishes a models.toml entry from a model discovery
+    serves with no entry at all, and it is NOT derivable from ``config``.
+    Checked live rather than assumed: a discovered model's ``config`` is not
+    empty, it carries whatever the SCANNER set (model_path, mmproj_path,
+    modalities, supports_thinking) because those fields really were assigned
+    on the entry the merge built. So a discovered model reads on the wire
+    exactly like a hand-written one with those keys stored -- which is the
+    argument for this field, not against it. The UI needs the difference
+    because editing a discovered model WRITES an entry for it, and because
+    those values are re-derived every load rather than stored.
+    ``written_ids=None`` means "caller did not compute it", which reports
+    every model as configured -- the pre-v1.69.0 answer, and the safe one for
+    callers that never see discovered models.
 
     ``capabilities`` is DERIVED through the same shared helper /v1/models
     uses. Reading ``mc.capabilities`` directly meant reporting the stored
@@ -121,6 +147,8 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None) -> AdminMod
         config=(mc.config.model_dump(exclude_unset=True)
                 if hasattr(mc.config, 'model_dump') else dict(mc.config)),
         loaded=loaded,
+        source=("config" if written_ids is None or mc.id in written_ids
+                else "discovered"),
         stale_reload_fields=(
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
@@ -175,7 +203,9 @@ async def list_model_configs(request: Request):
     router = request.app.state.router_instance
     loaded_ids = _get_loaded_model_ids(request)
     configs = _served_configs(request)
-    models = [_model_config_to_response(c, loaded_ids, router) for c in configs]
+    written = _written_down_ids(request)
+    models = [_model_config_to_response(c, loaded_ids, router, written)
+              for c in configs]
     return AdminModelListResponse(models=models, total=len(models))
 
 
@@ -542,10 +572,24 @@ def _scan_for_models(request: Request, scan_request: ModelScanRequest):
             paths=scan_request.paths or [],
             scan_hf=scan_request.scan_hf_cache,
         )
-        return {
-            "models": [asdict(r) for r in results],
-            "total": len(results),
+        # `already_configured` alone stopped being enough at v1.69.0: a model
+        # under [scan].folders with no entry reports False, so a UI that
+        # offers "Import" on that flag offers it for models the router is
+        # ALREADY serving. Mark what the router actually serves, matched on
+        # the resolved path (the same identity rule the registry merges on)
+        # so a symlinked spelling doesn't read as a different file.
+        from heylook_llm.model_registry import path_identity
+
+        served_paths = {
+            path_identity(p) for m in _served_configs(request)
+            if (p := getattr(m.config, "model_path", None))
         }
+        rows = []
+        for r in results:
+            row = asdict(r)
+            row["served"] = path_identity(r.path) in served_paths
+            rows.append(row)
+        return {"models": rows, "total": len(rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
 
@@ -615,6 +659,46 @@ def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest)
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _get_scan_config(request: Request):
+    """The [scan] watch folders -- what the server discovers models from.
+
+    models_served is filled here as well as on PUT: the same field reading a
+    real count after a write and a hardcoded 0 on read would be a worse lie
+    than omitting it.
+    """
+    saved = _get_service(request).get_scan_config()
+    return {**saved, "models_served": len(_served_configs(request))}
+
+
+def _put_scan_config(request: Request, body: ScanConfigRequest):
+    """Update [scan]; a folder added here becomes servable models.
+
+    `def`, not `async def`: this writes models.toml and then reloads the
+    router, which re-runs discovery -- see the threadpool banner above.
+
+    The reload is NOT optional here the way it is for a sampler tweak. Adding
+    a folder changes WHAT EXISTS, and leaving the router on its old snapshot
+    would show the caller a saved config whose models it cannot serve until
+    something else happens to reload. The warning field carries a reload that
+    failed, same contract as every other write route.
+    """
+    service = _get_service(request)
+    try:
+        saved = service.set_scan_config(
+            folders=body.folders,
+            watch_hf_cache=body.watch_hf_cache,
+            scan_interval_seconds=body.scan_interval_seconds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    warning = _safe_reload_config(request)
+    served = len(_served_configs(request))
+    result = {**saved, "models_served": served}
+    if warning:
+        result["warning"] = warning
+    return result
+
+
 # =============================================================================
 # Route registration order matters for {model_id:path} catch-all.
 # Fixed-path POST routes must come first.
@@ -625,6 +709,33 @@ scan_import_router = APIRouter(
     prefix="/v1/admin/models",
     tags=["Admin"],
     dependencies=[Depends(require_admin_token)],
+)
+
+scan_import_router.add_api_route(
+    "/scan-config",
+    _get_scan_config,
+    methods=["GET"],
+    summary="Get Watch Folders",
+    description=(
+        "The [scan] table from models.toml: which folders the server "
+        "discovers models from. Since v1.69.0 a model found here is SERVED "
+        "with no [[models]] entry -- models.toml is override-only."
+    ),
+    response_model=ScanConfigResponse,
+)
+
+scan_import_router.add_api_route(
+    "/scan-config",
+    _put_scan_config,
+    methods=["PUT"],
+    summary="Set Watch Folders",
+    description=(
+        "Update [scan] and reload the router. Absent fields are left alone. "
+        "Adding a folder makes every model under it servable; "
+        "scan_interval_seconds=0 turns discovery off entirely. Comments in "
+        "models.toml survive the write."
+    ),
+    response_model=ScanConfigResponse,
 )
 
 scan_import_router.add_api_route(

@@ -1008,6 +1008,23 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 /* Its own line inside the baseline-aligned flex row: the drafter note is a
    sentence, not another chip, and wrapping it beside the meta reads as noise. */
 .scan-row__note { flex-basis: 100%; overflow-wrap: break-word; }
+
+/* Watch-folder editor. The separator marks a real boundary: above it edits
+   server config (what gets served); below it is a throwaway scan. */
+.scan-controls__sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--space-4) 0 var(--space-3);
+}
+.scan-controls textarea.input { resize: vertical; min-height: 4.5rem; font-family: var(--font-mono); }
+
+/* Disclosure above the config editor for a model that has no models.toml
+   entry yet. Muted on purpose -- it states a consequence, it is not a
+   warning, and nothing is lost by saving. */
+.config-panel__note {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border);
+}
 .scan-row__actions { flex-shrink: 0; }
 
 /* ---- danger zone ---- */

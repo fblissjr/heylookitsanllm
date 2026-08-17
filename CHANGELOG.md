@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.70.0]
+
+### Added
+
+- v3 can tell a written-down model from a discovered one, and manage where
+  models come from:
+  - `AdminModelResponse.source` (`"config"` | `"discovered"`). Not derivable
+    from `config`: a discovered model's config is NOT empty -- it carries what
+    the scanner assigned, so on the wire it reads like a hand-written entry
+    storing those keys. The difference is that those values are re-derived
+    every load, and that the first save materializes an entry. v3 shows it as
+    a `no entry` token on the row plus a disclosure above the config editor.
+  - `ScannedModelResponse.served`. `already_configured` stopped being enough
+    at v1.69.0: a model under a watch folder reports it as false while the
+    router already serves it, so v3's scan panel offered Import for models
+    running in the list above it. The Import filter now gates on `served`.
+  - `GET|PUT /v1/admin/models/scan-config` -- the `[scan]` watch folders,
+    editable. PUT writes models.toml (comments carried), reloads the router,
+    and answers with `models_served` so the UI names the consequence instead
+    of saying "Saved". v3's Models page replaces its localStorage-only scan
+    path box with this; the one-off scan stays, relabelled, for folders you do
+    not want watched.
+  - `docs/frontend_v3_spec.md` §4 updated for all three.
+
+### Fixed
+
+- `_write_toml` rejected a models.toml with no `[[models]]` at all, because it
+  validated the raw parse and `AppConfig.models` is required. Since v1.69.0
+  that file is a legitimate config (everything discovered) -- so saving watch
+  folders on a fresh install failed validation. Found by the new tests, and
+  the same class as the startup bug fixed in 6d557ec.
+
 ## [1.69.1]
 
 ### Fixed

@@ -215,6 +215,15 @@ class ScannedModel:
     # file, and guessing it wrong is a load failure.
     draft_model_path: Optional[str] = None
     draft_spec_type: Optional[str] = None
+    # Is the ROUTER already serving this file? Since v1.69.0 a model under
+    # [scan].folders is servable with no models.toml entry, which splits the
+    # old two-state world in three: written down / served-by-discovery /
+    # neither. `already_configured` still means "has an entry"; only this
+    # says whether importing would actually change what you can call. The
+    # scan route fills it from the router snapshot -- ModelService has no
+    # router, and inventing a second discovery pass here would be the
+    # per-request walk the read paths were just freed from.
+    served: bool = False
 
 
 @dataclass
@@ -314,8 +323,13 @@ class ModelService:
         try:
             with open(tmp_path, "rb") as f:
                 parsed = tomllib.load(f)
-            # Validate it produces a valid AppConfig
-            AppConfig(**parsed)
+            # Validate it produces a valid AppConfig. `models` is defaulted in
+            # rather than required: since v1.69.0 a models.toml carrying only
+            # [scan] is a legitimate config (everything is discovered), and
+            # AppConfig.models is a REQUIRED field, so validating the raw
+            # parse rejected the entry-less file the registry design promotes.
+            # Saving watch folders on a fresh install failed on exactly this.
+            AppConfig(**{"models": [], **parsed})
         except Exception as e:
             tmp_path.unlink(missing_ok=True)
             raise ValueError(f"Generated TOML failed validation: {e}") from e
@@ -408,6 +422,53 @@ class ModelService:
                     seen_ids.add(model.id)
 
         return results
+
+    # --- [scan] watch folders -------------------------------------------
+
+    def get_scan_config(self) -> dict:
+        """The ``[scan]`` table as stored, with defaults filled in."""
+        raw = self._read_toml().get("scan") or {}
+        return {
+            "folders": [str(f) for f in (raw.get("folders") or [])],
+            "watch_hf_cache": bool(raw.get("watch_hf_cache", False)),
+            "scan_interval_seconds": int(raw.get("scan_interval_seconds", 900)),
+        }
+
+    def set_scan_config(self, folders=None, watch_hf_cache=None,
+                        scan_interval_seconds=None) -> dict:
+        """Update ``[scan]``; only the arguments given are changed.
+
+        These folders decide what the server SERVES (model_registry), so this
+        is a real config write, not a UI preference -- it goes through
+        _write_toml like any other, which means the comment carry and the
+        atomic replace apply. It deliberately does NOT reload the router: the
+        caller decides, because turning a folder on can add many models at
+        once and the cost of that belongs where it can be reported.
+        """
+        with self._lock:
+            data = self._read_toml()
+            scan = dict(data.get("scan") or {})
+            if folders is not None:
+                cleaned = [str(f).strip() for f in folders if str(f).strip()]
+                # Preserve order, drop repeats: two spellings of one folder
+                # would just make discovery walk it twice.
+                seen, unique = set(), []
+                for f in cleaned:
+                    if f not in seen:
+                        seen.add(f)
+                        unique.append(f)
+                scan["folders"] = unique
+            if watch_hf_cache is not None:
+                scan["watch_hf_cache"] = bool(watch_hf_cache)
+            if scan_interval_seconds is not None:
+                interval = int(scan_interval_seconds)
+                if interval < 0:
+                    raise ValueError("scan_interval_seconds must be >= 0 "
+                                     "(0 disables scanning entirely)")
+                scan["scan_interval_seconds"] = interval
+            data["scan"] = scan
+            self._write_toml(data)
+        return self.get_scan_config()
 
     def _raw_to_scanned(
         self,

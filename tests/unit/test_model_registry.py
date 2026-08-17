@@ -313,3 +313,106 @@ class TestAdminSurfaceSeesDiscovered:
         svc.get_config("found")
 
         assert cfg.read_text() == before
+
+
+@pytest.mark.unit
+class TestScanConfigAccessors:
+    """[scan] is server config, not a UI preference -- it decides what is served."""
+
+    def _service(self, tmp_path, body=""):
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(textwrap.dedent(f"""
+            default_model = "none"
+            {body}
+        """).strip())
+        return ModelService(str(cfg)), cfg
+
+    def test_defaults_when_no_scan_table(self, tmp_path):
+        svc, _ = self._service(tmp_path)
+        assert svc.get_scan_config() == {
+            "folders": [], "watch_hf_cache": False, "scan_interval_seconds": 900}
+
+    def test_partial_update_leaves_other_keys_alone(self, tmp_path):
+        svc, _ = self._service(tmp_path, '\n[scan]\nfolders = ["a"]\nwatch_hf_cache = true\n')
+        out = svc.set_scan_config(folders=["b", "c"])
+        assert out["folders"] == ["b", "c"]
+        assert out["watch_hf_cache"] is True, "an absent field must not be reset"
+
+    def test_duplicate_folders_are_dropped_in_order(self, tmp_path):
+        svc, _ = self._service(tmp_path)
+        # Two spellings of one folder just make discovery walk it twice.
+        assert svc.set_scan_config(folders=["a", "b", "a", " ", "b"])["folders"] == ["a", "b"]
+
+    def test_negative_interval_is_refused(self, tmp_path):
+        svc, _ = self._service(tmp_path)
+        with pytest.raises(ValueError, match="0 disables"):
+            svc.set_scan_config(scan_interval_seconds=-1)
+
+    def test_comments_elsewhere_survive_a_scan_edit(self, tmp_path):
+        """Editing [scan] must not cost comments on anything it did not touch.
+
+        The model_path is deliberately LONG. tomli_w renders an array-of-
+        tables INLINE when the whole array fits on one line and as [[models]]
+        when it does not, and toml_comments can only carry comments onto the
+        [[models]] form -- it counts sections and bails when they do not match
+        the model count. Real entries carry absolute paths and always take the
+        [[models]] branch; a short-path fixture would test the other one and
+        this assertion would fail for a reason that has nothing to do with
+        [scan]. See test_short_entries_render_inline_and_lose_comments.
+        """
+        long_path = "weights/" + "d" * 80 + "/model"
+        svc, cfg = self._service(tmp_path, textwrap.dedent(f'''
+            # why this model is pinned
+            [[models]]
+            id = "keep-me"
+            provider = "mlx"
+            enabled = true
+            [models.config]
+            model_path = "{long_path}"
+
+            [scan]
+            folders = ["a"]
+        '''))
+        svc.set_scan_config(folders=["a", "b"])
+        assert "# why this model is pinned" in cfg.read_text()
+
+    def test_short_entries_render_inline_and_lose_comments(self, tmp_path, caplog):
+        """A PRE-EXISTING edge, recorded rather than fixed here.
+
+        tomli_w inlines the models array when it fits on one line, so a
+        models.toml with short paths round-trips as `models = [{...}]`, and
+        toml_comments' section count no longer matches -- it degrades to a
+        comment-less write (loudly, by design) rather than refusing. Harmless
+        on a real config, where absolute paths are far past the threshold, but
+        a fresh minimal file silently loses annotations on its first admin
+        write. Pinned so the next reader finds the cause instead of the
+        symptom.
+        """
+        svc, cfg = self._service(tmp_path, textwrap.dedent('''
+            # short paths inline
+            [[models]]
+            id = "a"
+            provider = "mlx"
+            enabled = true
+            [models.config]
+            model_path = "w"
+
+            [scan]
+            folders = ["a"]
+        '''))
+        svc.set_scan_config(folders=["a", "b"])
+        text = cfg.read_text()
+        assert "models = [" in text and "[[models]]" not in text
+        assert "# short paths inline" not in text
+        assert "Comment carry-forward failed" in caplog.text
+
+    def test_a_comment_on_scan_itself_is_dropped_when_scan_changes(self, tmp_path):
+        """Documented toml_comments behaviour, pinned so it is not mistaken
+        for a bug: a comment survives only while its ANCHOR is unchanged, so
+        annotating the folder list means losing the note the next time you
+        edit the folder list. Provenance for a value you edit belongs in
+        CLAUDE.md, not beside the value."""
+        svc, cfg = self._service(
+            tmp_path, '\n# why this folder\n[scan]\nfolders = ["a"]\n')
+        svc.set_scan_config(folders=["a", "b"])
+        assert "# why this folder" not in cfg.read_text()
