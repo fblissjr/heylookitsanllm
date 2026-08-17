@@ -406,10 +406,20 @@ class LlamaServerProvider(BaseProvider):
             value = merged.get(src)
             if value is not None:
                 payload[dst] = value
+        template_kwargs: dict = {}
         enable_thinking = merged.get("enable_thinking")
         if enable_thinking is not None:
             # must be a JSON bool -- llama-server rejects string values
-            payload["chat_template_kwargs"] = {"enable_thinking": bool(enable_thinking)}
+            template_kwargs["enable_thinking"] = bool(enable_thinking)
+        # Only when thinking is actually ON: every template that reads
+        # reasoning_effort reads it INSIDE its thinking branch, so sending it
+        # with thinking off is at best inert and at worst an unread variable
+        # the next template revision starts acting on.
+        reasoning_effort = merged.get("reasoning_effort")
+        if reasoning_effort and enable_thinking:
+            template_kwargs["reasoning_effort"] = str(reasoning_effort)
+        if template_kwargs:
+            payload["chat_template_kwargs"] = template_kwargs
         return payload
 
     def _is_sleeping(self) -> bool:

@@ -18,6 +18,13 @@ export const PARAM_META = {
   presence_penalty:        { label: 'Presence penalty', type: 'number', min: 0, max: 2, step: 0.01, section: 'advanced' },
   seed:                    { label: 'Seed', type: 'number', min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, section: 'advanced' },
   enable_thinking:         { label: 'Enable thinking', type: 'checkbox', section: 'advanced', requiresCap: 'thinking' },
+  // Thinking DEPTH, only meaningful with thinking on. The accepted set is
+  // per-model (Qwen3.8 takes xhigh/medium/low and RAISES otherwise; harmony
+  // models take low/medium/high), so this offers the union and the backend
+  // rejects a value the request schema does not know. 'auto' = send nothing,
+  // leaving the template's own default -- xhigh on Qwen3.8, which is why the
+  // control exists at all.
+  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'thinking' },
   // Target visual tokens per image; the backend snaps to what the model's
   // processor supports (gemma-4 buckets 70..1120, qwen continuous).
   vision_tokens:           { label: 'Vision tokens / image', type: 'number', min: 16, max: 16384, step: 1, section: 'advanced', requiresCap: 'vision' },
@@ -239,6 +246,17 @@ export function onDisplayChange(cb) {
 // ---------------------------------------------------------------------------
 
 function bindControl(key, meta) {
+  if (meta.type === 'select') {
+    // '' is the empty option and means "don't send the key at all" -- for
+    // reasoning_effort that leaves the model's chat template on its own
+    // default, which is NOT the same as any of the listed values.
+    const sel = createEl('select', { id: `set-${key}`, class: 'input' },
+      [createEl('option', { value: '' }, ['auto']),
+       ...meta.options.map((o) => createEl('option', { value: o }, [o]))]);
+    sel.value = cache[key] ?? '';
+    sel.addEventListener('change', () => setSetting(key, sel.value || null));
+    return sel;
+  }
   if (meta.type === 'checkbox') {
     const box = createEl('input', { id: `set-${key}`, type: 'checkbox', checked: cache[key] === true });
     // unchecking sets null (cascade), NOT false -- false would override the

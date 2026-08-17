@@ -248,7 +248,7 @@ VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 EFFECTIVE_SAMPLER_KEYS = (
     'temperature', 'top_p', 'top_k', 'min_p', 'max_tokens',
     'repetition_penalty', 'repetition_context_size', 'presence_penalty',
-    'enable_thinking', 'vision_tokens',
+    'enable_thinking', 'reasoning_effort', 'vision_tokens',
 )
 REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed',)
 

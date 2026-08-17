@@ -134,6 +134,7 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
+                            reasoning_effort=None,
                             continue_final_message=False):
     """
     Apply chat template using mlx-vlm's prompt_utils.
@@ -191,6 +192,11 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     # add_generation_prompt must be False with it -- transformers refuses
     # the combination).
     template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
+    # Only alongside thinking-on: templates read reasoning_effort inside their
+    # thinking branch. transformers forwards unknown kwargs as template
+    # variables, so a model whose template ignores it is unaffected.
+    if reasoning_effort and enable_thinking:
+        template_kwargs["reasoning_effort"] = reasoning_effort
     if continue_final_message:
         template_kwargs["continue_final_message"] = True
     try:
@@ -298,12 +304,14 @@ class UnifiedTextStrategy:
         nothing to continue.
         """
         enable_thinking = _resolve_enable_thinking(effective_request)
+        reasoning_effort = effective_request.get("reasoning_effort")
 
         if self.is_vlm:
             try:
                 prompt = vlm_apply_chat_template(
                     processor, model.config, messages, num_images=0,
                     enable_thinking=enable_thinking,
+                    reasoning_effort=reasoning_effort,
                     continue_final_message=continuing,
                 )
             except ValueError as e:
@@ -325,10 +333,19 @@ class UnifiedTextStrategy:
                 # add_generation_prompt flip above.
                 base_kwargs["continue_final_message"] = True
 
+            # Deliberately NOT in base_kwargs: the TypeError retry below
+            # re-passes base_kwargs verbatim and drops only what is spelled
+            # out here, so a wrapper with a narrow signature must be able to
+            # lose reasoning_effort the same way it loses enable_thinking.
+            # In base_kwargs it would survive the retry and fail it again.
+            template_kwargs = {"enable_thinking": enable_thinking}
+            if reasoning_effort and enable_thinking:
+                template_kwargs["reasoning_effort"] = reasoning_effort
+
             try:
                 try:
                     prompt = tokenizer.apply_chat_template(
-                        messages, enable_thinking=enable_thinking, **base_kwargs,
+                        messages, **template_kwargs, **base_kwargs,
                     )
                 except TypeError:
                     if continuing:

@@ -506,6 +506,16 @@ the resolved path), the latter that it has an entry. Since v1.69.0 those differ,
 Import button must gate on `served` -- gating on `already_configured` offered Import for
 models running in the list above it.
 
+`ChatRequest.reasoning_effort` (v1.70.0) is thinking DEPTH: `low|medium|high|xhigh`,
+sent as a chat-template kwarg beside `enable_thinking` and dropped when thinking is off
+(every template that reads it reads it inside its thinking branch). The accepted set is
+MODEL-SPECIFIC — Qwen3.8 takes `xhigh|medium|low` and raises on anything else, harmony
+models take `low|medium|high` — so the schema Literal is their union and a value this
+model rejects surfaces as a template error. Absent = don't send the kwarg, leaving the
+template's own default (`xhigh` on Qwen3.8, which is why the control exists). v3 renders
+it as a `thinking`-gated select in the sampler panel; `samplerParams(caps)` drops it at
+the wire for models without the capability, like every other gated key.
+
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,

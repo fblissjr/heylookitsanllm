@@ -107,7 +107,18 @@ a submodule: the clone + build tree live OUTSIDE the repo (fixed dir under the u
 home; `dir`/`$HEYLOOK_LLAMA_CPP_DIR` relocate), so upstream source can never be
 committed or packaged and there is nothing to `submodule init`. Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
-load) -- the 400 guard lives in MLXProvider.create_chat_completion. MODEL REGISTRY (v1.69.0, `model_registry.py`): models.toml is OVERRIDE-ONLY --
+load) -- the 400 guard lives in MLXProvider.create_chat_completion.
+THINKING DEPTH: `reasoning_effort` (v1.71.0) is a CHAT-TEMPLATE VARIABLE, not a sampler
+knob -- it rides `chat_template_kwargs` beside `enable_thinking` (gguf) / apply_chat_template
+kwargs (MLX), and is DROPPED when thinking is off because every template reads it inside
+its thinking branch. The accepted SET IS PER MODEL (Qwen3.8: xhigh|medium|low and it RAISES
+otherwise; harmony: low|medium|high), so the schema Literal is their union and a wrong-for-
+this-model value reaches the template -- where llama-server turns a raised jinja exception
+into a 500. Absent = send nothing, leaving the template default (xhigh on Qwen3.8, which is
+why the field exists). In MLX it must NOT ride `base_kwargs`: the TypeError retry re-passes
+those verbatim and strips only the explicitly-named kwargs, so a narrow TokenizerWrapper
+has to be able to lose it the same way it loses enable_thinking.
+MODEL REGISTRY (v1.69.0, `model_registry.py`): models.toml is OVERRIDE-ONLY --
 anything under `[scan].folders` is served with derived defaults, so a new download
 needs no import, no symlink, no edit. The merge is LOAD-time (`ModelRouter._load_config`,
 so startup AND reload get it) and NEVER writes models.toml; a `[[models]]` entry is

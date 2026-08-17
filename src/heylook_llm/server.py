@@ -75,7 +75,18 @@ def main():
 
     # Import command
     import_parser = subparsers.add_parser(
-        "import", help="Import models from directories or HF cache"
+        "import",
+        help="Import models from directories or HF cache (usually unnecessary "
+             "-- see [scan].folders)",
+        description=(
+            "Write [[models]] entries for models found on disk.\n\n"
+            "SINCE v1.69.0 THIS IS RARELY WHAT YOU WANT. Anything under a "
+            "[scan].folders watch folder is served with no entry at all, so "
+            "the usual way to add models is to add a folder -- in models.toml, "
+            "or on the v3 Models page, or via PUT /v1/admin/models/scan-config. "
+            "Import remains the route for a model that lives somewhere you do "
+            "not want watched, and for pinning an entry you intend to hand-edit."
+        ),
     )
     import_parser.add_argument(
         "--folder", type=str, help="Path to folder containing models to import"

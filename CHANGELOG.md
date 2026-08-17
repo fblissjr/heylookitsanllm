@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.71.0]
+
+### Added
+
+- `reasoning_effort` (`low|medium|high|xhigh`) -- thinking DEPTH, reachable
+  per request, per preset, and as a per-model default on both providers.
+  Qwen3.8 introduced the knob and its template defaults to `xhigh`, so until
+  now every request to it ran at maximum reasoning depth with no way down.
+  It is a chat-template variable, not a sampler knob: it rides
+  `chat_template_kwargs` (gguf) / apply_chat_template kwargs (MLX) beside
+  `enable_thinking`, and is dropped when thinking is off because every
+  template that reads it reads it inside its thinking branch. The accepted
+  set is MODEL-SPECIFIC, so the schema Literal is the union of the Qwen and
+  harmony vocabularies -- a typo is a 422 here rather than a template
+  exception llama-server would surface as a 500. v3 renders it as a
+  `thinking`-gated select; `samplerParams(caps)` drops it at the wire for
+  models without the capability.
+
+### Changed
+
+- `heylookllm import` now says in its own `--help` that it is usually
+  unnecessary: anything under a `[scan].folders` watch folder is served with
+  no entry. The command stays -- it is still the route for a model outside a
+  watched tree, and for pinning an entry you intend to hand-edit.
+
 ## [1.70.0]
 
 ### Added

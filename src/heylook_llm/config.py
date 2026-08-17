@@ -80,6 +80,24 @@ class ChatRequest(BaseModel):
 
     # Thinking mode control (Qwen3 models)
     enable_thinking: Optional[bool] = Field(default=None, description="Enable thinking mode for Qwen3 models")
+    # Depth of thinking, when thinking is on. A chat-template variable like
+    # enable_thinking, not a sampler knob -- the template turns it into a
+    # system-prompt instruction (Qwen3.8) or a harmony channel setting.
+    #
+    # The ACCEPTED SET IS PER MODEL and this Literal is their union: Qwen3.8
+    # takes xhigh/medium/low and RAISES on anything else, the harmony family
+    # takes low/medium/high. Constrained rather than free-form so a typo is a
+    # 422 here; an unsupported-but-spelled-correctly value still reaches the
+    # template, and llama-server surfaces a raised jinja exception as a 500.
+    # Absent = don't pass the kwarg at all, so the template's own default
+    # applies (xhigh on Qwen3.8).
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
+        default=None,
+        description="Thinking depth when thinking is on. Valid values are "
+                    "MODEL-SPECIFIC (Qwen3.8: xhigh|medium|low; harmony "
+                    "models: low|medium|high). Absent = the template's own "
+                    "default.",
+    )
 
     # Visual token budget per image (model-agnostic; mapped onto the loaded
     # model's own processor knob -- gemma-4 buckets / qwen pixel budget)
@@ -438,6 +456,10 @@ class MLXModelConfig(BaseModel):
     # Thinking mode (Qwen3 models with <think> blocks)
     enable_thinking: bool = Field(
         default=False, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    # Model-level default for the request field of the same name. Per-request
+    # because it is a template variable resolved at prompt-build time.
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Per-model default visual token budget per image (request vision_tokens
     # overrides; None = the processor's own default). Mapped per family by
     # providers/common/vision_budget.py.
@@ -861,6 +883,12 @@ class GGUFModelConfig(BaseModel):
     # route was `default_sampler = "thinking"`, which drags a presence_penalty
     # change in with it. None = unset = off.
     enable_thinking: Optional[bool] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    # Model-level default thinking DEPTH, mirroring the MLX config's field of
+    # the same name. Reaches llama-server as a chat_template_kwargs entry, so
+    # the accepted set is whatever THIS model's embedded template accepts --
+    # see ChatRequest.reasoning_effort for why the Literal is a union.
+    reasoning_effort: Optional[Literal["low", "medium", "high", "xhigh"]] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
 

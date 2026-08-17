@@ -702,3 +702,42 @@ class TestBinaryResolution:
         assert any("server_binary" in r.getMessage() for r in caplog.records
                    if r.levelno >= _logging.WARNING), \
             "a models.toml server_binary override must WARN naming its source"
+
+
+@pytest.mark.unit
+class TestReasoningEffort:
+    """Thinking DEPTH is a template variable, not a sampler knob.
+
+    Qwen3.8 added it and defaults to xhigh, so without a route the server can
+    only ever run that model at maximum reasoning depth.
+    """
+
+    @staticmethod
+    def _payload(**body):
+        provider = LlamaServerProvider.__new__(LlamaServerProvider)
+        provider.config = {"model_path": "/x.gguf"}
+        provider.model_id = "test-gguf"
+        return provider._build_payload(req(**body))
+
+    def test_effort_rides_chat_template_kwargs_with_thinking_on(self):
+        kw = self._payload(enable_thinking=True, reasoning_effort="low",
+                           max_tokens=32)["chat_template_kwargs"]
+        assert kw == {"enable_thinking": True, "reasoning_effort": "low"}
+
+    def test_effort_is_dropped_when_thinking_is_off(self):
+        # Every template that reads reasoning_effort reads it inside its
+        # thinking branch; sending it with thinking off is inert at best.
+        kw = self._payload(enable_thinking=False, reasoning_effort="low",
+                           max_tokens=32).get("chat_template_kwargs")
+        assert kw == {"enable_thinking": False}
+
+    def test_absent_effort_leaves_the_templates_own_default(self):
+        kw = self._payload(enable_thinking=True, max_tokens=32)["chat_template_kwargs"]
+        assert "reasoning_effort" not in kw
+
+    def test_a_typo_is_rejected_before_it_reaches_the_template(self):
+        # llama-server surfaces a raised jinja exception as a 500, so a bad
+        # value has to fail here where the error can name the field.
+        import pydantic
+        with pytest.raises(pydantic.ValidationError):
+            req(enable_thinking=True, reasoning_effort="xtreme")
