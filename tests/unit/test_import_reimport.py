@@ -292,6 +292,88 @@ class TestCliImportMergePreserve:
         # comments ride the same toml_comments machinery as admin writes
         assert "# hand-tuned: custom binary" in text
 
+    def test_renamed_entry_is_not_re_added_under_its_derived_id(
+            self, tmp_path, monkeypatch):
+        """A hand-renamed entry must not come back as a second entry.
+
+        The id is DERIVED from the directory name, so renaming an entry makes
+        the derived name stop matching and the id-only filter waves the same
+        weights through again. That is how a duplicate Muse-Glimmer entry
+        landed beside the hand-renamed one (2026-08-17), carrying a wrong
+        supports_thinking with it.
+        """
+        weights = tmp_path / "weights" / "muse-glimmer"
+        weights.mkdir(parents=True)
+        blob = weights / "model.gguf"
+        blob.write_text("x")
+
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(textwrap.dedent(f"""
+            default_model = "Muse-Glimmer-official"
+
+            [[models]]
+            id = "Muse-Glimmer-official"
+            provider = "gguf"
+            enabled = true
+            [models.config]
+            model_path = "{blob}"
+            supports_thinking = true
+        """).strip())
+
+        # What a rescan produces: the DERIVED id, same file, wrong thinking.
+        rescanned = {"id": "muse-glimmer", "provider": "gguf", "enabled": True,
+                     "config": {"model_path": str(blob),
+                                "supports_thinking": False}}
+        monkeypatch.setattr(ModelImporter, "scan_directory",
+                            _scan_stub([rescanned]))
+
+        import_models(_cli_args(cfg))
+
+        data = tomllib.loads(cfg.read_text())
+        assert [m["id"] for m in data["models"]] == ["Muse-Glimmer-official"]
+        assert data["models"][0]["config"]["supports_thinking"] is True
+
+    def test_symlinked_spelling_of_a_configured_path_is_not_re_added(
+            self, tmp_path, monkeypatch):
+        """Guard the guard: the two spellings must share no textual prefix.
+
+        modelzoo/<vendor> symlinks into the real store, so one file is
+        reachable by two paths that a string compare calls different. Only
+        resolving symlinks makes them equal -- without `.resolve()` this test
+        fails while the id-based one above still passes.
+        """
+        store = tmp_path / "store" / "vendor"
+        store.mkdir(parents=True)
+        blob = store / "model.gguf"
+        blob.write_text("x")
+        link_root = tmp_path / "modelzoo"
+        link_root.mkdir()
+        (link_root / "vendor").symlink_to(store, target_is_directory=True)
+        linked = link_root / "vendor" / "model.gguf"
+        assert linked.exists() and str(linked) != str(blob)
+
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(textwrap.dedent(f"""
+            default_model = "via-symlink"
+
+            [[models]]
+            id = "via-symlink"
+            provider = "gguf"
+            enabled = true
+            [models.config]
+            model_path = "{linked}"
+        """).strip())
+
+        # Scanned through the REAL path, under a different derived id.
+        monkeypatch.setattr(ModelImporter, "scan_directory", _scan_stub([
+            {"id": "model", "provider": "gguf", "enabled": True,
+             "config": {"model_path": str(blob)}}]))
+
+        import_models(_cli_args(cfg))
+
+        data = tomllib.loads(cfg.read_text())
+        assert [m["id"] for m in data["models"]] == ["via-symlink"]
+
     def test_a_configured_id_cannot_reenter_through_a_scan(self, tmp_path, monkeypatch):
         cfg = tmp_path / "models.toml"
         cfg.write_text(HAND_TUNED)

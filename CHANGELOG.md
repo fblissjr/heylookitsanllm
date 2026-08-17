@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.69.0]
+
+### Added
+
+- **Discovery-as-registry** (`model_registry.py`): models found under
+  `[scan].folders` are served without an import, a symlink, or an edit.
+  models.toml is never written -- the merge happens at load, in
+  `ModelRouter._load_config`, so both startup and `reload_config` get it.
+  Entries in models.toml are served exactly as written and always win;
+  discovery can only ADD. That makes models.toml override-only: write an entry
+  when you want to change something (a hand-chosen id, `chat_template_path`,
+  `spec_type`, `enabled = false`, a comment recording a trap).
+
+  Matching is on the RESOLVED `model_path` (`.resolve()` follows symlinks),
+  which is Phase 6 item 1's rule. Id matching is what fails: an id is derived
+  from the directory name, so a hand-renamed entry stops matching itself, and
+  `modelzoo/<vendor>` symlinks make one file reachable by two spellings that
+  share no prefix.
+
+  Discovery is best-effort -- a scan that raises is logged and dropped, and
+  the server comes up on models.toml alone. Cost on a 30-model store is about
+  1.1s warm, 2.8s cold, paid once per load.
+
+- Admin edits materialize on write: `update_config`, `toggle_enabled`, and
+  `bulk_set_default_sampler` create a real entry when handed a
+  discovery-only model, since editing one is by definition the moment it
+  stops being default-shaped. Reads never materialize, so browsing the models
+  page does not grow the file. `remove_config` deliberately does NOT
+  materialize -- removing a discovered model's entry would be a no-op that
+  reads as success, because the next scan serves it straight back.
+
+### Fixed
+
+- `heylookllm import` no longer re-adds a model that is already configured
+  under a different id. Dedup was by derived id alone, so a hand-renamed entry
+  was invisible to it and a rescan appended a second entry for the same
+  weights -- observed 2026-08-17, where the duplicate also carried a wrong
+  `supports_thinking`. Now the resolved `model_path` is compared too, the same
+  rule the registry merge uses. A re-import with nothing new leaves the file
+  byte-identical.
+
+## [1.68.0]
+
+### Added
+
+- gguf: `chat_template_path` overrides the GGUF-embedded chat template
+  (llama-server `--chat-template-file`). Until now the template baked in at
+  quantization time was the only one reachable, so choosing a quant publisher
+  silently chose the prompt format -- and publishers differ materially on the
+  same weights. Measured on Qwen3.8-27B: ggml-org embeds Qwen's official
+  template byte-identically, while unsloth embeds a patched one that adds a
+  `developer` role, merges leading system messages, and removes three
+  `raise_exception` guards. A raised jinja exception surfaces as a 500 from
+  llama-server, so the strict template hard-fails on message arrays the
+  permissive one renders.
+
+  Classified `requires_reload`, which is the honest class: llama-server takes
+  the template at spawn, so there is no per-request or per-preset form of it.
+  Being schema-derived, the field reaches the reload set, the import
+  allowlist, and v3's models-page config editor with no further wiring. A
+  configured-but-unreadable template fails at load with a named error rather
+  than degrading to the embedded one -- silently serving a different prompt
+  format is the failure this field exists to prevent, and at
+  `observability_level=off` (the default) the subprocess log is DEVNULL, so
+  the spawn failure would otherwise leave no diagnostic.
+
 ## [1.67.1]
 
 ### Fixed

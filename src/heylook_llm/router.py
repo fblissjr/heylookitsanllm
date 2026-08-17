@@ -152,7 +152,17 @@ class ModelRouter:
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
 
     def _load_config(self, config_path: str) -> dict:
-        """Load configuration from TOML file."""
+        """Load configuration from TOML, then fold in discovered models.
+
+        Both AppConfig construction sites (__init__ and reload_config) come
+        through here, so discovery applies to a reload as well -- dropping a
+        model into a scan folder and hitting reload is enough to serve it.
+
+        The merge is LOAD-time only: models.toml is never written. See
+        model_registry for the rule (explicit entries win, matched by resolved
+        model_path) and for why discovery can only ever add models, never
+        change or remove the ones written down.
+        """
         config_file = Path(config_path)
 
         # If user specified exact file with extension
@@ -160,18 +170,25 @@ class ModelRouter:
             if not config_file.exists():
                 raise FileNotFoundError(f"Config file not found: {config_path}")
             with open(config_file, 'rb') as f:
-                return tomllib.load(f)
+                return self._with_discovered(tomllib.load(f))
 
         # If no extension, add .toml
         toml_path = config_file.with_suffix('.toml')
         if toml_path.exists():
             with open(toml_path, 'rb') as f:
-                return tomllib.load(f)
+                return self._with_discovered(tomllib.load(f))
 
         raise FileNotFoundError(
             f"Config file not found: {toml_path}. "
-            f"Run 'heylookllm import' to create configuration."
+            f"Add a [scan] section or a [[models]] entry to create one."
         )
+
+    @staticmethod
+    def _with_discovered(config_data: dict) -> dict:
+        """Fold `[scan].folders` discoveries into the parsed config."""
+        from heylook_llm.model_registry import discover, merge_discovered
+
+        return merge_discovered(config_data, discover(config_data))
 
     def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
         """Get or create a loading lock for a specific model."""

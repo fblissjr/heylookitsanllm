@@ -179,6 +179,11 @@ class LlamaServerProvider(BaseProvider):
             args += ["--ctx-size", str(cfg["ctx_size"])]
         if cfg.get("mmproj_path"):
             args += ["--mmproj", cfg["mmproj_path"]]
+        # Absent -> llama-server uses the template embedded in the GGUF, which
+        # is whatever the quantizer baked in. See GGUFModelConfig's docstring
+        # for why that is a real choice and not a formality.
+        if cfg.get("chat_template_path"):
+            args += ["--chat-template-file", cfg["chat_template_path"]]
         if cfg.get("draft_model_path"):
             args += ["-md", cfg["draft_model_path"]]
         if cfg.get("spec_type"):
@@ -238,6 +243,22 @@ class LlamaServerProvider(BaseProvider):
         host = self.config.get("host", "127.0.0.1")
         port = int(self.config.get("port") or 0) or self._free_port()
         args = self._build_args(binary, port)
+
+        # Pre-flight the chat template override HERE, not in _build_args (which
+        # stays pure -- it is exercised by the argv/metadata drift test with
+        # paths that do not exist). Worth a check of its own even though
+        # mmproj_path has none: at observability_level=off, which is the
+        # DEFAULT, the subprocess's stdout goes to DEVNULL, so llama-server
+        # exiting on an unreadable template file leaves NO diagnostic anywhere.
+        # A missing file must not degrade to the embedded template either --
+        # that would silently serve a different prompt format than configured.
+        template = self.config.get("chat_template_path")
+        if template and not Path(template).is_file():
+            raise FileNotFoundError(
+                f"[GGUF] {self.model_id}: chat_template_path points at "
+                f"{template}, which is not a readable file. Fix the path or "
+                f"remove the field to use the template embedded in the GGUF."
+            )
 
         # Subprocess output honors the file-logging master switch: at
         # observability_level=off (the default) NOTHING is written under

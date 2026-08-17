@@ -589,9 +589,20 @@ class GGUFModelConfig(BaseModel):
     One entry = one servable model; MTP/draft artifacts are FIELDS here,
     never their own entries (embedded MTP -> just ``spec_type``; a sidecar
     drafter -> ``draft_model_path``; the same field the MLX config uses).
-    llama-server owns tokenization, chat templating (GGUF-embedded jinja),
-    and reasoning splitting -- the provider surfaces pre-split thinking via
-    GenerationChunk.thinking and reports template_info() = None.
+    llama-server owns tokenization, chat templating, and reasoning splitting
+    -- the provider surfaces pre-split thinking via GenerationChunk.thinking
+    and reports template_info() = None.
+
+    Chat templating defaults to the jinja EMBEDDED IN THE GGUF, which means
+    whoever quantized the file chose the prompt format: publishers ship
+    materially different templates for the same weights (measured on
+    Qwen3.8-27B -- ggml-org embeds Qwen's official template byte-identically
+    while unsloth embeds a patched one that adds a `developer` role, merges
+    leading system messages, and DELETES three `raise_exception` guards).
+    Those exceptions are not cosmetic: a raised jinja exception surfaces as a
+    500 from llama-server, so the strict template hard-fails on message
+    arrays the permissive one renders. ``chat_template_path`` is the override,
+    so picking a quant no longer silently picks a prompt format.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -601,6 +612,22 @@ class GGUFModelConfig(BaseModel):
     mmproj_path: Optional[str] = Field(
         default=None,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--mmproj"},
+    )
+    # Override the GGUF-embedded chat template with a jinja file on disk.
+    # requires_reload, not per_request: llama-server takes the template at
+    # SPAWN (--chat-template-file), so there is no per-request or per-preset
+    # form of this -- changing it costs a respawn, same as mmproj_path. The
+    # per-request lever that DOES exist is chat_template_kwargs (the provider
+    # already sends enable_thinking through it).
+    #
+    # `--chat-template-file`, never the `--chat-template` sibling: that one
+    # takes template TEXT, and only "commonly used" builtin names unless
+    # --jinja is set. A path keeps the template reviewable/diffable on disk
+    # instead of inlined into models.toml.
+    chat_template_path: Optional[str] = Field(
+        default=None,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--chat-template-file"},
     )
     # sidecar drafter (e.g. gemma mtp-*.gguf). `-md`, not the `--model-draft`
     # alias: `arg` must be the spelling the provider ACTUALLY emits, so a UI or

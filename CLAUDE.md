@@ -30,6 +30,15 @@ engine-PRE-SPLIT reasoning, e.g. llama-server's reasoning_content; errors RAISE
 GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-server
 runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
 heylook's parsers to pass-through -- never re-parse another engine's split output);
+the template llama-server uses is the one EMBEDDED IN THE GGUF, so the quant publisher
+picks your prompt format and `chat_template_source` (MLX-only, template_info.py) does
+NOT reach this provider -- `chat_template_path` (v1.68.0, `--chat-template-file`) is the
+override, requires_reload because llama-server takes it at SPAWN, which is also why no
+per-request/per-preset form exists (per-request lever = `chat_template_kwargs`).
+Publishers differ on the SAME weights and it is not cosmetic: measured on Qwen3.8-27B,
+ggml-org embeds Qwen's official template byte-identically while unsloth's deletes three
+`raise_exception` guards -- and a raised jinja exception is a 500 from llama-server, so
+the strict template hard-fails on message arrays the permissive one renders.
 always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in and should stay OFF unless you have
 checked it a win on YOUR model at YOUR context. NO PERFORMANCE NUMBERS IN TRACKED DOCS
@@ -95,7 +104,22 @@ a submodule: the clone + build tree live OUTSIDE the repo (fixed dir under the u
 home; `dir`/`$HEYLOOK_LLAMA_CPP_DIR` relocate), so upstream source can never be
 committed or packaged and there is nothing to `submodule init`. Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
-load) -- the 400 guard lives in MLXProvider.create_chat_completion. Router keeps `max_loaded_models=1`
+load) -- the 400 guard lives in MLXProvider.create_chat_completion. MODEL REGISTRY (v1.69.0, `model_registry.py`): models.toml is OVERRIDE-ONLY --
+anything under `[scan].folders` is served with derived defaults, so a new download
+needs no import, no symlink, no edit. The merge is LOAD-time (`ModelRouter._load_config`,
+so startup AND reload get it) and NEVER writes models.toml; a `[[models]]` entry is
+served exactly as written and always wins, discovery can only ADD. Matching is the
+RESOLVED `model_path` (`.resolve()` follows symlinks), never the id -- an id is DERIVED
+from the directory name, so a hand-renamed entry stops matching itself, and
+`modelzoo/<vendor>` symlinks make one file reachable by two spellings sharing no prefix;
+that pair silently duplicated a Muse-Glimmer entry (with a wrong `supports_thinking`)
+on 2026-08-17, which is also why the importer now dedups on resolved path. Discovery is
+BEST-EFFORT: a failing scan is logged and dropped, never fatal. Admin edits MATERIALIZE
+an entry on write (`update_config`/`toggle_enabled`/`bulk_set_default_sampler`) because
+editing IS the override; reads never do, or browsing the models page would grow the
+file. `remove_config` deliberately does not materialize -- the next scan would serve it
+back, so a "removed" model that reappears is worse than a clear no.
+Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
 config in `models.toml`. Every provider-config FIELD declares when a change
 takes effect (`json_schema_extra={"effect": ...}`, six classes; reload set +

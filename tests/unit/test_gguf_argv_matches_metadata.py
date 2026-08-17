@@ -20,6 +20,7 @@ from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 SAMPLE_VALUES = {
     "ctx_size": 4096,
     "mmproj_path": "/tmp/mmproj.gguf",
+    "chat_template_path": "/tmp/chat_template.jinja",
     "draft_model_path": "/tmp/draft.gguf",
     "spec_type": "draft-mtp",
     "spec_draft_n_max": 2,

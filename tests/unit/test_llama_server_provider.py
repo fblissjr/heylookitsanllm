@@ -128,6 +128,49 @@ class TestBuildArgs:
         for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm"):
             assert flag not in args
 
+    def test_chat_template_override_reaches_argv(self):
+        args = self._args(chat_template_path="/tmp/qwen38-official.jinja")
+        assert ("--chat-template-file", "/tmp/qwen38-official.jinja") in \
+            list(zip(args, args[1:]))
+
+    def test_missing_chat_template_fails_before_spawn(self, tmp_path, monkeypatch):
+        # The failure this prevents is silent: at observability_level=off the
+        # subprocess log is DEVNULL, so llama-server dying on an unreadable
+        # template file would surface as a bare startup timeout. Assert we
+        # never even reach Popen.
+        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
+                            lambda self: tmp_path / "llama-server")
+        monkeypatch.setattr(
+            llama_mod.subprocess, "Popen",
+            lambda *a, **k: pytest.fail("spawned despite an unreadable template"))
+        provider = make_provider(chat_template_path=str(tmp_path / "nope.jinja"))
+        with pytest.raises(FileNotFoundError, match="chat_template_path"):
+            provider.load_model()
+
+    def test_present_chat_template_passes_preflight(self, tmp_path, monkeypatch):
+        # Guard the guard: the check must key on the file existing, not reject
+        # the field outright (which would pass the test above for free).
+        tmpl = tmp_path / "ok.jinja"
+        tmpl.write_text("{{ messages }}")
+        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
+                            lambda self: tmp_path / "llama-server")
+        spawned = []
+        monkeypatch.setattr(
+            llama_mod.subprocess, "Popen",
+            lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
+                RuntimeError("stop here -- preflight passed")))
+        provider = make_provider(chat_template_path=str(tmpl))
+        with pytest.raises(RuntimeError, match="preflight passed"):
+            provider.load_model()
+        assert spawned, "preflight rejected a template file that exists"
+
+    def test_absent_chat_template_leaves_the_gguf_embedded_one_in_force(self):
+        # The default MUST stay "whatever the quantizer baked in". Emitting a
+        # flag here would override the embedded template with something the
+        # user never chose -- the exact failure this field exists to make
+        # explicit rather than accidental.
+        assert "--chat-template-file" not in self._args()
+
     @pytest.mark.parametrize("field,flag,value", [
         ("n_gpu_layers_draft", "-ngld", 0),   # 0 = drafter entirely off the GPU
         ("cache_ram_mb", "-cram", 0),         # 0 = disable the prompt cache

@@ -522,8 +522,20 @@ class ModelService:
     # --- Config CRUD ---
 
     def list_configs(self) -> list[ModelConfig]:
-        """List all model configs (including disabled)."""
-        data = self._read_toml()
+        """List all model configs (including disabled AND discovered).
+
+        Discovery has to be folded in HERE too, not just in the router: this
+        backs ``GET /v1/admin/models``, which is what the v3 models page
+        renders. Reading models.toml alone would make a discovered model
+        servable and listed by ``/v1/models`` while being invisible in the UI
+        that manages models -- the two surfaces would disagree about what
+        exists. Read-only, exactly like the router's merge; nothing is
+        written (see _materialize_discovered for the write path).
+        """
+        from heylook_llm.model_registry import discover, merge_discovered
+
+        raw = self._read_toml()
+        data = merge_discovered(raw, discover(raw))
         configs = []
         for model_data in data.get("models", []):
             try:
@@ -536,13 +548,31 @@ class ModelService:
 
     def get_config(self, model_id: str) -> ModelConfig | None:
         """Get a single model's config by ID (constructs only the one entry --
-        constructing all N triggers each model's derive-at-load detection)."""
-        for model_data in self._read_toml().get("models", []):
+        constructing all N triggers each model's derive-at-load detection).
+
+        models.toml is checked FIRST and returns without scanning: the common
+        case is a configured model, and discovery costs a filesystem walk.
+        Only an id that is not written down is worth a scan for.
+        """
+        raw = self._read_toml()
+        for model_data in raw.get("models", []):
             if model_data.get("id") == model_id:
                 try:
                     return ModelConfig(**model_data)
                 except Exception as e:
                     logger.warning(f"Invalid model config '{model_id}': {e}")
+                    return None
+
+        from heylook_llm.model_registry import discover, merge_discovered
+
+        explicit = len(raw.get("models") or [])
+        merged = merge_discovered(raw, discover(raw))
+        for model_data in (merged.get("models") or [])[explicit:]:
+            if model_data.get("id") == model_id:
+                try:
+                    return ModelConfig(**model_data)
+                except Exception as e:
+                    logger.warning(f"Invalid discovered config '{model_id}': {e}")
                     return None
         return None
 
@@ -585,6 +615,37 @@ class ModelService:
 
             return validated
 
+    def _materialize_discovered(self, data: dict, model_id: str) -> bool:
+        """Give a discovery-only model a real models.toml entry, in place.
+
+        Under discovery-as-registry (model_registry) a model can be servable
+        with no entry at all, so every mutating admin call can be handed an id
+        that ``_read_toml`` has never heard of. Editing one is BY DEFINITION
+        the moment it stops being default-shaped, so the edit is what writes
+        it down -- materialization happens on write and never on read, which
+        is what keeps a browse of the models page from growing the file.
+
+        Returns True when an entry was appended to ``data["models"]``. The
+        caller must then re-find the model; the entry is unsaved until the
+        caller's own ``_write_toml``.
+        """
+        from heylook_llm.model_registry import discover, merge_discovered
+
+        existing = len(data.get("models") or [])
+        # Route through merge_discovered rather than matching discover()
+        # output directly: it owns the "explicit wins / id collision loses"
+        # rule, and materializing something the router would refuse to serve
+        # would write an entry that shadows a different model.
+        merged = merge_discovered(data, discover(data))
+        for entry in (merged.get("models") or [])[existing:]:
+            if str(entry.get("id")) == str(model_id):
+                data.setdefault("models", []).append(copy.deepcopy(entry))
+                logging.info(
+                    "[registry] materializing discovered model %r into "
+                    "models.toml so the edit has somewhere to live", model_id)
+                return True
+        return False
+
     def update_config(
         self, model_id: str, updates: dict
     ) -> tuple[ModelConfig, list[str]]:
@@ -602,6 +663,10 @@ class ModelService:
                 if m.get("id") == model_id:
                     idx = i
                     break
+
+            if idx is None and self._materialize_discovered(data, model_id):
+                models = data["models"]
+                idx = len(models) - 1
 
             if idx is None:
                 raise ValueError(f"Model '{model_id}' not found")
@@ -662,7 +727,13 @@ class ModelService:
             return validated, changed_reload_fields
 
     def remove_config(self, model_id: str) -> bool:
-        """Remove a model from config. Files stay on disk."""
+        """Remove a model's entry from config. Files stay on disk.
+
+        Deliberately NOT materializing: removing the entry for a discovered
+        model would be a no-op that reads as a success, because the next scan
+        serves it straight back. Disable it (``toggle_enabled``, which does
+        materialize) or take it out of the scan folder.
+        """
         with self._lock:
             data = self._read_toml()
             models = data.get("models", [])
@@ -691,6 +762,13 @@ class ModelService:
             data = self._read_toml()
             models = data.get("models", [])
 
+            if not any(m.get("id") == model_id for m in models):
+                # A discovered model is enabled by default, so the only useful
+                # toggle is OFF -- and that needs an entry to hold the flag,
+                # or the next scan just serves it again.
+                if self._materialize_discovered(data, model_id):
+                    models = data["models"]
+
             for model in models:
                 if model.get("id") == model_id:
                     model["enabled"] = not model.get("enabled", True)
@@ -718,6 +796,14 @@ class ModelService:
         with self._lock:
             data = self._read_toml()
             models = data.get("models", [])
+            # This loop SKIPS unknown ids rather than raising, so without
+            # materializing first a discovered model would silently not get
+            # the sampler -- a bulk edit that reports success and changed
+            # nothing.
+            known = {m.get("id") for m in models}
+            for missing in [i for i in model_ids if i not in known]:
+                if self._materialize_discovered(data, missing):
+                    models = data["models"]
             updated = []
 
             for model in models:

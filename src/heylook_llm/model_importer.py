@@ -795,9 +795,45 @@ def import_models(args: Any) -> None:
 
     # Belt and suspenders next to the scanners' own existing_ids check: an
     # already-configured id must never re-enter through any scan path.
+    #
+    # The id check ALONE is not enough, and the gap is not theoretical. An id
+    # is DERIVED from the directory name, so the moment you rename an entry by
+    # hand the derived name stops matching and the same model re-enters as a
+    # second entry. Symlinks widen it further: modelzoo/<vendor> pointing into
+    # the real store means one file is reachable by two spellings that share
+    # no prefix. That combination added a duplicate Muse-Glimmer entry --
+    # under the derived id, with a WRONG supports_thinking -- beside the
+    # hand-renamed one it could not see (2026-08-17).
+    #
+    # So dedupe on the resolved model_path too: `.resolve()` follows symlinks,
+    # which is what makes the two spellings compare equal. This is the same
+    # "merge by resolved model_path" rule the Phase 6 registry substrate is
+    # specified around (plan_2026-07.md item 1) -- adopting it here early
+    # keeps a re-import from corrupting models.toml before that lands.
+    def _identity(path: str) -> str:
+        try:
+            return str(Path(path).expanduser().resolve())
+        except (OSError, RuntimeError):
+            return path  # unresolvable: fall back to the literal spelling
+
     if existing_models:
         configured = {str(m["id"]) for m in existing_models if m.get("id")}
-        models = [m for m in models if str(m.get("id")) not in configured]
+        configured_paths = {
+            _identity(str(p)) for m in existing_models
+            if (p := (m.get("config") or {}).get("model_path"))
+        }
+        kept = []
+        for m in models:
+            path = (m.get("config") or {}).get("model_path")
+            if str(m.get("id")) in configured:
+                continue
+            if path and _identity(str(path)) in configured_paths:
+                logging.info(
+                    "skipping %s: already configured under a different id "
+                    "(same file after symlink resolution)", m.get("id"))
+                continue
+            kept.append(m)
+        models = kept
 
     if not models:
         if existing_models:
