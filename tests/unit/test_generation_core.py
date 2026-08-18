@@ -270,8 +270,12 @@ class TestRunGeneration:
                 mock_process.return_value = ([1, 2], mock_working_cache)
 
                 effective = {'max_tokens': 100}
+                # spec=[]: a bare MagicMock HAS every attribute, so the mRoPE
+                # reuse gate (hasattr _rope_deltas/_position_ids) would read
+                # it as an mRoPE model and correctly disable the cache store
+                # this test asserts. An empty spec models a plain LM.
                 list(run_generation(
-                    model=MagicMock(),
+                    model=MagicMock(spec=[]),
                     tokenizer=MagicMock(),
                     prompt_tokens=[1, 2],
                     effective_request=effective,

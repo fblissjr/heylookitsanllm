@@ -340,3 +340,41 @@ class TestSlotThreadAffinity:
         # What the next request's thread does with restored state. Must not
         # raise "There is no Stream(gpu, N) in current thread".
         mx.eval(arrays)
+
+
+@pytest.mark.unit
+class TestMropeReuseGate:
+    """mRoPE-family language models keep _position_ids/_rope_deltas as
+    instance state maintained across decode; KV written under that
+    bookkeeping is not reconstructible from a restored cache (live-verified
+    silent-EMPTY outputs on chained restores, identical across mlx-vlm
+    0.6.13/0.6.15). The gate walks the same unwrap as _reset_vlm_positions
+    and fails toward re-prefill."""
+
+    def _gate(self, model):
+        from heylook_llm.providers.common.generation_core import _cache_restore_safe
+        return _cache_restore_safe(model, f"gate-{id(model)}")
+
+    def test_plain_model_is_safe(self):
+        class _Plain:
+            pass
+        assert self._gate(_Plain()) is True
+
+    def test_mrope_language_model_is_unsafe(self):
+        class _MropeLM:
+            def __init__(self):
+                self._rope_deltas = None  # instance state, qwen3_vl-style
+        class _Wrapper:
+            def __init__(self):
+                self.language_model = _MropeLM()
+        assert self._gate(_Wrapper()) is False
+
+    def test_gate_inspects_the_unwrapped_model(self):
+        # The wrapper itself carrying nothing must not mask inner state.
+        class _Inner:
+            def __init__(self):
+                self._position_ids = None
+        class _Wrapper:
+            def __init__(self):
+                self._lm = _Inner()
+        assert self._gate(_Wrapper()) is False

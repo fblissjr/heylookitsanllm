@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.78.0]
+
+### Fixed
+
+**mRoPE models are excluded from prompt-cache reuse (silent-empty-output
+class closed).** Chained cache restores on Qwen3-VL-style models produced
+deterministic EMPTY responses (greedy: fresh multi-turn = "Rome",
+cache-reused = "") -- their language models keep _position_ids/_rope_deltas
+as INSTANCE state maintained across decode steps, and KV written under that
+bookkeeping is not reconstructible from a restored cache. Verified latent,
+not new: identical on mlx-vlm 0.6.13 and 0.6.15, and the radix era shared
+the exposure. The gate is an attribute check on the unwrapped language
+model (the same walk _reset_vlm_positions does), logged once per model; a
+behavioral logits-equivalence probe was built first and REJECTED with
+evidence -- single-hop synthetic restores pass on the very model whose
+chained server restores fail, so only the real generate->store->restore
+chain discriminates. gemma-4 (incl. sliding-window layers) keeps its
+verified-working reuse; qwen3_5 hybrids are gated too, consistent with
+their documented mRoPE state (their effective reuse was already nil
+through trim refusals).
+
+**Latent spec-decode cache landmine defused.** mlx-lm's speculative path
+slices a provided prompt_cache into target+draft halves; heylook always
+passed a target-only list, which would hand any future MLX drafter an
+empty cache (no MLX entry ships one today -- all three drafters are gguf).
+With a draft model, mlx-lm now builds its own paired caches and
+cross-request reuse is skipped.
+
+### Changed
+
+mlx 0.32.0 -> 0.32.1 and mlx-vlm 0.6.13 -> 0.6.15 (floors follow the
+resolved-and-tested rule; mlx-lm 0.31.3 already IS the latest published
+release). The mlx 0.32.1 bump surfaced one real strictness change --
+overwriting a safetensors file whose lazily-loaded (mmap-backed) arrays
+are the data source now fails at save; the one test doing that
+materializes first (the repo's documented mx.load laziness gotcha, now
+enforced by the library).
+
 ## [1.77.1]
 
 ### Fixed

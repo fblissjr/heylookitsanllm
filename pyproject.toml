@@ -28,9 +28,9 @@ classifiers = [
 # markers keep a base install resolvable elsewhere.
 dependencies = [
     # MLX / model stack (darwin-only)
-    "mlx>=0.32.0; sys_platform == 'darwin'",
+    "mlx>=0.32.1; sys_platform == 'darwin'",
     "mlx-lm>=0.31.3; sys_platform == 'darwin'",
-    "mlx-vlm>=0.6.13; sys_platform == 'darwin'",
+    "mlx-vlm>=0.6.15; sys_platform == 'darwin'",
     "transformers>=5.15.0",    # Floor only; the real constraint is the [tool.uv] override below
     # REQUIRED, and deliberately NOT derivable from the declared dep graph -- do
     # not "clean this up" because `uv tree` shows nothing depending on it

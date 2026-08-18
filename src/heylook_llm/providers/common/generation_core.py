@@ -60,6 +60,43 @@ def ensure_gen_tokenizer(tokenizer):
     return wrapped
 
 
+# Cache-reuse safety gate. mRoPE-family language models (qwen3_vl-style)
+# keep _position_ids/_rope_deltas as INSTANCE state and maintain them across
+# decode steps -- KV written under that bookkeeping is not reconstructible
+# from a restored cache. Live-verified 2026-08-18: deterministic silent-EMPTY
+# outputs on chained server restores (identical on mlx-vlm 0.6.13 and
+# 0.6.15, so latent, not a regression), while single-hop synthetic probes
+# PASS -- which is why this is an attribute gate rather than a behavioral
+# probe: the failing shape needs a chained generate->store->restore through
+# the real machinery to reproduce. Models without instance position state
+# derive positions purely from cache offset and restore correctly (verified
+# live: gemma-4 incl. sliding-window layers, qwen3_5 hybrids within their
+# trim-refusal envelope). Same unwrap walk as _reset_vlm_positions -- the
+# two must always inspect the same object.
+_REUSE_VERDICT_LOGGED: set = set()
+
+
+def _cache_restore_safe(model, model_id: str) -> bool:
+    target = model
+    for attr in ('_lm', 'language_model'):
+        inner = getattr(target, attr, None)
+        if inner is not None:
+            target = inner
+            break
+    safe = not (hasattr(target, '_rope_deltas') or hasattr(target, '_position_ids'))
+    if model_id not in _REUSE_VERDICT_LOGGED:
+        _REUSE_VERDICT_LOGGED.add(model_id)
+        if safe:
+            logging.info(f"Prompt-cache reuse enabled for {model_id}")
+        else:
+            logging.info(
+                f"Prompt-cache reuse DISABLED for {model_id}: the language model keeps "
+                f"instance mRoPE position state, which a restored cache cannot satisfy -- "
+                f"every request re-prefills (correct, slower)"
+            )
+    return safe
+
+
 def _reset_vlm_positions(model) -> None:
     """Reset mRoPE position state cached on VLM language models.
 
@@ -315,8 +352,23 @@ def run_generation(
 
         cache_config = _build_cache_config(effective_request)
 
+        # cache_model_id gates the CACHE only -- model_id itself keeps
+        # feeding the draft tuner and perf paths untouched.
+        # Spec decode: mlx-lm's speculative path slices a provided
+        # prompt_cache into target+draft halves; a target-only list (ours,
+        # fresh OR restored) would hand the drafter an empty cache. No MLX
+        # entry ships a drafter today, but the landmine is real -- with a
+        # draft model, mlx-lm builds its own paired caches and we skip
+        # cross-request reuse entirely.
+        cache_model_id = model_id if draft_model is None else None
+        # mRoPE gate: only reuse cache state on models whose positions derive
+        # purely from cache offset (silent empty output is the failure mode
+        # being excluded -- see _cache_restore_safe).
+        if cache_model_id and not _cache_restore_safe(model, cache_model_id):
+            cache_model_id = None
+
         prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
-            model_id, model, prompt_tokens, cache_config, cache_manager
+            cache_model_id, model, prompt_tokens, cache_config, cache_manager
         )
 
     def prompt_progress_callback(processed: int, total: int):
@@ -371,7 +423,7 @@ def run_generation(
                 draft_model=draft_model,
                 num_draft_tokens=num_draft_tokens,
                 prompt_progress_callback=prompt_progress_callback,
-                prompt_cache=generation_cache if generation_cache else None,
+                prompt_cache=generation_cache if (generation_cache and draft_model is None) else None,
                 **extra_generate_kwargs,
             ):
                 # Abort check: Python bool, no GPU sync
@@ -424,7 +476,7 @@ def run_generation(
         # Store the KV snapshot as the model's slot for future prefix reuse.
         # Skip on error: a failed prefill leaves partially-populated cache
         # layers that would corrupt future requests via cascade failures.
-        if not generation_failed and model_id and prompt_cache and generation_cache:
+        if not generation_failed and prompt_cache and generation_cache:
             full_tokens = prompt_tokens + generated_token_ids
             store_generation_cache(prompt_cache, full_tokens, generation_cache)
             logging.debug(
