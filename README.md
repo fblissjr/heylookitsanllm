@@ -49,7 +49,7 @@ Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build 
 
 See [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) for the build contract (§4 = the backend API contract).
 
-The React frontend `apps/heylook-frontend-v2/` (served at `/v2`) is retiring after v3 cutover; the older legacy React app was removed 2026-07-09.
+The previous frontend (`apps/heylook-frontend-v2/`, served at `/v2`) was deleted at cutover 2026-08-18; the older legacy React app was removed 2026-07-09. Both live on in git history.
 
 ## Platform Support
 

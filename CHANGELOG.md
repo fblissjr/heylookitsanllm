@@ -20,6 +20,18 @@ Cache-property tests now pin BOTH probes behaviorally (repeated calls hit
 the filesystem once; shown red against the uncached version), so a third
 probe added beside them without the cache gets caught.
 
+## [1.77.0]
+
+### Removed
+
+**The v2 frontend is deleted (cutover complete -- owner call).**
+`apps/heylook-frontend-v2/` and its `/v2` mount in api.py are gone; v3 at
+`/v3` is the only frontend, as it has been in practice. A contract test now
+pins `/v2` as 404 -- the deletion is the contract. Both retired frontends
+live on in git history. Rides along: the root `/` info endpoint reports the
+real `__version__` instead of a hardcoded "1.0.1" that had been stale since
+v1.0.
+
 ## [1.76.0]
 
 ### Changed

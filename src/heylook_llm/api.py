@@ -273,23 +273,9 @@ async def clear_all_data(request: Request):
     result = await _clear(conn)
     return result
 
-# Serve v2 frontend static files at /v2
+# Serve the v3 frontend static files at /v3 (the only frontend since
+# v1.77.0 -- v2 was deleted at cutover, owner call 2026-08-18)
 import pathlib as _pathlib
-_v2_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v2"
-if _v2_frontend_dir.is_dir():
-    from starlette.responses import FileResponse
-
-    @app.get("/v2")
-    @app.get("/v2/{rest:path}")
-    async def serve_v2_frontend(rest: str = ""):
-        """Serve the v2 frontend SPA -- all routes return index.html."""
-        if rest:
-            resolved = (_v2_frontend_dir / rest).resolve()
-            if resolved.is_relative_to(_v2_frontend_dir) and resolved.is_file():
-                return FileResponse(resolved)
-        return FileResponse(_v2_frontend_dir / "index.html")
-
-# Serve v3 frontend static files at /v3
 _v3_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v3"
 if _v3_frontend_dir.is_dir():
     from starlette.responses import FileResponse
@@ -2235,9 +2221,10 @@ def _get_api_endpoints():
 )
 async def root():
     """Root endpoint showing server info and available APIs"""
+    from heylook_llm import __version__
     return {
         "name": "HeylookLLM",
-        "version": "1.0.1",
+        "version": __version__,
         "description": "High-performance local LLM server with OpenAI-compatible API",
         "documentation": {
             "interactive": "/docs",

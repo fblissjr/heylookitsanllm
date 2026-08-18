@@ -31,7 +31,7 @@ falling back to `index.html` for SPA routing, with path-traversal protection via
 do not generalize/parameterize the existing `/v2` block to also serve v3; two small explicit blocks are
 simpler than one parameterized one for a two-mount case. Update `openapi_tags`/description only if v3
 introduces new endpoint groups (it doesn't — it reuses the existing backend contract in §4 as-is).
-Cut over (retire v2, promote v3 to `/v2` or rename the mount) as a separate, later decision once v3 is
+CUTOVER EXECUTED 2026-08-18 (v1.77.0): v2 and its `/v2` mount are deleted; v3 stays at `/v3`. (Historical text below predates the cutover.) Cut over was deferred until v3 was
 verified end-to-end.
 
 ## What "much simpler" means here (decided)

@@ -5,7 +5,7 @@ conventional commits, TDD, path-privacy, docs) live in the user-level CLAUDE.md
 and still apply. Don't duplicate them here. Last verified: 2026-07-09 -->
 
 Personal MLX inference server on Apple Silicon: FastAPI backend + a vanilla-JS
-frontend (v3, current, served at `/v3`) with two retiring React frontends (v2, legacy).
+frontend (v3, served at `/v3` -- the ONLY frontend since v1.77.0).
 
 ## Orient first
 
@@ -237,10 +237,9 @@ fallbacks (`@media (hover:none)`; hover-only affordances are unreachable on
 iPhone), the settings drawer as a **modal** (seals `#app` with `inert`, closes on
 `hashchange`), aria-live states, label association -- are [DESIGN.md](./apps/heylook-frontend-v3/DESIGN.md) §7.
 
-**Frontend v2 `apps/heylook-frontend-v2/`** (React+Zustand+Vite) -- RETIRING
-after v3 cutover (plan Q2/Phase 3); don't invest here. See its
-[CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md). (The older legacy React app
-`apps/heylook-frontend/` was deleted 2026-07-09 -- v3 has parity.)
+(Retired frontends: `apps/heylook-frontend-v2/` + its `/v2` mount deleted at
+cutover 2026-08-18, v1.77.0; the older legacy React app 2026-07-09. Both live
+in git history; a contract test pins that `/v2` stays 404.)
 
 **Optloop-lib `apps/optloop-lib/`** -- library-level bench for mlx-lm/mlx-vlm fork experiments (app-level optloop retired 2026-07-06: it bypassed the server code it claimed to measure). [docs/optloop_guide.md](./docs/optloop_guide.md) · its [CLAUDE.md](./apps/optloop-lib/CLAUDE.md). NB: root pyproject pins UPSTREAM mlx-lm/mlx-vlm, not its forks -- fork-side bench wins don't reach the server until upstreamed/repointed.
 
@@ -291,7 +290,6 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - Route MemoryManager calls through `memory.safe_mm_call(...)` (no-op when None, swallows errors); use `sampler_summary_from_request` (memory.py) for "what was this configured with". Redesign status + the memory.py-stream consolidation follow-ups: `docs/project/TODO.md` + `internal/research/observability_and_config_redesign.md`.
 - Pydantic `Field` defaults MUST use keyword form (`Field(default=None, ...)`, never `Field(None, ...)`) -- this pyright build only recognizes the keyword form; positional defaults make every model constructor flag false "arguments missing" errors (repo-wide sweep done 2026-07-20).
 - Pydantic model + custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)` (`JSONResponse` double-serializes). SSE post-generation telemetry (peak mem, cache bytes) goes in the usage chunk's `timing` (client needs `stream_options.include_usage=true`).
-- Frontend v2 specifics (Pydantic `model_fields_set`, `<base href="/v2/">` SPA serving, sanitization): see its [CLAUDE.md](./apps/heylook-frontend-v2/CLAUDE.md).
 - `models.toml` comments SURVIVE admin writes (v1.58.0, `toml_comments.py`) -- but only while their ANCHOR is unchanged, so a note can never outlive what it describes: a comment on a top-level key needs that key's value unchanged; every comment inside a `[[models]]` entry needs that whole model byte-identical (normalized through `tomli_w`, so old hand-formatting doesn't pin anything); a block sitting above a `[[models]]` header additionally needs that FOLLOWING model unchanged and still next. Consequence: a comment on the value you are PATCHING is deliberately dropped -- provenance for a value you're changing still belongs in CLAUDE.md or `internal/`, not next to the value. Mechanism invariants: `tomli_w` stays authoritative for values/layout/order; tomlkit is used STRICTLY READ-ONLY for comment extraction, and comments are injected as lines into the fresh render, gated on the merged text parsing to exactly the fresh render's values -- any doubt degrades to a comment-less write, never a refusal. NEVER graft comments into a tomlkit-parsed document instead: mutating ANY item of a parsed array-of-tables (even comment trivia) makes `tomlkit.dumps` re-render the AoT as an inline array -- malformed for nested tables; that is the failure mode that sank the first attempt against `test_import_reimport.py`.
 - Never commit runtime data: `*.db`, `*.jsonl`, `/data/*`, `apps/*/data/*` are gitignored; package data at `src/heylook_llm/data/` is intentionally NOT ignored.
 - `.claude/` is local-by-default with a PER-FILE tracked allowlist (2026-07-26): tracking a NEW rule/agent/skill/hookify file requires edits in TWO places -- the `.gitignore` negation block AND the pre-commit hook's `ALLOWED_PATHS` (a bare dir negation would silently publish future files; hookify filenames must keep `.local.md` -- its loader glob is hardcoded). Files INSIDE the four tracked skill dirs track by default (publish-intent boundary, deliberate). `modelzoo/` and `adapters/` (j-space lenses; `HEYLOOK_JSPACE_DIR` default `adapters/jspace/<model_id>/`) are git-tracked dirs with gitignored contents (only their `.gitkeep`).
@@ -310,7 +308,13 @@ after v3 cutover (plan Q2/Phase 3); don't invest here. See its
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - `test_mlx_provider.py` SEGFAULTS at GC teardown when run in near-ISOLATION (MLX `unload`/`__del__` flakiness) but passes clean in any multi-file batch / the full suite -- not a regression; run it batched, not alone.
 - Provider unit tests build `MLXProvider` from RAW config dicts (bypassing `MLXModelConfig` validation; production passes `model_config.config.model_dump()`), so provider/loader code must tolerate un-normalized config (e.g. missing `modalities`) -- a back-compat branch that looks dead in the router path may be live only in tests.
-- Backend: `uv run pytest tests/unit/ tests/contract/ -v`. `--timeout` is not installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
+- Backend: `uv run pytest tests/unit/ tests/contract/ -v`. THE ORDER IS
+  LOAD-BEARING: tests/contract/conftest.py applies a SESSION-scoped
+  sys.modules MLX mock, and a session fixture only tears down at the end of
+  the whole pytest run -- invoke contract FIRST and every unit test after it
+  sees MagicMock arrays (~57 fake failures across mlx_perf/embeddings that
+  all pass in isolation; burned an hour on 2026-08-18). `--timeout` is not
+  installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
 - Root venv: plain `uv sync` is the whole story now (v1.39.17). The performance stack (pyturbojpeg, uvloop, xxhash, cachetools) are CORE deps (questionary retired 2026-07-28 with config_tui), and dev tooling (pytest+plugins, httpx, build, twine, rich, py-spy) is the `dev` dependency-group uv installs by default -- there are NO optional extras anymore, and no `--all-extras` to forget. `uv sync --no-dev` for a runtime-only install. Dependency updates are PLAIN UV -- there is no updater script: `uv lock --upgrade[-package X]` + `uv sync`; pyproject.toml is a hand-maintained manifest of published releases. Running an upstream's git commit is a MACHINE-LOCAL experiment: a `[tool.uv.sources]` entry + relock (recipes incl. the zero-footprint `uv run --with`: `internal/deps.md`), and the committed pyproject/uv.lock stay on releases -- `scripts/guard_stable_channel.sh` (pre-commit) blocks committing a pin, because uv honors no gitignored home for source pins and pins always propagate into uv.lock; a dirty pyproject/uv.lock while pinned is the DESIGN, not a mess. llama-server is built by `scripts/build_llama.py` (see the Architecture section above). Build flags + their rationale (why no LTO, no OpenMP, and why `GGML_METAL_NDEBUG` stays OFF): `scripts/README.md`.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`).
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).

@@ -1,14 +1,14 @@
 # tests/contract/test_frontend_mounts.py
 #
-# Static frontend mounts: /v2 (legacy vanilla-JS frontend) and /v3 (rewrite).
-# Both serve index.html for SPA routes and real files for assets, with
-# path-traversal protection falling back to index.html.
+# Static frontend mount: /v3 (the only frontend since v1.77.0 -- v2 deleted
+# at cutover). Serves index.html for SPA routes and real files for assets,
+# with path-traversal protection falling back to index.html.
 
 
-def test_v2_index_served(client):
-    r = client.get("/v2")
-    assert r.status_code == 200
-    assert "text/html" in r.headers["content-type"]
+def test_v2_mount_is_gone(client):
+    # The deletion is the contract now: a resurrected /v2 mount would mean
+    # the retired app grew back a serving path.
+    assert client.get("/v2").status_code == 404
 
 
 def test_v3_index_served(client):
