@@ -20,6 +20,12 @@ Cross-session task backlog organized by priority.
   `DELETE /{id}/messages/{msg_id}`; the v3 button calls it; positions keep
   gaps. `?after` truncation stays API-only. Render check pins
   neighbor-survival (shown red against the truncation-era client).
+- [ ] **retrySave drops media blocks** (P3, pre-existing): the unsaved-row
+  Retry save re-POSTs `msg.content` (flattened text), so a media message's
+  blocks would not survive it. Unreachable today -- generation refuses
+  while an unsaved row exists and unsaved rows are only minted by
+  generation flows -- but the day an unsaved row can carry media, Retry
+  save must POST `content_blocks`.
 - [ ] **Per-message model attribution UI** (P3): messages carry `model_id`
   since v1.73.0 (stamped by generate's fresh-row commits; continuations
   keep the anchor's stamp). Surface it in v3 -- e.g. a muted per-message
