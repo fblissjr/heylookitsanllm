@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from starlette.testclient import TestClient
 
-from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks
+from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks, real_mlx_available
 from heylook_llm.config import AppConfig
 from heylook_llm.providers.base import BaseProvider
 
@@ -173,7 +173,32 @@ class MockModelService:
 
 @pytest.fixture(scope="session")
 def mlx_mocks():
-    """Patch sys.modules so MLX imports don't fail on non-Apple hardware."""
+    """Patch sys.modules so MLX imports don't fail on non-Apple hardware.
+
+    CONDITIONAL, and that is the whole point (2026-08-18): contract tests never
+    run a real generation path -- they drive FakeProvider -- so the mock exists
+    ONLY so ``import heylook_llm.api`` (which pulls the whole provider stack,
+    every module of which imports mlx at module level) succeeds where MLX is
+    absent. Where MLX is really installed, patching is pure damage and made
+    INVOCATION ORDER LOAD-BEARING two ways:
+
+    - This fixture is session-scoped, so the patch stands until the whole run
+      ends. ``pytest tests/contract/ tests/unit/`` therefore ran every unit
+      test under MagicMock ``mlx`` -- ~57 failures + 8 collection errors that
+      all passed in isolation.
+    - Worse than scope: a heylook module FIRST imported while the patch is
+      active binds MagicMocks into its own namespace PERMANENTLY (the module
+      object outlives the patch), so narrowing the scope alone would not have
+      fixed it.
+
+    Skipping the patch outright on Apple hardware removes both. It also fixes
+    isolated contract runs, which the mock tree was actively breaking: it
+    shadowed the real ``mlx_lm`` with a MagicMock that has no
+    ``tokenizer_utils`` submodule.
+    """
+    if real_mlx_available():
+        yield None
+        return
     modules = create_mlx_module_mocks()
     with patch.dict(sys.modules, modules):
         yield modules

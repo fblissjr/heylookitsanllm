@@ -14,17 +14,56 @@
 from unittest.mock import MagicMock
 
 
+def real_mlx_available() -> bool:
+    """True when the genuine MLX stack imports (i.e. we're on Apple hardware).
+
+    Callers that only need the mock so IMPORTS succeed (contract tests, which
+    drive FakeProvider and never touch a real generation path) should skip the
+    sys.modules patch entirely when this returns True: patching replaces a
+    working package tree with MagicMocks, which both breaks submodule imports
+    the mock tree doesn't enumerate and -- for a session/package-scoped patch --
+    binds MagicMocks into any heylook module FIRST imported under it, for the
+    rest of the process. Tests that assert on MagicMock behavior (the
+    ``mock_mlx`` fixture's clients) must keep patching unconditionally.
+    """
+    try:
+        import mlx.core  # noqa: F401
+        import mlx_lm  # noqa: F401
+        import mlx_vlm  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def create_mlx_module_mocks() -> dict:
     """Create a complete mock of the mlx module tree and all transitive deps.
 
     Returns a dict suitable for ``unittest.mock.patch.dict('sys.modules', ...)``.
+
+    Coverage obligation is IMPORT-TIME ONLY: every DOTTED module path any
+    heylook module reaches for needs its own key, because ``import a.b`` /
+    ``from a.b import x`` looks up ``sys.modules['a.b']`` and a MagicMock ``a``
+    is not a package. Plain attribute pulls off an already-mocked module
+    (``from mlx_lm.generate import BatchGenerator``) are free. A path missing
+    here surfaces as "No module named 'X'; 'Y' is not a package" -- which is
+    how ``mlx_lm.tokenizer_utils`` went missing until 2026-08-18. When you add
+    a module-level MLX import to src/, add its path here.
+
+    But add ONLY paths a MODULE-LEVEL import needs. Speculatively covering
+    function-level optional imports is not free: adding ``mlx.utils``,
+    ``mlx_lm.models.base`` and ``mlx_vlm.generate.diffusion`` here turned three
+    green unit tests red, because product code treats those as CAPABILITY
+    PROBES -- ``MLXProvider._detect_diffusion`` returns False precisely when
+    ``mlx_vlm.generate.diffusion`` won't import, and a test pins that. Making
+    the mock tree "more complete" makes the absent-dependency branch untestable.
+
     Covers:
     - mlx, mlx.core, mlx.nn
-    - mlx_lm (utils, generate, sample_utils, models, models.cache)
+    - mlx_lm (utils, generate, sample_utils, tokenizer_utils, models,
+      models.cache)
     - mlx_vlm (utils, generate, prompt_utils)
     - PIL / PIL.Image
     - transformers (PreTrainedTokenizer)
-    - numpy (partial -- enough for import to succeed)
     """
     mock_mx = MagicMock()
     mock_mx.core = MagicMock()
@@ -43,6 +82,8 @@ def create_mlx_module_mocks() -> dict:
     mock_mlx_lm.sample_utils = MagicMock()
     mock_mlx_lm.sample_utils.make_sampler = MagicMock()
     mock_mlx_lm.sample_utils.make_logits_processors = MagicMock(return_value=[])
+    mock_mlx_lm.tokenizer_utils = MagicMock()
+    mock_mlx_lm.tokenizer_utils.TokenizerWrapper = MagicMock()
     mock_mlx_lm.models = MagicMock()
     mock_mlx_lm.models.cache = MagicMock()
     mock_mlx_lm.models.cache.KVCache = MagicMock()
@@ -72,6 +113,7 @@ def create_mlx_module_mocks() -> dict:
         "mlx_lm.utils": mock_mlx_lm.utils,
         "mlx_lm.generate": mock_mlx_lm.generate,
         "mlx_lm.sample_utils": mock_mlx_lm.sample_utils,
+        "mlx_lm.tokenizer_utils": mock_mlx_lm.tokenizer_utils,
         "mlx_lm.models": mock_mlx_lm.models,
         "mlx_lm.models.cache": mock_mlx_lm.models.cache,
         # mlx_vlm

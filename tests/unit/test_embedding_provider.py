@@ -252,8 +252,13 @@ class TestProviderLoadModel:
         """Weights with rotary freqs and vision keys are cleaned during load."""
         _build_tiny_model_dir(tmp_path)
 
-        # Add rotary and vision keys to the safetensors file
+        # Add rotary and vision keys to the safetensors file.
+        # mx.eval FIRST: mx.load is lazy/mmap-backed, so saving back over the
+        # SAME path leaves the unmaterialized arrays pointing at a file that no
+        # longer holds what they expect -- the next read raises
+        # "[read] Unable to read from file". Latent until mlx 0.32.1 surfaced it.
         existing = mx.load(str(tmp_path / "model.safetensors"))
+        mx.eval(list(existing.values()))  # noqa: S307 -- MLX graph materializer
         existing["model.layers.0.self_attn.rotary_emb.inv_freq"] = mx.zeros((16,))
         existing["vision_tower.encoder.weight"] = mx.zeros((32, 32))
         mx.save_safetensors(str(tmp_path / "model.safetensors"), existing)

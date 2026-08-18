@@ -307,14 +307,31 @@ in git history; a contract test pins that `/v2` stays 404.)
 - **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB; load+warm readiness is the server-owned `POST /v1/admin/models/{id}/load?warm=true` (same contract as `scripts/dev_server.sh` -- never hand-roll poll/warm logic in a harness). NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`, MUST run UNSANDBOXED (bun's non-interactive script shell resolves the real node binary; bare `node run.mjs` from an interactive-derived shell hits the nvm lazy-load function, which `export PATH` cannot beat -- the harness itself still executes under node by design, via the package.json scripts). Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B). A THIRD entry, `bun run e2e:render`, is model-free and server-free (real `/v3` page, stubbed `/v1`, seconds): it guards that the chat message list is RECONCILED, not rebuilt -- `.message` is `content-visibility: auto`, so a row's laid-out height lives on the NODE, and a rebuild collapses `scrollHeight` mid-tick so any pixel-based scroll aims at a list about to grow underneath. Deliberately NOT part of `bun run e2e` (whose Metal/model prerequisites it does not share). `E2E_V3_ROOT` points it at a copy of the frontend, which is how each check was shown to FAIL against a deliberately broken one.
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - `test_mlx_provider.py` SEGFAULTS at GC teardown when run in near-ISOLATION (MLX `unload`/`__del__` flakiness) but passes clean in any multi-file batch / the full suite -- not a regression; run it batched, not alone.
+- A SEPARATE interpreter-teardown crash, `Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` (exit 134, printed AFTER the pass count), is NOT that MLX-GC class: it needs the MagicMock MLX tree, and reproduces model-free and pytest-free in a bare interpreter -- `import heylook_llm.api` under `patch.dict(sys.modules, create_mlx_module_mocks())` aborts at finalization, while the same import with real MLX exits 0 and the mock tree without that import exits 0. No stray Python thread survives the import, so the foreign thread doing it was not identified (timeboxed). Contract runs on Apple hardware no longer hit it at all since `mlx_mocks` stopped patching there (v1.77.1); it remains a residual on the mocked path.
+- Real-MLX failures POISON later real-MLX tests in the same process: one `RuntimeError: [read] Unable to read from file` inside `test_embedding_provider.py` also took down an unrelated `test_jspace.py` case, which passed the moment the first was fixed. Chase the FIRST such failure, not the count. Its cause is worth knowing generally: `mx.load` is lazy/mmap-backed, so `mx.save_safetensors` back over the SAME path without `mx.eval`-ing the loaded arrays first corrupts them -- latent in that test until mlx 0.32.1 surfaced it.
 - Provider unit tests build `MLXProvider` from RAW config dicts (bypassing `MLXModelConfig` validation; production passes `model_config.config.model_dump()`), so provider/loader code must tolerate un-normalized config (e.g. missing `modalities`) -- a back-compat branch that looks dead in the router path may be live only in tests.
-- Backend: `uv run pytest tests/unit/ tests/contract/ -v`. THE ORDER IS
-  LOAD-BEARING: tests/contract/conftest.py applies a SESSION-scoped
-  sys.modules MLX mock, and a session fixture only tears down at the end of
-  the whole pytest run -- invoke contract FIRST and every unit test after it
-  sees MagicMock arrays (~57 fake failures across mlx_perf/embeddings that
-  all pass in isolation; burned an hour on 2026-08-18). `--timeout` is not
+- Backend: `uv run pytest tests/unit/ tests/contract/ -v`. INVOCATION ORDER IS
+  NOT LOAD-BEARING (v1.77.1, verified on Apple hardware in both directions and
+  each directory alone) -- historically it was: tests/contract/conftest.py's
+  SESSION-scoped sys.modules MLX mock tore down only at the end of the whole
+  run, so contract-first left every later unit test looking at MagicMock arrays
+  (~57 failures + 8 collection errors that all passed in isolation). The fix is
+  that `mlx_mocks` now SKIPS the patch when real MLX imports
+  (`helpers.mlx_mock.real_mlx_available`), because contract tests drive
+  FakeProvider and only ever needed the mock so imports would succeed where MLX
+  is absent. Narrowing the fixture's SCOPE would not have sufficed: a heylook
+  module first-imported under the patch binds MagicMocks into its own namespace
+  permanently, since the module object outlives the patch. Where MLX is genuinely
+  absent the session mock still applies and that residual order-sensitivity
+  stands, untestable from here. `--timeout` is not
   installed. `settings.local.json` exempts `uv run pytest`/`uv sync`/`uv lock`/`bun install`/`bun run build` from the sandbox.
+- The `helpers.mlx_mock` tree must cover every DOTTED module path a heylook
+  module imports at module level (`import a.b` consults `sys.modules['a.b']`;
+  a MagicMock `a` is not a package) -- but ONLY those. Adding paths that
+  product code probes OPTIONALLY makes the absent-dependency branch untestable:
+  mocking `mlx_vlm.generate.diffusion` turned `_detect_diffusion`'s
+  returns-False-when-unavailable test green-to-red. Attribute pulls off an
+  already-mocked module are free.
 - Root venv: plain `uv sync` is the whole story now (v1.39.17). The performance stack (pyturbojpeg, uvloop, xxhash, cachetools) are CORE deps (questionary retired 2026-07-28 with config_tui), and dev tooling (pytest+plugins, httpx, build, twine, rich, py-spy) is the `dev` dependency-group uv installs by default -- there are NO optional extras anymore, and no `--all-extras` to forget. `uv sync --no-dev` for a runtime-only install. Dependency updates are PLAIN UV -- there is no updater script: `uv lock --upgrade[-package X]` + `uv sync`; pyproject.toml is a hand-maintained manifest of published releases. Running an upstream's git commit is a MACHINE-LOCAL experiment: a `[tool.uv.sources]` entry + relock (recipes incl. the zero-footprint `uv run --with`: `internal/deps.md`), and the committed pyproject/uv.lock stay on releases -- `scripts/guard_stable_channel.sh` (pre-commit) blocks committing a pin, because uv honors no gitignored home for source pins and pins always propagate into uv.lock; a dirty pyproject/uv.lock while pinned is the DESIGN, not a mess. llama-server is built by `scripts/build_llama.py` (see the Architecture section above). Build flags + their rationale (why no LTO, no OpenMP, and why `GGML_METAL_NDEBUG` stays OFF): `scripts/README.md`.
 - Separate venvs (cd first): batch-labeler (`uv sync --dev`), optloop-lib (`uv sync`).
 - GPG signing needs the 1Password agent; if a commit fails on socket errors use `git -c commit.gpgsign=false commit` (`-c` before `commit`).

@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.77.1]
+
+### Fixed
+
+The backend suite no longer depends on invocation order. `tests/contract/`
+applied a SESSION-scoped `sys.modules` MLX mock, and a session fixture tears
+down only when the whole pytest run ends -- so `pytest tests/contract/
+tests/unit/` ran every unit test against MagicMock arrays: 57 failures and 8
+collection errors, all of which passed in isolation. The mock exists only so
+imports succeed where MLX is absent (contract tests drive a FakeProvider and
+never touch a generation path), so it is now conditional -- skipped entirely
+when real MLX imports. Scope was the wrong lever: a heylook module first
+imported under the patch binds MagicMocks into its own namespace for the life
+of the process, which no fixture teardown undoes.
+
+Two consequences of that mock shadowing a working MLX install go away with it.
+`tests/contract/test_capabilities.py` run alone errored on "No module named
+'mlx_lm.tokenizer_utils'" -- the mock tree never listed that path, which
+`generation_core` imports; the entry is added for the non-Apple path, along
+with a note that only MODULE-LEVEL import paths belong there (mocking
+`mlx_vlm.generate.diffusion`, which product code probes optionally, makes
+`_detect_diffusion`'s absent-dependency branch untestable). And contract-only
+runs no longer abort at interpreter teardown with `gilstate_tss_set: failed to
+set current tstate`, which reproduces in a bare interpreter as `import
+heylook_llm.api` under the mock tree and not with real MLX.
+
+Separately, `test_sanitize_handles_rotary_and_vision_keys` saved a
+safetensors file back over the path it had just `mx.load`ed without
+materializing the lazy mmap-backed arrays first. Latent until mlx 0.32.1 began
+raising "[read] Unable to read from file" on it -- which then poisoned an
+unrelated `test_jspace.py` case in the same process.
+
 ## [1.74.1]
 
 ### Fixed
