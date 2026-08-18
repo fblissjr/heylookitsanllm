@@ -23,6 +23,11 @@ and error messages can name it. $HEYLOOK_LLAMA_CPP_DIR or --dir relocate it.
 The server finds the binary there with zero config (its last-resort fallback);
 `server_binary` in models.toml or $HEYLOOK_LLAMA_SERVER override it.
 
+Two self-checks keep the build honest: a checkout that has gone shallow is
+repaired before building (llama.cpp stamps its build number from history
+depth, so a shallow clone mislabels every binary), and after the build the
+binary's self-reported version must match the rev that was built.
+
 Examples:
   uv run scripts/build_llama.py                # newest release, build it
   uv run scripts/build_llama.py --status       # what is built now; no network
@@ -195,7 +200,22 @@ def checkout_rev(path: Path, rev: str) -> str:
     if dirty:
         die(f"{path} has uncommitted changes to TRACKED files -- refusing to "
             f"check out {rev} over them. Commit or stash first:\n{dirty}")
-    run(["git", "-C", str(path), "fetch", "--tags", "--force", "origin"])
+    # A SHALLOW checkout silently mislabels every binary it produces:
+    # llama.cpp stamps BUILD_NUMBER as `git rev-list --count HEAD`
+    # (cmake/build-info.cmake), so a history truncated at N commits brands the
+    # build "N" -- a b10472 build introduced itself as "build 151" on
+    # 2026-08-18 because the checkout predated this script and had been cloned
+    # shallow by hand. Repair is cheap here: the blob:none filter still
+    # applies, so --unshallow pulls commits and trees only, never blobs.
+    shallow = run(["git", "-C", str(path), "rev-parse",
+                   "--is-shallow-repository"], capture=True)
+    if shallow == "true":
+        print(yellow("  checkout is shallow -- repairing (fetch --unshallow) "
+                     "so the binary's version stamp counts real history"))
+        run(["git", "-C", str(path), "fetch", "--unshallow", "--tags",
+             "--force", "origin"])
+    else:
+        run(["git", "-C", str(path), "fetch", "--tags", "--force", "origin"])
     # AFTER the fetch: the remote-tracking ref has to exist to be resolvable.
     run(["git", "-C", str(path), "checkout", "--detach",
          resolve_fetched_rev(path, rev)])
@@ -373,6 +393,32 @@ def binary_version(binary: Path) -> str:
     return next((ln for ln in lines if ln.startswith("version:")), lines[0])
 
 
+def verify_version_stamp(rev: str, sha: str, version: str) -> None:
+    """Refuse to hand over a binary whose self-report contradicts what was
+    built. The reported version is the provenance surface every downstream
+    log shows; a corrupted stamp (the shallow-history case above) survives
+    repeated builds and looks exactly like a stale binary. NUMBERS are
+    checked, never the string's layout -- upstream already reformatted it
+    between b10323 (`version: N (sha)`) and b10472 (`version: X.Y.Z-dev
+    (build N, commit sha)`), so a shape check would false-fail on the next
+    reformat."""
+    if not version:
+        print(yellow("  binary reports no version -- cannot cross-check the "
+                     "stamp against what was built"))
+        return
+    if sha[:7] not in version:
+        die(f"built {sha[:12]} but the binary reports {version!r} -- that "
+            f"binary is not from the source just checked out. Re-run with "
+            f"--clean.")
+    m = _BUILD_TAG_RE.match(rev)
+    if m and not re.search(rf"\b{int(m.group(1))}\b", version):
+        die(f"built release {rev} but the binary reports {version!r} -- the "
+            f"embedded build number does not match the release. Usual causes: "
+            f"a stale cmake version stamp (re-run with --clean) or a checkout "
+            f"with truncated history (this run should have repaired that). If "
+            f"upstream changed its numbering scheme, update this check.")
+
+
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -482,7 +528,10 @@ def main() -> None:
         "version": version,
         "built_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
+    # Manifest FIRST: it must describe the binary that exists even when the
+    # stamp check below refuses it, or --status starts lying.
     (build_dir / "heylook-build.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    verify_version_stamp(rev, sha, version)
 
     print(f"\n  built {green(str(binary))}")
     if version:

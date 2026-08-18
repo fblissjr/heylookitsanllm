@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.3]
+
+### Fixed
+
+`scripts/build_llama.py` can no longer hand over a mislabeled llama-server.
+The canonical checkout had been cloned shallow by hand before the script
+existed, and llama.cpp stamps its build number as `git rev-list --count
+HEAD` -- so a correctly built b10472 binary introduced itself as "build
+151", making every "am I on the latest?" glance read as a failed update.
+Two self-checks keep the build honest now: a checkout that has gone shallow
+is repaired before building (`fetch --unshallow`; cheap, the blob:none
+filter still keeps blobs out), and after the build the binary's
+self-reported version must match the rev that was built -- commit prefix
+always, build number for `b<N>` releases. Numbers only, never the string's
+layout, which upstream has already reformatted once between releases. Both
+refusals were shown red against the real mislabeled binary before the
+repair; the manifest is written before the check so `--status` describes
+the binary that exists even when it is refused.
+
 ## [1.72.2]
 
 ### Fixed
