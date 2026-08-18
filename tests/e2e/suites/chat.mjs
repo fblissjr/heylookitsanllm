@@ -472,6 +472,14 @@ export async function runChatSuite({ suite, ctx, config }) {
       const t = await textOf(page, '.message--streaming .message-content');
       return t && t.length > 0;
     }, { message: 'no partial content appeared before the disconnect' });
+    // LIVENESS GUARD: if the stream finished before the reload, this check
+    // silently degenerates into the plain reload check above and passes with
+    // the disconnect path deleted. The Send button reads "Stop" exactly
+    // while a stream is live -- assert it in the same breath as the reload.
+    // (The 4000-token budget makes completion this early implausible, but
+    // implausible is not a guard.)
+    assert((await sendBtnLabel(page)) === 'Stop',
+      'stream already finished before the reload -- this run never tested the disconnect path');
     // Reload mid-stream = the disconnect. The in-stream beforeunload guard
     // raises a confirm dialog -- accept it or the reload (and the suite) hangs.
     page.once('dialog', (d) => d.accept().catch(() => {}));
