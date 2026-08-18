@@ -271,9 +271,26 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   Every message response carries BOTH `content` (flattened text of the text
   blocks — back-compatible; render targets that only know strings keep
   working) and `content_blocks` (the full stored list — the image-rendering
-  source of truth). Strings normalize to one text block. For generation, v3
-  converts stored image blocks to OpenAI `image_url` parts (data URLs) until
-  the Messages-first migration makes the stored blocks the wire shape.
+  source of truth). Strings normalize to one text block.
+- **Media by reference (v1.73.0, schema v7):** base64 media never persists
+  inline. Every message WRITE relocates it into a per-conversation blob
+  store (content-addressed, deduplicated) and the stored block becomes
+  `{type:"image",source:{type:"url",url:"/v1/conversations/{id}/media/{media_id}",
+  media_type,media_id}}` — so conversation reads are text-sized and the
+  browser fetches/caches media separately. `GET /{id}/media/{media_id}` →
+  the bytes (`Cache-Control: immutable`; content-addressed, safe to cache
+  forever). Clients render `source.url` directly and SEND base64 as before;
+  `media_id` is the server's internal marker (round-tripping a stored block
+  back through a write keeps it; a foreign/dangling one is stripped). The
+  generate saga resolves these blobs back to inline bytes at wire-build
+  time — providers never see the internal URLs. Blobs are garbage-collected
+  when the last referencing message goes; deleting a conversation deletes
+  its blobs.
+- **Per-message model attribution (v1.73.0, schema v7):** message rows carry
+  `model_id` — which model produced an assistant row (stamped by the
+  generate saga's fresh-row commits; null on user turns; a continuation
+  keeps the anchor's original stamp rather than misattributing a co-written
+  row). Metadata only, no content.
 - **Audio input (added v1.42.0, gguf models only):** `/v1/chat/completions`
   accepts `{type:"input_audio", input_audio:{data:<RAW base64, NOT a data
   URL>, format?:"wav"|"mp3"|...}}` content parts (or `url` instead of
@@ -284,9 +301,14 @@ batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_pea
   (shipped v1.43.0: gated attach button + dynamic accept list, audio chips
   in the strip, `<audio controls>` rendering, stored `audio` blocks
   converted to `input_audio` parts at send).
-- `DELETE /{id}/messages?after={pos}` → deletes `position > pos` (position-based truncation drives
-  regenerate/edit-regenerate/delete-cascade — LEGACY once the client moves to
-  `/generate` below; the CRUD stays for edits/deletes without generation).
+- `DELETE /{id}/messages/{msgId}` → `{deleted:1,id}` (v1.73.0). Deletes
+  exactly one message; later rows keep their positions (gaps are fine —
+  ordering and appends are position-based, nothing assumes density). This is
+  what the v3 Delete button calls: delete means delete, not truncate.
+- `DELETE /{id}/messages?after={pos}` → deletes `position > pos`. API-level
+  truncation only since v1.73.0 — the v3 client no longer calls it (the
+  generate saga owns regenerate/continue truncation server-side, and message
+  delete is the single-row form above).
 
 **Conversation-scoped generation (added v1.65.0 — plan_chat_orchestration.md
 Phase 1; the server-side saga that replaces the client-orchestrated
@@ -562,8 +584,9 @@ assistant response (RAF-throttled DOM writes; blinking cursor; collapsible "Thin
 auto-open while streaming, present only if thinking text arrives). Stop (abort = normal completion, partial
 saved). On complete: persist assistant message, status line `"N tokens · X.XX GB peak · Y KV"` from
 usage/timing. Per-message actions: Edit (inline textarea → Save / Save&Regenerate / Cancel), Regenerate
-(assistant only), Delete (confirm), Copy. Edit/regenerate/delete use **position-based truncation**
-(`DELETE .../messages?after=position-1`). Near-bottom-aware auto-scroll (only if within 100px, or forced on
+(assistant only), Delete (confirm), Copy. (Historical: this build used position-based truncation for
+edit/regenerate/delete; since v1.65–1.73 the generate saga owns truncation server-side and Delete is the
+single-row `DELETE .../messages/{msgId}`.) Near-bottom-aware auto-scroll (only if within 100px, or forced on
 send/switch/stream-start). Stale-response guard: capture `targetConvId` at stream start, bail in callbacks if
 `activeId` changed. beforeunload during stream. Remove the unused `bus.js` import (dead code in v2).
 

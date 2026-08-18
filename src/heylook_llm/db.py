@@ -18,6 +18,8 @@ No migration from the retired SQLite store: this is a fresh start by design.
 """
 
 import asyncio
+import base64
+import hashlib
 import logging
 import os
 import time
@@ -36,7 +38,10 @@ logger = logging.getLogger(__name__)
 # deleting a parent even when its children are deleted in the same
 # transaction -- a documented DuckDB limitation. Referential integrity is
 # enforced in code: single writer, explicit cascade in delete_conversation).
-_SCHEMA_VERSION = 6  # v6: applied_preset_id on conversations + notebooks -- which preset a document is running
+# v7: media by reference (media_blobs table; base64 media in content_blocks is
+# relocated to it at the write boundary, rows carry url sources) + per-message
+# model_id (which model produced an assistant row -- metadata only, no content).
+_SCHEMA_VERSION = 7
 
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
 _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset(
@@ -61,6 +66,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role            TEXT NOT NULL,
     content_blocks  TEXT NOT NULL DEFAULT '[]',
     thinking        TEXT,
+    model_id        TEXT,
     position        INTEGER NOT NULL,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
@@ -69,6 +75,15 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_conv_pos
     ON messages(conversation_id, position);
+
+CREATE TABLE IF NOT EXISTS media_blobs (
+    conversation_id TEXT NOT NULL,
+    id              TEXT NOT NULL,
+    media_type      TEXT NOT NULL,
+    data            BLOB NOT NULL,
+    created_at      TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, id)
+);
 
 CREATE TABLE IF NOT EXISTS notebooks (
     id            TEXT PRIMARY KEY,
@@ -154,6 +169,108 @@ def flatten_blocks(blocks: list[dict]) -> str:
     return "\n".join((b.get("text") or "") for b in blocks if b.get("type") == "text")
 
 
+# ---------------------------------------------------------------------------
+# Media by reference (schema v7)
+# ---------------------------------------------------------------------------
+# Base64 media never persists inside content_blocks: every message WRITE
+# relocates it into media_blobs (content-addressed by sha256, per
+# conversation) and stores a url source pointing at the serve endpoint, with
+# ``media_id`` as the internal marker. This is a relocation, not new storage
+# -- the same user-attached bytes the messages table held before, moved so a
+# conversation read is text-sized instead of shipping every image inline.
+# Consumers: the browser fetches the url (immutable, cacheable); the generate
+# saga resolves media_id blocks back to bytes at wire-build time.
+
+def _externalize_media(conn, conv_id: str, blocks: list[dict], now: str) -> list[dict]:
+    """Rewrite base64 media blocks to blob-backed url sources. Runs inside a
+    write op (single writer thread, same transaction as the message row).
+
+    A caller-supplied url source carrying ``media_id`` (a stored row round-
+    tripped back through a write) is honored only if that blob exists in THIS
+    conversation -- otherwise the marker is stripped and the block is treated
+    as a plain external url, so a cross-conversation or dangling reference
+    can never persist.
+    """
+    out = []
+    for b in blocks:
+        src = b.get("source")
+        if b.get("type") not in ("image", "audio") or not isinstance(src, dict):
+            out.append(b)
+            continue
+        if src.get("type") == "base64" and src.get("data"):
+            try:
+                raw = base64.b64decode(src["data"])
+            except Exception:
+                raise ValueError(f"{b['type']} block carries invalid base64 data")
+            media_id = hashlib.sha256(raw).hexdigest()
+            conn.execute(
+                "INSERT OR IGNORE INTO media_blobs (conversation_id, id, media_type, data, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (conv_id, media_id, src.get("media_type") or "application/octet-stream", raw, now),
+            )
+            b = dict(b)
+            b["source"] = {
+                "type": "url",
+                "url": f"/v1/conversations/{conv_id}/media/{media_id}",
+                "media_type": src.get("media_type"),
+                "media_id": media_id,
+            }
+        elif src.get("type") == "url" and src.get("media_id"):
+            exists = conn.execute(
+                "SELECT 1 FROM media_blobs WHERE conversation_id = ? AND id = ?",
+                (conv_id, src["media_id"]),
+            ).fetchone()
+            if not exists:
+                b = dict(b)
+                stripped = dict(src)
+                stripped.pop("media_id")
+                b["source"] = stripped
+        out.append(b)
+    return out
+
+
+def _gc_media(conn, conv_id: str) -> None:
+    """Drop blobs no message in this conversation references any more.
+
+    The reference check is a substring LIKE on the JSON text. Its only
+    false-positive direction is RETENTION (a 64-hex blob id pasted into a
+    text block keeps the blob alive); it can never delete a blob a media
+    block still references. Do not "fix" this into a JSON parse -- the safe
+    direction is the point.
+    """
+    conn.execute(
+        "DELETE FROM media_blobs WHERE conversation_id = ? AND NOT EXISTS ("
+        "  SELECT 1 FROM messages m WHERE m.conversation_id = media_blobs.conversation_id"
+        "  AND m.content_blocks LIKE '%' || media_blobs.id || '%')",
+        (conv_id,),
+    )
+
+
+async def get_media_blob(db: Store, conv_id: str, media_id: str) -> tuple[str, bytes] | None:
+    """Return (media_type, bytes) for one blob, or None."""
+    def op(conn):
+        row = conn.execute(
+            "SELECT media_type, data FROM media_blobs WHERE conversation_id = ? AND id = ?",
+            (conv_id, media_id),
+        ).fetchone()
+        return (row[0], bytes(row[1])) if row else None
+    return await db.run(op)
+
+
+async def get_media_blobs(db: Store, conv_id: str, media_ids: list[str]) -> dict[str, tuple[str, bytes]]:
+    """Batch fetch for the generate saga's wire build: id -> (media_type, bytes)."""
+    if not media_ids:
+        return {}
+    def op(conn):
+        placeholders = ", ".join("?" for _ in media_ids)
+        rows = conn.execute(
+            f"SELECT id, media_type, data FROM media_blobs WHERE conversation_id = ? AND id IN ({placeholders})",
+            (conv_id, *media_ids),
+        ).fetchall()
+        return {r[0]: (r[1], bytes(r[2])) for r in rows}
+    return await db.run(op)
+
+
 def _message_row_to_dict(names: list[str], row) -> dict:
     d = dict(zip(names, row))
     blocks = orjson.loads(d.pop("content_blocks"))
@@ -221,7 +338,7 @@ class Store:
                 "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
                 row[0], _SCHEMA_VERSION,
             )
-            for table in ("messages", "conversations", "notebooks", "schema_meta"):
+            for table in ("messages", "media_blobs", "conversations", "notebooks", "schema_meta"):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             self._create_schema()
             self._conn.execute(
@@ -295,6 +412,7 @@ async def clear_all_data(db: Store) -> dict:
         conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
         nb_count = conn.execute("SELECT COUNT(*) FROM notebooks").fetchone()[0]
         conn.execute("DELETE FROM messages")
+        conn.execute("DELETE FROM media_blobs")
         conn.execute("DELETE FROM conversations")
         conn.execute("DELETE FROM notebooks")
         return {"conversations_deleted": conv_count, "notebooks_deleted": nb_count}
@@ -308,7 +426,7 @@ async def clear_all_data(db: Store) -> dict:
 # Single source of truth per table: the SELECT string derives from the names
 # list, so the two can never drift (zip would silently mispair otherwise).
 _CONV_NAMES = ["id", "title", "model_id", "system_prompt", "params", "applied_preset_id", "created_at", "updated_at"]
-_MSG_NAMES = ["id", "role", "content_blocks", "thinking", "position", "created_at", "updated_at"]
+_MSG_NAMES = ["id", "role", "content_blocks", "thinking", "model_id", "position", "created_at", "updated_at"]
 _CONV_COLS = ", ".join(_CONV_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
 
@@ -466,6 +584,7 @@ async def delete_conversation(db: Store, conv_id: str) -> bool:
         if not exists:
             return False
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+        conn.execute("DELETE FROM media_blobs WHERE conversation_id = ?", (conv_id,))
         conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         return True
     return await db.run(op)
@@ -482,11 +601,15 @@ async def append_message(
     role: str,
     content: str | list[dict] = "",
     thinking: str | None = None,
+    model_id: str | None = None,
 ) -> dict | None:
     """Append a message to a conversation. Returns the message or None if conv not found.
 
     ``content`` may be a plain string (stored as one text block) or a
-    content-block list (stored verbatim).
+    content-block list. Base64 media blocks are relocated to media_blobs and
+    stored as url sources (_externalize_media). ``model_id`` records which
+    model produced the row (assistant rows only by convention; None for
+    user turns).
     """
     blocks = normalize_blocks(content)
     msg_id = new_id()
@@ -495,27 +618,30 @@ async def append_message(
     def op(conn):
         if conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conv_id,)).fetchone() is None:
             return None
+        stored = _externalize_media(conn, conv_id, blocks, now)
         position = conn.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
             (conv_id,),
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, position, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (msg_id, conv_id, role, orjson.dumps(blocks).decode(), thinking, position, now, now),
+            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, model_id, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conv_id, role, orjson.dumps(stored).decode(), thinking, model_id, position, now, now),
         )
         _touch_conversation(conn, conv_id, now)
-        return position
+        return position, stored
 
-    position = await db.run(op)
-    if position is None:
+    result = await db.run(op)
+    if result is None:
         return None
+    position, stored = result
     return {
         "id": msg_id,
         "role": role,
-        "content": flatten_blocks(blocks),
-        "content_blocks": blocks,
+        "content": flatten_blocks(stored),
+        "content_blocks": stored,
         "thinking": thinking,
+        "model_id": model_id,
         "position": position,
         "created_at": now,
         "updated_at": now,
@@ -539,8 +665,9 @@ async def update_message(
 
     now = _now_iso()
     col_updates = dict(updates)
-    if "content" in col_updates:
-        col_updates["content_blocks"] = orjson.dumps(normalize_blocks(col_updates.pop("content"))).decode()
+    # Validation (normalize_blocks raises on garbage) happens BEFORE the op;
+    # media externalization needs the connection, so it happens inside it.
+    new_blocks = normalize_blocks(col_updates.pop("content")) if "content" in col_updates else None
 
     def op(conn):
         row = conn.execute(
@@ -549,10 +676,15 @@ async def update_message(
         ).fetchone()
         if row is None:
             return None
+        if new_blocks is not None:
+            stored = _externalize_media(conn, conv_id, new_blocks, now)
+            col_updates["content_blocks"] = orjson.dumps(stored).decode()
         set_clause = ", ".join(f"{k}=?" for k in col_updates)
         values = list(col_updates.values()) + [now, msg_id]
         conn.execute(f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?", values)
         _touch_conversation(conn, conv_id, now)
+        if new_blocks is not None:
+            _gc_media(conn, conv_id)  # an edit can drop the last reference to a blob
         # Merge locally instead of re-SELECTing -- content_blocks can carry
         # multi-MB base64 images; one fetch is enough.
         raw = dict(zip(_MSG_NAMES, row))
@@ -578,7 +710,33 @@ async def truncate_messages_after(
             (conv_id, after_position),
         )
         _touch_conversation(conn, conv_id, now)
+        _gc_media(conn, conv_id)
         return count
+    return await db.run(op)
+
+
+async def delete_message(db: Store, conv_id: str, msg_id: str) -> bool:
+    """Delete exactly one message. Returns True if it existed.
+
+    Later rows keep their positions (gaps are fine: ordering and MAX+1
+    appends are position-based, nothing assumes density). Blobs the deleted
+    row was the last reference to are collected.
+    """
+    now = _now_iso()
+    def op(conn):
+        exists = conn.execute(
+            "SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?",
+            (msg_id, conv_id),
+        ).fetchone() is not None
+        if not exists:
+            return False
+        conn.execute(
+            "DELETE FROM messages WHERE id = ? AND conversation_id = ?",
+            (msg_id, conv_id),
+        )
+        _touch_conversation(conn, conv_id, now)
+        _gc_media(conn, conv_id)
+        return True
     return await db.run(op)
 
 
@@ -602,12 +760,14 @@ async def replace_tail_with_message(
     role: str,
     content: str | list[dict] = "",
     thinking: str | None = None,
+    model_id: str | None = None,
 ) -> dict | None:
     """Atomically delete position > after_position and append one message.
 
     Returns the appended message, or None if the conversation is gone.
     With after_position = the current last position this is a plain atomic
-    append (nothing to truncate).
+    append (nothing to truncate). ``model_id`` stamps which model produced
+    the row -- unambiguous here (fresh row, one producer).
     """
     blocks = normalize_blocks(content)
     msg_id = new_id()
@@ -620,27 +780,31 @@ async def replace_tail_with_message(
             "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
             (conv_id, after_position),
         )
+        stored = _externalize_media(conn, conv_id, blocks, now)
         position = conn.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM messages WHERE conversation_id = ?",
             (conv_id,),
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, position, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (msg_id, conv_id, role, orjson.dumps(blocks).decode(), thinking, position, now, now),
+            "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, model_id, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (msg_id, conv_id, role, orjson.dumps(stored).decode(), thinking, model_id, position, now, now),
         )
         _touch_conversation(conn, conv_id, now)
-        return position
+        _gc_media(conn, conv_id)  # the truncated tail may have held the last references
+        return position, stored
 
-    position = await db.run(op)
-    if position is None:
+    result = await db.run(op)
+    if result is None:
         return None
+    position, stored = result
     return {
         "id": msg_id,
         "role": role,
-        "content": flatten_blocks(blocks),
-        "content_blocks": blocks,
+        "content": flatten_blocks(stored),
+        "content_blocks": stored,
         "thinking": thinking,
+        "model_id": model_id,
         "position": position,
         "created_at": now,
         "updated_at": now,
@@ -662,6 +826,9 @@ async def replace_tail_with_update(
     combined text; everything after it goes in the same transaction.
     ``thinking`` is written only when not None (a continuation never clears
     prior thinking). Returns the updated message, or None if it is gone.
+    The row's model_id is deliberately NOT restamped: a continuation merges
+    onto a row possibly co-written by another model, and any single stamp
+    would misattribute half of it -- the original stamp stands.
     """
     blocks = normalize_blocks(content)
     now = _now_iso()
@@ -677,7 +844,8 @@ async def replace_tail_with_update(
             "DELETE FROM messages WHERE conversation_id = ? AND position > ?",
             (conv_id, after_position),
         )
-        col_updates: dict = {"content_blocks": orjson.dumps(blocks).decode()}
+        stored = _externalize_media(conn, conv_id, blocks, now)
+        col_updates: dict = {"content_blocks": orjson.dumps(stored).decode()}
         if thinking is not None:
             col_updates["thinking"] = thinking
         set_clause = ", ".join(f"{k}=?" for k in col_updates)
@@ -686,6 +854,7 @@ async def replace_tail_with_update(
             list(col_updates.values()) + [now, msg_id],
         )
         _touch_conversation(conn, conv_id, now)
+        _gc_media(conn, conv_id)
         raw = dict(zip(_MSG_NAMES, row))
         raw.update(col_updates, updated_at=now)
         return _message_row_to_dict(_MSG_NAMES, [raw[k] for k in _MSG_NAMES])

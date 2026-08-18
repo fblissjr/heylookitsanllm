@@ -9,6 +9,7 @@ docs/frontend_v3_spec.md §4 for the wire contract.
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from heylook_llm import db
@@ -209,3 +210,39 @@ async def truncate_messages(conv_id: str, request: Request, after: int):
     conn = _get_db(request)
     count = await db.truncate_messages_after(conn, conv_id, after)
     return {"deleted": count, "after_position": after}
+
+
+@conversation_router.delete(
+    "/{conv_id}/messages/{msg_id}",
+    summary="Delete Message",
+    description="Delete exactly one message. Later messages keep their "
+                "positions (gaps are fine -- ordering and appends are "
+                "position-based, nothing assumes density).",
+)
+async def delete_message(conv_id: str, msg_id: str, request: Request):
+    _refuse_while_generating(conv_id)
+    conn = _get_db(request)
+    if not await db.delete_message(conn, conv_id, msg_id):
+        raise HTTPException(status_code=404, detail="Message not found")
+    return {"deleted": 1, "id": msg_id}
+
+
+@conversation_router.get(
+    "/{conv_id}/media/{media_id}",
+    summary="Get Media Blob",
+    description="Serve one media blob (schema v7: media lives by reference; "
+                "message rows carry url sources pointing here). "
+                "Content-addressed, so the response is immutable and "
+                "cacheable forever.",
+)
+async def get_media(conv_id: str, media_id: str, request: Request):
+    conn = _get_db(request)
+    blob = await db.get_media_blob(conn, conv_id, media_id)
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    media_type, data = blob
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )

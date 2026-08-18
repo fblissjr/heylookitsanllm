@@ -117,10 +117,40 @@ class GenerateRequest(BaseModel):
     overrides: dict = Field(default_factory=dict)
 
 
-def _wire_content(blocks: list[dict], caps: list[str], dropped: dict) -> str | list[dict]:
+def _media_ids_for_wire(rows: list[dict], caps: list[str]) -> list[str]:
+    """Blob ids the wire build will need bytes for (schema v7 url sources).
+    Cap-excluded media is dropped at the wire, so its bytes are never
+    fetched."""
+    wanted_cap = {"image": "vision", "audio": "audio"}
+    ids = []
+    for row in rows:
+        for b in row.get("content_blocks") or []:
+            cap = wanted_cap.get(b.get("type") or "")
+            src = b.get("source") or {}
+            if cap in caps and src.get("media_id"):
+                ids.append(src["media_id"])
+    return list(dict.fromkeys(ids))
+
+
+def _wire_content(blocks: list[dict], caps: list[str], dropped: dict,
+                  media: dict[str, tuple[str, bytes]]) -> str | list[dict]:
     """Stored content blocks -> OpenAI wire content, dropping cap-excluded
     media (counted in ``dropped``). Text-only messages travel as a plain
-    string -- the shape MLX templates see today."""
+    string -- the shape MLX templates see today.
+
+    Blob-backed sources (schema v7: ``media_id`` on a url source) resolve to
+    inline bytes from ``media`` -- providers cannot fetch our own relative
+    URLs. A referenced blob missing from ``media`` is store corruption and
+    raises (ValueError -> 500 before any stream starts), never a silent
+    drop."""
+    def blob_b64(src: dict) -> tuple[str, str]:
+        entry = media.get(src["media_id"])
+        if entry is None:
+            raise ValueError(f"media blob {src['media_id']} referenced by a message is missing")
+        media_type, raw = entry
+        import base64
+        return media_type, base64.b64encode(raw).decode()
+
     parts: list[dict] = []
     text_parts: list[str] = []
     for b in blocks:
@@ -133,17 +163,26 @@ def _wire_content(blocks: list[dict], caps: list[str], dropped: dict) -> str | l
                 dropped["images"] += 1
                 continue
             src = b.get("source") or {}
-            url = src.get("url") if src.get("type") == "url" else (
-                f"data:{src.get('media_type')};base64,{src.get('data')}"
-            )
+            if src.get("type") == "url" and src.get("media_id"):
+                media_type, b64 = blob_b64(src)
+                url = f"data:{media_type};base64,{b64}"
+            elif src.get("type") == "url":
+                url = src.get("url")
+            else:
+                url = f"data:{src.get('media_type')};base64,{src.get('data')}"
             parts.append({"type": "image_url", "image_url": {"url": url}})
         elif btype == "audio":
             if "audio" not in caps:
                 dropped["audio"] += 1
                 continue
             src = b.get("source") or {}
-            if src.get("type") == "url":
-                input_audio: dict = {"url": src.get("url")}
+            if src.get("type") == "url" and src.get("media_id"):
+                media_type, b64 = blob_b64(src)
+                input_audio: dict = {"data": b64}
+                if "/" in media_type:
+                    input_audio["format"] = media_type.split("/", 1)[1]
+            elif src.get("type") == "url":
+                input_audio = {"url": src.get("url")}
             else:
                 input_audio = {"data": src.get("data")}
                 media_type = src.get("media_type") or ""
@@ -159,7 +198,7 @@ def _wire_content(blocks: list[dict], caps: list[str], dropped: dict) -> str | l
 
 def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
                         model_id: str, overrides: dict, *, continuing: bool,
-                        dropped: dict) -> ChatRequest:
+                        dropped: dict, media: dict[str, tuple[str, bytes]]) -> ChatRequest:
     """The store IS the request: system prompt + sampler bag + rows."""
     messages: list[ChatMessage] = []
     if conv.get("system_prompt"):
@@ -169,7 +208,7 @@ def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
         # construction (same shape converters.to_chat_request builds).
         messages.append(ChatMessage(
             role=row["role"],
-            content=cast("str | list", _wire_content(row.get("content_blocks") or [], caps, dropped)),
+            content=cast("str | list", _wire_content(row.get("content_blocks") or [], caps, dropped, media)),
         ))
 
     params = {**(conv.get("params") or {}), **overrides}
@@ -276,9 +315,17 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 continue_row = anchor
 
         dropped = {"images": 0, "audio": 0}
-        chat_request = _build_chat_request(
-            conv, prompt_rows, caps, model_id, body.overrides,
-            continuing=continue_row is not None, dropped=dropped)
+        # Blob bytes for the wire (schema v7): resolved HERE, before any
+        # stream starts, so a missing blob is a clean 500 rather than an
+        # in-band error mid-stream. Cap-excluded media never fetches.
+        media = await db.get_media_blobs(
+            conn, conv_id, _media_ids_for_wire(prompt_rows, caps))
+        try:
+            chat_request = _build_chat_request(
+                conv, prompt_rows, caps, model_id, body.overrides,
+                continuing=continue_row is not None, dropped=dropped, media=media)
+        except ValueError as e:  # referenced blob missing = store corruption
+            raise HTTPException(status_code=500, detail=str(e))
 
         from heylook_llm.api import validate_request_sampler
         validate_request_sampler(chat_request.sampler)
@@ -390,8 +437,13 @@ async def stop_generation(conv_id: str):
 
 async def _persist_result(conn, conv_id: str, *,
                           continue_row: dict | None, commit_after: int,
-                          content: str, thinking: str | None) -> dict | None:
-    """Commit the generation outcome atomically (truncate + write together)."""
+                          content: str, thinking: str | None,
+                          model_id: str | None) -> dict | None:
+    """Commit the generation outcome atomically (truncate + write together).
+
+    ``model_id`` stamps a FRESH assistant row only. A continuation keeps the
+    anchor's original stamp: the merged row was co-written, and any single
+    stamp would misattribute half of it (see replace_tail_with_update)."""
     if continue_row is not None:
         combined = (continue_row.get("content") or "") + content
         combined_thinking = None
@@ -403,7 +455,7 @@ async def _persist_result(conn, conv_id: str, *,
             content=combined, thinking=combined_thinking)
     return await db.replace_tail_with_message(
         conn, conv_id, commit_after,
-        role="assistant", content=content, thinking=thinking)
+        role="assistant", content=content, thinking=thinking, model_id=model_id)
 
 
 async def _stream_generate(conn, conv_id, generator, http_request, *,
@@ -446,7 +498,8 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
             return None  # nothing generated: the thread stays untouched
         return await _persist_result(
             conn, conv_id, continue_row=continue_row,
-            commit_after=commit_after, content=content, thinking=thinking)
+            commit_after=commit_after, content=content, thinking=thinking,
+            model_id=model_id)
 
     try:
         try:

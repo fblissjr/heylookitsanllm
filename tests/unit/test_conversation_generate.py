@@ -406,6 +406,112 @@ class TestCapGating:
 
 
 @pytest.mark.unit
+class TestMessageAndMediaEndpoints:
+    """The v7 HTTP surface: single-message DELETE and the media serve route."""
+
+    IMAGE = {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png",
+                        "data": "aGV5bG9vaw=="}}
+
+    @pytest.mark.asyncio
+    async def test_delete_one_message_leaves_neighbors(self, ctx):
+        client, store, _ = ctx
+        conv, rows = await make_conv(store, ("user", "q1"), ("assistant", "a1"), ("user", "q2"))
+        res = await client.delete(f"/v1/conversations/{conv['id']}/messages/{rows[1]['id']}")
+        assert res.status_code == 200
+        got = await db.get_conversation(store, conv["id"])
+        assert [m["content"] for m in got["messages"]] == ["q1", "q2"]
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_message_404s(self, ctx):
+        client, store, _ = ctx
+        conv, _ = await make_conv(store, ("user", "q1"))
+        res = await client.delete(f"/v1/conversations/{conv['id']}/messages/ghost")
+        assert res.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_409s_while_generating(self, ctx):
+        client, store, _ = ctx
+        conv, rows = await make_conv(store, ("user", "q1"))
+        _ACTIVE[conv["id"]] = AbortEvent()
+        try:
+            res = await client.delete(f"/v1/conversations/{conv['id']}/messages/{rows[0]['id']}")
+            assert res.status_code == 409
+        finally:
+            _ACTIVE.pop(conv["id"], None)
+
+    @pytest.mark.asyncio
+    async def test_media_endpoint_serves_immutable_bytes(self, ctx):
+        client, store, _ = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        row = await db.append_message(store, conv["id"], role="user", content=[self.IMAGE])
+        url = row["content_blocks"][0]["source"]["url"]
+        res = await client.get(url)
+        assert res.status_code == 200
+        assert res.content == b"heylook"
+        assert res.headers["content-type"].startswith("image/png")
+        assert "immutable" in res.headers["cache-control"]
+
+    @pytest.mark.asyncio
+    async def test_media_endpoint_404s_across_conversations(self, ctx):
+        client, store, _ = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        other = await db.create_conversation(store, title="o", model_id="fake-model")
+        row = await db.append_message(store, conv["id"], role="user", content=[self.IMAGE])
+        media_id = row["content_blocks"][0]["source"]["media_id"]
+        res = await client.get(f"/v1/conversations/{other['id']}/media/{media_id}")
+        assert res.status_code == 404
+
+
+@pytest.mark.unit
+class TestMediaWire:
+    """Schema v7: stored rows carry blob-backed url sources; the wire build
+    must resolve them back to inline bytes (providers cannot fetch our own
+    relative URLs)."""
+
+    IMAGE = {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png",
+                        "data": "aGV5bG9vaw=="}}
+
+    @pytest.mark.asyncio
+    async def test_blob_backed_image_reaches_the_wire_as_data_url(self, ctx):
+        client, store, provider = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        row = await db.append_message(
+            store, conv["id"], role="user",
+            content=[self.IMAGE, {"type": "text", "text": "what is this?"}])
+        # precondition: the store externalized -- no base64 in the row
+        assert row["content_blocks"][0]["source"]["type"] == "url"
+
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append"})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req is not None
+        parts = req.messages[-1].content
+        image_parts = [p for p in parts if getattr(p, "type", None) == "image_url"]
+        assert len(image_parts) == 1
+        # the original bytes, re-inlined from the blob
+        assert image_parts[0].image_url.url == "data:image/png;base64,aGV5bG9vaw=="
+
+    @pytest.mark.asyncio
+    async def test_cap_dropped_media_is_counted_not_fetched(self, ctx):
+        client, store, provider = ctx
+        # conversation on the NON-vision default model
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        await db.append_message(
+            store, conv["id"], role="user",
+            content=[self.IMAGE, {"type": "text", "text": "see this?"}])
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append"})
+        assert res.status_code == 200
+        assert saved_event(res.text)["dropped_media"] == {"images": 1, "audio": 0}
+        req = provider.last_request
+        assert req is not None
+        assert req.messages[-1].content == "see this?"  # text-only wire shape
+
+
+@pytest.mark.unit
 class TestClaimLeaks:
     @pytest.mark.asyncio
     async def test_busy_503_releases_the_claim(self, ctx):
