@@ -342,18 +342,29 @@ class TestSlotThreadAffinity:
         mx.eval(arrays)
 
 
+class _MropeLM:
+    def __init__(self):
+        self._rope_deltas = None  # instance state, qwen3_vl-style
+
+
+class _MropeWrapper:
+    def __init__(self):
+        self.language_model = _MropeLM()
+
+
 @pytest.mark.unit
 class TestMropeReuseGate:
     """mRoPE-family language models keep _position_ids/_rope_deltas as
     instance state maintained across decode; KV written under that
     bookkeeping is not reconstructible from a restored cache (live-verified
     silent-EMPTY outputs on chained restores, identical across mlx-vlm
-    0.6.13/0.6.15). The gate walks the same unwrap as _reset_vlm_positions
-    and fails toward re-prefill."""
+    0.6.13/0.6.15). The gate lives IN the reuse path (every caller inherits
+    it), walks the same shared unwrap as _reset_vlm_positions, and reads
+    absence of the attrs as safe."""
 
     def _gate(self, model):
-        from heylook_llm.providers.common.generation_core import _cache_restore_safe
-        return _cache_restore_safe(model, f"gate-{id(model)}")
+        from heylook_llm.providers.common.prompt_cache import _mrope_reuse_safe
+        return _mrope_reuse_safe(model)
 
     def test_plain_model_is_safe(self):
         class _Plain:
@@ -361,13 +372,7 @@ class TestMropeReuseGate:
         assert self._gate(_Plain()) is True
 
     def test_mrope_language_model_is_unsafe(self):
-        class _MropeLM:
-            def __init__(self):
-                self._rope_deltas = None  # instance state, qwen3_vl-style
-        class _Wrapper:
-            def __init__(self):
-                self.language_model = _MropeLM()
-        assert self._gate(_Wrapper()) is False
+        assert self._gate(_MropeWrapper()) is False
 
     def test_gate_inspects_the_unwrapped_model(self):
         # The wrapper itself carrying nothing must not mask inner state.
@@ -378,3 +383,31 @@ class TestMropeReuseGate:
             def __init__(self):
                 self._lm = _Inner()
         assert self._gate(_Wrapper()) is False
+
+    def test_mrope_model_is_ineligible_in_the_reuse_path(self):
+        # Path enforcement: the SHARED lookup refuses reuse AND blocks the
+        # store, while the working cache stays registered (telemetry).
+        mgr = get_global_cache_manager()
+        _generate(mgr, "gate-path", list(range(40)), [])   # plain: slot exists
+        pc = mgr.get_or_create_cache("gate-path", _TinyModel(), STD)
+        with patch("heylook_llm.providers.common.prompt_cache.make_cache",
+                   return_value=[KVCache()]):
+            to_process, pc = process_prompt_with_cache(
+                pc, list(range(40)), _MropeWrapper(), STD)
+        assert pc._radix_eligible is False
+        assert to_process == list(range(40))               # no reuse
+        store_generation_cache(pc, list(range(41)), [_kv_of_len(41)])
+        # the slot was NOT replaced by the gated generation
+        assert mgr.get_cache_info()["gate-path"]["slot_tokens"] == 40
+
+    def test_allow_reuse_false_is_ineligible(self):
+        # The spec-decode spelling: caller says no cross-request reuse.
+        mgr = get_global_cache_manager()
+        _generate(mgr, "gate-draft", list(range(30)), [])
+        pc = mgr.get_or_create_cache("gate-draft", _TinyModel(), STD)
+        with patch("heylook_llm.providers.common.prompt_cache.make_cache",
+                   return_value=[KVCache()]):
+            to_process, pc = process_prompt_with_cache(
+                pc, list(range(30)), _TinyModel(), STD, allow_reuse=False)
+        assert pc._radix_eligible is False
+        assert to_process == list(range(30))

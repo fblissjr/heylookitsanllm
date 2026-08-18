@@ -30,6 +30,12 @@ Cross-session task backlog organized by priority.
   same bank were clean. Related: the streaming_utils quarantine
   warnings. Needs its own investigation (candidate mitigations: detect
   the fault signature and refuse-with-restart-hint; py-spy needs sudo).
+- [ ] **mRoPE cache gate: fail-open + no config escape** (P3, review
+  finding 2026-08-18): the gate keys on two private upstream attribute
+  names; a rename fails OPEN (reuse re-enabled on a broken family) and
+  there is no per-model `cache_reuse` config override to gate manually.
+  Follow-up: a models.toml field (effect-classified) honored ahead of the
+  attribute sniff.
 - [ ] **Prompt-cache reuse for quantized/rotating CONFIGS** (P3, deliberate
   non-widening in v1.75.0): the config-level gate (cache_type standard, no
   max_kv_size) predates Q7 and was kept verbatim. Under the snapshot+

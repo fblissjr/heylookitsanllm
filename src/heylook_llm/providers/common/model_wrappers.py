@@ -16,6 +16,26 @@ The wrapper is a transparent nn.Module that must not interfere with:
 import mlx.nn as nn
 
 
+# ONE spelling of "find the language model inside whatever we were handed"
+# and of the mRoPE instance-state attribute names -- shared by
+# _reset_vlm_positions and the prompt-cache reuse gate (CLAUDE.md rule: a
+# hand-copied constant list is a defect with a delay; the two consumers MUST
+# inspect the same object and the same attributes, and a silent desync here
+# is the silent-empty-output class).
+LM_UNWRAP_ATTRS = ('_lm', 'language_model')
+MROPE_STATE_ATTRS = ('_position_ids', '_rope_deltas')
+
+
+def unwrap_language_model(model):
+    """The object mRoPE position state lives on, unwrapping one level of
+    LogitsWrapper-style indirection."""
+    for attr in LM_UNWRAP_ATTRS:
+        inner = getattr(model, attr, None)
+        if inner is not None:
+            return inner
+    return model
+
+
 class LanguageModelLogitsWrapper(nn.Module):
     """
     Wrapper for VLM language models to extract logits directly.

@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.78.1]
+
+### Fixed
+
+Ten code-review findings against v1.78.0, two of them real shipped bugs:
+
+- **The mRoPE gate's first cut went dark on telemetry.** Nulling the cache
+  model id skipped working-cache registration entirely, so gated models
+  vanished from context-usage metrics, /v1/cache info, clear_cache, and --
+  worse -- the byte-budget/memory-pressure reclamation paths (a gemma slot
+  could stay wired forever while a gated model re-prefilled under
+  pressure). Eligibility now lives INSIDE process_prompt_with_cache (path
+  enforcement: every present and future caller inherits the config gate,
+  the mRoPE gate, and the spec-decode allow_reuse together), and the
+  working cache always registers. Verified live: the gated model appears
+  in /v1/cache/list with real token counts while staying re-prefill-only.
+- **_reset_vlm_positions was silently poisoning warm mRoPE models --
+  pre-existing, empirically confirmed.** Its object.__setattr__ bypassed
+  mlx Module.__setattr__, creating a permanent instance-dict None shadow
+  over the module dict: after the second request, the model could never
+  see its own _rope_deltas/_position_ids writes again, so every warm
+  generation recomputed positions from the current input. Fixed
+  (delattr-the-shadow + plain setattr), pinned by a two-cycle regression
+  test on a real nn.Module. NB the chained-restore empty-output bug
+  SURVIVED this fix (re-verified live with the gate bypassed), so the
+  mRoPE gate is its own necessity, not a symptom patch.
+
+Also from the review: the unwrap walk + mRoPE attribute names are now ONE
+shared spelling in model_wrappers (the reset and the gate inspect the same
+object by construction, per the no-hand-copied-lists rule); the reuse
+verdict log latch lives on the cache manager and clears with
+invalidate/clear, so a model reloaded under the same alias re-announces
+its (possibly different) verdict; the draft-model reuse-disable is logged
+instead of silent; vision requests on a draft-configured model WARN and
+drop the draft rather than silently discarding the vision prefill KV; the
+misleading "qwen3_5 restores correctly" comment is gone (it is gated, as
+the CHANGELOG said); and run_generation-level wiring pins make the gate
+undeletable-while-green. Remaining review item tracked in TODO: the gate
+fails open on renamed upstream attrs and there is no per-model
+cache-reuse config escape hatch yet.
+
 ## [1.78.0]
 
 ### Fixed

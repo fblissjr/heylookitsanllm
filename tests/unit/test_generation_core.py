@@ -290,6 +290,60 @@ class TestRunGeneration:
             assert call_args[0][0] is mock_working_cache
             assert call_args[0][1] == [1, 2, 10]  # prompt + generated
 
+    def _run_with(self, model, mock_manager, draft_model=None):
+        from heylook_llm.providers.common.generation_core import run_generation
+        responses = [FakeResponse("hi", 10)]
+        with patch('heylook_llm.providers.common.generation_core.lm_stream_generate',
+                   return_value=iter(responses)) as mock_gen, \
+             patch('heylook_llm.providers.common.generation_core.wired_limit') as mock_wired, \
+             patch('heylook_llm.providers.common.generation_core._get_generation_stream',
+                   return_value=MagicMock()), \
+             patch('heylook_llm.providers.common.generation_core.store_generation_cache') as mock_store, \
+             patch('heylook_llm.providers.common.generation_core.process_prompt_with_cache') as mock_process:
+            mock_wired.return_value.__enter__ = MagicMock()
+            mock_wired.return_value.__exit__ = MagicMock(return_value=False)
+            working = MagicMock()
+            working.cache = [MagicMock()]
+            mock_manager.get_or_create_cache.return_value = working
+            mock_process.return_value = ([1, 2], working)
+            list(run_generation(
+                model=model, tokenizer=MagicMock(), prompt_tokens=[1, 2],
+                effective_request={'max_tokens': 100}, sampler=MagicMock(),
+                processors=[], model_id="test-model",
+                cache_manager=mock_manager, draft_model=draft_model,
+            ))
+            return mock_gen, mock_store, mock_process
+
+    def test_mrope_model_still_registers_its_working_cache(self, mock_mlx):
+        # Review finding on the first gate cut: nulling model_id skipped
+        # get_or_create_cache, so gated models vanished from telemetry,
+        # /v1/cache info, and the reclamation paths. model_id must ALWAYS
+        # flow; eligibility is the reuse path's job, not the call site's.
+        from heylook_llm.providers.common.generation_core import run_generation
+        class _MropeLM:
+            def __init__(self):
+                self._rope_deltas = None
+        class _Wrapper:
+            def __init__(self):
+                self.language_model = _MropeLM()
+        mock_manager = MagicMock()
+        _, _, mock_process = self._run_with(_Wrapper(), mock_manager)
+        mock_manager.get_or_create_cache.assert_called_once()
+        mock_process.assert_called_once()  # eligibility decided inside it
+
+    def test_draft_model_disables_reuse_and_hands_mlx_lm_no_cache(self, mock_mlx):
+        # mlx-lm's speculative path slices a provided prompt_cache into
+        # target+draft halves; a target-only list would hand the drafter an
+        # empty cache. With a draft: prompt_cache=None (mlx-lm pairs its
+        # own) and the reuse path is told allow_reuse=False.
+        from heylook_llm.providers.common.generation_core import run_generation
+        mock_manager = MagicMock()
+        mock_gen, _, mock_process = self._run_with(
+            MagicMock(spec=[]), mock_manager, draft_model=MagicMock(spec=[]))
+        assert mock_gen.call_args.kwargs['prompt_cache'] is None
+        assert mock_process.call_args.kwargs.get('allow_reuse') is False
+        mock_manager.get_or_create_cache.assert_called_once()  # telemetry intact
+
 
 class TestGenerateText:
     """Verify generate_text builds sampler internally and delegates to run_generation."""
@@ -366,3 +420,34 @@ class TestGenerateText:
             ))
 
         assert mock_gen.call_args.kwargs['draft_model'] is draft
+
+
+class TestResetVlmPositionsShadow:
+    """_reset_vlm_positions must NEVER object.__setattr__: mlx Module routes
+    array assignments to its module dict and un-shadows an instance __dict__
+    entry only when the key is absent, so a bypassed None write creates a
+    PERMANENT shadow -- the model's own position-state writes become
+    invisible and every warm generation recomputes positions from the
+    current input (empirically confirmed 2026-08-18; review finding)."""
+
+    def test_reset_leaves_position_state_writable(self):
+        import mlx.core as mx
+        import mlx.nn as nn
+        from heylook_llm.providers.common.generation_core import _reset_vlm_positions
+
+        class _LM(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self._rope_deltas = None
+                self._position_ids = None
+
+        lm = _LM()
+        for cycle in range(2):  # the shadow bug only bites from cycle 2
+            lm._rope_deltas = mx.array([float(cycle + 7)])
+            _reset_vlm_positions(lm)
+            assert lm._rope_deltas is None
+            lm._rope_deltas = mx.array([9.0])
+            assert lm._rope_deltas is not None, (
+                f"cycle {cycle}: the reset shadowed the attribute -- the model "
+                f"can no longer see its own position state")
+            _reset_vlm_positions(lm)

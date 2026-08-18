@@ -32,6 +32,7 @@ from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 from ..base import GenerationChunk
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
+from .model_wrappers import MROPE_STATE_ATTRS, unwrap_language_model
 from .stop_tokens import resolve_stop_tokens
 
 
@@ -60,43 +61,6 @@ def ensure_gen_tokenizer(tokenizer):
     return wrapped
 
 
-# Cache-reuse safety gate. mRoPE-family language models (qwen3_vl-style)
-# keep _position_ids/_rope_deltas as INSTANCE state and maintain them across
-# decode steps -- KV written under that bookkeeping is not reconstructible
-# from a restored cache. Live-verified 2026-08-18: deterministic silent-EMPTY
-# outputs on chained server restores (identical on mlx-vlm 0.6.13 and
-# 0.6.15, so latent, not a regression), while single-hop synthetic probes
-# PASS -- which is why this is an attribute gate rather than a behavioral
-# probe: the failing shape needs a chained generate->store->restore through
-# the real machinery to reproduce. Models without instance position state
-# derive positions purely from cache offset and restore correctly (verified
-# live: gemma-4 incl. sliding-window layers, qwen3_5 hybrids within their
-# trim-refusal envelope). Same unwrap walk as _reset_vlm_positions -- the
-# two must always inspect the same object.
-_REUSE_VERDICT_LOGGED: set = set()
-
-
-def _cache_restore_safe(model, model_id: str) -> bool:
-    target = model
-    for attr in ('_lm', 'language_model'):
-        inner = getattr(target, attr, None)
-        if inner is not None:
-            target = inner
-            break
-    safe = not (hasattr(target, '_rope_deltas') or hasattr(target, '_position_ids'))
-    if model_id not in _REUSE_VERDICT_LOGGED:
-        _REUSE_VERDICT_LOGGED.add(model_id)
-        if safe:
-            logging.info(f"Prompt-cache reuse enabled for {model_id}")
-        else:
-            logging.info(
-                f"Prompt-cache reuse DISABLED for {model_id}: the language model keeps "
-                f"instance mRoPE position state, which a restored cache cannot satisfy -- "
-                f"every request re-prefills (correct, slower)"
-            )
-    return safe
-
-
 def _reset_vlm_positions(model) -> None:
     """Reset mRoPE position state cached on VLM language models.
 
@@ -104,18 +68,27 @@ def _reset_vlm_positions(model) -> None:
     LanguageModel instance during forward(). These must be cleared between
     fresh generations (no pre-filled cache) to prevent broadcast shape
     mismatches in rotary embedding computation. Handles LogitsWrapper-style
-    wrapping by unwrapping first.
+    wrapping via the SHARED unwrap (model_wrappers) -- the cache-reuse gate
+    inspects the same object with the same attribute list, by construction.
     """
-    target = model
-    for attr in ('_lm', 'language_model'):
-        inner = getattr(target, attr, None)
-        if inner is not None:
-            target = inner
-            break
-    for attr in ('_position_ids', '_rope_deltas'):
+    target = unwrap_language_model(model)
+    for attr in MROPE_STATE_ATTRS:
         if hasattr(target, attr):
             try:
-                object.__setattr__(target, attr, None)
+                # NEVER object.__setattr__ here: mlx Module routes array
+                # assignments to its module dict and un-shadows an instance
+                # __dict__ entry only when the key is absent -- a bypassed
+                # None write creates a PERMANENT shadow, after which the
+                # model's own position-state writes become invisible and
+                # every warm generation recomputes positions from the
+                # current input (empirically confirmed 2026-08-18 on a real
+                # nn.Module). delattr any existing shadow first (heals
+                # processes that already have one), then plain setattr.
+                try:
+                    object.__delattr__(target, attr)
+                except AttributeError:
+                    pass
+                setattr(target, attr, None)
             except Exception:
                 pass
 
@@ -237,19 +210,23 @@ def _build_cache_config(effective_request: dict) -> dict:
     }
 
 
-def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_manager):
+def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_manager,
+                        allow_reuse: bool = True):
     """Set up the prompt cache from the model's single-slot snapshot.
 
     Returns:
         Tuple of (prompt_cache, tokens_to_process, generation_cache).
         If model_id is None, prompt_cache and generation_cache are None.
+        ``allow_reuse=False`` (spec decode) still REGISTERS the working
+        cache -- telemetry and reclamation depend on that -- but skips
+        cross-request lookup/store.
     """
     if not model_id:
         return None, prompt_tokens, None
 
     prompt_cache = cache_manager.get_or_create_cache(model_id, model, cache_config)
     tokens_to_process, updated_cache = process_prompt_with_cache(
-        prompt_cache, prompt_tokens, model, cache_config
+        prompt_cache, prompt_tokens, model, cache_config, allow_reuse=allow_reuse
     )
     generation_cache = updated_cache.cache
     logging.info(f"Prompt cache: processing {len(tokens_to_process)}/{len(prompt_tokens)} tokens")
@@ -337,6 +314,17 @@ def run_generation(
 
     tokenizer = ensure_gen_tokenizer(tokenizer)
 
+    if pre_filled_cache is not None and draft_model is not None:
+        # Spec decode needs prompt_cache=None so mlx-lm can build its paired
+        # target+draft caches -- which would DISCARD the vision prefill KV
+        # and generate fluent nonsense from a single token. Correctness
+        # wins: drop the draft for this request, keep the vision cache.
+        logging.warning(
+            "speculative decoding is not supported on the vision path -- "
+            "generating without the draft model for this request"
+        )
+        draft_model = None
+
     if pre_filled_cache is not None:
         # Vision path: cache already populated by VLM forward pass.
         # Skip the prompt cache -- vision embeddings can't be snapshotted here.
@@ -352,23 +340,21 @@ def run_generation(
 
         cache_config = _build_cache_config(effective_request)
 
-        # cache_model_id gates the CACHE only -- model_id itself keeps
-        # feeding the draft tuner and perf paths untouched.
+        # Reuse eligibility (mRoPE gate + config gate) is enforced INSIDE
+        # process_prompt_with_cache -- path enforcement, so any future
+        # caller inherits it. model_id always flows: the working cache must
+        # register even for no-reuse models, or context-usage telemetry,
+        # /v1/cache info and the byte-budget/memory-pressure reclamation
+        # paths all go dark for them (review finding on the first cut).
         # Spec decode: mlx-lm's speculative path slices a provided
         # prompt_cache into target+draft halves; a target-only list (ours,
-        # fresh OR restored) would hand the drafter an empty cache. No MLX
-        # entry ships a drafter today, but the landmine is real -- with a
-        # draft model, mlx-lm builds its own paired caches and we skip
-        # cross-request reuse entirely.
-        cache_model_id = model_id if draft_model is None else None
-        # mRoPE gate: only reuse cache state on models whose positions derive
-        # purely from cache offset (silent empty output is the failure mode
-        # being excluded -- see _cache_restore_safe).
-        if cache_model_id and not _cache_restore_safe(model, cache_model_id):
-            cache_model_id = None
-
+        # fresh OR restored) would hand the drafter an empty cache. With a
+        # draft model, mlx-lm builds its own paired caches and cross-request
+        # reuse is skipped (allow_reuse below; logged by the eligibility
+        # machinery).
         prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
-            cache_model_id, model, prompt_tokens, cache_config, cache_manager
+            model_id, model, prompt_tokens, cache_config, cache_manager,
+            allow_reuse=draft_model is None,
         )
 
     def prompt_progress_callback(processed: int, total: int):

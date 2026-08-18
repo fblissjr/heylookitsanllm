@@ -58,6 +58,7 @@ import mlx.core as mx
 from mlx_lm.models.cache import can_trim_prompt_cache, trim_prompt_cache
 
 from .cache_helpers import make_cache
+from .model_wrappers import MROPE_STATE_ATTRS, unwrap_language_model
 
 
 def _mlx_memory_pressure() -> bool:
@@ -143,6 +144,28 @@ def _restore_layers(slot: _Slot, model: Any, cache_config: dict) -> List[Any]:
     return cache
 
 
+def _mrope_reuse_safe(model) -> bool:
+    """mRoPE-family language models (qwen3_vl-style, and qwen3_5 -- BOTH set
+    the attrs in __init__ and BOTH are gated) keep _position_ids/_rope_deltas
+    as INSTANCE state maintained across decode steps; KV written under that
+    bookkeeping is not reconstructible from a restored cache. Live-verified
+    2026-08-18: deterministic silent-EMPTY outputs on chained server restores
+    (identical on mlx-vlm 0.6.13/0.6.15; single-hop synthetic probes PASS on
+    the same model, so only the real chain discriminates -- which is why this
+    is an attribute gate, not a behavioral probe; it also survived the
+    _reset_vlm_positions shadow fix, so it is its own bug, not a symptom).
+    Inspects the SAME object via the SAME shared constants as
+    _reset_vlm_positions (model_wrappers). Models without instance position
+    state derive purely from cache offset and restore correctly (verified
+    live: gemma-4 incl. sliding-window layers).
+
+    Fail direction: absence of the attrs reads as safe. A renamed upstream
+    attr therefore fails OPEN -- tracked in TODO with a per-model config
+    escape hatch as the follow-up."""
+    target = unwrap_language_model(model)
+    return not any(hasattr(target, attr) for attr in MROPE_STATE_ATTRS)
+
+
 def _common_prefix_len(a: List[int], b: List[int]) -> int:
     n = min(len(a), len(b))
     i = 0
@@ -172,6 +195,17 @@ class PromptCacheManager:
         self._max_cache_bytes = max_cache_bytes
         self._access_order: list[str] = []
         self._lock = threading.RLock()
+        # once-per-model reuse-verdict log latch; cleared with the model's
+        # caches so a reload/repoint under the same alias re-announces the
+        # (possibly different) verdict instead of standing on a stale line
+        self._verdict_logged: set[str] = set()
+
+    def _log_verdict_once(self, model_id: str, message: str) -> None:
+        with self._lock:
+            if model_id in self._verdict_logged:
+                return
+            self._verdict_logged.add(model_id)
+        logging.info(message)
 
     def set_byte_budget(self, max_bytes: int | None) -> None:
         """Set the maximum byte budget for all slots combined."""
@@ -231,6 +265,7 @@ class PromptCacheManager:
         with self._lock:
             self._slots.pop(model_id, None)
             self._working_caches.pop(model_id, None)
+            self._verdict_logged.discard(model_id)
             logging.debug(f"Invalidated caches for {model_id}")
 
     def clear_all(self):
@@ -239,6 +274,7 @@ class PromptCacheManager:
             self._slots.clear()
             self._working_caches.clear()
             self._access_order.clear()
+            self._verdict_logged.clear()
             logging.debug("Cleared all prompt caches")
 
     @property
@@ -295,15 +331,17 @@ def process_prompt_with_cache(
     new_tokens: List[int],
     model: Any,
     cache_config: dict | None = None,
+    allow_reuse: bool = True,
 ) -> Tuple[List[int], PromptCache]:
     """Process a prompt reusing the model's slot when it is safe to.
 
-    EXTENSION (stored sequence is a prefix of the new prompt): continue the
-    live cache, process the suffix -- valid for every cache type. DIVERGENCE:
-    trim the stored tail to the common prefix via mlx-lm's trim_prompt_cache
-    when the cache supports it; otherwise put the slot back untouched and
-    re-prefill. A reuse TAKES the slot -- the generation mutates those cache
-    objects, and the end-of-generation store re-registers them.
+    Reuse comes in two shapes -- EXTENSION (reconstruct from the snapshots
+    and continue) and TRIM to the common prefix via mlx-lm's
+    trim_prompt_cache (refused per layer-type). ELIGIBILITY is decided here,
+    once, for every caller (path enforcement): the config gate, the mRoPE
+    gate (_mrope_reuse_safe), and the caller's allow_reuse (spec decode:
+    mlx-lm must build its own paired caches). Ineligible models still keep
+    a registered working cache -- telemetry and reclamation depend on it.
     """
     cache_config = cache_config or {}
     model_id = prompt_cache.model_key[0]
@@ -317,6 +355,21 @@ def process_prompt_with_cache(
         cache_config.get("cache_type", "standard") == "standard"
         and not cache_config.get("max_kv_size")
     )
+    manager0 = get_global_cache_manager()
+    if prompt_cache._radix_eligible and not allow_reuse:
+        prompt_cache._radix_eligible = False
+        manager0._log_verdict_once(model_id, (
+            f"Prompt-cache reuse disabled for {model_id}: a draft model is "
+            f"configured, and mlx-lm's speculative path builds its own paired "
+            f"caches -- every request re-prefills"))
+    if prompt_cache._radix_eligible and not _mrope_reuse_safe(model):
+        prompt_cache._radix_eligible = False
+        manager0._log_verdict_once(model_id, (
+            f"Prompt-cache reuse DISABLED for {model_id}: the language model "
+            f"keeps instance mRoPE position state, which a restored cache "
+            f"cannot satisfy -- every request re-prefills (correct, slower)"))
+    elif prompt_cache._radix_eligible:
+        manager0._log_verdict_once(model_id, f"Prompt-cache reuse enabled for {model_id}")
 
     manager = get_global_cache_manager()
     slot = manager._get_slot(model_id) if prompt_cache._radix_eligible else None
