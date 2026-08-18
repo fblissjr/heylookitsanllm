@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.78.2]
+
+### Fixed
+
+Two test-infrastructure defects from the ordering review (all 100 test
+files were run in isolation as a census; every directory-level invocation
+shape is green):
+
+- **test_router_pinning's import-scoped sys.modules mock was an active
+  eviction bug.** patch.dict restores by clear+update, so modules
+  FIRST-imported inside its window (the whole provider chain, plus real
+  numpy) were evicted from sys.modules on exit. Whenever that file led a
+  per-file invocation (IDE run-this-file, changed-files CI, sharding),
+  later re-imports failed -- 11 failures across the router files, and a
+  reproducible hard SEGFAULT paired with test_generation_core. Full runs
+  were healed purely by collection luck. The router now imports REAL,
+  with importorskip on non-Apple; those tests never touched MLX at
+  runtime anyway.
+- **The mock tree's TokenizerWrapper was a MagicMock INSTANCE**, so
+  `isinstance(tok, TokenizerWrapper)` raised TypeError -- the reason
+  test_generation_core.py was the single file (of 100) failing alone. It
+  is a real class now.
+
+The review's other verdicts: the unit `mock_mlx` fixture stays
+unconditional on purpose (its oracles assert against the mocks); ordering
+plugins are the wrong tool (both hazards were collection-time, and the
+real exposure is per-file invocation). Full report:
+test_ordering_review (internal, local-only).
+
 ## [1.78.1]
 
 ### Fixed

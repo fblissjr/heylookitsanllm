@@ -8,29 +8,28 @@ mixing real MLX Metal state with MagicMock providers. We test selection logic
 directly and use careful fixture scoping to avoid the crash.
 """
 
-import sys
 import threading
 from collections import OrderedDict
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from helpers.mlx_mock import create_mlx_module_mocks
-
-# ModelRouter pulls in MLX at module load. Import it under a temporary
-# sys.modules mock so this module also collects on non-Apple hardware, then let
-# the context manager restore real MLX immediately on exit.
-#
-# Scoping the patch to JUST the import is load-bearing: an earlier version
-# started the patch at module-import time and only stopped it via atexit. Since
-# pytest imports every test module during collection, that replaced real MLX
-# with MagicMocks for the entire session, so any later test that imported MLX
-# (directly or through provider code) silently got mocks and failed. The
-# eviction/unload tests below use providers whose `.provider` is "test" (not
-# "mlx"), so the router never reaches `mx.clear_cache()` -- the mock only has to
-# satisfy the import, not the test bodies.
-with patch.dict(sys.modules, create_mlx_module_mocks()):
-    from heylook_llm.router import ModelRouter  # noqa: E402 -- import under mock
+# ModelRouter pulls in MLX at module load. Import it REAL, skipping this
+# module entirely where MLX is absent. The previous spelling imported it
+# under an import-scoped `patch.dict(sys.modules, mocks)` -- which looked
+# safe but was an ACTIVE defect (ordering review 2026-08-18): patch.dict
+# restores by clear+update, so any module FIRST-imported inside the window
+# (the whole provider chain, and real numpy via mlx_embedding_provider) was
+# EVICTED from sys.modules on exit. When this file was the first importer
+# of the router chain (any per-file invocation: IDE run-this-file,
+# changed-files CI, file-list sharding), later re-imports crashed --
+# `ImportError: cannot load module more than once per process` across the
+# router files, and a hard SEGFAULT paired with test_generation_core. Full
+# runs were healed only by collection luck (test_admin_offloop importing
+# the chain unmocked first). These tests never touch MLX at runtime (their
+# providers are `.provider == "test"`), so faking the stack bought nothing.
+pytest.importorskip("mlx.core", reason="router import pulls the MLX provider stack")
+from heylook_llm.router import ModelRouter  # noqa: E402
 
 
 def _make_fresh_router():

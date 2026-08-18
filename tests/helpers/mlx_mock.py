@@ -83,7 +83,17 @@ def create_mlx_module_mocks() -> dict:
     mock_mlx_lm.sample_utils.make_sampler = MagicMock()
     mock_mlx_lm.sample_utils.make_logits_processors = MagicMock(return_value=[])
     mock_mlx_lm.tokenizer_utils = MagicMock()
-    mock_mlx_lm.tokenizer_utils.TokenizerWrapper = MagicMock()
+
+    # A real TYPE, not a MagicMock instance: consumers do
+    # `isinstance(tok, TokenizerWrapper)` (generation_core.ensure_gen_tokenizer),
+    # and isinstance against an instance raises TypeError -- which is exactly
+    # how tests/unit/test_generation_core.py failed in ISOLATION for as long
+    # as its first import happened under this mock (ordering review
+    # 2026-08-18: the only file of 100 failing alone).
+    class _FakeTokenizerWrapper:
+        pass
+
+    mock_mlx_lm.tokenizer_utils.TokenizerWrapper = _FakeTokenizerWrapper
     mock_mlx_lm.models = MagicMock()
     mock_mlx_lm.models.cache = MagicMock()
     mock_mlx_lm.models.cache.KVCache = MagicMock()
