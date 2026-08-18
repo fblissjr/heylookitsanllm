@@ -75,7 +75,13 @@ function serveV3() {
 // --- stub conversation: long enough to scroll ------------------------------
 const LONG = 'lorem ipsum dolor sit amet consectetur adipiscing elit '.repeat(25);
 
-function makeMessages({ unsaved = false } = {}) {
+// 1x1 transparent PNG -- the byte payload the stub media endpoint serves.
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64');
+const MEDIA_ID = 'f'.repeat(64); // sha256-shaped, like the server mints
+
+function makeMessages({ unsaved = false, withMedia = false } = {}) {
   const msgs = Array.from({ length: 30 }, (_, i) => ({
     id: `m${i}`,
     role: i % 2 ? 'assistant' : 'user',
@@ -95,13 +101,28 @@ function makeMessages({ unsaved = false } = {}) {
     msgs.push({ id: null, role: 'assistant', content: 'unsaved reply',
       position: msgs.length, thinking: null, content_blocks: null });
   }
+  if (withMedia) {
+    // A schema-v7 row: the store externalizes base64 into a blob and returns
+    // a url source with the media_id marker -- this is the shape the page
+    // actually receives now, and the shape the media checks must exercise.
+    msgs.push({
+      id: 'mimg', role: 'user', content: 'look at this picture',
+      position: msgs.length, thinking: null,
+      content_blocks: [
+        { type: 'image',
+          source: { type: 'url', url: `/v1/conversations/c1/media/${MEDIA_ID}`,
+            media_type: 'image/png', media_id: MEDIA_ID } },
+        { type: 'text', text: 'look at this picture' },
+      ],
+    });
+  }
   return msgs;
 }
 
 // Stateful stub store. `handle` mutates `messages` the way the real store
 // would, so post-saga reconciliation reads back a consistent thread.
-function makeStubStore({ unsaved = false, caps = [], secondModel = null } = {}) {
-  const messages = makeMessages({ unsaved });
+function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMedia = false } = {}) {
+  const messages = makeMessages({ unsaved, withMedia });
   let nextId = messages.length;
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
@@ -240,12 +261,12 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null } = {}) 
 //   needs the text-only default.
 async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
-  secondModel = null,
+  secondModel = null, withMedia = false,
 } = {}) {
   const page = await browser.newPage();
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
-  const store = makeStubStore({ unsaved, caps, secondModel });
+  const store = makeStubStore({ unsaved, caps, secondModel, withMedia });
   const reqs = [];
 
   if (mobile) {
@@ -279,6 +300,10 @@ async function openChat(browser, base, {
       }
       // DELETE (Stop) -- nothing tracked in the stub; say "nothing active"
       return req.respond({ status: 404, contentType: 'application/json', body: '{}' });
+    }
+    // The v7 media serve endpoint: bytes, not JSON.
+    if (url.includes('/media/')) {
+      return req.respond({ status: 200, contentType: 'image/png', body: PNG_1PX });
     }
     const body = JSON.stringify(store.handle(url, req.method(), req.postData()));
     const send = () => req.respond({ status: 200, contentType: 'application/json', body });
@@ -719,6 +744,40 @@ async function main() {
       assert(gen.pageErrors.length === 0, `page errors: ${gen.pageErrors.join(' | ')}`);
     });
     await gen.page.close();
+
+    // ---- boot 2c: schema-v7 media rows render from the blob endpoint ------
+    // The store now returns url-source blocks (media by reference); every
+    // other boot serves content_blocks: null, so without this the page's
+    // media render path is only ever exercised against pre-v7 fixtures.
+    const med = await openChat(browser, base, { withMedia: true, caps: ['vision'] });
+
+    await suite.check('a url-source media row renders and its blob request loads', async () => {
+      await waitFor(() => med.page.evaluate(() => {
+        const img = [...document.querySelectorAll('.message-image')]
+          .find((i) => i.src.includes('/media/'));
+        // complete + naturalWidth: the request went out AND came back as a
+        // decodable image. NB <img> ignores HTTP status and decodes whatever
+        // bytes arrive, so this catches an undecodable body (the real
+        // server's 404 is JSON -- undecodable), NOT a 404 carrying valid
+        // image bytes. Shown red against a garbage body, not a bare 404.
+        return Boolean(img && img.complete && img.naturalWidth > 0);
+      }), { message: 'the blob-backed image never rendered or never loaded' });
+      const row = await med.page.evaluate(() => {
+        const img = document.querySelector('.message-image');
+        const msg = img.closest('.message');
+        return {
+          text: msg.textContent.includes('look at this picture'),
+          dropNote: Boolean(msg.querySelector('.message-drop-note')),
+        };
+      });
+      assert(row.text, 'the media row lost its text block');
+      assert(!row.dropNote, 'a vision-capable model shows a drop disclosure it should not');
+    });
+
+    await suite.check('no uncaught page errors (media rows)', () => {
+      assert(med.pageErrors.length === 0, `page errors: ${med.pageErrors.join(' | ')}`);
+    });
+    await med.page.close();
 
     // ---- boot 3: loud guard during the pre-first-token window -------------
     const slow = await openChat(browser, base, { sseDelayMs: 1500 });
