@@ -56,7 +56,12 @@ class MessageCreateRequest(BaseModel):
     system: Optional[str] = Field(
         default=None, description="System prompt. Kept out of messages array for clarity."
     )
-    max_tokens: int = Field(default=1024, gt=0)
+    # Tri-state like every other knob (deliberately unlike Anthropic's
+    # required max_tokens): absent = the server-side sampler cascade's
+    # default. A hard 1024 default here overrode the cascade for every
+    # client that simply omitted the field -- the exact knob-loss Phase 3b
+    # migration guards against.
+    max_tokens: Optional[int] = Field(default=None, gt=0)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     top_k: Optional[int] = Field(default=None, ge=0)
@@ -90,6 +95,21 @@ class MessageCreateRequest(BaseModel):
     top_logprobs: Optional[int] = Field(
         default=None, ge=0, le=20,
         description="Number of top token alternatives with log probabilities (0-20)",
+    )
+
+    # heylook extensions (Phase 3b namespace) -- same semantics and bounds as
+    # ChatRequest, so a consumer migrating from /v1/chat/completions loses no
+    # knob. `sampler` is the SamplerRegistry bundle name (never a /v1/presets
+    # id); `vision_tokens` is the per-image visual token budget.
+    sampler: Optional[str] = Field(
+        default=None,
+        description="Named sampler bundle (e.g. 'balanced', 'thinking'). "
+                    "Resolved against the server's SamplerRegistry.",
+    )
+    vision_tokens: Optional[int] = Field(
+        default=None, ge=16, le=16384,
+        description="Target visual tokens per image; snapped to what the "
+                    "model's processor supports",
     )
 
     # Performance

@@ -241,8 +241,14 @@ async def get_media(conv_id: str, media_id: str, request: Request):
     if blob is None:
         raise HTTPException(status_code=404, detail="Media not found")
     media_type, data = blob
+    # private (conversation media must not park in shared caches), nosniff
+    # (the type is caller-derived; never let the browser second-guess it into
+    # something scriptable), immutable (content-addressed -- safe forever).
     return Response(
         content=data,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

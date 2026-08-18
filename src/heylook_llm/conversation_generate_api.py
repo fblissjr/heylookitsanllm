@@ -117,15 +117,22 @@ class GenerateRequest(BaseModel):
     overrides: dict = Field(default_factory=dict)
 
 
+# The ONE media-type -> capability mapping. Both the prefetch filter
+# (_media_ids_for_wire) and the wire build (_wire_content) read it -- a
+# hand-copied second spelling drifted once already in review: a type added to
+# one and not the other means a blob is never prefetched and blob_b64 raises
+# "store corruption" for a blob that exists.
+_MEDIA_CAPS = {"image": "vision", "audio": "audio"}
+
+
 def _media_ids_for_wire(rows: list[dict], caps: list[str]) -> list[str]:
     """Blob ids the wire build will need bytes for (schema v7 url sources).
     Cap-excluded media is dropped at the wire, so its bytes are never
     fetched."""
-    wanted_cap = {"image": "vision", "audio": "audio"}
     ids = []
     for row in rows:
         for b in row.get("content_blocks") or []:
-            cap = wanted_cap.get(b.get("type") or "")
+            cap = _MEDIA_CAPS.get(b.get("type") or "")
             src = b.get("source") or {}
             if cap in caps and src.get("media_id"):
                 ids.append(src["media_id"])
@@ -159,7 +166,7 @@ def _wire_content(blocks: list[dict], caps: list[str], dropped: dict,
             text_parts.append(b.get("text") or "")
             parts.append({"type": "text", "text": b.get("text") or ""})
         elif btype == "image":
-            if "vision" not in caps:
+            if _MEDIA_CAPS["image"] not in caps:
                 dropped["images"] += 1
                 continue
             src = b.get("source") or {}
@@ -172,7 +179,7 @@ def _wire_content(blocks: list[dict], caps: list[str], dropped: dict,
                 url = f"data:{src.get('media_type')};base64,{src.get('data')}"
             parts.append({"type": "image_url", "image_url": {"url": url}})
         elif btype == "audio":
-            if "audio" not in caps:
+            if _MEDIA_CAPS["audio"] not in caps:
                 dropped["audio"] += 1
                 continue
             src = b.get("source") or {}

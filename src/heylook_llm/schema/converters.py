@@ -107,6 +107,8 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         reasoning_effort=request.reasoning_effort,
         logprobs=request.logprobs,
         top_logprobs=request.top_logprobs,
+        sampler=request.sampler,
+        vision_tokens=request.vision_tokens,
         stream_options=stream_options,
     )
 

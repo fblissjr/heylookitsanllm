@@ -189,8 +189,13 @@ class StreamingEventTranslator:
             "usage": usage,
         })
 
-    def message_stop_event(self) -> str:
-        """Emit terminal message_stop with performance data."""
+    def message_stop_event(self, timing: dict | None = None) -> str:
+        """Emit terminal message_stop with performance data.
+
+        ``timing`` merges caller-supplied telemetry fields (peak memory, KV
+        bytes, queue wait, draft acceptance -- the heylook extension names
+        shared with heylook_saved.timing) into the performance object; None
+        values are skipped so absent telemetry never renders as null."""
         end_time = time.time()
         total_ms = int((end_time - self.start_time) * 1000)
 
@@ -200,6 +205,9 @@ class StreamingEventTranslator:
             perf["thinking_duration_ms"] = int((t_end - self.thinking_start) * 1000)
         if self.content_start is not None:
             perf["content_duration_ms"] = int((end_time - self.content_start) * 1000)
+        for key, value in (timing or {}).items():
+            if value is not None:
+                perf[key] = value
 
         return self._sse("message_stop", {"type": "message_stop", "performance": perf})
 
@@ -331,9 +339,17 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # (whose raw `thinking` field is missing the whole sampler layer).
     thinking_enabled = provider.effective_thinking(chat_request) if provider else False
 
+    # Same collector the OpenAI wire uses (derived, not copied) -- streaming
+    # emits namespaced heylook_logprobs events; non-streaming lands a
+    # logprobs content block. None when logprobs weren't requested or the
+    # provider has no tokenizer (the factory logs that case).
+    from heylook_llm.api import _init_logprobs_collector
+    logprobs_collector = _init_logprobs_collector(
+        chat_request, provider, request_id, streaming=msg_request.stream)
+
     if msg_request.stream:
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation()),
+            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), logprobs_collector=logprobs_collector),
             media_type="text/event-stream",
         )
     else:
@@ -341,6 +357,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
             generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
             provider=provider, thinking_enabled=thinking_enabled,
             continuing=chat_request.is_continuation(),
+            logprobs_collector=logprobs_collector,
         )
 
 
@@ -357,6 +374,7 @@ async def _non_stream_messages(
     provider=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
+    logprobs_collector=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -376,6 +394,11 @@ async def _non_stream_messages(
                 full_text += chunk.text
                 token_count += 1
                 telemetry.absorb(chunk)
+                if logprobs_collector is not None:
+                    tid = getattr(chunk, 'token', None)
+                    lp = getattr(chunk, 'logprobs', None)
+                    if tid is not None and lp is not None:
+                        logprobs_collector.add_token(tid, lp)
 
     try:
         await asyncio.to_thread(consume)
@@ -405,9 +428,15 @@ async def _non_stream_messages(
     if thinking is not None:
         message["thinking"] = thinking
 
+    choice: dict = {"message": message, "index": 0, "finish_reason": finish_reason}
+    # The docstring promises a logprobs output block -- before this, only the
+    # streaming path delivered it (the non-streaming collector was never
+    # wired). from_openai_response_dict turns this into a LogprobsBlock.
+    if logprobs_collector is not None and logprobs_collector.content:
+        choice["logprobs"] = logprobs_collector.to_dict()
     openai_dict = {
         "model": msg_request.model or "unknown",
-        "choices": [{"message": message, "index": 0, "finish_reason": finish_reason}],
+        "choices": [choice],
         "usage": {
             "prompt_tokens": telemetry.prompt_tokens,
             "completion_tokens": telemetry.completion_tokens or token_count,
@@ -480,6 +509,7 @@ async def _stream_messages(
     abort_event=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
+    logprobs_collector=None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -525,6 +555,23 @@ async def _stream_messages(
                 for event_str in translator.process_presplit_thinking(chunk_thinking):
                     yield event_str
 
+            # Namespaced logprobs extension (Messages has no logprobs of its
+            # own -- spec §4's extension rule). One event per token, emitted
+            # BEFORE the token's text delta, carrying the same entry shape as
+            # the OpenAI wire's logprobs.content (token, logprob,
+            # top_logprobs) so a migrating consumer keeps its parser.
+            if logprobs_collector is not None:
+                chunk_logprobs = getattr(chunk, "logprobs", None)
+                chunk_token = getattr(chunk, "token", None)
+                if chunk_token is not None and chunk_logprobs is not None:
+                    # streaming path always constructs StreamingLogprobsCollector
+                    delta = logprobs_collector.add_token_and_get_delta(chunk_token, chunk_logprobs)  # type: ignore[attr-defined]
+                    if delta:
+                        yield translator._sse("heylook_logprobs", {
+                            "type": "heylook_logprobs",
+                            "tokens": delta["content"],
+                        })
+
             if not chunk.text:
                 continue
 
@@ -556,9 +603,16 @@ async def _stream_messages(
     for event_str in translator.flush():
         yield event_str
 
-    # message_delta + message_stop
+    # message_delta + message_stop (timing/KV telemetry rides message_stop's
+    # performance object -- the extension the v3 status lines read)
     yield translator.message_delta_event()
-    yield translator.message_stop_event()
+    yield translator.message_stop_event(timing={
+        "peak_memory_gb": telemetry.peak_memory_gb or None,
+        "kv_cache_bytes": telemetry.kv_cache_bytes or None,
+        "queue_wait_ms": telemetry.queue_wait_ms or None,
+        "draft_acceptance": (telemetry.draft_accepted / telemetry.draft_tokens)
+        if telemetry.draft_tokens else None,
+    })
 
     logging.info(f"[MESSAGES] {request_id[:12]} stream complete")
 

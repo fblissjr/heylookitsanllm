@@ -450,7 +450,26 @@ class TestMessageAndMediaEndpoints:
         assert res.status_code == 200
         assert res.content == b"heylook"
         assert res.headers["content-type"].startswith("image/png")
+        # private (conversation media stays out of shared caches), immutable
+        # (content-addressed), nosniff (the type is caller-derived)
         assert "immutable" in res.headers["cache-control"]
+        assert "private" in res.headers["cache-control"]
+        assert res.headers["x-content-type-options"] == "nosniff"
+
+    @pytest.mark.asyncio
+    async def test_off_family_media_type_degrades_to_octet_stream(self, ctx):
+        # A block claiming text/html would otherwise be SERVED as same-origin
+        # HTML -- stored XSS. The write boundary constrains the type to the
+        # block's own family; off-family claims store as octet-stream.
+        client, store, _ = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        evil = {"type": "image",
+                "source": {"type": "base64", "media_type": "text/html",
+                           "data": "PHNjcmlwdD5ib29tPC9zY3JpcHQ+"}}
+        row = await db.append_message(store, conv["id"], role="user", content=[evil])
+        res = await client.get(row["content_blocks"][0]["source"]["url"])
+        assert res.status_code == 200
+        assert res.headers["content-type"].startswith("application/octet-stream")
 
     @pytest.mark.asyncio
     async def test_media_endpoint_404s_across_conversations(self, ctx):

@@ -253,6 +253,33 @@ are unauthenticated.
 must be identical (else 400), none may set `stream` (else 400). Response `{ data: ChatCompletionResponse[],
 batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_peak_mb, ...} }`.
 
+**Messages** `POST /v1/messages` (v1.74.0: THE wire notebook and explore speak —
+Phase 3b; chat uses its conversation-scoped sibling below; /v1/chat/completions
+stays for external consumers, no v3 page calls it):
+- Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
+  max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
+  repetition_context_size?, presence_penalty?, seed?, thinking?,
+  reasoning_effort?, logprobs?, top_logprobs?, sampler?, vision_tokens?,
+  stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
+  is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
+  the rename in `messagesParams()`, settings.js, never a second bag);
+  `sampler`/`vision_tokens` are heylook extensions with ChatRequest
+  semantics. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
+  absent = the server-side sampler cascade's default (a hard schema default
+  here silently overrode the cascade for every client that omitted it).
+- Streaming: the Messages SSE grammar (message_start / content_block_* /
+  message_delta / message_stop) plus the namespaced extensions: `event:
+  heylook_logprobs` `data:{type,tokens:[{token,logprob,top_logprobs:[{token,
+  logprob}]}]}` — one per token when `logprobs:true`, SAME entry shape as
+  the OpenAI wire's logprobs.content so a migrating consumer keeps its
+  parser; and `message_stop.performance` additionally carries
+  `peak_memory_gb? / kv_cache_bytes? / queue_wait_ms? / draft_acceptance?`
+  (the heylook_saved.timing vocabulary; absent telemetry is OMITTED, never
+  null). An in-band `error` event ENDS a /v1/messages generation (unlike
+  /generate's, where heylook_saved may still follow).
+- Non-streaming: content blocks incl. a `logprobs` block when requested
+  (wired v1.74.0 — the docstring promised it earlier than it existed).
+
 **Conversations** (prefix `/v1/conversations`, no auth):
 - `GET /` → `{conversations:[{id,title,model_id,system_prompt,params,applied_preset_id,created_at,updated_at}], total}` — **no messages**.
 - `POST /` (201) `{title,model_id?,system_prompt?,params?,applied_preset_id?}` → full conv incl `messages:[]`.

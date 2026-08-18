@@ -203,10 +203,18 @@ def _externalize_media(conn, conv_id: str, blocks: list[dict], now: str) -> list
             except Exception:
                 raise ValueError(f"{b['type']} block carries invalid base64 data")
             media_id = hashlib.sha256(raw).hexdigest()
+            # The stored media_type is later SERVED verbatim as a same-origin
+            # Content-Type -- constrain it to the block type's own family, or
+            # a block claiming text/html becomes stored XSS at the serve
+            # endpoint (review finding). Off-family claims degrade to
+            # octet-stream (served with nosniff), never to trust.
+            media_type = src.get("media_type") or ""
+            if not media_type.startswith(f"{b['type']}/"):
+                media_type = "application/octet-stream"
             conn.execute(
                 "INSERT OR IGNORE INTO media_blobs (conversation_id, id, media_type, data, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (conv_id, media_id, src.get("media_type") or "application/octet-stream", raw, now),
+                (conv_id, media_id, media_type, raw, now),
             )
             b = dict(b)
             b["source"] = {
