@@ -246,3 +246,43 @@ class TestVlmTemplateThinkingForwarding:
 
     def test_none_omits_the_kwarg(self):
         assert self._run(enable_thinking=None) == {}
+
+
+class TestTemplateProbeCaching:
+    """Both template probes MUST be memoized per path. The reasoning_effort
+    probe shipped uncached (v1.71.0) while its sibling was cached -- on a
+    29-model registry that made EVERY /v1/models call re-read and re-parse
+    every MLX model's template files (~1.65s per call, measured live
+    2026-08-18), delaying every page's first paint. This pins the property
+    behaviorally: repeated calls for one path hit the file system once.
+    """
+
+    def _probe_read_count(self, probe, tmp_path):
+        from unittest.mock import patch as mock_patch
+
+        import heylook_llm.providers.common.template_info as ti
+
+        probe.cache_clear()
+        real = ti.read_template_info
+        calls = {"n": 0}
+
+        def counting(*args, **kwargs):
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        with mock_patch.object(ti, "read_template_info", counting):
+            for _ in range(3):
+                probe(str(tmp_path))
+        return calls["n"]
+
+    def test_reasoning_effort_probe_is_cached(self, tmp_path):
+        from heylook_llm.capabilities import template_supports_reasoning_effort
+
+        (tmp_path / "chat_template.jinja").write_text("{{ reasoning_effort }}")
+        assert self._probe_read_count(template_supports_reasoning_effort, tmp_path) == 1
+
+    def test_thinking_probe_is_cached(self, tmp_path):
+        from heylook_llm.capabilities import template_supports_thinking
+
+        (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
+        assert self._probe_read_count(template_supports_thinking, tmp_path) == 1

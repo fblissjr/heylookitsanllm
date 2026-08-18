@@ -39,12 +39,22 @@ def template_supports_thinking(model_path: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=64)
 def template_supports_reasoning_effort(model_path: str) -> bool:
     """Whether the model's template reads ``reasoning_effort``.
 
     Separate from the thinking capability on purpose: harmony models read
     reasoning_effort and never mention enable_thinking, so a UI gating depth
     on `thinking` hides it exactly where it is the only control that works.
+
+    Cached like its sibling above -- and not as an optimization nicety: this
+    probe shipped UNCACHED (v1.71.0) and read+parsed every MLX model's
+    template files on every /v1/models call. Measured live 2026-08-18 on a
+    29-model registry: ~1.65s PER CALL, every call, which delayed every
+    page's first paint-to-usable window (and every generation start paid the
+    single-model slice via effective_capabilities). Same invalidation
+    tradeoff as the sibling: templates change only with a restart in
+    practice.
     """
     try:
         from heylook_llm.providers.common.template_info import read_template_info

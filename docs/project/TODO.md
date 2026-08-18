@@ -31,11 +31,11 @@ Cross-session task backlog organized by priority.
   MIXES models; rides msgSignature so rows rebuild exactly when the label
   appears. Data since v1.73.0 (fresh-row commits stamp; continuations keep
   the anchor's stamp).
-- [ ] **/v1/models is ~1.7s on a 29-model registry** (P3, measured live
-  2026-08-18, cold page): per-request capability probing scales with the
-  model count and delays every page's first paint-to-usable window (the
-  e2e suites' early checks raced exactly this). Candidate: cache
-  capability detection at load/scan time, invalidate on reload.
+- [x] **/v1/models is ~1.7s on a 29-model registry -- FIXED v1.74.1**:
+  the reasoning_effort template probe shipped uncached (its sibling was
+  lru_cached) and re-read every MLX model's template files per call.
+  Measured 1650ms -> 1ms live. Cache-property tests pin BOTH probes
+  (shown red against the uncached version).
 
 - [x] **Phase 0 hardening -- DONE v1.64.0**: loud stream-guards (+ a
   `pendingSave` latch closing the Stop-then-act window between stream

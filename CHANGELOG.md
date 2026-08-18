@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.1]
+
+### Fixed
+
+`/v1/models` no longer costs ~1.65s per call on a 29-model registry. The
+`reasoning_effort` template probe (v1.71.0) shipped uncached while its
+thinking-probe sibling was lru_cached, so every call re-read and re-parsed
+every MLX model's template files -- delaying every v3 page's first
+paint-to-usable window (this is what the e2e suites' early checks were
+racing), and taxing every generation start with the single-model slice via
+`effective_capabilities`. One decorator: 1650ms -> ~1ms measured live.
+Cache-property tests now pin BOTH probes behaviorally (repeated calls hit
+the filesystem once; shown red against the uncached version), so a third
+probe added beside them without the cache gets caught.
+
 ## [1.74.0]
 
 ### Changed
