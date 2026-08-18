@@ -165,27 +165,55 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null } = {}) 
     return {};
   };
 
-  // The generate endpoint's stub half (Phase 2 wire): append a canned
-  // assistant turn to the store exactly as the server would, and return the
-  // Messages-grammar SSE ending in heylook_saved with the stored row.
+  // The generate endpoint's stub half (Phase 2 wire), all three modes: mutate
+  // the store the way the server-side saga would -- regenerate and continue
+  // TRUNCATE by the anchor and commit together with their row -- and return
+  // the Messages-grammar SSE ending in heylook_saved with the stored row(s).
+  // Modeling the truncation matters: the client's adoption path merges saved
+  // rows over a mirror that visually dropped its tail, and a stub that only
+  // ever appends would leave that merge unexercised.
   const genReply = (postData) => {
-    let mode = 'append';
-    try { mode = JSON.parse(postData || '{}').mode ?? 'append'; } catch { /* keep default */ }
-    const row = {
-      id: `mgen${nextId++}`, role: 'assistant', content: 'stub reply',
-      thinking: null, content_blocks: null,
-      position: (messages[messages.length - 1]?.position ?? -1) + 1,
-    };
-    messages.push(row);
+    let body = {};
+    try { body = JSON.parse(postData || '{}'); } catch { /* keep defaults */ }
+    const mode = body.mode ?? 'append';
+    let row;
+    let delta = 'stub reply';
+    if (mode === 'regenerate' || mode === 'continue') {
+      const anchor = messages.find((m) => m.id === body.message_id);
+      const cutoff = mode === 'continue' ? anchor.position : anchor.position - 1;
+      const keep = messages.filter((m) => m.position <= cutoff);
+      messages.length = 0;
+      messages.push(...keep);
+      if (mode === 'continue') {
+        anchor.content += ' continued tail';
+        delta = ' continued tail';
+        row = anchor;
+      } else {
+        delta = 'regenerated reply';
+        row = {
+          id: `mgen${nextId++}`, role: 'assistant', content: delta,
+          thinking: null, content_blocks: null,
+          position: (messages[messages.length - 1]?.position ?? -1) + 1,
+        };
+        messages.push(row);
+      }
+    } else {
+      row = {
+        id: `mgen${nextId++}`, role: 'assistant', content: 'stub reply',
+        thinking: null, content_blocks: null,
+        position: (messages[messages.length - 1]?.position ?? -1) + 1,
+      };
+      messages.push(row);
+    }
     const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     return [
       ev('message_start', { type: 'message_start', message: { id: row.id, content: [] } }),
       ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
-      ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'stub reply' } }),
+      ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } }),
       ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
       ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } }),
       ev('message_stop', { type: 'message_stop', performance: {} }),
-      ev('heylook_saved', { type: 'heylook_saved', conversation_id: 'c1', mode, end_reason: 'complete', messages: [row], dropped_media: { images: 0, audio: 0 }, timing: {} }),
+      ev('heylook_saved', { type: 'heylook_saved', conversation_id: 'c1', mode, end_reason: 'complete', messages: [{ ...row }], dropped_media: { images: 0, audio: 0 }, timing: {} }),
     ].join('');
   };
 
@@ -591,6 +619,64 @@ async function main() {
       assert(pageErrors.length === 0, `page errors: ${pageErrors.join(' | ')}`);
     });
     await page.close();
+
+    // ---- boot 2b: regenerate + continue adoption --------------------------
+    // The saved-rows merge over a mirror that dropped its tail -- append mode
+    // (boot 2) never exercises it. Fresh boot: no prior sends in the store.
+    const gen = await openChat(browser, base);
+    const genGets = () => gen.reqs.filter((r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url)).length;
+
+    await suite.check('regenerate replaces the tail from the saved rows, no re-fetch', async () => {
+      const before = genGets();
+      // assistant row index 5 = m11: a real tail (m12..m29) exists after it
+      const clicked = await clickRowButton(gen.page, '.message--assistant', 'Regenerate', 5);
+      assert(clicked, 'no Regenerate button on the anchor row');
+      await waitFor(() => gen.page.evaluate(() =>
+        !document.querySelector('.message--streaming')
+        && [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('regenerated reply'))),
+      { message: 'the regenerated row never rendered' });
+      const tailGone = await gen.page.evaluate(() =>
+        ![...document.querySelectorAll('.message')].some((m) => m.textContent.includes('message 29')));
+      assert(tailGone, 'rows after the regenerate anchor are still on screen');
+      assert(genGets() === before, 'regenerate completion re-fetched the conversation');
+    });
+
+    await suite.check('save & continue merges the continuation onto the anchor row', async () => {
+      const before = genGets();
+      // the regenerated row is now the thread tail; continue from it
+      const opened = await gen.page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.message--assistant')];
+        const btn = [...rows[rows.length - 1].querySelectorAll('button')]
+          .find((b) => b.textContent === 'Edit');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      });
+      assert(opened, 'could not open the editor on the tail assistant row');
+      await settle(gen.page);
+      const clicked = await gen.page.evaluate(() => {
+        const btn = [...document.querySelectorAll('.message-edit button')]
+          .find((b) => b.textContent === 'Save & Continue');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      });
+      assert(clicked, 'no Save & Continue button (provider unknown?)');
+      await waitFor(() => gen.page.evaluate(() =>
+        !document.querySelector('.message-edit') && !document.querySelector('.message--streaming')
+        && [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('regenerated reply continued tail'))),
+      { message: 'the merged continuation never rendered' });
+      // Adoption must REPLACE the anchor, not sit a merged copy beside it.
+      const carriers = await gen.page.evaluate(() =>
+        [...document.querySelectorAll('.message')].filter((m) => m.textContent.includes('regenerated reply')).length);
+      assert(carriers === 1, `the anchor row duplicated on adoption (${carriers} rows carry the text)`);
+      assert(genGets() === before, 'continue completion re-fetched the conversation');
+    });
+
+    await suite.check('no uncaught page errors (regenerate + continue)', () => {
+      assert(gen.pageErrors.length === 0, `page errors: ${gen.pageErrors.join(' | ')}`);
+    });
+    await gen.page.close();
 
     // ---- boot 3: loud guard during the pre-first-token window -------------
     const slow = await openChat(browser, base, { sseDelayMs: 1500 });
