@@ -6,7 +6,13 @@
 //   builds the request from the store, anchors truncation by message id,
 //   persists everything (completion, Stop, disconnect), and ends the stream
 //   with the authoritative rows. The client's post-stream state is
-//   resyncMessages (adoption), never position arithmetic.
+//   ASSIGNMENT from heylook_saved's rows (adoptSavedRows -- synchronous, no
+//   network), with resyncMessages (one GET) as the fallback for endings that
+//   carry no rows; never position arithmetic.
+// - Only renderMessages mutates the message LIST's DOM structure. The stream
+//   painter writes text INSIDE the live node; startStream/finishGenerate/
+//   handleStreamError never add or remove list nodes by hand -- a hand-removed
+//   node is a frame with the response missing and a collapsed scrollHeight.
 // - Regenerate / edit-regenerate / continue truncate NOTHING client-side:
 //   the mirror drops the tail visually; the server commits its truncation
 //   only together with the row it produced, so a failed or empty generation
@@ -1212,10 +1218,19 @@ function buildEditEl(ctx, msg) {
       if (Object.keys(changes).length) {
         const updated = await api.updateMessage(convId, msg.id, changes);
         if (!ctx.alive) return;
-        // keep content, blocks AND thinking in sync with the server's view
-        msg.content = updated.content;
-        msg.content_blocks = updated.content_blocks;
-        msg.thinking = updated.thinking;
+        // Keep content, blocks AND thinking in sync with the server's view --
+        // on the row the LIST currently holds, not just this closure's
+        // capture: a resync between opening the editor and Save replaces
+        // s.messages with fresh objects, and mutating only the stale capture
+        // repainted the pre-edit text (the "my edit vanished" report). The
+        // capture is still updated too -- the regenerate/continue branches
+        // below read msg.position/content.
+        const live = s.messages.find((m) => m.id === msg.id);
+        for (const target of live && live !== msg ? [msg, live] : [msg]) {
+          target.content = updated.content;
+          target.content_blocks = updated.content_blocks;
+          target.thinking = updated.thinking;
+        }
       }
       if (s.activeId !== convId) return; // switched away mid-save: edit saved, nothing destructive
       s.editingId = null;
@@ -1301,12 +1316,15 @@ function scrollMessages(ctx, force = false) {
   el.scrollTop = el.scrollHeight;
   // A row added this tick is still at its `contain-intrinsic-size` estimate,
   // so scrollHeight reads short and this lands above the real bottom. Re-aim
-  // once the browser has laid the new row out.
-  if (force) {
-    requestAnimationFrame(() => {
-      if (ctx.alive) el.scrollTop = el.scrollHeight;
-    });
-  }
+  // once the browser has laid the new row out. The non-forced path (stream
+  // paints, stream-end adoption) needs it too -- but re-checks nearBottom in
+  // the frame, so a user who scrolled up between the two writes is left alone.
+  requestAnimationFrame(() => {
+    if (!ctx.alive) return;
+    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1338,6 +1356,24 @@ async function resyncMessages(ctx, convId) {
   for (const m of unsaved) m.position = nextPos++;
   s.messages = [...serverRows, ...unsaved];
   renderMessages(ctx);
+}
+
+// Merge the heylook_saved rows into the mirror -- pure assignment, no
+// network. What the mirror holds below the first saved position IS what the
+// server kept (append: the prefix ending at the user turn; regenerate/
+// continue: the tail the mirror hid is exactly what the commit deleted), so
+// local rows at or past that position give way to the saved rows. A continue
+// anchor comes back as its own updated row (same id, merged content). Id-less
+// rows cannot exist here: refuseWhileUnsaved blocks every generation start
+// while one is on screen.
+function adoptSavedRows(ctx, rows) {
+  const s = ctx.state;
+  const savedIds = new Set(rows.map((r) => r.id));
+  const minPos = Math.min(...rows.map((r) => r.position));
+  s.messages = [
+    ...s.messages.filter((m) => m.position < minPos && !savedIds.has(m.id)),
+    ...rows,
+  ];
 }
 
 async function truncateAfter(ctx, position, convId) {
@@ -1797,9 +1833,6 @@ function startStream(ctx, opts = {}) {
     thinkingEl,
     createEl('div', { class: 'message-bubble' }, [contentEl]),
   ]);
-  if (continueMsg) s.messagesInner.lastElementChild?.remove(); // its own rendered row
-  s.messagesInner.append(msgEl);
-  scrollMessages(ctx, true);
 
   const stream = {
     controller,
@@ -1815,6 +1848,13 @@ function startStream(ctx, opts = {}) {
     els: { msgEl, contentEl, thinkingBody: thinkingEl.querySelector('.thinking__body'), thinkingEl },
   };
   s.stream = stream;
+  // List STRUCTURE goes through renderMessages only (it appends the stream
+  // node and, for a continuation, excludes the anchor's own row). The painter
+  // updates text INSIDE the node; nothing here touches the list by hand --
+  // hand-placed nodes are what let stream end leave a frame with the
+  // response missing.
+  renderMessages(ctx);
+  scrollMessages(ctx, true);
   s.sendBtn.textContent = 'Stop';
   beforeUnloadGuard.enable();
 
@@ -1971,19 +2011,31 @@ function releaseStream(ctx, stream) {
 // No client persistence, no pendingSave window, no unsaved fallback row:
 // the whole class of "the mirror wrote something the store didn't get"
 // cannot occur on this path anymore.
+//
+// Adoption is ASSIGNMENT FROM THE SAVED EVENT (spec §4), synchronously: the
+// streamed node is never removed by hand -- the same renderMessages pass
+// that inserts the saved rows reconciles it away, so there is no frame with
+// the response absent and no scrollHeight collapse (the old order removed
+// the node, THEN awaited a wholesale GET: on an image conversation that
+// round-trip re-downloaded every base64 block, and for its whole duration
+// the response was gone and the viewport clamped upward). The GET survives
+// only as the fallback for endings that carry no usable rows: transport
+// death (no heylook_saved at all -- recovery loop below) and the
+// failed/empty generation, where resync is what brings back the tail the
+// regenerate/continue mirror hid.
 async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, saved }) {
   const s = ctx.state;
   releaseStream(ctx, stream);
 
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
 
-  stream.els.msgEl.remove();
-  // Adopt the store wholesale. saved.messages carries the rows, but one GET
-  // keeps a single adoption path and also covers the endings that have no
-  // saved event: transport death (the server persisted via its disconnect
-  // task) and in-band errors. On a failed/empty generation this is also
-  // what brings back the tail the regenerate/continue mirror hid.
-  await resyncMessages(ctx, stream.targetConvId);
+  if (saved?.messages?.length) {
+    adoptSavedRows(ctx, saved.messages);
+    renderMessages(ctx);
+  } else {
+    await resyncMessages(ctx, stream.targetConvId);
+    if (!ctx.alive || s.activeId !== stream.targetConvId) return;
+  }
   scrollMessages(ctx);
 
   const endReason = saved?.end_reason;
@@ -2027,7 +2079,8 @@ function handleStreamError(ctx, stream, err) {
   const s = ctx.state;
   releaseStream(ctx, stream);
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
-  stream.els.msgEl.remove();
+  // s.stream is null now, so this reconcile drops the streaming node -- the
+  // renderer owns list structure, the same rule as finishGenerate.
   renderMessages(ctx);
   showStatus(ctx, `Generation failed: ${err.message}`, true);
   // A transport death mid-generation: the server's disconnect path may

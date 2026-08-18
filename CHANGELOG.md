@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.2]
+
+### Fixed
+
+Stream end no longer blanks the response and jumps the view. The chat client
+removed the streamed message node and then awaited a wholesale conversation
+GET before rendering the saved row -- for that whole round-trip (which
+re-downloads every base64 image block in the conversation) the response was
+absent from the DOM, so scrollHeight collapsed and the viewport clamped
+upward, reappearing only when the fetch landed. Post-stream state is now
+ASSIGNED synchronously from the rows the stream's own `heylook_saved` event
+already carries (the spec §4 contract as written), and the same reconcile
+pass that inserts them retires the streaming node -- no frame without the
+response, no network on the happy path. The GET survives only as the
+fallback for endings that carry no usable rows: transport death, and the
+failed/empty generation whose hidden tail resync restores.
+
+Related hardening in the same pass:
+
+- Message-list DOM structure is now mutated ONLY by `renderMessages`.
+  `startStream` and the stream error path no longer hand-place or
+  hand-remove nodes; the streaming placeholder (and a continuation's
+  anchor-row replacement) go through the same reconcile as everything else.
+- `scrollMessages` re-aims after layout on the non-forced path too (a row
+  added this tick still reports its `content-visibility` height estimate),
+  re-checking near-bottom in the frame so a reader parked in scrollback is
+  left alone.
+- Edit Save writes the server's response onto the row the LIST currently
+  holds, not only the editor's captured object -- a resync landing between
+  opening an editor and saving it used to repaint the pre-edit text.
+- New render-suite check (`tests/e2e/render.mjs`) pins the swap: removing
+  the streaming node while the saved reply is not on screen fails, as does
+  any happy-path conversation re-fetch. Both shown red against the pre-fix
+  tree via `E2E_V3_ROOT`.
+
 ## [1.72.1]
 
 ### Fixed

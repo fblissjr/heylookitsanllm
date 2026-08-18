@@ -18,7 +18,9 @@
 // - The Phase 0 chat-reliability contract (plan_chat_orchestration.md):
 //   refusals are LOUD (status line, never a silent dead button), the unsaved
 //   fallback row carries Retry save/Discard and locks destructive ops, stream
-//   completion reconciles against the store, and the editor offers thinking.
+//   completion adopts the heylook_saved rows in one reconcile pass (no
+//   wholesale re-fetch, no frame with the response missing), and the editor
+//   offers thinking.
 // - A phone-emulation pass (iPhone viewport + touch + hover:none via CDP):
 //   the new affordances must be reachable without hover (DESIGN.md §7).
 //   Emulation is a PROXY -- the hidden-row WebKit investigation still needs a
@@ -452,25 +454,56 @@ async function main() {
     // ---- boot 2: scroll pins + thinking editor + reconcile ----------------
     const { page, pageErrors, reqs } = await openChat(browser, base);
 
+    // FIRST send of this boot, deliberately: the blank-frame probe matches
+    // any row containing the stub reply text, so a reply minted by an earlier
+    // check would satisfy it during the very gap it exists to catch.
+    await suite.check('stream completion adopts the saved rows -- no re-fetch, no blank frame', async () => {
+      const convGets = () => reqs.filter((r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url)).length;
+      const before = convGets();
+      // Watch the swap itself: the streaming node's removal and the saved
+      // row's insertion must land in the SAME synchronous reconcile pass.
+      // MutationObserver callbacks run after each batch, so if the removal is
+      // ever observable with the saved reply absent, there was a frame with
+      // the response missing -- the disappear-then-jump this check pins out
+      // (the old order removed the node, then awaited a wholesale GET).
+      await page.evaluate(() => {
+        window.__streamSwap = [];
+        const obs = new MutationObserver((records) => {
+          for (const rec of records) {
+            for (const node of rec.removedNodes) {
+              if (node.classList?.contains('message--streaming')) {
+                window.__streamSwap.push([...document.querySelectorAll('.message')]
+                  .some((m) => m.textContent.includes('stub reply')));
+              }
+            }
+          }
+        });
+        obs.observe(document.querySelector('.chat__messages-inner'), { childList: true });
+      });
+      await send(page, 'another message');
+      // Adoption, not a wipe: the user turn and the saved reply both stand.
+      const onScreen = await page.evaluate(() => ({
+        user: [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('another message')),
+        reply: [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('stub reply')),
+      }));
+      assert(onScreen.user, 'the adoption dropped the just-sent message');
+      assert(onScreen.reply, 'the saved reply never rendered');
+      // The swap asserts come first: "a frame with the response missing" is
+      // the user-visible defect; the re-fetch is its cause.
+      const swaps = await page.evaluate(() => window.__streamSwap);
+      assert(swaps.length >= 1, 'the streaming node was never removed -- no swap happened');
+      assert(swaps.every(Boolean),
+        'the streaming node was removed while the saved reply was not on screen -- a blank frame');
+      assert(convGets() === before,
+        'the happy path re-fetched the conversation -- heylook_saved already carried the rows');
+    });
+
     await suite.check('send from mid-thread lands at the bottom', async () => {
       const before = await parkMidThread(page);
       assert(!atBottom(before), `setup: expected to be parked mid-thread, got ${JSON.stringify(before)}`);
       await send(page, 'new message');
       const after = await scroll(page);
       assert(atBottom(after), `send left the view at ${after.top} of ${after.height} (bottom is ${after.height - after.client})`);
-    });
-
-    await suite.check('stream completion reconciles against the store', async () => {
-      const convGets = () => reqs.filter((r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url)).length;
-      const before = convGets();
-      await send(page, 'another message');
-      await waitFor(() => convGets() > before,
-        { message: 'no conversation re-fetch followed the stream completion' });
-      // The reconcile must be an adoption, not a wipe: the rows this saga
-      // wrote come back from the (stateful) store and stay on screen.
-      const onScreen = await page.evaluate(() =>
-        [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('another message')));
-      assert(onScreen, 'the reconcile dropped the just-sent message');
     });
 
     await suite.check('opening and cancelling an edit holds the scroll position', async () => {
