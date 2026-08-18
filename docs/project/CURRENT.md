@@ -137,9 +137,11 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   17 contract tests; spec §4. Phase 2 (v1.66.0) cut the client over:
   chat generates via /generate, Stop = DELETE, mirror adopts the store at
   stream end. render 23/23 through the cutover; live suite 45/45; gguf
-  matrix 7/7 on DeepSeek V4 Flash. OPEN: disconnect-persist has no
-  automated test (TODO); Muse-Glimmer mis-templates at the engine level
-  (TODO); notebook/explore still on /v1/chat/completions (rest of 3b).
+  matrix 7/7 on DeepSeek V4 Flash. OPEN: Muse-Glimmer mis-templates at the
+  engine level (TODO). CLOSED since (v1.74.0): disconnect-persist now has a
+  live-suite check (reload mid-stream, detached task persists); notebook/
+  explore migrated to /v1/messages (heylook_logprobs + message_stop timing
+  extensions) -- no v3 page speaks /v1/chat/completions anymore.
 - Also: worktree-per-session convention retired (owner call); editable
   install re-pointed at the primary; DuckDB store cleared by the owner
   (fresh state is intentional, not a bug).

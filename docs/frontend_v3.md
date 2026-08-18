@@ -159,18 +159,20 @@ auto-appear from template detection, no `models.toml` flag needed).
 | Page | Endpoints |
 |------|-----------|
 | chat | `/v1/conversations` CRUD, **`/v1/conversations/{id}/generate` (Messages SSE -- v1.66.0, the server-side saga; DELETE = Stop)**, `/v1/presets` CRUD, `/v1/admin/models` (residency dots + the cold-send load status; the load-cost CONFIRM was removed v1.62.3 -- cost is disclosed, only loss gates) + `load?warm=true` (the bar's Load button) |
-| notebook | `/v1/notebooks` CRUD, `/v1/chat/completions` |
+| notebook | `/v1/notebooks` CRUD, `/v1/messages` (v1.74.0, Phase 3b) |
 | models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
-| explore | `/v1/chat/completions` **with logprobs** |
+| explore | `/v1/messages` **with the `heylook_logprobs` extension** (v1.74.0) |
 | jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
 | shared | `/v1/data/clear` (danger zone; presets are EXCLUDED from it -- config, not data) |
 
 Chat generates over the **conversation-scoped generate endpoint** (Messages
 SSE grammar + the `heylook_saved` extension -- v1.66.0, plan Phase 2; the
 server builds the request from the store and owns persistence). Notebook and
-explore still stream the OpenAI wire (`/v1/chat/completions`); their
-migration rides the rest of Phase 3b.
+explore stream `/v1/messages` since v1.74.0 (Phase 3b): logprobs ride the
+namespaced `heylook_logprobs` events, timing rides `message_stop.performance`,
+and no v3 page speaks `/v1/chat/completions` anymore (the endpoint stays for
+external consumers).
 
 ### Load-bearing contracts that MUST survive any backend change (plan guardrails)
 

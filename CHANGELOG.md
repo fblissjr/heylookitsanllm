@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.0]
+
+### Changed
+
+**Phase 3b consumer migration: no v3 page speaks /v1/chat/completions
+anymore.** Notebook and explore now stream `POST /v1/messages` (chat has
+used its conversation-scoped sibling since v1.66). The client grammar
+parser is ONE shared core in streaming.js (`streamTypedSSE`) under both
+`streamMessages` and `streamGenerate`; `streamChat` is deleted from v3
+(the backend endpoint stays for external consumers). The sampler bag's
+Messages spelling is DERIVED (`messagesParams()`: `enable_thinking` ->
+`thinking`), never a second hand-written copy.
+
+**/v1/messages extension namespace** (what the migration rode in on):
+
+- Streaming logprobs: `event: heylook_logprobs`, one per token when
+  `logprobs: true`, entries in the SAME shape as the OpenAI wire's
+  `logprobs.content` ({token, logprob, top_logprobs}) so a migrating
+  consumer keeps its parser. Non-streaming responses now really include
+  the logprobs content block the endpoint docstring always promised.
+- Timing/KV telemetry rides `message_stop.performance`: `peak_memory_gb`,
+  `kv_cache_bytes`, `queue_wait_ms`, `draft_acceptance` (the
+  heylook_saved.timing vocabulary; absent telemetry is omitted, never
+  null).
+- `sampler` (named SamplerRegistry bundle) and `vision_tokens` accepted
+  with ChatRequest semantics.
+- `max_tokens` is now OPTIONAL (deliberately unlike Anthropic's): absent =
+  the server-side sampler cascade's default. The old hard 1024 schema
+  default silently overrode the cascade for every client that omitted the
+  field -- exactly the knob-loss the migration guards against.
+
+### Added
+
+Per-message model attribution in v3 chat: a muted label under assistant
+rows naming the producing model, rendered only while the thread MIXES
+models (a single-model thread would just restate the header). Uses the
+v1.73.0 `model_id` column.
+
+Live-suite coverage: the long-open disconnect-persistence gap is closed --
+the chat suite reloads mid-stream (no Stop) and asserts the server's
+detached task persisted the partial. The suite's early one-shot checks now
+poll (they raced the ~1.7s first `/v1/models` on a 29-model registry and
+took six checks down as "No models available"), the delete check pins
+single-row semantics, and the models-page failure-restore retries a click
+the puppeteer interception-teardown race can silently drop. Full live run
+green: chat 46/46, pages 43/43.
+
+### Fixed
+
+Review findings on v1.73.0: one shared media-type->capability mapping for
+the generate saga's prefetch filter and wire build (a hand-copied second
+spelling would 500 with a false "store corruption" when they drift); the
+media endpoint serves `Cache-Control: private` + `X-Content-Type-Options:
+nosniff`, and the write boundary constrains a blob's media_type to the
+block's own family (an image block claiming text/html stored as
+octet-stream -- stored-XSS shape closed); chat's scroll re-aim
+distinguishes "reader scrolled away" from "row grew underneath" by
+scrollTop movement instead of a distance threshold, so a row growing
+more than 100px past its content-visibility estimate no longer strands
+the view above the response tail.
+
 ## [1.73.0]
 
 ### Changed

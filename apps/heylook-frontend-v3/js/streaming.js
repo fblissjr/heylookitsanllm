@@ -1,6 +1,8 @@
-// SSE streaming for /v1/chat/completions (streamChat) and the
-// conversation-scoped generate endpoint (streamGenerate) via fetch +
-// ReadableStream.
+// SSE streaming for the Messages wire: /v1/messages (streamMessages) and the
+// conversation-scoped generate endpoint (streamGenerate), via fetch +
+// ReadableStream. (streamChat -- the OpenAI /v1/chat/completions wire -- was
+// removed with Phase 3b: no v3 page speaks it anymore; the backend endpoint
+// stays for external consumers.)
 //
 // Contract gotchas (verified against backend; do not "simplify" away):
 // - AbortError is NORMAL completion: onComplete fires with partial content.
@@ -8,11 +10,13 @@
 //   connection alive and the NEXT request fails with "Failed to fetch".
 // - SSE comment lines (": keepalive", sent every 5s during long prefill)
 //   must be ignored, not parsed as data.
-// - streamChat: usage/timing arrive in a final chunk only because we always
-//   send stream_options.include_usage: true. Stream ends with `data: [DONE]`.
-// - streamGenerate: the Messages event grammar (spec §4) -- typed `event:`
-//   lines; `heylook_saved` is ALWAYS the last event and carries the
-//   authoritative stored rows. An in-band `error` event may precede it.
+// - Both endpoints speak the Messages event grammar (spec §4): typed
+//   `event:` lines. Extensions are namespaced: `heylook_logprobs` rides
+//   per-token on /v1/messages; `heylook_saved` is ALWAYS the last event on
+//   /generate and carries the authoritative stored rows; timing/KV telemetry
+//   rides message_stop's `performance` object. An in-band `error` event ENDS
+//   generation on /v1/messages but may PRECEDE heylook_saved on /generate --
+//   which is why error handling lives in each wrapper, not the shared core.
 
 import { requestId, httpError } from './api.js';
 
@@ -28,144 +32,19 @@ function sleep(ms, signal) {
   });
 }
 
-export async function streamChat(body, {
-  signal,
-  onToken,      // (delta, fullContent)
-  onThinking,   // (delta, fullThinking)
-  onLogprobs,   // (logprobsContentArray) -- explore page only
-  onRetryWait,  // (seconds, attempt) -- server busy, retrying automatically
-  onComplete,   // ({ content, thinking, usage, timing, stopReason, aborted })
-  onError,      // (err) -- err.status/.code/.retryAfter set for HTTP errors
-} = {}) {
+// The shared typed-SSE core: POST `url`, retry on 503 model_overloaded,
+// parse `event:`/`data:` blocks, hand each (eventType, data) to onEvent.
+// Returns { aborted } -- AbortError and an abort during the retry sleep both
+// resolve here rather than throwing, because an abort is NORMAL completion
+// for every consumer. Anything onEvent throws propagates to the caller's
+// catch (that is how streamMessages turns an in-band error event into
+// onError while streamGenerate deliberately keeps reading past one).
+async function streamTypedSSE(url, body, { signal, onRetryWait, onEvent }) {
   let reader = null;
-  let content = '';
-  let thinking = '';
-  let usage = null;
-  let timing = null;
-  let stopReason = null;
-
-  const finish = (aborted) =>
-    onComplete?.({ content, thinking, usage, timing, stopReason, aborted });
-
   try {
     let res;
     for (let attempt = 1; ; attempt++) {
-      res = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId() },
-        body: JSON.stringify({
-          ...body,
-          stream: true,
-          stream_options: { include_usage: true },
-        }),
-        signal,
-      });
-      if (res.ok) break;
-
-      const err = await httpError(res);
-      if (err.status === 503 && err.code === 'model_overloaded' && attempt <= MAX_BUSY_RETRIES) {
-        const wait = err.retryAfter ?? 2;
-        onRetryWait?.(wait, attempt);
-        await sleep(wait * 1000, signal);
-        if (signal?.aborted) return finish(true);
-        continue;
-      }
-      throw err;
-    }
-
-    reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-
-      let sep;
-      while ((sep = buf.indexOf('\n\n')) !== -1) {
-        const event = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        for (const line of event.split('\n')) {
-          if (!line.startsWith('data:')) continue; // drops ": keepalive" comments
-          const data = line.slice(5).trim();
-          if (!data || data === '[DONE]') continue;
-          let chunk;
-          try { chunk = JSON.parse(data); } catch { continue; }
-
-          // Mid-stream generation failure: the backend emits an error payload
-          // instead of content. Throwing lands in the outer catch, which
-          // cancels the reader and routes to onError.
-          if (chunk.error) {
-            const streamErr = new Error(chunk.error.message || 'Generation failed');
-            streamErr.code = chunk.error.code ?? null;
-            throw streamErr;
-          }
-
-          const choice = chunk.choices?.[0];
-          const delta = choice?.delta;
-          if (delta?.content) {
-            content += delta.content;
-            onToken?.(delta.content, content);
-          }
-          if (delta?.thinking) {
-            thinking += delta.thinking;
-            onThinking?.(delta.thinking, thinking);
-          }
-          if (choice?.logprobs?.content?.length) onLogprobs?.(choice.logprobs.content);
-          if (choice?.finish_reason) stopReason = choice.finish_reason;
-          if (chunk.usage) {
-            usage = chunk.usage;
-            timing = chunk.timing ?? null;
-            stopReason = chunk.stop_reason ?? stopReason;
-          }
-        }
-      }
-    }
-
-    finish(false);
-  } catch (err) {
-    try { await reader?.cancel(); } catch { /* already closed */ }
-    if (err.name === 'AbortError') finish(true);
-    else onError?.(err);
-  }
-}
-
-// Conversation-scoped generation (POST /v1/conversations/{id}/generate --
-// the server-side saga, spec §4). The server persists everything; the
-// client renders deltas and, at the end, ASSIGNS state from the saved rows.
-//
-// Callbacks:
-//   onToken(delta, full)     -- text deltas
-//   onThinking(delta, full)  -- thinking deltas
-//   onRetryWait(sec, n)      -- 503 model_overloaded auto-retry
-//   onSaved(payload)         -- the heylook_saved event: {messages (stored
-//                               rows), end_reason, dropped_media, timing}.
-//                               May be ABSENT if the connection died first
-//                               (the server still persisted -- reconcile).
-//   onComplete({content, thinking, usage, aborted, saved})
-//   onError(err)             -- HTTP errors + in-band typed error events
-export async function streamGenerate(convId, body, {
-  signal,
-  onToken,
-  onThinking,
-  onRetryWait,
-  onSaved,
-  onComplete,
-  onError,
-} = {}) {
-  let reader = null;
-  let content = '';
-  let thinking = '';
-  let usage = null;
-  let saved = null;
-
-  const finish = (aborted) => onComplete?.({ content, thinking, usage, aborted, saved });
-
-  try {
-    let res;
-    for (let attempt = 1; ; attempt++) {
-      res = await fetch(`/v1/conversations/${convId}/generate`, {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId() },
         body: JSON.stringify(body),
@@ -177,7 +56,7 @@ export async function streamGenerate(convId, body, {
         const wait = err.retryAfter ?? 2;
         onRetryWait?.(wait, attempt);
         await sleep(wait * 1000, signal);
-        if (signal?.aborted) return finish(true);
+        if (signal?.aborted) return { aborted: true };
         continue;
       }
       throw err;
@@ -205,8 +84,113 @@ export async function streamGenerate(convId, body, {
           }
           // ": keepalive" comment lines fall through both branches
         }
-        if (!eventType || !data) continue;
+        if (eventType && data) onEvent(eventType, data);
+      }
+    }
+    return { aborted: false };
+  } catch (err) {
+    try { await reader?.cancel(); } catch { /* already closed */ }
+    if (err.name === 'AbortError') return { aborted: true };
+    throw err;
+  }
+}
 
+// POST /v1/messages, streaming (Phase 3b: the wire notebook and explore
+// speak; chat has its conversation-scoped sibling below).
+//
+// Callbacks:
+//   onToken(delta, full)     -- text deltas
+//   onThinking(delta, full)  -- thinking deltas
+//   onLogprobs(tokens)       -- heylook_logprobs extension: an array of
+//                               {token, logprob, top_logprobs} entries, the
+//                               same shape the OpenAI wire carried
+//   onRetryWait(sec, n)      -- 503 model_overloaded auto-retry
+//   onComplete({content, thinking, usage, performance, aborted})
+//                            -- performance is message_stop's object incl.
+//                               the heylook timing fields
+//   onError(err)             -- HTTP errors + the in-band error event (which
+//                               ENDS a /v1/messages generation, unlike
+//                               /generate's, so it routes here not onComplete)
+export async function streamMessages(body, {
+  signal,
+  onToken,
+  onThinking,
+  onLogprobs,
+  onRetryWait,
+  onComplete,
+  onError,
+} = {}) {
+  let content = '';
+  let thinking = '';
+  let usage = null;
+  let performance = null;
+
+  try {
+    const { aborted } = await streamTypedSSE('/v1/messages', { ...body, stream: true }, {
+      signal,
+      onRetryWait,
+      onEvent: (eventType, data) => {
+        if (eventType === 'content_block_delta') {
+          const d = data.delta ?? {};
+          if (d.type === 'thinking_delta' && d.text) {
+            thinking += d.text;
+            onThinking?.(d.text, thinking);
+          } else if (d.type === 'text_delta' && d.text) {
+            content += d.text;
+            onToken?.(d.text, content);
+          }
+        } else if (eventType === 'heylook_logprobs') {
+          if (data.tokens?.length) onLogprobs?.(data.tokens);
+        } else if (eventType === 'message_delta') {
+          usage = data.usage ?? usage;
+        } else if (eventType === 'message_stop') {
+          performance = data.performance ?? null;
+        } else if (eventType === 'error') {
+          const err = new Error(data.error?.message || 'Generation failed');
+          err.code = data.error?.type ?? null;
+          throw err; // ends the stream -> outer catch -> onError
+        }
+      },
+    });
+    onComplete?.({ content, thinking, usage, performance, aborted });
+  } catch (err) {
+    onError?.(err);
+  }
+}
+
+// Conversation-scoped generation (POST /v1/conversations/{id}/generate --
+// the server-side saga, spec §4). The server persists everything; the
+// client renders deltas and, at the end, ASSIGNS state from the saved rows.
+//
+// Callbacks:
+//   onToken(delta, full)     -- text deltas
+//   onThinking(delta, full)  -- thinking deltas
+//   onRetryWait(sec, n)      -- 503 model_overloaded auto-retry
+//   onSaved(payload)         -- the heylook_saved event: {messages (stored
+//                               rows), end_reason, dropped_media, timing}.
+//                               May be ABSENT if the connection died first
+//                               (the server still persisted -- reconcile).
+//   onComplete({content, thinking, usage, aborted, saved})
+//   onError(err)             -- HTTP errors + in-band typed error events
+export async function streamGenerate(convId, body, {
+  signal,
+  onToken,
+  onThinking,
+  onRetryWait,
+  onSaved,
+  onComplete,
+  onError,
+} = {}) {
+  let content = '';
+  let thinking = '';
+  let usage = null;
+  let saved = null;
+
+  try {
+    const { aborted } = await streamTypedSSE(`/v1/conversations/${convId}/generate`, body, {
+      signal,
+      onRetryWait,
+      onEvent: (eventType, data) => {
         if (eventType === 'content_block_delta') {
           const d = data.delta ?? {};
           if (d.type === 'thinking_delta' && d.text) {
@@ -228,18 +212,16 @@ export async function streamGenerate(convId, body, {
           // An error event is not the end of the stream: a partial may
           // still persist and heylook_saved may still follow. Surface the
           // error but keep reading to the server's last word -- inBand
-          // tells the caller that onComplete is still coming.
+          // tells the caller that onComplete is still coming. (Deliberately
+          // NOT thrown, unlike streamMessages' error handling.)
           err.inBand = true;
           onError?.(err);
         }
-      }
-    }
-
-    finish(false);
+      },
+    });
+    onComplete?.({ content, thinking, usage, aborted, saved });
   } catch (err) {
-    try { await reader?.cancel(); } catch { /* already closed */ }
-    if (err.name === 'AbortError') finish(true);
-    else onError?.(err);
+    onError?.(err);
   }
 }
 

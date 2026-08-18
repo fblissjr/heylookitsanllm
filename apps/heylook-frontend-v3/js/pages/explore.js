@@ -12,8 +12,8 @@
 import { createPage } from '../page.js';
 import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
 import { api } from '../api.js';
-import { streamChat } from '../streaming.js';
-import { samplerParams } from '../settings.js';
+import { streamMessages } from '../streaming.js';
+import { messagesParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 
 export default createPage({
@@ -27,7 +27,7 @@ export default createPage({
     buildSkeleton(ctx);
     s.paintStrip = ctx.throttle(() => { if (ctx.alive) renderStrip(ctx); });
 
-    // Explore consumes samplerParams(); logprobs are hard-wired on for this
+    // Explore consumes messagesParams(); logprobs are hard-wired on for this
     // view, so the drawer just states that honestly as an extra (no control).
     const unregisterSettings = drawer.registerSettings({
       caps: () => exploreCaps(ctx),
@@ -243,6 +243,10 @@ function renderDetail(ctx) {
 // generate + stream
 // ---------------------------------------------------------------------------
 
+// Phase 3b wire: /v1/messages. Logprobs ride the namespaced
+// heylook_logprobs extension events -- same per-token entry shape
+// ({token, logprob, top_logprobs}) the OpenAI wire carried, so the
+// consumption below is unchanged.
 function buildRequestBody(ctx) {
   const s = ctx.state;
   return {
@@ -250,7 +254,7 @@ function buildRequestBody(ctx) {
     messages: [{ role: 'user', content: s.textarea.value.trim() }],
     logprobs: true,
     top_logprobs: 5,
-    ...samplerParams(exploreCaps(ctx)),
+    ...messagesParams(exploreCaps(ctx)),
   };
 }
 
@@ -279,7 +283,7 @@ function generate(ctx) {
 
   const isCurrent = () => s.stream === stream;
 
-  streamChat(buildRequestBody(ctx), {
+  streamMessages(buildRequestBody(ctx), {
     signal: controller.signal,
     onThinking: (_, full) => {
       if (!ctx.alive || !isCurrent()) return;

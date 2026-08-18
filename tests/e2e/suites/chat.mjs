@@ -194,14 +194,23 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('model select contains the E2E model', async () => {
-    const opts = await page.$$eval(`${MODEL_SELECT} option`, (els) => els.map((e) => e.value));
-    assert(opts.includes(config.model), `model ${config.model} not in [${opts.join(', ')}]`);
+    // POLL, never one-shot: the select exists at #app but fills only when
+    // the page's listModels lands -- measured ~1.7s on a 29-model registry
+    // (cold Chrome, live server). The old single $$eval raced that window
+    // and took the next six checks down with it ("No models available").
+    await waitFor(async () => {
+      const opts = await page.$$eval(`${MODEL_SELECT} option`, (els) => els.map((e) => e.value));
+      return opts.includes(config.model);
+    }, { message: `model ${config.model} never appeared in the select` });
     await page.select(MODEL_SELECT, config.model);
   });
 
   await suite.check('empty state before any conversation', async () => {
-    const empty = await textOf(page, '.chat__messages .empty-state');
-    assert(empty && empty.length > 0, 'expected empty-state prompt');
+    // Same race as the select: rendered by the same async setup.
+    await waitFor(async () => {
+      const empty = await textOf(page, '.chat__messages .empty-state');
+      return Boolean(empty && empty.length > 0);
+    }, { message: 'empty-state prompt never appeared' });
   });
 
   await suite.check('send streams an assistant reply that persists', async () => {
@@ -364,17 +373,27 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await userCount(page)) === 1, 'user message preserved');
   });
 
-  await suite.check('delete (armed) removes a message via truncation', async () => {
-    // Delete the assistant message -> truncates from its position, leaving the
-    // single user message.
+  await suite.check('delete (armed) removes exactly that message -- the tail survives', async () => {
+    // v1.74.0: Delete means delete. The old spelling truncated everything
+    // after the row, so deleting the FIRST user message (mid-thread) is the
+    // discriminating case: under truncation the assistant rows vanish too.
+    const before = await conversationStateServerSide(page);
+    assert(before.userCount >= 1 && before.assistantCount >= 1,
+      `need a user row with messages after it (got ${JSON.stringify(before)})`);
     const delBtn = await page.evaluateHandle(() => {
-      const msg = document.querySelector('.message--assistant');
+      const msg = document.querySelector('.message--user');
       return [...msg.querySelectorAll('.message__actions button')].find((b) => b.textContent.trim() === 'Delete');
     });
     await armedClick(delBtn.asElement());
     await delBtn.dispose();
-    await waitFor(async () => (await assistantCount(page)) === 0, { message: 'assistant not deleted' });
-    assert((await userCount(page)) === 1, 'user message remains');
+    await waitFor(async () => (await userCount(page)) === before.userCount - 1,
+      { message: 'user message not deleted' });
+    const after = await conversationStateServerSide(page);
+    assert(after.userCount === before.userCount - 1,
+      `server kept ${after.userCount} user rows, expected ${before.userCount - 1}`);
+    assert(after.assistantCount === before.assistantCount,
+      `assistant rows changed (${before.assistantCount} -> ${after.assistantCount}) `
+      + '-- Delete truncated the tail again');
   });
 
   // ---- stop = partial saved (needs a long generation) --------------------
@@ -433,6 +452,51 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.waitForSelector('.chat');
     await waitFor(async () => (await assistantCount(page)) === before, { message: 'partial lost on reload' });
     assert(before >= 1, 'had a partial reply');
+  });
+
+  // ---- disconnect persistence (TODO P2, plan Phase 1's server-owned half) --
+  await suite.check('a mid-stream disconnect still persists the partial (server task)', async () => {
+    // The contract: a phone locking mid-stream loses nothing. No Stop is
+    // pressed -- the fetch dies with the page (reload), the server notices
+    // the disconnect, and its DETACHED task persists whatever was generated.
+    const convId = await newFreshConversation(page);
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', '4000');
+    await closeDrawer(page);
+    await waitFor(async () => page.evaluate(async (id) => {
+      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
+      return (conv.params ?? {}).max_tokens === 4000;
+    }, convId), { message: 'max_tokens params PUT never landed server-side' });
+    await sendText(page, 'Write a long detailed story about a lighthouse.');
+    await waitFor(async () => {
+      const t = await textOf(page, '.message--streaming .message-content');
+      return t && t.length > 0;
+    }, { message: 'no partial content appeared before the disconnect' });
+    // Reload mid-stream = the disconnect. The in-stream beforeunload guard
+    // raises a confirm dialog -- accept it or the reload (and the suite) hangs.
+    page.once('dialog', (d) => d.accept().catch(() => {}));
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat');
+    // The persist is a detached server task racing our poll -- give it time.
+    await waitFor(async () => {
+      const state = await conversationStateById(page, convId);
+      return state.assistantCount === 1;
+    }, { timeout: 30000, message: 'the disconnect task never persisted the partial' });
+    const msgs = (await serverGet(page, `/v1/conversations/${convId}`))?.messages ?? [];
+    const partial = msgs.find((m) => m.role === 'assistant');
+    assert(partial?.content?.length > 0, 'the persisted partial has no content');
+    // And the client, having reloaded, shows what the server saved (the
+    // fresh conversation is the newest, so it is the one selected).
+    await waitFor(async () => (await lastAssistantText(page)).length > 0,
+      { message: 'the reloaded page never rendered the persisted partial' });
+    // Contain the 4000 (same hydration-leak reasoning as the stop check).
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', '24');
+    await closeDrawer(page);
+    await waitFor(async () => page.evaluate(async (id) => {
+      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
+      return (conv.params ?? {}).max_tokens === 24;
+    }, convId), { message: 'max_tokens never restored on the disconnect-test conversation' });
   });
 
   await suite.check('post-abort health: a new send completes normally', async () => {

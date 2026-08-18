@@ -4,7 +4,7 @@
 // provides:
 //   el         mount root
 //   state      fresh object per mount (no module singletons)
-//   signal     AbortSignal aborted on teardown -- pass to fetch/streamChat
+//   signal     AbortSignal aborted on teardown -- pass to fetch/streamMessages
 //   alive      false once torn down; check after any await
 //   guard(fn)  wraps a callback so it no-ops after teardown
 //   throttle(fn)  throttleToFrame that auto-cancels on teardown

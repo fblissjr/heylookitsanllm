@@ -130,6 +130,16 @@ export function samplerParams(caps = null) {
   return out;
 }
 
+// The same bag spelled for /v1/messages (Phase 3b): DERIVED from
+// samplerParams, never a second hand-written copy -- the one wire difference
+// is that Messages says `thinking` where the OpenAI wire said
+// `enable_thinking` (same tri-state: absent = the model's own default).
+export function messagesParams(caps = null) {
+  const { enable_thinking, ...out } = samplerParams(caps);
+  if (enable_thinking !== undefined) out.thinking = enable_thinking;
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Per-DOCUMENT sampler settings. ONE mechanism shared by every page whose doc
 // carries `params` (chat conversations, notebooks, ...) so sampler tuning lives

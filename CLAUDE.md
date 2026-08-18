@@ -171,8 +171,8 @@ chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
 server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
-position arithmetic -- notebook/explore still speak `/v1/chat/completions`
-until the rest of Phase 3b), takes image (and gguf audio) input + renders
+position arithmetic -- notebook/explore speak `/v1/messages` since v1.74.0,
+so NO v3 page uses `/v1/chat/completions`), takes image (and gguf audio) input + renders
 image content blocks out of the DuckDB store. THREE attach inputs -- picker,
 paste, drop (v1.72.0) -- funnel through ONE `addFiles` -> `addPendingFiles`
 routine, which is where the cap gate, the count cap and the aria-live

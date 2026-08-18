@@ -933,12 +933,16 @@ function blockFingerprint(b) {
 // row's signature invalidates the whole list the moment residency lands or the
 // model changes -- rebuilding every node, which is the full detach this design
 // exists to avoid.
-function msgSignature(msg, { editing, capsKey, provider }) {
+function msgSignature(msg, { editing, capsKey, provider, modelNote }) {
   return [
     msg.role,
     msg.position,
     editing ? `edit:${provider}` : 'view',
     hasMediaBlocks(msg) ? capsKey : '',
+    // Which model produced the row -- rendered only while the thread MIXES
+    // models, so the note string (not the raw stamp) is what the signature
+    // carries: rows rebuild exactly when the label appears/disappears.
+    modelNote,
     msg.thinking ?? '',
     msg.content ?? '',
     // Media identity only: a text block carries no `source`, and its text is
@@ -998,6 +1002,10 @@ function renderMessages(ctx) {
   const next = new Map();
   const capsKey = currentCaps(ctx).join('|');
   const provider = s.providerById?.get(s.modelSelect.value) ?? '?';
+  // Per-message model attribution (schema v7 model_id), shown only when the
+  // thread actually MIXES models -- a single-model thread labelling every
+  // row would be noise stating the header's select.
+  const mixedModels = new Set(s.messages.map((m) => m.model_id).filter(Boolean)).size > 1;
   // A live stream owns its own row (startStream appends the placeholder, and
   // for a continuation it removed the message's rendered row in favour of it).
   // Carry that node through the reconcile instead of dropping it: a render
@@ -1014,11 +1022,12 @@ function renderMessages(ctx) {
       // save-failure fallback row as an open editor whose Save would PUT to
       // /messages/null.
       const editing = msg.id != null && msg.id === s.editingId;
-      const sig = msgSignature(msg, { editing, capsKey, provider });
+      const modelNote = mixedModels && msg.model_id ? msg.model_id : '';
+      const sig = msgSignature(msg, { editing, capsKey, provider, modelNote });
       const cached = prev.get(key);
       let node = cached?.sig === sig ? cached.node : null;
       if (!node) {
-        node = editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg);
+        node = editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg, modelNote);
         // Rebuilding an OPEN editor (its model chrome changed) must not eat
         // what is in the box -- buildEditEl seeds from msg.content, which is
         // the SAVED text. Carry the live value + caret over instead.
@@ -1040,7 +1049,7 @@ function buildThinkingEl(thinking, open = false) {
   return details;
 }
 
-function buildMessageEl(ctx, msg) {
+function buildMessageEl(ctx, msg, modelNote = '') {
   const content = createEl('div', { class: 'message-content' });
   if (msg.role === 'assistant') content.innerHTML = renderMarkdown(msg.content);
   else content.textContent = msg.content;
@@ -1073,7 +1082,8 @@ function buildMessageEl(ctx, msg) {
   if (msg.role === 'assistant' && msg.thinking) children.push(buildThinkingEl(msg.thinking));
   children.push(bubble);
   // Drop disclosure: media still renders (it's in the store) but is not sent
-  // to the CURRENT model (toWireContent drops what the caps exclude). The
+  // to the CURRENT model (the server's _wire_content, conversation_generate_api.py,
+  // drops what the caps exclude). The
   // marker is what keeps the drop honest -- without it the model answers as
   // if the image were invisible and the user has no idea why.
   const caps = currentCaps(ctx);
@@ -1089,6 +1099,11 @@ function buildMessageEl(ctx, msg) {
   if (dropped.length) {
     children.push(createEl('div', { class: 'message-drop-note muted small' },
       [`${dropped.join(' and ')} not sent to this model`]));
+  }
+  // Attribution note (renderMessages passes it only while the thread mixes
+  // models): which model produced this row.
+  if (modelNote) {
+    children.push(createEl('div', { class: 'message-model-note muted small' }, [modelNote]));
   }
   // Unsaved fallback row: say so ON the row, always visible (not
   // hover-gated -- the state must be legible on touch). While it exists,
@@ -1315,16 +1330,18 @@ function scrollMessages(ctx, force = false) {
   const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
   if (!force && !nearBottom) return;
   el.scrollTop = el.scrollHeight;
+  const setTop = el.scrollTop; // post-clamp: what the write actually landed on
   // A row added this tick is still at its `contain-intrinsic-size` estimate,
   // so scrollHeight reads short and this lands above the real bottom. Re-aim
-  // once the browser has laid the new row out. The non-forced path (stream
-  // paints, stream-end adoption) needs it too -- but re-checks nearBottom in
-  // the frame, so a user who scrolled up between the two writes is left alone.
+  // once the browser has laid the new row out. The frame-time re-check must
+  // distinguish "the reader scrolled away" (leave them alone) from "the row
+  // grew underneath" (finish the aim): re-checking DISTANCE conflated them --
+  // a fresh row growing >100px past its 3rem estimate stranded the view above
+  // the tail (review finding). Growth moves scrollHeight, never scrollTop, so
+  // an unmoved scrollTop is the honest signal that the gap is new content.
   requestAnimationFrame(() => {
     if (!ctx.alive) return;
-    if (force || el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
-      el.scrollTop = el.scrollHeight;
-    }
+    if (force || Math.abs(el.scrollTop - setTop) < 2) el.scrollTop = el.scrollHeight;
   });
 }
 
@@ -1652,11 +1669,12 @@ function hasMediaBlocks(msg) {
   return hasBlocks(msg, 'image') || hasBlocks(msg, 'audio');
 }
 
-// One place that knows how a media block becomes a data/remote URL.
-// IMAGES use it for BOTH render and wire (they must never disagree).
-// Audio uses it for RENDER only -- the audio WIRE shape is deliberately
-// different (input_audio takes RAW base64, a data: URI is rejected
-// server-side), built inline in toWireContent.
+// One place that knows how a media block becomes a renderable URL. RENDER
+// only since Phase 2: the wire is built server-side (_wire_content in
+// conversation_generate_api.py -- data URLs for images, RAW base64 for
+// audio). Since schema v7 stored blocks usually carry url sources
+// (/v1/conversations/{id}/media/{id}); the base64 branch survives for
+// just-staged previews and any pre-v7-shaped payload.
 function blockSourceUrl(b) {
   return b.source.type === 'url'
     ? b.source.url

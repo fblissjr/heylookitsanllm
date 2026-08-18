@@ -26,11 +26,16 @@ Cross-session task backlog organized by priority.
   while an unsaved row exists and unsaved rows are only minted by
   generation flows -- but the day an unsaved row can carry media, Retry
   save must POST `content_blocks`.
-- [ ] **Per-message model attribution UI** (P3): messages carry `model_id`
-  since v1.73.0 (stamped by generate's fresh-row commits; continuations
-  keep the anchor's stamp). Surface it in v3 -- e.g. a muted per-message
-  label shown when a thread mixes models. Data exists; UI deliberately
-  deferred.
+- [x] **Per-message model attribution UI -- DONE v1.74.0**: a muted
+  per-row label (`.message-model-note`) rendered only while the thread
+  MIXES models; rides msgSignature so rows rebuild exactly when the label
+  appears. Data since v1.73.0 (fresh-row commits stamp; continuations keep
+  the anchor's stamp).
+- [ ] **/v1/models is ~1.7s on a 29-model registry** (P3, measured live
+  2026-08-18, cold page): per-request capability probing scales with the
+  model count and delays every page's first paint-to-usable window (the
+  e2e suites' early checks raced exactly this). Candidate: cache
+  capability detection at load/scan time, invalidate on reload.
 
 - [x] **Phase 0 hardening -- DONE v1.64.0**: loud stream-guards (+ a
   `pendingSave` latch closing the Stop-then-act window between stream
@@ -61,10 +66,10 @@ Cross-session task backlog organized by priority.
   teardown = fetch abort + server disconnect-persist). Verified: render
   23/23 unchanged through the cutover, live chat suite 45/45 (three checks
   rewritten off the old wire), gguf matrix 7/7 on DeepSeek V4 Flash.
-- [ ] **Disconnect-persistence test** (P2): the detached-task persist on
-  client disconnect has no automated coverage (unit harness can't cancel
-  mid-stream realistically); candidate: e2e chat suite kills the tab
-  mid-generation and asserts the partial row exists after reload.
+- [x] **Disconnect-persistence test -- DONE v1.74.0**: live chat suite
+  reloads the page mid-stream (no Stop; the beforeunload dialog is
+  accepted) and asserts the detached server task persisted the partial,
+  server-side by id and client-side after reload. Green live 2026-08-18.
 - [x] **Muse-Glimmer 30B -- RESOLVED 2026-08-13 (the parse was never
   broken)**: the "all output in reasoning_content, content empty" report
   was an always-reasoning model given a 100-token budget -- it burned it

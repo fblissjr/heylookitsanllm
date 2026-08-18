@@ -676,6 +676,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* History media the CURRENT model won't receive (drop disclosure). */
 .message-drop-note { padding: 0.1rem 0.25rem; }
 .message--user .message-drop-note { text-align: right; }
+.message-model-note { padding: 0.1rem 0.25rem; }
 
 /* -- image attachments -------------------------------------------------- */
 

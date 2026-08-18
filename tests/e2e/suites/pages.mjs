@@ -42,9 +42,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
 
   await suite.check('notebook page mounts', async () => {
     await page.waitForSelector('.notebook');
-    // empty state until a notebook exists
-    const empty = await textOf(page, '.notebook__empty');
-    assert(empty && empty.length > 0, 'expected notebook empty-state');
+    // POLL: the empty state renders when the page's async setup lands (the
+    // same ~1.7s /v1/models+list window the chat suite's early checks race).
+    await waitFor(async () => {
+      const empty = await textOf(page, '.notebook__empty');
+      return Boolean(empty && empty.length > 0);
+    }, { message: 'notebook empty-state never appeared' });
   });
 
   await suite.check('New notebook creates an entry and opens the editor', async () => {
@@ -250,8 +253,11 @@ export async function runPagesSuite({ suite, ctx, config }) {
   });
 
   await suite.check('explore model select contains the E2E model', async () => {
-    const opts = await page.$$eval('.explore__bar select option', (els) => els.map((e) => e.value));
-    assert(opts.includes(config.model), `model missing from explore select`);
+    // POLL, never one-shot -- same fill-race as the chat suite's select.
+    await waitFor(async () => {
+      const opts = await page.$$eval('.explore__bar select option', (els) => els.map((e) => e.value));
+      return opts.includes(config.model);
+    }, { message: 'model never appeared in the explore select' });
     await page.select('.explore__bar select', config.model);
   });
 
@@ -476,10 +482,20 @@ export async function runPagesSuite({ suite, ctx, config }) {
       await page.setRequestInterception(false);
     }
 
-    // Restore: really load it again for the checks that follow.
+    // Restore: really load it again for the checks that follow. The
+    // interception was JUST torn down, and a request issued inside that
+    // teardown window can be silently dropped (puppeteer interception race)
+    // -- seen live 2026-08-18 as a 120s "never reloaded" timeout. Retry the
+    // click once if the first attempt visibly never lands.
     await (await (await findModelRow(page, config.model)).$('.model-row__actions button')).click();
-    await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
-      { timeout: 120000, message: 'model never reloaded after the failure check' });
+    try {
+      await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
+        { timeout: 60000, message: 'first reload attempt never landed' });
+    } catch {
+      await (await (await findModelRow(page, config.model)).$('.model-row__actions button')).click();
+      await waitFor(async () => (await modelRowState(page, config.model))?.loaded,
+        { timeout: 120000, message: 'model never reloaded after the failure check (retried)' });
+    }
   });
 
   await suite.check('scan reaches local folders, not just the HF cache', async () => {

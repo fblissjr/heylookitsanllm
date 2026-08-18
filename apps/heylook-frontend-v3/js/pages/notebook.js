@@ -13,8 +13,8 @@
 import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
-import { streamChat } from '../streaming.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
+import { streamMessages } from '../streaming.js';
+import { messagesParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -69,7 +69,7 @@ export default createPage({
       onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
     });
 
-    // Notebook consumes samplerParams() for generate-at-cursor, so it gets full
+    // Notebook consumes messagesParams() for generate-at-cursor, so it gets full
     // sampler controls; the preset bar + per-notebook system-prompt editor
     // lead the panel.
     const unregisterSettings = drawer.registerSettings({
@@ -448,10 +448,6 @@ function startGenerate(ctx) {
   const head = s.content.slice(0, insertPos);
   const tail = s.content.slice(insertPos);
 
-  const messages = [];
-  if (s.systemPrompt) messages.push({ role: 'system', content: s.systemPrompt });
-  messages.push({ role: 'user', content: head.trim() ? head : 'Continue writing.' });
-
   const controller = ctx.linkedController();
 
   const gen = { controller, targetId: s.activeId, head, tail, content: '' };
@@ -463,7 +459,14 @@ function startGenerate(ctx) {
   s.contentTextarea.readOnly = true;
   showStatus(ctx, '');
 
-  streamChat({ model: s.modelSelect.value, messages, ...samplerParams(notebookCaps(ctx)) }, {
+  // Phase 3b wire: /v1/messages -- system rides as the top-level `system`
+  // parameter (Messages has no system role in the messages array).
+  streamMessages({
+    model: s.modelSelect.value,
+    system: s.systemPrompt || undefined,
+    messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
+    ...messagesParams(notebookCaps(ctx)),
+  }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },
     onRetryWait: (wait) => {
