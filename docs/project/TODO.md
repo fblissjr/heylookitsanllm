@@ -6,6 +6,25 @@ Cross-session task backlog organized by priority.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
+- [x] **Stream-end blank frame -- DONE v1.72.2**: post-stream adoption now
+  assigns from `heylook_saved`'s rows synchronously; the wholesale GET is
+  the no-rows fallback only; list DOM structure is renderMessages-only.
+  Guarded by the render-suite swap check (shown red against pre-fix tree).
+- [ ] **Media by reference** (P1, backend phase): message `content_blocks`
+  carry inline base64, so every conversation GET (select, resync fallback,
+  edit PUT responses) ships megabytes. Store blobs once (table or disk),
+  serve at `/v1/conversations/{id}/media/{blob_id}`, rows carry url
+  sources, browser caches them. Schema change = `_SCHEMA_VERSION` bump +
+  drop/recreate per the no-migration policy. Kills the payload tax on
+  every surface at once; also retires the length-based image fingerprint
+  in v3's msgSignature.
+- [ ] **Per-message Delete is an undisclosed truncation** (P2, owner
+  decision): the row's Delete button truncates the message AND everything
+  after it (`?after=position-1`), while its armed confirm says only
+  "Confirm?". Under the only-loss-gates rule the confirm must name the
+  loss ("Deletes this and everything after") -- or the server grows a true
+  single-message DELETE and the button means what it says. Decide which.
+
 - [x] **Phase 0 hardening -- DONE v1.64.0**: loud stream-guards (+ a
   `pendingSave` latch closing the Stop-then-act window between stream
   release and the partial save landing), unsaved-row "Retry save"/"Discard"
