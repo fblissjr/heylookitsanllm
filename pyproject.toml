@@ -14,59 +14,73 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: MacOS",
     "Framework :: FastAPI",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Development Status :: 4 - Beta",
 ]
 
-# Current as of 2026-08-12. Floors track published releases; uv.lock pins the
-# exact versions. The MLX stack is darwin-only -- the sys_platform markers keep
-# a base install resolvable elsewhere.
+# Current as of 2026-08-18. A floor is the version this repo actually resolves
+# and runs its suite against, not the oldest one that might work -- an ancient
+# floor lets a fresh resolve elsewhere pick something never tested here. uv.lock
+# pins the exact versions. The MLX stack is darwin-only -- the sys_platform
+# markers keep a base install resolvable elsewhere.
 dependencies = [
     # MLX / model stack (darwin-only)
     "mlx>=0.32.0; sys_platform == 'darwin'",
     "mlx-lm>=0.31.3; sys_platform == 'darwin'",
     "mlx-vlm>=0.6.13; sys_platform == 'darwin'",
-    "transformers>=5.13.1",    # Floor only; the real constraint is the [tool.uv] override below
-    "torch>=2.13.0",           # Floor (needed transitively by transformers/mlx-vlm)
+    "transformers>=5.15.0",    # Floor only; the real constraint is the [tool.uv] override below
+    # REQUIRED, and deliberately NOT derivable from the declared dep graph -- do
+    # not "clean this up" because `uv tree` shows nothing depending on it
+    # (checked 2026-08-18, ~505MB of venv, tempting to cut for exactly that
+    # reason). transformers declares torch only under `extra == "torch"`, but
+    # transformers/generation/logits_process.py does a BARE module-level
+    # `import torch`, reached eagerly by `import mlx_vlm` -> AutoProcessor ->
+    # configuration_utils -> generation.configuration_utils. So `import mlx_vlm`
+    # imports torch, and without it the MLX provider will not import at all.
+    # Verify by TRACING the import (a meta_path hook on "torch"), never by
+    # reading dependency metadata. Also needed by four mlx-vlm per-model modules
+    # (falcon_ocr, lfm2_vl, glm_ocr, sam3d_body) and, via its own PEP 723 inline
+    # deps, by scripts/jspace_convert_lens.py.
+    "torch>=2.13.0",
     # Web framework + server
-    "fastapi>=0.104.1",
-    "uvicorn[standard]>=0.24.0",
-    "python-multipart>=0.0.6",
-    "pydantic>=2.5.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.3",
+    "python-multipart>=0.0.32",
+    "pydantic>=2.13.4",
     # Data + serialization
-    "duckdb>=1.5.2",           # App-DB store: conversations, notebooks, presets, settings
-    "orjson>=3.9.15",          # Fast JSON serialization
-    "tomli-w>=1.0.0",
-    "numpy>=1.24.0",
+    "duckdb>=1.5.5",           # App-DB store: conversations, notebooks, presets, settings
+    "orjson>=3.12.0",          # Fast JSON serialization -- upstream ijl/orjson, never a fork
+    "tomli-w>=1.2.0",          # Authoritative for models.toml WRITES (values/layout/order)
+    "tomlkit>=0.15.1",         # STRICTLY read-only: comment extraction for toml_comments
+    "numpy>=2.5.2",
     # Images / IO / system
-    "Pillow>=10.0.1",
-    "requests>=2.31.0",
-    "psutil>=5.9.0",           # System metrics (RAM, CPU)
-    # Performance (guarded imports, but the server's fast paths expect them:
-    # turbojpeg = multipart JPEG decode, uvloop = event loop, xxhash/cachetools
-    # = image + cache hashing). Folded into core so `uv sync` gives a fast server.
-    "xxhash>=3.4.1",
-    "PyTurboJPEG>=1.7.5",
-    "cachetools>=5.3.2",
-    "uvloop>=0.19.0; sys_platform != 'win32'",   # Unix-only; excluded on Windows
-    "tomlkit>=0.15.1",
+    "Pillow>=12.3.0",
+    "requests>=2.34.2",        # utils.load_image URL fetch + scripts/benchmark.py
+    "psutil>=7.2.2",           # System metrics (RAM, CPU)
+    # Performance. Guarded imports, folded into core so `uv sync` gives a fast
+    # server. xxhash + PyTurboJPEG were dropped 2026-08-18: both were imported
+    # only to flip a status flag (no hash call, no decode call anywhere), and
+    # PyTurboJPEG additionally wanted a system libjpeg-turbo it never used.
+    "uvloop>=0.22.1; sys_platform != 'win32'",   # Unix-only; excluded on Windows
+    "cachetools>=7.1.7",       # TTLCache behind optimizations.fast_image.ImageCache
 ]
 
 # Dev tooling. Installed by default on `uv sync` (skip with --no-dev); not
 # part of a PyPI install.
 [dependency-groups]
 dev = [
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.3.0",
-    "httpx>=0.27",         # TestClient / API contract tests + tests/integration
-    "pyyaml>=6.0.1",       # scripts/export_openapi.py --yaml
-    "build>=1.0.0",        # sdist/wheel builds
-    "twine>=6.0.0",        # PyPI upload
-    "rich>=13.0.0",        # scripts/benchmark.py console output
-    "py-spy>=0.3.14",      # Sampling profiler
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.28.1",       # TestClient / API contract tests + tests/integration
+    "pyyaml>=6.0.3",       # scripts/export_openapi.py --yaml
+    "rich>=15.0.0",        # scripts/benchmark.py console output
+    "py-spy>=0.4.2",       # Sampling profiler
 ]
+# No build/twine: `uv build` and `uv publish` cover both, and this repo is
+# uv-only (dropped 2026-08-18 -- nothing referenced them).
 
 [project.urls]
 Homepage = "https://github.com/fblissjr/heylookitsanllm"
@@ -94,7 +108,7 @@ version = { attr = "heylook_llm.__version__" }
 [tool.uv]
 # Replaces every transformers constraint in the graph (strips the upper bounds
 # mlx-lm/mlx-vlm pin). Keep equal to the [project.dependencies] floor.
-override-dependencies = ["transformers>=5.13.1"]
+override-dependencies = ["transformers>=5.15.0"]
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

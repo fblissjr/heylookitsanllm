@@ -20,6 +20,34 @@ Cache-property tests now pin BOTH probes behaviorally (repeated calls hit
 the filesystem once; shown red against the uncached version), so a third
 probe added beside them without the cache gets caught.
 
+## [1.76.0]
+
+### Changed
+
+**Dependency hygiene: xxhash and PyTurboJPEG removed.** Both were imported
+only to flip a status flag -- no hash call and no decode call existed
+anywhere in the repo, and PyTurboJPEG additionally demanded a system
+libjpeg-turbo it never used. If multipart JPEG decode is ever really wired
+to TurboJPEG, the dependency returns together with its call site, never
+ahead of it. Consequences on the wire: `/v1/capabilities`
+`optimizations.image` no longer reports `xxhash_available` /
+`turbojpeg_available` / speedup strings (no consumer read them --
+frontend, tests and spec all swept), and
+`recommendations.vision_models.use_multipart` is now unconditionally true
+(the multipart win is bandwidth, which holds regardless of what is
+installed). `build` and `twine` left the dev group (`uv build` /
+`uv publish` cover both). Dependency floors refreshed to the versions
+this repo actually resolves and tests against, with the torch requirement
+documented in place: it is NOT derivable from dependency metadata
+(`import mlx_vlm` reaches a bare `import torch` through transformers'
+generation modules), so it must never be "cleaned up" on `uv tree`
+evidence.
+
+(This work was found uncommitted from an interrupted session; audited and
+landed: zero surviving consumers of anything removed, `uv lock --check`
+clean, removed packages absent from the lock, and the entire day's suite
+runs and live servers already ran on this dependency state.)
+
 ## [1.75.0]
 
 ### Changed

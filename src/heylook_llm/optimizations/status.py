@@ -29,13 +29,11 @@ def log_all_optimization_status():
     
     if json_status["orjson_available"]:
         active_optimizations.append("orjson (JSON)")
-    
-    if image_status["xxhash_available"]:
-        active_optimizations.append("xxHash")
-        
-    if image_status["turbojpeg_available"]:
-        active_optimizations.append("TurboJPEG")
-    
+
+    if image_status["cachetools_available"]:
+        active_optimizations.append("TTL cache (images)")
+
+
     if active_optimizations:
         logging.info(f"Active optimizations: {', '.join(active_optimizations)}")
     else:

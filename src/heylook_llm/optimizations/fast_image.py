@@ -1,28 +1,19 @@
 # src/heylook_llm/optimizations/fast_image.py
 """
-Fast image processing optimizations.
+Image helpers for the multipart vision path.
 
-Provides drop-in replacements for image operations with 4-10x speedups.
+Only ImageCache lives here now. The xxhash and PyTurboJPEG imports this module
+carried were removed 2026-08-18: nothing ever called them. There was no hash
+call and no decode call anywhere in the repo -- the TurboJPEG decoder was
+constructed at import and never touched -- so both libraries (plus the system
+libjpeg-turbo PyTurboJPEG needs) were being paid for a status flag. If the
+multipart JPEG decode is ever really wired to TurboJPEG, add the dependency back
+together with the call site, never ahead of it.
 """
 
 import logging
 from typing import Optional
 from PIL import Image
-
-# Try to import faster alternatives
-try:
-    import xxhash
-    HAS_XXHASH = True
-except ImportError:
-    import hashlib
-    HAS_XXHASH = False
-
-try:
-    import turbojpeg
-    HAS_TURBOJPEG = True
-    jpeg_decoder = turbojpeg.TurboJPEG()
-except ImportError:
-    HAS_TURBOJPEG = False
 
 try:
     from cachetools import TTLCache
@@ -35,26 +26,14 @@ except ImportError:
 def get_status():
     """Get the status of image optimizations."""
     return {
-        "xxhash_available": HAS_XXHASH,
-        "turbojpeg_available": HAS_TURBOJPEG,
         "cachetools_available": HAS_CACHETOOLS,
-        "hash_speedup": "50x" if HAS_XXHASH else "1x",
-        "jpeg_speedup": "4-10x" if HAS_TURBOJPEG else "1x"
     }
 
 
 def log_status():
     """Log the image optimization status."""
-    optimizations = []
-    if HAS_XXHASH:
-        optimizations.append("xxHash (50x faster hashing)")
-    if HAS_TURBOJPEG:
-        optimizations.append("TurboJPEG (4-10x faster JPEG)")
     if HAS_CACHETOOLS:
-        optimizations.append("TTL cache")
-    
-    if optimizations:
-        logging.info(f"Image optimizations available: {', '.join(optimizations)}")
+        logging.info("Image optimizations available: TTL cache")
     else:
         logging.info("No image optimization libraries available - using standard implementations")
 
