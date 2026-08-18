@@ -225,6 +225,27 @@ class TestHybridSafety:
 
 
 @pytest.mark.unit
+class TestZombieImmunity:
+    def test_slot_is_immune_to_post_store_mutation(self):
+        # The v2 postmortem pin: this server quarantines wedged generator
+        # threads ALIVE, and a zombie generation keeps mutating its cache
+        # objects after the store. The slot must hold CAPTURES that no
+        # later mutation of those objects can reach -- storing live objects
+        # (however convenient) reintroduces process-poisoning.
+        mgr = get_global_cache_manager()
+        kv = _kv_of_len(16)
+        pc = mgr.get_or_create_cache("zombie", _TinyModel(), STD)
+        pc._radix_eligible = True
+        store_generation_cache(pc, list(range(16)), [kv])
+        # the zombie writes on: buffer grows, attributes thrash
+        kv.update_and_fetch(mx.zeros((1, 2, 50, 4)), mx.zeros((1, 2, 50, 4)))
+        kv.offset = 3
+        slot = mgr._get_slot("zombie")
+        keys, _values = slot.layers[0][0]
+        assert keys.shape[2] == 16  # the capture never moved
+
+
+@pytest.mark.unit
 class TestManagerLifecycle:
     def test_byte_budget_drops_lru_slots(self):
         mgr = PromptCacheManager(max_cache_bytes=None)
