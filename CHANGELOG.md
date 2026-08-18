@@ -20,6 +20,53 @@ Cache-property tests now pin BOTH probes behaviorally (repeated calls hit
 the filesystem once; shown red against the uncached version), so a third
 probe added beside them without the cache gets caught.
 
+## [1.75.0]
+
+### Changed
+
+**The radix prompt cache is deleted (plan Q7, decided 2026-07-06, executed
+now).** Its replacement is a per-model SINGLE SLOT holding immutable
+per-layer (state, meta_state) snapshots of the last completed generation,
+registered with the token count the cache actually covers (read off the KV
+offset -- the final sampled token never passes through the model). Reuse
+has exactly two shapes: EXTENSION (multi-turn: reconstruct fresh cache
+objects from the snapshots and continue -- valid for every cache type) and
+TRIM to the common prefix via mlx-lm's own trim_prompt_cache (per-layer
+honest: hybrid ArraysCache recurrent state and rotated sliding windows
+REFUSE and re-prefill instead of being sliced). Deleted with the tree:
+segment eviction, the byte-budget partial trims (slots evict whole, LRU),
+`_find_system_boundary` and its extra per-request tokenization.
+
+Two failure modes were caught LIVE during the rewrite and shaped the final
+design -- both are now pinned by tests:
+
+- The radix's restore-time `keys[..., :N, :]` slicing was documented as
+  "technically incorrect but slight" for hybrid models; under exact prefix
+  matching it produced constant greedy garbage on Qwen3.5-0.8B
+  (fresh="Paris.", restored="\n\n"). Hybrids now refuse partial restores
+  outright -- correct, not "limited correctness".
+- An intermediate design stored LIVE cache objects; MLX arrays are
+  immutable but cache objects are not, and this server quarantines wedged
+  generator threads ALIVE -- a zombie generation kept mutating the shared
+  objects and poisoned the process (garbage on cache MISSES until
+  restart). Slots therefore store snapshots only; reuse reconstructs.
+- The snapshot store must mx.eval the EXACT capture it registers: each
+  .state access builds fresh lazy slice objects, so eval-one-capture/
+  store-another shipped lazy state that crashed the NEXT request's thread
+  ("There is no Stream(gpu, N)" -- the radix_thread_affinity postmortem
+  class, re-caught by the live chat e2e). A two-thread unit test now pins
+  the store path directly (shown red against the buggy split).
+
+Verification: suite green; greedy live probes (the instrument that caught
+both failed designs) green on the hybrid 0.8B and the MoE incl. repeat,
+multi-turn and deep-trim shapes; eval bank diffed per-task against a
+stashed radix baseline (24/26 outcome-identical, two known-flaky tasks
+moved in opposite directions); live chat e2e. NB afternoon bank re-runs
+on THIS machine hit an intermittent Metal command-buffer fault cascade --
+reproduced on the stashed BASELINE code, so it is a pre-existing
+machine/driver-state class (tracked in TODO), not a property of this
+change. Accepted Q7 trade: switching conversations re-prefills.
+
 ## [1.74.0]
 
 ### Changed

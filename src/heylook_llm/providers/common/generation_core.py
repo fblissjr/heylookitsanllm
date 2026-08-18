@@ -15,10 +15,10 @@ MLX alignment:
 - Logging happens in finally (outside the hot loop)
 
 Error handling:
-- Radix tree snapshot storage is skipped on generation errors. A failed prefill
-  leaves partially-populated cache layers (some layers updated, others fresh).
-  Storing this state would cascade into shape mismatches on future requests.
-  See internal/bugs/radix_cache_vlm_crash.md.
+- Prompt-cache snapshot storage is skipped on generation errors. A failed
+  prefill leaves partially-populated cache layers (some layers updated, others
+  fresh). Storing this state would cascade into shape mismatches on future
+  requests. See internal/bugs/radix_cache_vlm_crash.md.
 """
 
 import logging
@@ -201,7 +201,7 @@ def _build_cache_config(effective_request: dict) -> dict:
 
 
 def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_manager):
-    """Set up prompt cache using radix tree lookup.
+    """Set up the prompt cache from the model's single-slot snapshot.
 
     Returns:
         Tuple of (prompt_cache, tokens_to_process, generation_cache).
@@ -228,7 +228,6 @@ def generate_text(
     draft_model=None,
     cache_manager=None,
     abort_event=None,
-    system_prefix_len: int = 0,
 ) -> Generator:
     """High-level entry point for text-based generation.
 
@@ -246,7 +245,6 @@ def generate_text(
         sampler, processors,
         model_id=model_id, draft_model=draft_model,
         cache_manager=cache_manager, abort_event=abort_event,
-        system_prefix_len=system_prefix_len,
     )
 
 
@@ -262,13 +260,12 @@ def run_generation(
     cache_manager=None,
     abort_event=None,
     pre_filled_cache=None,
-    system_prefix_len: int = 0,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
     This is the only place lm_stream_generate is called for text. It handles:
     - Cache config construction from effective_request
-    - Radix-tree prompt cache lookup (skipped when pre_filled_cache provided)
+    - Single-slot prompt cache lookup (skipped when pre_filled_cache provided)
     - lm_stream_generate call with wired_limit scope
     - Abort checking (Python bool, no GPU sync)
     - Speculative decoding acceptance tracking (Python ints only)
@@ -287,7 +284,7 @@ def run_generation(
         cache_manager: PromptCacheManager instance (or None for default)
         abort_event: AbortEvent for cooperative cancellation
         pre_filled_cache: Pre-populated KV cache from VLM vision forward pass.
-            When provided, skips radix cache setup and leading space cleanup.
+            When provided, skips prompt-cache setup and leading space cleanup.
 
     Yields:
         Generation response objects from lm_stream_generate.
@@ -305,7 +302,7 @@ def run_generation(
 
     if pre_filled_cache is not None:
         # Vision path: cache already populated by VLM forward pass.
-        # Skip radix cache -- vision embeddings can't be cached in the radix tree.
+        # Skip the prompt cache -- vision embeddings can't be snapshotted here.
         prompt_cache = None
         tokens_to_process = prompt_tokens
         generation_cache = pre_filled_cache
@@ -321,9 +318,6 @@ def run_generation(
         prompt_cache, tokens_to_process, generation_cache = _setup_prompt_cache(
             model_id, model, prompt_tokens, cache_config, cache_manager
         )
-        # Store system prefix length for segment-aware eviction
-        if prompt_cache and system_prefix_len > 0:
-            prompt_cache.system_prefix_len = system_prefix_len
 
     def prompt_progress_callback(processed: int, total: int):
         logging.debug(f"Prompt processing: {processed}/{total} tokens")
@@ -427,7 +421,7 @@ def run_generation(
             )
             if model_id:
                 get_draft_tuner().record(model_id, draft_accepted, draft_total)
-        # Store KV snapshot in radix tree for future prefix reuse.
+        # Store the KV snapshot as the model's slot for future prefix reuse.
         # Skip on error: a failed prefill leaves partially-populated cache
         # layers that would corrupt future requests via cascade failures.
         if not generation_failed and model_id and prompt_cache and generation_cache:

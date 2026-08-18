@@ -20,6 +20,22 @@ Cross-session task backlog organized by priority.
   `DELETE /{id}/messages/{msg_id}`; the v3 button calls it; positions keep
   gaps. `?after` truncation stays API-only. Render check pins
   neighbor-survival (shown red against the truncation-era client).
+- [ ] **Intermittent Metal fault cascade / load-hang under load-unload
+  churn** (P2, observed 2026-08-18 during Q7 verification): three
+  incidents in one afternoon on a hot machine -- a mid-generation wedge, a
+  0.8B weight-load hang after a MoE unload, and a
+  kIOGPUCommandBufferCallbackErrorSubmissionsIgnored cascade that 500'd
+  every later MLX request. The cascade REPRODUCED ON STASHED BASELINE
+  code, so it predates the v1.75.0 cache rewrite; morning runs of the
+  same bank were clean. Related: the streaming_utils quarantine
+  warnings. Needs its own investigation (candidate mitigations: detect
+  the fault signature and refuse-with-restart-hint; py-spy needs sudo).
+- [ ] **Prompt-cache reuse for quantized/rotating CONFIGS** (P3, deliberate
+  non-widening in v1.75.0): the config-level gate (cache_type standard, no
+  max_kv_size) predates Q7 and was kept verbatim. Under the snapshot+
+  native-trim design, EXTENSION reuse would be sound for those configs
+  too (nothing is sliced); widening needs its own live verification on a
+  kv-quantized model, not a ride-along.
 - [ ] **retrySave drops media blocks** (P3, pre-existing): the unsaved-row
   Retry save re-POSTs `msg.content` (flattened text), so a media message's
   blocks would not survive it. Unreachable today -- generation refuses

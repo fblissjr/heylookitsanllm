@@ -2,7 +2,7 @@
 """
 KV cache construction, snapshot, and restore utilities.
 
-Snapshot/restore is used by the radix cache to persist KV state across requests.
+Snapshot/restore is used by the prompt cache to persist KV state across requests.
 Key invariant: restore_kv_from_snapshot(trim_to=N) must trim KVCache layers to N
 tokens, because snapshots are taken at end-of-generation and may contain entries
 for tokens beyond the matched prefix. Without trimming, hybrid models (Qwen3.5)
@@ -70,7 +70,7 @@ def snapshot_nbytes(snapshot: List[tuple | None]) -> int:
     """Compute total byte size of a KV cache snapshot.
 
     Each snapshot entry is a (keys, values) tuple of mx.arrays. Returns
-    the sum of nbytes across all arrays. Used by the radix cache for
+    the sum of nbytes across all arrays. Used by the prompt cache for
     byte-level budget enforcement.
     """
     total = 0
@@ -83,7 +83,7 @@ def snapshot_nbytes(snapshot: List[tuple | None]) -> int:
 
 
 def snapshot_kv(cache: List[Any]) -> List[tuple]:
-    """Capture KV cache state for radix tree storage.
+    """Capture KV cache state for prompt-cache storage.
 
     Each cache layer exposes a .state property returning (keys, values)
     trimmed to the current offset.
@@ -93,7 +93,7 @@ def snapshot_kv(cache: List[Any]) -> List[tuple]:
     on a fresh single-worker thread per request (streaming_utils), and both
     our generation_stream and mlx_lm's are thread-local. GPU thread-local
     streams die with their thread, so any *pending* lazy node published into
-    the shared radix tree would make the next request's
+    the shared cache slot would make the next request's
     `mx.eval([c.state for c in prompt_cache])` (mlx_lm generate_step) raise
     "There is no Stream(gpu, N) in current thread" when it runs on a
     different thread. Eval here happens on the generating thread, where the

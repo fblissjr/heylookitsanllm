@@ -241,8 +241,12 @@ UPDATE 2026-07-28 (v1.45.0-1.46.0 + full re-plan):
   vision+thinking forwards trigger Metal command-buffer fault cascades
   that poison the process. RETIRED for vision+thinking (text-only OK).
   Details: session log 2026-07-28.
-- **NEXT: Wave 1 item 2 (RLM extraction -- owner-gated, skipped for now
-  per owner) -> item 3 (batch-internals collapse) in a fresh session.**
+- **Wave 1 item 4 (radix simplification, Q7) EXECUTED 2026-08-18
+  (v1.75.0)** -- single-slot snapshot cache, hybrid hole closed by
+  refusal; see plan + mlx_provider.md §4.2. NEXT: item 2 (RLM extraction
+  -- owner-gated, skipped for now per owner) -> item 3 (batch-internals
+  collapse; NB its endpoint handler lives in api.py, which currently
+  carries an unowned uncommitted diff -- resolve that first).**
 
 UPDATE 2026-07-26 (PHASE 7, one day, v1.39.17 -> v1.44.2, 14 commits --
 multi-provider is REAL again; full record: the session log + plan Phase 7 +

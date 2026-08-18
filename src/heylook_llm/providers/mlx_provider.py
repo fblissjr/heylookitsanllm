@@ -260,12 +260,6 @@ class UnifiedTextStrategy:
         )
         gen_model = self._get_generation_model(model)
 
-        # Compute system prompt token boundary for segment-aware cache eviction.
-        # Only re-tokenizes the system prefix (not the full prompt again).
-        system_prefix_len = self._find_system_boundary(
-            messages_for_template, prompt_tokens, tokenizer, processor, model, effective_request
-        )
-
         # VLM mRoPE position state is reset in run_generation via _reset_vlm_positions().
 
         yield from generate_text(
@@ -277,7 +271,6 @@ class UnifiedTextStrategy:
             draft_model=self.draft_model,
             cache_manager=self.cache_manager,
             abort_event=abort_event,
-            system_prefix_len=system_prefix_len,
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -385,46 +378,6 @@ class UnifiedTextStrategy:
         if isinstance(prompt, str):
             return tokenizer.encode(prompt)
         return prompt
-
-    def _find_system_boundary(self, messages, prompt_tokens, tokenizer, processor, model, effective_request) -> int:
-        """Find the token boundary where system prompt ends.
-
-        Tokenizes just the system messages + empty user message, then compares
-        against the already-computed prompt_tokens to find the divergence point.
-        Only one extra tokenization (the system prefix), not two.
-
-        Returns 0 if no system messages or computation fails.
-        """
-        # Count leading system messages
-        num_system = 0
-        for msg in messages:
-            if msg.get('role') == 'system':
-                num_system += 1
-            else:
-                break
-
-        if num_system == 0:
-            return 0
-
-        try:
-            # Tokenize system messages + empty user to find boundary
-            sys_messages = messages[:num_system] + [{"role": "user", "content": ""}]
-            sys_tokens = self._apply_template(sys_messages, tokenizer, processor, model, effective_request)
-
-            # Find divergence point against already-computed full prompt
-            sys_end = 0
-            for i, (a, b) in enumerate(zip(sys_tokens, prompt_tokens)):
-                if a != b:
-                    sys_end = i
-                    break
-            else:
-                sys_end = min(len(sys_tokens), len(prompt_tokens))
-
-            if sys_end > 0:
-                logging.debug(f"System prefix: {sys_end} tokens ({num_system} system messages)")
-            return sys_end
-        except Exception:
-            return 0
 
     def _get_generation_model(self, model):
         """Return raw model for text-only, LanguageModelLogitsWrapper for VLM.
@@ -664,10 +617,10 @@ class DiffusionStrategy:
        before yielding any of it -- correct for a CLI, but on a streaming
        server it turns every request into full-duration dead air followed by
        a burst. The underlying generator streams token-by-token.
-    2. The radix/prompt cache is bypassed entirely -- this strategy never
+    2. The prompt cache is bypassed entirely -- this strategy never
        touches the global cache manager. The denoising loop owns its own KV
        cache (``diffusion_prefill_cache`` / ``model.make_cache``), and
-       heylook's radix cache assumes AR trim-to-a-prefix semantics that a
+       heylook's prompt cache assumes AR trim-to-a-prefix semantics that a
        canvas rewrite violates.
     3. Generation parameters come from the checkpoint's own
        ``config.generation_config`` -- canvas length, denoising steps, the

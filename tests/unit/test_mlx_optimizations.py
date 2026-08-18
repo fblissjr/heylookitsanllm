@@ -4,8 +4,6 @@
 Covers:
 - VisionFeatureCache: LRU eviction, URL keying, pixel hash fallback, stats
 - snapshot_nbytes: byte size computation for KV cache snapshots
-- Segment-aware eviction: system nodes survive longer than assistant nodes
-- Byte budget trimming: radix cache trim_to_bytes
 - Keepalive marker: streaming utils sentinel type
 - Cached tokens passthrough: generation_core attaches cached_tokens
 """
@@ -244,156 +242,6 @@ class TestSnapshotNbytes:
 # Segment-aware eviction tests
 # ---------------------------------------------------------------------------
 
-class TestSegmentAwareEviction:
-    def test_assistant_evicted_before_system(self):
-        """With both system and assistant nodes, assistant should be evicted first."""
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import time
-
-        cache = RadixCache(max_nodes=3)
-
-        # Insert 2 blocks at system prefix len = BLOCK_SIZE (first block is system)
-        tokens_a = list(range(BLOCK_SIZE * 2))
-        snap_a = [("kv_a",)]
-        cache.insert(tokens_a, snap_a, matched_length=0, system_prefix_len=BLOCK_SIZE)
-
-        # Insert another path (all assistant)
-        tokens_b = list(range(100, 100 + BLOCK_SIZE * 2))
-        snap_b = [("kv_b",)]
-        cache.insert(tokens_b, snap_b, matched_length=0, system_prefix_len=0)
-
-        # We have 4 nodes but max is 3 -- should have evicted an assistant leaf
-        assert cache._node_count <= 3
-
-        # System node (first block of tokens_a) should survive
-        matched, snap = cache.longest_prefix_match(tokens_a[:BLOCK_SIZE])
-        assert matched == BLOCK_SIZE  # system block survived
-
-    def test_all_assistant_evicts_oldest(self):
-        """When all nodes are assistant type, oldest is evicted."""
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import time
-
-        cache = RadixCache(max_nodes=2)
-
-        tokens_a = list(range(BLOCK_SIZE))
-        tokens_b = list(range(100, 100 + BLOCK_SIZE))
-        tokens_c = list(range(200, 200 + BLOCK_SIZE))
-
-        cache.insert(tokens_a, [("a",)], 0, system_prefix_len=0)
-        time.sleep(0.001)  # Ensure different timestamps
-        cache.insert(tokens_b, [("b",)], 0, system_prefix_len=0)
-        time.sleep(0.001)
-        cache.insert(tokens_c, [("c",)], 0, system_prefix_len=0)
-
-        # tokens_a should be evicted (oldest assistant)
-        assert cache.longest_prefix_match(tokens_a)[0] == 0
-        assert cache.longest_prefix_match(tokens_b)[0] == BLOCK_SIZE
-
-
-# ---------------------------------------------------------------------------
-# Byte budget trimming tests
-# ---------------------------------------------------------------------------
-
-class TestByteBudgetTrimming:
-    def test_trim_to_bytes(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import mlx.core as mx
-
-        cache = RadixCache(max_nodes=100)
-
-        # Insert 3 nodes with known sizes
-        for i in range(3):
-            tokens = list(range(i * 1000, i * 1000 + BLOCK_SIZE))
-            # Snapshot with a known-size array
-            k = mx.zeros((64, 64))  # 64*64*4 = 16384 bytes per array
-            snap = [(k, k)]
-            cache.insert(tokens, snap, 0, system_prefix_len=0)
-
-        assert cache._node_count == 3
-        initial_bytes = cache.nbytes
-        assert initial_bytes > 0
-
-        # Trim to allow only 1 node worth of bytes
-        single_node_bytes = initial_bytes // 3
-        cache.trim_to_bytes(single_node_bytes + 1)
-
-        assert cache._node_count <= 1
-        assert cache.nbytes <= single_node_bytes + 1
-
-    def test_trim_to_zero(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import mlx.core as mx
-
-        cache = RadixCache(max_nodes=100)
-        tokens = list(range(BLOCK_SIZE))
-        k = mx.zeros((8,))
-        cache.insert(tokens, [(k, k)], 0)
-
-        cache.trim_to_bytes(0)
-        assert cache._node_count == 0
-        assert cache.nbytes == 0
-
-    def test_nbytes_tracks_insertions(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import mlx.core as mx
-
-        cache = RadixCache(max_nodes=100)
-        assert cache.nbytes == 0
-
-        k = mx.zeros((32,))  # 128 bytes
-        tokens = list(range(BLOCK_SIZE))
-        cache.insert(tokens, [(k, k)], 0)
-
-        assert cache.nbytes == 2 * k.nbytes  # k + v
-
-    def test_clear_resets_bytes(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import mlx.core as mx
-
-        cache = RadixCache(max_nodes=100)
-        k = mx.zeros((32,))
-        cache.insert(list(range(BLOCK_SIZE)), [(k, k)], 0)
-        assert cache.nbytes > 0
-
-        cache.clear()
-        assert cache.nbytes == 0
-
-
-# ---------------------------------------------------------------------------
-# Segment stats tests
-# ---------------------------------------------------------------------------
-
-class TestSegmentStats:
-    def test_stats_by_segment_type(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache, BLOCK_SIZE
-        import mlx.core as mx
-
-        cache = RadixCache(max_nodes=100)
-
-        # Insert with system prefix covering first block
-        tokens = list(range(BLOCK_SIZE * 2))
-        k = mx.zeros((16,))
-        cache.insert(tokens, [(k, k)], 0, system_prefix_len=BLOCK_SIZE)
-
-        stats = cache.stats_by_segment_type()
-        assert "system" in stats
-        assert "assistant" in stats
-        assert stats["system"]["nodes"] == 1
-        assert stats["assistant"]["nodes"] == 1
-
-    def test_stats_empty_tree(self):
-        from heylook_llm.providers.common.radix_cache import RadixCache
-
-        cache = RadixCache(max_nodes=100)
-        stats = cache.stats_by_segment_type()
-        assert stats == {}
-
-
-# ---------------------------------------------------------------------------
-# Keepalive marker tests
-# ---------------------------------------------------------------------------
-
 class TestKeepaliveMarker:
     def test_marker_type(self):
         from heylook_llm.streaming_utils import KeepaliveMarker, KEEPALIVE_MARKER
@@ -427,21 +275,19 @@ class TestPromptCacheManagerByteBudget:
         mgr = PromptCacheManager()
         assert mgr.total_cache_bytes == 0
 
-    def test_cache_info_includes_segment_stats(self):
-        """get_cache_info should include radix_bytes and segment_stats."""
+    def test_cache_info_shape(self):
+        """get_cache_info carries tokens_cached (api.py reads it) + slot stats."""
         from heylook_llm.providers.common.prompt_cache import PromptCacheManager
-        import mlx.core as mx
 
         mgr = PromptCacheManager()
-
-        # Create a mock model with layers property for make_cache
         mock_model = MagicMock()
         mock_model.layers = [MagicMock() for _ in range(2)]
         mock_model.make_cache.return_value = [MagicMock() for _ in range(2)]
 
-        cache = mgr.get_or_create_cache("test-model", mock_model)
+        mgr.get_or_create_cache("test-model", mock_model)
         info = mgr.get_cache_info()
 
         assert "test-model" in info
-        assert "radix_bytes" in info["test-model"]
-        assert "radix_nodes" in info["test-model"]
+        assert info["test-model"]["tokens_cached"] == 0
+        assert info["test-model"]["slot_bytes"] == 0
+        assert info["test-model"]["slot_tokens"] == 0

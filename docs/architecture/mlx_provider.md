@@ -200,31 +200,51 @@ request's `acquire()` call would seize the only thread the active
 request's remaining `next()` calls need); see that postmortem for the
 full mechanism.
 
-### 4.2. Radix cache eligibility gate
+### 4.2. Prompt cache (Q7 single-slot; the radix is deleted)
 
-The radix prompt cache (`providers/common/prompt_cache.py`) reuses KV
-state across requests via longest-prefix matching. Two invariants, both
-added in the 2026-07-05/06 window, that this document previously did not
-mention:
+The prompt cache (`providers/common/prompt_cache.py`) keeps ONE slot per
+model: immutable per-layer `(state, meta_state)` snapshots of the last
+completed generation, registered with the token sequence the cache
+ACTUALLY covers (read off the KV offset -- the final sampled token is
+never fed through the model). Reuse has exactly two shapes:
 
-- **Snapshots must be materialized before publishing.** `snapshot_kv`
-  (`cache_helpers.py`) `mx.eval`s captured per-layer KV state on the
-  generating thread before it's inserted into the shared radix tree.
-  Unmaterialized (lazy) state is scheduled on a thread-local GPU stream
-  that dies with its thread; a later request restoring that state on a
-  different thread would crash. See
+- **Extension** (multi-turn: new prompt starts with the stored sequence):
+  reconstruct fresh cache objects from the snapshots and continue. Valid
+  for every cache type -- nothing is sliced.
+- **Trim to the common prefix** (edit/regenerate): reconstruct, then
+  mlx-lm's own `trim_prompt_cache` drops the stored tail. Refused
+  per-layer-type by `can_trim_prompt_cache` (hybrid `ArraysCache`
+  recurrent state, rotated `RotatingKVCache`) -- a refusal is a full
+  re-prefill, never a slice, and CLOSES the hybrid silent-wrong-output
+  hole the radix shipped with (its `keys[..., :N, :]` restore left
+  ArraysCache state describing tokens past the boundary; live-verified
+  as greedy garbage on Qwen3.5-0.8B during the Q7 rewrite).
+
+Three invariants:
+
+- **Snapshots, never shared live objects.** MLX arrays are immutable but
+  cache OBJECTS are not, and a wedged generator's worker is quarantined
+  ALIVE (`streaming_utils`) -- a zombie generation keeps rebinding
+  `.keys`/`.offset` on its cache objects. A slot holding those objects
+  hands the next request state mutating under it (live-verified as
+  process-poisoning garbage). Snapshot arrays are immune.
+- **Snapshots must be materialized before publishing.** `_materialize`
+  `mx.eval`s the captured state on the generating thread. Lazy state is
+  scheduled on a thread-local GPU stream that dies with its thread. See
   [postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md).
-- **Radix is bypassed entirely for non-standard caches.**
-  `process_prompt_with_cache` sets
+- **Non-standard cache CONFIGS bypass entirely.**
   `prompt_cache._radix_eligible = (cache_type == "standard" and no
-  max_kv_size)`; `store_generation_cache` mirrors the same gate. Prefix
-  restoration slices `keys[..., :N, :]`, which is correct for plain
-  `KVCache` but wrong for `QuantizedKVCache` (packed-tuple state) and
-  impossible for `RotatingKVCache`. Models configured with
-  `cache_type = "quantized"` or `"rotating"`, or with `max_kv_size` set,
-  get no prefix reuse -- a full re-prefill every request -- but no
-  silent-wrong-output risk either. This does **not** cover the
-  hybrid-architecture (`ArraysCache`) case from earlier work.
+  max_kv_size)` (historical flag name), mirrored by
+  `store_generation_cache`. Extension-only reuse would in fact be sound
+  for quantized/rotating configs; widening is a deliberate future
+  decision, not a ride-along.
+
+Accepted trade (Q7): switching conversations re-prefills -- the slot holds
+one sequence. NB the multi-turn extension rarely fires verbatim on
+thinking-family templates: the generation prompt's scaffold (e.g. Qwen's
+`<think>\n\n</think>` under `enable_thinking=False`) is not re-rendered in
+the next turn's prompt, so the match lands a few tokens short of the slot
+and rides the trim path instead -- same reuse, minus scaffold tokens.
 
 ### 4.3. transformers 5.x compatibility patches
 
