@@ -10,20 +10,21 @@ Cross-session task backlog organized by priority.
   assigns from `heylook_saved`'s rows synchronously; the wholesale GET is
   the no-rows fallback only; list DOM structure is renderMessages-only.
   Guarded by the render-suite swap check (shown red against pre-fix tree).
-- [ ] **Media by reference** (P1, backend phase): message `content_blocks`
-  carry inline base64, so every conversation GET (select, resync fallback,
-  edit PUT responses) ships megabytes. Store blobs once (table or disk),
-  serve at `/v1/conversations/{id}/media/{blob_id}`, rows carry url
-  sources, browser caches them. Schema change = `_SCHEMA_VERSION` bump +
-  drop/recreate per the no-migration policy. Kills the payload tax on
-  every surface at once; also retires the length-based image fingerprint
-  in v3's msgSignature.
-- [ ] **Per-message Delete is an undisclosed truncation** (P2, owner
-  decision): the row's Delete button truncates the message AND everything
-  after it (`?after=position-1`), while its armed confirm says only
-  "Confirm?". Under the only-loss-gates rule the confirm must name the
-  loss ("Deletes this and everything after") -- or the server grows a true
-  single-message DELETE and the button means what it says. Decide which.
+- [x] **Media by reference -- DONE v1.73.0 (schema v7)**: base64 relocates
+  to a content-addressed per-conversation blob store at every message
+  write; rows carry url sources (`/{id}/media/{media_id}`, immutable +
+  cacheable); the generate saga inlines blob bytes at wire build; GC on
+  last-reference delete (retention-safe direction). Conversation reads are
+  text-sized now.
+- [x] **Delete means delete -- DONE v1.73.0**: single-row
+  `DELETE /{id}/messages/{msg_id}`; the v3 button calls it; positions keep
+  gaps. `?after` truncation stays API-only. Render check pins
+  neighbor-survival (shown red against the truncation-era client).
+- [ ] **Per-message model attribution UI** (P3): messages carry `model_id`
+  since v1.73.0 (stamped by generate's fresh-row commits; continuations
+  keep the anchor's stamp). Surface it in v3 -- e.g. a muted per-message
+  label shown when a thread mixes models. Data exists; UI deliberately
+  deferred.
 
 - [x] **Phase 0 hardening -- DONE v1.64.0**: loud stream-guards (+ a
   `pendingSave` latch closing the Stop-then-act window between stream

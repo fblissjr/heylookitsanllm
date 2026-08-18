@@ -54,7 +54,7 @@ const ROUTES = {
   deleteConversation:['DELETE', (id) => `/v1/conversations/${id}`],
   addMessage:        ['POST', (id) => `/v1/conversations/${id}/messages`, true],
   updateMessage:     ['PUT', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`, true],
-  deleteMessagesAfter:['DELETE', (id, pos) => `/v1/conversations/${id}/messages?after=${pos}`],
+  deleteMessage:     ['DELETE', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`],
 
   // presets (saved system prompt + sampler bundles)
   listPresets:       ['GET', () => '/v1/presets'],

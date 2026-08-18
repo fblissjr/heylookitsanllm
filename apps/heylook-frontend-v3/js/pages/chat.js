@@ -17,7 +17,8 @@
 //   the mirror drops the tail visually; the server commits its truncation
 //   only together with the row it produced, so a failed or empty generation
 //   gets the rows back at the end-of-stream reconcile.
-// - Plain DELETE (message delete) stays client CRUD via ?after=P truncation.
+// - Message delete is a SINGLE-row DELETE (v1.73.0): exactly the clicked
+//   row goes; later rows keep their positions (gaps are fine by design).
 // - Stop button = DELETE /{id}/generate (server aborts + persists partial;
 //   the fetch stays open to receive the saved rows). Teardown/switch =
 //   controller.abort() -- the server's disconnect path persists instead.
@@ -1205,8 +1206,8 @@ function buildEditEl(ctx, msg) {
         && (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx))) return;
     // Everything below is anchored to the conversation the edit belongs to,
     // captured NOW: s.activeId read after an await can be a different
-    // conversation (switch mid-PUT), and deleteMessagesAfter against it
-    // would irreversibly truncate the wrong thread.
+    // conversation (switch mid-PUT), and a position-anchored mutation
+    // against it would irreversibly rewrite the wrong thread.
     const convId = s.activeId;
     const next = textarea.value;
     const changes = {};
@@ -1376,17 +1377,6 @@ function adoptSavedRows(ctx, rows) {
   ];
 }
 
-async function truncateAfter(ctx, position, convId) {
-  const s = ctx.state;
-  // convId is the conversation this truncation was DECIDED against, captured
-  // by the caller before any await -- s.activeId here could already be a
-  // different conversation (switch mid-flight), and position-based deletion
-  // against the wrong one is irreversible.
-  await api.deleteMessagesAfter(convId, position);
-  if (!ctx.alive || s.activeId !== convId) return; // server truncated; local state belongs to another conv now
-  s.messages = s.messages.filter((m) => m.position <= position);
-}
-
 function regenerate(ctx, msg) {
   const s = ctx.state;
   if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
@@ -1400,13 +1390,18 @@ function regenerate(ctx, msg) {
   startStream(ctx, { mode: 'regenerate', messageId: msg.id });
 }
 
+// Delete means delete: exactly the clicked row goes, the rest of the thread
+// stays (v1.73.0 -- the old spelling was a ?after truncation that silently
+// destroyed everything below, which no button saying "Delete" should do).
+// Later rows keep their positions; gaps are fine, nothing assumes density.
 async function deleteMessage(ctx, msg) {
   const s = ctx.state;
   if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
-  const convId = s.activeId; // anchor the truncation before any await
+  const convId = s.activeId; // anchor before any await (switch mid-flight)
   try {
-    await truncateAfter(ctx, msg.position - 1, convId);
+    await api.deleteMessage(convId, msg.id);
     if (!ctx.alive || s.activeId !== convId) return;
+    s.messages = s.messages.filter((m) => m.id !== msg.id);
     renderMessages(ctx);
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Delete failed: ${err.message}`, true);

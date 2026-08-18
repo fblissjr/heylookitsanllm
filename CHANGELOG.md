@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.73.0]
+
+### Changed
+
+**Media by reference (schema v7).** Base64 media no longer persists inside
+message rows: every message write relocates it into a per-conversation blob
+store (content-addressed on the bytes, so a re-pasted image stores once)
+and the stored block carries a url source pointing at the new
+`GET /v1/conversations/{id}/media/{media_id}` endpoint (immutable,
+browser-cacheable). This is a relocation, not new storage -- the same
+user-attached bytes the messages table already held, moved so that a
+conversation read is text-sized instead of shipping every image inline on
+every select, resync, and edit response. The generate saga resolves blob
+references back to inline bytes at wire-build time (providers never see
+the internal URLs; a missing referenced blob is a loud 500 before any
+stream starts, never a silent drop). Blobs are garbage-collected when the
+last referencing message goes -- the reference check's only false-positive
+direction is retention, never deletion -- and deleting a conversation (or
+Clear all data) deletes its blobs. Clients keep SENDING base64 exactly as
+before; only the stored/returned shape changed. Schema v7 drops and
+recreates the store per the no-migration policy (presets and settings
+survive as always).
+
+**Delete means delete.** The per-message Delete button deleted the clicked
+message AND everything after it -- the only server spelling was positional
+truncation, and the armed confirm never said so. New
+`DELETE /v1/conversations/{id}/messages/{msg_id}` removes exactly one row
+(later rows keep their positions; gaps are fine, nothing assumes density),
+and the v3 button now calls it. The `?after` truncation endpoint stays for
+API users; the client no longer calls it anywhere -- regenerate/continue
+truncation has been server-owned since v1.65.
+
+### Added
+
+Message rows carry `model_id` -- which model produced an assistant row,
+stamped by the generate saga's fresh-row commits (null on user turns; a
+continuation keeps the anchor's original stamp rather than misattributing
+a co-written row). Metadata only, no content; rides the same schema bump.
+No UI yet -- the column is the deferred G5 attribution substrate.
+
+Tests: blob lifecycle (dedup, GC direction, cross-conversation media_id
+stripping, round-trip honesty), single-delete neighbor survival (unit +
+render suite, the render check shown red against the truncation-era
+client), wire inlining for blob-backed media, and cap-dropped media
+counted-not-fetched.
+
 ## [1.72.3]
 
 ### Fixed

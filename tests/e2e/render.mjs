@@ -143,6 +143,14 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null } = {}) 
         return { ...row };
       }
       if (method === 'DELETE') {
+        // Single-message delete (v1.73.0): /messages/{id}. The ?after
+        // truncation form stays for API users; the UI no longer calls it.
+        const one = url.match(/\/messages\/([^/?]+)$/)?.[1];
+        if (one) {
+          const i = messages.findIndex((m) => m.id === one);
+          if (i !== -1) messages.splice(i, 1);
+          return { deleted: 1, id: one };
+        }
         const after = Number(url.match(/after=(-?\d+)/)?.[1]);
         const keep = messages.filter((m) => !(m.position > after));
         messages.length = 0;
@@ -671,6 +679,40 @@ async function main() {
         [...document.querySelectorAll('.message')].filter((m) => m.textContent.includes('regenerated reply')).length);
       assert(carriers === 1, `the anchor row duplicated on adoption (${carriers} rows carry the text)`);
       assert(genGets() === before, 'continue completion re-fetched the conversation');
+    });
+
+    await suite.check('Delete removes exactly one message -- the tail survives', async () => {
+      // v1.73.0: the old spelling truncated everything after the row. The
+      // tail-survives assert is what pins the new meaning of the button.
+      const target = await gen.page.evaluate(() => {
+        const row = [...document.querySelectorAll('.message')]
+          .find((m) => m.textContent.includes('message 4'));
+        row.scrollIntoView({ block: 'center' });
+        return Boolean(row);
+      });
+      assert(target, 'no message 4 row to delete');
+      const click = (label) => gen.page.evaluate((lbl) => {
+        const row = [...document.querySelectorAll('.message')]
+          .find((m) => m.textContent.includes('message 4'));
+        const btn = row && [...row.querySelectorAll('.message__actions button')]
+          .find((b) => b.textContent === lbl);
+        if (!btn) return false;
+        btn.click();
+        return true;
+      }, label);
+      assert(await click('Delete'), 'no Delete button on the row');
+      assert(await click('Confirm?'), 'the armed confirm never appeared');
+      await waitFor(() => gen.page.evaluate(() =>
+        ![...document.querySelectorAll('.message')].some((m) => m.textContent.includes('message 4'))),
+      { message: 'the deleted row never left the screen' });
+      const survivors = await gen.page.evaluate(() => ({
+        before: [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('message 3')),
+        after: [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('message 5')),
+        tail: [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('continued tail')),
+      }));
+      assert(survivors.before && survivors.after,
+        `the deleted row's neighbors did not survive (${JSON.stringify(survivors)})`);
+      assert(survivors.tail, 'Delete took the rest of the thread with it -- the truncation behavior is back');
     });
 
     await suite.check('no uncaught page errors (regenerate + continue)', () => {
