@@ -38,7 +38,7 @@ uv run pytest tests/unit/ -v
 # Contract only
 uv run pytest tests/contract/ -v
 
-# Integration (requires running server on port 1263)
+# Integration (requires running server on port 8000)
 uv run pytest tests/integration/ -v
 
 # All tests
@@ -86,7 +86,7 @@ API contract tests using FastAPI TestClient with mocked router/service. No real 
 
 ## Integration Tests (`tests/integration/`)
 
-Tests requiring a running heylookllm server (`heylookllm --port 1263`):
+Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 
 - **test_hidden_states_api.py** -- Hidden states endpoints (raw + structured)
 - **test_logprobs.py** -- Log probability extraction

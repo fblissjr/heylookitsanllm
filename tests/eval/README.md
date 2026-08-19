@@ -25,10 +25,10 @@ actually says.
 uv run python tests/eval/run.py --list-tasks    # no server needed, dry look at the bank
 
 uv run python tests/eval/run.py \
-    --server http://localhost:1263 \
+    --server http://localhost:8000 \
     --models gemma-4-31b-it-8bit-mlx,Qwen3.5-27B-8bit-mlx
 
-uv run python tests/eval/run.py --server http://localhost:1263 \
+uv run python tests/eval/run.py --server http://localhost:8000 \
     --models gemma-4-31b-it-8bit-mlx --tasks vision,thinking
 ```
 

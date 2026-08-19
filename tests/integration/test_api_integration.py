@@ -4,8 +4,8 @@ API integration tests for MLX provider optimizations.
 Tests optimizations against the actual heylookllm API endpoint.
 
 REQUIREMENTS:
-- heylookllm server must be running on port 1263
-- Start server: python -m heylook_llm.server --port 1263
+- heylookllm server must be running on port 8000
+- Start server: python -m heylook_llm.server --port 8000
 
 Usage: python -m pytest tests/test_api_integration.py
 """
@@ -24,12 +24,12 @@ src_dir = current_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
 # Test configuration
-BASE_URL = "http://localhost:1263"
+BASE_URL = "http://localhost:8000"
 VLM_MODEL = "gemma3n-e4b-it"  # MLX VLM model
 TEXT_MODEL = "llama-3.1-8b-instruct"  # Text-only model
 
 def check_server_running():
-    """Check if heylookllm server is running on port 1263."""
+    """Check if heylookllm server is running on port 8000."""
     try:
         response = requests.get(f"{BASE_URL}/health", timeout=2)
         return response.status_code == 200
@@ -106,7 +106,7 @@ def test_vlm_path_optimization():
     print("🎯 Testing VLM Path Optimization...")
     
     if not check_server_running():
-        print("❌ Server not running on port 1263. Please start with: python -m heylook_llm.server --port 1263")
+        print("❌ Server not running on port 8000. Please start with: python -m heylook_llm.server --port 8000")
         return False
     
     available_models = get_available_models()
@@ -221,7 +221,7 @@ def test_advanced_sampling_features():
     print("🔧 Testing Advanced Sampling Features...")
     
     if not check_server_running():
-        print("❌ Server not running on port 1263")
+        print("❌ Server not running on port 8000")
         return False
     
     available_models = get_available_models()
@@ -303,14 +303,14 @@ def main():
     """Run all API integration tests."""
     print("🚀 MLX Provider Optimization - API Integration Tests")
     print("=" * 60)
-    print("Server URL: http://localhost:1263")
+    print("Server URL: http://localhost:8000")
     print("=" * 60)
     
     # Check server first
     if not check_server_running():
         print("❌ REQUIREMENTS NOT MET:")
-        print("   heylookllm server must be running on port 1263")
-        print("   Start server: python -m heylook_llm.server --port 1263")
+        print("   heylookllm server must be running on port 8000")
+        print("   Start server: python -m heylook_llm.server --port 8000")
         return 1
     
     print("✅ Server is running")

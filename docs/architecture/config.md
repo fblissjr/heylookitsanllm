@@ -488,7 +488,7 @@ router = ModelRouter(config_path="models.toml")
 ### Hot Reload
 
 ```bash
-curl -X POST http://localhost:1263/v1/admin/reload
+curl -X POST http://localhost:8000/v1/admin/reload
 ```
 
 Reloads `models.toml` without restarting the server. Currently loaded models stay in cache.

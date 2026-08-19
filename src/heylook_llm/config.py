@@ -1,12 +1,14 @@
 # src/heylook_llm/config.py
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Default API port. Deliberately NOT 8080: that is llama-server's default,
-# and llama.cpp-ecosystem clients (including its web UI) probe
-# localhost:8080 with GET /props -- moving off it avoids the collision
-# class entirely (v1.49.0). One source of truth for server.py argparse,
+# Default API port. 8000 is the OpenAI-compatible-server convention
+# (uvicorn/FastAPI/vLLM), chosen for familiarity over uniqueness -- it CAN
+# collide with other dev servers on the same box (`--port` is the escape).
+# Still deliberately NOT 8080: that is llama-server's own default, and
+# llama.cpp-ecosystem clients (including its web UI) probe localhost:8080
+# with GET /props. One source of truth for server.py argparse,
 # service_manager install defaults, and the OpenAPI servers entry.
-DEFAULT_PORT = 1263
+DEFAULT_PORT = 8000
 from typing import List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):

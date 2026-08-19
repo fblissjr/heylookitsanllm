@@ -14,7 +14,7 @@ Feed the output of one RLM call as context to the next. Each stage does one thin
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 def rlm(context: str, query: str, **kwargs) -> dict:
@@ -52,7 +52,7 @@ Split a large context into chunks, process each independently, then merge result
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 def rlm(context: str, query: str, **kwargs) -> dict:
@@ -93,7 +93,7 @@ Extract structured data, then validate it in a second pass.
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 def rlm(context: str, query: str, **kwargs) -> dict:
@@ -135,7 +135,7 @@ Load two (or more) documents into one context and compare them.
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 def rlm(context: str, query: str, **kwargs) -> dict:
@@ -165,7 +165,7 @@ Watch the model work in real time and collect iteration data.
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 context = open("dataset.csv").read()
@@ -213,7 +213,7 @@ Start with a fast/small model. If it hits max iterations, retry with a bigger on
 import httpx
 import orjson
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 
 def rlm(context: str, query: str, model: str, **kwargs) -> dict:
     resp = httpx.post(BASE, json={"model": model, "context": context, "query": query, **kwargs})
@@ -242,7 +242,7 @@ import httpx
 import orjson
 from pathlib import Path
 
-BASE = "http://localhost:1263/v1/rlm/completions"
+BASE = "http://localhost:8000/v1/rlm/completions"
 MODEL = "YOUR_MODEL_ID"
 
 def rlm(context: str, query: str, **kwargs) -> dict:

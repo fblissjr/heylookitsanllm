@@ -19,7 +19,7 @@ import time
 
 import httpx
 
-BASE_URL = os.environ.get("HEYLOOK_URL", "http://localhost:1263")
+BASE_URL = os.environ.get("HEYLOOK_URL", "http://localhost:8000")
 
 
 async def _resolve_model(client: httpx.AsyncClient) -> str:

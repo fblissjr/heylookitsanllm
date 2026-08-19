@@ -172,7 +172,7 @@ def main():
         "--port",
         type=int,
         default=DEFAULT_PORT,
-        help=f"Port to run the server on (default: {DEFAULT_PORT} -- deliberately NOT 8080, which is llama-server's default; llama.cpp-ecosystem clients probe localhost:8080)",
+        help=f"Port to run the server on (default: {DEFAULT_PORT})",
     )
     service_parser.add_argument(
         "--log-level",
@@ -393,11 +393,11 @@ def main():
     # LAN hardening hint (S1.6): when bound to a non-loopback address, the
     # server is reachable by every host on the local network. Plain HTTP is
     # fine on a trusted home LAN but gets upgraded to HTTPS via a reverse
-    # proxy (Caddy / nginx), not uvicorn-native TLS. See docs/lan_setup.md.
+    # proxy (Caddy / nginx / tailscale serve), not uvicorn-native TLS.
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         logging.info(
-            "Listening on http://%s:%s -- LAN-reachable. For HTTPS, put Caddy "
-            "or nginx in front (see docs/lan_setup.md).",
+            "Listening on http://%s:%s -- LAN-reachable. For HTTPS, put a "
+            "reverse proxy (Caddy, nginx, or tailscale serve) in front.",
             args.host,
             args.port,
         )

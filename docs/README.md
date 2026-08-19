@@ -31,4 +31,3 @@ Start at its [README](./architecture/README.md).
 - [optimization_log.md](./optimization_log.md) -- cross-session performance findings
 - [optloop_guide.md](./optloop_guide.md) -- optloop-lib benchmark harness
 - [mlx_optimization_plan.md](./mlx_optimization_plan.md) -- MLX engine optimization plan (historical)
-- [lan_setup.md](./lan_setup.md) -- LAN / reverse-proxy setup

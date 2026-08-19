@@ -18,7 +18,7 @@ When NOT to use it: simple Q&A, creative writing, short conversations. If the an
 ## Quick start
 
 ```bash
-curl -X POST http://localhost:1263/v1/rlm/completions \
+curl -X POST http://localhost:8000/v1/rlm/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "YOUR_MODEL_ID",
@@ -43,7 +43,7 @@ The quick start above works, but it's a toy example -- a regular chat call handl
 
 ```bash
 # Feed in a big log file and ask a question that requires searching
-curl -X POST http://localhost:1263/v1/rlm/completions \
+curl -X POST http://localhost:8000/v1/rlm/completions \
   -H "Content-Type: application/json" \
   -d "$(python3 -c "
 import orjson
@@ -95,7 +95,7 @@ $(cat q1_sales.csv)
 === Q2 Sales ===
 $(cat q2_sales.csv)"
 
-curl -X POST http://localhost:1263/v1/rlm/completions \
+curl -X POST http://localhost:8000/v1/rlm/completions \
   -H "Content-Type: application/json" \
   -d "$(python3 -c "
 import orjson
@@ -239,7 +239,7 @@ The `trace` shows what happened each iteration: how much code was written, how m
 Set `"stream": true` to get Server-Sent Events as the model works:
 
 ```bash
-curl -N -X POST http://localhost:1263/v1/rlm/completions \
+curl -N -X POST http://localhost:8000/v1/rlm/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "YOUR_MODEL_ID",
@@ -362,7 +362,7 @@ Set `"sandbox": false` to disable restrictions (full Python access). Only do thi
 ```python
 import httpx
 
-response = httpx.post("http://localhost:1263/v1/rlm/completions", json={
+response = httpx.post("http://localhost:8000/v1/rlm/completions", json={
     "model": "Qwen3-4B",
     "context": open("big_document.txt").read(),
     "query": "Extract all dates mentioned and list them chronologically",
@@ -380,7 +380,7 @@ Streaming with SSE:
 ```python
 import httpx
 
-with httpx.stream("POST", "http://localhost:1263/v1/rlm/completions", json={
+with httpx.stream("POST", "http://localhost:8000/v1/rlm/completions", json={
     "model": "Qwen3-4B",
     "context": "...data...",
     "query": "Analyze this data",

@@ -17,7 +17,7 @@ import requests
 
 
 def test_batch_endpoint(
-    base_url="http://localhost:1263", model_id="gpt-oss-120b-MXFP4-Q8-mlx"
+    base_url="http://localhost:8000", model_id="gpt-oss-120b-MXFP4-Q8-mlx"
 ):
     """Test the batch chat completions endpoint."""
 
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Test batch processing endpoint")
-    parser.add_argument("--url", default="http://localhost:1263", help="Server URL")
+    parser.add_argument("--url", default="http://localhost:8000", help="Server URL")
     parser.add_argument(
         "--model", default="gpt-oss-120b-MXFP4-Q8-mlx", help="Model ID to test"
     )

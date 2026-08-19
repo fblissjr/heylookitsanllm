@@ -4,6 +4,20 @@ Cross-session task backlog organized by priority.
 
 *Last reviewed: 2026-07-26 (llama-server buckets superseded by plan Phase 7)*
 
+## Observability follow-ups (2026-08-19, from the startup-record review)
+
+- [ ] **Pre-warm load telemetry is dropped** (P3): a `--model-id` startup
+  load runs in server.py BEFORE the lifespan resolves `observability_level`
+  from the DB, so with telemetry enabled the most expensive load of the run
+  is missing from events.jsonl/model_events.jsonl while every later load is
+  recorded. Same pre-configure class as the fixed startup-record bug; fix =
+  resolve settings (or replay the load event) before/after the pre-warm.
+- [ ] **No test pins the lifespan ordering** (P3): log_startup_info must run
+  AFTER apply_runtime_settings in api.py's lifespan; both unit tests call it
+  directly with the level already set, so a refactor moving it back beside
+  MemoryManager construction regresses silently. Needs a contract test that
+  seeds the settings DB before app startup.
+
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
 - [x] **Stream-end blank frame -- DONE v1.72.2**: post-stream adoption now

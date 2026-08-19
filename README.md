@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-07-28
+Last updated: 2026-08-19
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -9,183 +9,141 @@ Last updated: 2026-07-28
   <br>
 </p>
 
-Local multimodal LLM API server with dual OpenAI-compatible and Anthropic Messages-style endpoints, a vanilla-JS web UI, and on-the-fly model swapping.
+Local multimodal LLM API server with dual OpenAI-compatible and Anthropic
+Messages-style endpoints, a vanilla-JS web UI, and on-the-fly model swapping.
 
-Built on Apple MLX for text and vision, with GGUF models served through a managed [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` subprocess -- one API, one UI, per-model engine choice.
+Built on Apple MLX for text and vision, with GGUF models served through a
+managed [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server`
+subprocess -- one API, one UI, per-model engine choice.
 
-## Key Features
+## Features
 
-- **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic Messages-style `/v1/messages` with typed content blocks (text, image, thinking, logprobs, hidden states)
-- **Multi-Provider**:
-  - **MLX**: Text and vision-language models on Apple Silicon ([mlx-lm](https://github.com/ml-explore/mlx-lm), [mlx-vlm](https://github.com/Blaizzy/mlx-vlm))
-  - **GGUF**: any GGUF model via a managed llama-server subprocess (one process per loaded model; spawn/health/teardown owned by the router) -- vision via mmproj sidecars, audio input, speculative decoding/MTP, prefix caching. Point `server_binary` at a llama-server build (or set `$HEYLOOK_LLAMA_SERVER`)
-  - **MLX Embedding**: Sentence embeddings with dynamic backbone loading (any mlx-lm architecture)
-- **Audio Input** (GGUF models): `input_audio` content parts (WAV/MP3/FLAC) on both APIs, an audio attach affordance in the chat UI, and audio tasks in the behavioral eval bank. MLX models reject audio with a clear 400 (their audio towers are skipped at load)
-- **Speculative Decoding** (GGUF): MTP heads -- embedded (Qwen3.6) or sidecar drafters (gemma-4 `mtp-*.gguf`, auto-paired at import) -- with draft-acceptance telemetry in the perf records and UI. Strongly model-dependent and **off by default** (`spec_type = "draft-mtp"` is per-model opt-in). Measure it on your own model before enabling: our earlier figures were taken at temperature 0 on short prompts, and both of those turned out to change the conclusion -- including its sign -- so treat any published speedup, ours included, as unverified for your workload. Tune `spec_draft_n_max` and `spec_draft_p_min` together; they interact
-- **Thinking Blocks**: format-aware reasoning parsing driven by the model's own chat template -- Qwen3-style `<think>` tags (including Qwen3.5's pre-filled-`<think>` templates) and gemma-4's channel format, with round-trip editing and streaming. Text-based only; there is no token-ID-based detection
-- **Logprobs**: Per-token log probabilities with top-K alternatives (OpenAI-compatible format)
-- **Hidden States**: Extract intermediate layer representations for diffusion model conditioning or research
-- **J-Space**: Post-hoc Jacobian-lens interpretability -- read a model's "silent workspace" (per-layer vocabulary tokens it's disposed toward before answering) plus a hallucination-risk signal, from Anthropic's July-2026 global-workspace work ([guide](docs/jspace_guide.md))
-- **Model Management**: Scan, import, configure, load/unload models from the web UI or API
-- **Vision Models**: Image processing with VLMs, client-side resize, fast multipart upload
-- **RLM**: Recursive Language Model endpoint -- the model writes Python code to iteratively explore long contexts via a sandboxed REPL ([guide](docs/rlm_guide.md), [advanced patterns](docs/rlm_advanced.md))
-- **Batch Processing**: 2-4x throughput for multi-prompt workloads
-- **Hot Swapping**: LRU cache holds up to 2 models, swaps on request
-- **Performance**: Metal acceleration, async processing, prompt caching, compiled logit processors
-- **Observability**: Disk-backed JSONL telemetry under `logs/` -- per-request metrics (tokens, tok/s, TTFT, peak memory, cache, engine path), errors (type + stage + cause chain), model load/unload, and periodic resource snapshots. **Never prompt or response text; everything is written to local files only -- nothing is transmitted anywhere.** One control knob: `observability_level` (`off`/`minimal`/`standard`/`debug`, default `off` -- file logging is opt-in), settable via `POST /v1/admin/config`. Streams and levels are self-describing: read logs/*.jsonl and GET /v1/admin/config.
+- **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic
+  Messages-style `/v1/messages` with typed content blocks (text, image,
+  thinking, logprobs, hidden states)
+- **Three providers**: MLX text + vision ([mlx-lm](https://github.com/ml-explore/mlx-lm),
+  [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)), GGUF via a managed
+  llama-server subprocess (vision mmproj sidecars, audio input, speculative
+  decoding/MTP, prefix caching), and MLX embeddings (any mlx-lm architecture)
+- **Thinking blocks**: format-aware reasoning parsing driven by the model's
+  own chat template (Qwen `<think>` styles, gemma channel format), with
+  round-trip editing, streaming, and a per-request toggle
+- **Vision and audio input**: images on both APIs and in the chat UI; audio
+  clips (WAV/MP3/FLAC) on GGUF models -- MLX models reject audio with a
+  clear 400
+- **Logprobs and hidden states**: per-token top-K alternatives; intermediate
+  layer extraction for conditioning or research
+- **J-Space**: Jacobian-lens interpretability -- per-layer "silent workspace"
+  tokens plus a hallucination-risk signal ([guide](docs/jspace_guide.md))
+- **RLM**: recursive inference -- the model explores long contexts by writing
+  Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
+  [advanced](docs/rlm_advanced.md))
+- **Model management**: scan, import, configure, load/unload from the web UI
+  or API; batch endpoint for multi-prompt workloads
+- **Local-only logging**: opt-in JSONL metrics/events under `logs/`
+
+## Things to know (heylook-specific)
+
+- **Defaults**: port 8000 (`--port`), bound to `127.0.0.1` (`--host 0.0.0.0`
+  to expose it on your network). HTTPS is not built in; put your own reverse
+  proxy in front if you need it.
+- **Opt-in auth, off by default**: `HEYLOOK_ADMIN_TOKEN` gates admin/destructive
+  endpoints (`X-Heylook-Admin-Token` header); `HEYLOOK_API_KEY` gates inference
+  (`Authorization: Bearer`; loopback exempt unless
+  `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`).
+- **`models.toml` is override-only.** Anything under a `[scan].folders` watch
+  folder is served automatically with defaults derived from the model's own
+  files (modalities, chat template, sampling, KV-cache sizing) -- a new
+  download needs no import, no edit. A `[[models]]` entry always wins as an
+  explicit override; import exists for pinning entries you intend to hand-edit.
+- **One model resident by default** (`max_loaded_models = 1`): LRU eviction,
+  optional idle unload (`idle_unload_seconds`). Loading a model on request is
+  disclosed in the UI, never confirmed away.
+- **GGUF needs a llama-server binary**, built by
+  `uv run scripts/build_llama.py` (`uv sync` cannot build C++). One subprocess
+  per loaded model. The chat template is the one embedded in the GGUF by the
+  quant publisher -- `chat_template_path` is the per-model override. An
+  omitted `max_tokens` gets a 4096 default (an explicit value always wins);
+  llama-server's own "unlimited" default is never passed through.
+- **Telemetry is off by default** (`observability_level`, settable via
+  `PUT /v1/admin/config`); raising it writes JSONL under `logs/`, local files
+  only.
+- **Server-side storage** (conversations, notebooks, presets, settings) is a
+  single DuckDB file; `HEYLOOK_DB_PATH` relocates it, `HEYLOOK_LOGS_DIR` the
+  log dir.
 
 ## Web UI
 
-### v3 Frontend (current)
+Vanilla JS frontend at `/v3` -- no bundler, no node_modules, no build step;
+served directly by the backend. Conversations, notebooks, and presets are
+stored server-side in DuckDB (messages as content blocks; images round-trip).
 
-Vanilla JS frontend at `/v3` -- no React, no bundler, no node_modules, no build step; served directly by the backend. Conversations, notebooks, and presets are stored server-side in DuckDB (messages as content blocks; images round-trip).
+Pages: **Chat** (streaming with thinking blocks, capability-gated image/audio
+attach, per-conversation system prompt + presets, honest mid-conversation
+model switching), **Notebook** (base-model continuation), **Models** (scan,
+import, load/unload, schema-driven per-model config editor), **Performance**,
+**Token Explorer**, and **J-Space** (needs a fitted lens under
+`adapters/jspace/`).
 
-- **Chat** -- streaming with collapsible thinking blocks and a composer toggle to enable/disable thinking per request, edit/regenerate/delete, capability-gated attach (multi-image, plus audio clips on audio-capable models), a vision-tokens drawer control (per-image visual token budget), per-conversation system prompt + saved presets. Switch models mid-conversation: the select shows which models are resident, switching to a costly or incompatible model warns first (with a Load button to pay the warm-up deliberately), and history media a model can't take is dropped from requests with a per-message note -- never deleted
-- **Notebook** -- base-model text continuation with cursor-based generation
-- **Models** -- scan, import, load/unload, and a per-model config editor generated from the server's option schema: every settable field with type/bounds/defaults, grouped by when a change takes effect (live vs needs-reload vs fixed), with reset-to-default and a reload-to-apply marker driven by the server
-- **Performance** -- system metrics and timing breakdowns
-- **Token Explorer** -- token probability visualization with top-K alternatives
-- **J-Space** -- Jacobian-lens "workspace" heatmap: the silent tokens a model tracks before answering, with an optional hallucination-risk badge (needs a fitted lens installed under `adapters/jspace/`; see the [guide](docs/jspace_guide.md))
-
-See [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) for the build contract (§4 = the backend API contract).
-
-The previous frontend (`apps/heylook-frontend-v2/`, served at `/v2`) was deleted at cutover 2026-08-18; the older legacy React app was removed 2026-07-09. Both live on in git history.
-
-## Platform Support
-
-- **macOS (Apple Silicon)**: MLX backend + GGUF via llama-server (Metal)
-- The GGUF provider is pure-stdlib HTTP around a llama-server binary, so a future CPU/CUDA deployment needs only a llama-server build for that platform (the MLX provider stays Apple-only)
+Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
+the backend API contract).
 
 ## Quick Start
-
-### Installation
 
 ```bash
 git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
+uv sync    # one step -- full runtime + dev tooling, no extras to remember
 
-# One step. Installs the full runtime (MLX stack, fast image/JSON/async
-# path, CLI) plus dev tooling. There are no extras to remember.
-uv sync
-```
-
-The v3 frontend needs no install or build -- the backend serves it at `/v3`.
-
-### Start Server
-
-```bash
-# Import models from your HuggingFace cache (auto-generates models.toml)
-heylookllm import --hf-cache
-# Or from a specific directory:
+# point it at your models: add a watch folder to models.toml ([scan].folders),
+# or import explicit entries:
+heylookllm import --hf-cache            # from the HuggingFace cache
 heylookllm import --folder /path/to/models
 
-# Start
-heylookllm --log-level INFO
-heylookllm --port 1263
+heylookllm --log-level INFO             # serves API + UI on :8000
 ```
 
-### Open the Frontend
+Then open `http://localhost:8000/v3`.
 
-Once the server is running, open `http://localhost:1263/v3` -- the v3 UI is served
-by the backend (no separate dev server or build step).
+Run it as a background service with `heylookllm service install`
+(`status|start|stop|restart|uninstall`; `--host 0.0.0.0` for LAN).
 
-### Run as Background Service
+### Adding models
 
-```bash
-heylookllm service install            # localhost only
-heylookllm service install --host 0.0.0.0  # LAN access
-heylookllm service status|start|stop|restart|uninstall
-```
+Import writes THIN `models.toml` entries -- `id`, `model_path`, `provider`,
+plus anything you explicitly chose. Everything else is derived from the
+model's own files at load time and never goes stale; a stored field always
+wins as an override. See `models.example.toml` for the format.
 
-### Adding Models
+Three routes: the Models page in the UI (scan, select, import), the CLI
+(`heylookllm import --folder ... [--sampler balanced]`), or the admin API
+(`POST /v1/admin/models/scan` then `POST /v1/admin/models/import`). The scan
+understands MLX/safetensors dirs, embedding models, and GGUF dirs (mmproj
+projectors and `mtp-*` drafter sidecars auto-paired).
 
-Import discovers models and registers them; it deliberately writes THIN
-`models.toml` entries -- `id`, `model_path`, `provider`, plus anything you
-explicitly chose (a default sampler, overrides). Everything else is derived
-from the model's own files at load time and never goes stale: modalities
-from `config.json`, the chat template from the model dir, sampling defaults
-from `generation_config.json`, and KV-cache defaults from actual weight
-size vs your machine's RAM. Re-quantize or swap a model dir in place and
-the derived values follow; a stored field in `models.toml` always wins as
-an explicit override. See `models.example.toml` for the format.
-
-There are three ways to add models:
-
-**Web UI** -- Open the Models page in the `/v3` UI. Click Import, scan a directory or your HuggingFace cache, select the models you want, optionally pick a default sampler, and import. Models are added to `models.toml` and available immediately.
-
-The scan understands MLX/safetensors dirs, embedding models, and GGUF dirs (primary weight + `mmproj` projector + `mtp-` drafter sidecars auto-paired; HF-format assistant/drafter checkpoints and imatrix calibration files are recognized and skipped).
-
-**CLI** -- Scan a directory or HF cache and generate config:
-```bash
-heylookllm import --folder /path/to/models --output models.toml
-heylookllm import --hf-cache --sampler balanced
-```
-
-**API** -- Scan then import programmatically (server must be running):
-```bash
-# Scan a directory for models
-curl -X POST http://localhost:1263/v1/admin/models/scan \
-  -H "Content-Type: application/json" \
-  -d '{"paths": ["/path/to/models"], "scan_hf_cache": true}'
-
-# Import selected models from scan results
-curl -X POST http://localhost:1263/v1/admin/models/import \
-  -H "Content-Type: application/json" \
-  -d '{"models": [{"model_path": "mlx-community/Qwen3-4B-4bit"}], "default_sampler": "balanced"}'
-```
-
-If you edit `models.toml` directly while the server is running, reload the config:
-```bash
-curl -X POST http://localhost:1263/v1/admin/reload
-```
+After hand-editing `models.toml` on a running server:
+`curl -X POST http://localhost:8000/v1/admin/reload`.
 
 ## API
 
-Interactive docs at `http://localhost:1263/docs` when the server is running.
+Interactive docs at `http://localhost:8000/docs`; live schema at
+`/openapi.json`. Key endpoints: `/v1/chat/completions`, `/v1/messages`,
+`/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`,
+`/v1/batch/chat/completions`, `/v1/jspace/analyze`.
 
-Key endpoints: `/v1/chat/completions`, `/v1/messages`, `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`, `/v1/batch/chat/completions`, `/v1/jspace/analyze`. Full live reference: `/docs` (Swagger) and `/openapi.json` on a running server.
+## Related apps
 
-## Batch Vision Labeling
+- [`apps/batch-labeler/`](apps/batch-labeler/) -- standalone CLI for labeling
+  image directories with VLMs
+- [`apps/optloop-lib/`](apps/optloop-lib/) -- library-level benchmark harness
+  for mlx-lm/mlx-vlm fork experiments ([guide](docs/optloop_guide.md))
 
-Standalone CLI tool for labeling image directories with VLMs. See [`apps/batch-labeler/`](apps/batch-labeler/) for install and usage.
+## Monitoring
 
-## Inference Optimization
-
-**[`apps/optloop-lib/`](apps/optloop-lib/)** -- library-level benchmark harness
-for experiments on local forks of mlx-lm and mlx-vlm (in its `repos/`): dual
-text+VLM benchmarks, composite scoring, output fingerprinting, and structured
-cycle logging. Configured via `bench_config.toml` (scoring weights, decision
-thresholds, constraint limits, optimizer scope). See the
-[user guide](docs/optloop_guide.md).
-
-The former app-level loop (`apps/optloop/`) was retired 2026-07-06: its
-benchmarks called mlx-lm directly and never exercised the `src/heylook_llm/`
-serving path it was chartered to optimize. Serving-path benchmarking will be
-done over HTTP against a running server instead.
-
-## Monitoring and Optimization
-
-Point `tail -f` at `logs/metrics.jsonl` (per-request metrics) or
-`logs/events.jsonl` (errors + model lifecycle), or `logs/memory_baseline.jsonl`
-(hourly resource snapshots), to watch the server's shape over time (runtime
-telemetry lives under `logs/`, not `internal/log/`). For aggregate questions,
-point DuckDB at the files: `duckdb -c "SELECT model, quantile_cont(generation_tps,0.95)
-FROM read_json_auto('logs/metrics.jsonl') GROUP BY model"`. Recipes for finding
-leaks and usage patterns are visible in the logs/*.jsonl streams directly.
-
-Everything is stored in **local files only -- nothing leaves your machine.** The
-single control is `observability_level`; set it to `off` to disable all telemetry:
-
-```bash
-curl -X PUT http://localhost:1263/v1/admin/config \
-  -H "Content-Type: application/json" -d '{"observability_level": "off"}'
-```
-
-(The legacy `memory.py` streams also honor the older per-stream env toggles
-`HEYLOOK_REQUEST_LOG_ENABLED` / `HEYLOOK_MODEL_EVENT_LOG_ENABLED` /
-`HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS` for granular control; these are being
-folded under `observability_level`.) See
-the `logs/*.jsonl` streams and `/v1/admin/config` for the full picture.
+With `observability_level` raised, `tail -f logs/metrics.jsonl` (per-request
+metrics) or `logs/events.jsonl` (errors + model lifecycle), or point DuckDB at
+the files for aggregates:
+`duckdb -c "SELECT model, quantile_cont(generation_tps,0.95) FROM read_json_auto('logs/metrics.jsonl') GROUP BY model"`.
 
 ## Troubleshooting
 

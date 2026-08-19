@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.0]
+
+### Changed
+
+- The server's default port is now **8000** (`--port` overrides, as ever).
+  Anything that relied on the old default -- shell aliases, service installs,
+  client base URLs -- needs either the new port or an explicit `--port`.
+  Reinstall the background service (`heylookllm service install`) to pick up
+  the new default there.
+- README rewritten: shorter, with a "Things to know" section for
+  heylook-specific behavior (override-only `models.toml`, single resident
+  model, GGUF binary/template/`max_tokens` gotchas, opt-in auth and
+  telemetry). Stale claims fixed along the way (resident-model default,
+  llama-server binary provenance).
+
+### Security
+
+- `HEYLOOK_ADMIN_TOKEN` now also gates `/v1/admin/config` -- it was the one
+  `/v1/admin/*` router without the dependency, so a set token left runtime
+  settings (observability level, MLX cache cap) writable by any client that
+  could reach the port. Unset token remains a no-op, as everywhere else.
+
+### Fixed
+
+- Raising `observability_level` mid-run via `PUT /v1/admin/config` (or a
+  reset that lands on a non-off default) now emits the one-shot startup
+  record, so streams enabled at runtime still carry the hardware/config
+  header. Previously only a boot-time level produced it.
+
 ## [1.78.2]
 
 ### Fixed

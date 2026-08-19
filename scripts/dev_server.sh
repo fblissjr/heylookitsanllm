@@ -25,7 +25,8 @@
 #   - Reuse first: run `status` before `start`. If ANY heylookllm process is
 #     already running (this script's or not), prefer driving it -- its resident
 #     model is RAM someone paid for. NEVER kill a server you did not spawn
-#     (port 1263 is typically the owner's daily server).
+#     (an already-running heylookllm on any port may be the owner's daily
+#     server).
 #   - Default model for behavior checks: the fast MoE gemma-4-26B-A4B variant
 #     (~90 tok/s, the discriminating model per CLAUDE.md); ids in models.toml
 #     carry quant suffixes, so list exact ids first.

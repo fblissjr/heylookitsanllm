@@ -186,7 +186,7 @@ class TestLogprobsIntegration:
         import httpx
 
         response = httpx.post(
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "messages": [{"role": "user", "content": "Say hello"}],
                 "logprobs": True,
@@ -210,7 +210,7 @@ class TestLogprobsIntegration:
 
         with httpx.stream(
             "POST",
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "messages": [{"role": "user", "content": "Say hello"}],
                 "logprobs": True,
@@ -242,7 +242,7 @@ class TestLogprobsIntegration:
 
         with httpx.stream(
             "POST",
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "messages": [{"role": "user", "content": "Say hi"}],
                 "max_tokens": 10,
@@ -275,12 +275,12 @@ def run_integration_tests():
     import httpx
 
     print("Running integration tests...")
-    print("Make sure the server is running on localhost:1263")
+    print("Make sure the server is running on localhost:8000")
 
     # Get available models first
     print("\n0. Fetching available models...")
     try:
-        models_response = httpx.get("http://localhost:1263/v1/models", timeout=10.0)
+        models_response = httpx.get("http://localhost:8000/v1/models", timeout=10.0)
         if models_response.status_code != 200:
             print(f"   FAILED: Could not fetch models (status {models_response.status_code})")
             return
@@ -299,7 +299,7 @@ def run_integration_tests():
     print("\n1. Testing non-streaming with logprobs...")
     try:
         response = httpx.post(
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "model": model_id,
                 "messages": [{"role": "user", "content": "Say hello in 5 words"}],
@@ -339,7 +339,7 @@ def run_integration_tests():
     try:
         with httpx.stream(
             "POST",
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "model": model_id,
                 "messages": [{"role": "user", "content": "Count to 5"}],
@@ -377,7 +377,7 @@ def run_integration_tests():
     try:
         with httpx.stream(
             "POST",
-            "http://localhost:1263/v1/chat/completions",
+            "http://localhost:8000/v1/chat/completions",
             json={
                 "model": model_id,
                 "messages": [{"role": "user", "content": "Say hi"}],

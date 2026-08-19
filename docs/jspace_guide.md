@@ -110,7 +110,7 @@ The registry defaults to `<repo>/adapters/jspace`; override with `HEYLOOK_JSPACE
 ### Step 2 — Confirm it's registered
 
 ```bash
-curl -s localhost:1263/v1/jspace/models | jq
+curl -s localhost:8000/v1/jspace/models | jq
 # { "models": ["gemma-4-26b-a4b-it-8bit-mlx"], "base_dir": ".../adapters/jspace" }
 ```
 
@@ -120,7 +120,7 @@ matches the served model id and that `lens.safetensors` is present.
 ### Step 3 — Analyze a prompt (API)
 
 ```bash
-curl -s localhost:1263/v1/jspace/analyze -H 'content-type: application/json' -d '{
+curl -s localhost:8000/v1/jspace/analyze -H 'content-type: application/json' -d '{
   "model": "gemma-4-26b-a4b-it-8bit-mlx",
   "prompt": "The Eiffel Tower is located in the city of",
   "heatmap": true

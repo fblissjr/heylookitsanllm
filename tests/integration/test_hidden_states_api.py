@@ -14,7 +14,7 @@ import pytest
 import requests
 
 # Server configuration
-BASE_URL = os.environ.get("HEYLOOK_TEST_URL", "http://localhost:1263")
+BASE_URL = os.environ.get("HEYLOOK_TEST_URL", "http://localhost:8000")
 # Default test model - override with HEYLOOK_TEST_MODEL env var
 TEST_MODEL = os.environ.get("HEYLOOK_TEST_MODEL", "Qwen3-4B-mxfp4-mlx")
 
