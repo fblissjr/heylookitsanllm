@@ -112,7 +112,6 @@ async def lifespan(app: FastAPI):
     router: ModelRouter = app.state.router_instance
     from heylook_llm.memory import MemoryManager
     memory_manager = MemoryManager(router=router, app_config=router.app_config)
-    memory_manager.log_startup_info()
     app.state.memory_manager = memory_manager
     router.memory_manager = memory_manager
 
@@ -131,6 +130,10 @@ async def lifespan(app: FastAPI):
         "· configure/disable: /v1/admin/config",
         _obs.observability_level, observability_log_dir(), _obs.observability_retention_days,
     )
+    # AFTER the level is resolved from settings: log_startup_info honors the
+    # kill switch, so calling it earlier would read the pre-configure default
+    # and skip the record even when telemetry is enabled.
+    memory_manager.log_startup_info()
 
     yield
 
@@ -2281,12 +2284,12 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 
 ### 1. Check Available Models
 ```bash
-curl http://localhost:1263/v1/models
+curl http://localhost:8000/v1/models
 ```
 
 ### 2. Generate Text
 ```bash
-curl http://localhost:1263/v1/chat/completions \\
+curl http://localhost:8000/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "qwen2.5-coder-1.5b-instruct-4bit",
@@ -2309,7 +2312,7 @@ data = {
         ]
     }])
 }
-response = requests.post('http://localhost:1263/v1/chat/completions/multipart',
+response = requests.post('http://localhost:8000/v1/chat/completions/multipart',
                         files=files, data=data)
 ```
 
@@ -2318,7 +2321,7 @@ response = requests.post('http://localhost:1263/v1/chat/completions/multipart',
 ### OpenAI Python SDK
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:1263/v1", api_key="not-needed")
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
 response = client.chat.completions.create(
     model="qwen2.5-coder-1.5b-instruct-4bit",
     messages=[{"role": "user", "content": "Hello!"}]

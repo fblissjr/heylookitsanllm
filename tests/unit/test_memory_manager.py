@@ -258,7 +258,7 @@ def test_request_event_content_invariant(mm: MemoryManager, tmp_path: Path):
 def test_model_event_content_invariant(mm: MemoryManager, tmp_path: Path):
     metadata = ModelMetadata(
         model_id="qwen3-4b",
-        path="~/models/qwen3-4b-4bit",
+        path="~/models/qwen3-4b-4bit",  # path-privacy: ignore (fixture: tests tilde normalization)
         weights_bytes=2_400_000_000,
         architecture="qwen3",
         quantization="4bit",
@@ -301,7 +301,7 @@ def test_request_event_dataclass_has_only_primitive_fields():
 
 def test_normalize_path_strips_home_prefix():
     home = str(Path.home())
-    assert _normalize_path_for_log(f"{home}/models/foo") == "~/models/foo"
+    assert _normalize_path_for_log(f"{home}/models/foo") == "~/models/foo"  # path-privacy: ignore (the function under test strips the home prefix)
     assert _normalize_path_for_log(home) == "~"
     # Non-home paths are preserved
     assert _normalize_path_for_log("/opt/models/bar") == "/opt/models/bar"
@@ -337,7 +337,9 @@ def test_mark_request_tracks_inflight(mm: MemoryManager):
     assert snapshot["inflight_requests"] == 0
 
 
-def test_log_startup_info_always_writes(tmp_path: Path):
+def test_log_startup_info_writes_when_level_raised(tmp_path: Path):
+    # conftest configures level="minimal" per test; independent of the
+    # per-stream toggles, the startup record still writes.
     manager = MemoryManager(
         router=_make_router(),
         app_config=_make_app_config(
@@ -352,6 +354,21 @@ def test_log_startup_info_always_writes(tmp_path: Path):
     assert len(events) == 1
     assert events[0]["event"] == "startup"
     assert events[0]["baseline_interval_seconds"] == 0
+
+
+def test_log_startup_info_gated_off_leaves_no_footprint(tmp_path: Path):
+    """observability_level=off silences the startup record too, and the log
+    dir is created lazily on first write -- so at 'off' it never appears."""
+    from heylook_llm import observability
+    log_dir = tmp_path / "logs"
+    observability.configure(level="off", log_dir=log_dir)
+    manager = MemoryManager(
+        router=_make_router(),
+        app_config=_make_app_config(),
+        log_dir=log_dir,
+    )
+    manager.log_startup_info()
+    assert not log_dir.exists()
 
 
 def test_sampler_summary_drops_none_fields_and_messages():

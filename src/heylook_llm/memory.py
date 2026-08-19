@@ -253,10 +253,8 @@ class MemoryManager:
         self._discovered: dict[str, dict[str, Any]] = {}
         self._last_scan_ts: float = 0.0
 
-        try:
-            self.log_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
-            logging.warning(f"MemoryManager: could not create {self.log_dir}: {exc}")
+        # No eager mkdir: the log dir is created lazily on first actual write
+        # (_append_jsonl), so observability_level=off leaves no logs/ footprint.
 
     # -- request lifecycle -------------------------------------------------
 
@@ -567,7 +565,14 @@ class MemoryManager:
     # -- startup self-description ------------------------------------------
 
     def log_startup_info(self) -> None:
-        """Write one record describing hardware + config toggles. Always runs."""
+        """Write one record describing hardware + config toggles.
+
+        Honors the master kill switch like every other stream: at
+        ``observability_level = off`` nothing is written (file logging is
+        opt-in -- the startup record was the one writer that ignored this).
+        """
+        if _telemetry_off():
+            return
         info: dict[str, Any] = {
             "ts": time.time(),
             "event": "startup",
@@ -587,6 +592,7 @@ class MemoryManager:
 
     def _append_jsonl(self, path: Path, record: dict) -> None:
         try:
+            path.parent.mkdir(parents=True, exist_ok=True)
             line = orjson.dumps(record) + b"\n"
             with open(path, "ab") as f:
                 f.write(line)

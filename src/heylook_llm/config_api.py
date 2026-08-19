@@ -14,8 +14,10 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import ValidationError
+
+from heylook_llm.auth import require_admin_token
 
 from heylook_llm import db, observability
 from heylook_llm.db import get_db as _get_db
@@ -23,7 +25,13 @@ from heylook_llm.settings import SettingsSchema, resolve_settings_safe
 
 logger = logging.getLogger(__name__)
 
-config_router = APIRouter(prefix="/v1/admin/config", tags=["Config"])
+# Gated like every other /v1/admin/* router: HEYLOOK_ADMIN_TOKEN, when set,
+# is a no-op when unset. This was the one admin router without the dependency.
+config_router = APIRouter(
+    prefix="/v1/admin/config",
+    tags=["Config"],
+    dependencies=[Depends(require_admin_token)],
+)
 
 
 def observability_log_dir() -> Path:
@@ -125,8 +133,24 @@ async def update_config(request: Request, updates: dict = Body(...)):
             raise HTTPException(status_code=400, detail=str(e))
     # Refresh the in-process consumers so a settings change takes effect
     # immediately (no restart, no per-event DB hit).
+    prev_level = observability.current_level()
     await apply_runtime_settings(conn)
+    _maybe_emit_startup_record(request, prev_level)
     return await _snapshot(conn)
+
+
+def _maybe_emit_startup_record(request: Request, prev_level: str) -> None:
+    """Emit the one-shot startup record when telemetry flips off -> on mid-run.
+
+    log_startup_info honors the kill switch, so a server booted at ``off``
+    wrote nothing; without this, streams enabled via this API would carry no
+    hardware/config header for the very sessions logging was turned on for.
+    """
+    if prev_level == "off" and observability.current_level() != "off":
+        from heylook_llm.memory import safe_mm_call
+        safe_mm_call(
+            getattr(request.app.state, "memory_manager", None), "log_startup_info"
+        )
 
 
 @config_router.delete(
@@ -142,5 +166,7 @@ async def reset_config(key: str, request: Request):
     await db.delete_setting(conn, key)
     # Re-apply like PUT does -- otherwise the reset only takes effect after a
     # restart while GET already reports the default as effective.
+    prev_level = observability.current_level()
     await apply_runtime_settings(conn)
+    _maybe_emit_startup_record(request, prev_level)
     return await _snapshot(conn)
