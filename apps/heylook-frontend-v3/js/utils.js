@@ -86,7 +86,6 @@ export function debounce(fn, ms) {
     if (timer !== null) { clearTimeout(timer); timer = null; fn(...args); }
   };
   wrapped.cancel = () => { clearTimeout(timer); timer = null; };
-  wrapped.pending = () => timer !== null;
   return wrapped;
 }
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.3]
+
+### Changed
+
+- v3 page lifecycle grew `ctx.onHide(fn)` / `ctx.onResume(fn)` (`page.js`),
+  each registering both spellings of its edge (`visibilitychange` +
+  `pagehide` / `pageshow.persisted`) so a consumer cannot wire one and
+  forget the other; chat's resume sync and the prompt editor's flush ride
+  them, and the sampler-params binder now flushes on hide too. The resume
+  sync fetches the conversation body only when the list's `updated_at`
+  for the active conversation moved (every message write touches it), and
+  repaints the sidebar/drawer only on an actual change. Its "is the user
+  typing in the drawer" test is the drawer's own exported predicate
+  (`isEditingInDrawer`), not a re-derivation with different semantics.
+  `render.mjs` gained a check that an unchanged resume never downloads the
+  body.
+
 ## [1.79.2]
 
 ### Fixed

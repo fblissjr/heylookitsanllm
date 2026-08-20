@@ -135,8 +135,16 @@ export { open as openSettings };
 // unless force -- see the module header.
 export function requestRebuild({ force = false } = {}) {
   if (!mounted || !isOpen) return;
-  if (!force && bodyEl.contains(document.activeElement)) return;
+  if (!force && isEditingInDrawer()) return;
   render();
+}
+
+// The focus guard's predicate, for pages that must make the same call (a
+// resume sync deciding whether the drawer's fields are newer than the
+// store). bodyEl, not the whole panel: open() parks focus on the header's
+// Close button precisely so that state does NOT count as editing.
+export function isEditingInDrawer() {
+  return Boolean(bodyEl?.contains(document.activeElement));
 }
 
 // ---------------------------------------------------------------------------

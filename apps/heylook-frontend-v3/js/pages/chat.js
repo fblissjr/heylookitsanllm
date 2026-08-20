@@ -117,20 +117,11 @@ export default createPage({
     });
     ctx.onTeardown(s.paramsBinder);
 
-    // Resume sync. The page is a mirror of the store with no other
-    // invalidation: nothing polls, and the select guard deliberately skips
-    // re-fetching the active conversation. That is fine while the tab runs
-    // continuously; it is not fine on a phone, where Safari freezes a
-    // backgrounded tab and later resumes it with the heap it had -- hours
-    // old, and every whole-value write from it (prompt keystroke, sampler
-    // PUT, preset Save snapshot) would re-play that stale state over
-    // whatever happened since. Re-adopt the store on every resume; `pageshow`
-    // with `persisted` is the back/forward-cache spelling of the same event.
-    const onResume = ctx.guard(() => refreshAfterResume(ctx));
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') onResume();
-    }, { signal: ctx.signal });
-    window.addEventListener('pageshow', (e) => { if (e.persisted) onResume(); }, { signal: ctx.signal });
+    // The page is a mirror of the store: re-adopt it when the tab comes back
+    // (why: refreshAfterResume), and flush the sampler PUT before it goes --
+    // the prompt editor flushes its own (prompt-section.js).
+    ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
+    ctx.onHide(() => s.paramsBinder.flush());
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -876,9 +867,7 @@ async function selectConversation(ctx, convId) {
     // silently become some future conversation's prompt.
     writeDraftPrompt(null);
     s.messages = conv.messages ?? [];
-    s.systemPrompt = conv.system_prompt ?? null;
-    s.appliedPresetId = conv.applied_preset_id ?? null;
-    hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
+    adoptConversationMeta(ctx, conv);
     if (conv.model_id && s.models.some((m) => m.id === conv.model_id)) {
       s.modelSelect.value = conv.model_id;
     }
@@ -1416,44 +1405,75 @@ function mergeServerRows(ctx, serverRows) {
   renderMessages(ctx);
 }
 
-// Re-adopt the store after the tab comes back (visibilitychange -> visible,
-// bfcache pageshow). Everything the page mirrors is refreshed: the
-// conversation list (titles, new/removed conversations), the preset list,
-// and the active conversation's prompt/stamp/params/rows. Two things are
-// deliberately NOT touched: a live stream's rows (the stream owns them and
-// heylook_saved will reconcile), and the prompt/params while the user has
-// focus inside the drawer -- a half-typed prompt is the one local state
-// newer than the store, and the textarea's own debounce will write it.
-// Rows still adopt in that case; the reconcile reuses every unchanged node.
+// The per-conversation state a fetched row carries into the page, in ONE
+// place for both adopters (select and resume) -- the next stored field is
+// added here or it is silently missing on the path nobody retests. Rows,
+// scroll and the model select stay with the caller: select moves the select
+// to the conversation's model, resume deliberately does not (a model the
+// user picked since is newer than the store's stamp).
+function adoptConversationMeta(ctx, conv) {
+  const s = ctx.state;
+  s.systemPrompt = conv.system_prompt ?? null;
+  s.appliedPresetId = conv.applied_preset_id ?? null;
+  hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
+}
+
+const convListFingerprint = (convs) => JSON.stringify(convs.map((c) => [c.id, c.title, c.updated_at]));
+
+// Re-adopt the store after the tab comes back (ctx.onResume). The page is a
+// mirror with no other invalidation: nothing polls, and the select guard
+// deliberately skips re-fetching the active conversation. That is fine while
+// the tab runs continuously; it is not fine on a phone, where Safari freezes
+// a backgrounded tab and later resumes it with the heap it had -- hours old,
+// and every whole-value write from it (prompt keystroke, sampler PUT, preset
+// Save snapshot) would re-play that stale state over whatever happened since.
+//
+// Cost-shaped: the list and the presets are cheap; the conversation body is
+// not (every row, base64 media inline), so it is fetched only when the
+// list's `updated_at` for the active conversation differs from the one the
+// page holds -- every message write touches it server-side, so an equal
+// stamp means nothing to adopt. A local PUT bumps the server's stamp without
+// updating the page's copy, which costs one extra fetch on the next resume
+// and nothing else. Two things are never touched: a live stream's rows (the
+// stream owns them; heylook_saved reconciles), and the prompt/params while
+// focus is inside the drawer -- a half-typed prompt is the one local state
+// newer than the store, and its own debounce will write it.
 async function refreshAfterResume(ctx) {
   const s = ctx.state;
   if (s.resumeSync) return; // one in flight; a burst of events is one resume
   s.resumeSync = true;
   try {
     const convId = s.activeId;
-    const [, list, conv] = await Promise.all([
+    const [presetsChanged, list] = await Promise.all([
       s.presetBar.refresh(),
       api.listConversations({ signal: ctx.signal }).catch(() => null),
-      convId ? api.getConversation(convId, { signal: ctx.signal }).catch(() => null) : null,
     ]);
     if (!ctx.alive) return;
+    let docChanged = false;
     if (list?.conversations) {
+      const before = convListFingerprint(s.conversations);
+      const held = s.conversations.find((c) => c.id === convId)?.updated_at;
       s.conversations = list.conversations;
-      renderConvList(ctx);
-    }
-    if (conv && s.activeId === convId) {
-      const drawerHasFocus = Boolean(document.activeElement?.closest('.drawer'));
-      if (!drawerHasFocus) {
-        s.systemPrompt = conv.system_prompt ?? null;
-        s.appliedPresetId = conv.applied_preset_id ?? null;
-        hydrateDocParams(conv); // silent: a resume must not PUT the params back
-        refreshThinkBtn(ctx);
+      if (convListFingerprint(s.conversations) !== before) renderConvList(ctx);
+      const fresh = list.conversations.find((c) => c.id === convId)?.updated_at;
+      const unchanged = Boolean(held && fresh && held === fresh);
+      const conv = convId && !unchanged
+        ? await api.getConversation(convId, { signal: ctx.signal }).catch(() => null)
+        : null;
+      if (!ctx.alive) return;
+      if (conv && s.activeId === convId) {
+        docChanged = true;
+        if (!drawer.isEditingInDrawer()) {
+          adoptConversationMeta(ctx, conv);
+          refreshThinkBtn(ctx);
+        }
+        if (!s.stream) mergeServerRows(ctx, conv.messages ?? []);
       }
-      if (!s.stream) mergeServerRows(ctx, conv.messages ?? []);
     }
-    s.presetBar.syncIndicator();
-    paintSysPromptChip(ctx);
-    drawer.requestRebuild(); // focus-guarded: never under a field being edited
+    if (presetsChanged || docChanged) {
+      s.presetBar.syncIndicator(); // repaints both chips via onIndicator
+      drawer.requestRebuild();     // focus-guarded: never under a field being edited
+    }
   } finally {
     s.resumeSync = false;
   }

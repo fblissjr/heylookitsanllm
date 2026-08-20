@@ -102,18 +102,13 @@ export function createPromptSection(ctx, adapter) {
   // app switch, lock) fires no teardown and no `change` -- the tab is frozen
   // with the debounce timer unfired, and a frozen tab may later be discarded
   // or resurrected with its old heap, either of which loses or re-plays the
-  // edit. Flush at the last moment the page is known to be running. One
-  // listener per section; a section the drawer has since replaced unhooks
-  // itself the first time it fires with nothing left to flush.
-  const hideHooks = ctx.linkedController();
-  const flushOnHide = () => {
-    if (!element.isConnected && !schedulePersist.pending()) { hideHooks.abort(); return; }
+  // edit. Flush at the last moment the page is known to be running. A
+  // section the drawer has since replaced unhooks itself on its first hide:
+  // a detached textarea can never schedule another persist.
+  const offHide = ctx.onHide(() => {
     flush();
-  };
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushOnHide();
-  }, { signal: hideHooks.signal });
-  window.addEventListener('pagehide', flushOnHide, { signal: hideHooks.signal });
+    if (!element.isConnected) offHide();
+  });
 
   return { element, setValue, flush };
 }

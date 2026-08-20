@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url';
 
 import { launchBrowser } from './lib/browser.mjs';
 import { Suite, printSummary, assert, waitFor, sleep } from './lib/harness.mjs';
+import { openDrawer, closeDrawer } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
@@ -126,7 +127,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   let nextId = messages.length;
   // State "another session" can change under the page: mutate from a check,
   // then resume the page and watch it adopt. Read at RESPOND time.
-  const remote = { system_prompt: null, presets: [] };
+  const remote = { system_prompt: null, presets: [], updated_at: 't1' };
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -135,7 +136,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
       return { data };
     }
     if (url.endsWith('/v1/conversations') && method === 'GET') {
-      const convs = [{ id: 'c1', title: 'render suite', model_id: 'test-model' }];
+      const convs = [{ id: 'c1', title: 'render suite', model_id: 'test-model', updated_at: remote.updated_at }];
       if (secondModel) convs.push({ id: 'c2', title: 'other model', model_id: secondModel.id });
       return { conversations: convs };
     }
@@ -338,6 +339,24 @@ const scroll = (page) => page.evaluate(() => {
 
 const atBottom = (s) => s.height - s.top - s.client < 100;
 
+// A GET of the active conversation's body (with or without a query string).
+const isConvGet = (r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url);
+
+// Node-identity probe for "did this re-render REUSE the rows": stamp every
+// live row, do the thing, count the stamps that survived. A reused row
+// carries the stamp across the re-render, a rebuilt one cannot. This is
+// measured instead of the scroll symptom because Chrome's scroll anchoring
+// often papers over a full rebuild -- until a forced scroll-to-bottom is the
+// first thing computed against the collapsed height, and then the list
+// looks like it jumped to the top for no reason.
+const stampRows = (page) => page.evaluate(() => {
+  const rows = [...document.querySelectorAll('.message')];
+  rows.forEach((el, i) => { el.dataset.reuseProbe = String(i); });
+  return rows.length;
+});
+const stampedRows = (page) => page.evaluate(() =>
+  [...document.querySelectorAll('.message')].filter((el) => el.dataset.reuseProbe !== undefined).length);
+
 const statusText = (page) => page.evaluate(
   () => document.querySelector('.chat__status')?.textContent ?? '');
 
@@ -528,7 +547,7 @@ async function main() {
     // any row containing the stub reply text, so a reply minted by an earlier
     // check would satisfy it during the very gap it exists to catch.
     await suite.check('stream completion adopts the saved rows -- no re-fetch, no blank frame', async () => {
-      const convGets = () => reqs.filter((r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url)).length;
+      const convGets = () => reqs.filter(isConvGet).length;
       const before = convGets();
       // Watch the swap itself: the streaming node's removal and the saved
       // row's insertion must land in the SAME synchronous reconcile pass.
@@ -666,7 +685,7 @@ async function main() {
     // The saved-rows merge over a mirror that dropped its tail -- append mode
     // (boot 2) never exercises it. Fresh boot: no prior sends in the store.
     const gen = await openChat(browser, base);
-    const genGets = () => gen.reqs.filter((r) => r.method === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(r.url)).length;
+    const genGets = () => gen.reqs.filter(isConvGet).length;
 
     await suite.check('regenerate replaces the tail from the saved rows, no re-fetch', async () => {
       const before = genGets();
@@ -821,21 +840,10 @@ async function main() {
     await suite.check('a late residency refresh reuses every unchanged row', async () => {
       const before = await parkMidThread(late.page);
       assert(!atBottom(before), `setup: expected to be parked mid-thread, got ${JSON.stringify(before)}`);
-      // Stamp the live nodes: a REUSED row carries the stamp across the
-      // re-render, a rebuilt one cannot. This measures node identity rather
-      // than the scroll symptom, because Chrome's scroll anchoring often
-      // papers over a full rebuild -- until a forced scroll-to-bottom is the
-      // first thing computed against the collapsed height, and then it looks
-      // like the list jumped to the top for no reason.
-      const total = await late.page.evaluate(() => {
-        const rows = [...document.querySelectorAll('.message')];
-        rows.forEach((el, i) => { el.dataset.reuseProbe = String(i); });
-        return rows.length;
-      });
-      await new Promise((r) => setTimeout(r, 1600)); // let the held response land
+      const total = await stampRows(late.page); // see stampRows: identity, not scroll
+      await sleep(1600); // let the held response land
       await settle(late.page);
-      const kept = await late.page.evaluate(() =>
-        [...document.querySelectorAll('.message')].filter((el) => el.dataset.reuseProbe !== undefined).length);
+      const kept = await stampedRows(late.page);
       assert(kept === total,
         `residency arriving rebuilt ${total - kept} of ${total} rows -- nothing about those messages changed`);
       const after = await scroll(late.page);
@@ -856,57 +864,62 @@ async function main() {
     // iOS Safari resumes a backgrounded tab with the heap it had; without a
     // resume sync the page would mirror (and write back) hours-old state.
     const resumed = await openChat(browser, base);
-    const waitForResumeFetch = async (p, reqs, from) => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        if (reqs.slice(from).some((r) => r.method === 'GET' && r.url.endsWith('/v1/conversations/c1'))) return;
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      throw new Error('resume did not re-fetch the active conversation');
+    const resumeVia = {
+      pageshow: (page) => page.evaluate(() =>
+        window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))),
+      visibility: (page) => page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }),
     };
+    const waitForResumeFetch = (reqs, from) => waitFor(() => reqs.slice(from).some(isConvGet),
+      { timeout: 5000, interval: 50, message: 'resume did not re-fetch the active conversation' });
+    await suite.check('a resume with nothing changed fetches the list, not the conversation body', async () => {
+      const { page, reqs } = resumed;
+      const from = reqs.length;
+      await resumeVia.pageshow(page);
+      await waitFor(() => reqs.slice(from).some((r) => r.url.endsWith('/v1/conversations')),
+        { timeout: 5000, interval: 50, message: 'resume did not re-fetch the conversation list' });
+      await sleep(300);
+      assert(!reqs.slice(from).some(isConvGet),
+        'resume re-downloaded the conversation body although its updated_at had not moved');
+    });
     await suite.check('resume adopts prompt, presets and new rows without rebuilding unchanged ones', async () => {
       const { page, reqs, store } = resumed;
-      const total = await page.evaluate(() => {
-        const rows = [...document.querySelectorAll('.message')];
-        rows.forEach((el, i) => { el.dataset.reuseProbe = String(i); });
-        return rows.length;
-      });
+      const total = await stampRows(page);
       // "another session" edits the prompt, saves a preset and appends a row
       store.remote.system_prompt = 'Set on another device.';
+      store.remote.updated_at = 't2';
       store.remote.presets = [{ id: 'p-remote', name: 'remote', system_prompt: 'Set on another device.', params: {}, updated_at: 'x' }];
       store.messages.push({ id: 'm-remote', role: 'assistant', content: 'appended elsewhere',
         position: store.messages[store.messages.length - 1].position + 1 });
       const from = reqs.length;
-      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
-      await waitForResumeFetch(page, reqs, from);
+      await resumeVia.pageshow(page);
+      await waitForResumeFetch(reqs, from);
       await settle(page);
       const state = await page.evaluate(() => ({
         chip: document.querySelector('.chat__sysprompt-chip')?.textContent,
         presetChip: document.querySelector('.preset-chip:not(.chat__sysprompt-chip)')?.textContent,
         appended: !!document.querySelector('.message--assistant:last-of-type')?.textContent.includes('appended elsewhere'),
-        kept: [...document.querySelectorAll('.message')].filter((el) => el.dataset.reuseProbe !== undefined).length,
       }));
+      const kept = await stampedRows(page);
       assert(state.chip !== 'No system prompt', `prompt chip still "${state.chip}" after resume`);
       assert(state.presetChip === 'remote', `preset chip "${state.presetChip}" -- the remote preset was not adopted`);
       assert(state.appended, 'the row appended elsewhere is not rendered after resume');
-      assert(state.kept === total, `resume rebuilt ${total - state.kept} of ${total} unchanged rows`);
+      assert(kept === total, `resume rebuilt ${total - kept} of ${total} unchanged rows`);
     });
     await suite.check('resume never overwrites a prompt being typed in the drawer', async () => {
       const { page, reqs, store } = resumed;
-      await page.evaluate(() => document.querySelector('.drawer-gear').click());
-      await page.waitForSelector('.drawer--open .sysprompt-input', { timeout: 5000 });
-      // focus + keyboard, not a coordinate click: the drawer is still sliding
-      // in, and the resume guard keys on focus, which is what is under test
+      await openDrawer(page);
+      // focus + keyboard, not a coordinate click: the resume guard keys on
+      // focus, which is what is under test
       await page.evaluate(() => { const t = document.querySelector('.drawer--open .sysprompt-input'); t.focus(); t.select(); });
       await page.keyboard.type('local draft, unsaved');
       store.remote.system_prompt = 'Set on another device, again.';
+      store.remote.updated_at = 't3';
       const from = reqs.length;
-      // visibilitychange spelling this time (the app-switch path)
-      await page.evaluate(() => {
-        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-      await waitForResumeFetch(page, reqs, from);
+      await resumeVia.visibility(page); // the app-switch spelling this time
+      await waitForResumeFetch(reqs, from);
       await settle(page);
       const value = await page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
       assert(value === 'local draft, unsaved', `resume replaced the typed prompt with "${value}"`);
@@ -919,17 +932,12 @@ async function main() {
       const beforeSave = reqs.length;
       await page.evaluate(() => [...document.querySelectorAll('.drawer--open .preset-row button')]
         .find((b) => b.textContent.trim() === 'Save').click());
-      const deadline = Date.now() + 5000;
-      let post = null;
-      while (Date.now() < deadline && !post) {
-        post = reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets'));
-        if (!post) await new Promise((r) => setTimeout(r, 50));
-      }
-      assert(post, 'preset Save sent no POST');
+      const post = await waitFor(() => reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets')),
+        { timeout: 5000, interval: 50, message: 'preset Save sent no POST' });
       const saved = JSON.parse(post.postData);
       assert(saved.system_prompt === 'local draft, unsaved',
         `preset saved after a resume carried "${saved.system_prompt}" -- the resume overwrote the prompt state under the editor`);
-      await page.keyboard.press('Escape');
+      await closeDrawer(page);
     });
     await suite.check('no uncaught page errors (resume)', () => {
       assert(resumed.pageErrors.length === 0, `page errors: ${resumed.pageErrors.join(' | ')}`);

@@ -10,6 +10,14 @@
 //   throttle(fn)  throttleToFrame that auto-cancels on teardown
 //   linkedController()  AbortController chained to signal; abort() it on release
 //   onTeardown(fn)  register extra cleanup (runs before teardown())
+//   onHide(fn)      the page is about to stop running: visibilitychange ->
+//                   hidden, or pagehide. Flush debounced writes here -- a
+//                   backgrounded phone tab fires no teardown and may never
+//                   come back. Returns an unsubscribe.
+//   onResume(fn)    the page is running again after a hide: visibilitychange
+//                   -> visible, or a bfcache pageshow. Re-adopt server state
+//                   here -- the heap is whatever it was when the tab froze.
+//                   Returns an unsubscribe.
 
 import { throttleToFrame } from './utils.js';
 
@@ -44,6 +52,25 @@ export function createPage(spec) {
           ctx.signal.addEventListener('abort', () => controller.abort(),
             { once: true, signal: controller.signal });
           return controller;
+        },
+        // Both spellings of each lifecycle edge, registered once per hook so
+        // a consumer cannot wire one and forget the other (the bfcache pair
+        // and the app-switch pair are different events for the same moment).
+        onHide(fn) {
+          const ac = ctx.linkedController();
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') fn();
+          }, { signal: ac.signal });
+          window.addEventListener('pagehide', () => fn(), { signal: ac.signal });
+          return () => ac.abort();
+        },
+        onResume(fn) {
+          const ac = ctx.linkedController();
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') fn();
+          }, { signal: ac.signal });
+          window.addEventListener('pageshow', (e) => { if (e.persisted) fn(); }, { signal: ac.signal });
+          return () => ac.abort();
         },
       };
       current = { ctx, controller, cleanups };
