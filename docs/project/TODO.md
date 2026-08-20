@@ -91,7 +91,11 @@ Cross-session task backlog organized by priority.
   shift. Fix: the optimization is gated on `@supports (overflow-anchor:
   auto)`; editor close re-aims at its row. Instrument that saw it (no
   suite can): a same-origin injecting proxy + `simctl openurl` +
-  screenshot loop, recipe in the 2026-08-20 session log. Open follow-up:
+  screenshot loop, recipe in the 2026-08-20 session log. v1.79.2 added
+  chat's resume sync (`refreshAfterResume`: visibilitychange/pageshow
+  re-adopt the store) + the prompt editor's flush-on-hide; NOTEBOOK still
+  lacks the resume refetch (it gets the flush via the shared factory) --
+  port it when notebook is next touched. Open follow-up:
   the keyboard-dismissal drift after Save is only re-aimed, not prevented
   (viewport `interactive-widget` is not in Safari 26's notes).
 - [x] **Phase 1 backend -- DONE v1.65.0**: `POST/DELETE

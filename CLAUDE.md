@@ -173,7 +173,16 @@ disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
 position arithmetic -- notebook/explore speak `/v1/messages` since v1.74.0,
 so NO v3 page uses `/v1/chat/completions`), takes image (and gguf audio) input + renders
-image content blocks out of the DuckDB store. THREE attach inputs -- picker,
+image content blocks out of the DuckDB store. The page is a MIRROR of the store
+with exactly two invalidation points: document select, and RESUME (`visibilitychange`
+-> visible / bfcache `pageshow` -> `refreshAfterResume`, v1.79.2) -- nothing polls,
+and re-clicking the active conversation deliberately does not refetch. Resume exists
+because iOS Safari brings a backgrounded tab back with the heap it had, and every
+write the page makes is whole-value from that mirror (prompt keystroke PUT, params
+PUT, preset Save snapshot), so a stale mirror re-plays old state over newer edits.
+It never touches a live stream's rows or a prompt under focus in the drawer; the
+prompt editor flushes its debounce on hide/pagehide for the same reason. Notebook
+has the flush (shared factory) but not yet the resume refetch. THREE attach inputs -- picker,
 paste, drop (v1.72.0) -- funnel through ONE `addFiles` -> `addPendingFiles`
 routine, which is where the cap gate, the count cap and the aria-live
 announcement live; adding a fourth input means calling addFiles, never

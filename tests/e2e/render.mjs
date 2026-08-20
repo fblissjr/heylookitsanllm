@@ -124,6 +124,9 @@ function makeMessages({ unsaved = false, withMedia = false } = {}) {
 function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMedia = false } = {}) {
   const messages = makeMessages({ unsaved, withMedia });
   let nextId = messages.length;
+  // State "another session" can change under the page: mutate from a check,
+  // then resume the page and watch it adopt. Read at RESPOND time.
+  const remote = { system_prompt: null, presets: [] };
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -181,9 +184,15 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     }
     if (url.includes('/v1/conversations/c1')) {
       return { id: 'c1', title: 'render suite', model_id: 'test-model',
-        system_prompt: null, applied_preset_id: null, params: {}, messages };
+        system_prompt: remote.system_prompt, applied_preset_id: null, params: {}, messages };
     }
-    if (url.endsWith('/v1/presets')) return { presets: [] };
+    if (url.endsWith('/v1/presets') && method === 'POST') {
+      const row = { id: `p${remote.presets.length + 1}`, name: body.name,
+        system_prompt: body.system_prompt ?? null, params: body.params ?? {}, updated_at: 'y' };
+      remote.presets.push(row);
+      return row;
+    }
+    if (url.endsWith('/v1/presets')) return { presets: remote.presets };
     if (url.endsWith('/v1/admin/models')) {
       const models = [{ id: 'test-model', loaded: true, provider: 'mlx' }];
       if (secondModel) models.push({ id: secondModel.id, loaded: true, provider: 'mlx' });
@@ -246,7 +255,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     ].join('');
   };
 
-  return { messages, handle, genReply };
+  return { messages, remote, handle, genReply };
 }
 
 // A page with the stub API wired in.
@@ -842,6 +851,90 @@ async function main() {
       assert(late.pageErrors.length === 0, `page errors: ${late.pageErrors.join(' | ')}`);
     });
     await late.page.close();
+
+    // ---- boot 4b: the tab comes back after the store changed under it ----
+    // iOS Safari resumes a backgrounded tab with the heap it had; without a
+    // resume sync the page would mirror (and write back) hours-old state.
+    const resumed = await openChat(browser, base);
+    const waitForResumeFetch = async (p, reqs, from) => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (reqs.slice(from).some((r) => r.method === 'GET' && r.url.endsWith('/v1/conversations/c1'))) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error('resume did not re-fetch the active conversation');
+    };
+    await suite.check('resume adopts prompt, presets and new rows without rebuilding unchanged ones', async () => {
+      const { page, reqs, store } = resumed;
+      const total = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.message')];
+        rows.forEach((el, i) => { el.dataset.reuseProbe = String(i); });
+        return rows.length;
+      });
+      // "another session" edits the prompt, saves a preset and appends a row
+      store.remote.system_prompt = 'Set on another device.';
+      store.remote.presets = [{ id: 'p-remote', name: 'remote', system_prompt: 'Set on another device.', params: {}, updated_at: 'x' }];
+      store.messages.push({ id: 'm-remote', role: 'assistant', content: 'appended elsewhere',
+        position: store.messages[store.messages.length - 1].position + 1 });
+      const from = reqs.length;
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+      await waitForResumeFetch(page, reqs, from);
+      await settle(page);
+      const state = await page.evaluate(() => ({
+        chip: document.querySelector('.chat__sysprompt-chip')?.textContent,
+        presetChip: document.querySelector('.preset-chip:not(.chat__sysprompt-chip)')?.textContent,
+        appended: !!document.querySelector('.message--assistant:last-of-type')?.textContent.includes('appended elsewhere'),
+        kept: [...document.querySelectorAll('.message')].filter((el) => el.dataset.reuseProbe !== undefined).length,
+      }));
+      assert(state.chip !== 'No system prompt', `prompt chip still "${state.chip}" after resume`);
+      assert(state.presetChip === 'remote', `preset chip "${state.presetChip}" -- the remote preset was not adopted`);
+      assert(state.appended, 'the row appended elsewhere is not rendered after resume');
+      assert(state.kept === total, `resume rebuilt ${total - state.kept} of ${total} unchanged rows`);
+    });
+    await suite.check('resume never overwrites a prompt being typed in the drawer', async () => {
+      const { page, reqs, store } = resumed;
+      await page.evaluate(() => document.querySelector('.drawer-gear').click());
+      await page.waitForSelector('.drawer--open .sysprompt-input', { timeout: 5000 });
+      // focus + keyboard, not a coordinate click: the drawer is still sliding
+      // in, and the resume guard keys on focus, which is what is under test
+      await page.evaluate(() => { const t = document.querySelector('.drawer--open .sysprompt-input'); t.focus(); t.select(); });
+      await page.keyboard.type('local draft, unsaved');
+      store.remote.system_prompt = 'Set on another device, again.';
+      const from = reqs.length;
+      // visibilitychange spelling this time (the app-switch path)
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await waitForResumeFetch(page, reqs, from);
+      await settle(page);
+      const value = await page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
+      assert(value === 'local draft, unsaved', `resume replaced the typed prompt with "${value}"`);
+      // The textarea keeping its text is not the whole claim: the drawer
+      // rebuild is focus-guarded on its own, so the box can look right while
+      // the page's prompt STATE was silently replaced -- and the next preset
+      // Save snapshots state, not the box. Save one and read what went out.
+      await page.evaluate(() => { const n = document.querySelector('.drawer--open .preset-section .input'); n.focus(); n.select(); });
+      await page.keyboard.type('after-resume');
+      const beforeSave = reqs.length;
+      await page.evaluate(() => [...document.querySelectorAll('.drawer--open .preset-row button')]
+        .find((b) => b.textContent.trim() === 'Save').click());
+      const deadline = Date.now() + 5000;
+      let post = null;
+      while (Date.now() < deadline && !post) {
+        post = reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets'));
+        if (!post) await new Promise((r) => setTimeout(r, 50));
+      }
+      assert(post, 'preset Save sent no POST');
+      const saved = JSON.parse(post.postData);
+      assert(saved.system_prompt === 'local draft, unsaved',
+        `preset saved after a resume carried "${saved.system_prompt}" -- the resume overwrote the prompt state under the editor`);
+      await page.keyboard.press('Escape');
+    });
+    await suite.check('no uncaught page errors (resume)', () => {
+      assert(resumed.pageErrors.length === 0, `page errors: ${resumed.pageErrors.join(' | ')}`);
+    });
+    await resumed.page.close();
 
     // ---- boot 5: editor repair across the residency render ----------------
     const dur = await openChat(browser, base, { residencyDelayMs: 1500 });

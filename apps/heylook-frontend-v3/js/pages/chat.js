@@ -117,6 +117,21 @@ export default createPage({
     });
     ctx.onTeardown(s.paramsBinder);
 
+    // Resume sync. The page is a mirror of the store with no other
+    // invalidation: nothing polls, and the select guard deliberately skips
+    // re-fetching the active conversation. That is fine while the tab runs
+    // continuously; it is not fine on a phone, where Safari freezes a
+    // backgrounded tab and later resumes it with the heap it had -- hours
+    // old, and every whole-value write from it (prompt keystroke, sampler
+    // PUT, preset Save snapshot) would re-play that stale state over
+    // whatever happened since. Re-adopt the store on every resume; `pageshow`
+    // with `persisted` is the back/forward-cache spelling of the same event.
+    const onResume = ctx.guard(() => refreshAfterResume(ctx));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') onResume();
+    }, { signal: ctx.signal });
+    window.addEventListener('pageshow', (e) => { if (e.persisted) onResume(); }, { signal: ctx.signal });
+
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
       api.listConversations({ signal: ctx.signal }).catch((err) => {
@@ -1387,12 +1402,61 @@ async function resyncMessages(ctx, convId) {
     return; // best-effort: the next saga end (or a reselect) retries
   }
   if (!ctx.alive || s.activeId !== convId || s.stream) return;
-  const serverRows = conv.messages ?? [];
+  mergeServerRows(ctx, conv.messages ?? []);
+}
+
+// The one way server rows replace the mirror outside a stream end: saved
+// rows wholesale, id-less rows re-seated after them (see resyncMessages).
+function mergeServerRows(ctx, serverRows) {
+  const s = ctx.state;
   const unsaved = s.messages.filter((m) => m.id == null);
   let nextPos = (serverRows[serverRows.length - 1]?.position ?? -1) + 1;
   for (const m of unsaved) m.position = nextPos++;
   s.messages = [...serverRows, ...unsaved];
   renderMessages(ctx);
+}
+
+// Re-adopt the store after the tab comes back (visibilitychange -> visible,
+// bfcache pageshow). Everything the page mirrors is refreshed: the
+// conversation list (titles, new/removed conversations), the preset list,
+// and the active conversation's prompt/stamp/params/rows. Two things are
+// deliberately NOT touched: a live stream's rows (the stream owns them and
+// heylook_saved will reconcile), and the prompt/params while the user has
+// focus inside the drawer -- a half-typed prompt is the one local state
+// newer than the store, and the textarea's own debounce will write it.
+// Rows still adopt in that case; the reconcile reuses every unchanged node.
+async function refreshAfterResume(ctx) {
+  const s = ctx.state;
+  if (s.resumeSync) return; // one in flight; a burst of events is one resume
+  s.resumeSync = true;
+  try {
+    const convId = s.activeId;
+    const [, list, conv] = await Promise.all([
+      s.presetBar.refresh(),
+      api.listConversations({ signal: ctx.signal }).catch(() => null),
+      convId ? api.getConversation(convId, { signal: ctx.signal }).catch(() => null) : null,
+    ]);
+    if (!ctx.alive) return;
+    if (list?.conversations) {
+      s.conversations = list.conversations;
+      renderConvList(ctx);
+    }
+    if (conv && s.activeId === convId) {
+      const drawerHasFocus = Boolean(document.activeElement?.closest('.drawer'));
+      if (!drawerHasFocus) {
+        s.systemPrompt = conv.system_prompt ?? null;
+        s.appliedPresetId = conv.applied_preset_id ?? null;
+        hydrateDocParams(conv); // silent: a resume must not PUT the params back
+        refreshThinkBtn(ctx);
+      }
+      if (!s.stream) mergeServerRows(ctx, conv.messages ?? []);
+    }
+    s.presetBar.syncIndicator();
+    paintSysPromptChip(ctx);
+    drawer.requestRebuild(); // focus-guarded: never under a field being edited
+  } finally {
+    s.resumeSync = false;
+  }
 }
 
 // Merge the heylook_saved rows into the mirror -- pure assignment, no

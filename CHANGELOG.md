@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.2]
+
+### Fixed
+
+- v3 chat re-adopts the store when the tab comes back (`visibilitychange`
+  to visible, bfcache `pageshow`): conversation list, preset list, and the
+  active conversation's prompt, stamp, params and rows. The page mirrors
+  the store with no other invalidation (nothing polls; the select guard
+  skips re-fetching the active conversation), and iOS Safari resumes a
+  backgrounded tab with the heap it had -- so every whole-value write
+  from that tab (prompt keystroke, sampler PUT, preset Save) re-played
+  hours-old state over whatever happened since. A live stream's rows and
+  a prompt being typed in the drawer are left alone (the textarea's own
+  debounce writes it). The shared system-prompt editor also flushes its
+  pending debounced write when the page is hidden or unloading, the
+  phone's equivalent of the drawer-close window it already covered.
+  Guarded by three `e2e:render` checks, each shown red against the
+  previous tree (and the focus guard against a mutated one).
+
 ## [1.79.1]
 
 ### Fixed
