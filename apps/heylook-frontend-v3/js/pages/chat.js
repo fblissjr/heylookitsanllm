@@ -112,16 +112,16 @@ export default createPage({
     // preset applies.
     s.paramsBinder = bindDocumentParams({
       activeId: () => ctx.state.activeId,
-      updateDoc: (id, body) => api.updateConversation(id, body),
+      updateDoc: (id, body, opts) => api.updateConversation(id, body, opts),
       onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
+      onHide: ctx.onHide, // the binder owns its hide flush, like its teardown flush
     });
     ctx.onTeardown(s.paramsBinder);
 
     // The page is a mirror of the store: re-adopt it when the tab comes back
-    // (why: refreshAfterResume), and flush the sampler PUT before it goes --
-    // the prompt editor flushes its own (prompt-section.js).
+    // (why: refreshAfterResume). Each debounced writer owns its own hide
+    // flush (prompt-section.js, bindDocumentParams).
     ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
-    ctx.onHide(() => s.paramsBinder.flush());
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -604,10 +604,16 @@ function setSystemPrompt(ctx, value) {
 // issued milliseconds apart, and without ordering the stale one could land
 // last server-side (pre-existing class, /code-review 2026-07-23; localhost
 // keep-alive makes it near-unobservable, but the chain closes it outright).
-function putSystemPrompt(ctx, convId, value) {
+function putSystemPrompt(ctx, convId, value, { keepalive = false } = {}) {
   const s = ctx.state;
-  s.promptPutChain = (s.promptPutChain ?? Promise.resolve())
-    .then(() => api.updateConversation(convId, { system_prompt: value }))
+  const put = () => api.updateConversation(convId, { system_prompt: value }, { keepalive });
+  // A hide-time flush (keepalive) cannot wait its turn: the page may be
+  // unloading, and a request still queued behind an in-flight PUT is never
+  // sent at all. Dispatch it now -- keepalive is what lets it outlive the
+  // document -- and make the chain wait on it instead. It carries the newest
+  // value, so landing ahead of an older in-flight PUT is the right order.
+  const next = keepalive ? put() : (s.promptPutChain ?? Promise.resolve()).then(put);
+  s.promptPutChain = next
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
@@ -628,7 +634,11 @@ function setAppliedPreset(ctx, presetId) {
 
 function buildPromptSection(ctx) {
   const s = ctx.state;
-  return createPromptSection(ctx, {
+  // One live section at a time: releasing the one this render replaces
+  // flushes its pending write and drops its hide hook, so hooks don't pile
+  // up across renders and two sections never both answer one hide.
+  s.promptSection?.release();
+  s.promptSection = createPromptSection(ctx, {
     owner: () => s.activeId,
     get: () => s.systemPrompt,
     set: (v) => {
@@ -637,9 +647,10 @@ function buildPromptSection(ctx) {
       // (builtFor is null) -- park the draft here instead, per keystroke.
       if (!s.activeId) writeDraftPrompt(v);
     },
-    persist: (v, id) => putSystemPrompt(ctx, id, v),
+    persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
     onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
   });
+  return s.promptSection;
 }
 
 
@@ -895,8 +906,10 @@ async function selectConversation(ctx, convId) {
       // this conversation retries -- the select guard's messages.length
       // condition would otherwise no-op on the stale array forever.
       s.messages = [];
-      s.systemPrompt = null;
-      s.appliedPresetId = null;
+      // Through the one adopter, with an empty row: the sampler panel must
+      // not keep the PREVIOUS conversation's params under this id either --
+      // the next knob edit would PUT them onto it.
+      adoptConversationMeta(ctx, {});
       renderMessages(ctx);
       drawer.requestRebuild({ force: true });
       // resync so the chip doesn't keep claiming the previous conversation's
@@ -1399,9 +1412,21 @@ async function resyncMessages(ctx, convId) {
 function mergeServerRows(ctx, serverRows) {
   const s = ctx.state;
   const unsaved = s.messages.filter((m) => m.id == null);
-  let nextPos = (serverRows[serverRows.length - 1]?.position ?? -1) + 1;
+  // An open editor on a row the server no longer has (deleted elsewhere):
+  // keep the local row, and the draft in it, rather than vanish typed work
+  // without a word. Save will 404 loudly and resync; Cancel drops it.
+  const orphanEditor = s.editingId != null && !serverRows.some((r) => r.id === s.editingId)
+    ? s.messages.find((m) => m.id === s.editingId) ?? null
+    : null;
+  if (orphanEditor) {
+    showStatus(ctx, 'The message you are editing was deleted elsewhere — your draft is kept until you cancel or save.', true);
+  }
+  const rows = orphanEditor
+    ? [...serverRows, orphanEditor].sort((a, b) => a.position - b.position)
+    : [...serverRows];
+  let nextPos = (rows[rows.length - 1]?.position ?? -1) + 1;
   for (const m of unsaved) m.position = nextPos++;
-  s.messages = [...serverRows, ...unsaved];
+  s.messages = [...rows, ...unsaved];
   renderMessages(ctx);
 }
 
@@ -1411,14 +1436,18 @@ function mergeServerRows(ctx, serverRows) {
 // scroll and the model select stay with the caller: select moves the select
 // to the conversation's model, resume deliberately does not (a model the
 // user picked since is newer than the store's stamp).
-function adoptConversationMeta(ctx, conv) {
+// `keepPrompt`: leave s.systemPrompt alone (a resume while the prompt is being
+// typed -- the box holds the only state newer than the store).
+function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
   const s = ctx.state;
-  s.systemPrompt = conv.system_prompt ?? null;
+  if (!keepPrompt) s.systemPrompt = conv.system_prompt ?? null;
   s.appliedPresetId = conv.applied_preset_id ?? null;
   hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
 }
 
-const convListFingerprint = (convs) => JSON.stringify(convs.map((c) => [c.id, c.title, c.updated_at]));
+// What the sidebar shows, in order (order already encodes recency); not
+// updated_at itself, which every local write bumps without the page noticing.
+const convListFingerprint = (convs) => JSON.stringify(convs.map((c) => [c.id, c.title]));
 
 // Re-adopt the store after the tab comes back (ctx.onResume). The page is a
 // mirror with no other invalidation: nothing polls, and the select guard
@@ -1435,9 +1464,16 @@ const convListFingerprint = (convs) => JSON.stringify(convs.map((c) => [c.id, c.
 // stamp means nothing to adopt. A local PUT bumps the server's stamp without
 // updating the page's copy, which costs one extra fetch on the next resume
 // and nothing else. Two things are never touched: a live stream's rows (the
-// stream owns them; heylook_saved reconciles), and the prompt/params while
-// focus is inside the drawer -- a half-typed prompt is the one local state
-// newer than the store, and its own debounce will write it.
+// stream owns them; heylook_saved reconciles), and the prompt while it is
+// being TYPED -- the box holds the one local state newer than the store, and
+// its own debounce will write it. Every other drawer field commits on change
+// and re-reads the panel, so the stamp and params adopt wherever focus is.
+//
+// The page commits the new `updated_at` only once everything it covers has
+// been adopted. Committing it first would turn one failed body fetch (phone
+// radio half up) or one deferred adoption into a permanent "unchanged": the
+// select guard never refetches the active conversation, so nothing else
+// would ever retry.
 async function refreshAfterResume(ctx) {
   const s = ctx.state;
   if (s.resumeSync) return; // one in flight; a burst of events is one resume
@@ -1451,23 +1487,33 @@ async function refreshAfterResume(ctx) {
     if (!ctx.alive) return;
     let docChanged = false;
     if (list?.conversations) {
-      const before = convListFingerprint(s.conversations);
       const held = s.conversations.find((c) => c.id === convId)?.updated_at;
-      s.conversations = list.conversations;
-      if (convListFingerprint(s.conversations) !== before) renderConvList(ctx);
       const fresh = list.conversations.find((c) => c.id === convId)?.updated_at;
       const unchanged = Boolean(held && fresh && held === fresh);
-      const conv = convId && !unchanged
-        ? await api.getConversation(convId, { signal: ctx.signal }).catch(() => null)
-        : null;
-      if (!ctx.alive) return;
-      if (conv && s.activeId === convId) {
-        docChanged = true;
-        if (!drawer.isEditingInDrawer()) {
-          adoptConversationMeta(ctx, conv);
+      let adopted = unchanged;
+      if (convId && !unchanged) {
+        const conv = await api.getConversation(convId, { signal: ctx.signal }).catch(() => null);
+        if (!ctx.alive) return;
+        if (conv && s.activeId === convId) {
+          docChanged = true;
+          const typingPrompt = document.activeElement?.classList.contains('sysprompt-input') ?? false;
+          adoptConversationMeta(ctx, conv, { keepPrompt: typingPrompt });
           refreshThinkBtn(ctx);
+          const rowsMerged = !s.stream;
+          if (rowsMerged) mergeServerRows(ctx, conv.messages ?? []);
+          adopted = !typingPrompt && rowsMerged;
         }
-        if (!s.stream) mergeServerRows(ctx, conv.messages ?? []);
+      }
+      // A sidebar rename commits on blur against the conv object it was
+      // started on; swapping the list under it orphans that commit, and
+      // WebKit removes the input without a blur at all. Leave the list alone
+      // until the rename settles -- the next resume catches up.
+      const renaming = Boolean(s.convListEl.querySelector('.conv-item__rename'));
+      if (!renaming) {
+        const before = convListFingerprint(s.conversations);
+        s.conversations = list.conversations.map((c) =>
+          (c.id === convId && !adopted && held) ? { ...c, updated_at: held } : c);
+        if (convListFingerprint(s.conversations) !== before) renderConvList(ctx);
       }
     }
     if (presetsChanged || docChanged) {
@@ -1903,7 +1949,9 @@ async function send(ctx) {
     const convId = s.activeId; // anchor: a switch mid-POST must not leak into another conv
     const msg = await api.addMessage(convId, { role: 'user', content });
     if (!ctx.alive || s.activeId !== convId) return; // saved to its conv; reselect re-fetches it
-    s.messages.push(msg);
+    // Idempotent by id: a resume merge that landed while the POST was in
+    // flight may already hold this row (the server's list saw the bump).
+    if (!s.messages.some((m) => m.id === msg.id)) s.messages.push(msg);
     renderMessages(ctx);
     scrollMessages(ctx, true);
     startStream(ctx, { mode: 'append' });

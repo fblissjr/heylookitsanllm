@@ -34,8 +34,10 @@ export default createPage({
     s.gen = null; // { controller, targetId, head, tail, content }
 
     buildSkeleton(ctx);
-    s.scheduleSave = debounce(() => { doSave(ctx); }, 500);
+    s.scheduleSave = debounce((opts) => { doSave(ctx, opts); }, 500);
     ctx.onTeardown(() => s.scheduleSave.flush());
+    // The largest typed body on any page: flush it before the tab goes away.
+    ctx.onHide(() => s.scheduleSave.flush({ keepalive: true }));
 
     // Shared preset bar (preset-bar.js), adapted to the active notebook.
     // Apply DOES write the notebook's system prompt -- a preset is a
@@ -65,7 +67,7 @@ export default createPage({
       owner: () => s.activeId,
       get: () => s.systemPrompt,
       set: (v) => { s.systemPrompt = v ?? ''; },
-      persist: (v, id) => putSystemPrompt(ctx, id, v),
+      persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
       onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
     });
 
@@ -84,8 +86,9 @@ export default createPage({
     // active notebook's `params`; hydrate on select is silent.
     ctx.onTeardown(bindDocumentParams({
       activeId: () => ctx.state.activeId,
-      updateDoc: (id, body) => api.updateNotebook(id, body),
+      updateDoc: (id, body, opts) => api.updateNotebook(id, body, opts),
       onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
+      onHide: ctx.onHide,
     }));
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
@@ -251,10 +254,14 @@ function setAppliedPreset(ctx, presetId) {
     .catch((err) => showStatus(ctx, `Preset stamp save failed: ${err.message}`, true));
 }
 
-function putSystemPrompt(ctx, notebookId, value) {
+function putSystemPrompt(ctx, notebookId, value, { keepalive = false } = {}) {
   const s = ctx.state;
-  s.promptPutChain = (s.promptPutChain ?? Promise.resolve())
-    .then(() => api.updateNotebook(notebookId, { system_prompt: value }))
+  const put = () => api.updateNotebook(notebookId, { system_prompt: value }, { keepalive });
+  // A hide-time flush (keepalive) is dispatched immediately rather than queued
+  // behind an in-flight PUT: a queued request is never sent if the page
+  // unloads first. Same shape as chat's putSystemPrompt.
+  const next = keepalive ? put() : (s.promptPutChain ?? Promise.resolve()).then(put);
+  s.promptPutChain = next
     .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
 }
 
@@ -410,7 +417,7 @@ async function selectNotebook(ctx, id) {
 // auto-save (debounced; always reads FROM ctx.state, never the DOM)
 // ---------------------------------------------------------------------------
 
-async function doSave(ctx) {
+async function doSave(ctx, { keepalive = false } = {}) {
   const s = ctx.state;
   const id = s.activeId;
   if (!id || !s.dirty) return;
@@ -423,7 +430,7 @@ async function doSave(ctx) {
       title: s.title,
       content: s.content,
       model_id: s.modelId || null,
-    });
+    }, { keepalive });
   } catch (err) {
     if (ctx.alive && s.activeId === id) {
       s.dirty = true; // retry on the next edit/flush

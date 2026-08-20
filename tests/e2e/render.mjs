@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 
 import { launchBrowser } from './lib/browser.mjs';
 import { Suite, printSummary, assert, waitFor, sleep } from './lib/harness.mjs';
-import { openDrawer, closeDrawer } from './lib/dom.mjs';
+import { openDrawer, closeDrawer, clickByText } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
@@ -310,6 +310,11 @@ async function openChat(browser, base, {
       }
       // DELETE (Stop) -- nothing tracked in the stub; say "nothing active"
       return req.respond({ status: 404, contentType: 'application/json', body: '{}' });
+    }
+    // One failed body fetch on demand (a phone waking with the radio half up).
+    if (store.remote.failNextBody && req.method() === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(url)) {
+      store.remote.failNextBody = false;
+      return req.respond({ status: 503, contentType: 'application/json', body: '{"detail":"stub outage"}' });
     }
     // The v7 media serve endpoint: bytes, not JSON.
     if (url.includes('/media/')) {
@@ -930,14 +935,32 @@ async function main() {
       await page.evaluate(() => { const n = document.querySelector('.drawer--open .preset-section .input'); n.focus(); n.select(); });
       await page.keyboard.type('after-resume');
       const beforeSave = reqs.length;
-      await page.evaluate(() => [...document.querySelectorAll('.drawer--open .preset-row button')]
-        .find((b) => b.textContent.trim() === 'Save').click());
+      await clickByText(page, '.drawer--open .preset-row button', 'Save');
       const post = await waitFor(() => reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets')),
         { timeout: 5000, interval: 50, message: 'preset Save sent no POST' });
       const saved = JSON.parse(post.postData);
       assert(saved.system_prompt === 'local draft, unsaved',
         `preset saved after a resume carried "${saved.system_prompt}" -- the resume overwrote the prompt state under the editor`);
       await closeDrawer(page);
+    });
+    await suite.check('a resume whose body fetch fails retries on the next resume', async () => {
+      const { page, reqs, store } = resumed;
+      store.remote.system_prompt = 'Set after an outage.';
+      store.remote.updated_at = 't4';
+      store.remote.failNextBody = true;
+      let from = reqs.length;
+      await resumeVia.pageshow(page);
+      await waitForResumeFetch(reqs, from); // the one that fails
+      await settle(page);
+      // Second resume, nothing changed server-side since: the page must not
+      // have recorded t4 as adopted, so it fetches the body again.
+      from = reqs.length;
+      await resumeVia.pageshow(page);
+      await waitFor(() => reqs.slice(from).some(isConvGet),
+        { timeout: 5000, interval: 50, message: 'after a failed body fetch the next resume did not retry it' });
+      await settle(page);
+      const chip = await page.$eval('.chat__sysprompt-chip', (el) => el.title);
+      assert(chip.includes('Set after an outage.'), `prompt not adopted on the retry (chip title: ${JSON.stringify(chip)})`);
     });
     await suite.check('no uncaught page errors (resume)', () => {
       assert(resumed.pageErrors.length === 0, `page errors: ${resumed.pageErrors.join(' | ')}`);

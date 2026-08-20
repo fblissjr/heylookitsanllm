@@ -282,6 +282,10 @@ stays for external consumers, no v3 page calls it):
 
 **Conversations** (prefix `/v1/conversations`, no auth):
 - `GET /` → `{conversations:[{id,title,model_id,system_prompt,params,applied_preset_id,created_at,updated_at}], total}` — **no messages**.
+  `updated_at` is a change stamp for the WHOLE conversation: every message
+  write (append, edit, delete, truncate, generate commit) bumps it, not only
+  metadata PUTs. Clients may skip re-fetching the body when it is unchanged
+  (v3's resume sync does, v1.79.3).
 - `POST /` (201) `{title,model_id?,system_prompt?,params?,applied_preset_id?}` → full conv incl `messages:[]`.
   `applied_preset_id` at create (added v1.59.0) is the new-document preset
   inheritance: the document explicitly STARTS as that preset, which counts as

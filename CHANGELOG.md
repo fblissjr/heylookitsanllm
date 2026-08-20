@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.4]
+
+### Fixed
+
+- Code-review follow-through on the resume/hide work (all introduced in
+  1.79.2-1.79.3, none shipped past this repo):
+  - notebook's prompt flush-on-hide disabled itself after the first hide
+    with the drawer closed (the shared section treated "detached" as
+    "replaced"); the hook now lives as long as the section and chat, which
+    builds one per drawer render, explicitly `release()`s the one it replaces.
+  - the resume sync committed the new `updated_at` before adoption succeeded,
+    so one failed body fetch (or one deferred adoption) became a permanent
+    "unchanged"; the stamp is now committed only once everything it covers
+    is adopted, and a render check pins the retry.
+  - the resume focus guard skipped ALL meta adoption for any focused drawer
+    field; it now skips only the prompt, and only while the prompt box itself
+    is being typed in.
+  - hide-time flushes send with `keepalive` and are dispatched ahead of the
+    PUT chain, so they survive an unload instead of waiting behind an
+    in-flight write that never completes; `bindDocumentParams` owns its hide
+    flush (and its teardown now flushes rather than cancels), and notebook's
+    content autosave flushes on hide too.
+  - a resume no longer swaps the sidebar under an in-progress rename, no
+    longer duplicates the user row when it lands mid-send, and keeps an open
+    editor's draft (with a status line) when its row was deleted elsewhere.
+  - `selectConversation`'s failure branch resets the sampler panel too
+    (it kept the previous conversation's params under the failed id).
+- Backend test now asserts a message write strictly bumps the conversation's
+  `updated_at` (spec §4 states the guarantee the resume sync relies on).
+
 ## [1.79.3]
 
 ### Changed

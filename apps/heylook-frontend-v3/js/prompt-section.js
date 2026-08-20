@@ -9,18 +9,24 @@
 //   owner():                string|null  -- the document id this edit belongs to
 //   get():                  string|null  -- the document's current prompt (may be '' or null)
 //   set(value, ownerId):    void         -- commit to page state (per keystroke)
-//   persist(value, ownerId):void         -- write to the server (debounced)
+//   persist(value, ownerId, opts?): void -- write to the server (debounced);
+//                                           opts is `{ keepalive: true }` on a
+//                                           hide-time flush -- pass it to the
+//                                           request so the write survives unload
 //   onEdit?():              void         -- optional, fires after every keystroke
 //                                           (preset-bar drift tracking)
 // }
 //
-// Returns { element, setValue, flush }:
+// Returns { element, setValue, flush, release }:
 //   element   the <details> to mount as a drawer section
 //   setValue  external sync (document switch, preset apply): repaints the
 //             textarea AND re-anchors which document new edits target
 //   flush     force any pending debounced persist to fire now -- call before
 //             switching the active document out from under a long-lived
 //             instance (see notebook.js's selectNotebook)
+//   release   flush + drop the hide hook. A page that builds a NEW section
+//             per drawer render (chat) releases the one it replaces; a page
+//             that keeps one for the mount (notebook) never calls it
 
 import { createEl, autoGrow, debounce } from './utils.js';
 
@@ -45,10 +51,10 @@ export function createPromptSection(ctx, adapter) {
   // focus (drawer close via Escape/hashchange): a removed textarea never
   // fires `change`, and a preset saved in that window captured
   // system_prompt=null, so applying it later erased the prompt outright.
-  const schedulePersist = debounce((value) => {
+  const schedulePersist = debounce((value, opts) => {
     // null: a pre-create draft, or -- for a reused instance -- no document
     // loaded yet. State rides along until something gives it a home.
-    if (builtFor != null) adapter.persist(value, builtFor);
+    if (builtFor != null) adapter.persist(value, builtFor, opts);
   }, 400);
 
   const currentValue = () => normalize(input.value);
@@ -86,8 +92,8 @@ export function createPromptSection(ctx, adapter) {
     schedulePersist.cancel();
   }
 
-  function flush() {
-    schedulePersist.flush(currentValue());
+  function flush(opts) {
+    schedulePersist.flush(currentValue(), opts);
   }
 
   // On teardown FLUSH, never cancel: navigating away within the debounce
@@ -102,13 +108,17 @@ export function createPromptSection(ctx, adapter) {
   // app switch, lock) fires no teardown and no `change` -- the tab is frozen
   // with the debounce timer unfired, and a frozen tab may later be discarded
   // or resurrected with its old heap, either of which loses or re-plays the
-  // edit. Flush at the last moment the page is known to be running. A
-  // section the drawer has since replaced unhooks itself on its first hide:
-  // a detached textarea can never schedule another persist.
-  const offHide = ctx.onHide(() => {
-    flush();
-    if (!element.isConnected) offHide();
-  });
+  // edit. Flush at the last moment the page is known to be running, with
+  // keepalive so the write survives an unload. The hook lives as long as the
+  // section: a detached section is NOT a dead one (notebook keeps its single
+  // section through every drawer close), so only an explicit release() --
+  // chat, replacing a section -- drops it.
+  const offHide = ctx.onHide(() => flush({ keepalive: true }));
 
-  return { element, setValue, flush };
+  function release() {
+    flush();
+    offHide();
+  }
+
+  return { element, setValue, flush, release };
 }

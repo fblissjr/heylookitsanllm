@@ -181,14 +181,20 @@ backgrounded tab back with the heap it had, and every write the page makes is
 whole-value from that mirror (prompt keystroke PUT, params PUT, preset Save snapshot),
 so a stale mirror re-plays old state over newer edits. The lifecycle edges are
 `createPage`'s `ctx.onHide`/`ctx.onResume` (each binds BOTH event spellings -- never
-hand-wire `visibilitychange`/`pagehide`/`pageshow` in a page); every debounced
-writer registers a flush on `onHide` beside its `onTeardown` flush (prompt editor,
-params binder). Resume fetches the conversation body only when the list's
-`updated_at` moved, adopts via the same `adoptConversationMeta` select uses, and
-never touches a live stream's rows or a prompt under focus in the drawer
-(`drawer.isEditingInDrawer()` -- the drawer's own guard, bodyEl-scoped because open()
-parks focus on the header's Close button on purpose). Notebook has the flushes via
-the shared factory but not yet a resume refetch. THREE attach inputs -- picker,
+hand-wire `visibilitychange`/`pagehide`/`pageshow` in a page). Every debounced
+writer OWNS its hide flush the way it owns its teardown flush (prompt-section,
+`bindDocumentParams` via its `onHide` arg, notebook's `scheduleSave`) -- a consumer
+that has to remember it is how one shipped without. Hide flushes send with
+`keepalive` and are dispatched AHEAD of the PUT chain (a request queued behind an
+in-flight PUT is never sent if the page unloads). A prompt section's hide hook lives
+as long as the section -- detached is NOT dead (notebook keeps one through every
+drawer close); chat, which builds one per drawer render, `release()`s the one it
+replaces. Resume fetches the conversation body only when the list's `updated_at`
+moved and commits the new stamp only AFTER everything it covers is adopted (else one
+failed fetch is a permanent "unchanged" -- nothing else ever refetches the active
+conversation); adopts via the same `adoptConversationMeta` select uses; never touches
+a live stream's rows, the prompt while its box is being typed in (only that field --
+every other drawer field commits on change), or the sidebar during a rename. THREE attach inputs -- picker,
 paste, drop (v1.72.0) -- funnel through ONE `addFiles` -> `addPendingFiles`
 routine, which is where the cap gate, the count cap and the aria-live
 announcement live; adding a fourth input means calling addFiles, never

@@ -281,7 +281,11 @@ class TestMessageCRUD:
 
         fetched = await db.get_conversation(conn, conv["id"])
         assert fetched is not None
-        assert fetched["updated_at"] >= original_updated
+        # Strictly greater: the v3 resume sync skips re-fetching a
+        # conversation's body when the list's updated_at has not moved, so
+        # "a message write bumps the stamp" is a contract clients rely on
+        # (spec section 4). >= would pass with the touch deleted.
+        assert fetched["updated_at"] > original_updated
 
 
 @pytest.mark.unit

@@ -139,11 +139,10 @@ export function requestRebuild({ force = false } = {}) {
   render();
 }
 
-// The focus guard's predicate, for pages that must make the same call (a
-// resume sync deciding whether the drawer's fields are newer than the
-// store). bodyEl, not the whole panel: open() parks focus on the header's
-// Close button precisely so that state does NOT count as editing.
-export function isEditingInDrawer() {
+// The focus guard's one predicate. bodyEl, not the whole panel: open() parks
+// focus on the header's Close button precisely so that state does NOT count
+// as editing.
+function isEditingInDrawer() {
   return Boolean(bodyEl?.contains(document.activeElement));
 }
 
@@ -178,7 +177,7 @@ function close() {
   // bug that ate chat's system prompt). Blurring here fires it for EVERY
   // commit-on-change field (sampler numbers included), at the one place all
   // close paths converge.
-  if (bodyEl.contains(document.activeElement)) document.activeElement.blur();
+  if (isEditingInDrawer()) document.activeElement.blur();
   isOpen = false;
   panelEl.classList.remove('drawer--open');
   backdropEl.classList.remove('drawer-backdrop--open');

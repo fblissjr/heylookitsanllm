@@ -126,8 +126,10 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   `plan_chat_orchestration.md`)**: loud refusals (stream + pendingSave
   latch + unsaved-row lock), unsaved-row Retry save/Discard, reconcile at
   every saga end, thinking-block editing. `e2e:render` grew 8->23 checks
-  (stateful stub store, red-first, iPhone-emulation boot). OPEN: the iOS
-  hidden-row repro needs the owner's device (plan Phase 0.5). File logging
+  (stateful stub store, red-first, iPhone-emulation boot). The iOS
+  hidden-row bug was reproduced on an iOS 26.5 simulator with a control and
+  fixed in v1.79.1 (content-visibility gated on scroll-anchoring support;
+  rows were displaced, never blank). File logging
   went opt-in in v1.63.0 (default `off`; llama-server log joined the switch).
 - **SOLID -- conversation-scoped generate, backend half (v1.65.0, plan
   Phase 1)**: POST/DELETE /v1/conversations/{id}/generate -- server builds

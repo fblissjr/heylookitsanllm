@@ -154,7 +154,11 @@ export function messagesParams(caps = null) {
 // (register in the page's teardown). The debounce timer is per-binding (closure),
 // and `id` is captured at schedule time so a doc switch mid-debounce still writes
 // to the one the edit was for.
-export function bindDocumentParams({ activeId, updateDoc, onError, delay = 400 }) {
+// `onHide` is the page's ctx.onHide: the binder registers its own
+// last-moment flush there, exactly as it owns its teardown flush -- a
+// consumer that had to remember either is how notebook shipped without
+// one. `updateDoc(id, body, opts)` receives `{ keepalive }` on those flushes.
+export function bindDocumentParams({ activeId, updateDoc, onError, onHide, delay = 400 }) {
   let timer = null;
   let pending = false;
   // Fire the debounced PUT NOW. Exposed as .flush on the returned teardown
@@ -163,14 +167,14 @@ export function bindDocumentParams({ activeId, updateDoc, onError, delay = 400 }
   // absence, which overrides cannot spell -- only the params PUT can
   // (review finding 2026-08-13: reset temperature + fast Send still
   // generated at the stored value).
-  const flush = () => {
+  const flush = (opts = {}) => {
     clearTimeout(timer);
     timer = null;
     if (!pending) return Promise.resolve();
     pending = false;
     const id = activeId();
     if (!id) return Promise.resolve();
-    return Promise.resolve(updateDoc(id, { params: snapshotSettings() }))
+    return Promise.resolve(updateDoc(id, { params: snapshotSettings() }, opts))
       .catch(onError || (() => {}));
   };
   const unsub = onSettingsChange(() => {
@@ -180,7 +184,12 @@ export function bindDocumentParams({ activeId, updateDoc, onError, delay = 400 }
     clearTimeout(timer);
     timer = setTimeout(flush, delay);
   });
-  const teardown = () => { clearTimeout(timer); unsub(); };
+  const offHide = onHide?.(() => flush({ keepalive: true }));
+  // Teardown FLUSHES (it used to cancel): leaving the page inside the
+  // debounce window is the same typed-and-believed-saved shape as the
+  // drawer closing under focus. The id was captured when the edit was
+  // scheduled, so the write stays correct after the mount is gone.
+  const teardown = () => { offHide?.(); unsub(); flush(); };
   teardown.flush = flush;
   return teardown;
 }

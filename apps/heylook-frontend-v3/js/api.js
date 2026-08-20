@@ -23,7 +23,10 @@ export async function httpError(res) {
   return err;
 }
 
-export async function request(method, path, body, { signal } = {}) {
+// `keepalive`: the request outlives the document -- for the last-moment
+// flushes a page makes on hide/pagehide, where a plain fetch is cancelled by
+// the unload. Bodies must stay under the browser's ~64KB keepalive cap.
+export async function request(method, path, body, { signal, keepalive = false } = {}) {
   const headers = { 'X-Request-ID': requestId() };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const res = await fetch(path, {
@@ -31,6 +34,7 @@ export async function request(method, path, body, { signal } = {}) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
+    keepalive,
   });
   if (!res.ok) throw await httpError(res);
   return res.status === 204 ? null : res.json();
