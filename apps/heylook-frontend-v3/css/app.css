@@ -551,8 +551,23 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 .message {
   margin-bottom: 1.1rem;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 3rem;
+}
+/* Off-screen rows skip layout/paint -- but ONLY where the engine also has
+   scroll anchoring. A skipped row reports its 3rem estimate until the engine
+   decides it is relevant, and that decision is lazy; when the row is finally
+   laid out everything below it shifts. Chrome/Firefox compensate with scroll
+   anchoring, so the list stays put. WebKit has neither scroll anchoring nor
+   a synchronous relevance check (Safari 26.5: overflow-anchor unsupported),
+   and the shift is what the user sees: a conversation opened ~1000px above
+   its end, an edited row shoved under the composer after Save (measured on
+   an iOS 26.5 simulator, 2026-08-20; the same run with content-visibility
+   off landed at the bottom exactly). overflow-anchor support is the gate
+   because it IS the precondition, not a proxy for "is this Safari". */
+@supports (overflow-anchor: auto) {
+  .message {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 3rem;
+  }
 }
 .message--user { display: flex; flex-direction: column; align-items: flex-end; }
 

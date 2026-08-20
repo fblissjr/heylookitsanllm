@@ -81,12 +81,19 @@ Cross-session task backlog organized by priority.
   editor. All guarded by `e2e:render` (23 checks, each new one shown red
   against a pre-fix tree first), incl. an iPhone-emulation boot (viewport +
   touch + hover:none via CDP) for touch reachability.
-- [ ] **Phase 0.5 iOS hidden-row bug** (P1, needs the owner's device):
-  edited/saved assistant row hidden-until-interaction on iOS Safari; test
-  the `content-visibility: auto` skip-state hypothesis on real WebKit. The
-  Chrome half is pinned ("a saved edit leaves the row painted" in
-  `e2e:render`); emulation cannot see WebKit paint, so this stays open
-  until tried on the phone.
+- [x] **Phase 0.5 iOS hidden-row bug -- DONE v1.79.1**: reproduced on an
+  iOS 26.5 simulator (Safari 26.5) with a control: with `content-visibility:
+  auto` the thread opened 1046px above its end and the saved row landed
+  mostly under the composer; with it off, the landing was exact. The row
+  was never blank -- it was displaced: skipped rows report their 3rem
+  estimate until WebKit's lazy relevance check lays them out, and WebKit
+  has no scroll anchoring (`overflow-anchor` unsupported) to absorb the
+  shift. Fix: the optimization is gated on `@supports (overflow-anchor:
+  auto)`; editor close re-aims at its row. Instrument that saw it (no
+  suite can): a same-origin injecting proxy + `simctl openurl` +
+  screenshot loop, recipe in the 2026-08-20 session log. Open follow-up:
+  the keyboard-dismissal drift after Save is only re-aimed, not prevented
+  (viewport `interactive-widget` is not in Safari 26's notes).
 - [x] **Phase 1 backend -- DONE v1.65.0**: `POST/DELETE
   /v1/conversations/{id}/generate` (append/regenerate/continue, Messages
   SSE + `heylook_saved` final event, per-conversation 409 arbitration,

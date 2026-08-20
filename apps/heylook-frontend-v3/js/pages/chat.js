@@ -1210,7 +1210,7 @@ function buildEditEl(ctx, msg) {
     });
     thinkArea.addEventListener('input', () => autoGrow(thinkArea, thinkCap()));
   }
-  const cancel = () => { s.editingId = null; renderMessages(ctx); };
+  const cancel = () => { s.editingId = null; renderMessages(ctx); keepRowInView(ctx, msg); };
 
   const save = async (regenerateAfter, continueAfter = false) => {
     // The truncate-then-stream branches are destructive; with a stream
@@ -1268,6 +1268,7 @@ function buildEditEl(ctx, msg) {
         startStream(ctx, { mode: 'continue', messageId: msg.id, continueMsg: msg });
       } else {
         renderMessages(ctx);
+        keepRowInView(ctx, msg);
       }
     } catch (err) {
       if (ctx.alive) showStatus(ctx, `Save failed: ${err.message}`, true);
@@ -1343,6 +1344,24 @@ function scrollMessages(ctx, force = false) {
     if (!ctx.alive) return;
     if (force || Math.abs(el.scrollTop - setTop) < 2) el.scrollTop = el.scrollHeight;
   });
+}
+
+// After an editor closes (Save or Cancel) the row it stood in is rebuilt as a
+// view row, and on a phone the keyboard that was open for the textarea goes
+// away with it. WebKit restores the scroll offsets it moved for the keyboard
+// asynchronously, and the restore lands the row partly under the composer
+// (measured 174px low on an iOS 26.5 simulator even with content-visibility
+// off) -- which reads as "my message vanished until I tapped around". Re-aim
+// at the row with the least movement that brings it fully into view: once
+// now, once after the viewport has had time to settle. `nearest` never moves
+// a row that is already visible, so the desktop path is a no-op.
+function keepRowInView(ctx, msg) {
+  const aim = () => {
+    if (!ctx.alive) return;
+    ctx.state.msgNodes?.get(msgKey(msg))?.node?.scrollIntoView({ block: 'nearest' });
+  };
+  requestAnimationFrame(aim);
+  setTimeout(aim, 250);
 }
 
 // ---------------------------------------------------------------------------

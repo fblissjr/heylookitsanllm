@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.1]
+
+### Fixed
+
+- v3 chat on iOS Safari: opening a conversation landed far above its end,
+  and a message edited on the phone slid under the composer after Save (or
+  Cancel) until something nudged the scroll -- the long-standing
+  "message disappears while I edit it" report. Cause, measured on an
+  iOS 26.5 simulator with a control run: `.message` rows used
+  `content-visibility: auto`, whose skipped rows report a 3rem estimate
+  until WebKit lazily decides they are relevant, and WebKit has no scroll
+  anchoring to absorb the re-layout shift (Chrome does, which is why the
+  desktop never showed it). The optimization is now gated on
+  `@supports (overflow-anchor: auto)` -- the precondition itself, so
+  Chrome/Firefox keep it byte-for-byte and WebKit gets plain rows -- and
+  closing a message editor re-aims the scroll at its row (`block: 'nearest'`,
+  a no-op when the row is already visible) to absorb the keyboard-dismissal
+  drift that remains even without content-visibility.
+
 ## [1.79.0]
 
 ### Changed
