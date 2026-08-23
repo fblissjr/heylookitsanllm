@@ -112,16 +112,36 @@ async function newFreshConversation(page) {
   return id;
 }
 
-// Client-observed streaming cadence, measured INSIDE the page against the same
-// /v1/chat/completions path the app uses. The Phase 1 fix (asyncio.wait instead
-// of a 0.1s poll in async_generator_with_abort) is invisible to server-side
-// telemetry -- only a client timing this stream can catch a regression back to
-// the ~100ms poll ceiling. Returns per-content-delta inter-arrival gaps.
+// Client-observed streaming cadence, measured INSIDE the page. The Phase 1 fix
+// (asyncio.wait instead of a 0.1s poll in async_generator_with_abort) is
+// invisible to server-side telemetry -- only a client timing the stream can
+// catch a regression back to the ~100ms poll ceiling. Returns per-delta
+// inter-arrival gaps.
+//
+// Measured against /v1/messages: the delivery machinery under test is shared by
+// every streaming route, and this is a wire v3 actually speaks (notebook and
+// explore) -- it used to probe /v1/chat/completions, which no page has used
+// since v1.74.0, so the comment claiming it was "the path the app uses" had
+// quietly stopped being true. Deliberately NOT chat's own
+// /v1/conversations/{id}/generate: that path PERSISTS, and an extra assistant
+// row mid-suite would break the sidebar-title, survives-a-reload and
+// second-turn checks that run after this one.
+//
+// Counts any content_block_delta carrying text, thinking deltas included: the
+// question is when BYTES reach the client, and counting only the answer text
+// measures a sparse subset whose gaps span the thinking phase. Measured on one
+// gemma-4-E4B generation, same stream counted both ways: 61 deltas at 19.8ms
+// median (all) vs 18 at 28.5ms (content only) -- and the old content-only count
+// on the OpenAI wire yielded ELEVEN samples, one unlucky run above the >= 8
+// floor. That is how the check false-failed at a 197ms median on a thinking
+// run while the wire itself was delivering at 19ms. Quantization would slow
+// every delta alike, so counting more of them cannot hide it -- it only removes
+// the phase-transition confound and gives ~5x the samples.
 async function measureStreamCadence(page, model, maxTokens) {
   return page.evaluate(async (model, maxTokens) => {
     const marks = [];
     let usage = null;
-    const res = await fetch('/v1/chat/completions', {
+    const res = await fetch('/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -147,11 +167,15 @@ async function measureStreamCadence(page, model, maxTokens) {
         for (const line of evt.split('\n')) {
           if (!line.startsWith('data:')) continue;
           const d = line.slice(5).trim();
-          if (!d || d === '[DONE]') continue;
+          if (!d) continue;
           let c;
           try { c = JSON.parse(d); } catch { continue; }
-          if (c.choices?.[0]?.delta?.content) marks.push(performance.now());
+          // Messages grammar: text rides content_block_delta; usage lands on
+          // message_delta (and again on message_stop).
+          if (c.type === 'content_block_delta' && c.delta?.text) marks.push(performance.now());
           if (c.usage) usage = c.usage;
+          else if (c.delta?.usage) usage = c.delta.usage;
+          else if (c.message?.usage) usage = c.message.usage;
         }
       }
     }
