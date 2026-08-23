@@ -150,11 +150,21 @@ export function messagesParams(caps = null) {
 // same bag (CLAUDE.md). This is display state, so it is spread in beside the bag
 // at the two send sites, never merged into it.
 //
-// Two consumers today -- chat's /generate body and notebook's /v1/messages body.
-// Explore speaks the same wire but is a token-ARRAY surface (§6's other
-// mechanism: flag specials by token id), so it deliberately does not send this.
-export function displayWireFields() {
-  return { show_special_tokens: getDisplayPref('show_special_tokens') === true };
+// Takes the PAGE'S OWN declared list -- the same array it hands the drawer as
+// `displayPrefs` -- so declaring a pref and sending it cannot come apart.
+// Hardcoding the body here instead let a page offer a checkbox it never sent
+// (and would have sent a second pref from every caller regardless of what that
+// caller claimed to honor). Keys with no `wire` spelling in DISPLAY_META are
+// render-time prefs and are skipped: a page may honor those without any request
+// changing shape. Explore speaks the same wire but declares nothing -- it is a
+// token-ARRAY surface (§6's other mechanism: flag specials by token id).
+export function displayWireFields(prefs = []) {
+  const out = {};
+  for (const key of prefs) {
+    const wire = DISPLAY_META[key]?.wire;
+    if (wire) out[wire] = getDisplayPref(key) === true;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,12 +242,15 @@ export const DISPLAY_META = {
     label: 'Show special tokens',
     type: 'checkbox',
     default: true,   // honesty-first: shown by default (DESIGN.md §6)
-    // Honored by the DECODED-TEXT surfaces (chat, notebook) since v1.79.6: they
-    // send `show_special_tokens` on the wire and the server skips its
-    // declared-specials strip (DESIGN.md §6). The token-ARRAY surfaces (explore,
-    // jspace) are the other half of "one preference, two render mechanisms" and
-    // do not read it yet.
-    wired: true,
+    // The request field this pref rides on (v1.79.6): the DECODED-TEXT surfaces
+    // (chat, notebook) send it and the server then skips its declared-specials
+    // strip (DESIGN.md §6). Absent `wire` = a render-time pref, honored without
+    // any request changing shape. WHICH pages honor it is the page's own
+    // `displayPrefs` declaration, not a flag here -- "no surface honors this" is
+    // exactly "no page lists it", so a second gate here could only disagree with
+    // that one, silently. The token-ARRAY surfaces (explore, jspace) are the
+    // other half of "one preference, two render mechanisms" and declare nothing.
+    wire: 'show_special_tokens',
     help: 'Keep the model\'s special tokens (<|im_end|>, <bos>, role markers) in '
         + 'its replies instead of stripping them. Display-only -- never changes '
         + 'what is sent to the model. Applies to replies generated from now on: '
@@ -360,16 +373,15 @@ export function buildSettingsPanel({ caps = [] } = {}) {
 // Display-prefs section (the second section-kind, alongside Sampling and
 // per-page extras). Model-agnostic, so no capability gating -- but NOT
 // page-agnostic: `honored` is the PAGE's list of pref keys it actually reads
-// (drawer contribution `displayPrefs`), and a pref outside it is omitted here.
-// Two gates, and they are different questions: `wired` = "does any surface honor
-// this yet", `honored` = "does THIS page". Explore and jspace are the token-array
-// half of show_special_tokens and read nothing, so offering them the checkbox
-// would be the same lie the `wired` gate exists to prevent -- one control that
-// silently does nothing on the page you are looking at.
+// (drawer contribution `displayPrefs`), and that ONE list is the gate. It is the
+// same array the page passes to displayWireFields(), so a checkbox rendered here
+// is a checkbox that does something -- which is the whole rule (a control that
+// silently does nothing on the page you are looking at is worse than no control).
+// Explore and jspace read token ids rather than this, so they declare nothing.
 // Returns null when the page honors none, so the drawer omits the section.
 export function buildDisplayPanel(honored = []) {
   const rows = Object.entries(DISPLAY_META).filter(
-    ([key, meta]) => meta.wired && honored.includes(key)
+    ([key]) => honored.includes(key)
   ).map(([key, meta]) => {
     const box = createEl('input', { id: `disp-${key}`, type: 'checkbox', checked: getDisplayPref(key) === true });
     box.addEventListener('change', () => setDisplayPref(key, box.checked));

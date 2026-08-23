@@ -173,7 +173,12 @@ server skips its declared-specials strip for that request. Two invariants:
   decoded-text surfaces (chat, notebook) render a *string*, so "show specials"
   means *not stripping them from the decoded text*. Same switch, two code paths —
   don't ship it as if it were uniform. Only the decoded-text half is wired
-  today; explore and jspace still ignore the pref.
+  today; explore and jspace still ignore the pref — and say so structurally: a
+  page DECLARES the display prefs it honors (`displayPrefs` on its drawer
+  contribution) and passes that same array to `displayWireFields()`, so the
+  drawer offers exactly the controls that page acts on. One list, both uses —
+  declaring a pref and sending it cannot come apart, and there is no second
+  registry-level flag to disagree with it.
 - **It is an MLX-only lever, and the help text says so.** The strip lives in
   heylook's own reasoning parser, and the gguf provider routes to a
   pass-through (`template_info()` is None: llama-server pre-splits reasoning

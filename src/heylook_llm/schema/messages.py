@@ -117,12 +117,15 @@ class MessageCreateRequest(BaseModel):
     # returns, as a guard against fast-detokenizer leaks. That guard also
     # deletes a special the model wrote deliberately -- and those say where in
     # the turn the model is, which is the thing an interpretability surface
-    # exists to show. Opt IN to keep them: absent/false = strip, as before, so
-    # no existing consumer changes. Affects the text returned (and, on the
+    # exists to show. Opt IN to keep them: false -- the default, and what every
+    # existing consumer sends by omitting the field -- strips, as before.
+    # Deliberately NOT tri-state: nothing distinguishes absent from false, and a
+    # third state no branch reads is one every future call site has to re-derive
+    # as meaningless (`include_performance` below is the in-file precedent). Affects the text returned (and, on the
     # conversation surface, the text PERSISTED), never what is sent to the
     # model and never generation itself.
-    show_special_tokens: Optional[bool] = Field(
-        default=None,
+    show_special_tokens: bool = Field(
+        default=False,
         description="Return the model's declared special tokens instead of "
                     "stripping them (e.g. <|im_end|>, <bos>). Display-only: "
                     "changes the text you get back, never the generation. "

@@ -19,6 +19,12 @@ import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 
+// The display prefs this page HONORS -- one array, two uses: it declares what the
+// drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
+// the wire (displayWireFields). Same list for both, so offering a control and
+// sending it cannot come apart.
+const DISPLAY_PREFS = ['show_special_tokens'];
+
 export default createPage({
   async setup(ctx) {
     const s = ctx.state;
@@ -79,8 +85,7 @@ export default createPage({
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],
       onOpen: s.presetBar.onDrawerOpen,
-      // this page sends it (displayWireFields); pages that do not, do not offer it
-      displayPrefs: ['show_special_tokens'],
+      displayPrefs: DISPLAY_PREFS,
     });
     ctx.onTeardown(unregisterSettings);
     // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --
@@ -476,7 +481,7 @@ function startGenerate(ctx) {
     messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
     ...messagesParams(notebookCaps(ctx)),
     // Display pref, not a sampler -- spread AFTER the bag and never inside it.
-    ...displayWireFields(),
+    ...displayWireFields(DISPLAY_PREFS),
   }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },

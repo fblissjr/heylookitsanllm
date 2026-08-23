@@ -87,11 +87,11 @@ class TestToRequestConversion:
         dumped = to_chat_request(req).model_dump()
         assert not any("special" in k for k in dumped)
 
-    def test_show_special_tokens_defaults_to_absent(self):
+    def test_show_special_tokens_defaults_to_off(self):
         """Opt-IN: every existing client omits it and keeps the strip."""
         req = MessageCreateRequest(
             model="test", messages=[Message(role="user", content="hi")])
-        assert req.show_special_tokens is None
+        assert req.show_special_tokens is False
 
     def test_stream_flag_forwarded(self):
         req = MessageCreateRequest(

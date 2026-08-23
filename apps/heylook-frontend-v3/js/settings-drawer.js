@@ -123,7 +123,7 @@ export function registerSettings(contribution) {
   return () => {
     if (current === contribution) {
       current = null;
-      if (isOpen) render(); // fall back to the global Display panel
+      if (isOpen) render(); // no page contribution -> no Display panel either
     }
   };
 }
@@ -215,7 +215,7 @@ function render() {
   }
 
   // null unless THIS page declared a display pref it honors (see buildDisplayPanel)
-  const displayPanel = buildDisplayPanel(current?.displayPrefs ?? []);
+  const displayPanel = buildDisplayPanel(current?.displayPrefs);
   if (displayPanel) children.push(displayPanel);
 
   if (current?.extras) children.push(...current.extras());

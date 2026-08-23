@@ -44,6 +44,13 @@ import { createPromptSection } from '../prompt-section.js';
 // good prompt.
 const DRAFT_PROMPT_KEY = 'heylook.v3.chat.draft-prompt';
 
+// The display prefs this page HONORS -- one array, two uses: it declares what the
+// drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
+// the wire (displayWireFields). Same list for both, so offering a control and
+// sending it cannot come apart.
+const DISPLAY_PREFS = ['show_special_tokens'];
+
+
 function readDraftPrompt() {
   try { return localStorage.getItem(DRAFT_PROMPT_KEY) || null; } catch { return null; }
 }
@@ -103,8 +110,7 @@ export default createPage({
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
-      // this page sends it (displayWireFields); pages that do not, do not offer it
-      displayPrefs: ['show_special_tokens'],
+      displayPrefs: DISPLAY_PREFS,
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -2066,7 +2072,7 @@ function startStream(ctx, opts = {}) {
   // is the sampler bag the server layers over the document's stored params, and
   // a display pref landing in there would be persisted as generation state.
   const launch = () => streamGenerate(stream.targetConvId,
-    { mode, message_id: messageId, overrides, ...displayWireFields() }, {
+    { mode, message_id: messageId, overrides, ...displayWireFields(DISPLAY_PREFS) }, {
     signal: controller.signal,
     onToken: (_, full) => { firstDelta(); stream.sawEvent = true; stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.sawEvent = true; stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },

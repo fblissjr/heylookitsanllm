@@ -18,8 +18,6 @@ generator's finally) is exercised only by code review + the e2e suite once
 the v3 cutover lands.
 """
 
-import json as std_json
-
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
@@ -31,6 +29,7 @@ from heylook_llm.conversation_api import conversation_router
 from heylook_llm.conversation_generate_api import _ACTIVE, generate_router
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import BaseProvider, GenerationChunk
+from helpers.sse import sse_events, streamed_text
 
 
 TEST_MODELS = {
@@ -90,21 +89,6 @@ class FakeRouter:
         if not self.app_config.get_model_config(model_id):
             raise ModelNotFound(f"Model '{model_id}' not found or not enabled")
         return self.provider
-
-
-def sse_events(text: str) -> list[tuple[str, dict]]:
-    """Parse '(event, data)' pairs out of an SSE body."""
-    events = []
-    for block in text.split("\n\n"):
-        ev, data = None, None
-        for line in block.split("\n"):
-            if line.startswith("event: "):
-                ev = line[len("event: "):]
-            elif line.startswith("data: "):
-                data = std_json.loads(line[len("data: "):])
-        if ev:
-            events.append((ev, data))
-    return events
 
 
 def saved_event(text: str) -> dict:
@@ -601,14 +585,6 @@ class TestShowSpecialTokens:
         _ACTIVE.clear()
         await app.state.db.close()
 
-    @staticmethod
-    def _streamed_text(body: str) -> str:
-        return "".join(
-            data["delta"].get("text", "")
-            for ev, data in sse_events(body)
-            if ev == "content_block_delta" and data["delta"].get("type") == "text_delta"
-        )
-
     @pytest.mark.asyncio
     async def test_asking_keeps_them_on_screen_and_in_the_row(self, ctx_specials):
         client, store, _ = ctx_specials
@@ -616,7 +592,7 @@ class TestShowSpecialTokens:
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
                                 json={"mode": "append", "show_special_tokens": True})
         assert res.status_code == 200
-        assert self.SPECIAL in self._streamed_text(res.text)
+        assert self.SPECIAL in streamed_text(res.text)
         saved = saved_event(res.text)["messages"][-1]
         assert saved["content"] == f"Hello world{self.SPECIAL}"
 
@@ -629,7 +605,7 @@ class TestShowSpecialTokens:
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
                                 json={"mode": "append"})
         assert res.status_code == 200
-        assert self.SPECIAL not in self._streamed_text(res.text)
+        assert self.SPECIAL not in streamed_text(res.text)
         assert saved_event(res.text)["messages"][-1]["content"] == "Hello world"
 
     @pytest.mark.asyncio

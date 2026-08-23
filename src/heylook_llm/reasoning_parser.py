@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from typing import Any, List, Optional, Protocol, Tuple
+from typing import Any, Callable, List, Optional, Protocol, Tuple
 
 
 ParserDelta = Tuple[str, str]  # ("content" | "thinking", text)
@@ -507,6 +507,31 @@ class GemmaChannelParser:
 # fallback (an arbitrary True) unanswerable on its own terms.
 
 
+def declared_specials(template_info: Any) -> frozenset[str]:
+    """The strip set for a model, derived in ONE place.
+
+    Both the streaming filter and any one-shot caller ask HERE rather than
+    reaching into ``ModelTemplateInfo`` themselves -- a second spelling of this
+    derivation is a place for the two to drift apart silently, which for a
+    strip set means "no specials" and a filter that quietly does nothing."""
+    return frozenset(getattr(template_info, "special_tokens", None) or ())
+
+
+def specials_stripper(template_info: Any) -> Optional[Callable[[str], str]]:
+    """A one-shot ``str -> str`` strip for callers holding WHOLE text.
+
+    ``StripSpecials`` is the STREAMING form (it owns a rolling holdback across
+    deltas); a caller with the finished text -- the conversation surface
+    cleaning replayed history, say -- needs the same filter without the state
+    machine. Returns None when the model declares nothing, so such a caller can
+    skip its walk instead of testing per item. Shares the compiled, cached
+    pattern with the streaming path by construction, not by convention."""
+    pattern = _compile_strip_pattern(declared_specials(template_info))
+    if pattern is None:
+        return None
+    return lambda text: _strip_specials(text, pattern)
+
+
 def select_reasoning_parser(
     template_info: Any = None, *, thinking_enabled: bool | None = None,
     continuing: bool = False, strip_specials: bool = True,
@@ -543,9 +568,7 @@ def select_reasoning_parser(
     if template_info is None:
         return PassThroughParser()
 
-    strip_tokens = frozenset(
-        getattr(template_info, "special_tokens", frozenset()) or frozenset()
-    )
+    strip_tokens = declared_specials(template_info)
 
     parser: ReasoningParser
     if getattr(template_info, "has_harmony_structure", False):

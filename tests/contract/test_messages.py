@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from helpers.sse import streamed_text
+
 
 class TestMessagesNonStreaming:
     """Tests for POST /v1/messages (non-streaming)."""
@@ -195,19 +197,6 @@ class TestShowSpecialTokens:
             else:
                 mock_router.providers[model_id] = previous
 
-    @staticmethod
-    def _streamed_text(body: str) -> str:
-        out = []
-        for line in body.split("\n"):
-            if not line.startswith("data: "):
-                continue
-            data = json.loads(line[len("data: "):])
-            if data.get("type") == "content_block_delta":
-                delta = data.get("delta") or {}
-                if delta.get("type") == "text_delta":
-                    out.append(delta.get("text", ""))
-        return "".join(out)
-
     def test_streaming_keeps_them_when_asked(self, client, declaring_model):
         """The path notebook actually takes."""
         resp = client.post("/v1/messages", json={
@@ -217,7 +206,7 @@ class TestShowSpecialTokens:
             "show_special_tokens": True,
         })
         assert resp.status_code == 200
-        assert self.SPECIAL in self._streamed_text(resp.text)
+        assert self.SPECIAL in streamed_text(resp.text)
 
     def test_streaming_strips_by_default(self, client, declaring_model):
         resp = client.post("/v1/messages", json={
@@ -226,12 +215,12 @@ class TestShowSpecialTokens:
             "max_tokens": 128, "stream": True,
         })
         assert resp.status_code == 200
-        text = self._streamed_text(resp.text)
+        text = streamed_text(resp.text)
         assert self.SPECIAL not in text
         assert "Hello world" in text
 
     def test_non_streaming_honors_it_too(self, client, declaring_model):
-        for flag, expected in ((True, True), (False, False)):
+        for flag in (True, False):
             resp = client.post("/v1/messages", json={
                 "model": declaring_model,
                 "messages": [{"role": "user", "content": "Hello"}],
@@ -241,4 +230,4 @@ class TestShowSpecialTokens:
             assert resp.status_code == 200
             text = "".join(b.get("text", "") for b in resp.json()["content"]
                            if b["type"] == "text")
-            assert (self.SPECIAL in text) is expected
+            assert (self.SPECIAL in text) is flag

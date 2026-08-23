@@ -69,11 +69,10 @@ from heylook_llm.perf_collector import (
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.reasoning_parser import (
-    _compile_strip_pattern,
-    _strip_specials,
     merge_presplit_thinking,
     parse_reasoning,
     select_reasoning_parser,
+    specials_stripper,
 )
 from heylook_llm.router import ModelNotFound
 
@@ -123,7 +122,7 @@ class GenerateRequest(BaseModel):
     # per-conversation because it decides what this reply RECORDS: the text is
     # persisted exactly as parsed, so a reply generated with it on keeps its
     # specials forever and one generated with it off never had them to keep.
-    show_special_tokens: bool | None = None
+    show_special_tokens: bool = False
 
 
 # The ONE media-type -> capability mapping. Both the prefetch filter
@@ -259,23 +258,24 @@ def _strip_history_specials(request: ChatRequest, provider) -> None:
     unstripped. User-authored text keeps the semantics every other API surface
     gives it -- untouched, whatever the user typed or pasted.
 
-    Same compiled pattern the streaming filter uses (never a second matcher).
+    Uses the parser module's own one-shot stripper, so the strip SET and the
+    compiled pattern are shared with the streaming filter by construction --
+    `reasoning_parser` owns what "declared special" means, and asking it is what
+    keeps this path from drifting onto a stale spelling of that set.
     """
-    info = provider.template_info() if provider else None
-    pattern = _compile_strip_pattern(
-        frozenset(getattr(info, "special_tokens", None) or ()))
-    if pattern is None:
+    strip = specials_stripper(provider.template_info())
+    if strip is None:   # model declares none (gguf routes here too)
         return
     for msg in request.messages:
         if msg.role != "assistant":
             continue
         if isinstance(msg.content, str):
-            msg.content = _strip_specials(msg.content, pattern)
+            msg.content = strip(msg.content)
             continue
         for part in msg.content or []:
             text = getattr(part, "text", None)
             if isinstance(text, str):
-                part.text = _strip_specials(text, pattern)
+                part.text = strip(text)
 
 
 @generate_router.post(
@@ -459,7 +459,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 saved_user_row=saved_user_row, continue_row=continue_row,
                 commit_after=commit_after, dropped=dropped,
                 thinking_enabled=thinking_enabled,
-                show_specials=bool(body.show_special_tokens),
+                strip_specials=not body.show_special_tokens,
                 perf_ctx=perf_ctx, started=started,
             ),
             media_type="text/event-stream",
@@ -518,7 +518,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                            provider, abort_event, model_id, mode,
                            saved_user_row, continue_row, commit_after,
                            dropped, thinking_enabled, perf_ctx,
-                           show_specials=False,
+                           strip_specials=True,
                            started=None) -> AsyncGenerator[str, None]:
     if started is not None:
         started["flag"] = True  # the finally below owns _ACTIVE from here on
@@ -527,7 +527,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
     # be built the same way or the row would disagree with what was rendered.
     parser_args = dict(thinking_enabled=thinking_enabled,
                        continuing=continue_row is not None,
-                       strip_specials=not show_specials)
+                       strip_specials=strip_specials)
     translator = StreamingEventTranslator(
         message_id, model_id,
         thinking_parser=select_reasoning_parser(provider.template_info(), **parser_args))
