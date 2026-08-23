@@ -112,6 +112,8 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //   samplers?:  'enabled'|'disabled'|'hidden'   (default 'hidden')
 //   sections?():Node[]                   -- lead sections (rendered first)
 //   extras?():  Node[]                   -- trailing controls (rendered last)
+//   displayPrefs?: string[]              -- DISPLAY_META keys this page honors;
+//                                           omitted = no Display panel here
 //   onOpen?():  void                     -- fired each time the drawer opens
 //                                           (e.g. lazily refresh presets)
 // }
@@ -212,7 +214,8 @@ function render() {
     children.push(panel);
   }
 
-  const displayPanel = buildDisplayPanel();   // null while no display pref is wired yet
+  // null unless THIS page declared a display pref it honors (see buildDisplayPanel)
+  const displayPanel = buildDisplayPanel(current?.displayPrefs ?? []);
   if (displayPanel) children.push(displayPanel);
 
   if (current?.extras) children.push(...current.extras());

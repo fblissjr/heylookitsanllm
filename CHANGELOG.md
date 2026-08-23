@@ -38,6 +38,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`<think>`, harmony/gemma channel markers) -- the switch governs only the
   declared-specials filter over the text those parsers route.
 
+  Kept markers never re-enter a prompt: the conversation surface replays stored
+  rows as the next turn's messages, so the server strips declared specials out
+  of replayed ASSISTANT text before the request reaches the provider -- without
+  that, turn 2 of every chat fed the model its own control-token string (a fast
+  tokenizer encodes it as the real token), and `continue` would prefill ending
+  on a turn boundary. User-authored text is untouched. Notebook differs by
+  design: the reply becomes visible, editable document text, and that document
+  is what gets sent.
+
+  The drawer's Display panel is now offered only on pages that declare they
+  honor a pref (`displayPrefs` in the drawer contribution) -- explore and jspace
+  read token ids, not this, and a checkbox that silently does nothing on the
+  page you are looking at is the thing the pref's `wired` gate exists to
+  prevent.
+
+  MLX-only in practice: the strip lives in heylook's parser and the gguf
+  provider routes to a pass-through, so a gguf reply is never stripped and the
+  toggle is a no-op there. Verified live on gemma-4-E4B in both packagings --
+  with the pref off, MLX returned `STARTEND` where the GGUF returned
+  `START<mask>END`.
+
 ## [1.79.5]
 
 ### Fixed

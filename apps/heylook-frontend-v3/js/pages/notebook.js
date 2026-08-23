@@ -79,6 +79,8 @@ export default createPage({
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],
       onOpen: s.presetBar.onDrawerOpen,
+      // this page sends it (displayWireFields); pages that do not, do not offer it
+      displayPrefs: ['show_special_tokens'],
     });
     ctx.onTeardown(unregisterSettings);
     // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --

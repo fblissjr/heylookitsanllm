@@ -69,6 +69,8 @@ from heylook_llm.perf_collector import (
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.reasoning_parser import (
+    _compile_strip_pattern,
+    _strip_specials,
     merge_presplit_thinking,
     parse_reasoning,
     select_reasoning_parser,
@@ -240,6 +242,42 @@ def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
     )
 
 
+def _strip_history_specials(request: ChatRequest, provider) -> None:
+    """Remove the model's DECLARED specials from replayed ASSISTANT text.
+
+    `show_special_tokens` keeps those specials in the row we PERSIST -- that is
+    the point of the pref, they are what the model wrote. But the store IS the
+    request: the next turn replays those rows verbatim, and a fast tokenizer
+    matches a declared special's STRING and encodes the real control-token id.
+    Left alone, an end-of-turn marker inside prior assistant content becomes a
+    real turn boundary mid-prompt -- and in `continue` mode the prefill would
+    END with one. A display pref that reached the model that way would be a
+    generation-settings path wearing a display label (DESIGN.md §6), so the
+    strip on REPLAY is what keeps "display-only" true rather than aspirational.
+
+    ASSISTANT rows only: those are the ones this server chose to record
+    unstripped. User-authored text keeps the semantics every other API surface
+    gives it -- untouched, whatever the user typed or pasted.
+
+    Same compiled pattern the streaming filter uses (never a second matcher).
+    """
+    info = provider.template_info() if provider else None
+    pattern = _compile_strip_pattern(
+        frozenset(getattr(info, "special_tokens", None) or ()))
+    if pattern is None:
+        return
+    for msg in request.messages:
+        if msg.role != "assistant":
+            continue
+        if isinstance(msg.content, str):
+            msg.content = _strip_specials(msg.content, pattern)
+            continue
+        for part in msg.content or []:
+            text = getattr(part, "text", None)
+            if isinstance(text, str):
+                part.text = _strip_specials(text, pattern)
+
+
 @generate_router.post(
     "/{conv_id}/generate",
     summary="Generate Into Conversation",
@@ -351,6 +389,9 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
             provider = await asyncio.to_thread(router.get_provider, chat_request.model)
             provider_get_ms = (time.time() - provider_get_start) * 1000
             provider.check_capacity()
+            # AFTER the provider resolves (it owns template_info) and BEFORE
+            # the request is handed over -- see _strip_history_specials.
+            _strip_history_specials(chat_request, provider)
             generator = await asyncio.to_thread(
                 provider.create_chat_completion, chat_request, abort_event)
         except RuntimeError as e:

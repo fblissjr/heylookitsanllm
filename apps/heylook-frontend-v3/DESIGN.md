@@ -174,6 +174,28 @@ server skips its declared-specials strip for that request. Two invariants:
   means *not stripping them from the decoded text*. Same switch, two code paths —
   don't ship it as if it were uniform. Only the decoded-text half is wired
   today; explore and jspace still ignore the pref.
+- **It is an MLX-only lever, and the help text says so.** The strip lives in
+  heylook's own reasoning parser, and the gguf provider routes to a
+  pass-through (`template_info()` is None: llama-server pre-splits reasoning
+  and re-parsing another engine's output is the documented trap), so heylook
+  never strips a gguf reply. Verified live on the *same model* in both
+  packagings, gemma-4-E4B MLX vs its q4_0 GGUF: with the pref off, MLX returned
+  `STARTEND` where gguf returned `START<mask>END`. Default-on hides the
+  asymmetry — both show — so it only surfaces if someone turns it off and
+  expects stripping. Not worth "fixing" by teaching heylook to strip gguf
+  output: that would add hiding where none exists, against this section.
+- **Kept markers must never re-enter a prompt.** The store IS the request on
+  chat, so an unstripped assistant row would be replayed into the next turn --
+  and a fast tokenizer matches a declared special's *string* and encodes the
+  real control token, putting a turn boundary inside prior assistant content
+  (worst case: `continue`, whose prefill would end on one). The server therefore
+  strips declared specials out of replayed ASSISTANT text
+  (`_strip_history_specials`), which is what makes the "display-only" invariant
+  above true rather than aspirational. User-authored text is left alone.
+  Notebook is the deliberate exception and differs in kind: the reply lands in
+  the document body, which is raw, visible, editable text the user is composing,
+  and *what you see is what is sent* is that surface's contract — mangling it
+  silently would be the bigger lie. Caveat stated in the drawer help text.
 - **On the decoded-text surfaces it is a GENERATION-time switch, and the help
   text says so.** The strip runs server-side before the text is streamed *and*
   before it is persisted, so there is no stripped-vs-raw copy to toggle between

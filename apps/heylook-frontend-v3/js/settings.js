@@ -242,7 +242,11 @@ export const DISPLAY_META = {
         + 'its replies instead of stripping them. Display-only -- never changes '
         + 'what is sent to the model. Applies to replies generated from now on: '
         + 'chat stores a reply exactly as it was parsed, so this cannot add '
-        + 'markers to (or remove them from) a reply that already exists.',
+        + 'markers to (or remove them from) a reply that already exists. '
+        + 'gguf models are never stripped, so turning this off does nothing there. '
+        + 'Chat strips the markers back out when it replays a reply as history, so '
+        + 'they never re-enter a prompt; notebook writes the reply into the document, '
+        + 'where they are ordinary text you can see and edit -- and send.',
   },
 };
 
@@ -353,14 +357,20 @@ export function buildSettingsPanel({ caps = [] } = {}) {
   ]);
 }
 
-// Global display-prefs section (the second section-kind, alongside Sampling and
-// per-page extras). Rendered in the shared drawer on every page -- these prefs
-// are model-agnostic, so no capability gating.
-// Renders only prefs whose render surface actually honors them (`wired`); a pref
-// with no consumer is a lie as a control, so it stays in the store but out of the
-// UI. Returns null when nothing is wired yet, so the drawer omits the section.
-export function buildDisplayPanel() {
-  const rows = Object.entries(DISPLAY_META).filter(([, meta]) => meta.wired).map(([key, meta]) => {
+// Display-prefs section (the second section-kind, alongside Sampling and
+// per-page extras). Model-agnostic, so no capability gating -- but NOT
+// page-agnostic: `honored` is the PAGE's list of pref keys it actually reads
+// (drawer contribution `displayPrefs`), and a pref outside it is omitted here.
+// Two gates, and they are different questions: `wired` = "does any surface honor
+// this yet", `honored` = "does THIS page". Explore and jspace are the token-array
+// half of show_special_tokens and read nothing, so offering them the checkbox
+// would be the same lie the `wired` gate exists to prevent -- one control that
+// silently does nothing on the page you are looking at.
+// Returns null when the page honors none, so the drawer omits the section.
+export function buildDisplayPanel(honored = []) {
+  const rows = Object.entries(DISPLAY_META).filter(
+    ([key, meta]) => meta.wired && honored.includes(key)
+  ).map(([key, meta]) => {
     const box = createEl('input', { id: `disp-${key}`, type: 'checkbox', checked: getDisplayPref(key) === true });
     box.addEventListener('change', () => setDisplayPref(key, box.checked));
     return createEl('div', { class: 'settings-row' }, [

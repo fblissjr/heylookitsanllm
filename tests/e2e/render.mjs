@@ -1231,6 +1231,21 @@ async function main() {
         'the generate body still asked for special tokens after unchecking');
     });
 
+    await suite.check('a page that ignores the pref does not offer it', async () => {
+      // The drawer is an app-shell singleton rendered on every page, so a
+      // globally-`wired` pref would appear on explore/jspace too -- which read
+      // token ids, not this. Same lie the `wired` gate exists to prevent.
+      await disp.page.evaluate(() => { location.hash = '#/explore'; });
+      await waitFor(async () => (await disp.page.$('.explore__strip, .page--explore, main')) !== null,
+        { timeout: 5000, message: 'explore never mounted' });
+      await openDrawer(disp.page, '.drawer-gear');
+      assert(!(await dispBox()), 'explore offered a display pref it does not honor');
+      await closeDrawer(disp.page);
+      await disp.page.evaluate(() => { location.hash = '#/chat'; });
+      await waitFor(async () => (await disp.page.$('.chat__thread')) !== null,
+        { timeout: 5000, message: 'chat never came back' });
+    });
+
     await suite.check('the pref never rides in the sampler bag', async () => {
       // `overrides` is layered over the conversation's stored params, which is
       // the sampler bag -- a display pref landing there would be persisted as
@@ -1245,6 +1260,10 @@ async function main() {
     await suite.check('no uncaught page errors (display pref)', () => {
       assert(disp.pageErrors.length === 0, `page errors: ${disp.pageErrors.join(' | ')}`);
     });
+    // setDisplayPref PERSISTS, and every boot in this run shares one browser
+    // profile and origin -- leaving it unchecked would silently seed every
+    // later boot with a non-default pref (code review finding, 2026-08-23).
+    await disp.page.evaluate(() => localStorage.removeItem('heylook-v3-display'));
     await disp.page.close();
 
     // ---- boot 9: raw HTML in model text is SHOWN, never rendered ---------

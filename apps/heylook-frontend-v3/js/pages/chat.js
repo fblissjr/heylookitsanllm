@@ -103,6 +103,8 @@ export default createPage({
       samplers: 'enabled',
       sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
+      // this page sends it (displayWireFields); pages that do not, do not offer it
+      displayPrefs: ['show_special_tokens'],
     });
     ctx.onTeardown(unregisterSettings);
 

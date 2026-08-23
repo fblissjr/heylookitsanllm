@@ -644,3 +644,60 @@ class TestShowSpecialTokens:
         dumped = provider.last_request.model_dump()
         assert "show_special_tokens" not in dumped
         assert not any("special" in k for k in dumped)
+
+    @pytest.mark.asyncio
+    async def test_kept_specials_do_not_come_back_as_prompt(self, ctx_specials):
+        """The store IS the request, so a row recorded WITH specials is
+        replayed into the next turn's prompt -- and a fast tokenizer encodes a
+        declared special's string as the real control token, putting a turn
+        boundary inside prior assistant content. Display state must not reach
+        the model: the replay strips (code review finding, 2026-08-23)."""
+        client, store, provider = ctx_specials
+        conv, _ = await make_conv(store, ("user", "q1"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "show_special_tokens": True})
+        assert res.status_code == 200
+        stored = saved_event(res.text)["messages"][-1]["content"]
+        assert self.SPECIAL in stored, "precondition: the row must carry a special"
+
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "q2",
+                                      "show_special_tokens": True})
+        assert res.status_code == 200
+        replayed = [m for m in provider.last_request.messages if m.role == "assistant"]
+        assert replayed, "the second turn replayed no assistant history"
+        assert all(self.SPECIAL not in (m.content or "") for m in replayed), \
+            f"the model was fed its own control token back: {[m.content for m in replayed]}"
+
+    @pytest.mark.asyncio
+    async def test_continue_prefill_never_ends_in_a_control_token(self, ctx_specials):
+        """Worst case of the same bug: in continue mode the anchor row rides as
+        the FINAL message with continue_final_message=True, so an unstripped
+        row would make the prefill end on a turn boundary."""
+        client, store, provider = ctx_specials
+        conv, _ = await make_conv(store, ("user", "q1"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "show_special_tokens": True})
+        assert res.status_code == 200
+        anchor = saved_event(res.text)["messages"][-1]
+        assert self.SPECIAL in anchor["content"], "precondition: anchor carries a special"
+
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "continue", "message_id": anchor["id"],
+                                      "show_special_tokens": True})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req.continue_final_message is True
+        assert self.SPECIAL not in (req.messages[-1].content or "")
+
+    @pytest.mark.asyncio
+    async def test_user_text_is_left_alone(self, ctx_specials):
+        """The strip is scoped to what the SERVER recorded unstripped. What a
+        user typed keeps the semantics every other API surface gives it."""
+        client, store, provider = ctx_specials
+        conv, _ = await make_conv(store, ("user", f"keep {self.SPECIAL} mine"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append"})
+        assert res.status_code == 200
+        user_msgs = [m for m in provider.last_request.messages if m.role == "user"]
+        assert any(self.SPECIAL in (m.content or "") for m in user_msgs)

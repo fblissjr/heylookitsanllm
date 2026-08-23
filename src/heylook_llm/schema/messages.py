@@ -125,7 +125,12 @@ class MessageCreateRequest(BaseModel):
         default=None,
         description="Return the model's declared special tokens instead of "
                     "stripping them (e.g. <|im_end|>, <bos>). Display-only: "
-                    "changes the text you get back, never the generation.",
+                    "changes the text you get back, never the generation. "
+                    "Text you send is never altered either way -- but text you "
+                    "send BACK carries whatever you kept, so a client that "
+                    "replays a reply verbatim is replaying control-token "
+                    "strings (the conversation surface strips those on replay; "
+                    "see conversation_generate_api._strip_history_specials).",
     )
 
     # Performance
