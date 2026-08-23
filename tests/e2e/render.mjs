@@ -1191,6 +1191,53 @@ async function main() {
       assert(two.pageErrors.length === 0, `page errors: ${two.pageErrors.join(' | ')}`);
     });
     await two.page.close();
+
+    // ---- boot 9: raw HTML in model text is SHOWN, never rendered ---------
+    // marked passes raw HTML through and DOMPurify then deletes any tag
+    // outside its allowlist while KEEPING the tag's content, so a model
+    // writing `<d>tag</d>` rendered as "tag" with the tags silently gone --
+    // while Copy, which reads the stored text, still showed them. Module-level
+    // check (no chat page needed): renderMarkdown is the only text->HTML path.
+    const md = await browser.newPage();
+    await md.goto(`${base}/v3/`, { waitUntil: 'domcontentloaded' });
+    const render = (src) => md.evaluate(async (b, text) => {
+      const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+      return renderMarkdown(text);
+    }, base, src);
+
+    await suite.check('an unknown tag survives rendering as text', async () => {
+      const html = await render('Use the <d>tag</d> here.');
+      assert(html.includes('&lt;d&gt;tag&lt;/d&gt;'),
+        `the tags did not survive rendering: ${JSON.stringify(html)}`);
+    });
+
+    await suite.check('an allowlisted tag is shown, not rendered', async () => {
+      // The narrow fix (teach DOMPurify to keep <d>) would leave this red:
+      // render would still disagree with Copy for every allowlisted tag.
+      const html = await render('bold <b>works</b>');
+      assert(html.includes('&lt;b&gt;works&lt;/b&gt;'),
+        `raw HTML was rendered instead of shown: ${JSON.stringify(html)}`);
+    });
+
+    await suite.check('angle-bracketed prose is not mangled into a tag', async () => {
+      const html = await render('math a <b and c> d');
+      assert(html.includes('math a &lt;b and c&gt; d'),
+        `prose was parsed as inline HTML: ${JSON.stringify(html)}`);
+    });
+
+    await suite.check('code and autolinks are untouched by the escape', async () => {
+      const fenced = await render('```\n<d>fenced</d>\n```');
+      assert(fenced.includes('<pre><code>&lt;d&gt;fenced&lt;/d&gt;'),
+        `fenced code changed shape: ${JSON.stringify(fenced)}`);
+      const span = await render('inline `<d>` code');
+      assert(span.includes('<code>&lt;d&gt;</code>'),
+        `inline code changed shape: ${JSON.stringify(span)}`);
+      const link = await render('<https://example.com>');
+      assert(link.includes('<a href="https://example.com">'),
+        `an autolink stopped being a link: ${JSON.stringify(link)}`);
+    });
+
+    await md.close();
   } finally {
     await browser.close();
     server.close();

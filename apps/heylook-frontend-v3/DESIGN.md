@@ -195,6 +195,19 @@ no special tokens, there's nothing to expose and the edit box is just its text.
 hidden token is a missing label; in an *edit* view it's a token you can destroy
 without knowing it was there.)
 
+**Tag-shaped text is content too (chat's markdown path, v1.79.5).** The same
+rule reaches the one surface that renders model text as HTML. marked passes raw
+HTML through and DOMPurify then deletes any tag outside its allowlist while
+keeping the tag's *content*, so a reply containing `<d>tag</d>` rendered as
+"tag" and the markers vanished with no trace — Copy, reading the stored text,
+still showed them. `renderMarkdown` (`markdown.js`, still the only sanctioned
+text→HTML path) now **escapes raw HTML instead of rendering it**: what the model
+wrote is what the message shows, for every tag rather than only the ones
+DOMPurify happens to drop. A model that wants HTML *rendered* fences it; fenced
+and inline code were always escaped and are unchanged. This is the honesty rule
+above, not a security one — DOMPurify stays as the backstop for what marked's
+other renderers emit (link hrefs, image srcs).
+
 Known violation to fix (backend): `jspace/analyze.py` decodes the answer with
 `skip_special_tokens=True` and its raw-completion path (`chat=False`) drops the
 chat template entirely — so the assistant turn and its markers never reach the

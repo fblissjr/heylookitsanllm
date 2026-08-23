@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.5]
+
+### Fixed
+
+- v3 chat silently deleted tag-shaped text from a model's reply. marked passes
+  raw HTML through and DOMPurify then removes any tag outside its allowlist
+  while KEEPING the tag's content, so a reply containing `<d>tag</d>` rendered
+  as "tag" with the markers gone -- while Copy, which reads the stored text,
+  still showed them. Same root cause mangled ordinary prose: `a <b and c> d`
+  parsed as an inline `<b>` and re-emitted as markup, and an HTML comment
+  removed its content outright.
+
+  Raw HTML in model text is now escaped at the renderer, so the rendered
+  message matches the stored text for EVERY tag rather than only the ones
+  DOMPurify happens to drop -- fixing the class, not the instance. Fenced and
+  inline code (already escaped), autolinks, and markdown structure are
+  unchanged; DOMPurify stays as the backstop for what marked's other renderers
+  emit. Nothing else in the pipeline touches tag-shaped text: the backend
+  removes only tokens a model's own tokenizer files mark `special: true`.
+
+  Guarded by four checks in the model-free render suite (`bun run e2e:render`),
+  each seen failing against a pre-fix copy of the frontend.
+
 ## [1.79.4]
 
 ### Fixed
