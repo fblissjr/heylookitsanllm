@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Request-schema parity guard** (`tests/unit/test_request_schema_parity.py`).
+  `ChatRequest` (the OpenAI wire, and the model providers are driven with) and
+  `MessageCreateRequest` (the Messages wire) share 19 fields, so every knob is a
+  decision made twice and getting it wrong is silent -- the field just does not
+  exist on the other surface. The guard derives the sampler roster from
+  `REQUEST_SAMPLER_FIELDS` (never a hand-list), requires every asymmetry between
+  the two schemas to be DECLARED with a reason, catches a declaration that has
+  gone stale, and pins that shared fields agree on type and default (a knob with
+  different bounds on each wire is a value one API accepts and the other 422s --
+  the reason the `reasoning_effort` Literal is shared). Each assertion was seen
+  failing against a deliberate mutation.
+
+
+### Added
+
 - **"Show special tokens" is wired** (v3 settings drawer, DESIGN.md §6's
   toggle -- it has been in the store with `wired: false` since the pref was
   designed). The server strips a model's DECLARED specials (`special: true` in
