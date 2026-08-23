@@ -112,6 +112,22 @@ class MessageCreateRequest(BaseModel):
                     "model's processor supports",
     )
 
+    # Display honesty (DESIGN.md §6): the server strips the specials a model
+    # DECLARES (`special: true` in its tokenizer files) out of the text it
+    # returns, as a guard against fast-detokenizer leaks. That guard also
+    # deletes a special the model wrote deliberately -- and those say where in
+    # the turn the model is, which is the thing an interpretability surface
+    # exists to show. Opt IN to keep them: absent/false = strip, as before, so
+    # no existing consumer changes. Affects the text returned (and, on the
+    # conversation surface, the text PERSISTED), never what is sent to the
+    # model and never generation itself.
+    show_special_tokens: Optional[bool] = Field(
+        default=None,
+        description="Return the model's declared special tokens instead of "
+                    "stripping them (e.g. <|im_end|>, <bos>). Display-only: "
+                    "changes the text you get back, never the generation.",
+    )
+
     # Performance
     include_performance: bool = Field(
         default=False, description="Include performance metrics (tps, memory) in response"

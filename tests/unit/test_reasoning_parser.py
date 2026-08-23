@@ -564,6 +564,61 @@ class TestStripTokensDefense:
         assert "<|reserved_200000|>" not in content
 
 
+class TestShowSpecialTokensOptOut:
+    """``strip_specials=False`` -- v3's "Show special tokens" display pref
+    (DESIGN.md §6). The strip is a GUARD against detokenizer leaks; it also
+    deletes a special the model wrote on purpose, and those say where in the
+    turn the model is. Opt-in per request, so every other consumer keeps the
+    guard."""
+
+    def test_declared_specials_survive_when_not_stripping(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = _template(thinking=True, specials=["<|im_end|>"])
+        parser = select_reasoning_parser(info, strip_specials=False)
+        out = parser.process_chunk("hello <|im_end|>") + parser.flush()
+        assert "".join(t for _, t in out) == "hello <|im_end|>"
+
+    def test_default_still_strips(self):
+        """The opt-out is opt-IN: the same template with no flag strips, so a
+        client that says nothing (every OpenAI-compat consumer) is unchanged."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = _template(thinking=True, specials=["<|im_end|>"])
+        parser = select_reasoning_parser(info)
+        out = parser.process_chunk("hello <|im_end|>") + parser.flush()
+        assert "".join(t for _, t in out) == "hello "
+
+    def test_routing_is_unaffected(self):
+        """Structural tokens are NOT declared-specials handling: the parser
+        consumes ``<think>`` to know what is thinking, and that must keep
+        working with the filter off (otherwise "show specials" would silently
+        dump the reasoning into the answer)."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = _template(thinking=True, specials=["<|im_end|>"])
+        parser = select_reasoning_parser(info, strip_specials=False)
+        out = []
+        for ch in ["<think>", "plan <|im_end|>", "</think>", "answer <|im_end|>"]:
+            out += parser.process_chunk(ch)
+        out += parser.flush()
+        thinking = "".join(t for k, t in out if k == "thinking")
+        content = "".join(t for k, t in out if k == "content")
+        assert thinking == "plan <|im_end|>"
+        assert content == "answer <|im_end|>"
+
+    def test_holdback_does_not_swallow_the_tail(self):
+        """With the filter composed, a trailing prefix of a special is HELD
+        pending; with it off there is no holdback at all, so a reply ending in
+        a bare ``<`` must still arrive."""
+        from heylook_llm.reasoning_parser import select_reasoning_parser
+
+        info = _template(specials=["<|im_end|>"])
+        parser = select_reasoning_parser(info, strip_specials=False)
+        out = parser.process_chunk("done <") + parser.flush()
+        assert "".join(t for _, t in out) == "done <"
+
+
 class TestSharedStripHoldback:
     """One holdback for all four parsers, sized by the STRIP SET.
 

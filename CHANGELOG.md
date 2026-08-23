@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.6]
+
+### Added
+
+- **"Show special tokens" is wired** (v3 settings drawer, DESIGN.md §6's
+  toggle -- it has been in the store with `wired: false` since the pref was
+  designed). The server strips a model's DECLARED specials (`special: true` in
+  its tokenizer files) out of the text it returns, as a guard against
+  fast-detokenizer leaks; that guard also deletes a special the model wrote
+  deliberately, and those say where in the turn the model is.
+
+  New opt-IN request field `show_special_tokens` on `POST /v1/messages` and
+  `POST /v1/conversations/{id}/generate`: when set, the declared-specials
+  filter is not composed and those specials arrive as the model emitted them.
+  Scoped to that filter -- a trailing PARTIAL structural token is still
+  trimmed at the final drain (`_strip_partial_token`, a deliberate guess about
+  text the model never finished), and routing still consumes its own
+  markers. Absent
+  or false is the previous behavior, so `/v1/chat/completions` and every
+  existing consumer are unchanged. It never reaches the model and is never
+  merged into the sampler bag.
+
+  v3's chat and notebook send it from the global display pref, which defaults
+  to ON (honesty-first, per §6). It is a GENERATION-time switch on these
+  surfaces, and the drawer's help text says so: a reply is persisted exactly
+  as it was parsed, so the toggle decides what the next reply records rather
+  than how an existing one renders. Explore and jspace are the token-ARRAY
+  half of the same pref and still ignore it.
+
+  Routing is unaffected: a parser still consumes its own structural tokens
+  (`<think>`, harmony/gemma channel markers) -- the switch governs only the
+  declared-specials filter over the text those parsers route.
+
 ## [1.79.5]
 
 ### Fixed

@@ -140,6 +140,23 @@ export function messagesParams(caps = null) {
   return out;
 }
 
+// Display prefs that ride the WIRE rather than the renderer. `show_special_tokens`
+// is one: the server strips a model's declared specials before the text is
+// streamed AND before it is persisted, so "show" cannot be a render-time choice
+// on these surfaces -- the client has to ask for the unstripped text.
+//
+// Kept OUT of samplerParams/messagesParams on purpose: those are the sampler bag,
+// everything in them reaches the model, and a document's stored `params` is that
+// same bag (CLAUDE.md). This is display state, so it is spread in beside the bag
+// at the two send sites, never merged into it.
+//
+// Two consumers today -- chat's /generate body and notebook's /v1/messages body.
+// Explore speaks the same wire but is a token-ARRAY surface (§6's other
+// mechanism: flag specials by token id), so it deliberately does not send this.
+export function displayWireFields() {
+  return { show_special_tokens: getDisplayPref('show_special_tokens') === true };
+}
+
 // ---------------------------------------------------------------------------
 // Per-DOCUMENT sampler settings. ONE mechanism shared by every page whose doc
 // carries `params` (chat conversations, notebooks, ...) so sampler tuning lives
@@ -215,15 +232,17 @@ export const DISPLAY_META = {
     label: 'Show special tokens',
     type: 'checkbox',
     default: true,   // honesty-first: shown by default (DESIGN.md §6)
-    // NOT yet honored by any render surface (the token-rendering paths still strip
-    // specials -- DESIGN.md §6 "known violation"). Kept in the store (getDisplayPref
-    // returns the `true` default, so a future consumer reads "shown"), but HIDDEN from
-    // the drawer UI until wired -- surfacing a toggle that does nothing misleads. Flip
-    // to true when a surface reads getDisplayPref/onDisplayChange for it.
-    wired: false,
-    help: 'Render <|im_start|>, <think>, role markers etc. as distinct tokens. '
-        + 'Display-only -- never changes what is sent to the model. Edit surfaces '
-        + 'always expose raw tokens regardless of this toggle.',
+    // Honored by the DECODED-TEXT surfaces (chat, notebook) since v1.79.6: they
+    // send `show_special_tokens` on the wire and the server skips its
+    // declared-specials strip (DESIGN.md §6). The token-ARRAY surfaces (explore,
+    // jspace) are the other half of "one preference, two render mechanisms" and
+    // do not read it yet.
+    wired: true,
+    help: 'Keep the model\'s special tokens (<|im_end|>, <bos>, role markers) in '
+        + 'its replies instead of stripping them. Display-only -- never changes '
+        + 'what is sent to the model. Applies to replies generated from now on: '
+        + 'chat stores a reply exactly as it was parsed, so this cannot add '
+        + 'markers to (or remove them from) a reply that already exists.',
   },
 };
 

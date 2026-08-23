@@ -89,7 +89,7 @@ js/
   page.js                   # createPage lifecycle (READ FIRST)
   api.js                    # table-generated endpoint wrappers
   streaming.js              # SSE over /v1/chat/completions (keepalive, reader.cancel, abort-as-completion, 503 retry, mid-stream {"error"})
-  settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/onDisplayChange); null = backend-cascade; snapshotSettings()/applySettings()
+  settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/onDisplayChange; displayWireFields() = display prefs that ride the WIRE, never the sampler bag -- show_special_tokens); null = backend-cascade; snapshotSettings()/applySettings()
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
   preset-bar.js             # shared drawer section (createPresetBar): select is inert, Apply is an explicit armed-confirmed copy, live drift line; used by chat + notebook
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook

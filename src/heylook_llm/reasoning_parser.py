@@ -509,7 +509,7 @@ class GemmaChannelParser:
 
 def select_reasoning_parser(
     template_info: Any = None, *, thinking_enabled: bool | None = None,
-    continuing: bool = False,
+    continuing: bool = False, strip_specials: bool = True,
 ) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
     pass-through so shutdown paths + unit tests don't need a full load.
@@ -529,6 +529,16 @@ def select_reasoning_parser(
     Declared specials are stripped by ONE wrapper (``StripSpecials``) that
     every routing parser composes -- a model that declares none gets the
     bare parser, since the wrapper exists only to strip.
+
+    ``strip_specials=False`` composes no wrapper at all: the caller wants the
+    specials the model actually emitted (v3's "Show special tokens" display
+    pref, DESIGN.md §6 -- they are load-bearing signal about where in the turn
+    the model is, and hiding them manufactures a class of bug). It is opt-IN
+    per request so the OpenAI-compatible surface keeps stripping by default.
+    ROUTING is unaffected either way: a routing parser still consumes its own
+    structural tokens (``<think>``, harmony/gemma channel markers) because
+    those are what it splits content from thinking WITH -- this switch governs
+    only the declared-specials FILTER over the text it routes.
     """
     if template_info is None:
         return PassThroughParser()
@@ -552,7 +562,7 @@ def select_reasoning_parser(
     else:
         parser = PassThroughParser()
 
-    return StripSpecials(parser, strip_tokens) if strip_tokens else parser
+    return StripSpecials(parser, strip_tokens) if (strip_tokens and strip_specials) else parser
 
 
 def parse_reasoning(

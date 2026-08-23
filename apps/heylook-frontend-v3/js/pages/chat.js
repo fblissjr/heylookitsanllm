@@ -28,7 +28,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
+import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -2060,7 +2060,11 @@ function startStream(ctx, opts = {}) {
   // expressed by absence and only the PUT can spell that (overrides
   // cannot un-set a stored key).
   const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) };
-  const launch = () => streamGenerate(stream.targetConvId, { mode, message_id: messageId, overrides }, {
+  // displayWireFields() is spread in BESIDE overrides, never into it: overrides
+  // is the sampler bag the server layers over the document's stored params, and
+  // a display pref landing in there would be persisted as generation state.
+  const launch = () => streamGenerate(stream.targetConvId,
+    { mode, message_id: messageId, overrides, ...displayWireFields() }, {
     signal: controller.signal,
     onToken: (_, full) => { firstDelta(); stream.sawEvent = true; stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.sawEvent = true; stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },

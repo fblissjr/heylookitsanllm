@@ -1192,6 +1192,61 @@ async function main() {
     });
     await two.page.close();
 
+    // ---- boot 9: the "Show special tokens" display pref reaches the wire --
+    // DESIGN.md §6. The strip is server-side (before the text is streamed AND
+    // before it is persisted), so the pref can only work by being ASKED FOR on
+    // the generate body -- a toggle that flips a local flag and sends nothing
+    // would look identical in the drawer and do nothing at all.
+    const disp = await openChat(browser, base);
+    const dispBox = () => disp.page.$('.drawer--open #disp-show_special_tokens');
+
+    await suite.check('the display toggle is offered and defaults to shown', async () => {
+      await openDrawer(disp.page);
+      const box = await dispBox();
+      assert(box, 'no Show special tokens control in the drawer');
+      assert(await (await box.getProperty('checked')).jsonValue(),
+        'the toggle defaults to OFF -- DESIGN.md §6 says shown by default');
+      await closeDrawer(disp.page);
+    });
+
+    const sentFlag = async (text) => {
+      const before = disp.reqs.length;
+      await send(disp.page, text);
+      const post = await waitFor(
+        () => disp.reqs.slice(before).find((r) => r.method === 'POST' && r.url.includes('/generate')),
+        { timeout: 5000, interval: 50, message: 'send made no generate POST' });
+      return JSON.parse(post.postData).show_special_tokens;
+    };
+
+    await suite.check('generate asks for the specials while the toggle is on', async () => {
+      assert((await sentFlag('with specials')) === true,
+        'the generate body did not ask for special tokens');
+    });
+
+    await suite.check('unchecking it asks for the strip instead', async () => {
+      await openDrawer(disp.page);
+      await (await dispBox()).click();
+      await closeDrawer(disp.page);
+      assert((await sentFlag('without specials')) === false,
+        'the generate body still asked for special tokens after unchecking');
+    });
+
+    await suite.check('the pref never rides in the sampler bag', async () => {
+      // `overrides` is layered over the conversation's stored params, which is
+      // the sampler bag -- a display pref landing there would be persisted as
+      // generation state and would reach the model.
+      const post = [...disp.reqs].reverse()
+        .find((r) => r.method === 'POST' && r.url.includes('/generate'));
+      const body = JSON.parse(post.postData);
+      assert(!('show_special_tokens' in (body.overrides ?? {})),
+        'the display pref was merged into overrides');
+    });
+
+    await suite.check('no uncaught page errors (display pref)', () => {
+      assert(disp.pageErrors.length === 0, `page errors: ${disp.pageErrors.join(' | ')}`);
+    });
+    await disp.page.close();
+
     // ---- boot 9: raw HTML in model text is SHOWN, never rendered ---------
     // marked passes raw HTML through and DOMPurify then deletes any tag
     // outside its allowlist while KEEPING the tag's content, so a model

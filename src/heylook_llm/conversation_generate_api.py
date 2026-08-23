@@ -115,6 +115,13 @@ class GenerateRequest(BaseModel):
     # (same allowlist + cap gates). May carry "model" to generate with a
     # model other than the conversation's stamped one.
     overrides: dict = Field(default_factory=dict)
+    # v3's "Show special tokens" display pref (DESIGN.md §6). NOT a sampler and
+    # deliberately NOT carried in `overrides`/params -- it never reaches the
+    # model, and params is the sampler bag. It is per-REQUEST rather than
+    # per-conversation because it decides what this reply RECORDS: the text is
+    # persisted exactly as parsed, so a reply generated with it on keeps its
+    # specials forever and one generated with it off never had them to keep.
+    show_special_tokens: bool | None = None
 
 
 # The ONE media-type -> capability mapping. Both the prefetch filter
@@ -411,6 +418,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 saved_user_row=saved_user_row, continue_row=continue_row,
                 commit_after=commit_after, dropped=dropped,
                 thinking_enabled=thinking_enabled,
+                show_specials=bool(body.show_special_tokens),
                 perf_ctx=perf_ctx, started=started,
             ),
             media_type="text/event-stream",
@@ -469,12 +477,16 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                            provider, abort_event, model_id, mode,
                            saved_user_row, continue_row, commit_after,
                            dropped, thinking_enabled, perf_ctx,
+                           show_specials=False,
                            started=None) -> AsyncGenerator[str, None]:
     if started is not None:
         started["flag"] = True  # the finally below owns _ACTIVE from here on
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
+    # ONE dict, both parsers: the streamed split and the persisted split must
+    # be built the same way or the row would disagree with what was rendered.
     parser_args = dict(thinking_enabled=thinking_enabled,
-                       continuing=continue_row is not None)
+                       continuing=continue_row is not None,
+                       strip_specials=not show_specials)
     translator = StreamingEventTranslator(
         message_id, model_id,
         thinking_parser=select_reasoning_parser(provider.template_info(), **parser_args))

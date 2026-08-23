@@ -556,3 +556,91 @@ class TestClaimLeaks:
         finally:
             if "check_capacity" in provider.__dict__:
                 del provider.check_capacity
+
+
+@pytest.mark.unit
+class TestShowSpecialTokens:
+    """v3's "Show special tokens" display pref on the wire (DESIGN.md §6).
+
+    The server strips a model's DECLARED specials before the text is streamed
+    and before it is persisted, so "show them" has to be asked for per request.
+    Both halves matter: a reply is stored exactly as it was parsed, so the
+    streamed deltas and the saved row must agree -- one parser built two ways
+    would put markers on screen that the row does not have (or the reverse).
+    """
+
+    SPECIAL = "<|im_end|>"
+
+    @pytest_asyncio.fixture
+    async def ctx_specials(self):
+        """Same app as `ctx`, but the provider DECLARES a special and emits it
+        -- the fake in `ctx` returns template_info() None (pass-through), where
+        nothing is ever stripped and this pref could not be observed."""
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+        class DeclaringProvider(FakeProvider):
+            def __init__(self):
+                super().__init__(chunks=("Hello", f" world{TestShowSpecialTokens.SPECIAL}"))
+
+            def template_info(self):
+                return ModelTemplateInfo(
+                    chat_template="",
+                    special_tokens=frozenset([TestShowSpecialTokens.SPECIAL]),
+                    template_source="jinja",
+                )
+
+        provider = DeclaringProvider()
+        app = FastAPI()
+        app.include_router(conversation_router)
+        app.include_router(generate_router)
+        app.state.db = await db.get_connection(path=":memory:")
+        app.state.router_instance = FakeRouter(provider)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client, app.state.db, provider
+        _ACTIVE.clear()
+        await app.state.db.close()
+
+    @staticmethod
+    def _streamed_text(body: str) -> str:
+        return "".join(
+            data["delta"].get("text", "")
+            for ev, data in sse_events(body)
+            if ev == "content_block_delta" and data["delta"].get("type") == "text_delta"
+        )
+
+    @pytest.mark.asyncio
+    async def test_asking_keeps_them_on_screen_and_in_the_row(self, ctx_specials):
+        client, store, _ = ctx_specials
+        conv, _ = await make_conv(store, ("user", "q"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "show_special_tokens": True})
+        assert res.status_code == 200
+        assert self.SPECIAL in self._streamed_text(res.text)
+        saved = saved_event(res.text)["messages"][-1]
+        assert saved["content"] == f"Hello world{self.SPECIAL}"
+
+    @pytest.mark.asyncio
+    async def test_default_strips_both(self, ctx_specials):
+        """Opt-IN: a body that says nothing gets today's behavior, streamed
+        and stored."""
+        client, store, _ = ctx_specials
+        conv, _ = await make_conv(store, ("user", "q"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append"})
+        assert res.status_code == 200
+        assert self.SPECIAL not in self._streamed_text(res.text)
+        assert saved_event(res.text)["messages"][-1]["content"] == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_it_never_reaches_the_model(self, ctx_specials):
+        """It is a display pref: it must not land in the request the provider
+        is driven with (params is the sampler bag -- CLAUDE.md)."""
+        client, store, provider = ctx_specials
+        conv, _ = await make_conv(store, ("user", "q"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "show_special_tokens": True})
+        assert res.status_code == 200
+        dumped = provider.last_request.model_dump()
+        assert "show_special_tokens" not in dumped
+        assert not any("special" in k for k in dumped)

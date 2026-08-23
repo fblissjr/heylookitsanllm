@@ -260,13 +260,19 @@ stays for external consumers, no v3 page calls it):
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
   reasoning_effort?, logprobs?, top_logprobs?, sampler?, vision_tokens?,
-  stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
+  show_special_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
   the rename in `messagesParams()`, settings.js, never a second bag);
   `sampler`/`vision_tokens` are heylook extensions with ChatRequest
   semantics. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
+  `show_special_tokens` (v1.79.6) is the one field here that is NOT a
+  generation knob: it returns the model's declared special tokens instead of
+  stripping them (DESIGN.md §6). Opt-IN — absent/false is the pre-1.79.6
+  behavior, so no existing consumer changes. Notebook sends it from the
+  global display pref (`displayWireFields()`, settings.js); explore speaks
+  this same wire and deliberately does not, being a token-ARRAY surface.
 - Streaming: the Messages SSE grammar (message_start / content_block_* /
   message_delta / message_stop) plus the namespaced extensions: `event:
   heylook_logprobs` `data:{type,tokens:[{token,logprob,top_logprobs:[{token,
@@ -345,7 +351,7 @@ stays for external consumers, no v3 page calls it):
 Phase 1; the server-side saga that replaces the client-orchestrated
 truncate→stream→persist sequences):**
 - `POST /{id}/generate` `{mode:"append"|"regenerate"|"continue",
-  message_id?, user_content?, overrides?}` → SSE stream.
+  message_id?, user_content?, overrides?, show_special_tokens?}` → SSE stream.
   - The server builds the provider request FROM THE STORE: the conversation's
     `system_prompt`, `params` (sampler bag, cap-gated keys dropped for the
     target model), `model_id`, and message rows (media blocks the model can't
@@ -383,6 +389,14 @@ truncate→stream→persist sequences):**
     commit truncates by position in its own transaction, and rows appended
     mid-stream by another client would be silently destroyed at that
     commit. Metadata PUTs (title/prompt/params) stay open.
+  - `show_special_tokens` (v1.79.6) is a DISPLAY pref, not a sampler, and is
+    top-level for that reason — putting it in `overrides` would layer it into
+    the conversation's stored `params`, which is the sampler bag and reaches
+    the model. It selects the response parser: with it on, the declared
+    specials the model emits are neither stripped from the stream NOR from
+    the row that is PERSISTED, so it decides what this reply records, not how
+    an existing reply renders. v3 sends it on every generate from the global
+    display pref (`displayWireFields()`, settings.js).
   - v3 sends `overrides: {model, ...panel snapshot}` on every generate
     (v1.67.0): the store is the request's BASE, but panel writes to it are
     debounced/async — overrides carry the user's live intent past that

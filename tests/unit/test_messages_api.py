@@ -74,6 +74,25 @@ class TestToRequestConversion:
         assert chat_req.max_tokens == 512
         assert chat_req.seed == 42
 
+    def test_show_special_tokens_does_not_reach_the_model(self):
+        """Display pref, not a sampler: it selects the response PARSER and must
+        not survive the conversion into the request the provider is driven with
+        (DESIGN.md §6 -- "never changes what is sent to the model")."""
+        req = MessageCreateRequest(
+            model="test",
+            messages=[Message(role="user", content="hi")],
+            show_special_tokens=True,
+        )
+        assert req.show_special_tokens is True
+        dumped = to_chat_request(req).model_dump()
+        assert not any("special" in k for k in dumped)
+
+    def test_show_special_tokens_defaults_to_absent(self):
+        """Opt-IN: every existing client omits it and keeps the strip."""
+        req = MessageCreateRequest(
+            model="test", messages=[Message(role="user", content="hi")])
+        assert req.show_special_tokens is None
+
     def test_stream_flag_forwarded(self):
         req = MessageCreateRequest(
             model="test",

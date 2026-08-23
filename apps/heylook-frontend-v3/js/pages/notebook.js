@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { messagesParams, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
+import { messagesParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -473,6 +473,8 @@ function startGenerate(ctx) {
     system: s.systemPrompt || undefined,
     messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
     ...messagesParams(notebookCaps(ctx)),
+    // Display pref, not a sampler -- spread AFTER the bag and never inside it.
+    ...displayWireFields(),
   }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },

@@ -162,15 +162,26 @@ default, never unconditional stripping.
 
 **Realized as ONE global display toggle**, not a per-page control — it lives in
 the shared settings drawer and every token-rendering surface reads it (the
-canonical cross-cutting display pref; see the settings taxonomy below). Two
-invariants:
+canonical cross-cutting display pref; see the settings taxonomy below). Wired
+for the decoded-text surfaces in v1.79.6: chat and notebook send
+`show_special_tokens` on the wire (`displayWireFields()`, settings.js) and the
+server skips its declared-specials strip for that request. Two invariants:
 - **Display-only.** The toggle changes rendering, never what is sent to the
   model. This keeps it from becoming a second generation-settings path.
 - **One preference, two render mechanisms.** Token-array surfaces (token
   explorer, jspace) receive token *ids* and flag/style the special ones;
   decoded-text surfaces (chat, notebook) render a *string*, so "show specials"
   means *not stripping them from the decoded text*. Same switch, two code paths —
-  don't ship it as if it were uniform.
+  don't ship it as if it were uniform. Only the decoded-text half is wired
+  today; explore and jspace still ignore the pref.
+- **On the decoded-text surfaces it is a GENERATION-time switch, and the help
+  text says so.** The strip runs server-side before the text is streamed *and*
+  before it is persisted, so there is no stripped-vs-raw copy to toggle between
+  afterwards: a reply generated with the pref on keeps its specials in the
+  stored row forever, and one generated with it off never recorded them. That is
+  the honest shape (the row holds what the model produced), and it is what makes
+  the edit rule below reachable at all — but it means flipping the toggle
+  changes the *next* reply, never the thread already on screen.
 
 The shared settings drawer therefore holds four kinds of thing, and the drawer's
 `registerSettings(contribution)` contract (`settings-drawer.js`) models them
@@ -208,7 +219,8 @@ and inline code were always escaped and are unchanged. This is the honesty rule
 above, not a security one — DOMPurify stays as the backstop for what marked's
 other renderers emit (link hrefs, image srcs).
 
-Known violation to fix (backend): `jspace/analyze.py` decodes the answer with
+Known violation to fix (backend), and the reason the pref is only half wired:
+`jspace/analyze.py` decodes the answer with
 `skip_special_tokens=True` and its raw-completion path (`chat=False`) drops the
 chat template entirely — so the assistant turn and its markers never reach the
 UI. The interpretability default should be the *chat turn with markers shown*;
