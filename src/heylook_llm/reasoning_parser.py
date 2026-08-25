@@ -11,18 +11,18 @@ files on disk are the reliable source of truth.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Any, Callable, List, Optional, Protocol, Tuple
+from typing import Any, Protocol
 
-
-ParserDelta = Tuple[str, str]  # ("content" | "thinking", text)
+ParserDelta = tuple[str, str]  # ("content" | "thinking", text)
 
 
 class ReasoningParser(Protocol):
     def process_chunk(
-        self, text: str, token_id: Optional[int] = None
-    ) -> List[ParserDelta]: ...
-    def flush(self) -> List[ParserDelta]: ...
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]: ...
+    def flush(self) -> list[ParserDelta]: ...
     def reset(self) -> None: ...
 
 
@@ -30,7 +30,7 @@ class ReasoningParser(Protocol):
 # they route text, ``StripSpecials`` filters it (composed by
 # ``select_reasoning_parser``). Design + history: docs/parser_strip_unification.md.
 @lru_cache(maxsize=16)
-def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]:
+def _compile_strip_pattern(strip_tokens: frozenset[str]) -> re.Pattern | None:
     """Alternation regex over the declared specials, sorted longest-first so
     ``<|endoftext|>`` wins over a substring match inside it. Returns None for
     the empty set -- callers check and skip the sub().
@@ -46,7 +46,7 @@ def _compile_strip_pattern(strip_tokens: frozenset[str]) -> Optional[re.Pattern]
 
 
 @lru_cache(maxsize=16)
-def _partial_prefixes(strip_tokens: frozenset[str]) -> Tuple[frozenset[str], int]:
+def _partial_prefixes(strip_tokens: frozenset[str]) -> tuple[frozenset[str], int]:
     """Every PROPER prefix of every declared special, plus the longest
     special's length -- the holdback's lookup table.
 
@@ -59,7 +59,7 @@ def _partial_prefixes(strip_tokens: frozenset[str]) -> Tuple[frozenset[str], int
     return frozenset(prefixes), max((len(t) for t in strip_tokens), default=0)
 
 
-def _strip_specials(text: str, pattern: Optional[re.Pattern]) -> str:
+def _strip_specials(text: str, pattern: re.Pattern | None) -> str:
     if pattern is None or not text:
         return text
     return pattern.sub("", text)
@@ -86,15 +86,15 @@ class StripSpecials:
         self.inner = inner
         self._pattern = _compile_strip_pattern(strip_tokens)
         self._prefixes, self._max_len = _partial_prefixes(strip_tokens)
-        self._pend_kind: Optional[str] = None
+        self._pend_kind: str | None = None
         self._pend = ""
 
     def process_chunk(
-        self, text: str, token_id: Optional[int] = None
-    ) -> List[ParserDelta]:
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]:
         return self._clean(self.inner.process_chunk(text, token_id))
 
-    def flush(self) -> List[ParserDelta]:
+    def flush(self) -> list[ParserDelta]:
         return self._clean(self.inner.flush(), final=True)
 
     def reset(self) -> None:
@@ -110,7 +110,7 @@ class StripSpecials:
                 return len(buf) - i
         return 0
 
-    def _flush_pend(self, out: List[ParserDelta]) -> None:
+    def _flush_pend(self, out: list[ParserDelta]) -> None:
         if self._pend and self._pend_kind is not None:
             cleaned = _strip_specials(self._pend, self._pattern)
             if cleaned:
@@ -119,11 +119,11 @@ class StripSpecials:
         self._pend_kind = None
 
     def _clean(
-        self, deltas: List[ParserDelta], final: bool = False
-    ) -> List[ParserDelta]:
+        self, deltas: list[ParserDelta], final: bool = False
+    ) -> list[ParserDelta]:
         if self._pattern is None:
             return [d for d in deltas if d[1]]
-        out: List[ParserDelta] = []
+        out: list[ParserDelta] = []
         for kind, text in deltas:
             # a pending tail belongs to the kind it was routed under: flush it
             # before the stream switches channels so ordering is preserved
@@ -157,7 +157,7 @@ def _safe_prefix_len(buffer: str, max_token_len: int, final: bool) -> int:
     return len(buffer)
 
 
-def _strip_partial_token(text: str, control_tokens: Tuple[str, ...]) -> str:
+def _strip_partial_token(text: str, control_tokens: tuple[str, ...]) -> str:
     """Drop a trailing PARTIAL structural control token before a final drain.
 
     The final drain emits the whole buffer, so an abort landing mid-token
@@ -187,11 +187,11 @@ class PassThroughParser:
     """No reasoning structure. Text -> content."""
 
     def process_chunk(
-        self, text: str, token_id: Optional[int] = None
-    ) -> List[ParserDelta]:
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]:
         return [("content", text)] if text else []
 
-    def flush(self) -> List[ParserDelta]:
+    def flush(self) -> list[ParserDelta]:
         return []
 
     def reset(self) -> None:
@@ -230,17 +230,17 @@ class HarmonyChannelParser:
         self._buffer = ""
         self._state = "preamble"
         self._channel_name_buf = ""
-        self._current_channel: Optional[str] = None
+        self._current_channel: str | None = None
 
     def process_chunk(
-        self, text: str, token_id: Optional[int] = None
-    ) -> List[ParserDelta]:
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]:
         if not text:
             return []
         self._buffer += text
         return self._drain(final=False)
 
-    def flush(self) -> List[ParserDelta]:
+    def flush(self) -> list[ParserDelta]:
         return self._drain(final=True)
 
     def reset(self) -> None:
@@ -249,13 +249,13 @@ class HarmonyChannelParser:
         self._channel_name_buf = ""
         self._current_channel = None
 
-    def _drain(self, final: bool) -> List[ParserDelta]:
+    def _drain(self, final: bool) -> list[ParserDelta]:
         if final:
             # the loop below emits the WHOLE buffer when final -- drop a
             # trailing partial control token first, or an abort landing
             # mid-token flushes literal garbage like "<|chan"
             self._buffer = _strip_partial_token(self._buffer, _HARMONY_CONTROL_TOKENS)
-        out: List[ParserDelta] = []
+        out: list[ParserDelta] = []
         progress = True
         while progress:
             progress = False
@@ -321,7 +321,7 @@ class HarmonyChannelParser:
 
         return [d for d in out if d[1]]
 
-    def _find_next_control_token(self) -> Tuple[Optional[int], Optional[str]]:
+    def _find_next_control_token(self) -> tuple[int | None, str | None]:
         m = _HARMONY_CONTROL_PATTERN.search(self._buffer)
         if m is None:
             return None, None
@@ -369,17 +369,17 @@ class GemmaChannelParser:
         self._buffer = ""
         self._state = "content"
         self._channel_name_buf = ""
-        self._current_channel: Optional[str] = None
+        self._current_channel: str | None = None
 
     def process_chunk(
-        self, text: str, token_id: Optional[int] = None
-    ) -> List[ParserDelta]:
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]:
         if not text:
             return []
         self._buffer += text
         return self._drain(final=False)
 
-    def flush(self) -> List[ParserDelta]:
+    def flush(self) -> list[ParserDelta]:
         return self._drain(final=True)
 
     def reset(self) -> None:
@@ -388,13 +388,13 @@ class GemmaChannelParser:
         self._channel_name_buf = ""
         self._current_channel = None
 
-    def _drain(self, final: bool) -> List[ParserDelta]:
+    def _drain(self, final: bool) -> list[ParserDelta]:
         if final:
             # same reason as harmony: the loop below emits the WHOLE buffer
             # when final, so a trailing partial (gemma's close token starts
             # "<c") has to go before the drain, not after it
             self._buffer = _strip_partial_token(self._buffer, _GEMMA_CONTROL_TOKENS)
-        out: List[ParserDelta] = []
+        out: list[ParserDelta] = []
         progress = True
         while progress:
             progress = False
@@ -517,7 +517,7 @@ def declared_specials(template_info: Any) -> frozenset[str]:
     return frozenset(getattr(template_info, "special_tokens", None) or ())
 
 
-def specials_stripper(template_info: Any) -> Optional[Callable[[str], str]]:
+def specials_stripper(template_info: Any) -> Callable[[str], str] | None:
     """A one-shot ``str -> str`` strip for callers holding WHOLE text.
 
     ``StripSpecials`` is the STREAMING form (it owns a rolling holdback across
@@ -590,14 +590,14 @@ def select_reasoning_parser(
 
 def parse_reasoning(
     text: str, parser: ReasoningParser
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """Non-streaming wrapper: returns ``(content, thinking_or_None)``.
     ``thinking`` stays ``None`` when the parser emitted nothing to that
     channel -- the non-streaming API handlers rely on thinking staying
     ``None`` when absent."""
     parser.reset()
-    content_parts: List[str] = []
-    thinking_parts: List[str] = []
+    content_parts: list[str] = []
+    thinking_parts: list[str] = []
     for kind, chunk in parser.process_chunk(text):
         (content_parts if kind == "content" else thinking_parts).append(chunk)
     for kind, chunk in parser.flush():
@@ -608,8 +608,8 @@ def parse_reasoning(
 
 
 def merge_presplit_thinking(
-    pre_parts: List[str], parsed_thinking: Optional[str]
-) -> Optional[str]:
+    pre_parts: list[str], parsed_thinking: str | None
+) -> str | None:
     """Merge engine-PRE-SPLIT reasoning (GenerationChunk.thinking, e.g.
     llama-server's reasoning_content) ahead of anything the text parser
     extracted. In practice a provider pre-splits or it doesn't, so one side
