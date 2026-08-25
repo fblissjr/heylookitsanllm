@@ -1,54 +1,112 @@
 # Current Work
 
-Last updated: 2026-08-11 late (v1.54.0-1.57.1 config editor + switch arc,
-the follow-on session's v1.58.0-1.62.0, then a third session's
-v1.62.2-1.62.3: v3 asset caching, the system-prompt override box +
-draft persistence + chip, and the load-cost confirm removed -- all on
-main, unpushed; earlier narrative below unchanged)
+Last updated: 2026-08-25 (v1.79.7 on the `frontend` branch; suite 1500+
+unit+contract green, E2E chat 46/46 + pages 43/43 live-verified, model-free
+render suite 36/36 checks passing)
 
-HANDOFF (next session start here): main is at v1.62.3, suite 1500
-unit+contract green, E2E chat 45/45 + pages 43/43 live-verified. The
-2026-08-11 arc (fourteen commits across three sessions,
-v1.54.0-1.62.3) is COMPLETE except the two small items below -- see the
-UPDATE blocks for what each version shipped.
+HANDOFF (next session start here): The codebase is at v1.79.7 on the
+`frontend` branch. The extensive post-v1.62.3 arc shipped 60+ commits
+covering the complete Chat Orchestration & Reliability phases (0 through 2),
+Schema v7 media-by-reference and true single-message deletion, the Messages
+API Phase 3b consumer migration (no v3 page speaks /v1/chat/completions
+anymore), Q7 single-slot prompt-cache snapshot replacement (deleting radix),
+v2 frontend deletion (v3 is the sole frontend, /v2 returns 404), port 8000
+default, "show special tokens" wiring, iOS Safari scrolling/resume fixes,
+and v1.79.7's frontend-v3 rendering & memory performance optimizations.
 
-Two rules settled by the owner in the third session, both now contract
-(spec §4 + CLAUDE.md), because they generalize past the bugs that
-produced them:
+Two foundational contracts established in earlier arcs remain in force:
 - **Only LOSS gates; cost is disclosed.** Choosing a model is choosing
-  to pay for it, so the load-cost confirm is gone -- a confirm for
-  something inevitable only trains click-through. Say what is
-  happening (residency dots, Load button, a live pre-first-token
-  status) and gate only what destroys something (history media the
-  target cannot read, a prompt about to be replaced).
+  to pay for it -- gate only what destroys something (incompatible history
+  media, overwriting prompts), disclose residency/costs inline.
 - **The system prompt is an OVERRIDE BOX.** A preset owns a prompt and
-  carries it; an EMPTY one makes no claim and changes nothing. Empty
-  never means "set to empty".
+  carries it; an empty prompt in a preset makes no claim and changes
+  nothing.
 
 NEXT, in order:
-1. **F14 switch-lock + G4 context estimate** (last §15 switch polish;
-   TODO.md). F14 is an hour (disable the model select during a pending
-   load -- state already tracked). G4 is a half-day: honest context
-   estimation wants server-side token counting (a client-side count would
-   be the same drift sin the fit meter exists to avoid).
-2. **P3 schema-nits batch** (TODO.md, one sitting): extra_args
-   default/items typing, description/tags clearable via null, binary
-   staleness warning, -t/--threads + n_gpu_layers auto/all. One OWNER
-   DECISION embedded: admin /import currently log-skips invalid entries
-   where the CLI refuses loudly -- pick a behavior before changing it.
-Continuation loose ends parked in TODO (Messages-API explicit flag,
-image-history continuation, eval-bank run = explicit-ask tier).
-Gotchas for the next session: E2E must run unsandboxed and its server
-uses the REAL models.toml (only the DB is isolated) -- intercept any
-config-writing PATCH; contract tests only run green BATCHED (mock-MLX
-import ordering), use the full-suite command. (The worktree-per-session
-convention was retired 2026-08-11 -- sessions run in the primary
-checkout again.) Two more earned in the third session: a v3 UI bug that
-cannot be reproduced with a consistent module set is probably the
-BROWSER CACHE, not the code (v1.62.2 -- and the server must be
-RESTARTED for that fix, since it lives in api.py); and a chat-suite
-check must leave the world as found on EVERY axis, the preset LIST as
-well as the stamp, or it breaks checks three positions downstream.
+1. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
+   TODO.md). Startup `--model-id` load runs in server.py before the lifespan
+   resolves `observability_level` from the DB, so telemetry is missing for
+   pre-warmed loads. Needs settings resolution before pre-warm, and a contract
+   test pinning that `log_startup_info()` runs strictly after
+   `apply_runtime_settings()`.
+2. **Notebook resume sync** (P3, `apps/heylook-frontend-v3/js/pages/notebook.js`;
+   TODO.md). Port chat's `refreshAfterResume` / `ctx.onResume` store re-adoption
+   to the notebook page (currently notebook gets prompt flush-on-hide via the
+   shared factory, but lacks visibilitychange/pageshow re-fetch).
+3. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
+   TODO.md). The mRoPE cache gate keys on `_position_ids`/`_rope_deltas`
+   attribute sniffing; add an explicit per-model `cache_reuse = true|false`
+   config escape hatch in `models.toml` ahead of attribute sniffing.
+   Live-verify extension reuse for quantized/rotating cache configs.
+4. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
+   TODO.md). Slim `docs/frontend_v3_spec.md` down to §4 (the living API contract)
+   + decision records now that v2 is deleted. Trim `config.md` and `mlx_provider.md`.
+5. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
+   TODO.md). Admin panel observability controls and v3 `logs/*.jsonl` viewer page;
+   consolidate `memory.py` legacy streams into the spine once verified.
+6. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
+   TODO.md). Live streaming analyze endpoint (SSE) and interactive
+   steering/activation patching (porting `mlxui-core` op-semantics via forward-hooks).
+7. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
+   Optional 1Password / `op read` integration for DuckDB file encryption.
+
+UPDATE 2026-08-25 (v1.62.4-v1.79.7, 60+ commits across multiple milestones, on branch `frontend`):
+
+- **SOLID -- Frontend-v3 rendering & memory performance optimizations (v1.79.7)**:
+  - Token Explorer (`explore.js`): $O(N)$ streaming via incremental `DocumentFragment` appending and in-place `.tok--selected` toggling (eliminated $O(N^2)$ chip rebuilds, >98% fewer DOM ops).
+  - J-Space stability (`jspace.js`): Replaced array spreading in `Math.min`/`Math.max` with single-pass iterative loop (preventing stack overflow on >65k element matrices) + fast cell hover/marking lookup.
+  - HTML escaping (`markdown.js`): Zero-allocation compiled regex replacement replacing DOM-based `createElement('div')`.
+  - Image/audio previews (`chat.js`): `URL.createObjectURL(file)` lifecycle with deterministic revocation replacing multi-megabyte base64 strings in thumbnail DOM.
+  - Layout decoupling (`app.css`, `utils.js`): `@supports (field-sizing: content)` for modern textarea auto-sizing bypassing forced layout reads; canonical CSS design tokens.
+  - Module preloading (`index.html`): `<link rel="modulepreload">` for core shared modules.
+- **SOLID -- "Show special tokens" display pref wired (v1.79.6)**:
+  - Opt-in `show_special_tokens` request field on `POST /v1/messages` and `POST /v1/conversations/{id}/generate`.
+  - Drawer display panel wired on chat & notebook; generation-time toggle preserves declared specials (`special: true`) from the model.
+  - Wire hygiene: assistant-stored declared specials stripped before replaying as prompt turns to prevent control-token injection; request-schema parity guard (`test_request_schema_parity.py`) pins wire consistency between OpenAI and Messages APIs.
+- **SOLID -- Raw HTML preservation in replies (v1.79.5)**:
+  - Escaped raw HTML in model responses at the renderer so tags (e.g. `<d>tag</d>` or `<b and c>`) render accurately rather than being stripped by DOMPurify. Guarded by 4 model-free render checks.
+- **SOLID -- Tab resume store sync & page lifecycle hooks (v1.79.2-v1.79.4)**:
+  - `page.js` lifecycle grew `ctx.onHide()` and `ctx.onResume()` registering `visibilitychange` + `pagehide`/`pageshow`.
+  - Chat re-adopts store state (conversations, presets, params, rows) when returning from background/bfcache on iOS Safari; prompt editor debounced writes flush immediately on hide/unload with `keepalive`.
+- **SOLID -- iOS Safari scroll anchoring fix (v1.79.1)**:
+  - Root-caused iOS hidden/displaced row bug on simulator: `.message` rows' `content-visibility: auto` caused layout displacement on WebKit due to lack of `overflow-anchor`. Gated on `@supports (overflow-anchor: auto)`; message editor close re-aims scroll at row.
+- **SOLID -- Default port 8000 & security token hardening (v1.79.0)**:
+  - Default server port changed from 8080 to 8000 (`DEFAULT_PORT = 8000`); README rewritten with operational gotchas.
+  - `HEYLOOK_ADMIN_TOKEN` security gating extended to `/v1/admin/config`.
+- **SOLID -- mRoPE prompt-cache gate & test runner fixes (v1.78.0-v1.78.2)**:
+  - mRoPE language models (Qwen3-VL, Qwen3.5) gated out of prompt-cache reuse inside `process_prompt_with_cache` to eliminate empty output on chained restores; spec-decode draft cache slicing defused.
+  - Test runner order independence: session `sys.modules` MLX mock made conditional on absence of real MLX, module eviction bug fixed in `test_router_pinning.py`. Dependency floors bumped: `mlx>=0.32.1`, `mlx-vlm>=0.6.15`.
+- **SOLID -- v2 frontend deleted (v1.77.0-v1.77.1)**:
+  - `apps/heylook-frontend-v2/` deleted; `/v2` returns 404 (pinned by contract test); v3 is the sole frontend. Root `/` reports real `__version__`.
+  - Dependency cleanup: removed unused `xxhash` and `PyTurboJPEG` (v1.76.0).
+- **SOLID -- Q7 Single-slot prompt-cache snapshot replacement (v1.75.0)**:
+  - Radix tree completely deleted. Replaced with per-model single-slot snapshot cache holding immutable `(state, meta_state)` arrays with native `trim_prompt_cache`.
+  - Hybrid models (ArraysCache) refuse partial trims cleanly and re-prefill; zombie generation mutations quarantined.
+- **SOLID -- Phase 3b Messages API consumer migration & model attribution (v1.74.0-v1.74.1)**:
+  - Notebook and Explore migrated to `POST /v1/messages` (no v3 page speaks `/v1/chat/completions`).
+  - `/v1/messages` extended with streaming `heylook_logprobs`, `message_stop.performance` timing/KV metrics, optional `max_tokens`.
+  - Per-message model attribution chips (`.message-model-note`) rendered in mixed-model threads.
+  - Disconnect-persistence live E2E check; `/v1/models` template probe cached (v1.74.1, 1650ms -> 1ms).
+- **SOLID -- Media by reference (schema v7) & true single-message deletion (v1.73.0)**:
+  - Base64 media moved to content-addressed per-conversation blob store (`/v1/conversations/{id}/media/{media_id}`); reads are text-sized; generate saga inlines bytes on demand; reference-counted GC on deletion.
+  - `DELETE /v1/conversations/{id}/messages/{msg_id}` deletes a single message without truncating neighbor rows. `model_id` column added to messages table.
+- **SOLID -- Drag-and-drop / paste attach & stream swap (v1.72.0-v1.72.3)**:
+  - Unified staging pipeline for file picker, paste, and drag-and-drop with drop overlay and capability validation.
+  - Stream end swaps saved rows synchronously from `heylook_saved` without blank frame or layout shift (v1.72.2).
+  - `scripts/build_llama.py` repairs shallow clones and enforces binary rev verification (v1.72.3).
+- **SOLID -- Reasoning effort knob & Discovery-as-registry (v1.68.0-v1.71.2)**:
+  - `reasoning_effort` (`low|medium|high|xhigh`) thinking-depth knob supported per-request, preset, and model default; probed per-template on MLX and GGUF.
+  - Discovery-as-registry (`model_registry.py`): models under `[scan].folders` served automatically without writing models.toml; admin routes moved off event loop; v3 scan config editor (`GET/PUT /v1/admin/models/scan-config`).
+  - GGUF `chat_template_path` override (v1.68.0).
+- **SOLID -- Chat Orchestration & Reliability Phases 0-2 (v1.64.0-v1.67.1)**:
+  - Phase 0: Loud stream guards, unsaved-row honesty & retry/discard, saga reconciliation at stream end, editable thinking blocks.
+  - Phase 1: Conversation-scoped generation backend (`POST/DELETE /v1/conversations/{id}/generate`), server-owned persistence (completion, abort, client disconnect via detached task), atomic truncation transactions (`replace_tail_with_message`).
+  - Phase 2: v3 chat client cutover to `/generate` via `streamGenerate` in `streaming.js`; Stop = `DELETE .../generate`.
+  - Canonical llama-server build enforcement with loud spawn warnings on overrides (v1.66.1).
+  - 20 adversarial review findings resolved across two passes (v1.67.0-v1.67.1).
+- **SOLID -- Plain uv manifest & build_llama.py (v1.62.6)**:
+  - pyproject.toml simplified to a hand-maintained manifest of published releases; updater retired. `scripts/build_llama.py` manages canonical llama-server builds; `scripts/guard_stable_channel.sh` pre-commit guard prevents accidental pin commits.
+  - `heylookllm import` merges by default, preserving hand-edits.
 
 UPDATE 2026-08-11 late (v1.62.2-1.62.3, third session, all on main):
 
@@ -783,50 +841,35 @@ All in the plan with full rationale; one-liners here so nothing is missed:
 3. Audit the months-old model import/config/loading system.
 4. Clean up the test suite + verify assumptions against current mlx/mlx-lm/mlx-vlm.
 
-## 1. Frontend v3 (`apps/heylook-frontend-v3/`, served at /v3; /v2 untouched)
+## 1. Frontend v3 (`apps/heylook-frontend-v3/`, served at /v3; /v2 deleted in v1.77.0)
 
 - **SOLID -- chat**: conversations CRUD, streaming w/ thinking blocks,
-  edit/regenerate/delete via position truncation, stop = partial saved,
-  status telemetry line, mobile drawer. 25 browser E2E checks + a /simplify
-  pass. The most-verified surface in the app.
-- **SOLID -- shared layer**: `js/page.js` createPage lifecycle (read FIRST
-  before touching any page), hash router, table-generated `api.js`,
-  `streaming.js` (keepalive comments, reader.cancel, abort-as-completion,
-  built-in 503 retry via `onRetryWait`, mid-stream `{"error":...}` payloads
-  -> onError), settings panel (null = backend-cascade contract).
-- **SOLID -- notebook, models, perf, explore**: built by delegated agents
-  against the spec, reviewed, 27 E2E checks (autosave, generate-at-cursor,
-  scan/import/load/unload, no-polling perf, logprob chips + keyboard nav,
-  390px viewports).
-- **DONE -- visual design (2026-07-11)**: the impeccable `audit` + `polish`
-  gates ran across all 6 pages + shell + drawer (slop-clean, scored 17/20).
-  Fixed a mobile + a11y cluster -- notably delete/rename were unreachable on
-  iPhone (hover-gated, no touch fallback) -- plus aria-live status/error, `<label
-  for>` association, a real drawer focus-trap (`inert` #app, closes on hashchange),
-  the mobile settings gear (FAB -> bottom-nav), explore chip titles, aria-current.
-  Load-bearing rules new UI must honor: `apps/heylook-frontend-v3/DESIGN.md` §7.
-  iPhone-Safari verified via viewport + touch-media emulation (19/19), not a real
-  device.
-- **HALF-BAKED -- j-space visualizer track (v1.34.36-.37)**: DESIGN.md gate
-  cleared; SHIPPED + live-green in E2E: item 1 click-to-pin readout (strip
-  rows + heatmap cells pin a detail panel with logit bars +
-  first-answer-token emphasis; Esc/arrow-key walk; same-top-token echo;
-  onset marker + token header row), the `heatmap_top_k` analyze extension
-  (every heatmap cell now pins its full top-k -- reduced on-device), item 2
-  layer-range slider (slot-based; click/drag/hover-preview/reset; pure
-  client-side) + most-common-silent-tokens aggregation in the unpinned
-  detail panel (click a row = echo-highlight where it wins), and a
-  "provisional lens" badge from `/v1/jspace/models` meta (consumes the
-  fitting track's sidecar provenance stamps). Next per TODO.md: live
-  streaming (new SSE endpoint), interventions last.
-- **NOT DONE -- cutover**: retiring v2 / promoting v3 is deliberately open
-  until the owner has lived in /v3. Nothing blocks it.
-- **DONE -- E2E in repo (v1.34.8)**: rebuilt under `tests/e2e/` (puppeteer-core
-  + system Chrome; claude-in-chrome refuses localhost). 51/51 live-green vs the
-  MoE gemma-4-26B-A4B: chat 24 + pages 27. Spawns its own server with an
-  isolated HEYLOOK_DB_PATH so real data is untouched; each suite clears the temp
-  DB, pages ends on the danger-zone clear. `cd tests/e2e && bun install` then
-  `bun run e2e[:chat|:pages]`. Must run UNSANDBOXED (Chrome profile dir + Metal).
+  edit/regenerate/delete via single-message delete & server-side generate,
+  media by reference (schema v7), drag-and-drop & paste staging, model attribution,
+  status telemetry line, mobile drawer, tab resume store re-adoption, row reuse
+  with in-place reconcile (content-visibility jumping eliminated).
+- **SOLID -- shared layer**: `js/page.js` createPage lifecycle (hide/resume hooks),
+  hash router, table-generated `api.js`, `streaming.js` (typed SSE, `streamMessages`
+  and `streamGenerate` sharing `streamTypedSSE`), settings panel & global drawer
+  (null = backend-cascade contract, `show_special_tokens` wired).
+- **SOLID -- notebook, models, perf, explore**: notebook & explore migrated to
+  `POST /v1/messages` (Phase 3b); models page has discovered vs config distinction
+  + editable scan watch folders; perf page has no-polling perf; token explorer
+  has $O(N)$ streaming fragment optimizations.
+- **SOLID -- visual design & layout**: impeccable audit + polish across all pages;
+  iOS Safari scroll anchoring fix (`@supports (overflow-anchor: auto)`);
+  modern `@supports (field-sizing: content)` textarea auto-sizing decoupling
+  forced layout reads; canonical CSS design tokens.
+- **SOLID -- cutover (v1.77.0)**: retiring v2 / promoting v3 is COMPLETE.
+  `apps/heylook-frontend-v2/` deleted; `/v2` returns 404 (pinned by contract test);
+  v3 at `/v3` is the sole frontend.
+- **SOLID -- E2E & render suites**: `tests/e2e/` (puppeteer-core + system Chrome,
+  chat 46/46, pages 43/43 live-green) + model-free `bun run e2e:render` (36/36 checks).
+- **HALF-BAKED -- j-space visualizer track (v1.34.36-.37, v1.79.7)**: click-to-pin
+  readout (strip rows + heatmap cells, Esc/arrow-key walk, same-top-token echo,
+  onset marker), layer-range slider + aggregation detail panel, provisional lens
+  badge, matrix performance optimizations (v1.79.7 single-pass iterative min/max,
+  fast cell lookup). Live streaming (SSE) and interactive interventions remain open.
 - **STUB -- batch page**: dropped from v3 scope on purpose (spec §6); the
   backend endpoint remains.
 

@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-07-26 (llama-server buckets superseded by plan Phase 7)*
+*Last reviewed: 2026-08-25 (caught up through v1.79.7 on frontend branch)*
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
@@ -103,11 +103,6 @@ Cross-session task backlog organized by priority.
   SSE + `heylook_saved` final event, per-conversation 409 arbitration,
   server-owned persistence incl. disconnect, truncation commits only with
   its replacement row). 17 contract tests; spec §4 updated.
-- [ ] **Phase 2 client cutover** (P1, next): chat.js send/regenerate/
-  continue -> `/generate`; new SSE-grammar parser beside streaming.js;
-  drop buildRequestBody/toWireContent/position math; render-suite stubs
-  move to the new endpoint. Do NOT start the Messages bridge migration
-  separately -- this endpoint IS 3b's first consumer.
 - [x] **Phase 2 client cutover -- DONE v1.66.0**: chat generates via
   `/generate` (streamGenerate parser in streaming.js; Stop = DELETE;
   teardown = fetch abort + server disconnect-persist). Verified: render
@@ -552,11 +547,14 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   (assistant-reply-persists polled instead of racing finishStream's save; post-abort waits for the
   conv list). Result: 62/63 green; the sole miss is the load-sensitive streaming-cadence perf check
   (Mac Studio throttled after many back-to-back 26B spawns -- passes idle, README notes it).
-- [ ] **Wire `show_special_tokens` render consumers** (P2, 2026-07-11): the display pref exists +
-  is honesty-first `true`, but is gated (`wired:false`) out of the UI because NO surface reads it --
-  the token-rendering paths still strip specials (DESIGN.md §6 "known violation"). Wire chat /
-  notebook / token-explorer to read `getDisplayPref` + subscribe to `onDisplayChange` (unsubscribe on
-  teardown), then flip `wired:true`. Edit surfaces must ALWAYS show raw tokens regardless (§6).
+- [x] **Wire `show_special_tokens` render consumers -- DONE v1.79.6** (commits
+  `a7a3b3f`, `447cb32`, `b489ab1`): `show_special_tokens` display pref wired
+  in v3 settings drawer on chat & notebook; new opt-in request field on
+  `POST /v1/messages` and `POST /v1/conversations/{id}/generate` bypassing
+  the declared-specials filter; assistant-stored declared specials stripped
+  before replay to prevent control-token prompt injection. Display panel
+  gated to pages declaring support (`displayPrefs`). Request-schema parity
+  guard (`tests/unit/test_request_schema_parity.py`) pins wire consistency.
 - [ ] **jspace viz: chat-turn default + special tokens + prefill/token-walker** (P2/P3, 2026-07-11):
   see `docs/jspace_integration_plan.md` Part 2 (2026-07-11 refinements). Flip analyze to chat-turn-
   default (verify the "format-dominated onset" claim -- likely a provisional-lens artifact), show
@@ -866,7 +864,7 @@ None currently.
 - [x] S1.3 -- byte cap on VisionFeatureCache (v1.28.0, `312db4e`)
 - [x] S1.4 -- provider.warmup() + prefill_step_size (v1.28.0, `31e59a2`/`915dab6`)
 - [ ] S1.5 -- batched docs + cleanup (in progress: STT removal + test cleanup + cache_keys refactor done; docs-audit items landing next)
-- [ ] S1.6 -- LAN hardening (Caddy reverse proxy + optional `HEYLOOK_ADMIN_TOKEN`)
+- [x] S1.6 -- LAN hardening: Caddy reverse proxy guidance in server.py + optional `HEYLOOK_ADMIN_TOKEN` (extended to gate `/v1/admin/config` in v1.79.0)
 
 ## Slice 1 gated work
 
@@ -896,11 +894,10 @@ None currently.
 
 ### Build v1.20.0: Models Config TUI + CI Foundation
 
-#### Models Config Command (Phase 4)
-- [ ] Create `src/heylook_llm/commands/models_config.py`
-- [ ] Implement TUI menu for model management (ConfigEditor in `config_tui.py` exists, 344 lines -- needs CLI wrapper)
-- [ ] Add subparser to `server.py`
-- [ ] Integrate into server.py CLI
+#### Models Config Command (Phase 4) -- RETIRED / MOOT
+- [x] ~~Create `src/heylook_llm/commands/models_config.py`~~ MOOT: config_tui.py
+  was retired in v1.47.0 (derive-at-load thin models.toml entries); superseded
+  by the v3 Web admin config editor (v1.54.0+).
 
 #### llama-server Provider -- SUPERSEDED 2026-07-26 (and then BUILT same day)
 Absorbed into `plan_2026-07.md` Phase 7 and executed v1.40.0-1.44.2 (7a-7e
@@ -936,8 +933,8 @@ detection all DONE). Dossiers:
 - [ ] Coverage reporting
 
 ### Benchmark Script
-- [ ] Create `scripts/benchmark.py` (standalone, useful before shape bucketing)
-- [ ] Token throughput, TTFT, memory usage metrics
+- [x] Create `scripts/benchmark.py` (DONE -- HTTP benchmark measuring TTFT, TPS, memory across OpenAI and Messages APIs)
+- [x] Token throughput, TTFT, memory usage metrics (DONE in `scripts/benchmark.py`)
 
 ### ~~Build v1.21.0: llama-server Provider + GGUF + Benchmark~~ RETIRED 2026-07-26
 Stale bucket (predates the v1.21.0 removal; the referenced commented
