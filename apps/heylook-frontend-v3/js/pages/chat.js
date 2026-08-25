@@ -1946,11 +1946,12 @@ async function send(ctx) {
       const preset = s.presetBar.presetForNewDoc();
       const sentPrompt = s.systemPrompt || preset?.system_prompt;
       const appliedPresetId = s.appliedPresetId || preset?.id;
+      const promptBeforeCreate = s.systemPrompt;
       const conv = await api.createConversation({
         title,
         model_id: s.modelSelect.value || undefined,
         system_prompt: sentPrompt || undefined,
-        params: snapshotSettings(),  // the panel state this first message was sent with
+        params: (!s.appliedPresetId && preset?.params) ? { ...(preset.params ?? {}) } : snapshotSettings(),
         applied_preset_id: appliedPresetId || undefined,
       });
       if (!ctx.alive) return;
@@ -1959,7 +1960,7 @@ async function send(ctx) {
       s.conversations.unshift(conv);
       s.activeId = conv.id;
       s.messages = [];
-      if (s.systemPrompt !== sentPrompt) {
+      if (s.systemPrompt !== promptBeforeCreate) {
         // prompt changed while the create was in flight -- it has a home now
         putSystemPrompt(ctx, conv.id, s.systemPrompt);
       } else {

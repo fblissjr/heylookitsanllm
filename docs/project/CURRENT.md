@@ -29,19 +29,15 @@ NEXT, in order:
    pre-warmed loads. Needs settings resolution before pre-warm, and a contract
    test pinning that `log_startup_info()` runs strictly after
    `apply_runtime_settings()`.
-2. **Notebook resume sync** (P3, `apps/heylook-frontend-v3/js/pages/notebook.js`;
-   TODO.md). Port chat's `refreshAfterResume` / `ctx.onResume` store re-adoption
-   to the notebook page (currently notebook gets prompt flush-on-hide via the
-   shared factory, but lacks visibilitychange/pageshow re-fetch).
-3. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
+2. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
    TODO.md). The mRoPE cache gate keys on `_position_ids`/`_rope_deltas`
    attribute sniffing; add an explicit per-model `cache_reuse = true|false`
    config escape hatch in `models.toml` ahead of attribute sniffing.
    Live-verify extension reuse for quantized/rotating cache configs.
-4. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
+3. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
    TODO.md). Slim `docs/frontend_v3_spec.md` down to §4 (the living API contract)
    + decision records now that v2 is deleted. Trim `config.md` and `mlx_provider.md`.
-5. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
+4. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
    TODO.md). Admin panel observability controls and v3 `logs/*.jsonl` viewer page;
    consolidate `memory.py` legacy streams into the spine once verified.
 6. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;

@@ -597,7 +597,6 @@ async function refreshAfterResume(ctx) {
           }
           s.appliedPresetId = nb.applied_preset_id ?? null;
           hydrateDocParams(nb);
-          drawer.requestRebuild();
           adopted = !typingPrompt && !typingDoc;
         }
       }
@@ -608,7 +607,10 @@ async function refreshAfterResume(ctx) {
         if (cur && held) cur.updated_at = held;
       }
     }
-    if (presetsChanged || docChanged) s.presetBar.syncIndicator();
+    if (presetsChanged || docChanged) {
+      s.presetBar.syncIndicator();
+      drawer.requestRebuild();
+    }
   } finally {
     s.resumeSync = false;
   }
