@@ -97,6 +97,7 @@ export default createPage({
       onError: (err) => showStatus(ctx, `Settings save failed: ${err.message}`, true),
       onHide: ctx.onHide,
     }));
+    ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
     s.paint = ctx.throttle(() => paintGen(ctx));
@@ -550,5 +551,65 @@ function handleGenerateError(ctx, gen, err) {
   releaseGen(ctx, gen);
   if (ctx.alive && s.activeId === gen.targetId) {
     showStatus(ctx, `Generation failed: ${err.message}`, true);
+  }
+}
+
+// Re-adopt the store after the tab comes back (ctx.onResume). The page is a
+// mirror with no other invalidation: nothing polls, and the select guard
+// deliberately skips re-fetching the active notebook.
+async function refreshAfterResume(ctx) {
+  const s = ctx.state;
+  if (s.resumeSync) return;
+  s.resumeSync = true;
+  try {
+    const nbId = s.activeId;
+    const [presetsChanged, list] = await Promise.all([
+      s.presetBar.refresh(),
+      api.listNotebooks({ signal: ctx.signal }).catch(() => null),
+    ]);
+    if (!ctx.alive) return;
+    let docChanged = false;
+    if (list?.notebooks) {
+      const held = s.notebooks.find((n) => n.id === nbId)?.updated_at;
+      const fresh = list.notebooks.find((n) => n.id === nbId)?.updated_at;
+      const unchanged = Boolean(held && fresh && held === fresh);
+      let adopted = unchanged;
+      if (nbId && !unchanged) {
+        const nb = await api.getNotebook(nbId, { signal: ctx.signal }).catch(() => null);
+        if (!ctx.alive) return;
+        if (nb && s.activeId === nbId) {
+          docChanged = true;
+          const typingPrompt = document.activeElement?.classList.contains('sysprompt-input') ?? false;
+          const typingDoc = s.dirty || document.activeElement === s.contentTextarea || document.activeElement === s.titleInput;
+          if (!typingDoc) {
+            s.title = nb.title ?? '';
+            s.content = nb.content ?? '';
+            s.modelId = nb.model_id ?? '';
+            s.titleInput.value = s.title;
+            s.contentTextarea.value = s.content;
+            autoGrow(s.contentTextarea, Infinity);
+            if (s.modelId && s.models.some((m) => m.id === s.modelId)) s.modelSelect.value = s.modelId;
+            s.modelId = s.modelSelect.value;
+          }
+          if (!typingPrompt) {
+            s.systemPrompt = nb.system_prompt ?? '';
+            s.promptSection.setValue(s.systemPrompt);
+          }
+          s.appliedPresetId = nb.applied_preset_id ?? null;
+          hydrateDocParams(nb);
+          drawer.requestRebuild({ force: true });
+          adopted = !typingPrompt && !typingDoc;
+        }
+      }
+      s.notebooks = list.notebooks;
+      renderList(ctx);
+      if (!adopted && nbId) {
+        const cur = s.notebooks.find((n) => n.id === nbId);
+        if (cur && held) cur.updated_at = held;
+      }
+    }
+    if (presetsChanged || docChanged) s.presetBar.syncIndicator();
+  } finally {
+    s.resumeSync = false;
   }
 }

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Layout thrashing decoupling & modern CSS (`app.css`, `utils.js`)**: Added native `@supports (field-sizing: content)` to composer textareas across chat, explore, jspace, and notebook; `autoGrow()` bypasses forced layout measurements when native sizing is supported.
   - **CSS Design Tokens (`app.css`)**: Replaced undefined CSS variables (`--border`, `--font-mono`, `--space-*`) with canonical design system tokens.
   - **Module preloading (`index.html`)**: Added `<link rel="modulepreload">` for core shared modules.
+  - **Notebook resume sync (`notebook.js`)**: Ported `refreshAfterResume` / `ctx.onResume` store re-adoption to the Notebook page, syncing edits made in background/mobile tabs upon resume.
+  - **Media block preservation on `retrySave` (`chat.js`)**: Ensured unsaved rows with image/audio `content_blocks` re-POST all media attachments instead of only flattened text.
+  - **Model-switch lock during load (`chat.js`)**: Disabled the model select dropdown while `loadModelNow` is actively loading a model into memory, eliminating switch race conditions.
 
 ## [1.79.6]
 

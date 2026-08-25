@@ -429,6 +429,7 @@ async function loadModelNow(ctx) {
   if (!id || s.loadNowBtn.dataset.busy) return;
   s.loadNowBtn.dataset.busy = '1';
   s.loadNowBtn.disabled = true;
+  s.modelSelect.disabled = true;
   showStatus(ctx, `Loading ${id}…`);
   try {
     const result = await api.adminLoadModel(id, true);
@@ -443,9 +444,11 @@ async function loadModelNow(ctx) {
   } catch (err) {
     if (!ctx.alive) return;
     showStatus(ctx, `Load failed: ${err.message}`, true);
+  } finally {
+    delete s.loadNowBtn.dataset.busy;
+    s.loadNowBtn.disabled = false;
+    s.modelSelect.disabled = false;
   }
-  delete s.loadNowBtn.dataset.busy;
-  s.loadNowBtn.disabled = false;
   if (ctx.alive) await refreshLoadedIds(ctx);
 }
 
@@ -1195,7 +1198,10 @@ async function retrySave(ctx, msg) {
   const convId = s.activeId;
   try {
     const saved = await api.addMessage(convId, {
-      role: msg.role, content: msg.content, thinking: msg.thinking || undefined,
+      role: msg.role,
+      content: msg.content,
+      thinking: msg.thinking || undefined,
+      content_blocks: msg.content_blocks?.length ? msg.content_blocks : undefined,
     });
     if (!ctx.alive || s.activeId !== convId) return;
     const i = s.messages.indexOf(msg);
