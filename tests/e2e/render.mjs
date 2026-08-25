@@ -532,6 +532,9 @@ async function main() {
       const post = un.reqs.find((r) => r.method === 'POST' && r.url.includes('/messages')
         && r.postData?.includes('unsaved reply'));
       assert(post, 'Retry save never POSTed the row');
+      const body = JSON.parse(post.postData);
+      assert(body.content === 'unsaved reply', `expected content string on wire, got ${JSON.stringify(body.content)}`);
+      assert(body.content_blocks === undefined, 'content_blocks must not be sent on root wire');
       const labels = await un.page.evaluate(() => {
         const el = [...document.querySelectorAll('.message')]
           .find((m) => m.textContent.includes('unsaved reply'));

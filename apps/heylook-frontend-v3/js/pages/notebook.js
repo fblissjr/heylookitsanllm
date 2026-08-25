@@ -580,7 +580,7 @@ async function refreshAfterResume(ctx) {
         if (nb && s.activeId === nbId) {
           docChanged = true;
           const typingPrompt = document.activeElement?.classList.contains('sysprompt-input') ?? false;
-          const typingDoc = s.dirty || document.activeElement === s.contentTextarea || document.activeElement === s.titleInput;
+          const typingDoc = s.dirty || Boolean(s.gen) || document.activeElement === s.contentTextarea || document.activeElement === s.titleInput;
           if (!typingDoc) {
             s.title = nb.title ?? '';
             s.content = nb.content ?? '';
@@ -597,7 +597,7 @@ async function refreshAfterResume(ctx) {
           }
           s.appliedPresetId = nb.applied_preset_id ?? null;
           hydrateDocParams(nb);
-          drawer.requestRebuild({ force: true });
+          drawer.requestRebuild();
           adopted = !typingPrompt && !typingDoc;
         }
       }

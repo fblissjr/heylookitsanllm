@@ -4,8 +4,8 @@
 // Invariants:
 // - state.tokens holds {token, logprob, prob, top} -- built fresh from each
 //   onLogprobs batch, never mutated in place once appended.
-// - The token strip is a single throttled FULL re-render (ctx.throttle), not
-//   incremental DOM patching -- v2's dual incremental/full path is gone.
+// - The token strip appends incrementally via DocumentFragment during streaming,
+//   with in-place CSS class toggling (.tok--selected) and container-delegated clicks.
 // - Keyboard nav (ArrowLeft/ArrowRight/Escape) is bound to the page
 //   container, not document -- it dies with the DOM, no leaked listener.
 

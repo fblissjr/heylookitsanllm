@@ -1199,9 +1199,8 @@ async function retrySave(ctx, msg) {
   try {
     const saved = await api.addMessage(convId, {
       role: msg.role,
-      content: msg.content,
+      content: msg.content_blocks?.length ? msg.content_blocks : (msg.content ?? ''),
       thinking: msg.thinking || undefined,
-      content_blocks: msg.content_blocks?.length ? msg.content_blocks : undefined,
     });
     if (!ctx.alive || s.activeId !== convId) return;
     const i = s.messages.indexOf(msg);
@@ -1761,7 +1760,12 @@ async function addPendingFiles(ctx, files, kind) {
     .map((f) => fileToDataUrl(f)
       .then((dataUrl) => kind.toEntry(f, dataUrl))
       .catch(() => null)));  /* unreadable file -- skip */
-  if (!ctx.alive) return;
+  if (!ctx.alive) {
+    for (const r of reads) {
+      if (r?.previewUrl) URL.revokeObjectURL(r.previewUrl);
+    }
+    return;
+  }
   // send() and clearPendingAttachments REPLACE these arrays rather than
   // emptying them, so a send (or a conversation switch) during the read leaves
   // us holding an orphan: pushing into it would render nothing and lose the
@@ -1978,6 +1982,8 @@ async function send(ctx) {
     // generation concern can interfere.)
     const convId = s.activeId; // anchor: a switch mid-POST must not leak into another conv
     const msg = await api.addMessage(convId, { role: 'user', content });
+    for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
+    for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
     if (!ctx.alive || s.activeId !== convId) return; // saved to its conv; reselect re-fetches it
     // Idempotent by id: a resume merge that landed while the POST was in
     // flight may already hold this row (the server's list saw the bump).
@@ -1986,7 +1992,11 @@ async function send(ctx) {
     scrollMessages(ctx, true);
     startStream(ctx, { mode: 'append' });
   } catch (err) {
-    if (!ctx.alive) return;
+    if (!ctx.alive) {
+      for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
+      for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
+      return;
+    }
     // The message did NOT reach the store -- put the composer back exactly
     // as it was. Without this, the new mid-generation 409 (another device
     // streaming into this conversation) destroyed the typed text and

@@ -71,10 +71,20 @@ async function streamTypedSSE(url, body, { signal, onRetryWait, onEvent }) {
       if (done) break;
       buf += decoder.decode(value, { stream: true });
 
-      let sep;
-      while ((sep = buf.indexOf('\n\n')) !== -1) {
+      let sep, sepLen;
+      while (true) {
+        const crlfSep = buf.indexOf('\r\n\r\n');
+        const lfSep = buf.indexOf('\n\n');
+        if (crlfSep === -1 && lfSep === -1) break;
+        if (crlfSep !== -1 && (lfSep === -1 || crlfSep < lfSep)) {
+          sep = crlfSep;
+          sepLen = 4;
+        } else {
+          sep = lfSep;
+          sepLen = 2;
+        }
         const eventText = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
+        buf = buf.slice(sep + sepLen);
         let eventType = null;
         let data = null;
         for (const line of eventText.split(/\r?\n/)) {
@@ -87,7 +97,7 @@ async function streamTypedSSE(url, body, { signal, onRetryWait, onEvent }) {
           }
           // ": keepalive" comment lines fall through both branches
         }
-        if (eventType && data) onEvent(eventType, data);
+        if (eventType && data !== null) onEvent(eventType, data);
       }
     }
     return { aborted: false };
