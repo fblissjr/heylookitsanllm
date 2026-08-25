@@ -77,10 +77,13 @@ async function streamTypedSSE(url, body, { signal, onRetryWait, onEvent }) {
         buf = buf.slice(sep + 2);
         let eventType = null;
         let data = null;
-        for (const line of eventText.split('\n')) {
+        for (const line of eventText.split(/\r?\n/)) {
           if (line.startsWith('event:')) eventType = line.slice(6).trim();
           else if (line.startsWith('data:')) {
-            try { data = JSON.parse(line.slice(5).trim()); } catch { data = null; }
+            const raw = line.slice(5).trim();
+            if (raw) {
+              try { data = JSON.parse(raw); } catch { data = null; }
+            }
           }
           // ": keepalive" comment lines fall through both branches
         }

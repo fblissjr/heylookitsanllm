@@ -795,6 +795,15 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   line-height: 1.5;
   max-height: 200px;
 }
+@supports (field-sizing: content) {
+  .chat__composer textarea,
+  .explore__composer textarea,
+  .jspace__composer textarea,
+  .notebook__content,
+  .sysprompt-input {
+    field-sizing: content;
+  }
+}
 
 @media (max-width: 767px) {
   .chat { grid-template-columns: 1fr; }
@@ -1051,17 +1060,17 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
    server config (what gets served); below it is a throwaway scan. */
 .scan-controls__sep {
   border: 0;
-  border-top: 1px solid var(--border);
-  margin: var(--space-4) 0 var(--space-3);
+  border-top: 1px solid var(--line);
+  margin: 1rem 0 0.75rem;
 }
-.scan-controls textarea.input { resize: vertical; min-height: 4.5rem; font-family: var(--font-mono); }
+.scan-controls textarea.input { resize: vertical; min-height: 4.5rem; font-family: var(--mono); }
 
 /* Disclosure above the config editor for a model that has no models.toml
    entry yet. Muted on purpose -- it states a consequence, it is not a
    warning, and nothing is lost by saving. */
 .config-panel__note {
-  padding: var(--space-2) var(--space-3);
-  border-left: 2px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--line);
 }
 .scan-row__actions { flex-shrink: 0; }
 

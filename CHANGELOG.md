@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.7]
+
+### Optimized
+
+- **Frontend-v3 rendering & memory performance**:
+  - **Token Explorer (`explore.js`)**: Eliminated $O(N^2)$ chip recreations during logprob streaming via incremental `DocumentFragment` appending and in-place `.tok--selected` class toggling on keyboard/click selection, reducing DOM operations per stream by over 98%.
+  - **J-Space stability & matrix marking (`jspace.js`)**: Replaced array spreading in `Math.min(...flat)` / `Math.max(...flat)` with a single-pass iterative loop, preventing call stack overflow exceptions on large matrices ($>65\text{k}$ elements). Optimized matrix cell lookup in hover and marking loops.
+  - **Fast HTML escaping (`markdown.js`)**: Replaced DOM-based HTML escaping (`document.createElement('div')`) with zero-allocation compiled regex replacement.
+  - **Image & audio preview memory lifecycle (`chat.js`)**: Staged thumbnails now use `URL.createObjectURL(file)` rather than multi-megabyte base64 strings in the thumbnail DOM, with deterministic URL revocation on remove, composer clear, send, and page teardown.
+  - **Layout thrashing decoupling & modern CSS (`app.css`, `utils.js`)**: Added native `@supports (field-sizing: content)` to composer textareas across chat, explore, jspace, and notebook; `autoGrow()` bypasses forced layout measurements when native sizing is supported.
+  - **CSS Design Tokens (`app.css`)**: Replaced undefined CSS variables (`--border`, `--font-mono`, `--space-*`) with canonical design system tokens.
+  - **Module preloading (`index.html`)**: Added `<link rel="modulepreload">` for core shared modules.
+
 ## [1.79.6]
 
 ### Added

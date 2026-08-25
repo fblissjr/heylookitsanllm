@@ -203,20 +203,20 @@ function updateMarks(ctx, scrollPin = false) {
   const pin = s.pinned;
   const onset = pin && isOnsetPin(d, pin);
   const echoTok = pin ? pinnedTopToken(d, pin) : s.aggTok;
+  const onsetIdx = onsetPosIdx(d);
 
   for (const [layer, row] of s.rowEls) {
     row.classList.toggle('jspace__row--pinned', !!pin && onset && layer === pin.layer);
   }
-  for (const [key, cell] of s.cellEls) {
-    const [layer, posIdx] = key.split(':').map(Number);
-    const isPinned = !!pin && layer === pin.layer &&
-      (pin.posIdx == null ? posIdx === onsetPosIdx(d) : posIdx === pin.posIdx);
-    cell.classList.toggle('jspace__hcell--pinned', isPinned);
+  for (const c of s.cells) {
+    const isPinned = !!pin && c.layer === pin.layer &&
+      (pin.posIdx == null ? c.posIdx === onsetIdx : c.posIdx === pin.posIdx);
+    c.el.classList.toggle('jspace__hcell--pinned', isPinned);
     // != null (not truthiness): the empty-string token is a legal echo target
     // (it renders as the ∅ glyph).
-    cell.classList.toggle('jspace__hcell--echo',
-      echoTok != null && !isPinned && cell.dataset.tok === echoTok);
-    if (isPinned && scrollPin) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    c.el.classList.toggle('jspace__hcell--echo',
+      echoTok != null && !isPinned && c.tok === echoTok);
+    if (isPinned && scrollPin) c.el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 }
 
@@ -354,7 +354,7 @@ function renderResult(ctx, data) {
   s.hoverLayer = null;
   s.aggTok = null;
   s.rowEls = new Map();   // layer -> strip row element
-  s.cellEls = new Map();  // "layer:posIdx" -> heatmap cell element
+  s.cells = [];           // array of { el, layer, posIdx, tok }
   s.hrowEls = new Map();  // layer -> heatmap row element
 
   // Answer + optional risk badge.
@@ -410,8 +410,13 @@ function renderResult(ctx, data) {
 
 function buildHeatmap(ctx, data) {
   const s = ctx.state;
-  const flat = data.heatmap.flatMap((r) => r.cells.map((c) => c.entropy));
-  const lo = Math.min(...flat), hi = Math.max(...flat);
+  let lo = Infinity, hi = -Infinity;
+  for (const row of data.heatmap) {
+    for (const cell of row.cells) {
+      if (cell.entropy < lo) lo = cell.entropy;
+      if (cell.entropy > hi) hi = cell.entropy;
+    }
+  }
   const norm = (e) => (hi > lo ? 1 - (e - lo) / (hi - lo) : 1); // low entropy = confident = green
 
   const grid = createEl('div', { class: 'jspace__heatmap' });
@@ -440,7 +445,7 @@ function buildHeatmap(ctx, data) {
         dataset: { tok: c.token },
       }, [glyph(c.token).slice(0, 4)]);
       cell.addEventListener('click', () => togglePin(ctx, { layer: rowData.layer, posIdx: i }));
-      s.cellEls.set(`${rowData.layer}:${i}`, cell);
+      s.cells.push({ el: cell, layer: rowData.layer, posIdx: i, tok: c.token });
       return cell;
     });
     const hrow = createEl('div', { class: 'jspace__hrow' }, [
@@ -504,16 +509,24 @@ function computeAgg(ctx) {
   const d = s.data;
   const layers = new Set(scopedLayers(ctx));
   const counts = new Map();
-  const add = (c) => counts.set(c.token, (counts.get(c.token) ?? 0) + 1);
   const heatmapHasTopK = d.heatmap?.some((r) => r.cells.some((c) => c.top_k?.length));
   if (heatmapHasTopK) {
     for (const row of d.heatmap) {
       if (!layers.has(row.layer)) continue;
-      for (const cell of row.cells) (cell.top_k ?? []).forEach(add);
+      for (const cell of row.cells) {
+        if (cell.top_k) {
+          for (const item of cell.top_k) {
+            counts.set(item.token, (counts.get(item.token) ?? 0) + 1);
+          }
+        }
+      }
     }
   } else {
     for (const row of d.onset_strip ?? []) {
-      if (layers.has(row.layer)) row.top_k.forEach(add);
+      if (!layers.has(row.layer)) continue;
+      for (const item of row.top_k) {
+        counts.set(item.token, (counts.get(item.token) ?? 0) + 1);
+      }
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);

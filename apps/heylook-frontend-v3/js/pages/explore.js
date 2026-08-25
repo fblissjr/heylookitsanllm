@@ -79,6 +79,13 @@ function buildSkeleton(ctx) {
   ]);
 
   s.stripEl = createEl('div', { class: 'explore__strip' });
+  s.stripEl.addEventListener('click', (e) => {
+    const chip = e.target.closest('.tok');
+    if (!chip || chip.dataset.idx == null) return;
+    const idx = Number(chip.dataset.idx);
+    selectToken(ctx, idx);
+    s.rootEl.focus({ preventScroll: true });
+  });
   s.detailEl = createEl('aside', { class: 'explore__detail' });
 
   s.rootEl = createEl('div', { class: 'explore', tabindex: '0' }, [
@@ -129,8 +136,15 @@ function handleKeydown(ctx, e) {
 }
 
 function selectToken(ctx, idx) {
-  ctx.state.selectedIndex = idx;
-  renderStrip(ctx);
+  const s = ctx.state;
+  const prev = s.selectedIndex;
+  s.selectedIndex = idx;
+  if (prev != null && s.chipEls?.[prev]) {
+    s.chipEls[prev].classList.remove('tok--selected');
+  }
+  if (idx != null && s.chipEls?.[idx]) {
+    s.chipEls[idx].classList.add('tok--selected');
+  }
   renderDetail(ctx);
 }
 
@@ -154,27 +168,25 @@ function appendGlyphs(el, text) {
   }
 }
 
-function buildChip(ctx, tok, idx) {
+function buildChip(tok, idx, selected = false) {
   const hue = 25 + tok.prob * 120;
-  const selected = ctx.state.selectedIndex === idx;
   // Probability is titled, not color-only (DESIGN.md §2): the chip hue encodes
   // it, but a tooltip + a11y readout must carry it too.
   const chip = createEl('span', {
     class: `tok${selected ? ' tok--selected' : ''}`,
     title: `p ${(tok.prob * 100).toFixed(1)}%`,
+    dataset: { idx: String(idx) },
   });
   chip.style.background = `oklch(0.86 0.11 ${hue})`;
   appendGlyphs(chip, tok.token);
-  chip.addEventListener('click', () => {
-    selectToken(ctx, idx);
-    ctx.state.rootEl.focus({ preventScroll: true });
-  });
   return chip;
 }
 
 function renderStrip(ctx) {
   const s = ctx.state;
+  if (!s.chipEls) s.chipEls = [];
   if (!s.tokens.length) {
+    s.chipEls = [];
     s.stripEl.replaceChildren(
       createEl('div', { class: 'empty-state' }, [
         'Pick a model, write a prompt — every generated token shows its probability; click one to see what else the model considered.',
@@ -182,7 +194,20 @@ function renderStrip(ctx) {
     );
     return;
   }
-  s.stripEl.replaceChildren(...s.tokens.map((tok, i) => buildChip(ctx, tok, i)));
+  if (s.stripEl.querySelector('.empty-state')) {
+    s.stripEl.replaceChildren();
+    s.chipEls = [];
+  }
+  const currentCount = s.chipEls.length;
+  if (currentCount < s.tokens.length) {
+    const fragment = document.createDocumentFragment();
+    for (let i = currentCount; i < s.tokens.length; i++) {
+      const chip = buildChip(s.tokens[i], i, s.selectedIndex === i);
+      s.chipEls.push(chip);
+      fragment.append(chip);
+    }
+    s.stripEl.append(fragment);
+  }
 }
 
 // ---------------------------------------------------------------------------

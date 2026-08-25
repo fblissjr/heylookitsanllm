@@ -22,10 +22,12 @@ marked.use({ gfm: true, breaks: true });
 // parser dispatch `case "html"` to this same renderer method.
 marked.use({ renderer: { html: ({ text }) => escapeHtml(text) } });
 
+const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ESCAPE_REGEX = /[&<>"']/g;
+
 export function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text ?? '';
-  return div.innerHTML;
+  if (text == null) return '';
+  return String(text).replace(ESCAPE_REGEX, (m) => ESCAPE_MAP[m]);
 }
 
 export function renderMarkdown(text) {

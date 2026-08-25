@@ -91,6 +91,8 @@ export function debounce(fn, ms) {
 
 // Auto-grow a textarea up to maxPx.
 export function autoGrow(textarea, maxPx = 200) {
+  if (!textarea) return;
+  if (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('field-sizing', 'content')) return;
   textarea.style.height = 'auto';
   textarea.style.height = `${Math.min(textarea.scrollHeight, maxPx)}px`;
 }

@@ -125,6 +125,7 @@ export default createPage({
       onHide: ctx.onHide, // the binder owns its hide flush, like its teardown flush
     });
     ctx.onTeardown(s.paramsBinder);
+    ctx.onTeardown(() => clearPendingAttachments(ctx));
 
     // The page is a mirror of the store: re-adopt it when the tab comes back
     // (why: refreshAfterResume). Each debounced writer owns its own hide
@@ -1606,11 +1607,11 @@ function fileToDataUrl(file) {
 const ATTACH_KINDS = {
   image: {
     mime: 'image/', cap: 'vision', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
-    label: 'image', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type }),
+    label: 'image', toEntry: (f, dataUrl) => ({ dataUrl, previewUrl: URL.createObjectURL(f), mediaType: f.type }),
   },
   audio: {
     mime: 'audio/', cap: 'audio', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
-    label: 'audio clip', toEntry: (f, dataUrl) => ({ dataUrl, mediaType: f.type, name: f.name }),
+    label: 'audio clip', toEntry: (f, dataUrl) => ({ dataUrl, previewUrl: URL.createObjectURL(f), mediaType: f.type, name: f.name }),
   },
 };
 
@@ -1762,12 +1763,19 @@ async function addPendingFiles(ctx, files, kind) {
   // this window is no longer theoretical.
   const pending = ctx.state[kind.stateKey];
   if (pending !== pendingAtStart) {
+    for (const r of reads) {
+      if (r?.previewUrl) URL.revokeObjectURL(r.previewUrl);
+    }
     showStatus(ctx, `Attachment discarded -- the composer was cleared while it was still loading.`, true);
     return;
   }
   const usable = reads.filter(Boolean);
   if (!usable.length) return;
   const room = Math.max(kind.max - pending.length, 0);
+  const excess = usable.slice(room);
+  for (const ex of excess) {
+    if (ex?.previewUrl) URL.revokeObjectURL(ex.previewUrl);
+  }
   pending.push(...usable.slice(0, room));
   renderAttachStrip(ctx);
   // aria-live: chat__status is role="status" -- this announces the cap to
@@ -1778,6 +1786,12 @@ async function addPendingFiles(ctx, files, kind) {
 }
 
 function clearPendingAttachments(ctx) {
+  for (const img of ctx.state.pendingImages ?? []) {
+    if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
+  }
+  for (const clip of ctx.state.pendingAudio ?? []) {
+    if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl);
+  }
   ctx.state.pendingImages = [];
   ctx.state.pendingAudio = [];
   renderAttachStrip(ctx);
@@ -1792,11 +1806,12 @@ function renderAttachStrip(ctx) {
     const label = `Remove image ${i + 1}`;
     const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
     remove.addEventListener('click', () => {
-      s.pendingImages.splice(i, 1);
+      const [removed] = s.pendingImages.splice(i, 1);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       renderAttachStrip(ctx);
     });
     return createEl('div', { class: 'attach-thumb' }, [
-      createEl('img', { src: img.dataUrl, alt: '' }),
+      createEl('img', { src: img.previewUrl || img.dataUrl, alt: '' }),
       remove,
     ]);
   });
@@ -1804,7 +1819,8 @@ function renderAttachStrip(ctx) {
     const label = `Remove audio ${clip.name || i + 1}`;
     const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
     remove.addEventListener('click', () => {
-      s.pendingAudio.splice(i, 1);
+      const [removed] = s.pendingAudio.splice(i, 1);
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       renderAttachStrip(ctx);
     });
     return createEl('div', { class: 'attach-thumb attach-thumb--audio' }, [
