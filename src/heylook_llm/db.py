@@ -435,7 +435,16 @@ async def clear_all_data(db: Store) -> dict:
 # list, so the two can never drift (zip would silently mispair otherwise).
 _CONV_NAMES = ["id", "title", "model_id", "system_prompt", "params", "applied_preset_id", "created_at", "updated_at"]
 _MSG_NAMES = ["id", "role", "content_blocks", "thinking", "model_id", "position", "created_at", "updated_at"]
+# What the LIST needs, which is not what a single conversation needs. The
+# sidebar renders a title and orders by recency; it reads neither the stored
+# system prompt nor the sampler bag, and both are unbounded. Shipping them for
+# every conversation on page load AND on every foreground (the resume path
+# re-lists) is the "load what it needs when it needs it" rule broken at the
+# one place it costs the most. Derived by subtraction so a new column joins
+# the list only if someone decides it should.
+_CONV_LIST_NAMES = [n for n in _CONV_NAMES if n not in ("system_prompt", "params")]
 _CONV_COLS = ", ".join(_CONV_NAMES)
+_CONV_LIST_COLS = ", ".join(_CONV_LIST_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
 
 
@@ -466,17 +475,26 @@ def _conv_row_to_dict(row) -> dict:
     return _decode_params(dict(zip(_CONV_NAMES, row)))
 
 
+def _conv_list_row_to_dict(row) -> dict:
+    # No params column to decode -- the list does not carry one.
+    return dict(zip(_CONV_LIST_NAMES, row))
+
+
 def _touch_conversation(conn, conv_id: str, now: str) -> None:
     conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conv_id))
 
 
 async def list_conversations(db: Store) -> list[dict]:
-    """Return all conversations ordered by updated_at desc."""
+    """Return all conversations ordered by updated_at desc.
+
+    Excludes system_prompt and params for efficiency -- same reason
+    list_notebooks excludes content. Fetch one conversation to get either.
+    """
     def op(conn):
         rows = conn.execute(
-            f"SELECT {_CONV_COLS} FROM conversations ORDER BY updated_at DESC"
+            f"SELECT {_CONV_LIST_COLS} FROM conversations ORDER BY updated_at DESC"
         ).fetchall()
-        return [_conv_row_to_dict(r) for r in rows]
+        return [_conv_list_row_to_dict(r) for r in rows]
     return await db.run(op)
 
 

@@ -420,10 +420,25 @@ class TestConversationParams:
         assert got["params"] == {"temperature": 0.2}
 
     @pytest.mark.asyncio
-    async def test_params_listed(self, conn):
-        await db.create_conversation(conn, title="c", params={"temperature": 0.7})
+    async def test_list_omits_params_and_prompt_but_the_body_carries_them(self, conn):
+        """The list is a sidebar, not a document.
+
+        It renders a title and orders by recency; it reads neither the sampler
+        bag nor the stored system prompt, and both are unbounded. They used to
+        ship for every conversation on page load AND on every foreground (the
+        resume path re-lists). Same reason list_notebooks omits content.
+        """
+        conv = await db.create_conversation(
+            conn, title="c", params={"temperature": 0.7}, system_prompt="be terse")
         (row,) = await db.list_conversations(conn)
-        assert row["params"] == {"temperature": 0.7}
+        assert "params" not in row
+        assert "system_prompt" not in row
+        assert row["title"] == "c"          # what the sidebar actually reads
+        assert "updated_at" in row
+        # Fetching the conversation is how you get either of them.
+        body = await db.get_conversation(conn, conv["id"])
+        assert body["params"] == {"temperature": 0.7}
+        assert body["system_prompt"] == "be terse"
 
 
 @pytest.mark.unit
