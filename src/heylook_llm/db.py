@@ -598,6 +598,125 @@ async def delete_conversation(db: Store, conv_id: str) -> bool:
     return await db.run(op)
 
 
+async def clone_conversation(
+    db: Store,
+    conv_id: str,
+    *,
+    title: str | None = None,
+) -> dict | None:
+    """Clone a conversation and all its messages and media blobs into a new conversation.
+
+    Returns the new cloned conversation dict (with its messages) or None if source conversation doesn't exist.
+    """
+    new_conv_id = new_id()
+    now = _now_iso()
+
+    def op(conn):
+        row = conn.execute(
+            f"SELECT {_CONV_COLS} FROM conversations WHERE id = ?", (conv_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        src_conv = _conv_row_to_dict(row)
+
+        cloned_title = title if (title is not None and title.strip()) else f"Copy of {src_conv['title']}"
+
+        conn.execute(
+            "INSERT INTO conversations (id, title, model_id, system_prompt, params, applied_preset_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                new_conv_id,
+                cloned_title,
+                src_conv["model_id"],
+                src_conv["system_prompt"],
+                _encode_params(src_conv["params"]),
+                src_conv["applied_preset_id"],
+                now,
+                now,
+            ),
+        )
+
+        conn.execute(
+            "INSERT INTO media_blobs (conversation_id, id, media_type, data, created_at) "
+            "SELECT ?, id, media_type, data, ? FROM media_blobs WHERE conversation_id = ?",
+            (new_conv_id, now, conv_id),
+        )
+
+        src_msgs = conn.execute(
+            f"SELECT {_MSG_COLS} FROM messages WHERE conversation_id = ? ORDER BY position",
+            (conv_id,),
+        ).fetchall()
+
+        cloned_msgs = []
+        old_url_prefix = f"/v1/conversations/{conv_id}/media/"
+        new_url_prefix = f"/v1/conversations/{new_conv_id}/media/"
+
+        for msg_row in src_msgs:
+            msg_dict = _message_row_to_dict(_MSG_NAMES, msg_row)
+            msg_id = new_id()
+            blocks = msg_dict.get("content_blocks", [])
+
+            rewritten_blocks = []
+            for b in blocks:
+                if isinstance(b, dict) and b.get("type") in ("image", "audio"):
+                    src = b.get("source")
+                    if isinstance(src, dict) and src.get("type") == "url":
+                        b_copy = dict(b)
+                        src_copy = dict(src)
+                        url = src_copy.get("url", "")
+                        if old_url_prefix in url:
+                            src_copy["url"] = url.replace(old_url_prefix, new_url_prefix)
+                        b_copy["source"] = src_copy
+                        rewritten_blocks.append(b_copy)
+                        continue
+                rewritten_blocks.append(b)
+
+            blocks_json = orjson.dumps(rewritten_blocks).decode("utf-8")
+
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content_blocks, thinking, model_id, position, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    msg_id,
+                    new_conv_id,
+                    msg_dict["role"],
+                    blocks_json,
+                    msg_dict.get("thinking"),
+                    msg_dict.get("model_id"),
+                    msg_dict["position"],
+                    now,
+                    now,
+                ),
+            )
+
+            cloned_msg = {
+                "id": msg_id,
+                "role": msg_dict["role"],
+                "content": flatten_blocks(rewritten_blocks),
+                "content_blocks": rewritten_blocks,
+                "thinking": msg_dict.get("thinking"),
+                "model_id": msg_dict.get("model_id"),
+                "position": msg_dict["position"],
+                "created_at": now,
+                "updated_at": now,
+            }
+            cloned_msgs.append(cloned_msg)
+
+        return {
+            "id": new_conv_id,
+            "title": cloned_title,
+            "model_id": src_conv["model_id"],
+            "system_prompt": src_conv["system_prompt"],
+            "params": src_conv["params"],
+            "applied_preset_id": src_conv["applied_preset_id"],
+            "created_at": now,
+            "updated_at": now,
+            "messages": cloned_msgs,
+        }
+
+    return await db.run(op)
+
+
 # ---------------------------------------------------------------------------
 # Message CRUD
 # ---------------------------------------------------------------------------

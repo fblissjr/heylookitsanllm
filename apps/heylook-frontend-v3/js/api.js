@@ -54,6 +54,7 @@ const ROUTES = {
   listConversations: ['GET', () => '/v1/conversations'],
   createConversation:['POST', () => '/v1/conversations', true],
   getConversation:   ['GET', (id) => `/v1/conversations/${id}`],
+  cloneConversation: ['POST', (id) => `/v1/conversations/${id}/clone`, true],
   updateConversation:['PUT', (id) => `/v1/conversations/${id}`, true],
   deleteConversation:['DELETE', (id) => `/v1/conversations/${id}`],
   addMessage:        ['POST', (id) => `/v1/conversations/${id}/messages`, true],

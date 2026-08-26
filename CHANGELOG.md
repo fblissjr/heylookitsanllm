@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.8]
+
+### Added
+
+- **Conversation Cloning & Mobile Safeguards**:
+  - **Storage layer (`db.py`)**: Added `clone_conversation()` to atomically duplicate conversations in DuckDB. Creates a fresh conversation record with new unique ID and timestamps, clones `model_id`, `system_prompt`, `params`, and `applied_preset_id`, generates fresh message IDs for all turns while preserving position/role/thinking/model attribution, duplicates content-addressed `media_blobs`, and rewrites internal media URL sources in `content_blocks` to keep media lifecycles isolated.
+  - **REST API (`conversation_api.py`)**: Added `POST /v1/conversations/{conv_id}/clone` (201 Created) endpoint with optional title override support and generation-lock protection (409 Conflict while streaming).
+  - **Frontend API (`api.js`)**: Added `cloneConversation(id, body)` route mapping.
+  - **Frontend-v3 UI & Mobile Touch Safeguard (`chat.js`, `app.css`)**: Added a two-tap armed confirmation (`armedConfirm`) "Copy" action to conversation list items. On mobile/touch screens (`hover: none`), single taps or accidental scroll swipes only arm the button into "Copy?" for 3 seconds before safely resetting, preventing unintended duplicates while scrolling. Styled `.conv-item__clone.btn--armed` with the brand accent color (`--accent`) for visual clarity. Automatically opens and hydrates the cloned conversation on creation.
+  - **Unit & Endpoint Tests (`test_conversation_api.py`)**: Added comprehensive tests for default/custom titles, parameter/message preservation, media blob cloning, isolation after parent deletion, and REST endpoint contracts.
+
 ## [1.79.7]
 
 ### Optimized

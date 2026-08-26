@@ -6,8 +6,11 @@ Tests run against an in-memory SQLite database -- no server required.
 
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from heylook_llm import db
+from heylook_llm.conversation_api import conversation_router
 
 
 @pytest_asyncio.fixture
@@ -106,6 +109,99 @@ class TestConversationCRUD:
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, conn):
         assert await db.get_conversation(conn, "nope") is None
+
+    @pytest.mark.asyncio
+    async def test_clone_default_title(self, conn):
+        conv = await db.create_conversation(
+            conn,
+            title="Design Talk",
+            model_id="qwen-3",
+            system_prompt="Be concise",
+            params={"temperature": 0.4},
+            applied_preset_id="preset-abc",
+        )
+        m1 = await db.append_message(conn, conv["id"], role="user", content="Hello")
+        m2 = await db.append_message(conn, conv["id"], role="assistant", content="Hi!", thinking="Thinking...")
+
+        cloned = await db.clone_conversation(conn, conv["id"])
+        assert cloned is not None
+        assert cloned["id"] != conv["id"]
+        assert cloned["title"] == "Copy of Design Talk"
+        assert cloned["model_id"] == "qwen-3"
+        assert cloned["system_prompt"] == "Be concise"
+        assert cloned["params"] == {"temperature": 0.4}
+        assert cloned["applied_preset_id"] == "preset-abc"
+        assert len(cloned["messages"]) == 2
+
+        # Check message clone properties
+        cm1, cm2 = cloned["messages"]
+        assert cm1["id"] != m1["id"]
+        assert cm1["role"] == "user"
+        assert cm1["content"] == "Hello"
+        assert cm1["position"] == 0
+
+        assert cm2["id"] != m2["id"]
+        assert cm2["role"] == "assistant"
+        assert cm2["content"] == "Hi!"
+        assert cm2["thinking"] == "Thinking..."
+        assert cm2["position"] == 1
+
+        # Check fetch of cloned conversation
+        fetched = await db.get_conversation(conn, cloned["id"])
+        assert fetched is not None
+        assert fetched["title"] == "Copy of Design Talk"
+        assert len(fetched["messages"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_clone_custom_title(self, conn):
+        conv = await db.create_conversation(conn, title="Original")
+        cloned = await db.clone_conversation(conn, conv["id"], title="Branched Chat")
+        assert cloned is not None
+        assert cloned["title"] == "Branched Chat"
+
+    @pytest.mark.asyncio
+    async def test_clone_with_media_blobs(self, conn):
+        conv = await db.create_conversation(conn, title="Image Chat")
+        image_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "aGV5bG9vaw=="},
+        }
+        await db.append_message(conn, conv["id"], role="user", content=[image_block, {"type": "text", "text": "look"}])
+
+        cloned = await db.clone_conversation(conn, conv["id"])
+        assert cloned is not None
+        assert len(cloned["messages"]) == 1
+
+        # Check cloned block URL points to cloned conversation
+        blocks = cloned["messages"][0]["content_blocks"]
+        assert len(blocks) == 2
+        assert blocks[0]["type"] == "image"
+        media_id = blocks[0]["source"]["media_id"]
+        assert blocks[0]["source"]["url"] == f"/v1/conversations/{cloned['id']}/media/{media_id}"
+
+        # Check media blob is readable in cloned conversation
+        blob = await db.get_media_blob(conn, cloned["id"], media_id)
+        assert blob == ("image/png", b"heylook")
+
+    @pytest.mark.asyncio
+    async def test_clone_nonexistent_returns_none(self, conn):
+        result = await db.clone_conversation(conn, "ghost")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_clone_independence_after_delete(self, conn):
+        conv = await db.create_conversation(conn, title="Parent")
+        await db.append_message(conn, conv["id"], role="user", content="msg")
+        cloned = await db.clone_conversation(conn, conv["id"])
+
+        # Delete original conversation
+        await db.delete_conversation(conn, conv["id"])
+
+        # Cloned conversation should still exist intact
+        fetched = await db.get_conversation(conn, cloned["id"])
+        assert fetched is not None
+        assert len(fetched["messages"]) == 1
+        assert fetched["messages"][0]["content"] == "msg"
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +424,47 @@ class TestConversationParams:
         await db.create_conversation(conn, title="c", params={"temperature": 0.7})
         (row,) = await db.list_conversations(conn)
         assert row["params"] == {"temperature": 0.7}
+
+
+@pytest.mark.unit
+class TestConversationCloneEndpoints:
+    @pytest.fixture
+    def app(self, conn):
+        application = FastAPI()
+        application.include_router(conversation_router)
+        application.state.db = conn
+        return application
+
+    @pytest.mark.asyncio
+    async def test_clone_endpoint_default(self, app, conn):
+        conv = await db.create_conversation(conn, title="Chat to clone")
+        await db.append_message(conn, conv["id"], role="user", content="hello")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post(f"/v1/conversations/{conv['id']}/clone")
+            assert res.status_code == 201
+            data = res.json()
+            assert data["title"] == "Copy of Chat to clone"
+            assert data["id"] != conv["id"]
+            assert len(data["messages"]) == 1
+            assert data["messages"][0]["content"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_clone_endpoint_custom_title(self, app, conn):
+        conv = await db.create_conversation(conn, title="Original Chat")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post(f"/v1/conversations/{conv['id']}/clone", json={"title": "My Cloned Chat"})
+            assert res.status_code == 201
+            data = res.json()
+            assert data["title"] == "My Cloned Chat"
+
+    @pytest.mark.asyncio
+    async def test_clone_endpoint_404_nonexistent(self, app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post("/v1/conversations/nonexistent-id/clone")
+            assert res.status_code == 404
+

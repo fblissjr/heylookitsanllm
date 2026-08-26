@@ -754,13 +754,19 @@ function renderConvList(ctx) {
       e.stopPropagation();
       startRename(ctx, conv, title);
     });
+    // Armed confirm requires two deliberate taps, preventing accidental clones on mobile.
+    const copy = armedConfirm(
+      createEl('button', { class: 'btn btn--sm btn--ghost conv-item__clone', title: 'Clone conversation' }, ['Copy']),
+      () => cloneConversation(ctx, conv.id),
+      'Copy?',
+    );
     const del = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost conv-item__delete' }, ['Del']),
       () => deleteConversation(ctx, conv.id),
     );
     const item = createEl('div', {
       class: `conv-item${conv.id === s.activeId ? ' conv-item--active' : ''}`,
-    }, [title, ren, del]);
+    }, [title, ren, copy, del]);
     item.addEventListener('click', () => {
       selectConversation(ctx, conv.id);
       s.rootEl.classList.remove('chat--convs-open');
@@ -868,6 +874,26 @@ async function deleteConversation(ctx, convId) {
     }
   }
   if (ctx.alive) renderConvList(ctx);
+}
+
+async function cloneConversation(ctx, convId) {
+  const s = ctx.state;
+  if (s.stream?.targetConvId === convId) {
+    showStatus(ctx, 'Cannot clone while generation is in progress', true);
+    return;
+  }
+  try {
+    showStatus(ctx, 'Cloning conversation…');
+    const cloned = await api.cloneConversation(convId);
+    if (!ctx.alive) return;
+    s.conversations.unshift(cloned);
+    renderConvList(ctx);
+    await selectConversation(ctx, cloned.id);
+    s.rootEl.classList.remove('chat--convs-open');
+    showStatus(ctx, 'Conversation cloned.');
+  } catch (err) {
+    if (ctx.alive) showStatus(ctx, `Clone failed: ${err.message}`, true);
+  }
 }
 
 async function selectConversation(ctx, convId) {

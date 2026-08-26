@@ -491,14 +491,19 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   min-width: 0;
 }
 .conv-item__delete,
+.conv-item__clone,
 .conv-item__edit { visibility: hidden; }
 .conv-item:hover .conv-item__delete,
+.conv-item:hover .conv-item__clone,
 .conv-item:hover .conv-item__edit,
 .conv-item .btn--armed { visibility: visible; }
 .conv-item__rename { width: 100%; }
+.conv-item__clone.btn--armed { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.conv-item__clone.btn--armed:hover { background: var(--accent-hover); }
 /* touch has no hover: the row's actions can't be revealed, so show them. */
 @media (hover: none) {
   .conv-item__delete,
+  .conv-item__clone,
   .conv-item__edit { visibility: visible; }
 }
 

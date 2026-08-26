@@ -299,6 +299,7 @@ stays for external consumers, no v3 page calls it):
 - `GET /{id}` → conv **with** `messages:[{id,role,content,thinking,position,...}]` ordered by position.
 - `PUT /{id}` `{title?,model_id?,system_prompt?,params?,applied_preset_id?}` (only set fields patched; empty→400) → updated conv
   **without messages** (asymmetric — keep your in-memory messages, don't trust PUT to return them).
+- `POST /{id}/clone` (201) `{title?}` → full cloned conv incl messages and cloned media blobs.
 - `DELETE /{id}` → `{status:"deleted",id}`.
 - `POST /{id}/messages` (201) `{role,content,thinking?}` → message.
 - `PUT /{id}/messages/{msgId}` `{content?,thinking?}` → message.

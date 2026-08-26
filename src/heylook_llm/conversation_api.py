@@ -69,6 +69,10 @@ class ConversationUpdate(BaseModel):
     applied_preset_id: str | None = None
 
 
+class ConversationClone(BaseModel):
+    title: str | None = None
+
+
 # content accepts a plain string OR a content-block list (Messages-style,
 # e.g. [{"type":"image","source":{...}}, {"type":"text","text":"..."}]).
 # Responses always carry both: `content` (flattened text, back-compatible)
@@ -156,6 +160,26 @@ async def delete_conversation(conv_id: str, request: Request):
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return {"status": "deleted", "id": conv_id}
+
+
+@conversation_router.post(
+    "/{conv_id}/clone",
+    summary="Clone Conversation",
+    description="Clone a conversation and all its messages into a new conversation.",
+    status_code=201,
+)
+async def clone_conversation(
+    conv_id: str,
+    request: Request,
+    body: ConversationClone | None = None,
+):
+    _refuse_while_generating(conv_id)
+    conn = _get_db(request)
+    title = body.title if body else None
+    conv = await db.clone_conversation(conn, conv_id, title=title)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
 
 
 # ---------------------------------------------------------------------------
