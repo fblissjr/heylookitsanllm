@@ -29,6 +29,7 @@ import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
+import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
 import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
@@ -1123,10 +1124,18 @@ function buildMessageEl(ctx, msg, modelNote = '') {
     bubbleChildren.push(createEl('div', { class: 'message-images' },
       msg.content_blocks
         .filter((b) => b.type === 'image')
+        // decoding="async" keeps the decode off the main thread. NO
+        // loading="lazy" here, deliberately: a lazily-loaded image has no
+        // height until it arrives, and WebKit has no scroll anchoring to
+        // absorb the shift -- the same reason `content-visibility` is gated
+        // off for `.message` (css/app.css). Lazy loading would reintroduce
+        // exactly the iOS bug that gate exists to prevent. Revisit only
+        // alongside stored image dimensions to reserve the box.
         .map((b) => createEl('img', {
           class: 'message-image',
           src: blockSourceUrl(b),
           alt: 'attached image',
+          decoding: 'async',
         }))));
   }
   if (hasBlocks(msg, 'audio')) {
@@ -1662,27 +1671,31 @@ async function deleteMessage(ctx, msg) {
 const MAX_ATTACH_IMAGES = 8;
 const MAX_ATTACH_AUDIO = 2; // server-side gemma cap is 30s/clip; keep the strip sane
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
 
 // Picker dispatch: the input's accept list is capability-driven, but a
 // picker can't be trusted (drag/drop, "All files") -- split by MIME here.
 // One staging routine parameterized per kind (the repo's shared-factory
 // discipline: a cap/guard fix lands once, never in a per-kind twin).
+// A staged entry holds a BLOB and an object URL for the thumbnail -- never
+// base64. Base64 is 1.33x the bytes and it used to be produced at staging time
+// and retained for as long as the attachment sat in the composer; it is now
+// produced at send (buildContentBlocks) and lives only as long as the request
+// body. `prepare` is per-kind because only images can be downscaled.
 const ATTACH_KINDS = {
   image: {
     mime: 'image/', cap: 'vision', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
-    label: 'image', toEntry: (f, dataUrl) => ({ dataUrl, previewUrl: URL.createObjectURL(f), mediaType: f.type }),
+    label: 'image',
+    prepare: async (f) => {
+      const { blob, mediaType, resized } = await prepareImage(f);
+      return { blob, previewUrl: URL.createObjectURL(blob), mediaType, resized, sourceBytes: f.size };
+    },
   },
   audio: {
     mime: 'audio/', cap: 'audio', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
-    label: 'audio clip', toEntry: (f, dataUrl) => ({ dataUrl, previewUrl: URL.createObjectURL(f), mediaType: f.type, name: f.name }),
+    label: 'audio clip',
+    // Audio is passed through: there is no cheap, lossless equivalent of a
+    // resolution cap, and the 30s/clip server-side limit already bounds it.
+    prepare: async (f) => ({ blob: f, previewUrl: URL.createObjectURL(f), mediaType: f.type, name: f.name }),
   },
 };
 
@@ -1823,9 +1836,7 @@ async function addPendingFiles(ctx, files, kind) {
   }
   const pendingAtStart = ctx.state[kind.stateKey];
   const reads = await Promise.all([...files]
-    .map((f) => fileToDataUrl(f)
-      .then((dataUrl) => kind.toEntry(f, dataUrl))
-      .catch(() => null)));  /* unreadable file -- skip */
+    .map((f) => kind.prepare(f).catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) {
     for (const r of reads) {
       if (r?.previewUrl) URL.revokeObjectURL(r.previewUrl);
@@ -1852,8 +1863,16 @@ async function addPendingFiles(ctx, files, kind) {
   for (const ex of excess) {
     if (ex?.previewUrl) URL.revokeObjectURL(ex.previewUrl);
   }
-  pending.push(...usable.slice(0, room));
+  const staged = usable.slice(0, room);
+  pending.push(...staged);
   renderAttachStrip(ctx);
+  // Disclosure, not a prompt: the resolution cap is a cost the user pays
+  // silently otherwise, and a confirm on every photo would only train
+  // click-through. Says it once per staging batch, and only when it happened.
+  const shrunk = staged.filter((e) => e.resized).length;
+  if (shrunk) {
+    showStatus(ctx, `${shrunk === 1 ? 'Image' : `${shrunk} images`} scaled down to ${MAX_EDGE_PX}px for upload.`);
+  }
   // aria-live: chat__status is role="status" -- this announces the cap to
   // screen readers, not just the sighted strip.
   if (usable.length > room) {
@@ -1887,7 +1906,7 @@ function renderAttachStrip(ctx) {
       renderAttachStrip(ctx);
     });
     return createEl('div', { class: 'attach-thumb' }, [
-      createEl('img', { src: img.previewUrl || img.dataUrl, alt: '' }),
+      createEl('img', { src: img.previewUrl, alt: '', decoding: 'async' }),
       remove,
     ]);
   });
@@ -1930,23 +1949,25 @@ function blockSourceUrl(b) {
     : `data:${b.source.media_type};base64,${b.source.data}`;
 }
 
-function buildContentBlocks(text, images, audio) {
-  const blocks = images.map((img) => ({
-    type: 'image',
-    source: {
-      type: 'base64',
-      media_type: img.mediaType,
-      data: img.dataUrl.slice(img.dataUrl.indexOf(',') + 1),
-    },
-  }));
-  blocks.push(...audio.map((clip) => ({
-    type: 'audio',
-    source: {
-      type: 'base64',
-      media_type: clip.mediaType,
-      data: clip.dataUrl.slice(clip.dataUrl.indexOf(',') + 1),
-    },
-  })));
+// Base64 is minted HERE and nowhere else. It used to exist three times over at
+// send -- the data URL retained since staging, the slice taken to build these
+// blocks, and the JSON string of the whole body -- for every attachment, at
+// full camera-roll resolution. Now the staged bytes are already capped and the
+// base64 lives only as long as the request.
+async function buildContentBlocks(text, images, audio) {
+  const blocks = [];
+  for (const img of images) {
+    blocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: await blobToBase64(img.blob) },
+    });
+  }
+  for (const clip of audio) {
+    blocks.push({
+      type: 'audio',
+      source: { type: 'base64', media_type: clip.mediaType, data: await blobToBase64(clip.blob) },
+    });
+  }
   if (text) blocks.push({ type: 'text', text });
   return blocks;
 }
@@ -1996,8 +2017,6 @@ async function send(ctx) {
     return;
   }
 
-  const content = (images.length || audio.length)
-    ? buildContentBlocks(text, images, audio) : text;
   const title = (text || (audio.length ? 'Audio message' : 'Image message')).slice(0, 50);
   s.textarea.value = '';
   autoGrow(s.textarea);
@@ -2007,6 +2026,15 @@ async function send(ctx) {
   showStatus(ctx, '');
 
   try {
+    // Inside the try: encoding is real work that can fail, and the restore
+    // path below is exactly what a failure here needs.
+    const content = (images.length || audio.length)
+      ? await buildContentBlocks(text, images, audio) : text;
+    if (!ctx.alive) {
+      for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
+      for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
+      return;
+    }
     if (!s.activeId) {
       // a prompt typed (or preset applied) before the first send
       const preset = s.presetBar.presetForNewDoc();

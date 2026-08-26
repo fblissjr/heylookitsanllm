@@ -412,6 +412,18 @@ const stampedRows = (page) => page.evaluate(() =>
 const statusText = (page) => page.evaluate(
   () => document.querySelector('.chat__status')?.textContent ?? '');
 
+// Record every value the status line takes, for checks about what the user was
+// TOLD. A status is a sequence of announcements, not a state to sample: an
+// announcement can be correct and still be gone before the next poll.
+const watchStatus = (page) => page.evaluate(() => {
+  const el = document.querySelector('.chat__status');
+  window.__statusLog = [el.textContent];
+  window.__statusObs?.disconnect();
+  window.__statusObs = new MutationObserver(() => window.__statusLog.push(el.textContent));
+  window.__statusObs.observe(el, { childList: true, subtree: true, characterData: true });
+});
+const statusLog = (page) => page.evaluate(() => window.__statusLog ?? []);
+
 // Click the named action button on the row matching `rowFilter` (evaluated in
 // the page). Buttons are click()able even when hover-hidden -- visibility is
 // asserted separately where it matters (the touch checks).
@@ -511,6 +523,53 @@ async function send(page, text) {
 // cannot pass because the handler bailed early on an empty one.
 const mkFile = `const dt = new DataTransfer();
   dt.items.add(new File([new Uint8Array([1, 2, 3, 4])], name, { type }));`;
+
+// Drop a real, DECODABLE JPEG of given pixel dimensions. The staging path now
+// decodes what it is handed in order to cap its resolution, so the 4-byte
+// placeholder above cannot exercise it -- that file fails to decode and is
+// passed through, which is the fallback path, not the one under test.
+const dropRealImage = (page, { w, h, name = 'photo.jpg' }) =>
+  page.evaluate(new Function('w', 'h', 'name', `
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const cx = c.getContext('2d');
+    // Noise, not a flat fill: a flat image compresses to almost nothing, which
+    // would make every size assertion below pass for the wrong reason.
+    const img = cx.createImageData(w, h);
+    let seed = 1;
+    for (let i = 0; i < img.data.length; i += 4) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      img.data[i] = seed & 0xff;
+      img.data[i + 1] = (seed >> 8) & 0xff;
+      img.data[i + 2] = (seed >> 16) & 0xff;
+      img.data[i + 3] = 255;
+    }
+    cx.putImageData(img, 0, 0);
+    return new Promise((resolve) => {
+      c.toBlob((blob) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([blob], name, { type: 'image/jpeg' }));
+        const el = document.querySelector('.chat__thread');
+        const fire = (k) => el.dispatchEvent(new DragEvent(k, { dataTransfer: dt, bubbles: true, cancelable: true }));
+        fire('dragenter'); fire('dragover'); fire('drop');
+        resolve(blob.size);
+      }, 'image/jpeg', 0.92);
+    });
+  `), w, h, name);
+
+// Send whatever is staged and return the resulting message POST.
+async function sendAndCapturePost(ctx, text) {
+  const before = ctx.reqs.length;
+  await ctx.page.evaluate((t) => {
+    const ta = document.querySelector('.chat__composer textarea');
+    ta.value = t;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    [...document.querySelectorAll('.chat__composer button')].find((b) => b.textContent === 'Send').click();
+  }, text);
+  return waitFor(
+    () => ctx.reqs.slice(before).find((r) => r.method === 'POST' && /\/messages$/.test(r.url)),
+    { timeout: 30000, message: 'the message POST never fired' });
+}
 
 const dropFile = (page, { name = 'shot.png', type = 'image/png', leaveInstead = false } = {}) =>
   page.evaluate(new Function('name', 'type', 'leave', `
@@ -1220,6 +1279,7 @@ async function main() {
     // renders nothing either way) -- the status line is the only observable
     // that separates "discarded, and said so" from "vanished".
     await suite.check('a send during the attachment read does not lose it silently', async () => {
+      await watchStatus(vis.page);
       await vis.page.evaluate(() => {
         const dt = new DataTransfer();
         dt.items.add(new File([new Uint8Array(1024)], 'race.png', { type: 'image/png' }));
@@ -1231,9 +1291,53 @@ async function main() {
         [...document.querySelectorAll('.chat__composer button')]
           .find((b) => b.textContent === 'Send').click();
       });
-      await waitFor(async () => (await statusText(vis.page)).includes('discarded'),
+      // Observe the sequence rather than polling for a value. "Was the user
+      // told?" is a question about what was WRITTEN, and the send that raced
+      // this attachment overwrites the line within milliseconds of it
+      // appearing -- polling for it passes or fails on timing alone. (It was
+      // passing on a window a few ms wide until an unrelated change to the
+      // staging path moved it.) The observer is installed before the drop, so
+      // nothing can slip past between writes.
+      await waitFor(async () => (await statusLog(vis.page)).some((t) => t.includes('discarded')),
         { timeout: 3000, interval: 25,
-          message: async () => `the racing attachment vanished without a word (status: "${await statusText(vis.page)}")` });
+          message: async () => `the racing attachment vanished without a word (status line only ever said: ${JSON.stringify(await statusLog(vis.page))})` });
+    });
+
+    await suite.check('an oversized image is capped before it reaches the wire', async () => {
+      // Measured before this fix, through this same path: eight 3MB camera-roll
+      // photos left as a single 32MB POST. Nothing between the file picker and
+      // the request reduced anything, and base64 added 33% on top.
+      const sourceBytes = await dropRealImage(vis.page, { w: 4032, h: 3024 });
+      await waitFor(async () => (await thumbCount(vis.page)) === 1,
+        { timeout: 20000, message: 'the image never staged' });
+      const post = await sendAndCapturePost(vis, 'describe this');
+      const block = JSON.parse(post.postData).content.find((b) => b.type === 'image');
+      assert(block, `no image block on the wire: ${post.postData.slice(0, 200)}`);
+      // Base64 is 1.33x, so an uncapped image can never come in under source.
+      assert(post.postData.length < sourceBytes,
+        `the POST body (${post.postData.length}B) is no smaller than the source image (${sourceBytes}B) -- nothing capped it`);
+      // And it is the PIXELS that shrank, not merely the JPEG re-compressing.
+      const dims = await vis.page.evaluate((b64, type) => new Promise((resolve) => {
+        const i = new Image();
+        i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight });
+        i.onerror = () => resolve(null);
+        i.src = `data:${type};base64,${b64}`;
+      }), block.source.data, block.source.media_type);
+      assert(dims && Math.max(dims.w, dims.h) <= 2048,
+        `the image reached the wire at ${dims ? `${dims.w}x${dims.h}` : 'an unreadable size'} -- the resolution cap did not apply`);
+    });
+
+    await suite.check('an image already within the cap is passed through, not re-encoded', async () => {
+      // A lossy round-trip that saves nothing is worse than doing nothing.
+      const sourceBytes = await dropRealImage(vis.page, { w: 800, h: 600, name: 'small.jpg' });
+      await waitFor(async () => (await thumbCount(vis.page)) === 1,
+        { timeout: 20000, message: 'the small image never staged' });
+      const post = await sendAndCapturePost(vis, 'and this one');
+      const block = JSON.parse(post.postData).content.find((b) => b.type === 'image');
+      // Untouched bytes reach the wire as base64: 4/3 of the source, plus padding.
+      const ratio = block.source.data.length / sourceBytes;
+      assert(ratio > 1.3 && ratio < 1.4,
+        `a within-cap image was re-encoded (base64 is ${ratio.toFixed(2)}x the source, expected ~1.33x)`);
     });
 
     await suite.check('no uncaught page errors (attach staging)', () => {

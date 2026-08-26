@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.10]
+
+### Optimized
+
+- **Frontend-v3 attached images (upload size and heap)**: Measured through the real staging path before this change: eight 3MB camera-roll photos left the phone as a **single 32MB POST** (base64 is 1.33x, exactly), and nothing between the file picker and the request reduced anything.
+  - **Resolution cap at staging (`image-prep.js`, new)**: `prepareImage()` decodes each staged image honouring EXIF orientation (phone cameras store a rotation flag; a canvas draw that ignores it silently rotates the photo) and reduces it to `MAX_EDGE_PX` (2048) on its longest edge. An image already within the cap is passed through **untouched** rather than re-encoded -- a lossy round-trip that saves nothing is worse than doing nothing -- as is one whose re-encode came out larger. PNG stays PNG (a re-encoded screenshot shows JPEG ringing on text); everything else, including HEIC/HEIF off an iPhone, becomes JPEG at q0.85. Every failure path returns the original file: a downscale bug must not be able to lose a picture.
+  - **Base64 is minted at send, not at staging (`chat.js`)**: a staged attachment now holds a Blob plus an object URL for its thumbnail. Previously each one retained a base64 data URL for as long as it sat in the composer, `buildContentBlocks` took a second full copy via `.slice()`, and `JSON.stringify` made a third -- all three live simultaneously, at full camera-roll resolution. `buildContentBlocks` is now async and encodes from the (already capped) blob.
+  - **Thumbnails read the capped blob** and carry `decoding="async"`, as do message images. `loading="lazy"` is deliberately NOT used: a lazily-loaded image has no height until it arrives and WebKit has no scroll anchoring to absorb the shift -- the same reason `content-visibility` is gated off for `.message`. Revisit only alongside stored image dimensions to reserve the box.
+  - The cap is **disclosed, not confirmed** (owner rule: loss gates a switch, cost gets disclosed) -- one status line per staging batch, only when something was actually scaled.
+  - `MAX_EDGE_PX` is a deliberate default, not a derived one. How much resolution a vision model can use is a model question: the Qwen-VL family in this repo's modelzoo declares dynamic resolution (a pixel budget of ~4096x4096), so it consumes what it is given and pays in vision tokens and prefill, while a fixed-input tower discards the surplus.
+
+### Tests
+
+- **`tests/e2e/render.mjs`**: `dropRealImage` stages a genuinely decodable JPEG of chosen dimensions -- the existing 4-byte placeholder cannot exercise a path that decodes what it is handed. New checks: an oversized image is capped before it reaches the wire (asserting both that the POST is smaller than the source and that the *pixels* shrank, not merely that the JPEG re-compressed), and an image already within the cap is passed through un-re-encoded. The first was shown red against the pre-fix tree.
+- **Fixed a flaky check**: `a send during the attachment read does not lose it silently` polled the status line for a transient value. The status line is a sequence of announcements, not a state to sample -- the send that races the attachment overwrites it within milliseconds, so the check was passing on a window a few ms wide and went red when an unrelated change to the staging path moved it. It now records every value the line takes (`watchStatus`/`statusLog`) and asserts the announcement was *written*. The underlying behaviour was verified correct throughout.
+
 ## [1.79.9]
 
 ### Optimized

@@ -70,12 +70,6 @@ export function throttleToInterval(fn, ms) {
     if (timer !== null || raf !== null) return;
     timer = setTimeout(schedule, Math.max(0, ms - (performance.now() - lastRun)));
   };
-  wrapped.flush = () => {
-    const had = pending;
-    wrapped.cancel();
-    pending = had;
-    fire();
-  };
   wrapped.cancel = () => {
     clearTimeout(timer);
     timer = null;
