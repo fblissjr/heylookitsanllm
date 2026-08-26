@@ -11,6 +11,7 @@
 
 import { createPage } from '../page.js';
 import { createEl, autoGrow, setStatus, fillOptions } from '../utils.js';
+import { appendPlainText } from '../markdown-stream.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
 import { messagesParams } from '../settings.js';
@@ -296,6 +297,7 @@ function generate(ctx) {
   s.selectedIndex = null;
   s.thinkingEl.hidden = true;
   s.thinkingBody.textContent = '';
+  s.thinkingWritten = 0;
   renderStrip(ctx);
   renderDetail(ctx);
   showStatus(ctx, '');
@@ -313,7 +315,11 @@ function generate(ctx) {
     onThinking: (_, full) => {
       if (!ctx.alive || !isCurrent()) return;
       s.thinkingEl.hidden = false;
-      s.thinkingBody.textContent = full;
+      // Append the delta rather than rewriting the whole string on every one
+      // of them: this runs per DELTA with no throttle at all, so a plain
+      // assignment is O(thinking so far) per token. Same defect the chat
+      // painter had, one page over.
+      s.thinkingWritten = appendPlainText(s.thinkingBody, full, s.thinkingWritten);
     },
     onLogprobs: (items) => {
       if (!ctx.alive || !isCurrent()) return;

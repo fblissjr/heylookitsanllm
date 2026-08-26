@@ -218,6 +218,37 @@ drop-overlay label) is refreshed AFTER `modelSelect.value` moves, never before
 the order backwards, so every one of them described the conversation being left. Drag/drop
 is desktop-only ON PURPOSE and is not a §7 violation: it duplicates paths that
 exist on the phone rather than being the sole route to anything.
+A STREAMING message is rendered INCREMENTALLY (`markdown-stream.js`, v1.79.9)
+and this is load-bearing, not a micro-optimization: the painter used to
+re-parse the whole accumulated response through marked+DOMPurify into
+`innerHTML` every animation frame, and marked's parse is SUPERLINEAR in
+length, so per-frame cost grew with the response and a long generation
+saturated the main thread -- on a phone that is heat and battery, and NO
+check that renders a finished document can see it. MarkdownStream cuts at a
+boundary no markdown construct can span (not inside a fence; at column 0
+after a blank line; never a list marker or `>`, which would merge with a
+block above), renders each segment ONCE into a committed prefix whose nodes
+are then never touched again, and re-renders only the tail; a
+link-reference/footnote definition disables splitting for that message
+because it reaches forward arbitrarily far. The boundary rule is a PROPERTY,
+not a set of examples -- `tests/e2e/render.mjs` grows generated documents one
+chunk at a time and diffs against a whole-document render, the same technique
+and the same reason as the backend's `TestParserInvariants`. If you touch the
+boundary rules, make that check FAIL first; it was shown red against three
+deliberate mutations. Painters whose cost scales with the document use
+`ctx.throttleTime` (~15/s), never `ctx.throttle` (per-frame, correct only for
+cheap work like explore's token strip). Scroll-follow is measured at the TOP of
+the painter, BEFORE it mutates -- both halves of that are load-bearing. Before
+the write the reads are cache hits (layout is still clean from the last paint)
+rather than a forced re-layout, which matters most on iOS, where
+`content-visibility` is gated off (Safari has no scroll anchoring) so a forced
+layout walks every row. And only before the write is it HONEST: measured after,
+one paint appending more than the slack (a code block, a table) reads as "the
+reader scrolled away" and strands the view for the rest of the generation. A
+CACHED flag fed by scroll events was tried and is WRONG -- pinning coalesces
+scroll events to a handful across a whole generation, so the flag goes stale
+exactly when the viewport changes under it, which on a phone is every keyboard
+open (`tests/e2e/render.mjs` resizes mid-stream and was shown red against it).
 Chat also has a per-document system-prompt editor + a saved-preset bar (TWO shared
 drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat AND
 notebook -- fix a bug in the shared factory, never in one page's copy).

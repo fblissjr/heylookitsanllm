@@ -37,6 +37,55 @@ export function throttleToFrame(fn) {
   return wrapped;
 }
 
+// Coalesce repeated calls to at most one run per `ms`, on an animation frame.
+//
+// throttleToFrame is the right tool when a call is cheap; a STREAM painter is
+// not. One paint per frame is up to 120/s on a ProMotion phone, and nobody
+// reads faster than a fraction of that -- the extra frames are pure heat. The
+// run is still aligned to a frame so the DOM write lands with the browser's
+// own paint rather than fighting it. Leading-edge (the first call runs
+// immediately) so a stream's first token is not held back.
+export function throttleToInterval(fn, ms) {
+  let timer = null;
+  let raf = null;
+  let lastRun = 0;
+  let lastArgs = null;
+  let pending = false;
+
+  const fire = () => {
+    if (!pending) return;
+    pending = false;
+    lastRun = performance.now();
+    fn(...lastArgs);
+  };
+
+  const schedule = () => {
+    timer = null;
+    raf = requestAnimationFrame(() => { raf = null; fire(); });
+  };
+
+  const wrapped = (...args) => {
+    lastArgs = args;
+    pending = true;
+    if (timer !== null || raf !== null) return;
+    timer = setTimeout(schedule, Math.max(0, ms - (performance.now() - lastRun)));
+  };
+  wrapped.flush = () => {
+    const had = pending;
+    wrapped.cancel();
+    pending = had;
+    fire();
+  };
+  wrapped.cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (raf !== null) cancelAnimationFrame(raf);
+    raf = null;
+    pending = false;
+  };
+  return wrapped;
+}
+
 const beforeUnloadHandler = (e) => {
   e.preventDefault();
   e.returnValue = '';

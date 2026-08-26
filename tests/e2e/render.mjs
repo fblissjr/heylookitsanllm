@@ -55,8 +55,21 @@ const TYPES = {
 };
 
 // --- static file server for the v3 tree ------------------------------------
+//
+// It also carries ONE dynamic route: a drip-fed /generate stream. puppeteer's
+// request interception can only answer a request in a single shot, so every
+// other stub here delivers a whole SSE body at once -- which is exactly the
+// shape that cannot show a painter repainting over time. The streaming-cost
+// checks let that one request through to this server instead, and it writes
+// the deltas out with real delays. `drip` is mutated by the check that is
+// about to run (checks are sequential).
 function serveV3() {
-  const server = http.createServer((req, res) => {
+  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0 };
+  const server = http.createServer(async (req, res) => {
+    if (/\/v1\/conversations\/[^/]+\/generate$/.test(req.url) && req.method === 'POST') {
+      await streamDrip(req, res, drip);
+      return;
+    }
     let rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/v3\/?/, '');
     if (rel === '' || rel === '/') rel = 'index.html';
     const file = path.join(V3_ROOT, rel);
@@ -69,8 +82,40 @@ function serveV3() {
     res.end(fs.readFileSync(file));
   });
   return new Promise((resolve) => {
-    server.listen(0, () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` }));
+    server.listen(0, () => resolve({ server, base: `http://127.0.0.1:${server.address().port}`, drip }));
   });
+}
+
+// Write `drip.text` out as Messages-grammar SSE, a chunk at a time, ending in
+// the heylook_saved event the client adopts from.
+async function streamDrip(req, res, drip) {
+  for await (const _ of req) { /* drain the POST body */ }
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+  const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  ev('message_start', { type: 'message_start', message: { id: drip.rowId, content: [] } });
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } });
+  for (let i = 0; i < drip.text.length; i += drip.chunkChars) {
+    ev('content_block_delta', {
+      type: 'content_block_delta', index: 0,
+      delta: { type: 'text_delta', text: drip.text.slice(i, i + drip.chunkChars) },
+    });
+    await sleep(drip.delayMs);
+  }
+  // Hold the terminal events back on request. The painter is rate-limited, so
+  // the LAST delta is normally still unpainted when the saved row lands and
+  // replaces the streaming node -- harmless in the app (the adopted row is
+  // complete) but it makes "what was on screen" a moving target for a check.
+  if (drip.tailPauseMs) await sleep(drip.tailPauseMs);
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 });
+  ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } });
+  ev('message_stop', { type: 'message_stop', performance: {} });
+  ev('heylook_saved', {
+    type: 'heylook_saved', conversation_id: 'c1', mode: 'append', end_reason: 'complete',
+    messages: [{ id: drip.rowId, role: 'assistant', content: drip.text, thinking: null,
+      content_blocks: null, position: drip.position }],
+    dropped_media: { images: 0, audio: 0 }, timing: {},
+  });
+  res.end();
 }
 
 // --- stub conversation: long enough to scroll ------------------------------
@@ -271,7 +316,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
 //   needs the text-only default.
 async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
-  secondModel = null, withMedia = false,
+  secondModel = null, withMedia = false, dripGenerate = false,
 } = {}) {
   const page = await browser.newPage();
   const pageErrors = [];
@@ -299,6 +344,8 @@ async function openChat(browser, base, {
     // store mutation happens at RESPOND time so a delayed stream mutates
     // when the "server" answers, not when the request leaves.
     if (url.includes('/generate')) {
+      // Let the real (drip-feeding) server answer -- see serveV3.
+      if (dripGenerate && req.method() === 'POST') return req.continue();
       if (req.method() === 'POST') {
         const respond = () => req.respond({
           status: 200, contentType: 'text/event-stream',
@@ -388,6 +435,60 @@ async function parkMidThread(page) {
   return scroll(page);
 }
 
+// A realistic assistant reply: enough distinct BLOCKS that a rebuild-the-
+// subtree painter and an incremental one are told apart by how many nodes a
+// single paint removes, and enough shapes (fence with a blank line inside,
+// loose list, table, quote) that a bad split boundary shows up as a diff.
+const STREAM_DOC = [
+  'Here is the short answer, followed by the detail you asked for.',
+  '## What is happening',
+  'The painter re-parsed the whole message on every frame, which is why the '
+    + 'cost grew with the response rather than staying flat.',
+  '- the parse is superlinear in length',
+  '- the DOM was rebuilt each time',
+  '- the scroll write forced a layout right after',
+  '### The shape of the fix',
+  'Split at a boundary no construct can span, render each segment once, and '
+    + 're-render only the tail.',
+  '```js\nfunction paint(text) {\n  const b = boundary(text);\n\n  commit(text.slice(0, b));\n  return render(text.slice(b));\n}\n```',
+  '> The seam rule still holds: the cut is chosen so nothing spans it.',
+  '| case | before | after |\n| --- | --- | --- |\n| long reply | whole doc | tail only |',
+  'One more paragraph with `inline code`, **bold** and *emphasis* so the '
+    + 'inline lexer has something to do.',
+  '1. first numbered item',
+  '2. second numbered item',
+  '---',
+  'A closing paragraph that runs on for a while so the tail has some real '
+    + 'length to it before the stream ends and the row is adopted.',
+].join('\n\n');
+
+// Send, then wait for the stream to actually END. send()'s fixed pause is
+// sized for the single-shot stubs; a drip-fed stream outlives it.
+const streaming = (page) => page.evaluate(() => Boolean(document.querySelector('.message--streaming')));
+
+// Send and return as soon as the stream is UNDER WAY, so a check can intervene
+// mid-stream (resize the viewport, scroll away) rather than only inspect the end.
+async function startSend(page, text = 'go') {
+  await page.evaluate((t) => {
+    const ta = document.querySelector('.chat__composer textarea');
+    ta.value = t;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    [...document.querySelectorAll('.chat__composer button')]
+      .find((b) => b.textContent === 'Send').click();
+  }, text);
+  await waitFor(async () => await streaming(page), { timeout: 10000, message: 'the stream never started' });
+}
+
+async function waitStreamEnd(page) {
+  await waitFor(async () => !(await streaming(page)), { timeout: 30000, message: 'the stream never finished' });
+  await settle(page);
+}
+
+async function sendAndWait(page, text = 'go') {
+  await startSend(page, text);
+  await waitStreamEnd(page);
+}
+
 async function send(page, text) {
   await page.evaluate((t) => {
     const ta = document.querySelector('.chat__composer textarea');
@@ -461,7 +562,7 @@ const thumbCount = (page) => page.evaluate(
   () => document.querySelectorAll('.chat__attach .attach-thumb').length);
 
 async function main() {
-  const { server, base } = await serveV3();
+  const { server, base, drip } = await serveV3();
   const browser = await launchBrowser();
   const suite = new Suite('render');
 
@@ -1312,6 +1413,291 @@ async function main() {
       const link = await render('<https://example.com>');
       assert(link.includes('<a href="https://example.com">'),
         `an autolink stopped being a link: ${JSON.stringify(link)}`);
+    });
+
+
+    // ---- boot 10: the streaming painter is incremental --------------------
+    // A streaming message used to be re-parsed WHOLE and assigned to innerHTML
+    // on every animation frame. marked's parse is superlinear in document
+    // length, so the per-frame cost grew faster than the response did and a
+    // long generation saturated the main thread -- which on a phone is heat and
+    // battery, invisible to every check that only renders a FINISHED document.
+    // The two properties that make the fix real are guarded here, and the
+    // boundary rules they rest on are proven by the growth check further down.
+
+    await suite.check('a growing message re-renders the tail, never the whole document', async () => {
+      // A rebuild-the-subtree painter removes EVERY child on every paint; an
+      // incremental one removes only the tail. The largest single removal is
+      // what separates them, and it does not depend on timing.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 6;
+      drip.delayMs = 3;
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await st.page.evaluate(() => {
+        window.__paint = { records: 0, maxRemoved: 0, maxChildren: 0 };
+        const obs = new MutationObserver((records) => {
+          const el = document.querySelector('.message--streaming .message-content');
+          if (!el) return;
+          const p = window.__paint;
+          for (const r of records) {
+            if (r.type !== 'childList' || !r.target.closest?.('.message--streaming')) continue;
+            p.records++;
+            // Only judge removals once the message HAS a prefix to preserve.
+            if (p.maxChildren > 8) p.maxRemoved = Math.max(p.maxRemoved, r.removedNodes.length);
+          }
+          p.maxChildren = Math.max(p.maxChildren, el.childNodes.length);
+        });
+        obs.observe(document.querySelector('.chat__messages'), { childList: true, subtree: true });
+        window.__paintObs = obs;
+      });
+      await sendAndWait(st.page);
+      const p = await st.page.evaluate(() => { window.__paintObs.disconnect(); return window.__paint; });
+      await st.page.close();
+      assert(p.maxChildren > 8,
+        `setup: the streamed message only reached ${p.maxChildren} child nodes -- too short to tell`);
+      // The old painter's removals equal the whole child count (20+ here);
+      // the incremental one only ever drops the trailing block or two.
+      assert(p.maxRemoved <= 6,
+        `a single paint removed ${p.maxRemoved} of ${p.maxChildren} nodes -- the message is being rebuilt, not extended`);
+    });
+
+    await suite.check('the streaming repaint rate is bounded, not one per frame', async () => {
+      // Deltas arrive far faster than anyone reads. A per-frame painter paints
+      // once per delta (they are slower than a frame); a rate-limited one
+      // paints on the order of duration/PAINT_INTERVAL_MS.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 6;
+      drip.delayMs = 3;
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await st.page.evaluate(() => {
+        window.__rate = { paints: 0, deltas: 0, start: performance.now(), end: 0 };
+        const obs = new MutationObserver(() => {
+          const el = document.querySelector('.message--streaming .message-content');
+          if (!el) return;
+          window.__rate.paints++;
+          window.__rate.end = performance.now();
+        });
+        obs.observe(document.querySelector('.chat__messages'), { childList: true, subtree: true, characterData: true });
+        window.__rateObs = obs;
+      });
+      await sendAndWait(st.page);
+      const r = await st.page.evaluate(() => { window.__rateObs.disconnect(); return window.__rate; });
+      await st.page.close();
+      const deltas = Math.ceil(STREAM_DOC.length / 6);
+      const ms = r.end - r.start;
+      // The ceiling is the CONFIGURED rate (PAINT_INTERVAL_MS = 66) with slack
+      // for observer batching and the structural renders that bracket a stream.
+      // The point is the ORDER: bounded by elapsed time, not by how many
+      // deltas arrived. Measured either side of the fix on this same document
+      // -- rate-limited ~10, one-per-frame 45, ceiling ~22.
+      const ceiling = Math.max(15, (ms / 66) * 2.5);
+      assert(r.paints < ceiling,
+        `${r.paints} repaints for ${deltas} deltas over ${Math.round(ms)}ms (ceiling ${Math.round(ceiling)}) -- the painter is not rate-limited`);
+    });
+
+    await suite.check('the streamed message matches a whole-document render', async () => {
+      // Speed is worthless if the seam shows. What was on screen at the last
+      // paint must equal what a single render of the same text produces.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 5;
+      drip.delayMs = 2;
+      drip.tailPauseMs = 400; // let the last rate-limited paint land
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await st.page.evaluate(() => {
+        window.__last = '';
+        const obs = new MutationObserver(() => {
+          const el = document.querySelector('.message--streaming .message-content');
+          if (el) window.__last = el.innerHTML;
+        });
+        obs.observe(document.querySelector('.chat__messages'), { childList: true, subtree: true, characterData: true });
+        window.__lastObs = obs;
+      });
+      await sendAndWait(st.page);
+      const got = await st.page.evaluate(() => { window.__lastObs.disconnect(); return window.__last; });
+      const want = await st.page.evaluate(async (b, text) => {
+        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+        const el = document.createElement('div');
+        el.innerHTML = renderMarkdown(text);
+        return el.innerHTML;
+      }, base, STREAM_DOC);
+      await st.page.close();
+      drip.tailPauseMs = 0;
+      if (got !== want) {
+        // Report WHERE they diverge -- the heads are identical for hundreds of
+        // characters, so a head-of-string dump names nothing.
+        let i = 0;
+        while (i < got.length && i < want.length && got[i] === want[i]) i++;
+        assert(false,
+          `the streamed render differs from a whole-document render at offset ${i} `
+          + `(streamed ${got.length} chars, whole ${want.length}):\n`
+          + `  got:  ${JSON.stringify(got.slice(Math.max(0, i - 80), i + 160))}\n`
+          + `  want: ${JSON.stringify(want.slice(Math.max(0, i - 80), i + 160))}`);
+      }
+    });
+
+    await suite.check('the view still follows the tail after a mid-stream viewport change', async () => {
+      // A resize changes clientHeight without the reader ever scrolling. This
+      // check exists because the first version of the fix cached "at the tail"
+      // as a flag written by scroll events -- and pinning coalesces those to a
+      // handful across a whole generation, so the flag went stale exactly here.
+      // On a phone the keyboard resizes the viewport constantly, so this is the
+      // common case, not an exotic one.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 6;
+      drip.delayMs = 7;
+      drip.tailPauseMs = 400;
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await st.page.setViewport({ width: 390, height: 844 });
+      await startSend(st.page);
+      await sleep(250);
+      // Shrink, then grow, WITHOUT ever scrolling.
+      await st.page.setViewport({ width: 390, height: 600 });
+      await sleep(200);
+      await st.page.setViewport({ width: 390, height: 844 });
+      await waitStreamEnd(st.page);
+      const end = await scroll(st.page);
+      await st.page.close();
+      drip.tailPauseMs = 0;
+      const gap = end.height - end.top - end.client;
+      assert(gap < 120, `the view stranded ${gap}px above the tail after a mid-stream resize`);
+    });
+
+    await suite.check('a reader who scrolls up mid-stream is left alone', async () => {
+      // The other half of the same flag: it must also go FALSE and stay false.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 6;
+      drip.delayMs = 7;
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await startSend(st.page);
+      await sleep(300);
+      const parked = await st.page.evaluate(() => {
+        const el = document.querySelector('.chat__messages');
+        el.scrollTop = 0;
+        return el.scrollTop;
+      });
+      await waitStreamEnd(st.page);
+      const end = await scroll(st.page);
+      await st.page.close();
+      assert(end.top < parked + 200,
+        `the view was yanked back to the tail (${parked} -> ${end.top}) while the reader was scrolled up`);
+    });
+
+    await suite.check('no uncaught page errors (streaming paint)', async () => {
+      const st = await openChat(browser, base, { dripGenerate: true });
+      drip.text = STREAM_DOC;
+      await sendAndWait(st.page);
+      const errs = st.pageErrors.slice();
+      await st.page.close();
+      assert(errs.length === 0, `page errors: ${errs.join(' | ')}`);
+    });
+
+
+    // ---- the boundary rules that make incremental rendering equivalent ----
+    // Every speed property above rests on ONE claim: the cut MarkdownStream
+    // chooses is a place no markdown construct can span. That claim is not
+    // provable by example -- it is a property, so check it as one, over
+    // generated documents grown one chunk at a time, exactly the way a stream
+    // arrives. Chunk-boundary invariance is the same technique the backend's
+    // parser tests use (TestParserInvariants) and for the same reason: both
+    // 2026-07-23 parser bugs were invisible to example-based tests.
+    await suite.check('an incrementally grown document renders identically to a whole one', async () => {
+      const bad = await md.evaluate(async (b) => {
+        const { MarkdownStream } = await import(`${b}/v3/js/markdown-stream.js`);
+        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+
+        let seed = 20260826;
+        const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+        const pick = (a) => a[Math.floor(rnd() * a.length)];
+        const W = ('the model returns a value when parsing tokens across layers and caches '
+          + 'inputs for later reuse in generation which is why latency matters here').split(' ');
+        const words = (n) => Array.from({ length: n }, () => pick(W)).join(' ');
+
+        // Every block shape that could plausibly straddle a split.
+        const BLOCKS = [
+          () => words(25) + '.',
+          () => '## ' + words(4),
+          () => '### ' + words(3),
+          () => '- ' + words(5) + '\n- ' + words(4) + '\n- ' + words(6),
+          () => '1. ' + words(5) + '\n2. ' + words(4),
+          () => '- ' + words(5) + '\n\n- ' + words(4),                  // LOOSE list across a blank line
+          () => '- ' + words(4) + '\n\n  continued paragraph in the item', // indented continuation
+          () => '```js\nconst x = 1;\n\nfunction f() { return x; }\n```', // blank line INSIDE a fence
+          () => '~~~\nplain ~~ fence body\n~~~',
+          () => '````\n```\nnested ticks\n```\n````',                    // longer fence wins
+          () => '```\nunclosed fence body\n' + words(6),                 // never closed
+          () => '> ' + words(8) + '\n> ' + words(6),
+          () => '> ' + words(5) + '\n\n> ' + words(5),                   // adjacent quotes
+          () => '    indented code one\n    indented code two',
+          () => '    code a\n\n    code b',                             // one code block across a blank line
+          () => '| a | b |\n| --- | --- |\n| ' + words(2) + ' | ' + words(2) + ' |',
+          () => '---',
+          () => words(4) + '\n' + '='.repeat(5),                        // setext h1
+          () => words(4) + '\n' + '-'.repeat(5),                        // setext h2
+          () => words(8) + ' `inline` and **bold** and *em*.',
+          () => '<div>literal html</div>',
+          () => 'A line\nwith a soft break.',                           // breaks: true
+          () => '[a link](https://example.com) mid-paragraph ' + words(6),
+        ];
+        // Reference and footnote definitions reach forward arbitrarily far, so
+        // no split is safe once one appears -- the fallback must keep these
+        // CORRECT, which is the whole point of including them here.
+        const UNSAFE = [
+          () => '[ref]: https://example.com\n\nSee [the doc][ref] for more.',
+          () => 'Text with a note[^1].\n\n[^1]: the footnote body.',
+        ];
+
+        const CHUNKS = [1, 5, 23, 97];
+        for (let d = 0; d < 60; d++) {
+          const n = 4 + Math.floor(rnd() * 6);
+          const parts = Array.from({ length: n }, () => pick(BLOCKS)());
+          if (d % 7 === 0) parts.splice(Math.floor(rnd() * parts.length), 0, pick(UNSAFE)());
+          const doc = parts.join('\n\n');
+
+          const ref = document.createElement('div');
+          ref.innerHTML = renderMarkdown(doc);
+          const want = ref.innerHTML;
+
+          for (const step of CHUNKS) {
+            const el = document.createElement('div');
+            const ms = new MarkdownStream(el);
+            try {
+              for (let i = step; i < doc.length; i += step) ms.render(doc.slice(0, i));
+              ms.render(doc);
+            } catch (err) {
+              return { doc, step, threw: String(err && err.message) };
+            }
+            if (el.innerHTML !== want) return { doc, step, got: el.innerHTML, want };
+          }
+        }
+        return null;
+      }, base);
+      if (bad) {
+        const detail = bad.threw
+          ? `threw: ${bad.threw}`
+          : `\n  got:  ${JSON.stringify(String(bad.got).slice(0, 500))}\n  want: ${JSON.stringify(String(bad.want).slice(0, 500))}`;
+        assert(false,
+          `growing this document ${bad.step} chars at a time diverged from a whole-document render.\n`
+          + `  source: ${JSON.stringify(bad.doc.slice(0, 500))}\n  ${detail}`);
+      }
+    });
+
+    await suite.check('a document with no safe split still renders correctly', async () => {
+      // One giant block (no blank line anywhere) can never advance the
+      // boundary. It must stay CORRECT -- the rate limit is what bounds its
+      // cost, not the boundary machinery.
+      const ok = await md.evaluate(async (b) => {
+        const { MarkdownStream } = await import(`${b}/v3/js/markdown-stream.js`);
+        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+        const doc = 'one enormous paragraph with no blank line anywhere in it '.repeat(40).trim();
+        const el = document.createElement('div');
+        const ms = new MarkdownStream(el);
+        for (let i = 7; i < doc.length; i += 7) ms.render(doc.slice(0, i));
+        ms.render(doc);
+        const ref = document.createElement('div');
+        ref.innerHTML = renderMarkdown(doc);
+        return el.innerHTML === ref.innerHTML;
+      }, base);
+      assert(ok, 'a split-free document did not survive incremental rendering');
     });
 
     await md.close();

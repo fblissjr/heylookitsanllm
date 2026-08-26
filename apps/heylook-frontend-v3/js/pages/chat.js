@@ -28,6 +28,7 @@ import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setSt
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
+import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
@@ -43,6 +44,14 @@ import { createPromptSection } from '../prompt-section.js';
 // box silently blank, a Save onto an existing preset name stored null over a
 // good prompt.
 const DRAFT_PROMPT_KEY = 'heylook.v3.chat.draft-prompt';
+
+// How often a streaming message repaints. One paint per animation frame is up
+// to 120/s on a ProMotion phone; nobody reads at that rate, and every paint
+// costs a markdown render plus a scroll write. ~15/s still reads as live text.
+const PAINT_INTERVAL_MS = 66;
+
+// How close to the tail still counts as "following along".
+const STICK_SLACK_PX = 100;
 
 // The display prefs this page HONORS -- one array, two uses: it declares what the
 // drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
@@ -96,7 +105,7 @@ export default createPage({
     // One throttle for the whole mount (it reads s.stream), not one per
     // stream -- per-stream throttles would pin each stream's closure in the
     // page's cleanup list for the mount lifetime.
-    s.paint = ctx.throttle(() => paintStream(ctx));
+    s.paint = ctx.throttleTime(() => paintStream(ctx), PAINT_INTERVAL_MS);
     ctx.onTeardown(() => {
       if (s.stream) beforeUnloadGuard.disable();
     });
@@ -1383,10 +1392,10 @@ function buildEditEl(ctx, msg) {
   return el;
 }
 
+// The STRUCTURAL scroll: a row was added, removed or rebuilt.
 function scrollMessages(ctx, force = false) {
   const el = ctx.state.messagesEl;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-  if (!force && !nearBottom) return;
+  if (!force && !followingTail(ctx)) return;
   el.scrollTop = el.scrollHeight;
   const setTop = el.scrollTop; // post-clamp: what the write actually landed on
   // A row added this tick is still at its `contain-intrinsic-size` estimate,
@@ -1401,6 +1410,37 @@ function scrollMessages(ctx, force = false) {
     if (!ctx.alive) return;
     if (force || Math.abs(el.scrollTop - setTop) < 2) el.scrollTop = el.scrollHeight;
   });
+}
+
+// Is the reader at the tail, i.e. should the view follow the generation?
+//
+// The streaming painter calls this BEFORE it mutates the message and pins
+// AFTER, and that order is load-bearing twice over. It is CHEAP before the
+// write, because layout is still clean from the previous paint, so the reads
+// are cache hits rather than a forced re-layout -- which matters most on iOS,
+// where `content-visibility` is gated off (Safari has no scroll anchoring) and
+// a forced layout walks every row in the conversation. And it is only HONEST
+// before the write: measured after, a single paint that appends more than the
+// slack -- a code block, a table -- reads as "the reader has scrolled away"
+// and would strand the view above the tail for the rest of the generation.
+//
+// A cached flag was tried instead and is wrong: nothing writes it reliably
+// while a stream runs. Pinning writes `scrollTop`, but the resulting scroll
+// events are coalesced to a handful across a whole generation (measured), so
+// the flag goes stale exactly when the viewport changes underneath it -- which
+// on a phone is every time the keyboard opens.
+function followingTail(ctx) {
+  const el = ctx.state.messagesEl;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLACK_PX;
+}
+
+// The STREAMING pin: one write, no read-back and no re-aim frame.
+// scrollMessages needs those for a row added THIS tick that is still at its
+// contain-intrinsic-size estimate; a streaming paint adds no rows, it only
+// grows one.
+function pinToTail(ctx) {
+  const el = ctx.state.messagesEl;
+  el.scrollTop = el.scrollHeight;
 }
 
 // After an editor closes (Save or Cancel) the row it stood in is rebuilt as a
@@ -2061,7 +2101,11 @@ function startStream(ctx, opts = {}) {
   const baseContent = continueMsg?.content ?? '';
   const role = continueMsg?.role ?? 'assistant';
   const contentEl = createEl('div', { class: 'message-content' });
-  if (baseContent) contentEl.innerHTML = renderMarkdown(baseContent);
+  const md = new MarkdownStream(contentEl);
+  // A continuation's prior text is seeded through the SAME renderer, so its
+  // blocks are already classified and committed before the first delta -- the
+  // anchor's content is never re-parsed again for the life of the stream.
+  if (baseContent) md.render(baseContent);
   const thinkingEl = buildThinkingEl(continueMsg?.thinking ?? '', true);
   thinkingEl.hidden = !continueMsg?.thinking;
   const msgEl = createEl('div', { class: `message message--${role} message--streaming` }, [
@@ -2077,6 +2121,10 @@ function startStream(ctx, opts = {}) {
     baseThinking: continueMsg?.thinking ?? '',
     content: '',
     thinking: '',
+    md,
+    // What the thinking box already holds, so a paint appends the delta
+    // instead of rewriting the whole string (buildThinkingEl seeded it).
+    thinkingWritten: (continueMsg?.thinking ?? '').length,
     contentDirty: false,
     thinkingDirty: false,
     waiting: true, // no delta yet -- the wait status below is still on screen
@@ -2178,20 +2226,25 @@ function paintStream(ctx) {
   const s = ctx.state;
   const stream = s.stream;
   if (!stream || s.activeId !== stream.targetConvId) return;
+  // Measured before anything below mutates the DOM -- see followingTail.
+  const following = followingTail(ctx);
   if (stream.contentDirty) {
     stream.contentDirty = false;
-    // A continuation paints prefix + new text as ONE markdown document --
-    // rendering them separately would break constructs spanning the seam.
-    stream.els.contentEl.innerHTML = renderMarkdown(stream.baseContent + stream.content);
+    // Prefix + new text are still ONE markdown document -- constructs spanning
+    // the seam were the reason the old painter re-rendered the whole thing
+    // every frame. MarkdownStream keeps that guarantee by choosing a cut no
+    // construct can span, instead of by never cutting.
+    stream.md.render(stream.baseContent + stream.content);
   }
   if (stream.thinkingDirty) {
     stream.thinkingDirty = false;
     stream.els.thinkingEl.hidden = false;
     // Same seam rule as content: a continuation's seeded prior thinking must
     // survive the first new thinking delta, not vanish until finishStream.
-    stream.els.thinkingBody.textContent = stream.baseThinking + stream.thinking;
+    stream.thinkingWritten = appendPlainText(stream.els.thinkingBody,
+      stream.baseThinking + stream.thinking, stream.thinkingWritten);
   }
-  scrollMessages(ctx);
+  if (following) pinToTail(ctx);
 }
 
 // The Stop button: SERVER-side abort. The partial persists on the server

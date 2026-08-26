@@ -8,6 +8,8 @@
 //   alive      false once torn down; check after any await
 //   guard(fn)  wraps a callback so it no-ops after teardown
 //   throttle(fn)  throttleToFrame that auto-cancels on teardown
+//   throttleTime(fn, ms)  the same, rate-limited to one run per ms (use for
+//                   painters whose cost scales with the document)
 //   linkedController()  AbortController chained to signal; abort() it on release
 //   onTeardown(fn)  register extra cleanup (runs before teardown())
 //   onHide(fn)      the page is about to stop running: visibilitychange ->
@@ -19,7 +21,7 @@
 //                   here -- the heap is whatever it was when the tab froze.
 //                   Returns an unsubscribe.
 
-import { throttleToFrame } from './utils.js';
+import { throttleToFrame, throttleToInterval } from './utils.js';
 
 export function createPage(spec) {
   let current = null;
@@ -39,6 +41,15 @@ export function createPage(spec) {
         },
         throttle(fn) {
           const throttled = throttleToFrame(fn);
+          cleanups.push(() => throttled.cancel());
+          return throttled;
+        },
+        // The same contract at a rate the reader actually needs. For a
+        // painter whose cost scales with the document (a streaming message),
+        // one run per FRAME is up to 120/s of work nobody can read; see
+        // throttleToInterval.
+        throttleTime(fn, ms) {
+          const throttled = throttleToInterval(fn, ms);
           cleanups.push(() => throttled.cancel());
           return throttled;
         },

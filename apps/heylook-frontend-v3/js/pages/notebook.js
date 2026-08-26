@@ -19,6 +19,10 @@ import * as drawer from '../settings-drawer.js';
 import { createPresetBar } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 
+// Match chat's streaming repaint rate: one paint per animation frame is up to
+// 120/s on a ProMotion phone and nobody reads at that rate.
+const PAINT_INTERVAL_MS = 66;
+
 // The display prefs this page HONORS -- one array, two uses: it declares what the
 // drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
 // the wire (displayWireFields). Same list for both, so offering a control and
@@ -100,7 +104,7 @@ export default createPage({
     ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
-    s.paint = ctx.throttle(() => paintGen(ctx));
+    s.paint = ctx.throttleTime(() => paintGen(ctx), PAINT_INTERVAL_MS);
 
     const [models, list] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -495,13 +499,25 @@ function startGenerate(ctx) {
 }
 
 // Throttled painter (one per mount, created in setup).
+//
+// Every line here is O(document): the value write, the selection move and
+// autoGrow's forced layout all scale with what has been generated so far. This
+// is the same shape of loop the chat painter had, one order of magnitude
+// cheaper per run (plain text, no markdown) -- which is why the rate limit is
+// the whole fix here and no incremental renderer is warranted.
 function paintGen(ctx) {
   const s = ctx.state;
   const gen = s.gen;
   if (!gen || s.activeId !== gen.targetId) return;
   s.contentTextarea.value = gen.head + gen.content + gen.tail;
-  const caret = gen.head.length + gen.content.length;
-  s.contentTextarea.setSelectionRange(caret, caret);
+  // Moving the caret is how the view follows the generation point, which only
+  // means anything while this textarea has focus. It is readOnly during
+  // generation, so usually it does not -- and the call is not free on a long
+  // value.
+  if (document.activeElement === s.contentTextarea) {
+    const caret = gen.head.length + gen.content.length;
+    s.contentTextarea.setSelectionRange(caret, caret);
+  }
   autoGrow(s.contentTextarea, Infinity);
 }
 
