@@ -46,7 +46,8 @@ class MessageCreateRequest(BaseModel):
     - content uses typed blocks instead of OpenAI's content_parts
     - thinking is a top-level bool instead of enable_thinking
     - no processing_mode/return_individual (those move to BatchRequest)
-    - no image resize params (handled by /v1/messages/multipart)
+    - no image resize params (Messages clients resize before sending; the
+      OpenAI wire keeps them for clients that want the server to do it)
     """
     model: Optional[str] = Field(
         None,

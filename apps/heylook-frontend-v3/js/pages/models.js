@@ -33,7 +33,6 @@ export default createPage({
     // verdict; see onFitGate below). Only ever set for unloaded models.
     s.fitGates = new Map();
     s.configSaveNote = null;    // {id, text} one-shot: carries the save outcome across the post-save rebuild
-    s.scanConfig = null;        // [scan] table as the server has it
     s.savingFolders = false;
 
     buildSkeleton(ctx);
@@ -172,8 +171,7 @@ async function loadWatchFolders(ctx) {
   try {
     const cfg = await api.adminScanConfig({ signal: ctx.signal });
     if (!ctx.alive) return;
-    s.scanConfig = cfg;
-    s.foldersInput.value = (cfg.folders || []).join('\n');
+      s.foldersInput.value = (cfg.folders || []).join('\n');
     s.foldersHf.checked = Boolean(cfg.watch_hf_cache);
     if (cfg.scan_interval_seconds === 0) {
       s.foldersNote.textContent = 'Discovery is off (scan_interval_seconds = 0).';
@@ -196,8 +194,7 @@ async function saveWatchFolders(ctx) {
       watch_hf_cache: s.foldersHf.checked,
     });
     if (!ctx.alive) return;
-    s.scanConfig = cfg;
-    // models_served is the POINT of the edit -- naming the consequence beats
+      // models_served is the POINT of the edit -- naming the consequence beats
     // "Saved", which says nothing about whether the folder found anything.
     s.foldersNote.textContent = cfg.warning
       ? cfg.warning

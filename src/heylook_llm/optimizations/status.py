@@ -1,50 +1,24 @@
 # src/heylook_llm/optimizations/status.py
-"""
-Centralized optimization status reporting.
+"""Optimization status reporting.
+
+Only orjson is left to report. The image entry went with fast_image.py
+(2026-08-26): its ImageCache had exactly one construction site, in the
+multipart endpoint, behind a `hasattr(app.state, 'image_cache')` that nothing
+ever set -- so the cache was never built, and `cachetools_available` was a flag
+describing a code path that could not run. The xxhash/turbojpeg flags beside it
+had already gone the same way on 2026-08-18.
 """
 
 import logging
-from . import fast_json, fast_image
+
+from . import fast_json
 
 
 def log_all_optimization_status():
-    """Log the status of all optimizations at server startup."""
-    
-    logging.info("=" * 60)
-    logging.info("PERFORMANCE OPTIMIZATIONS STATUS")
-    logging.info("=" * 60)
-    
-    # JSON optimizations
+    """Log optimization status at server startup."""
     fast_json.log_status()
-    
-    # Image optimizations  
-    fast_image.log_status()
-    
-    # Get summary
-    json_status = fast_json.get_status()
-    image_status = fast_image.get_status()
-    
-    # Log summary
-    active_optimizations = []
-    
-    if json_status["orjson_available"]:
-        active_optimizations.append("orjson (JSON)")
-
-    if image_status["cachetools_available"]:
-        active_optimizations.append("TTL cache (images)")
-
-
-    if active_optimizations:
-        logging.info(f"Active optimizations: {', '.join(active_optimizations)}")
-    else:
-        logging.info("No performance optimization libraries detected")
-    
-    logging.info("=" * 60)
 
 
 def get_optimization_summary():
-    """Get a summary of all optimization statuses."""
-    return {
-        "json": fast_json.get_status(),
-        "image": fast_image.get_status()
-    }
+    """Summary of optimization statuses (mirrored by /v1/capabilities)."""
+    return {"json": fast_json.get_status()}

@@ -442,7 +442,6 @@ function buildHeatmap(ctx, data) {
         class: 'jspace__hcell jspace__hcell--selectable',
         style: `background:${strengthColor(norm(c.entropy))}`,
         title: `${glyph(c.token)}  ·  entropy ${c.entropy.toFixed(2)}`,
-        dataset: { tok: c.token },
       }, [glyph(c.token).slice(0, 4)]);
       cell.addEventListener('click', () => togglePin(ctx, { layer: rowData.layer, posIdx: i }));
       s.cells.push({ el: cell, layer: rowData.layer, posIdx: i, tok: c.token });

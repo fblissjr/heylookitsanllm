@@ -619,12 +619,16 @@ def sampler_summary_from_request(request: Any) -> dict:
     # missed on the way in: two requests at "low" and "xhigh" produced
     # identical summaries while their token counts and latency differed by a
     # lot, and the one field that explained the difference was the absent one.
-    fields = (
-        "temperature", "top_p", "top_k", "min_p",
-        "repetition_penalty", "repetition_context_size", "presence_penalty",
-        "max_tokens", "enable_thinking", "reasoning_effort", "seed",
-        "preset",
-    )
+    # DERIVED, never hand-copied: this list drifted from its source while it
+    # was one (it had gained the RETIRED `preset` -- which config.py 422s, so
+    # the getattr was permanently None -- lost the current `sampler`, and never
+    # picked up `vision_tokens`). The same defect in
+    # conversation_generate_api.py was fixed the same way; this sibling was
+    # missed. `sampler` is the named-bundle field, not a REQUEST_SAMPLER_FIELDS
+    # member, so it is appended explicitly.
+    from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
+
+    fields = REQUEST_SAMPLER_FIELDS + ("sampler",)
     result: dict[str, Any] = {}
     for name in fields:
         value = getattr(request, name, None)

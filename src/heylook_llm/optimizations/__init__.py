@@ -1,7 +1,6 @@
 # Fast performance optimizations module
 
 from . import fast_json
-from . import fast_image
 from . import status
 
 __all__ = ['fast_json', 'fast_image', 'status']

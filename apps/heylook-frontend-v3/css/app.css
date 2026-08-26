@@ -44,10 +44,9 @@
   --sidebar-w: 200px;
   --bottom-nav-h: 54px;
 
-  /* z scale: raised < drawer < toast */
+  /* z scale: raised < drawer */
   --z-raised: 10;
   --z-drawer: 20;
-  --z-toast: 30;
 }
 
 /* ================= base ================= */

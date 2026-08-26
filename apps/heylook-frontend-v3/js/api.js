@@ -45,7 +45,6 @@ export async function request(method, path, body, { signal, keepalive = false } 
 const ROUTES = {
   // models + system
   listModels:        ['GET', () => '/v1/models'],
-  capabilities:      ['GET', () => '/v1/capabilities'],
   systemMetrics:     ['GET', (force) => `/v1/system/metrics${force ? '?force_refresh=true' : ''}`],
   perfProfile:       ['GET', (range) => `/v1/performance/profile/${range}`],
   clearAllData:      ['POST', () => '/v1/data/clear'],

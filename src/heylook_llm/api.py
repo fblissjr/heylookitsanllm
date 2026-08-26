@@ -1902,17 +1902,15 @@ Get detailed information about server capabilities and optimization options.
 - API extensions
 
 **Use this endpoint to:**
-- Discover fast endpoints (like multipart upload)
 - Check which optimizations are active
 - Get recommendations for best performance
 - Understand server limits and capabilities
 
 **Client Integration:**
 Clients should query this endpoint on startup to discover:
-1. Whether to use `/v1/chat/completions/multipart` for images
-2. Recommended batch sizes
-3. Optimal request patterns
-4. Available performance features
+1. Recommended batch sizes
+2. Optimal request patterns
+3. Available performance features
     """,
     response_description="Server capabilities and optimization details",
     tags=["Monitoring"]
@@ -1957,36 +1955,6 @@ async def get_capabilities(request: Request):
             "distinct_from": "/v1/presets (saved user prompt+sampler bundles)",
         },
         "endpoints": {
-            "fast_vision": {
-                "available": True,
-                "endpoint": "/v1/chat/completions/multipart",
-                "description": "Raw image upload endpoint - 57ms faster per image",
-                "benefits": {
-                    "time_saved_per_image_ms": 57,
-                    "bandwidth_reduction_percent": 33,
-                    "supports_parallel_processing": True
-                },
-                "usage": {
-                    "method": "POST",
-                    "content_type": "multipart/form-data",
-                    "fields": {
-                        "model": "Model ID (required)",
-                        "messages": "JSON string of messages with __RAW_IMAGE__ placeholders",
-                        "images": "Image files (multiple allowed)",
-                        "resize_max": "Max dimension to resize to (optional)",
-                        "resize_width": "Specific width to resize to (optional)",
-                        "resize_height": "Specific height to resize to (optional)",
-                        "image_quality": "JPEG quality 1-100 (default: 85)",
-                        "preserve_alpha": "Keep transparency, output PNG (default: false)"
-                    }
-                },
-                "image_processing": {
-                    "auto_resize": "Resize images to reduce tokens",
-                    "preserve_originals": "Default behavior keeps original dimensions",
-                    "format_conversion": "Automatically handles JPEG/PNG conversion",
-                    "alpha_support": "Preserves transparency when requested"
-                }
-            },
             "standard_vision": {
                 "endpoint": "/v1/chat/completions",
                 "description": "Standard endpoint with base64 images",
@@ -2002,8 +1970,7 @@ async def get_capabilities(request: Request):
             "streaming": True,
             "model_caching": {
                 "enabled": True,
-                "cache_size": 2,
-                "eviction_policy": "LRU"
+                "eviction_policy": "LRU",
             },
             "vision_models": True,
             "concurrent_requests": True,
@@ -2011,14 +1978,6 @@ async def get_capabilities(request: Request):
             "supported_image_formats": ["JPEG", "PNG", "WEBP", "BMP", "GIF"]
         },
         "recommendations": {
-            "vision_models": {
-                # Unconditional: the multipart endpoint's win is bandwidth (no
-                # base64 inflation), which holds regardless of what is installed.
-                # This used to key off turbojpeg/xxhash availability, but neither
-                # library was ever on the decode path -- see optimizations/fast_image.py.
-                "use_multipart": True,
-                "reason": "Multipart endpoint is faster and uses less bandwidth"
-            },
             "batch_size": {
                 "optimal": 4,
                 "max": 8,
@@ -2035,12 +1994,6 @@ async def get_capabilities(request: Request):
                 "concurrent_requests": "Safe with different models"
             }
         },
-        "limits": {
-            "max_tokens": 4096,
-            "max_images_per_request": 10,
-            "max_request_size_mb": 100,
-            "timeout_seconds": 300
-        }
     }
 
     return capabilities
@@ -2127,81 +2080,6 @@ async def clear_caches(request: Request, body: CacheClearRequest = Body(default=
         return CacheClearResponse(deleted_count=count)
 
 
-# Import and register multipart endpoint
-from heylook_llm.api_multipart import create_chat_multipart
-app.post("/v1/chat/completions/multipart",
-    summary="Create Chat Completion with Raw Images (Fast)",
-    description="""
-High-performance vision endpoint that accepts raw image uploads instead of base64.
-
-**🚀 Performance Benefits:**
-- ⚡ 57ms faster per image (no base64 encoding/decoding)
-- 📉 33% bandwidth reduction
-- 🔄 Parallel image processing
-- 💾 Smart image caching with xxHash
-
-**How to Use:**
-1. Send images as multipart form files
-2. Include messages as JSON string with `__RAW_IMAGE__` placeholders
-3. Images are injected into messages in order
-
-**Example Request:**
-```python
-files = [
-    ('images', ('img1.jpg', image1_bytes, 'image/jpeg')),
-    ('images', ('img2.jpg', image2_bytes, 'image/jpeg'))
-]
-data = {
-    'model': 'llava-1.5-7b-hf-4bit',
-    'messages': json.dumps([{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "Compare these images"},
-            {"type": "image_url", "image_url": {"url": "__RAW_IMAGE__"}},
-            {"type": "image_url", "image_url": {"url": "__RAW_IMAGE__"}}
-        ]
-    }])
-}
-response = requests.post(url + '/multipart', files=files, data=data)
-```
-
-**Perfect for:**
-- ComfyUI integration
-- Batch image processing
-- Real-time vision applications
-- Network-constrained environments
-    """,
-    tags=["OpenAI API"],
-    responses={
-        200: {
-            "description": "Successful completion",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "id": "chatcmpl-123",
-                        "object": "chat.completion",
-                        "created": 1677652288,
-                        "model": "llava-1.5-7b-hf-4bit",
-                        "choices": [{
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "The first image shows a cat, while the second shows a dog."
-                            },
-                            "finish_reason": "stop"
-                        }],
-                        "usage": {
-                            "prompt_tokens": 156,
-                            "completion_tokens": 23,
-                            "total_tokens": 179
-                        }
-                    }
-                }
-            }
-        }
-    }
-)(create_chat_multipart)
-
 def _get_api_endpoints():
     """Dynamically discover all /v1/ endpoints from registered routes."""
     endpoints = {}
@@ -2275,8 +2153,7 @@ A high-performance API server for local LLM inference with OpenAI-compatible end
 - **MLX Models**: Optimized for Apple Silicon with Metal acceleration
 - **Vision Models**: Process images with vision-language models
 ### Performance Features
-- **Smart Model Caching**: LRU cache keeps 2 models in memory
-- **Fast Vision Endpoint**: `/v1/chat/completions/multipart` - 57ms faster per image
+- **Smart Model Caching**: LRU cache, size set by `max_loaded_models`
 - **Async Processing**: Non-blocking request handling
 - **GPU Acceleration**: Metal (Apple Silicon)
 
@@ -2297,24 +2174,21 @@ curl http://localhost:8000/v1/chat/completions \\
   }'
 ```
 
-### 3. Process Images (Fast)
-```python
-import requests
-
-files = [('images', ('image.jpg', image_bytes, 'image/jpeg'))]
-data = {
-    'model': 'llava-1.5-7b-hf-4bit',
-    'messages': json.dumps([{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "What's in this image?"},
-            {"type": "image_url", "image_url": {"url": "__RAW_IMAGE__"}}
-        ]
-    }])
-}
-response = requests.post('http://localhost:8000/v1/chat/completions/multipart',
-                        files=files, data=data)
+### 3. Process Images
+```bash
+curl http://localhost:8000/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "your-vision-model",
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "What is in this image?"},
+      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
+    ]}],
+    "resize_max": 1024
+  }'
 ```
+`resize_max` / `resize_width` / `resize_height` / `image_quality` /
+`preserve_alpha` downscale server-side before the model sees the image.
 
 ## 📚 Client Libraries
 

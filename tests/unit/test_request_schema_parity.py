@@ -41,11 +41,18 @@ OPENAI_ONLY = {
     ),
     "processing_mode": "batch-only; moves to BatchRequest on the Messages side",
     "return_individual": "batch-only; moves to BatchRequest on the Messages side",
-    "resize_max": "image preprocessing; Messages handles it at /v1/messages/multipart",
-    "resize_width": "image preprocessing; Messages handles it at /v1/messages/multipart",
-    "resize_height": "image preprocessing; Messages handles it at /v1/messages/multipart",
-    "image_quality": "image preprocessing; Messages handles it at /v1/messages/multipart",
-    "preserve_alpha": "image preprocessing; Messages handles it at /v1/messages/multipart",
+    # Server-side image downscaling, applied in api.py's OpenAI path via
+    # utils_resize before the model sees the image. The reason here used to
+    # read "Messages handles it at /v1/messages/multipart" -- an endpoint that
+    # has never existed, so five fields were exempted on a rationale this file
+    # exists to prevent. They are OpenAI-wire-only because v3 (the Messages
+    # client) caps resolution IN THE BROWSER at staging time and never asks the
+    # server to resize; batch-labeler, which does ask, speaks the OpenAI wire.
+    "resize_max": "server-side downscale; Messages clients resize before sending",
+    "resize_width": "server-side downscale; Messages clients resize before sending",
+    "resize_height": "server-side downscale; Messages clients resize before sending",
+    "image_quality": "server-side downscale; Messages clients resize before sending",
+    "preserve_alpha": "server-side downscale; Messages clients resize before sending",
     "include_timing": "spelled `include_performance` on Messages",
 }
 

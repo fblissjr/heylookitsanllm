@@ -1,1 +1,0 @@
-# Middleware package for API compatibility layers

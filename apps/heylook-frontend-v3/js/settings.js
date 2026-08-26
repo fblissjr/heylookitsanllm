@@ -66,7 +66,7 @@ export function getSetting(key) { return cache[key]; }
 
 // Sampler-change listeners -- fired on any panel mutation so a surface can
 // persist the panel elsewhere (chat binds this to PUT the active conversation's
-// `params`). Mirrors onDisplayChange; return value is an unsubscribe fn (call it
+// `params`). Return value is an unsubscribe fn (call it
 // in the page's teardown so listeners don't outlive the mount).
 const samplerListeners = new Set();
 export function onSettingsChange(cb) {
@@ -276,23 +276,19 @@ function loadDisplay() {
 }
 
 let displayCache = loadDisplay();
-const displayListeners = new Set();
 
 export function getDisplayPref(key) { return displayCache[key]; }
 
-// Fires listeners so every open surface re-renders live when a pref flips.
+// Stored only. A display pref reaches the model on the NEXT generation
+// (displayWireFields puts it on the wire), so there is nothing to re-render
+// when one flips -- which is what each pref's own help text says. An
+// onDisplayChange subscription mechanism used to live here promising live
+// re-render; it never had a subscriber, so the notify loop always ran over an
+// empty set and the promise was never kept.
 export function setDisplayPref(key, value) {
   displayCache[key] = value;
   try { localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify(displayCache)); }
   catch { /* in-memory only */ }
-  for (const cb of displayListeners) { try { cb(key, value); } catch { /* isolate */ } }
-}
-
-// Subscribe to display-pref changes; returns an unsubscribe fn (call it in a
-// page's teardown so listeners don't outlive the mount).
-export function onDisplayChange(cb) {
-  displayListeners.add(cb);
-  return () => displayListeners.delete(cb);
 }
 
 // ---------------------------------------------------------------------------

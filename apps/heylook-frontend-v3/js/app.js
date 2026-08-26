@@ -73,7 +73,6 @@ async function navigate() {
   main.replaceChildren();
 
   document.title = `${route.title} · heylook`;
-  document.body.dataset.page = routeName;
   for (const link of navLinks) {
     const active = link.dataset.route === routeName;
     link.classList.toggle('nav-item--active', active);
