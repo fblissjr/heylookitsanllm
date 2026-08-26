@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.11]
+
+### Removed
+
+- **Unreachable surface** (each removal is a search that came back empty): `api_multipart.py` and `/v1/chat/completions/multipart` (no in-repo client; it also carried its own copy of the resize logic, so `utils_resize.py` is now the single implementation, shared by the OpenAI JSON path and batch-labeler); `optimizations/fast_image.py` (its `ImageCache` had one construction site, behind a `hasattr(app.state, 'image_cache')` nothing ever set); the empty `middleware/` package; `/v1/capabilities`' `fast_vision` block (advertised the deleted endpoint, plus "57ms faster per image" -- a performance number in a shipped surface), its `use_multipart` recommendation, its invented `limits` block (nothing enforces any of those), and `cache_size: 2` (contradicted the `max_loaded_models=1` default). The `ChatRequest` resize fields are NOT dead and stay.
+- **v3 dead code**: the `onDisplayChange` listener mechanism (no subscriber ever, so `setDisplayPref`'s notify loop always ran over an empty set while its comment promised live re-render), `api.capabilities`, write-only `s.scanConfig`, `--z-toast`, `dataset.tok`, `document.body.dataset.page`.
+
+### Fixed
+
+- **`memory.py`'s `sampler_summary_from_request` now DERIVES from `REQUEST_SAMPLER_FIELDS`.** It had drifted while it was a hand-copy: it carried the retired `preset` (which `config.py` 422s, so the getattr was permanently `None`), lacked the current `sampler`, and never picked up `vision_tokens`. Its twin in `conversation_generate_api.py` was already fixed by derivation; this sibling was missed, which is exactly the failure mode CLAUDE.md names.
+- **`test_request_schema_parity.py` exempted five fields citing `/v1/messages/multipart`** -- an endpoint that has never existed. The exemption is legitimate (server-side downscale knobs; Messages clients resize before sending) but a green test was certifying a reason that was fiction.
+
+### Optimized
+
+- **v3 assets: revalidate, but never resend.** `no-cache` is correct and stays -- v3 is no-build with unhashed URLs, so revalidation is the only thing that can invalidate a cached module. What it *cost* was the problem: starlette's `FileResponse` sets an etag but has no conditional branch (only `StaticFiles` does), so every revalidation was answered with the whole file. The handler now answers `If-None-Match` with a 304, and gzips text assets above 1KB. Measured: a cold load goes 427 KB -> 138 KB (68% off), and a revalidating load goes to zero body. The in-code note used to call the full re-send "free for a localhost frontend" -- true until the client is a phone, where iOS discards backgrounded tabs and reloads, making it a half-megabyte transfer per wake.
+  - Compression is in the v3 handler deliberately, **not** `GZipMiddleware`: that wraps every response including the generate endpoint's SSE, where buffering to a minimum size would sit on the first token. A contract test pins that the middleware is absent.
+  - `index.html` now preloads the modules chat.js pulls in (streaming, markdown, markdown-stream, image-prep, preset-bar, prompt-section, and both vendor modules) -- the two vendor files are the largest assets after chat.js and were three hops deep.
+
 ## [1.79.10]
 
 ### Optimized

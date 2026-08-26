@@ -281,7 +281,12 @@ async def clear_all_data(request: Request):
 import pathlib as _pathlib
 _v3_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v3"
 if _v3_frontend_dir.is_dir():
-    from starlette.responses import FileResponse
+    import gzip as _gzip
+    import hashlib as _hashlib
+    from email.utils import formatdate as _formatdate
+    from mimetypes import guess_type
+
+    from starlette.responses import FileResponse, Response
 
     # v3 has no build step and no content hashes in its URLs, so a cached
     # module can only ever be invalidated by revalidation. Without an explicit
@@ -289,20 +294,64 @@ if _v3_frontend_dir.is_dir():
     # age at cache time) and skips the request entirely -- which silently
     # mixes module versions: frequently-edited files (chat.js) refetch while
     # rarely-edited ones (preset-bar.js) serve stale for hours, and the new
-    # caller calls into the old module ("X is not a function"). no-cache makes
-    # every asset revalidate; starlette's FileResponse has no 304 path, so
-    # that is a full re-send, which is free for a ~450KB localhost frontend.
+    # caller calls into the old module ("X is not a function"). no-cache keeps
+    # every asset revalidating, which is the property worth having.
+    #
+    # What it used to COST is the part that was wrong. Starlette's FileResponse
+    # sets an etag but has no conditional-request branch (only StaticFiles
+    # does), so every revalidation was answered with the whole file -- 427KB
+    # across 22 assets, on every load. The note here used to call that "free
+    # for a localhost frontend", which is true right up until the client is a
+    # phone: iOS Safari discards backgrounded tabs and reloads the document, so
+    # it was a half-megabyte transfer per wake-from-eviction. Answering
+    # If-None-Match makes an unchanged asset cost a header round trip and no
+    # body, with the same no-stale-module guarantee.
     _V3_NO_CACHE = {"Cache-Control": "no-cache"}
+    # Text assets only, and only above the size where a round trip dominates.
+    _V3_GZIP_TYPES = (".js", ".mjs", ".css", ".html", ".json", ".svg")
+    _V3_GZIP_MIN = 1024
+
+    def _v3_etag(stat_result) -> str:
+        """Byte-identical to starlette's FileResponse etag (responses.py)."""
+        base = f"{stat_result.st_mtime}-{stat_result.st_size}"
+        return f'"{_hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
+
+    def _v3_file_response(path, request: Request):
+        stat_result = path.stat()
+        etag = _v3_etag(stat_result)
+        if_none_match = request.headers.get("if-none-match", "")
+        if etag in [t.strip().removeprefix("W/") for t in if_none_match.split(",")]:
+            return Response(status_code=304, headers={**_V3_NO_CACHE, "etag": etag})
+
+        # Compress in the handler rather than via GZipMiddleware: that
+        # middleware wraps EVERY response including the generate endpoint's
+        # SSE, where buffering to a minimum size would sit on the first token.
+        # Static assets are the whole win and they are the only thing here.
+        if (path.suffix in _V3_GZIP_TYPES and stat_result.st_size >= _V3_GZIP_MIN
+                and "gzip" in request.headers.get("accept-encoding", "")):
+            body = _gzip.compress(path.read_bytes(), compresslevel=6)
+            return Response(
+                content=body,
+                media_type=guess_type(path.name)[0] or "application/octet-stream",
+                headers={
+                    **_V3_NO_CACHE,
+                    "etag": etag,
+                    "last-modified": _formatdate(stat_result.st_mtime, usegmt=True),
+                    "content-encoding": "gzip",
+                    "vary": "accept-encoding",
+                },
+            )
+        return FileResponse(path, stat_result=stat_result, headers=_V3_NO_CACHE)
 
     @app.get("/v3")
     @app.get("/v3/{rest:path}")
-    async def serve_v3_frontend(rest: str = ""):
+    async def serve_v3_frontend(request: Request, rest: str = ""):
         """Serve the v3 frontend SPA -- all routes return index.html."""
         if rest:
             resolved = (_v3_frontend_dir / rest).resolve()
             if resolved.is_relative_to(_v3_frontend_dir) and resolved.is_file():
-                return FileResponse(resolved, headers=_V3_NO_CACHE)
-        return FileResponse(_v3_frontend_dir / "index.html", headers=_V3_NO_CACHE)
+                return _v3_file_response(resolved, request)
+        return _v3_file_response(_v3_frontend_dir / "index.html", request)
 
 @app.get("/v1/models",
     summary="List Available Models",

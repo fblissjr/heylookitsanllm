@@ -48,3 +48,40 @@ def test_v3_path_traversal_falls_back_to_index(client):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "[project]" not in r.text
+
+
+def test_v3_revalidation_costs_no_body(client):
+    # The other half of no-cache. Revalidating is only cheap if an unchanged
+    # asset answers 304; starlette's FileResponse sets an etag but has no
+    # conditional branch of its own (only StaticFiles does), so every
+    # revalidation used to be answered with the whole file -- 427KB per load,
+    # which is a half-megabyte transfer every time a phone reloads a tab iOS
+    # evicted. Together with the test above: always revalidate, never resend.
+    first = client.get("/v3/js/app.js")
+    etag = first.headers.get("etag")
+    assert etag, "no etag to revalidate against"
+    again = client.get("/v3/js/app.js", headers={"if-none-match": etag})
+    assert again.status_code == 304
+    assert not again.content
+    # A stale validator must still get the body.
+    stale = client.get("/v3/js/app.js", headers={"if-none-match": '"not-the-etag"'})
+    assert stale.status_code == 200
+    assert stale.content
+
+
+def test_v3_text_assets_are_compressed_and_sse_is_not_touched(client):
+    # Compression lives in the v3 handler, NOT in GZipMiddleware: that
+    # middleware wraps every response including the generate endpoint's SSE,
+    # where buffering to a minimum size would sit on the first token. So the
+    # win is scoped to static assets and the streaming path cannot regress.
+    gz = client.get("/v3/js/app.js", headers={"accept-encoding": "gzip"})
+    assert gz.headers.get("content-encoding") == "gzip"
+    assert "accept-encoding" in gz.headers.get("vary", "").lower()
+    plain = client.get("/v3/js/app.js", headers={"accept-encoding": "identity"})
+    assert plain.headers.get("content-encoding") is None
+    # Both spellings must deliver the same bytes.
+    assert gz.content == plain.content
+    from starlette.middleware.gzip import GZipMiddleware
+    import heylook_llm.api as api
+    assert not any(m.cls is GZipMiddleware for m in api.app.user_middleware), \
+        "GZipMiddleware would wrap the SSE generate endpoint"
