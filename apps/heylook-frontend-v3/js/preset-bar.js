@@ -370,3 +370,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
 
   return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator, presetForNewDoc, promptState };
 }
+
+// The bar chip's one renderer -- fed by onIndicator above, so it lives here
+// rather than in each page. Chat and notebook carried byte-identical copies,
+// both commented "the bar chip's ONE renderer", which was true of neither.
+export function paintPresetChip(chip, info) {
+  chip.hidden = !info;
+  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
+}

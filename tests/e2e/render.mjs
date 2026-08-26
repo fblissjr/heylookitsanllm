@@ -1660,11 +1660,22 @@ async function main() {
       await sleep(200);
       await st.page.setViewport({ width: 390, height: 844 });
       await waitStreamEnd(st.page);
-      const end = await scroll(st.page);
+      // Condition, not a snapshot: the final rate-limited paint and WebKit's
+      // own post-resize scroll restore both land after the stream ends, and a
+      // single read right at that boundary made this check flaky. What is
+      // being asserted is where the view SETTLES.
+      const gap = await waitFor(async () => {
+        const at = await scroll(st.page);
+        const g = at.height - at.top - at.client;
+        return g < 120 ? { g } : null;
+      }, { timeout: 5000, interval: 100,
+           message: async () => {
+             const at = await scroll(st.page);
+             return `the view stranded ${at.height - at.top - at.client}px above the tail after a mid-stream resize`;
+           } }).then((r) => r.g);
       await st.page.close();
       drip.tailPauseMs = 0;
-      const gap = end.height - end.top - end.client;
-      assert(gap < 120, `the view stranded ${gap}px above the tail after a mid-stream resize`);
+      assert(gap < 120, `settled ${gap}px above the tail`);
     });
 
     await suite.check('a reader who scrolls up mid-stream is left alone', async () => {
@@ -1841,6 +1852,71 @@ async function main() {
         return el.innerHTML === ref.innerHTML;
       }, base);
       assert(ok, 'a split-free document did not survive incremental rendering');
+    });
+
+
+    // ---- the shared document writer's ordering rule ----------------------
+    // chat and notebook each carried a byte-identical copy of this, and what
+    // the copies duplicated was not boilerplate: it is the keepalive rule
+    // below, hand-maintained in two files and guarded in neither.
+    await suite.check('a keepalive prompt write is dispatched ahead of the PUT chain', async () => {
+      const out = await md.evaluate(async (b) => {
+        const { createDocumentWriter } = await import(`${b}/v3/js/document-writer.js`);
+        const calls = [];
+        let releaseFirst;
+        const update = (docId, body, opts) => {
+          calls.push({ body, keepalive: Boolean(opts?.keepalive) });
+          // The first PUT never settles: it is the in-flight request a
+          // hide-time flush must not queue behind.
+          if (calls.length === 1) return new Promise((r) => { releaseFirst = r; });
+          return Promise.resolve();
+        };
+        const w = createDocumentWriter({ update, onError: () => {} });
+        w.putSystemPrompt('d1', 'typed');
+        // Let the ordinary write actually REACH the network before flushing --
+        // that is the real sequence (a keystroke PUT in flight, then the page
+        // hides), and the invariant is about not queueing behind it.
+        await new Promise((r) => setTimeout(r, 0));
+        const inFlight = calls.length;
+        w.putSystemPrompt('d1', 'flushed', { keepalive: true });
+        const dispatched = calls.length;  // read SYNCHRONOUSLY: no await to hide behind
+        releaseFirst?.();
+        return { inFlight, dispatched, calls };
+      }, base);
+      // A page may be UNLOADING: a request still queued behind an in-flight
+      // PUT is never sent at all, so the newest value would be lost.
+      assert(out.inFlight === 1, `setup: expected one in-flight PUT, saw ${out.inFlight}`);
+      assert(out.dispatched === 2,
+        `the keepalive write queued behind the in-flight PUT (${out.dispatched} dispatched, expected 2)`);
+      assert(out.calls[1].keepalive === true, 'the flush lost its keepalive flag');
+      assert(out.calls[1].body.system_prompt === 'flushed',
+        `the flush carried ${JSON.stringify(out.calls[1].body)}`);
+    });
+
+    await suite.check('ordinary prompt writes stay serialised', async () => {
+      // The other half: without keepalive they must chain, or an older value
+      // can land after a newer one.
+      const out = await md.evaluate(async (b) => {
+        const { createDocumentWriter } = await import(`${b}/v3/js/document-writer.js`);
+        const calls = [];
+        let releaseFirst;
+        const update = (docId, body) => {
+          calls.push(body.system_prompt);
+          if (calls.length === 1) return new Promise((r) => { releaseFirst = r; });
+          return Promise.resolve();
+        };
+        const w = createDocumentWriter({ update, onError: () => {} });
+        w.putSystemPrompt('d1', 'one');
+        w.putSystemPrompt('d1', 'two');
+        await new Promise((r) => setTimeout(r, 0));
+        const beforeRelease = calls.length;
+        releaseFirst?.();
+        await new Promise((r) => setTimeout(r, 0));
+        return { beforeRelease, after: calls };
+      }, base);
+      assert(out.beforeRelease === 1,
+        `a second ordinary write went out while the first was in flight (${out.beforeRelease})`);
+      assert(out.after.join(',') === 'one,two', `writes landed as ${out.after.join(',')}`);
     });
 
     await md.close();

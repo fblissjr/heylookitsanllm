@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.13]
+
+### Changed
+
+- **One document write path instead of two** (`document-writer.js`, new). `putSystemPrompt` and `setAppliedPreset` were byte-identical in `chat.js` and `notebook.js` apart from which api function they called -- and notebook's copy said "same shape as chat's putSystemPrompt" in a comment, which is the tell. What the copies duplicated is not boilerplate: it is the keepalive ordering rule (a hide-time flush must be DISPATCHED rather than queued behind an in-flight PUT, because a request still queued when the page unloads is never sent), an invariant hand-maintained in two files and guarded in neither. The PUT chain now lives in the writer's closure rather than on each page's state. Each page keeps only what is genuinely its own: which api function, and the pre-create stamp guard.
+- **`paintPresetChip` moved into `preset-bar.js`**, next to the `onIndicator` callback that drives it. Both pages had identical copies, both commented "the bar chip's ONE renderer".
+
+### Tests
+
+- Two render-suite checks now pin the ordering rule in both directions -- a keepalive write is dispatched ahead of an in-flight PUT, and ordinary writes stay serialised so an older value cannot land after a newer one. The first was shown red against a mutation that queues the keepalive write. Neither behaviour had any coverage while it lived in two copies.
+- The mid-stream viewport check is condition-based rather than a single post-stream read: the final rate-limited paint and WebKit's own post-resize scroll restore both land near that boundary, which made it flaky. Verified over repeated runs.
+
 ## [1.79.12]
 
 ### Changed

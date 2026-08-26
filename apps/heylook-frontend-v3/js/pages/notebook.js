@@ -16,8 +16,9 @@ import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
 import { messagesParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
-import { createPresetBar } from '../preset-bar.js';
+import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
+import { createDocumentWriter } from '../document-writer.js';
 
 // Match chat's streaming repaint rate: one paint per animation frame is up to
 // 120/s on a ProMotion phone and nobody reads at that rate.
@@ -60,7 +61,7 @@ export default createPage({
       setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
-      onIndicator: (info) => paintPresetChip(ctx, info),
+      onIndicator: (info) => paintPresetChip(s.presetChip, info),
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
     });
@@ -104,6 +105,10 @@ export default createPage({
     ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
+    s.docWriter = createDocumentWriter({
+      update: api.updateNotebook,
+      onError: (msg) => showStatus(ctx, msg, true),
+    });
     s.paint = ctx.throttleTime(() => paintGen(ctx), PAINT_INTERVAL_MS);
 
     const [models, list] = await Promise.all([
@@ -240,6 +245,21 @@ function renderEditor(ctx) {
 // chat.js's setSystemPrompt has the same shape. The textarea has its own
 // path -- per-keystroke state + debounced PUT via the shared prompt-section
 // factory; both converge on putSystemPrompt.
+
+// Thin delegates to the shared writer (document-writer.js). What stays here is
+// only what is genuinely this page's: which api function to call, and the
+// pre-create guard below.
+function putSystemPrompt(ctx, docId, value, opts) {
+  ctx.state.docWriter.putSystemPrompt(docId, value, opts);
+}
+
+function setAppliedPreset(ctx, presetId) {
+  const s = ctx.state;
+  s.appliedPresetId = presetId;
+  if (!s.activeId) return; // pre-create draft: the stamp rides in state only
+  s.docWriter.setAppliedPreset(s.activeId, presetId);
+}
+
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
   const next = value ?? '';
@@ -258,31 +278,8 @@ function setSystemPrompt(ctx, value) {
 // rest of the document (doSave owns title/content/model_id).
 // Explicit preset stamp for the active notebook -- chat parity (see
 // chat.js's setAppliedPreset and the provenance note in preset-bar.js).
-function setAppliedPreset(ctx, presetId) {
-  const s = ctx.state;
-  s.appliedPresetId = presetId;
-  if (!s.activeId) return;
-  api.updateNotebook(s.activeId, { applied_preset_id: presetId })
-    .catch((err) => showStatus(ctx, `Preset stamp save failed: ${err.message}`, true));
-}
 
-function putSystemPrompt(ctx, notebookId, value, { keepalive = false } = {}) {
-  const s = ctx.state;
-  const put = () => api.updateNotebook(notebookId, { system_prompt: value }, { keepalive });
-  // A hide-time flush (keepalive) is dispatched immediately rather than queued
-  // behind an in-flight PUT: a queued request is never sent if the page
-  // unloads first. Same shape as chat's putSystemPrompt.
-  const next = keepalive ? put() : (s.promptPutChain ?? Promise.resolve()).then(put);
-  s.promptPutChain = next
-    .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
-}
 
-// The bar chip's one renderer (fed by the preset bar's onIndicator).
-function paintPresetChip(ctx, info) {
-  const chip = ctx.state.presetChip;
-  chip.hidden = !info;
-  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
-}
 
 function populateFields(ctx) {
   const s = ctx.state;

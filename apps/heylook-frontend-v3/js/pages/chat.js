@@ -32,8 +32,9 @@ import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
 import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
-import { createPresetBar } from '../preset-bar.js';
+import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
+import { createDocumentWriter } from '../document-writer.js';
 
 // A system prompt typed before any conversation exists has no owner: the
 // server has nothing to attach it to, so it lived in page state alone and a
@@ -97,7 +98,7 @@ export default createPage({
       // (document switch/create/delete) AND updateDrift (every prompt
       // keystroke + every sampler change), so neither chip can go stale
       // without the other noticing.
-      onIndicator: (info) => { paintPresetChip(ctx, info); paintSysPromptChip(ctx); },
+      onIndicator: (info) => { paintPresetChip(s.presetChip, info); paintSysPromptChip(ctx); },
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
     });
@@ -106,6 +107,10 @@ export default createPage({
     // One throttle for the whole mount (it reads s.stream), not one per
     // stream -- per-stream throttles would pin each stream's closure in the
     // page's cleanup list for the mount lifetime.
+    s.docWriter = createDocumentWriter({
+      update: api.updateConversation,
+      onError: (msg) => showStatus(ctx, msg, true),
+    });
     s.paint = ctx.throttleTime(() => paintStream(ctx), PAINT_INTERVAL_MS);
     ctx.onTeardown(() => {
       if (s.stream) beforeUnloadGuard.disable();
@@ -618,6 +623,21 @@ function currentCaps(ctx) {
 // textarea has its own path -- per-keystroke state + debounced PUT via the
 // shared prompt-section factory (buildPromptSection below); both converge on
 // putSystemPrompt.
+
+// Thin delegates to the shared writer (document-writer.js). What stays here is
+// only what is genuinely this page's: which api function to call, and the
+// pre-create guard below.
+function putSystemPrompt(ctx, docId, value, opts) {
+  ctx.state.docWriter.putSystemPrompt(docId, value, opts);
+}
+
+function setAppliedPreset(ctx, presetId) {
+  const s = ctx.state;
+  s.appliedPresetId = presetId;
+  if (!s.activeId) return; // pre-create draft: the stamp rides in state only
+  s.docWriter.setAppliedPreset(s.activeId, presetId);
+}
+
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
   const changed = value !== s.systemPrompt;
@@ -635,18 +655,6 @@ function setSystemPrompt(ctx, value) {
 // issued milliseconds apart, and without ordering the stale one could land
 // last server-side (pre-existing class, /code-review 2026-07-23; localhost
 // keep-alive makes it near-unobservable, but the chain closes it outright).
-function putSystemPrompt(ctx, convId, value, { keepalive = false } = {}) {
-  const s = ctx.state;
-  const put = () => api.updateConversation(convId, { system_prompt: value }, { keepalive });
-  // A hide-time flush (keepalive) cannot wait its turn: the page may be
-  // unloading, and a request still queued behind an in-flight PUT is never
-  // sent at all. Dispatch it now -- keepalive is what lets it outlive the
-  // document -- and make the chain wait on it instead. It carries the newest
-  // value, so landing ahead of an older in-flight PUT is the right order.
-  const next = keepalive ? put() : (s.promptPutChain ?? Promise.resolve()).then(put);
-  s.promptPutChain = next
-    .catch((err) => showStatus(ctx, `System prompt save failed: ${err.message}`, true));
-}
 
 // Chat builds a NEW section per drawer build (the drawer forces a rebuild on
 // every conversation switch), so the shared factory's construction-time
@@ -655,13 +663,6 @@ function putSystemPrompt(ctx, convId, value, { keepalive = false } = {}) {
 // Persist the applied-preset stamp onto the active conversation. Explicit
 // stamps only (the preset bar calls this from apply/save/delete) -- see the
 // provenance note in preset-bar.js.
-function setAppliedPreset(ctx, presetId) {
-  const s = ctx.state;
-  s.appliedPresetId = presetId;
-  if (!s.activeId) return; // pre-create draft: the stamp rides in state only
-  api.updateConversation(s.activeId, { applied_preset_id: presetId })
-    .catch((err) => showStatus(ctx, `Preset stamp save failed: ${err.message}`, true));
-}
 
 function buildPromptSection(ctx) {
   const s = ctx.state;
@@ -716,12 +717,6 @@ function refuseWhileUnsaved(ctx) {
   return true;
 }
 
-// The bar chip's one renderer (fed by the preset bar's onIndicator).
-function paintPresetChip(ctx, info) {
-  const chip = ctx.state.presetChip;
-  chip.hidden = !info;
-  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
-}
 
 // The system-prompt chip: what prompt is in force, where it came from, and
 // whether it still matches that source. Four states, each one a claim the
