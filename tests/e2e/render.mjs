@@ -172,7 +172,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   let nextId = messages.length;
   // State "another session" can change under the page: mutate from a check,
   // then resume the page and watch it adopt. Read at RESPOND time.
-  const remote = { system_prompt: null, presets: [], updated_at: 't1' };
+  const remote = { system_prompt: null, presets: [], updated_at: 't1', generating: false };
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -230,7 +230,8 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     }
     if (url.includes('/v1/conversations/c1')) {
       return { id: 'c1', title: 'render suite', model_id: 'test-model',
-        system_prompt: remote.system_prompt, applied_preset_id: null, params: {}, messages };
+        system_prompt: remote.system_prompt, applied_preset_id: null, params: {},
+        generating: remote.generating, messages };
     }
     if (url.endsWith('/v1/presets') && method === 'POST') {
       const row = { id: `p${remote.presets.length + 1}`, name: body.name,
@@ -1684,6 +1685,44 @@ async function main() {
       await st.page.close();
       assert(end.top < parked + 200,
         `the view was yanked back to the tail (${parked} -> ${end.top}) while the reader was scrolled up`);
+    });
+
+    await suite.check('a run started elsewhere shows as generating, with a way to stop it', async () => {
+      // A generation now outlives the response that started it, so a
+      // conversation can be generating with no local stream object: you left
+      // mid-generation and came back. Without a surface that says so, a
+      // runaway has no off switch from the page that shows it running.
+      const gen = await openChat(browser, base);
+      gen.store.remote.generating = true;
+      gen.store.remote.updated_at = 't2';           // make resume refetch the body
+      await gen.page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      await waitFor(async () => (await gen.page.evaluate(
+        () => [...document.querySelectorAll('.chat__composer button')]
+          .find((b) => b.textContent === 'Stop' || b.textContent === 'Send')?.textContent)) === 'Stop',
+        { timeout: 8000, message: 'the composer never offered Stop for a run started elsewhere' });
+      const status = await statusText(gen.page);
+      assert(/still generating/i.test(status),
+        `no disclosure that the server is still generating (status: ${JSON.stringify(status)})`);
+
+      // Sending is refused loudly rather than racing the running generation.
+      const beforePosts = gen.reqs.filter((r) => r.method === 'POST').length;
+      await gen.page.evaluate(() => {
+        const ta = document.querySelector('.chat__composer textarea');
+        ta.value = 'me too';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await gen.page.keyboard?.press?.('Enter').catch(() => {});
+      assert(gen.reqs.filter((r) => r.method === 'POST').length === beforePosts,
+        'a send went out while the conversation was still generating');
+
+      // Stop reaches it as a DELETE, the same contract the local Stop uses.
+      await gen.page.evaluate(() => [...document.querySelectorAll('.chat__composer button')]
+        .find((b) => b.textContent === 'Stop').click());
+      const del = await waitFor(
+        () => gen.reqs.find((r) => r.method === 'DELETE' && /\/generate$/.test(r.url)),
+        { timeout: 8000, message: 'Stop never sent a DELETE for the remote run' });
+      assert(del, 'no DELETE observed');
+      await gen.page.close();
     });
 
     await suite.check('no uncaught page errors (streaming paint)', async () => {

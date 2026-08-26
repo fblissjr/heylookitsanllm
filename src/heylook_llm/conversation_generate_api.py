@@ -83,11 +83,80 @@ generate_router = APIRouter(
     tags=["Conversations"],
 )
 
-# conv_id -> AbortEvent for the generation currently streaming into it.
+class _Run:
+    """A generation the SERVER owns, not the HTTP response that started it.
+
+    Switching tabs or conversations used to kill the generation outright: the
+    client aborted its fetch, the server saw the disconnect, set the abort
+    event, and persisted whatever partial had accumulated. The work is the
+    expensive half and the server already owns persistence -- so the response
+    is now a SUBSCRIBER to a run that finishes and commits either way, and a
+    reader who walks away gets the whole answer when they come back rather
+    than a truncated one.
+
+    `detached` is what keeps a walked-away run from growing a queue nobody
+    drains: the pump keeps generating and stops enqueueing.
+    """
+
+    __slots__ = ("abort_event", "queue", "detached", "task")
+
+    def __init__(self, abort_event: AbortEvent):
+        self.abort_event = abort_event
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self.detached = False
+        self.task: asyncio.Task | None = None
+
+
+# conv_id -> the _Run currently generating into it.
 # Single event loop, claimed before the first await after the 409 check --
 # two concurrent POSTs cannot both pass. NOT persisted: a server restart has
 # no active generations by construction.
-_ACTIVE: dict[str, AbortEvent] = {}
+_ACTIVE: dict[str, _Run] = {}
+
+
+def is_generating(conv_id: str) -> bool:
+    """Is a generation running for this conversation right now?
+
+    In-process and authoritative: `_ACTIVE` is the same dict the 409 check and
+    the Stop endpoint read. Exposed so the conversation list can say so --
+    without it, a run that outlives its response is invisible and unstoppable
+    from any client that navigated away.
+    """
+    return conv_id in _ACTIVE
+
+
+def active_conversation_ids() -> set[str]:
+    return set(_ACTIVE)
+
+
+async def _pump(conv_id: str, run: _Run, agen) -> None:
+    """Drive the generation to completion, independent of any subscriber."""
+    try:
+        async for event_str in agen:
+            if run.detached:
+                continue  # nobody listening; the run still finishes and persists
+            run.queue.put_nowait(event_str)
+    except Exception:
+        logger.warning(f"[CONV-GEN {conv_id[:8]}] generation task failed", exc_info=True)
+    finally:
+        run.queue.put_nowait(None)  # sentinel: end of stream for any subscriber
+
+
+async def _subscribe(run: _Run):
+    """Yield the run's events to one HTTP response."""
+    try:
+        while True:
+            event_str = await run.queue.get()
+            if event_str is None:
+                return
+            yield event_str
+    finally:
+        # The response is over -- the client disconnected, or the stream
+        # ended. Either way stop enqueueing and drop anything buffered; the
+        # run continues on its own and commits its own result.
+        run.detached = True
+        while not run.queue.empty():
+            run.queue.get_nowait()
 
 
 # Sampler-bag keys that may reach ChatRequest from conv.params / overrides.
@@ -310,7 +379,8 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
     # a row landed between the two and was destroyed by the positional
     # commit: the exact phone+desktop hole the gate exists to close.
     abort_event = AbortEvent()
-    _ACTIVE[conv_id] = abort_event
+    run = _Run(abort_event)
+    _ACTIVE[conv_id] = run
 
     try:
         conv = await db.get_conversation(conn, conv_id)
@@ -442,28 +512,42 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         started = {"flag": False}
 
         def _release_claim(source: str):
-            if _ACTIVE.get(conv_id) is abort_event:
+            if _ACTIVE.get(conv_id) is run:
                 logger.warning(f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
                 _ACTIVE.pop(conv_id, None)
 
         def _watchdog():
             if not started["flag"]:
                 _release_claim("watchdog (stream never started)")
+
+        def _release_if_never_started():
+            if not started["flag"]:
+                _release_claim("response cleanup (stream never started)")
         asyncio.get_running_loop().call_later(60, _watchdog)
 
+        # The generation runs as its own task and the response merely
+        # subscribes. A client that disconnects (tab switch, conversation
+        # switch, phone lock) ends the SUBSCRIPTION; the task runs to
+        # completion and commits, which is the whole point.
+        run.task = asyncio.create_task(_pump(conv_id, run, _stream_generate(
+            conn, conv_id, generator, request,
+            provider=provider, abort_event=abort_event,
+            model_id=model_id, mode=body.mode,
+            saved_user_row=saved_user_row, continue_row=continue_row,
+            commit_after=commit_after, dropped=dropped,
+            thinking_enabled=thinking_enabled,
+            strip_specials=not body.show_special_tokens,
+            perf_ctx=perf_ctx, started=started,
+        )))
         return StreamingResponse(
-            _stream_generate(
-                conn, conv_id, generator, request,
-                provider=provider, abort_event=abort_event,
-                model_id=model_id, mode=body.mode,
-                saved_user_row=saved_user_row, continue_row=continue_row,
-                commit_after=commit_after, dropped=dropped,
-                thinking_enabled=thinking_enabled,
-                strip_specials=not body.show_special_tokens,
-                perf_ctx=perf_ctx, started=started,
-            ),
+            _subscribe(run),
             media_type="text/event-stream",
-            background=BackgroundTask(_release_claim, "response cleanup"),
+            # NOT an unconditional release any more: response cleanup now fires
+            # while the run may still be going, and popping the claim there
+            # would let a second POST start a rival generation into the same
+            # conversation. The task's own finally owns the release; this is
+            # only the belt for a run that never took its first step.
+            background=BackgroundTask(_release_if_never_started),
         )
     except BaseException:
         # Any failure before the stream starts releases the claim; the
@@ -480,10 +564,10 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 "contract as the Stop button). 404 if none is active.",
 )
 async def stop_generation(conv_id: str):
-    ev = _ACTIVE.get(conv_id)
-    if ev is None:
+    run = _ACTIVE.get(conv_id)
+    if run is None:
         raise HTTPException(status_code=404, detail="No active generation for this conversation")
-    ev.set()
+    run.abort_event.set()
     return {"status": "stopping", "conversation_id": conv_id}
 
 
@@ -565,6 +649,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
         try:
             async for chunk in async_generator_with_abort(
                     generator, http_request, abort_event,
+                    abort_on_disconnect=False,
                     log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
                 ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
                 if ka:

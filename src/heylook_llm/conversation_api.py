@@ -100,6 +100,13 @@ class MessageUpdate(BaseModel):
 async def list_conversations(request: Request):
     conn = _get_db(request)
     convs = await db.list_conversations(conn)
+    # A generation now OUTLIVES the response that started it, so a client that
+    # navigated away has no other way to know one is running -- or to stop it.
+    # In-process and free: the same dict the 409 check and Stop endpoint read.
+    from heylook_llm.conversation_generate_api import active_conversation_ids
+    active = active_conversation_ids()
+    for c in convs:
+        c["generating"] = c["id"] in active
     return {"conversations": convs, "total": len(convs)}
 
 
@@ -129,6 +136,8 @@ async def get_conversation(conv_id: str, request: Request):
     conv = await db.get_conversation(conn, conv_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    from heylook_llm.conversation_generate_api import is_generating
+    conv["generating"] = is_generating(conv_id)
     return conv
 
 

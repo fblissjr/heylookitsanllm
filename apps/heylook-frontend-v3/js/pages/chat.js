@@ -287,7 +287,16 @@ function buildSkeleton(ctx) {
   ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
   s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
   s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
-  s.sendBtn.addEventListener('click', () => (s.stream ? stopStream(ctx) : send(ctx)));
+  // Three states, not two. A generation now OUTLIVES the response that
+  // started it, so this conversation can be generating with no local stream
+  // object -- you left mid-generation and came back, or another device
+  // started it. Stop still has to reach it, or a runaway 27B has no off
+  // switch from the surface that shows it running.
+  s.sendBtn.addEventListener('click', () => {
+    if (s.stream) return stopStream(ctx);
+    if (s.remoteGenerating) return stopRemote(ctx);
+    return send(ctx);
+  });
 
   // In-context settings entry: the sidebar-foot / bottom-nav gears are far
   // from the conversation, and the drawer holds chat's most-edited controls
@@ -686,6 +695,10 @@ function showStatus(ctx, text, isError = false) {
 // window of a cold load when nothing visibly streams. role="status" on the
 // line makes this audible to AT as well as visible.
 function refuseWhileStreaming(ctx) {
+  if (!ctx.state.stream && ctx.state.remoteGenerating) {
+    showStatus(ctx, 'This conversation is still generating on the server — press Stop, or wait for it to finish.');
+    return true;
+  }
   if (!ctx.state.stream) return false;
   // (The v1.64 pendingSave latch is gone with Phase 2: the server persists
   // BEFORE its stream ends, so there is no client-save window to guard.)
@@ -1532,6 +1545,39 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
   if (!keepPrompt) s.systemPrompt = conv.system_prompt ?? null;
   s.appliedPresetId = conv.applied_preset_id ?? null;
   hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
+  setRemoteGenerating(ctx, Boolean(conv.generating));
+}
+
+// A run this page is not subscribed to. Server-owned generation means the
+// answer keeps coming while you are elsewhere; this is the surface that says
+// so and offers the way out. Cleared the moment a LOCAL stream takes over --
+// the local one owns the button from then on.
+function setRemoteGenerating(ctx, on) {
+  const s = ctx.state;
+  if (s.remoteGenerating === on) return;
+  s.remoteGenerating = on;
+  if (s.stream) return;
+  s.sendBtn.textContent = on ? 'Stop' : 'Send';
+  if (on) {
+    showStatus(ctx, 'Still generating — this reply was started elsewhere and is finishing on the server.');
+  } else if (s.statusEl.textContent.startsWith('Still generating')) {
+    showStatus(ctx, '');
+  }
+}
+
+// Stop a run this page never subscribed to. The server aborts and commits the
+// partial exactly as it does for the local Stop; the row lands on the next
+// refresh rather than through a stream we are not reading.
+function stopRemote(ctx) {
+  const s = ctx.state;
+  const convId = s.activeId;
+  if (!convId) return;
+  showStatus(ctx, 'Stopping…');
+  stopGenerate(convId).then(() => {
+    if (!ctx.alive || s.activeId !== convId) return;
+    setRemoteGenerating(ctx, false);
+    resyncMessages(ctx, convId);
+  });
 }
 
 // What the sidebar shows, in order (order already encodes recency); not
@@ -2166,6 +2212,7 @@ function startStream(ctx, opts = {}) {
   // response missing.
   renderMessages(ctx);
   scrollMessages(ctx, true);
+  s.remoteGenerating = false;  // the local stream owns the button now
   s.sendBtn.textContent = 'Stop';
   beforeUnloadGuard.enable();
 

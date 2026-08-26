@@ -18,6 +18,9 @@ generator's finally) is exercised only by code review + the e2e suite once
 the v3 cutover lands.
 """
 
+import asyncio
+import time
+
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
@@ -26,7 +29,8 @@ from httpx import ASGITransport, AsyncClient
 from heylook_llm import db
 from heylook_llm.config import AppConfig
 from heylook_llm.conversation_api import conversation_router
-from heylook_llm.conversation_generate_api import _ACTIVE, generate_router
+from heylook_llm.conversation_generate_api import (
+    _ACTIVE, _Run, _pump, _subscribe, generate_router)
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import BaseProvider, GenerationChunk
 from helpers.sse import sse_events, streamed_text
@@ -63,6 +67,11 @@ class FakeProvider(BaseProvider):
         super().__init__(model_id, {"model_path": "/fake/model", "vision": False}, False)
         self.chunks = chunks
         self.last_request = None
+        # Seconds per chunk. Default 0 keeps every existing test instant; the
+        # detached-run tests need a generation that is still going when they
+        # look at it. This is a SYNC generator driven on an executor thread,
+        # so a plain sleep is the right blocking call.
+        self.chunk_delay = 0.0
 
     def load_model(self):
         pass
@@ -75,6 +84,8 @@ class FakeProvider(BaseProvider):
 
         def gen():
             for i, text in enumerate(self.chunks):
+                if self.chunk_delay:
+                    time.sleep(self.chunk_delay)
                 yield GenerationChunk(text=text, token=i)
         return gen()
 
@@ -260,7 +271,7 @@ class TestArbitration:
     async def test_second_generate_409(self, ctx):
         client, store, _ = ctx
         conv, _ = await make_conv(store, ("user", "q1"))
-        _ACTIVE[conv["id"]] = AbortEvent()  # simulate an in-flight generation
+        _ACTIVE[conv["id"]] = _Run(AbortEvent())  # simulate an in-flight generation
         try:
             res = await client.post(f"/v1/conversations/{conv['id']}/generate",
                                     json={"mode": "append", "user_content": "x"})
@@ -274,13 +285,44 @@ class TestArbitration:
         client, store, _ = ctx
         conv, _ = await make_conv(store)
         ev = AbortEvent()
-        _ACTIVE[conv["id"]] = ev
+        _ACTIVE[conv["id"]] = _Run(ev)
         try:
             res = await client.delete(f"/v1/conversations/{conv['id']}/generate")
             assert res.status_code == 200
             assert ev.is_set()
         finally:
             _ACTIVE.pop(conv["id"], None)
+
+    @pytest.mark.asyncio
+    async def test_the_conversation_list_names_an_active_run(self, ctx):
+        """A run nobody is subscribed to must still be visible and stoppable.
+
+        Without this the disconnect fix trades a truncation bug for a runaway
+        one: a generation that survives the client walking away, with no
+        surface that admits it is running.
+        """
+        client, store, _ = ctx
+        conv, _ = await make_conv(store)
+        ev = AbortEvent()
+        _ACTIVE[conv["id"]] = _Run(ev)
+        try:
+            listed = (await client.get("/v1/conversations")).json()["conversations"]
+            assert any(c["id"] == conv["id"] and c["generating"] for c in listed), \
+                "an active run is invisible in the conversation list"
+            body = (await client.get(f"/v1/conversations/{conv['id']}")).json()
+            assert body["generating"] is True
+            assert (await client.delete(
+                f"/v1/conversations/{conv['id']}/generate")).status_code == 200
+            assert ev.is_set(), "Stop did not reach a run with no subscriber"
+        finally:
+            _ACTIVE.pop(conv["id"], None)
+
+    @pytest.mark.asyncio
+    async def test_idle_conversation_is_not_marked_generating(self, ctx):
+        client, store, _ = ctx
+        conv, _ = await make_conv(store)
+        listed = (await client.get("/v1/conversations")).json()["conversations"]
+        assert all(c["generating"] is False for c in listed)
 
     @pytest.mark.asyncio
     async def test_delete_without_active_404(self, ctx):
@@ -417,7 +459,7 @@ class TestMessageAndMediaEndpoints:
     async def test_delete_409s_while_generating(self, ctx):
         client, store, _ = ctx
         conv, rows = await make_conv(store, ("user", "q1"))
-        _ACTIVE[conv["id"]] = AbortEvent()
+        _ACTIVE[conv["id"]] = _Run(AbortEvent())
         try:
             res = await client.delete(f"/v1/conversations/{conv['id']}/messages/{rows[0]['id']}")
             assert res.status_code == 409
@@ -677,3 +719,109 @@ class TestShowSpecialTokens:
         assert res.status_code == 200
         user_msgs = [m for m in provider.last_request.messages if m.role == "user"]
         assert any(self.SPECIAL in (m.content or "") for m in user_msgs)
+
+
+@pytest.mark.unit
+class TestRunOutlivesResponse:
+    """The generation is the SERVER's, not the HTTP response's.
+
+    These drive the mechanism directly rather than through the test client.
+    That is not a shortcut -- httpx's ASGITransport runs the app to completion
+    before it yields the first line, so a test that opens a stream, breaks out
+    and calls it a disconnect never disconnects anything: the run has already
+    finished. The first version of these tests did exactly that and passed
+    while proving nothing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pump_finishes_after_its_subscriber_leaves(self):
+        run = _Run(AbortEvent())
+        produced = []
+
+        async def saga():
+            for i in range(10):
+                await asyncio.sleep(0.005)
+                produced.append(i)
+                yield f"event: tick\ndata: {i}\n\n"
+
+        task = asyncio.create_task(_pump("c" * 8, run, saga()))
+        sub = _subscribe(run)
+        seen = []
+        async for event_str in sub:
+            seen.append(event_str)
+            break
+        await sub.aclose()  # the client went away
+
+        await asyncio.wait_for(task, timeout=5)
+        assert produced == list(range(10)), \
+            f"the run stopped when its subscriber left (got {produced})"
+        assert len(seen) == 1
+        assert run.detached
+
+    @pytest.mark.asyncio
+    async def test_detached_run_does_not_grow_a_queue(self):
+        """A run nobody drains must not accumulate its own output."""
+        run = _Run(AbortEvent())
+
+        async def saga():
+            for i in range(500):
+                yield f"event: tick\ndata: {i}\n\n"
+
+        run.detached = True  # as if the subscriber had already gone
+        await asyncio.wait_for(_pump("c" * 8, run, saga()), timeout=5)
+        # Only the end-of-stream sentinel.
+        assert run.queue.qsize() == 1
+        assert run.queue.get_nowait() is None
+
+
+@pytest.mark.unit
+class TestDisconnectPolicy:
+    """`abort_on_disconnect` is the whole behaviour switch; pin it both ways."""
+
+    @staticmethod
+    def _request(disconnected: bool):
+        class _Req:
+            async def is_disconnected(self):
+                return disconnected
+        return _Req()
+
+    @pytest.mark.asyncio
+    async def test_stateless_wires_still_abort_on_disconnect(self):
+        # /v1/messages and /v1/chat/completions persist nothing, so a client
+        # that leaves means the work has nowhere to go. This must not change.
+        from heylook_llm.streaming_utils import async_generator_with_abort
+        ev = AbortEvent()
+        produced = []
+
+        def gen():
+            for i in range(50):
+                time.sleep(0.005)
+                produced.append(i)
+                yield GenerationChunk(text=str(i), token=i)
+
+        out = []
+        async for chunk in async_generator_with_abort(
+                gen(), self._request(True), ev):
+            out.append(chunk)
+        assert ev.is_set(), "a disconnect no longer aborts the stateless wire"
+        assert len(produced) < 50, "generation ran to completion despite the abort"
+
+    @pytest.mark.asyncio
+    async def test_conversation_saga_keeps_going_when_the_client_leaves(self):
+        from heylook_llm.streaming_utils import async_generator_with_abort
+        ev = AbortEvent()
+        produced = []
+
+        def gen():
+            for i in range(20):
+                produced.append(i)
+                yield GenerationChunk(text=str(i), token=i)
+
+        out = []
+        async for chunk in async_generator_with_abort(
+                gen(), self._request(True), ev, abort_on_disconnect=False):
+            out.append(chunk)
+        assert not ev.is_set(), "a disconnect aborted a server-persisted run"
+        assert produced == list(range(20)), \
+            f"the run was truncated by the disconnect (got {len(produced)} chunks)"
+        assert len(out) == 20

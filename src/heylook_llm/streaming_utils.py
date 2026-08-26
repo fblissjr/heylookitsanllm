@@ -88,6 +88,7 @@ async def async_generator_with_abort(
     http_request: Request | None,
     abort_event,
     log_prefix: str = "",
+    abort_on_disconnect: bool = True,
 ) -> AsyncGenerator:
     """Wrap a synchronous generator for async iteration with client disconnect detection.
 
@@ -100,6 +101,13 @@ async def async_generator_with_abort(
         http_request: The Starlette request, used for disconnect detection (may be None).
         abort_event: A ``threading.Event`` from the provider (may be None).
         log_prefix: Label used in log messages (e.g. "[API]" or "[MESSAGES]").
+        abort_on_disconnect: Stop generating when the client goes away.
+            TRUE for the stateless wires (/v1/messages, /v1/chat/completions):
+            nothing is persisted there, so a disconnected client means the
+            work has nowhere to go. FALSE for the conversation-generate saga,
+            which persists server-side -- there a disconnect is a tab switch,
+            not an abandonment, and killing the run threw away the answer the
+            user came back for. Keepalives are emitted either way.
     """
     loop = asyncio.get_event_loop()
 
@@ -127,7 +135,7 @@ async def async_generator_with_abort(
 
             if http_request and abort_event:
                 while not chunk_future.done():
-                    if await http_request.is_disconnected():
+                    if abort_on_disconnect and await http_request.is_disconnected():
                         logging.info(f"{log_prefix}Client disconnected during streaming")
                         abort_event.set()
                         # Wait (bounded) for the in-flight next() to observe the

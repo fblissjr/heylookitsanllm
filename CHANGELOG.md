@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.12]
+
+### Changed
+
+- **A generation now outlives the HTTP response that started it.** Switching tabs or conversations used to KILL it: the client aborted its fetch, the server saw the disconnect, set the abort event and committed whatever partial had accumulated. The work is the expensive half and the server already owns persistence, so the response is now a **subscriber** to a run that finishes and commits either way -- walk away mid-generation and the whole answer is there when you come back.
+  - `_Run` (`conversation_generate_api.py`) owns the abort event, an event queue and the task. `_pump` drives the saga to completion regardless of subscribers; `_subscribe` feeds one HTTP response. A subscriber leaving sets `detached`, after which the pump keeps generating and stops enqueueing, so an abandoned run cannot grow a queue nobody drains.
+  - `async_generator_with_abort` gained `abort_on_disconnect`. It stays **true** for the stateless wires (`/v1/messages`, `/v1/chat/completions`): nothing is persisted there, so a client that leaves means the work has nowhere to go. It is **false** for the conversation saga alone. Keepalives are emitted either way.
+  - `_ACTIVE` holds a `_Run` rather than a bare `AbortEvent`; every identity guard compares the run. The response's `BackgroundTask` no longer releases the claim unconditionally -- that now fires while the run may still be going, and popping the claim there would let a second POST start a rival generation into the same conversation. The task's own `finally` owns the release; the background task and the 60s watchdog are the belt for a run that never took its first step.
+  - **No pinning was moved because this path never pinned.** `pin_model` is used only by `rlm.py` and `jspace_api.py`; what protects a running generation from an LRU evict is the provider's `_active_generations` counter, which `unload()` waits on and which a detached run keeps raised.
+- **The runaway is visible and stoppable.** A run nobody is subscribed to would otherwise have no off switch from a client that navigated away. `GET /v1/conversations` and `GET /v1/conversations/{id}` now carry `generating` (in-process, read off the same dict the 409 check and Stop use). v3's composer has three states rather than two: with a remote run it reads **Stop** and the status line says the reply is finishing on the server; a send is refused loudly instead of racing it; Stop sends the same `DELETE` the local button does.
+
+### Tests
+
+- `TestRunOutlivesResponse` drives the pump and subscriber **directly**, and the reason is worth keeping: httpx's `ASGITransport` runs the app to completion before yielding the first line, so a test that opens a stream, breaks out and calls that a disconnect never disconnects anything -- the run has already finished. The first version of these tests did exactly that and passed while proving nothing. `TestDisconnectPolicy` pins `abort_on_disconnect` both ways so the stateless wires cannot silently inherit the new behaviour.
+- Every new guarantee was shown red against a mutation of the branch it guards: the pump returning instead of continuing when detached, the disconnect probe ignoring the flag, and (in the render suite) adoption ignoring the `generating` field.
+
 ## [1.79.11]
 
 ### Removed
