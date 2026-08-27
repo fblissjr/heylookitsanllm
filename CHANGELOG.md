@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.19]
+
+### Added
+
+- **`scripts/migrate_conversations.py`** -- copy a conversation store into a fresh one on the current schema. `db.Store` recreates on version mismatch rather than migrating (deliberate policy), which means opening an older store with newer code drops `conversations`, `messages`, `media_blobs` and `notebooks` with no prompt and no backup. This is the escape hatch, run by hand; it is not migration code in the app.
+  - Opens the source **read-only** and never writes to it; refuses an existing destination; prints only counts and column names, never stored content.
+  - **Fails closed on renames** (exit 2). A renamed column is indistinguishable from a dropped one plus a defaulted new one, so a name-matching copy would silently discard the data. `--rename [TABLE.]OLD=NEW` carries it across; `--accept-drops` confirms the loss is intended; `--dry-run` just reports.
+  - Derives the target schema from `db._SCHEMA_SQL` rather than restating it, so it cannot drift from the app.
+  - The result contains the current schema and nothing else, stamped with the current version so the app opens it without dropping anything.
+  - Verified end to end against a synthetic v6 store (a renamed column, a stale column, real rows): the rename carries its value, the stale column is gone, the source is left untouched, and `db.get_connection()` opens the result with the rows intact.
+
 ## [1.79.18]
 
 ### Removed

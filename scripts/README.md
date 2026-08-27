@@ -110,3 +110,44 @@ architecture may need the checkout at master
 (`uv run python scripts/build_llama.py --rev master`) -- converter classes
 land in llama.cpp's Python side separately from the C++ inference side.
 Verify output with `scripts/gguf_probe.py` before registering it.
+
+## migrate_conversations.py
+
+`db.Store` recreates on schema-version mismatch rather than migrating -- a
+deliberate policy for a fresh-start store (CLAUDE.md: "NEVER write migration
+code"). The consequence is that opening an older store with newer code DROPS
+`conversations`, `messages`, `media_blobs` and `notebooks`, with no prompt and
+no backup, on the next server start. That is fine for a store you do not mind
+losing and a disaster for one you do.
+
+This is the escape hatch: a one-off, run by hand, that the app knows nothing
+about -- which is the distinction the policy draws. It is not migration code in
+the app.
+
+```bash
+# see the diff, write nothing
+uv run python scripts/migrate_conversations.py --from data/conversations.duckdb --dry-run
+
+# carry a renamed column across; drop what is genuinely stale
+uv run python scripts/migrate_conversations.py --from data/conversations.duckdb \
+    --rename conversations.name=title --accept-drops
+```
+
+It opens the source **read-only** and never writes to it, refuses an existing
+destination, and prints only counts and column names -- never stored content.
+
+**It fails closed on renames**, which is the whole reason it is not a one-liner.
+A renamed column is indistinguishable from a dropped one plus a defaulted new
+one, so a name-matching copy would throw the data away silently. When the diff
+has that shape it refuses to write (exit 2) until told which it is.
+
+The result contains the current schema and nothing else, stamped with the
+current version so the app opens it without dropping anything.
+
+For a *pure* rename, `ALTER TABLE ... RENAME COLUMN` in place is simpler and
+lossless and needs no copy -- just bump the `schema_meta` version row
+afterwards, or the app drops the tables on open regardless. The tradeoff is
+that it mutates the original; this copies so there is something to go back to.
+
+Stop the server first: DuckDB locks the file, and the script refuses a locked
+source rather than risk a torn snapshot.
