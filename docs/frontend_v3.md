@@ -1,6 +1,20 @@
 # Frontend v3 -- orientation & backend coupling
 
-Last updated: 2026-08-26 (v1.79.9; the streaming painter is INCREMENTAL. It used
+Last updated: 2026-08-26 (v1.79.9-.15. Beyond the painter below: staged
+images are capped at 2048px on the longest edge before upload and base64 is
+minted at SEND rather than held (`image-prep.js`); chat and notebook share one
+document write path (`document-writer.js`) carrying the keepalive PUT-ordering
+rule that used to live in two hand-maintained copies; `/v3` assets answer
+If-None-Match with a 304 and gzip text (the `no-cache` policy is unchanged --
+what changed is that revalidating no longer re-sends the file). BACKEND
+COUPLING, the reason this file exists: `GET /v1/conversations` no longer
+carries `system_prompt` or `params` (fetch the conversation for either), and
+both it and the conversation body now carry `generating` -- a generation
+OUTLIVES the response that started it, so a run survives a tab or conversation
+switch and the composer has a third state that offers Stop for a run this page
+never subscribed to.
+
+The streaming painter is INCREMENTAL. It used
 to re-parse the whole accumulated response through marked+DOMPurify and assign
 the result to innerHTML on every animation frame -- so the per-frame cost grew
 with the response (marked's parse is superlinear in length) and a long
@@ -16,9 +30,9 @@ cached flag fed by scroll events was tried first and rejected: pinning coalesces
 those events to a handful per generation, so it went stale whenever the viewport
 changed underneath it -- a phone keyboard, every time. Notebook's painter got the same rate
 limit and explore's thinking box now appends its delta instead of rewriting the
-whole string per token. Measured in real Chrome on a 4000-token response, render
-work fell from ~4.3s to ~80ms, and its growth with response length went from
-superlinear to near-linear. Previously 2026-08-17 (v1.72.0-.1): chat attachments grew a third input: drag-and-drop
+whole string per token. Its growth with response length went from superlinear to
+near-linear, which is the durable part; the measured figures live in the
+CHANGELOG entry rather than here. Previously 2026-08-17 (v1.72.0-.1): chat attachments grew a third input: drag-and-drop
 onto the thread, with a drop overlay whose label names what THIS model accepts.
 Picker, paste and drop now funnel through one `addFiles` -> `addPendingFiles`
 routine, so paste can stage audio (it was image-only) and every input is gated
@@ -113,6 +127,8 @@ js/
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook
   markdown.js                 # the ONLY text->HTML path (marked + DOMPurify; raw HTML is SHOWN, never rendered)
   markdown-stream.js          # incremental render for a message still streaming: safe-boundary split, committed prefix, tail-only re-render (+ appendPlainText for thinking boxes)
+  image-prep.js               # staging-time resolution cap (EXIF-aware, passes small images through untouched) + blobToBase64, minted at send
+  document-writer.js          # the per-document write path shared by chat + notebook: system-prompt PUT chain and the keepalive ordering rule, applied_preset_id stamp
   utils.js                    # createEl/debounce/autoGrow + throttleToFrame (cheap work) and throttleToInterval (painters whose cost scales with the document)
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
   pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js

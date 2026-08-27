@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.16]
+
+### Fixed
+
+- **v3 assets**: gzip output is memoised on the same `(mtime, size)` the etag derives from -- every cache-missing load was re-compressing ~20 assets at level 6 on the event loop, the same loop delivering SSE tokens. The gzip and identity representations now carry **distinct etags** (RFC 9110 requires one per content-coding; a shared validator lets a cache answer an identity request with a gzip body), and `Vary: accept-encoding` is set on all three exits rather than only the compressed one.
+- **Attachments encode in parallel at send.** Eight staged photos ran eight full FileReader round trips in series at exactly the moment the user is waiting; `Promise.all` costs the slowest read instead of their sum.
+- `optimizations/__all__` still named the deleted `fast_image`, so `from ... import *` would have raised.
+
+### Tests
+
+- The send-refusal assertion in the remote-generating check was **vacuous**: it set the textarea through `page.evaluate` (which never focuses it) and then pressed Enter, so the key reached `document.body` and the assertion held whether or not the guard existed. It now focuses the field and types for real, and additionally asserts the refusal is *loud*. Shown red against a mutation that removes the guard -- which makes v1.79.12's "every new guarantee was shown red" claim true rather than aspirational.
+
+### Docs
+
+- `docs/project/plan_2026-07.md` still listed `/v1/chat/completions/multipart` as ACTIVE for an endpoint deleted in v1.79.11. CLAUDE.md names that file as the first thing a new session reads, so a stale entry there misdirects the next agent.
+- `docs/frontend_v3.md` was stamped v1.79.9 at v1.79.15 and missing `image-prep.js` / `document-writer.js`, plus the backend coupling changes it exists to record (`generating` added, `system_prompt`/`params` dropped from the list). Its performance figures moved to the CHANGELOG per CLAUDE.md's rule against numbers in tracked docs -- the superlinear-to-linear *shape* is the durable claim.
+
+### Note
+
+- The review finding that `delete_conversation` and `clone_conversation` lacked an active-run guard was **incorrect** -- both call `_refuse_while_generating` as their first statement. Verified before acting; no change made.
+
 ## [1.79.15]
 
 ### Fixed

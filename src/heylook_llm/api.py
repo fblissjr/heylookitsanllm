@@ -316,32 +316,47 @@ if _v3_frontend_dir.is_dir():
         base = f"{stat_result.st_mtime}-{stat_result.st_size}"
         return f'"{_hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
 
+    # Compressed bytes keyed on the same (mtime, size) the etag derives from.
+    # The tree is static between edits, so this is a hit after the first
+    # request; without it every cache-missing load re-compressed ~20 assets at
+    # level 6 on the event loop -- the same loop delivering SSE tokens.
+    _v3_gzip_cache: dict = {}
+
     def _v3_file_response(path, request: Request):
         stat_result = path.stat()
-        etag = _v3_etag(stat_result)
-        if_none_match = request.headers.get("if-none-match", "")
-        if etag in [t.strip().removeprefix("W/") for t in if_none_match.split(",")]:
-            return Response(status_code=304, headers={**_V3_NO_CACHE, "etag": etag})
+        base_etag = _v3_etag(stat_result)
+        wants_gzip = (path.suffix in _V3_GZIP_TYPES
+                      and stat_result.st_size >= _V3_GZIP_MIN
+                      and "gzip" in request.headers.get("accept-encoding", ""))
+        # RFC 9110: distinct entity-tags per content-coding. One etag across
+        # both representations lets a shared cache answer an identity request
+        # with a gzip body (or 304 an identity copy against a gzip validator).
+        etag = f'{base_etag[:-1]}-gzip"' if wants_gzip else base_etag
+        # Vary on EVERY exit, not just the compressed one -- a 304 or an
+        # identity 200 stored without it is the same cache-poisoning bug.
+        headers = {**_V3_NO_CACHE, "etag": etag, "vary": "accept-encoding"}
 
-        # Compress in the handler rather than via GZipMiddleware: that
-        # middleware wraps EVERY response including the generate endpoint's
-        # SSE, where buffering to a minimum size would sit on the first token.
-        # Static assets are the whole win and they are the only thing here.
-        if (path.suffix in _V3_GZIP_TYPES and stat_result.st_size >= _V3_GZIP_MIN
-                and "gzip" in request.headers.get("accept-encoding", "")):
-            body = _gzip.compress(path.read_bytes(), compresslevel=6)
+        if etag in [t.strip().removeprefix("W/")
+                    for t in request.headers.get("if-none-match", "").split(",")]:
+            return Response(status_code=304, headers=headers)
+
+        if wants_gzip:
+            key = (str(path), stat_result.st_mtime, stat_result.st_size)
+            body = _v3_gzip_cache.get(key)
+            if body is None:
+                body = _gzip.compress(path.read_bytes(), compresslevel=6)
+                _v3_gzip_cache.clear()  # one generation of the tree at a time
+                _v3_gzip_cache[key] = body
             return Response(
                 content=body,
                 media_type=guess_type(path.name)[0] or "application/octet-stream",
                 headers={
-                    **_V3_NO_CACHE,
-                    "etag": etag,
+                    **headers,
                     "last-modified": _formatdate(stat_result.st_mtime, usegmt=True),
                     "content-encoding": "gzip",
-                    "vary": "accept-encoding",
                 },
             )
-        return FileResponse(path, stat_result=stat_result, headers=_V3_NO_CACHE)
+        return FileResponse(path, stat_result=stat_result, headers=headers)
 
     @app.get("/v3")
     @app.get("/v3/{rest:path}")

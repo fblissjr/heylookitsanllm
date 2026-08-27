@@ -1716,16 +1716,24 @@ async function main() {
       assert(/still generating/i.test(status),
         `no disclosure that the server is still generating (status: ${JSON.stringify(status)})`);
 
-      // Sending is refused loudly rather than racing the running generation.
+      // Sending is refused LOUDLY rather than racing the running generation.
+      //
+      // This has to reach the real send path. The first version set the
+      // textarea via evaluate (which never focuses it) and then pressed Enter,
+      // so the key went to document.body and the assertion below was vacuously
+      // true whether or not the guard existed. Clicking is no good either --
+      // the button reads Stop here by design. So: focus the field for real and
+      // press Enter, which is the keystroke a user would actually use.
       const beforePosts = gen.reqs.filter((r) => r.method === 'POST').length;
-      await gen.page.evaluate(() => {
-        const ta = document.querySelector('.chat__composer textarea');
-        ta.value = 'me too';
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-      await gen.page.keyboard?.press?.('Enter').catch(() => {});
+      await gen.page.focus('.chat__composer textarea');
+      await gen.page.type('.chat__composer textarea', 'me too');
+      await gen.page.keyboard.press('Enter');
+      await settle(gen.page);
       assert(gen.reqs.filter((r) => r.method === 'POST').length === beforePosts,
         'a send went out while the conversation was still generating');
+      const refusal = await statusText(gen.page);
+      assert(/still generating/i.test(refusal),
+        `the refusal was silent (status: ${JSON.stringify(refusal)})`);
 
       // Stop reaches it as a DELETE, the same contract the local Stop uses.
       await gen.page.evaluate(() => [...document.querySelectorAll('.chat__composer button')]

@@ -2072,19 +2072,17 @@ function blockSourceUrl(b) {
 // full camera-roll resolution. Now the staged bytes are already capped and the
 // base64 lives only as long as the request.
 async function buildContentBlocks(text, images, audio) {
-  const blocks = [];
-  for (const img of images) {
-    blocks.push({
-      type: 'image',
-      source: { type: 'base64', media_type: img.mediaType, data: await blobToBase64(img.blob) },
-    });
-  }
-  for (const clip of audio) {
-    blocks.push({
-      type: 'audio',
-      source: { type: 'base64', media_type: clip.mediaType, data: await blobToBase64(clip.blob) },
-    });
-  }
+  // In PARALLEL: eight staged photos read one after another put eight full
+  // FileReader round trips in series at exactly the moment the user is waiting
+  // on the send. Promise.all costs the slowest read instead of their sum;
+  // block order within each kind is all that has to hold, and it does.
+  const encode = (entry, type) => blobToBase64(entry.blob).then((data) => ({
+    type, source: { type: 'base64', media_type: entry.mediaType, data },
+  }));
+  const blocks = await Promise.all([
+    ...images.map((img) => encode(img, 'image')),
+    ...audio.map((clip) => encode(clip, 'audio')),
+  ]);
   if (text) blocks.push({ type: 'text', text });
   return blocks;
 }
