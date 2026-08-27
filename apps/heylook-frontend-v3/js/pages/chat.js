@@ -1415,6 +1415,7 @@ function scrollMessages(ctx, force = false) {
   if (!force && !followingTail(ctx)) return;
   el.scrollTop = el.scrollHeight;
   const setTop = el.scrollTop; // post-clamp: what the write actually landed on
+  ctx.state.pinnedTop = setTop;
   // A row added this tick is still at its `contain-intrinsic-size` estimate,
   // so scrollHeight reads short and this lands above the real bottom. Re-aim
   // once the browser has laid the new row out. The frame-time re-check must
@@ -1425,7 +1426,10 @@ function scrollMessages(ctx, force = false) {
   // an unmoved scrollTop is the honest signal that the gap is new content.
   requestAnimationFrame(() => {
     if (!ctx.alive) return;
-    if (force || Math.abs(el.scrollTop - setTop) < 2) el.scrollTop = el.scrollHeight;
+    if (force || Math.abs(el.scrollTop - setTop) < 2) {
+      el.scrollTop = el.scrollHeight;
+      ctx.state.pinnedTop = el.scrollTop;
+    }
   });
 }
 
@@ -1447,7 +1451,20 @@ function scrollMessages(ctx, force = false) {
 // the flag goes stale exactly when the viewport changes underneath it -- which
 // on a phone is every time the keyboard opens.
 function followingTail(ctx) {
-  const el = ctx.state.messagesEl;
+  const s = ctx.state;
+  const el = s.messagesEl;
+  // The gap alone cannot tell "the reader scrolled away" from "the gap opened
+  // underneath them" -- and the second happens for two reasons here: one paint
+  // appending more than the slack (a code block, a table), and a VIEWPORT
+  // RESIZE shrinking clientHeight, which on a phone is every keyboard. Both
+  // stranded the view mid-generation, measured.
+  //
+  // scrollTop is the honest discriminator, the same one scrollMessages uses
+  // for a row growing past its intrinsic-size estimate: growth and resize move
+  // scrollHeight and clientHeight, never scrollTop. So if scrollTop is still
+  // where we last pinned it, the reader has not moved and we keep following,
+  // whatever the gap says.
+  if (s.pinnedTop != null && Math.abs(el.scrollTop - s.pinnedTop) < 2) return true;
   return el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLACK_PX;
 }
 
@@ -1458,6 +1475,9 @@ function followingTail(ctx) {
 function pinToTail(ctx) {
   const el = ctx.state.messagesEl;
   el.scrollTop = el.scrollHeight;
+  // Post-clamp: what the write actually landed on, which is what a later
+  // read is compared against.
+  ctx.state.pinnedTop = el.scrollTop;
 }
 
 // After an editor closes (Save or Cancel) the row it stood in is rebuilt as a
@@ -1500,8 +1520,14 @@ async function resyncMessages(ctx, convId) {
   } catch {
     return; // best-effort: the next saga end (or a reselect) retries
   }
-  if (!ctx.alive || s.activeId !== convId || s.stream) return;
+  if (!ctx.alive || s.activeId !== convId || s.stream) return false;
   mergeServerRows(ctx, conv.messages ?? []);
+  // Since v1.79.12 a run outlives the response that started it, so "our
+  // stream ended" no longer implies "the server is done". Adopt what the
+  // server says and hand it back, because the difference decides whether
+  // there is anything to recover.
+  setRemoteGenerating(ctx, Boolean(conv.generating));
+  return Boolean(conv.generating);
 }
 
 // The one way server rows replace the mirror outside a stream end: saved
@@ -1549,9 +1575,17 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // the local one owns the button from then on.
 function setRemoteGenerating(ctx, on) {
   const s = ctx.state;
+  // A LOCAL stream owns the button and the status line, so a remote flag is
+  // not merely ignored here -- it must not be RECORDED either. The server
+  // correctly reports our own in-flight run as generating, so a resume during
+  // it used to latch this true beneath the stream; releaseStream resets the
+  // button but not this flag, and afterwards Send silently performed a Stop
+  // (and the `=== on` guard above made the latch self-perpetuating, swallowing
+  // the later honest value as a no-op). The local stream's own end re-derives
+  // this through resyncMessages.
+  if (s.stream) return;
   if (s.remoteGenerating === on) return;
   s.remoteGenerating = on;
-  if (s.stream) return;
   s.sendBtn.textContent = on ? 'Stop' : 'Send';
   if (on) {
     showStatus(ctx, 'Still generating — this reply was started elsewhere and is finishing on the server.');
@@ -2415,18 +2449,24 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   }
 
   // A stream that ended WITHOUT its heylook_saved is not success (spec §4:
-  // that event is always last) -- the transport died and the server is
-  // persisting via its detached disconnect task, which the resync above may
-  // have raced. Adopt again with backoff (the task can lose a DB-writer
-  // race well past any single fixed delay), then close the loop on the
-  // status line. A new stream supersedes the remaining retries -- its own
-  // saga end re-adopts everything anyway.
+  // that event is always last) -- the transport died. Two different things
+  // that used to look identical: the server FINISHED and its commit raced
+  // our resync, or the server is STILL GENERATING, because a run now
+  // outlives the response that started it. Only the first has anything to
+  // recover; announcing "recovered" during the second states that a partial
+  // answer is the whole one. resyncMessages reports which it is.
+  // A new stream supersedes the remaining retries -- its own saga end
+  // re-adopts everything anyway.
   if (!saved && !aborted && (content || thinking) && !stream.inBandError) {
     showStatus(ctx, 'The stream ended without a save confirmation — recovering…', true);
     const retry = (delay, attemptsLeft) => setTimeout(async () => {
       if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;
-      await resyncMessages(ctx, stream.targetConvId);
+      const stillGenerating = await resyncMessages(ctx, stream.targetConvId);
       if (!ctx.alive || s.activeId !== stream.targetConvId) return;
+      // Still working: nothing to recover, and no backoff could outlast it.
+      // setRemoteGenerating has already put the honest line on screen and
+      // turned the button into Stop.
+      if (stillGenerating) return;
       if (attemptsLeft > 0) {
         retry(delay * 2.5, attemptsLeft - 1);
       } else if (s.statusEl.textContent.includes('recovering')) {

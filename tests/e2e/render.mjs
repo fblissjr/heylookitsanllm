@@ -64,7 +64,7 @@ const TYPES = {
 // the deltas out with real delays. `drip` is mutated by the check that is
 // about to run (checks are sequential).
 function serveV3() {
-  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0 };
+  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0, omitSaved: false };
   const server = http.createServer(async (req, res) => {
     if (/\/v1\/conversations\/[^/]+\/generate$/.test(req.url) && req.method === 'POST') {
       await streamDrip(req, res, drip);
@@ -109,6 +109,7 @@ async function streamDrip(req, res, drip) {
   ev('content_block_stop', { type: 'content_block_stop', index: 0 });
   ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } });
   ev('message_stop', { type: 'message_stop', performance: {} });
+  if (drip.omitSaved) { res.end(); return; }  // transport died before the last word
   ev('heylook_saved', {
     type: 'heylook_saved', conversation_id: 'c1', mode: 'append', end_reason: 'complete',
     messages: [{ id: drip.rowId, role: 'assistant', content: drip.text, thinking: null,
@@ -1734,6 +1735,41 @@ async function main() {
         { timeout: 8000, message: 'Stop never sent a DELETE for the remote run' });
       assert(del, 'no DELETE observed');
       await gen.page.close();
+    });
+
+    await suite.check('a stream that dies mid-run does not claim the answer is complete', async () => {
+      // Two things used to look identical when heylook_saved never arrived:
+      // the server FINISHED and its commit raced our resync, or the server is
+      // STILL GENERATING. Since a run outlives the response that started it,
+      // the second is now the common one -- and announcing "Recovered what the
+      // server saved" there states that a partial answer is the whole one.
+      drip.text = STREAM_DOC;
+      // Slow enough that the streaming node is OBSERVABLE: at 40 chars/1ms the
+      // whole stream finished inside one poll interval and startSend timed out
+      // waiting for a node that had already come and gone.
+      drip.chunkChars = 8;
+      drip.delayMs = 8;
+      drip.omitSaved = true;
+      const dead = await openChat(browser, base, { dripGenerate: true });
+      await watchStatus(dead.page);
+      await startSend(dead.page);
+      // Flipped AFTER the send: with it set beforehand the composer already
+      // reads Stop on mount and there is nothing to send -- the setup would
+      // defeat the check rather than arrange it.
+      dead.store.remote.generating = true;   // the run continues server-side
+      // The recovery backoff is 1s, 2.5s, 6.25s -- outlast the first two.
+      await sleep(5000);
+      const seen = await statusLog(dead.page);
+      const btn = await dead.page.evaluate(
+        () => [...document.querySelectorAll('.chat__composer button')]
+          .find((b) => b.textContent === 'Stop' || b.textContent === 'Send')?.textContent);
+      await dead.page.close();
+      drip.omitSaved = false;
+      assert(!seen.some((t) => /Recovered what the server saved/.test(t)),
+        `claimed recovery while the server was still generating: ${JSON.stringify(seen)}`);
+      assert(seen.some((t) => /[Ss]till generating/.test(t)),
+        `never said the server was still generating: ${JSON.stringify(seen)}`);
+      assert(btn === 'Stop', `the composer offered "${btn}" for a run that is still going`);
     });
 
     await suite.check('no uncaught page errors (streaming paint)', async () => {
