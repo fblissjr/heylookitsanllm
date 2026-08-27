@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.14]
+
+### Fixed
+
+- **A model with an active generation is no longer torn down.** `router._is_generating()` now guards all three teardown paths (LRU evict, admin unload, idle unload) the same way `_pinned` already did — a generating model is pinned, by definition, so no new concept was needed.
+  - The guard belongs at the ROUTER because the hazard differs per provider and gguf had **less** protection than MLX, not more: `MLXProvider.unload` waits for `_active_generations` but force-unloads after 30s, freeing weights under a live Metal command buffer (its own docstring says that crashes); `LlamaServerProvider.unload` SIGTERMs the llama-server subprocess with **no wait for actives at all**, because `_active_generations` is MLX-local and appears nowhere in `router.py` or `base.py`.
+  - The race is pre-existing (`get_provider` resolves, and can evict, before the generation gate is acquired), but v1.79.12 widened the window from "while a client is watching" to the full length of every abandoned run, which with `max_loaded_models=1` is the common case.
+  - Refusal reuses the existing backpressure vocabulary rather than inventing one: `ModelBusyError` → the saga's existing `MODEL_BUSY` branch → 503 + Retry-After, which v3 already retries; admin unload/reload → the 409 the pinned path already returns, carrying a detail that names the generating model.
+  - **Known cost:** the generation gate is a process-global singleton, so the predicate is conservative *across* models — with `max_loaded_models > 1` a generation on one model blocks evicting any other. No effect at the default of 1. Failing toward "do not tear down" is the safe direction for a teardown decision.
+  - `_is_generating` type-checks `generation_queue_stats()` against its documented `Optional[Dict]` rather than truth-testing it: a bare Mock is truthy and its `.get()` returns another truthy Mock, which would report every mocked provider as permanently generating and un-unloadable.
+
 ## [1.79.13]
 
 ### Changed

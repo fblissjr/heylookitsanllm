@@ -230,15 +230,67 @@ class ModelRouter:
         if HAS_MLX and is_mlx_model:
             mx.clear_cache()
 
+    def _is_generating(self, model_id: str) -> bool:
+        """Is this model in the middle of a generation right now?
+
+        Tearing a model down mid-generation is unsafe in DIFFERENT ways per
+        provider, which is why the guard belongs here and not in either one:
+        MLXProvider.unload frees weights under a live Metal command buffer
+        (its own docstring says that crashes), and LlamaServerProvider.unload
+        SIGTERMs the llama-server subprocess with no wait for actives at all --
+        `_active_generations` is MLX-local, so gguf had strictly less
+        protection. One predicate at the router covers both.
+
+        Reads the generation gate, which is a process-global singleton, so
+        this is CONSERVATIVE across models: it can report a model busy while a
+        different one generates. That is the safe direction for a teardown
+        decision, and with the default max_loaded_models=1 there is only one
+        loaded model for it to be conservative about.
+
+        Why this became load-bearing (v1.79.12): a generation used to exist
+        only while a client watched it, so the window was small. Runs now
+        outlive the response that started them, which widens it to the full
+        length of every abandoned generation.
+        """
+        provider = self.providers.get(model_id)
+        stats = provider.generation_queue_stats() if provider else None
+        # The base contract is Optional[Dict]; None means "this provider does
+        # not serialize generation", i.e. nothing to wait for. Type-check
+        # rather than truth-test: a bare Mock is truthy and its .get() returns
+        # another truthy Mock, so a duck-typed check reports every mocked
+        # provider as permanently generating and makes it un-unloadable.
+        if not isinstance(stats, dict):
+            return False
+        return bool(stats.get("active")) or bool(stats.get("waiting"))
+
     def _evict_lru_model(self):
-        """Evict least recently used non-pinned model. Must be called with cache_lock held."""
+        """Evict least recently used non-pinned, non-generating model.
+
+        Must be called with cache_lock held.
+        """
         evict_id = None
+        blocked_by_generation = []
         for model_id in self.providers:
-            if model_id not in self._pinned:
-                evict_id = model_id
-                break
+            if model_id in self._pinned:
+                continue
+            if self._is_generating(model_id):
+                blocked_by_generation.append(model_id)
+                continue
+            evict_id = model_id
+            break
 
         if evict_id is None:
+            if blocked_by_generation:
+                # MODEL_BUSY is the existing backpressure contract: the API
+                # layer maps it to 503 + Retry-After and v3 already retries on
+                # it with a "Server busy" line. Better than evicting a running
+                # generation, and better than inventing a second vocabulary.
+                from heylook_llm.providers.common.generation_gate import ModelBusyError
+                raise ModelBusyError(
+                    f"MODEL_BUSY: cannot make room -- {blocked_by_generation} "
+                    f"{'is' if len(blocked_by_generation) == 1 else 'are'} "
+                    f"generating. Stop the generation or wait for it to finish."
+                )
             raise RuntimeError(
                 f"All {len(self.providers)} loaded models are pinned. "
                 f"Cannot evict to make room. Pinned: {self._pinned}"
@@ -559,6 +611,11 @@ class ModelRouter:
                     f"Model '{model_id}' is pinned (batch job in progress). "
                     f"Use force=True to override."
                 )
+            if self._is_generating(model_id) and not force:
+                raise RuntimeError(
+                    f"Model '{model_id}' is generating. "
+                    f"Stop the generation, or use force=True to override."
+                )
             if model_id not in self.providers:
                 return False
 
@@ -659,6 +716,12 @@ class ModelRouter:
             candidates = []
             for model_id in list(self.providers.keys()):
                 if model_id in self._pinned:
+                    continue
+                # An idle timer that fires mid-generation is the same teardown
+                # hazard as an evict. (Should be unreachable -- generating is
+                # not idle -- but last_used is stamped at REQUEST time, and a
+                # long generation can outlive the window from that stamp.)
+                if self._is_generating(model_id):
                     continue
                 threshold = self._effective_idle_threshold(model_id)
                 if threshold <= 0:
