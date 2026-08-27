@@ -75,3 +75,35 @@ One JSONL line per `(model, task)` pair, written to `--out` (default
 `tests/eval/results.jsonl`): `model`, `task`, `category`, `passed`,
 `evidence`, `elapsed_ms`, `timestamp`, and on failure an `error` field with
 the exception text.
+
+## lifecycle.py -- generation lifecycle, not model behavior
+
+Sibling script, same cost profile (opt-in, points at an already-running
+server, never spawns one, not in `/test-suite`), different kind: `run.py`
+judges what the model *says*, `lifecycle.py` asserts the plumbing around it.
+
+```bash
+uv run python tests/eval/lifecycle.py --server http://127.0.0.1:8991 \
+    --models Qwen3.5-0.8B-MLX-8bit,google_gemma-4-E4B-it-qat-q4_0-gguf
+```
+
+**Pass an MLX model AND a gguf model.** The two fail differently when a model
+is torn down mid-generation -- MLX frees weights under a live Metal command
+buffer, llama-server gets SIGTERMed out from under an open HTTP stream -- and
+gguf is the one that historically had no protection.
+
+What it pins: a generating model cannot be unloaded (409, naming it); Stop
+returns 200 and the run clears; **a stopped generation persists exactly what
+the wire delivered, byte for byte** (what makes a stopped reply editable
+afterwards -- the abort has to land on the token it stopped at, with nothing
+lost in the reasoning parser's rolling holdback); and at most one llama-server
+subprocess.
+
+Why it is not a unit test: it *was* one, and it certified a guard that did not
+work. The guard reads a provider's in-flight generation count, and with
+MagicMock providers that count is whatever the test says -- so the suite was
+green while the guard returned False for every gguf model, because
+`LlamaServerProvider` did not implement the signal at all. Mocks cannot answer
+"does the real provider report this". Shown red by removing the gguf counter:
+the unload goes 409 -> 200 and the check fails with both that and the
+follow-on 404 from Stop finding nothing left alive.

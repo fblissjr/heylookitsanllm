@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.17]
+
+### Tests
+
+- **`tests/eval/lifecycle.py`** -- generation-lifecycle checks that need a real model actually decoding. Sibling of `run.py` with the same cost profile (opt-in, points at an already-running server, never spawns one, not in `/test-suite`) and a different kind: `run.py` judges what the model says, this asserts the plumbing around it.
+  - Per model: a generating model cannot be unloaded (409, naming it); Stop returns 200 and the run clears; **a stopped generation persists exactly what the wire delivered, byte for byte**; and at most one llama-server subprocess.
+  - Takes an MLX model **and** a gguf one deliberately: the two fail differently when torn down mid-generation, and gguf is the one that had no protection.
+  - It replaces mock-based unit tests that were deleted rather than kept, because they certified a guard that did not work: the guard reads a provider's in-flight count, MagicMock reports whatever it is told, and the suite was green while the guard returned False for every gguf model. Shown red by removing the gguf counter -- the unload goes 409 to 200, and Stop then 404s because nothing is left alive.
+
 ## [1.79.16]
 
 ### Fixed
