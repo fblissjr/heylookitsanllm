@@ -784,9 +784,10 @@ class MLXProvider(BaseProvider):
             int(self.config.get("max_queue_depth", 8))
         )
 
-        # Reference counting for safe unload -- prevents eviction during active generation
-        self._active_generations = 0
-        self._active_lock = threading.Lock()
+        # (_active_generations / _active_lock now live on BaseProvider, so the
+        # router can ask EVERY provider the same question before a teardown --
+        # they were MLX-only, which made a guard built on them cover half the
+        # app. Re-initialising them here would be harmless but misleading.)
 
     def load_model(self):
         model_path = self.config['model_path']

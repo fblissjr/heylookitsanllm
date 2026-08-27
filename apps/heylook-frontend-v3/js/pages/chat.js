@@ -1594,6 +1594,24 @@ function setRemoteGenerating(ctx, on) {
   }
 }
 
+// Poll the store a few times with backoff until the run has actually
+// finished. Not a general polling loop: it is bounded, it only runs after an
+// explicit Stop, and it stops the moment the server says the run is done --
+// the alternative is a partial that stays invisible until the user happens to
+// reselect the conversation.
+function resyncUntilSettled(ctx, convId, delay = 250, attemptsLeft = 4) {
+  setTimeout(async () => {
+    if (!ctx.alive || ctx.state.activeId !== convId || ctx.state.stream) return;
+    const stillGenerating = await resyncMessages(ctx, convId);
+    if (!ctx.alive || ctx.state.activeId !== convId) return;
+    if (!stillGenerating) {
+      if (ctx.state.statusEl.textContent === 'Stopping…') showStatus(ctx, 'Stopped.');
+      return;
+    }
+    if (attemptsLeft > 0) resyncUntilSettled(ctx, convId, delay * 2, attemptsLeft - 1);
+  }, delay);
+}
+
 // Stop a run this page never subscribed to. The server aborts and commits the
 // partial exactly as it does for the local Stop; the row lands on the next
 // refresh rather than through a stream we are not reading.
@@ -1602,10 +1620,24 @@ function stopRemote(ctx) {
   const convId = s.activeId;
   if (!convId) return;
   showStatus(ctx, 'Stopping…');
-  stopGenerate(convId).then(() => {
+  // stopGenerate resolves to the STATUS (null on network failure, 404 when
+  // the server has nothing active). Reporting "stopped" for all three told
+  // the user a run had been stopped that was still going -- the one thing
+  // this button exists to promise.
+  stopGenerate(convId).then((status) => {
     if (!ctx.alive || s.activeId !== convId) return;
+    if (status === null) {
+      showStatus(ctx, 'Could not reach the server to stop it — still generating.', true);
+      return;  // leave the flag ON: as far as we know it is still running
+    }
+    // 404 = the server has nothing active: it already finished. Not an error,
+    // but not a stop either -- adopt the truth from the store either way.
     setRemoteGenerating(ctx, false);
-    resyncMessages(ctx, convId);
+    // The abort is asynchronous server-side: the provider has to observe the
+    // flag, unwind, and win the DB writer queue. One immediate resync almost
+    // always precedes the commit, so the partial would stay invisible until a
+    // reselect. Re-check until the run actually clears.
+    resyncUntilSettled(ctx, convId);
   });
 }
 
@@ -1672,6 +1704,16 @@ async function refreshAfterResume(ctx) {
       // started on; swapping the list under it orphans that commit, and
       // WebKit removes the input without a blur at all. Leave the list alone
       // until the rename settles -- the next resume catches up.
+      // The list carries `generating` for every row; adopt the ACTIVE one
+      // even when the body was not refetched. Reaching it only through
+      // adoptConversationMeta (which runs only when updated_at moved) left a
+      // real stick: a run that generated nothing never moves updated_at, so
+      // the composer read "Stop" and refused every send until the user
+      // navigated away and back.
+      const activeRow = list.conversations.find((c) => c.id === convId);
+      if (activeRow && 'generating' in activeRow) {
+        setRemoteGenerating(ctx, Boolean(activeRow.generating));
+      }
       const renaming = Boolean(s.convListEl.querySelector('.conv-item__rename'));
       if (!renaming) {
         const before = convListFingerprint(s.conversations);

@@ -552,7 +552,14 @@ class LlamaServerProvider(BaseProvider):
                 f"llama-server for '{self.model_id}' unreachable: {e}"
             )
         try:
-            yield from self._stream_chunks(response, abort_event, echo_chars=echo_chars)
+            # generation_active spans the YIELDING, so the router can see this
+            # model as busy and refuse to SIGTERM llama-server out from under
+            # an open stream. Nothing counted here before: the base returned
+            # None for generation_queue_stats (llama-server queues its own
+            # requests, so there is no MLX-style gate to report), which made
+            # every gguf model look permanently idle to a teardown guard.
+            with self.generation_active():
+                yield from self._stream_chunks(response, abort_event, echo_chars=echo_chars)
         finally:
             # Closing the connection frees the llama-server slot on abort.
             try:

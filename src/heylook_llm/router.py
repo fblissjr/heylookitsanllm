@@ -241,11 +241,11 @@ class ModelRouter:
         `_active_generations` is MLX-local, so gguf had strictly less
         protection. One predicate at the router covers both.
 
-        Reads the generation gate, which is a process-global singleton, so
-        this is CONSERVATIVE across models: it can report a model busy while a
-        different one generates. That is the safe direction for a teardown
-        decision, and with the default max_loaded_models=1 there is only one
-        loaded model for it to be conservative about.
+        Reads BaseProvider's per-provider in-flight count, so it is exact for
+        the model asked about rather than conservative across models -- the
+        earlier spelling read the process-global generation gate, which gguf
+        does not use at all (llama-server queues its own requests), so every
+        gguf model looked permanently idle.
 
         Why this became load-bearing (v1.79.12): a generation used to exist
         only while a client watched it, so the window was small. Runs now
@@ -253,15 +253,12 @@ class ModelRouter:
         length of every abandoned generation.
         """
         provider = self.providers.get(model_id)
-        stats = provider.generation_queue_stats() if provider else None
-        # The base contract is Optional[Dict]; None means "this provider does
-        # not serialize generation", i.e. nothing to wait for. Type-check
-        # rather than truth-test: a bare Mock is truthy and its .get() returns
-        # another truthy Mock, so a duck-typed check reports every mocked
-        # provider as permanently generating and makes it un-unloadable.
-        if not isinstance(stats, dict):
+        if provider is None:
             return False
-        return bool(stats.get("active")) or bool(stats.get("waiting"))
+        count = getattr(provider, "active_generations", 0)
+        # int(), not truth-test: a bare Mock is truthy and would report every
+        # mocked provider as permanently generating and un-unloadable.
+        return isinstance(count, int) and count > 0
 
     def _evict_lru_model(self):
         """Evict least recently used non-pinned, non-generating model.

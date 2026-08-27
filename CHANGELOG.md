@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.15]
+
+### Fixed
+
+- **The teardown guard now actually covers gguf.** v1.79.14's `_is_generating` read `generation_queue_stats()`, which `LlamaServerProvider` does not implement -- it inherits the base's `None`, deliberately, because llama-server queues its own requests and there is no MLX-style FIFO gate to report. So the guard returned False for every gguf model, always: it protected only the provider that already had a 30s wait, and did nothing for the one with no protection at all. The unit tests missed it because they used mocks that reported whatever they were told to.
+  - `_active_generations` / `_active_lock` moved from `MLXProvider` to `BaseProvider`, with a `generation_active()` context manager and an `active_generations` property. The gguf provider wraps its yielding in it, so the count follows the generator's real lifetime (exhaustion, `close()`, or an abort that closes it). The router asks one question of any provider.
+  - **Verified live, both providers, real models** (`Qwen3.5-0.8B-MLX-8bit` and `google_gemma-4-E4B-it-qat-q4_0-gguf`): an unload attempt during generation returns 409 naming the model; a Stop returns 200 and clears; exactly one llama-server process throughout. Shown RED by removing the gguf counter and repeating: the same unload returns **200**, SIGTERMing llama-server out from under an open stream.
+  - Also verified live, and previously only assumed: **a stopped generation persists exactly what the wire delivered** -- byte-identical on both providers, so the abort lands on the token it stopped at and the reasoning parser's rolling holdback drops nothing. That is what makes a stopped reply editable afterwards.
+
+- **The generation task no longer swallows failures.** `_pump` caught every exception and emitted only the end-of-stream sentinel, handing a still-attached client a clean 200 and a well-formed but truncated stream -- which the client's recovery path reads as "the transport died, the server is committing", announcing a FAILED generation as a recovered one. It now emits a typed `error` event first. This is the common path on gguf, where a killed llama-server surfaces as a connection error rather than a `GenerationFailed` the saga can shape.
+- **Stop reports what actually happened.** `stopRemote` treated all three outcomes of `stopGenerate` as success; a network failure now says so and leaves the run marked generating, and the settle-check polls (bounded, backoff, only after an explicit Stop) until the server confirms the run ended, so the partial is not invisible until the next reselect.
+- **Resume adopts `generating` from the conversation list**, not only from a body refetch. Reaching it solely through `adoptConversationMeta` -- which runs only when `updated_at` moved -- meant a run that generated nothing left the composer reading "Stop" and refusing every send until the user navigated away and back.
+
 ## [1.79.14]
 
 ### Fixed

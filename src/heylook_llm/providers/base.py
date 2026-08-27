@@ -1,5 +1,7 @@
 # src/heylook_llm/providers/base.py
+import threading
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Generator, Dict, Optional
 from ..config import ChatRequest, ModelMetrics
@@ -98,6 +100,41 @@ class BaseProvider(ABC):
         self.model_id = model_id
         self.config = config
         self.verbose = verbose
+        # How many generations are in flight on this provider RIGHT NOW.
+        #
+        # Lives here, not in a subclass, because the router needs one question
+        # it can ask any provider before tearing a model down -- and tearing a
+        # model down mid-generation is unsafe in a DIFFERENT way per backend:
+        # MLX frees weights under a live Metal command buffer, llama-server
+        # gets SIGTERMed out from under an open HTTP stream. The count used to
+        # exist only on MLXProvider, so a guard built on it silently covered
+        # half the app -- and the uncovered half (gguf) was the one with no
+        # protection of its own.
+        self._active_generations = 0
+        self._active_lock = threading.Lock()
+
+    @property
+    def active_generations(self) -> int:
+        with self._active_lock:
+            return self._active_generations
+
+    @contextmanager
+    def generation_active(self):
+        """Count one in-flight generation for as long as the block runs.
+
+        Wrap the GENERATOR BODY, not the call that returns it: providers hand
+        back a generator, and what must be counted is the span during which it
+        can still be pulled from. A generator's finally runs on exhaustion,
+        on close(), and on an abort that closes it, so the count follows the
+        real lifetime.
+        """
+        with self._active_lock:
+            self._active_generations += 1
+        try:
+            yield
+        finally:
+            with self._active_lock:
+                self._active_generations -= 1
 
     def template_info(self):
         """Chat-template metadata (ModelTemplateInfo) for reasoning-parser

@@ -159,3 +159,4 @@ class TestUnloadPinnedGuard:
     def test_unload_nonexistent_returns_false(self, router):
         result = router.unload_model("nonexistent")
         assert result is False
+

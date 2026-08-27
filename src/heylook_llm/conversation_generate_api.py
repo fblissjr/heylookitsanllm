@@ -136,8 +136,22 @@ async def _pump(conv_id: str, run: _Run, agen) -> None:
             if run.detached:
                 continue  # nobody listening; the run still finishes and persists
             run.queue.put_nowait(event_str)
-    except Exception:
+    except Exception as exc:
+        # TELL the subscriber. Swallowing this and emitting only the
+        # end-of-stream sentinel hands a still-attached client a clean 200 and
+        # a well-formed but TRUNCATED stream, which its recovery path reads as
+        # "the transport died, the server is committing" -- so a generation
+        # that FAILED is announced as a recovered one. That is the common path
+        # on gguf, where an evicted or killed llama-server surfaces here as a
+        # connection error rather than a GenerationFailed the saga can shape.
         logger.warning(f"[CONV-GEN {conv_id[:8]}] generation task failed", exc_info=True)
+        if not run.detached:
+            payload = json.dumps({
+                "type": "error",
+                "error": {"type": "api_error",
+                          "message": str(exc) or exc.__class__.__name__},
+            })
+            run.queue.put_nowait(f"event: error\ndata: {payload}\n\n")
     finally:
         run.queue.put_nowait(None)  # sentinel: end of stream for any subscriber
 
