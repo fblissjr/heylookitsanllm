@@ -11,10 +11,10 @@
 //
 // What it guards:
 // - The chat message list is RECONCILED, not rebuilt. `.message` carries
-//   `content-visibility: auto`, so a row's laid-out height lives on the NODE;
-//   rebuilding the list collapses scrollHeight for the rest of the tick and
-//   every pixel-based scroll computed against it aims at a list about to grow
-//   underneath (v1.62.5: send dumped a long thread near the top).
+//   `content-visibility: auto` until v1.79.18, so a row's laid-out height
+//   lived on the NODE and rebuilding collapsed scrollHeight for the rest of
+//   the tick (v1.62.5: send dumped a long thread near the top). That feature
+//   is gone, but a rebuild still drops open editors and their drafts.
 // - The Phase 0 chat-reliability contract (plan_chat_orchestration.md):
 //   refusals are LOUD (status line, never a silent dead button), the unsaved
 //   fallback row carries Retry save/Discard and locks destructive ops, stream
@@ -1608,6 +1608,12 @@ async function main() {
       drip.chunkChars = 5;
       drip.delayMs = 2;
       drip.tailPauseMs = 400; // let the last rate-limited paint land
+      // A REALISTIC tail position, overriding the stub default of 2. That
+      // default makes adoptSavedRows truncate the mirror from 32 rows to 3 at
+      // stream end, and the resulting collapse is a harness artifact that
+      // masks the bug this check is for: measured, the real strand is caught
+      // ~17% of the time at position 2 and ~79% at a realistic append.
+      drip.position = 31;
       const st = await openChat(browser, base, { dripGenerate: true });
       await st.page.evaluate(() => {
         window.__last = '';
@@ -1676,6 +1682,7 @@ async function main() {
            } }).then((r) => r.g);
       await st.page.close();
       drip.tailPauseMs = 0;
+      drip.position = 2;
       assert(gap < 120, `settled ${gap}px above the tail`);
     });
 

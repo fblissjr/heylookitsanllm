@@ -25,7 +25,8 @@ left alone, and re-renders only the tail; the painter is rate-limited to ~15/s
 instead of one run per frame; and "is the reader at the tail" is measured at the
 TOP of the painter, before it mutates, where the reads are cache hits rather
 than the forced full-list layout the old per-frame measurement caused (on iOS
-the list is never skipped, because `content-visibility` is gated off there). A
+the list is never skipped -- `content-visibility` is gone entirely as of
+v1.79.18). A
 cached flag fed by scroll events was tried first and rejected: pinning coalesces
 those events to a handful per generation, so it went stale whenever the viewport
 changed underneath it -- a phone keyboard, every time. Notebook's painter got the same rate

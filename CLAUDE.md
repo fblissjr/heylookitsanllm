@@ -241,7 +241,10 @@ cheap work like explore's token strip). Scroll-follow is measured at the TOP of
 the painter, BEFORE it mutates -- both halves of that are load-bearing. Before
 the write the reads are cache hits (layout is still clean from the last paint)
 rather than a forced re-layout, which matters most on iOS, where
-`content-visibility` is gated off (Safari has no scroll anchoring) so a forced
+nothing skips off-screen rows (content-visibility was REMOVED in v1.79.18 --
+it moved `scrollTop` behind the app's back on every engine, not just WebKit,
+stranding the tail-follow and opening conversations thousands of px above
+their end; the layout it saved was one-time and desktop-only) so a forced
 layout walks every row. And only before the write is it HONEST: measured after,
 one paint appending more than the slack (a code block, a table) reads as "the
 reader scrolled away" and strands the view for the rest of the generation. A

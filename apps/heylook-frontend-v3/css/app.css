@@ -556,23 +556,33 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .message {
   margin-bottom: 1.1rem;
 }
-/* Off-screen rows skip layout/paint -- but ONLY where the engine also has
-   scroll anchoring. A skipped row reports its 3rem estimate until the engine
-   decides it is relevant, and that decision is lazy; when the row is finally
-   laid out everything below it shifts. Chrome/Firefox compensate with scroll
-   anchoring, so the list stays put. WebKit has neither scroll anchoring nor
-   a synchronous relevance check (Safari 26.5: overflow-anchor unsupported),
-   and the shift is what the user sees: a conversation opened ~1000px above
-   its end, an edited row shoved under the composer after Save (measured on
-   an iOS 26.5 simulator, 2026-08-20; the same run with content-visibility
-   off landed at the bottom exactly). overflow-anchor support is the gate
-   because it IS the precondition, not a proxy for "is this Safari". */
-@supports (overflow-anchor: auto) {
-  .message {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 3rem;
-  }
-}
+/* No content-visibility here, deliberately, and it is not an oversight.
+   `content-visibility: auto` was in the original v3 scaffold as a generic
+   "make long lists fast" pattern -- not a response to a measured problem --
+   and it never paid for itself:
+
+   A skipped row reports its contain-intrinsic-size estimate instead of its
+   real height until the engine lazily decides it is relevant, so scrollHeight
+   lurches by thousands of pixels and the ENGINE moves scrollTop on its own
+   (clamping, then scroll anchoring). Every scroll decision in chat.js is
+   derived from those two values, so all of them are poisoned: measured on
+   Chrome, a conversation opened 14,380px above its end, and the streaming
+   tail-follow failed in roughly three generations out of four.
+
+   It was gated on @supports (overflow-anchor: auto) in v1.79.1 after it broke
+   iOS -- Safari has no scroll anchoring to absorb the shift -- on the belief
+   that Chrome/Firefox scroll anchoring compensated. It does not compensate;
+   it is one of the things MOVING scrollTop. So the gate was protecting the
+   optimization in the one engine where it was also broken, just less visibly.
+
+   What it bought, measured (CDP LayoutDuration, initial render): flat layout
+   as the thread grows -- 18ms vs 120ms at 1000 messages, 17ms vs 45ms at 300.
+   One-time, on open, desktop Chrome only. Against a chat that opens in the
+   wrong place and stops following mid-generation, that is not a trade worth
+   making. It is also the smallest of the three long-thread costs: the
+   conversation fetch returns every message and renderMessages builds a node
+   for every one. If long threads ever need work, pagination and windowing are
+   where it goes -- not a hint that lies about row heights. */
 .message--user { display: flex; flex-direction: column; align-items: flex-end; }
 
 .message-bubble {

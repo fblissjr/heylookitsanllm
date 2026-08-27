@@ -68,8 +68,9 @@ cursor positioning — ~100+ lines). **Total ≈ 5,400 lines gone.**
   **wrapping/RTL/bidi** by the browser's own text engine (pretext's bidi is an admitted "simplified" pdf.js
   port not even wired into its line-breaker).
 - The only unique capability is **virtualizing thousands of DOM rows**, irrelevant at this app's scale
-  (personal chat: dozens–low-hundreds of turns). Native substitute: `content-visibility: auto` +
-  `contain-intrinsic-size` per `.message`. If enormous transcripts ever matter, paginate (fetch last N,
+  (personal chat: dozens–low-hundreds of turns). `content-visibility: auto` was tried as a native
+  substitute and REMOVED in v1.79.18 -- it let the engine move `scrollTop` behind the app's back, which
+  broke tail-following and conversation open position. If enormous transcripts ever matter, paginate (fetch last N,
   "load earlier" on scroll-to-top via `IntersectionObserver`) — far simpler than a layout engine.
 
 **Replacement:** standardize on the legacy path. `renderMarkdown()` (marked + DOMPurify, already vendored,

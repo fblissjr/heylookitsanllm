@@ -320,15 +320,16 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   tech by construction instead of by convention. Use this pattern for any new
   binary toggle rendered as an icon button.
 
-- **A long list under `content-visibility: auto` must be reconciled, not
-  rebuilt.** `.message` (and any future virtualised-ish list) only knows its
-  `contain-intrinsic-size` estimate until it has been laid out once, and that
-  measurement lives on the *node*. `replaceChildren`-ing the list throws every
-  measurement away, so `scrollHeight` collapses to a fraction of the truth for
-  the rest of that tick — and any pixel-based scroll computed against it
-  (restore-position OR `scrollTop = scrollHeight`) aims at a list that is about
-  to grow underneath it. That is what dumped chat near the top on every send,
-  edit and delete. `renderMessages` therefore keys nodes by message id, reuses
+- **A long message list must be reconciled, not rebuilt.** `replaceChildren`-ing
+  the list drops every open editor and its unsaved draft, and re-runs layout
+  for the whole thread. Historically it was worse: under
+  `content-visibility: auto` a row knew only its `contain-intrinsic-size`
+  estimate until laid out once, that measurement lived on the *node*, and a
+  rebuild collapsed `scrollHeight` to a fraction of the truth for the rest of
+  the tick — which dumped chat near the top on every send, edit and delete.
+  That feature was REMOVED in v1.79.18 (it moved `scrollTop` behind the app's
+  back; see css/app.css), so this rule no longer rests on it — but reconciling
+  is still how the list is rendered, and the E2E check still pins it. `renderMessages` therefore keys nodes by message id, reuses
   any whose render signature is unchanged, and places them with a reconcile
   that **removes departing children first** — placing before removing walks a
   stale node down the list and re-detaches the whole tail, which has the same

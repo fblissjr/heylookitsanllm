@@ -979,13 +979,12 @@ async function selectConversation(ctx, convId) {
 // message rendering
 // ---------------------------------------------------------------------------
 
-// Render key + signature. `.message` carries `content-visibility: auto`, so a
-// message that is off-screen only knows its `contain-intrinsic-size` estimate
-// (3rem) until it has been laid out once -- and that measurement lives on the
-// NODE. Rebuilding the list threw every measurement away, collapsing
-// scrollHeight to a fraction of the real one mid-render; every pixel-based
-// scroll after that (restore OR scrollTop = scrollHeight) then aimed at a
-// thread that was about to grow underneath it, which is what dumped a long
+// Render key + signature. Reconcile, never rebuild. The original reason was
+// `content-visibility: auto` -- an off-screen row knew only its 3rem estimate
+// until laid out once, that measurement lived on the NODE, and rebuilding
+// threw it away, collapsing scrollHeight mid-render. That mechanism went with
+// the feature, but the rule stands on its own: a rebuild drops open editors
+// and their unsaved drafts. Historically it also dumped a long
 // conversation near the top on send/edit/delete. So nodes are REUSED unless
 // their content actually changed, and the list is reconciled in place.
 function msgKey(msg) {
@@ -1135,10 +1134,10 @@ function buildMessageEl(ctx, msg, modelNote = '') {
         // decoding="async" keeps the decode off the main thread. NO
         // loading="lazy" here, deliberately: a lazily-loaded image has no
         // height until it arrives, and WebKit has no scroll anchoring to
-        // absorb the shift -- the same reason `content-visibility` is gated
-        // off for `.message` (css/app.css). Lazy loading would reintroduce
-        // exactly the iOS bug that gate exists to prevent. Revisit only
-        // alongside stored image dimensions to reserve the box.
+        // absorb the shift -- the same reason `content-visibility` was
+        // removed from `.message` altogether (css/app.css). A height that
+        // arrives late is the whole bug class. Revisit only alongside stored
+        // image dimensions, which would let the box be reserved up front.
         .map((b) => createEl('img', {
           class: 'message-image',
           src: blockSourceUrl(b),
@@ -1414,23 +1413,12 @@ function scrollMessages(ctx, force = false) {
   const el = ctx.state.messagesEl;
   if (!force && !followingTail(ctx)) return;
   el.scrollTop = el.scrollHeight;
-  const setTop = el.scrollTop; // post-clamp: what the write actually landed on
-  ctx.state.pinnedTop = setTop;
-  // A row added this tick is still at its `contain-intrinsic-size` estimate,
-  // so scrollHeight reads short and this lands above the real bottom. Re-aim
-  // once the browser has laid the new row out. The frame-time re-check must
-  // distinguish "the reader scrolled away" (leave them alone) from "the row
-  // grew underneath" (finish the aim): re-checking DISTANCE conflated them --
-  // a fresh row growing >100px past its 3rem estimate stranded the view above
-  // the tail (review finding). Growth moves scrollHeight, never scrollTop, so
-  // an unmoved scrollTop is the honest signal that the gap is new content.
-  requestAnimationFrame(() => {
-    if (!ctx.alive) return;
-    if (force || Math.abs(el.scrollTop - setTop) < 2) {
-      el.scrollTop = el.scrollHeight;
-      ctx.state.pinnedTop = el.scrollTop;
-    }
-  });
+  ctx.state.pinnedTop = el.scrollTop;
+  // One write, no re-aim. A row added this tick lays out at its REAL height
+  // immediately, so scrollHeight is already right when we read it. A second
+  // frame used to re-aim after the browser got round to laying the row out --
+  // necessary only while `content-visibility: auto` let a fresh row report a
+  // 3rem estimate. That is gone (css/app.css) and this went with it.
 }
 
 // Is the reader at the tail, i.e. should the view follow the generation?
@@ -1438,9 +1426,9 @@ function scrollMessages(ctx, force = false) {
 // The streaming painter calls this BEFORE it mutates the message and pins
 // AFTER, and that order is load-bearing twice over. It is CHEAP before the
 // write, because layout is still clean from the previous paint, so the reads
-// are cache hits rather than a forced re-layout -- which matters most on iOS,
-// where `content-visibility` is gated off (Safari has no scroll anchoring) and
-// a forced layout walks every row in the conversation. And it is only HONEST
+// are cache hits rather than a forced re-layout -- and a forced layout walks
+// every row in the conversation, since nothing skips off-screen rows any more
+// (css/app.css). And it is only HONEST
 // before the write: measured after, a single paint that appends more than the
 // slack -- a code block, a table -- reads as "the reader has scrolled away"
 // and would strand the view above the tail for the rest of the generation.
@@ -1464,19 +1452,29 @@ function followingTail(ctx) {
   // scrollHeight and clientHeight, never scrollTop. So if scrollTop is still
   // where we last pinned it, the reader has not moved and we keep following,
   // whatever the gap says.
-  if (s.pinnedTop != null && Math.abs(el.scrollTop - s.pinnedTop) < 2) return true;
+  // A VIEWPORT RESIZE is the case the gap gets wrong and this gets right: on
+  // a phone the keyboard shrinks clientHeight by a few hundred px in one step,
+  // opening a gap far past the slack while the reader has not moved at all.
+  // Growth and resize move scrollHeight and clientHeight; only the reader
+  // moves scrollTop. So if scrollTop is still where we last pinned it, keep
+  // following whatever the gap says.
+  //
+  // Briefly removed along with content-visibility on an A/B that came back
+  // clean -- against a reproducer whose stub truncated the thread and never
+  // exercised a resize. At a realistic tail position it stranded 771px on
+  // every run. Both changes were needed; only one of them was the root cause.
+  if (ctx.state.pinnedTop != null
+      && Math.abs(el.scrollTop - ctx.state.pinnedTop) < 2) return true;
   return el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLACK_PX;
 }
 
-// The STREAMING pin: one write, no read-back and no re-aim frame.
-// scrollMessages needs those for a row added THIS tick that is still at its
-// contain-intrinsic-size estimate; a streaming paint adds no rows, it only
-// grows one.
+// The STREAMING pin: one write. Rows lay out at their real height, so there is
+// nothing to read back and nothing to re-aim at.
 function pinToTail(ctx) {
   const el = ctx.state.messagesEl;
   el.scrollTop = el.scrollHeight;
-  // Post-clamp: what the write actually landed on, which is what a later
-  // read is compared against.
+  // Post-clamp: what the write actually landed on, which is what
+  // followingTail compares a later read against.
   ctx.state.pinnedTop = el.scrollTop;
 }
 
@@ -1484,8 +1482,9 @@ function pinToTail(ctx) {
 // view row, and on a phone the keyboard that was open for the textarea goes
 // away with it. WebKit restores the scroll offsets it moved for the keyboard
 // asynchronously, and the restore lands the row partly under the composer
-// (measured 174px low on an iOS 26.5 simulator even with content-visibility
-// off) -- which reads as "my message vanished until I tapped around". Re-aim
+// (measured 174px low on an iOS 26.5 simulator with content-visibility off,
+// which is now the only mode) -- so it reads as "my message vanished until I
+// tapped around". Re-aim
 // at the row with the least movement that brings it fully into view: once
 // now, once after the viewport has had time to settle. `nearest` never moves
 // a row that is already visible, so the desktop path is a no-op.

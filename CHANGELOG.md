@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.18]
+
+### Removed
+
+- **`content-visibility: auto` on `.message`.** It was in the original v3 scaffold as a generic "make long lists fast" pattern -- not a response to any measured problem -- and it never paid for itself. A skipped row reports its `contain-intrinsic-size` estimate instead of its real height until the engine lazily decides it is relevant, so `scrollHeight` lurches by thousands of pixels and **the engine moves `scrollTop` on its own** (clamping, then scroll anchoring). Every scroll decision in `chat.js` derives from those two values.
+  - Measured on Chrome: a conversation opened **14,380px above its end** (800x600) / 23,659px (390x844) and stayed there; the streaming tail-follow failed in roughly three generations out of four.
+  - v1.79.1 gated it behind `@supports (overflow-anchor: auto)` after it broke iOS, on the stated belief that "Chrome/Firefox compensate with scroll anchoring, so the list stays put". They do not compensate -- scroll anchoring is one of the things *moving* `scrollTop`. The gate was protecting the optimization in the one engine where it was also broken, just less visibly.
+  - **What it bought, measured** (CDP `LayoutDuration`, initial render, median of 6): flat layout as the thread grows -- 18ms vs 120ms at 1000 messages, 17ms vs 45ms at 300. One-time, on open, desktop Chrome only (Safari never ran it). It is also the smallest of the three long-thread costs: the conversation fetch returns every message and `renderMessages` builds a node for every one. If long threads ever need work, pagination and windowing are where it goes.
+  - The re-aim `requestAnimationFrame` in `scrollMessages` went with it -- it existed only so a row still reporting a 3rem estimate could be re-aimed once the browser laid it out.
+  - Every comment asserting the feature as a live fact was corrected in the same commit (`chat.js`, `DESIGN.md`, `CLAUDE.md`, `frontend_v3.md`, `frontend_v3_spec.md`, `tests/e2e/README.md`, the render-suite header).
+
+### Fixed
+
+- **`followingTail`'s `pinnedTop` discriminator stays, and now works.** Removing `content-visibility` was the root cause but not the whole fix: a viewport resize shrinks `clientHeight` by a few hundred px in one step, opening a gap far past `STICK_SLACK_PX` while the reader has not moved at all. Growth and resize move `scrollHeight`/`clientHeight`; only the reader moves `scrollTop`. Previously the discriminator was defeated by the engine's own `scrollTop` writes -- which came from `content-visibility`, so with that gone it is reliable.
+
+### Tests
+
+- **The mid-stream-resize check was weak in a way that hid all of this.** `serveV3`'s stub default `drip.position = 2` makes `adoptSavedRows` truncate the mirror from 32 rows to 3 at stream end; the resulting collapse is a harness artifact that masks the real strand. Measured: the bug is caught ~17% of the time at position 2 and ~79% at a realistic append. The check now overrides `drip.position = 31` for its duration. Red against HEAD at 1355-1383px, green three runs after the fix.
+
 ## [1.79.17]
 
 ### Tests
