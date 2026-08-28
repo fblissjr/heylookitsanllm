@@ -236,6 +236,60 @@ class TestIdleUnloadRespectsQueue(_RouterTestBase):
         unloaded = router.unload_idle_models(now_ts=2_000.0)
         self.assertEqual(unloaded, ["model-a"])
 
+    def test_a_gateless_provider_generating_is_not_unloaded(self):
+        """The gguf shape: no generation gate, so queue stats are None.
+
+        `unload_idle_models` skips a generating model in its candidate scan,
+        then RELEASES the lock before `_unload_idle` re-acquires it and pops.
+        Everything that becomes true in that window has to be caught by the
+        re-check -- and the re-check tested only queue stats, which are None
+        for a provider that queues its own requests (llama-server does). So a
+        gguf generation starting inside the window took a SIGTERM under an
+        open stream: exactly the "gguf had strictly less protection" hole
+        `_is_generating` exists to close, still open on the path that does the
+        popping.
+
+        Driven through `_unload_idle` directly, because that IS the window:
+        going through `unload_idle_models` would let the candidate scan catch
+        it and prove nothing about the re-check.
+        """
+        router, provider = self._idle_router_with()
+        provider.generation_queue_stats = lambda: None   # no gate, like gguf
+        # The REAL counter, via the context manager the providers use, rather
+        # than a patched attribute: active_generations is a read-only property
+        # and the point is that the router reads what a live run actually sets.
+        with provider.generation_active():               # a run began in the window
+            self.assertFalse(router._unload_idle("model-a"))
+        self.assertIn("model-a", router.providers)
+        provider.unload.assert_not_called()
+
+    def test_a_model_pinned_inside_the_window_is_not_unloaded(self):
+        # Same window, the other condition the scan skips on. Pinning is how a
+        # batch job holds a model; losing it mid-job is the thing pin prevents.
+        router, provider = self._idle_router_with()
+        provider.generation_queue_stats = lambda: None
+        router._pinned.add("model-a")
+        self.assertFalse(router._unload_idle("model-a"))
+        self.assertIn("model-a", router.providers)
+        provider.unload.assert_not_called()
+
+    def test_generating_counts_as_use_so_the_next_tick_does_not_unload(self):
+        """Skipping without re-stamping only DEFERRED the unload by a tick.
+
+        `_last_used_ts` is written at REQUEST time, so a generation longer than
+        the idle threshold is already stale for its whole second half. The tick
+        after it finishes would then tear the model down the instant the reply
+        lands -- immediately before the user's next message.
+        """
+        router, provider = self._idle_router_with(active=1)
+        self.assertEqual(router.unload_idle_models(now_ts=2_000.0), [])
+        # The run ends. `_unload_idle` stamps with the wall clock rather than
+        # the injected one, so assert the STAMP MOVED rather than pinning a
+        # fake-clock value the production path never sees.
+        self.assertGreater(router._last_used_ts["model-a"], 1_000.0)
+        provider.queue_stats = {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
+        self.assertIn("model-a", router.providers)
+
 
 if __name__ == "__main__":
     unittest.main()

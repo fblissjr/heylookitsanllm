@@ -715,10 +715,19 @@ class ModelRouter:
                 if model_id in self._pinned:
                     continue
                 # An idle timer that fires mid-generation is the same teardown
-                # hazard as an evict. (Should be unreachable -- generating is
-                # not idle -- but last_used is stamped at REQUEST time, and a
-                # long generation can outlive the window from that stamp.)
+                # hazard as an evict. NOT unreachable, and the stamp is why:
+                # last_used is written at REQUEST time (get_provider), so a
+                # generation longer than the threshold is ALREADY stale for its
+                # whole second half -- routine since v1.79.12, when runs began
+                # outliving the response that started them.
+                #
+                # Re-stamping is the other half. Skipping without it deferred
+                # the unload by exactly one tick: the run finishes, the next
+                # tick still sees a stale timestamp, and the model is torn down
+                # the instant the reply lands -- immediately before the user's
+                # next message. Generating IS use; say so.
                 if self._is_generating(model_id):
+                    self._last_used_ts[model_id] = now_ts
                     continue
                 threshold = self._effective_idle_threshold(model_id)
                 if threshold <= 0:
@@ -744,17 +753,39 @@ class ModelRouter:
         waits can outlast the idle threshold) -- unloading then would tear
         the weights down under a request that's about to run. Any cache hit
         after this pop simply reloads.
+
+        This re-check is the ONLY thing standing between the candidate scan
+        and the pop: ``unload_idle_models`` computes candidates, RELEASES the
+        lock, then calls this. Anything that becomes true in that window has
+        to be caught here or not at all, so every condition the scan skips on
+        is re-tested -- `_is_generating` and `_pinned` included. Both were
+        missing, and the queue-stats test does not cover either: it returns
+        None for the gguf provider (llama-server queues its own requests), so
+        `if stats and ...` is False and a gguf generation started inside the
+        window took a SIGTERM under an open stream -- exactly the "gguf had
+        strictly less protection" hole `_is_generating` was written to close.
         """
         with self.cache_lock:
             provider = self.providers.get(model_id)
             if provider is None:
                 return False
             stats = provider.generation_queue_stats()
-            if stats and (stats.get("active", 0) > 0 or stats.get("waiting", 0) > 0):
-                logging.info(
-                    f"Skipping idle unload of {model_id}: generation queue busy "
-                    f"(active={stats.get('active', 0)}, waiting={stats.get('waiting', 0)})"
-                )
+            busy = None
+            if model_id in self._pinned:
+                busy = "pinned since the scan"
+            elif self._is_generating(model_id):
+                busy = "generating"
+            elif stats and (stats.get("active", 0) > 0 or stats.get("waiting", 0) > 0):
+                busy = (f"generation queue busy (active={stats.get('active', 0)}, "
+                        f"waiting={stats.get('waiting', 0)})")
+            if busy:
+                # Every one of these means IN USE, so all three re-stamp. A
+                # refusal without a stamp only defers by one tick: last_used is
+                # written at REQUEST time, so the model is already stale, and
+                # the tick after the work finishes unloads it the instant the
+                # reply lands -- right before the user's next message.
+                self._last_used_ts[model_id] = time.time()
+                logging.info(f"Skipping idle unload of {model_id}: {busy}")
                 return False
             self.providers.pop(model_id, None)
             self._last_used_ts.pop(model_id, None)

@@ -18,7 +18,17 @@ class MockProvider(BaseProvider):
     unload."""
 
     def __init__(self, model_id, model_config, is_debug):
-        self.model_id = model_id
+        # super() FIRST: it is what installs the base-class state every
+        # provider is contractually assumed to have -- `_active_generations`
+        # and its lock, which the router's teardown guard reads through
+        # `active_generations`. Hand-setting three attributes instead meant a
+        # new obligation on BaseProvider arrived here as an AttributeError in
+        # whichever test first drove the real path, which is exactly the trap
+        # tests/contract/conftest.py's FakeProvider documents avoiding.
+        super().__init__(model_id, model_config, is_debug)
+        # Kept as their own names: the router and these tests read
+        # `model_config`/`is_debug`, while BaseProvider spells them
+        # `config`/`verbose`.
         self.model_config = model_config
         self.is_debug = is_debug
         self.unload = MagicMock()
