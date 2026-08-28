@@ -68,6 +68,7 @@ from heylook_llm.perf_collector import (
 )
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
+from heylook_llm.busy_response import model_busy_response
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     parse_reasoning,
@@ -493,7 +494,6 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 provider.create_chat_completion, chat_request, abort_event)
         except RuntimeError as e:
             if "MODEL_BUSY" in str(e):
-                capacity = (provider.generation_queue_stats() or {}).get("capacity") if provider else None
                 # A RETURN skips the except-BaseException release below and no
                 # stream generator exists yet -- pop here or the conversation
                 # is 409-locked forever (review finding 2026-08-13).
@@ -501,17 +501,8 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 # re-claimed this early (the 409 gate holds), so this is for
                 # the reader, who should not have to prove that per call site.
                 _release_claim("model busy before the stream started")
-                return JSONResponse(
-                    status_code=503,
-                    content={"error": {
-                        "message": "The generation queue is full. Retry shortly.",
-                        "type": "server_error",
-                        "code": "model_overloaded",
-                    }},
-                    headers={"Retry-After": "1",
-                             "X-RateLimit-Limit": str(capacity) if capacity else "1",
-                             "X-RateLimit-Remaining": "0"},
-                )
+                # One speller for all three endpoints -- see busy_response.py.
+                return model_busy_response(e, provider)
             raise HTTPException(status_code=500, detail=str(e))
         except ModelNotFound as e:
             raise HTTPException(status_code=400, detail=str(e))

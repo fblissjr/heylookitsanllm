@@ -85,3 +85,40 @@ def test_v3_text_assets_are_compressed_and_sse_is_not_touched(client):
     import heylook_llm.api as api
     assert not any(m.cls is GZipMiddleware for m in api.app.user_middleware), \
         "GZipMiddleware would wrap the SSE generate endpoint"
+
+
+def test_the_gzip_cache_survives_a_multi_asset_page_load(client):
+    """A page load fetches ~20 assets; the cache must still hold the first.
+
+    It used to `clear()` on every miss, so each asset evicted the one before
+    it and the cache held exactly ONE entry -- nothing was ever a hit, and the
+    level-6 compression it exists to keep off the event loop ran on every
+    load, on the same loop delivering SSE tokens. Eviction is per-PATH now
+    (older generations of the same file), which is what "one generation of the
+    tree at a time" was reaching for.
+
+    Counted at `gzip.compress`, because a hit and a miss are byte-identical on
+    the wire -- there is nothing in the response to assert on.
+    """
+    import gzip as _real_gzip
+    from unittest.mock import patch
+    import heylook_llm.api as api
+
+    hdrs = {"accept-encoding": "gzip"}
+    assets = ["/v3/js/app.js", "/v3/js/api.js", "/v3/js/utils.js"]
+    for a in assets:                       # warm, whatever the cache held before
+        assert client.get(a, headers=hdrs).status_code == 200
+
+    calls = []
+
+    def counting_compress(data, compresslevel=6):
+        calls.append(compresslevel)
+        return _real_gzip.compress(data, compresslevel=compresslevel)
+
+    with patch.object(api._gzip, "compress", counting_compress):
+        for a in assets:
+            r = client.get(a, headers=hdrs)
+            assert r.headers.get("content-encoding") == "gzip"
+    assert calls == [], (
+        f"re-compressed {len(calls)} already-cached asset(s) -- a page load "
+        "evicts its own entries")

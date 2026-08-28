@@ -48,7 +48,6 @@ dependencies = [
     # Web framework + server
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.3",
-    "python-multipart>=0.0.32",
     "pydantic>=2.13.4",
     # Data + serialization
     "duckdb>=1.5.5",           # App-DB store: conversations, notebooks, presets, settings
@@ -65,7 +64,6 @@ dependencies = [
     # only to flip a status flag (no hash call, no decode call anywhere), and
     # PyTurboJPEG additionally wanted a system libjpeg-turbo it never used.
     "uvloop>=0.22.1; sys_platform != 'win32'",   # Unix-only; excluded on Windows
-    "cachetools>=7.1.7",       # TTLCache behind optimizations.fast_image.ImageCache
 ]
 
 # Dev tooling. Installed by default on `uv sync` (skip with --no-dev); not

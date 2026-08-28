@@ -14,6 +14,7 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelNotFound, ModelRouter
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
+from heylook_llm.busy_response import model_busy_response
 from heylook_llm.config import (
     DEFAULT_PORT,
     ChatRequest, ChatCompletionResponse, PerformanceMetrics,
@@ -320,6 +321,8 @@ if _v3_frontend_dir.is_dir():
     # The tree is static between edits, so this is a hit after the first
     # request; without it every cache-missing load re-compressed ~20 assets at
     # level 6 on the event loop -- the same loop delivering SSE tokens.
+    # Bounded by the number of gzip-eligible files in the tree (one entry each,
+    # older generations of the same path evicted on write), not by traffic.
     _v3_gzip_cache: dict = {}
 
     def _v3_file_response(path, request: Request):
@@ -345,7 +348,17 @@ if _v3_frontend_dir.is_dir():
             body = _v3_gzip_cache.get(key)
             if body is None:
                 body = _gzip.compress(path.read_bytes(), compresslevel=6)
-                _v3_gzip_cache.clear()  # one generation of the tree at a time
+                # Evict older generations of THIS FILE, not the whole tree. The
+                # key carries mtime+size, so an edited file lands on a new key
+                # and its predecessor would otherwise linger -- that is what
+                # "one generation at a time" was reaching for. Clearing the
+                # whole dict achieved the opposite: every asset of a ~20-file
+                # page load evicted the previous one, so the cache held exactly
+                # ONE entry, nothing was ever a hit, and the level-6 compression
+                # this exists to keep off the event loop ran on every load --
+                # the same loop delivering SSE tokens.
+                for stale in [k for k in _v3_gzip_cache if k[0] == key[0]]:
+                    del _v3_gzip_cache[stale]
                 _v3_gzip_cache[key] = body
             return Response(
                 content=body,
@@ -737,29 +750,22 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
                        error="model_busy", model=chat_request.model, stage=stage)
             _record_error_event(chat_request.model or "unknown", request_start_time, provider_get_ms, image_resize_ms, image_stats['count'] > 0, perf_ctx=_error_ctx, chat_request=chat_request)
 
-            # Return 503 Service Unavailable with retry headers so OpenAI-style
-            # clients auto-retry. The generation queue (1 active + max_queue_depth
-            # waiting) is full; capacity frees as requests drain in FIFO order.
-            # provider is bound here -- MODEL_BUSY only originates from
-            # check_capacity()/create_chat_completion(), both after assignment.
-            capacity = (provider.generation_queue_stats() or {}).get("capacity") if provider else None
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": {
-                        "message": "The generation queue is full. Please retry in a moment.",
-                        "type": "server_error",
-                        "code": "model_overloaded"
-                    }
-                },
-                headers={
-                    "Retry-After": "1",  # Suggest retry after 1 second
-                    # Total in-flight + queued requests the server admits.
-                    "X-RateLimit-Limit": str(capacity) if capacity else "1",
-                    "X-RateLimit-Remaining": "0",  # Queue is full right now
-                    "X-RateLimit-Reset": str(int(time.time() + 1))  # Reset in 1 second
-                }
-            )
+            # 503 + retry headers so OpenAI-style clients auto-retry. ONE
+            # speller for all three endpoints (busy_response.py) -- the three
+            # hand-written copies had already drifted in wording, and all three
+            # replaced the raised message with a fixed sentence about the queue.
+            # That is wrong for the OTHER cause of MODEL_BUSY: eviction blocked
+            # because every loaded model is generating, where the raise names
+            # the models and the remedy.
+            #
+            # `provider` may be None here. The old comment claimed it could not
+            # be ("MODEL_BUSY only originates from check_capacity()/
+            # create_chat_completion(), both after assignment"), and that stopped
+            # being true when _evict_lru_model began raising ModelBusyError from
+            # inside router.get_provider -- one line BEFORE the assignment. It
+            # did not crash only because `provider = None` is pre-bound far
+            # above, i.e. the invariant the comment stated was already gone.
+            return model_busy_response(e, provider)
         else:
             # Other runtime errors
             logging.error(f"Runtime error: {e}", exc_info=True)
@@ -2276,7 +2282,6 @@ The performance stack is part of the base install (`uv sync` / `pip install heyl
 no extras required:
 - uvloop for faster async (non-Windows)
 - orjson for JSON serialization
-- cachetools for TTL-backed image caching
         """,
         routes=app.routes,
     )
