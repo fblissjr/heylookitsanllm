@@ -694,7 +694,7 @@ an in-context opener (`.chat__settings-btn` in the top bar, via
 textarea commits state per keystroke with a 400ms debounced PUT (flushed
 immediately on blur) -- not save-on-blur only, which lost text when the drawer
 closed under focus. The preset `<select>` is inert (records the selection and
-prefills the save-as name, never writes the document); Apply is an explicit
+follows the document's applied_preset_id and aims Update, never writes the document); Apply is an explicit
 button, armed-confirmed ("Replace prompt?") only when it would replace a
 differing non-empty prompt; a live drift line (`role="status"`) reports whether
 the selected preset matches the current prompt + sampler state.
@@ -731,7 +731,7 @@ as "everything else loads fine, just not the system prompt". An
 applied-preset chip (v1.39.6, `.preset-chip`) sits beside each page's model
 select naming the preset the active document is running -- "(edited)" once it
 drifts -- and opens the drawer on click. Provenance is session-local: only
-explicit Apply/Save stamp it (delete clears it); a document whose state merely
+explicit Apply/Update/Save-as-new stamp it (delete clears it); a document whose state merely
 equals a preset is labeled by live inference and never stored, so a stale or
 coincidental match cannot persist as a false "(edited)" claim. The server
 stores no preset association.

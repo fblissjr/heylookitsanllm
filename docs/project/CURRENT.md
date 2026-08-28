@@ -365,7 +365,7 @@ memo + reasoning in `internal/handoff_findings_2026-07-23.md`):
   not added (its two sites make different decisions).
 - **Durable preset provenance + parser invariants as properties (v1.39.16).**
   `applied_preset_id` (schema v6) on conversations + notebooks -- explicit
-  Apply/Save stamps only, holds a preset id or null and never any prompt or
+  Apply/Update/Save-as-new stamps only, holds a preset id or null and never any prompt or
   model output; NOT stashed in `params` (that bag reaches the model).
   `TestParserInvariants` states the two properties today's bugs violated
   (chunking invariance; no silent loss) and checks them over randomised

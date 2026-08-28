@@ -447,7 +447,7 @@ async function refreshLoadedIds(ctx) {
 function refreshLoadBtn(ctx) {
   const s = ctx.state;
   const id = s.modelSelect.value;
-  s.loadNowBtn.hidden = !(s.loadedKnown && id && !s.loadedIds.has(id) && !s.loadNowBtn.dataset.busy);
+  s.loadNowBtn.hidden = !(isCold(ctx, id) && !s.loadNowBtn.dataset.busy);
 }
 
 async function loadModelNow(ctx) {
@@ -562,18 +562,27 @@ function commitModelSwitch(ctx, to) {
   // conversation.model_id still misattributes it. True per-message
   // attribution is G5 in the switching design (deferred until a
   // _SCHEMA_VERSION bump adds messages.model_id).
-  // Abandoning, not stopping: the run detaches and commits into THIS
-  // conversation under the old model. finishGenerate says so (abandonNote),
-  // and it also carries the load-cost clause -- so this path stays quiet
-  // rather than writing a line the async abort would overwrite a beat later.
-  const abandoning = Boolean(s.stream);
-  if (s.stream) abortStream(ctx, 'switch-model');
   // A local, not page state: thinkingLossNote needs where we came FROM, and
   // committedModelId is about to become the destination. It was briefly an
   // `s.lastCommittedModelId`, which read as meaningful elsewhere while only
   // ever being used ten lines below -- and switchWarnings(ctx, from, to)
-  // right above already takes `from` as a parameter.
+  // right above already takes `from` as a parameter. Computed BEFORE the
+  // abort, because the abort resolves later and `from` is gone by then.
   const from = s.committedModelId;
+  const thinking = thinkingLossNote(ctx, from, to);
+
+  // Abandoning, not stopping: the run detaches and commits into THIS
+  // conversation under the old model. finishGenerate says so (abandonNote),
+  // which also carries the load-cost clause -- so this path writes no line of
+  // its own that the async abort would overwrite a beat later. But the
+  // THINKING note is not in abandonNote and is not recoverable later, so it
+  // rides along on the stream. Suppressing both was how a mid-stream switch
+  // silently reintroduced the capability loss v1.79.27 exists to close.
+  const abandoning = Boolean(s.stream);
+  if (s.stream) {
+    s.stream.pendingNote = thinking;
+    abortStream(ctx, ABANDON.MODEL);
+  }
   s.committedModelId = to;
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
@@ -583,10 +592,9 @@ function commitModelSwitch(ctx, to) {
     // The thinking note is the ONLY announcement when the conversation has no
     // media for switchWarnings to have warned about.
     const notes = [];
-    if (s.loadedKnown && !s.loadedIds.has(to)) {
+    if (isCold(ctx, to)) {
       notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
     }
-    const thinking = thinkingLossNote(ctx, from, to);
     if (thinking) notes.push(thinking);
     showStatus(ctx, notes.join(' '));
   }
@@ -723,6 +731,15 @@ function buildPromptSection(ctx) {
   return s.promptSection;
 }
 
+
+// True while a switch warning owns the status line. showStatus assigns
+// textContent, which deletes the warning AND its Cancel / Switch-anyway
+// buttons -- leaving the select on an unconfirmed model with no way to
+// confirm or cancel, and the next send going to that model. An async abandon
+// note landing a beat later did exactly that.
+function switchWarningOnScreen(ctx) {
+  return Boolean(ctx.state.statusEl?.querySelector('.chat__switch-warning'));
+}
 
 function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);
@@ -897,7 +914,7 @@ async function deleteConversation(ctx, convId) {
   // and give the unwind a moment before retrying once.
   if (s.stream?.targetConvId === convId) {
     stopGenerate(convId);
-    abortStream(ctx, 'delete'); // genuinely ended server-side, not abandoned
+    abortStream(ctx, ABANDON.DELETE); // genuinely ended server-side, not abandoned
   }
   try {
     await api.deleteConversation(convId);
@@ -918,7 +935,7 @@ async function deleteConversation(ctx, convId) {
   if (!ctx.alive) return;
   s.conversations = s.conversations.filter((c) => c.id !== convId);
   if (s.activeId === convId) {
-    abortStream(ctx, 'delete');
+    abortStream(ctx, ABANDON.DELETE);
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
@@ -959,10 +976,13 @@ async function selectConversation(ctx, convId) {
   // returns early once activeId has moved, so it is not going to say this for
   // us. The run itself is unharmed -- it detaches and commits the whole reply
   // into the conversation being left.
+  // `|| 'That conversation'`, not `?? null`: an untitled conversation (empty
+  // string, or one missing from the list) is falsy, and the disclosure the
+  // user guide promises would silently not appear at all.
   const leaving = s.stream
-    ? (s.conversations.find((c) => c.id === s.stream.targetConvId)?.title ?? null)
+    ? (s.conversations.find((c) => c.id === s.stream.targetConvId)?.title || 'That conversation')
     : null;
-  if (s.stream) abortStream(ctx, 'switch-conversation');
+  if (s.stream) abortStream(ctx, ABANDON.CONVERSATION);
   s.activeId = convId;
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
@@ -1570,22 +1590,29 @@ function keepRowInView(ctx, msg) {
 // survive adoption: the server doesn't have them, and vanishing text is
 // worse than divergence (they also lock destructive ops via
 // refuseWhileUnsaved, so surviving is safe).
+// Returns 'generating' | 'idle' | 'unknown' -- THREE answers, because falsy
+// used to mean three different things and callers read all of them as "the
+// server is done". A failed GET returned undefined; the stale-context guard
+// returned false; only the third was an actual answer. The recovery loop then
+// announced "Recovered what the server saved." having never reached the
+// server. Anything that decides on this MUST distinguish 'unknown' -- it is
+// the absence of an answer, not a negative one.
 async function resyncMessages(ctx, convId) {
   const s = ctx.state;
   let conv;
   try {
     conv = await api.getConversation(convId, { signal: ctx.signal });
   } catch {
-    return; // best-effort: the next saga end (or a reselect) retries
+    return 'unknown'; // best-effort: the next saga end (or a reselect) retries
   }
-  if (!ctx.alive || s.activeId !== convId || s.stream) return false;
+  if (!ctx.alive || s.activeId !== convId || s.stream) return 'unknown';
   mergeServerRows(ctx, conv.messages ?? []);
   // Since v1.79.12 a run outlives the response that started it, so "our
   // stream ended" no longer implies "the server is done". Adopt what the
   // server says and hand it back, because the difference decides whether
   // there is anything to recover.
   setRemoteGenerating(ctx, Boolean(conv.generating));
-  return Boolean(conv.generating);
+  return conv.generating ? 'generating' : 'idle';
 }
 
 // The one way server rows replace the mirror outside a stream end: saved
@@ -1631,6 +1658,17 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // answer keeps coming while you are elsewhere; this is the surface that says
 // so and offers the way out. Cleared the moment a LOCAL stream takes over --
 // the local one owns the button from then on.
+// Every line that claims a run is still going, and the one predicate that
+// recognises them. The clear-branch used to test startsWith('Still
+// generating'), which the switch-model wording does not match -- so that note
+// could never be cleared and the page went on claiming a reply was coming for
+// an idle conversation. A shared prefix plus one predicate means a new
+// wording cannot come apart from its own eraser.
+const GENERATING_PREFIX = 'Still generating on the server';
+const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
+const isGeneratingNote = (text) =>
+  text.startsWith(GENERATING_PREFIX) || text.startsWith(MODEL_SWITCH_PREFIX);
+
 function setRemoteGenerating(ctx, on) {
   const s = ctx.state;
   // A LOCAL stream owns the button and the status line, so a remote flag is
@@ -1656,8 +1694,8 @@ function setRemoteGenerating(ctx, on) {
     // disclosed, the commonest way to see this line is a run THIS tab started
     // and walked away from. Claiming another origin was a guess, and a wrong
     // one most of the time.
-    showStatus(ctx, 'Still generating on the server — Stop ends it and keeps the partial.');
-  } else if (s.statusEl.textContent.startsWith('Still generating')) {
+    showStatus(ctx, `${GENERATING_PREFIX} — Stop ends it and keeps the partial.`);
+  } else if (isGeneratingNote(s.statusEl.textContent)) {
     showStatus(ctx, '');
   }
 }
@@ -1670,9 +1708,11 @@ function setRemoteGenerating(ctx, on) {
 function resyncUntilSettled(ctx, convId, delay = 250, attemptsLeft = 4) {
   setTimeout(async () => {
     if (!ctx.alive || ctx.state.activeId !== convId || ctx.state.stream) return;
-    const stillGenerating = await resyncMessages(ctx, convId);
+    const state = await resyncMessages(ctx, convId);
     if (!ctx.alive || ctx.state.activeId !== convId) return;
-    if (!stillGenerating) {
+    // Only a real 'idle' ends the poll. 'unknown' means we never got an
+    // answer, so keep trying rather than announcing a stop we cannot see.
+    if (state === 'idle') {
       if (ctx.state.statusEl.textContent === 'Stopping…') showStatus(ctx, 'Stopped.');
       return;
     }
@@ -2361,7 +2401,7 @@ function startStream(ctx, opts = {}) {
   // counts: a reasoning model emits thinking first, and leaving "Loading…"
   // up while thinking streams would be a lie).
   const modelId = s.modelSelect.value;
-  const cold = s.loadedKnown && modelId && !s.loadedIds.has(modelId);
+  const cold = isCold(ctx, modelId);
   // Remembered so teardown can clear THIS line and nothing else: an abort
   // resolves asynchronously, so a status written after the abort (e.g. the
   // model-switch disclosure, when the user switches away mid-wait) would
@@ -2491,6 +2531,15 @@ function stopStream(ctx) {
       // about a run that was still going.
       stream.userStopped = true;
       stream.controller.abort();
+      return;
+    }
+    // The DELETE never arrived (offline, 5xx). The run is still going, the
+    // stream keeps painting, and the button still reads Stop -- so saying
+    // nothing invites a second press that does exactly as little. stopRemote
+    // already models this; the two make the same promise about the same
+    // endpoint and must not diverge.
+    if (status === null && ctx.state.stream === stream) {
+      showStatus(ctx, 'Could not reach the server to stop it — still generating.', true);
     }
   });
 }
@@ -2506,7 +2555,26 @@ function stopStream(ctx) {
 // keeps just the partial. Do not re-describe this as "persists the partial";
 // it did work that way once, and the stale comment made walking away look
 // lossy in the user guide until the server was read.
-function abortStream(ctx, reason = 'teardown') {
+// The reasons, as a frozen set rather than four bare literals across five
+// call sites and two consumers -- a typo'd reason silently reads as "not that
+// one" at every consumer, which is the quietest possible failure.
+const ABANDON = Object.freeze({
+  TEARDOWN: 'teardown',              // the safe default; nothing calls it (see below)
+  CONVERSATION: 'switch-conversation',
+  MODEL: 'switch-model',
+  DELETE: 'delete',                  // genuinely ended server-side
+});
+
+// Is `id` a model the first message would have to load? Silent when residency
+// is unknown -- a guess is worse than nothing (same rule as the dots). One
+// derivation: it had grown copies in startStream, commitModelSwitch and
+// abandonNote.
+function isCold(ctx, id) {
+  const s = ctx.state;
+  return Boolean(s.loadedKnown && id && !s.loadedIds.has(id));
+}
+
+function abortStream(ctx, reason = ABANDON.TEARDOWN) {
   const stream = ctx.state.stream;
   if (!stream) return;
   // WHY we let go decides what the end is allowed to claim. "Stopped" is a
@@ -2523,13 +2591,20 @@ function abortStream(ctx, reason = 'teardown') {
 // to come back mid-run.
 function abandonNote(ctx, stream) {
   const s = ctx.state;
-  if (stream.abandonReason === 'switch-model') {
-    const next = s.modelSelect.value;
-    const cold = s.loadedKnown && next && !s.loadedIds.has(next);
-    return 'The reply in flight keeps generating on the previous model and saves to '
-      + `this conversation. Your next message ${cold ? 'loads' : 'uses'} ${next}.`;
+  if (stream.abandonReason === ABANDON.MODEL) {
+    // committedModelId, NOT modelSelect.value: the select can be showing an
+    // UNCONFIRMED target (showSwitchWarning leaves it there pending Cancel /
+    // Switch anyway), and this sentence promises what the next message uses.
+    const next = s.committedModelId ?? s.modelSelect.value;
+    const cold = isCold(ctx, next);
+    return `${MODEL_SWITCH_PREFIX} on the previous model and saves to `
+      + `this conversation. Your next message ${cold ? 'loads' : 'uses'} ${next}.`
+      // Carried from commitModelSwitch: a capability the switch takes away is
+      // not derivable here (the `from` model is long gone) and nothing else
+      // will ever say it.
+      + (stream.pendingNote ? ` ${stream.pendingNote}` : '');
   }
-  return 'Still generating on the server — the reply will be saved to this conversation.';
+  return `${GENERATING_PREFIX} — the reply will be saved to this conversation.`;
 }
 
 function releaseStream(ctx, stream) {
@@ -2578,38 +2653,52 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
 
   if (!ctx.alive || s.activeId !== stream.targetConvId) return;
 
+  // `serverState` is the AUTHORITATIVE answer to "is the run still going",
+  // and it is the whole reason the branch below needs no proxies. It was
+  // already being fetched here and thrown away.
+  let serverState = null;
   if (saved?.messages?.length) {
     adoptSavedRows(ctx, saved.messages);
     renderMessages(ctx);
   } else {
-    await resyncMessages(ctx, stream.targetConvId);
+    serverState = await resyncMessages(ctx, stream.targetConvId);
     if (!ctx.alive || s.activeId !== stream.targetConvId) return;
   }
   scrollMessages(ctx);
 
   const endReason = saved?.end_reason;
-  // ORDER IS THE DESIGN here, and it is the failure side first.
+  // WHAT HAPPENED IS THE SERVER'S ANSWER, NOT OURS.
   //
-  // A client-side abort is NOT a stop. Pressing Stop aborts the run server
-  // side (end_reason 'aborted'); deleting the conversation stops it too.
-  // Everything else -- switching model or conversation -- only ends our
-  // SUBSCRIPTION, and the run finishes and commits regardless. Reporting that
-  // as "Stopped." was a false statement about the server.
+  // `heylook_saved` is always the LAST event (spec §4), so `saved` present
+  // means the run ENDED and `end_reason` says how -- whatever our fetch did.
+  // `saved` absent means the transport died, and then `serverState` (the GET
+  // above) is the only thing that knows whether a run is still going.
   //
-  // A FAILED run that was then stopped is still a failure: this branch used to
-  // sit third, so "Stopped." overwrote the red error line in normal colour and
-  // the failure left no report at all.
+  // This used to be a three-input boolean derived from client-side proxies
+  // (`aborted`, `stream.userStopped`, `stream.abandonReason`), and every
+  // lifecycle bug in v1.79.26-.29 was a symptom of that: each new abort path
+  // had to be hand-classified, and the classification was silently wrong the
+  // moment it drifted. Two independent reviews found bugs in it inside a
+  // week. The proxies survive only where the server cannot answer.
+  //
+  // Order is failure-first: a run that failed and was then stopped is still a
+  // failure, and "Stopped." used to paint over the red line in normal colour.
+  const ended = Boolean(saved) || serverState === 'idle';
   if (endReason === 'error' || stream.inBandError) {
     // the in-band error status line stands; a partial (if any) is saved
-  } else if (endReason === 'aborted' || stream.userStopped
-             || stream.abandonReason === 'delete') {
+  } else if (endReason === 'aborted' || (ended && stream.userStopped)) {
+    // userStopped is only reachable via stopStream's 404-with-no-events
+    // branch, where there is no server answer to have -- see stopStream.
     showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
-  } else if (aborted && !saved) {
-    // `!saved` matters: heylook_saved is always the LAST event (spec §4), so
-    // its presence means the run ENDED, whatever our fetch did. Gating on
-    // `aborted` alone announced "the reply keeps generating" directly above a
-    // finished reply adoptSavedRows had just painted.
-    showStatus(ctx, abandonNote(ctx, stream));
+  } else if (serverState === 'generating') {
+    // The server says a run is still going and it is not ours any more.
+    if (!switchWarningOnScreen(ctx)) showStatus(ctx, abandonNote(ctx, stream));
+  } else if (aborted && !saved && serverState !== 'idle') {
+    // No answer either way (`unknown`): we let go of a run whose end we never
+    // saw. Say the reply may still be coming rather than claim it stopped --
+    // the run detaches and commits, so the optimistic reading is the true one
+    // far more often than not.
+    if (!switchWarningOnScreen(ctx)) showStatus(ctx, abandonNote(ctx, stream));
   } else if (usage || saved) {
     const timing = saved?.timing;
     const parts = [`${usage?.output_tokens ?? '?'} tokens`];
@@ -2632,12 +2721,18 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     showStatus(ctx, 'The stream ended without a save confirmation — recovering…', true);
     const retry = (delay, attemptsLeft) => setTimeout(async () => {
       if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;
-      const stillGenerating = await resyncMessages(ctx, stream.targetConvId);
+      const state = await resyncMessages(ctx, stream.targetConvId);
       if (!ctx.alive || s.activeId !== stream.targetConvId) return;
       // Still working: nothing to recover, and no backoff could outlast it.
       // setRemoteGenerating has already put the honest line on screen and
       // turned the button into Stop.
-      if (stillGenerating) return;
+      if (state === 'generating') return;
+      // 'unknown' is NOT a recovery: the fetch never reached the server, so
+      // keep retrying and never fall through to the success line below.
+      if (state === 'unknown') {
+        if (attemptsLeft > 0) retry(delay * 2.5, attemptsLeft - 1);
+        return;
+      }
       if (attemptsLeft > 0) {
         retry(delay * 2.5, attemptsLeft - 1);
       } else if (s.statusEl.textContent.includes('recovering')) {

@@ -142,41 +142,77 @@ class Report:
 # ---------------------------------------------------------------------------
 
 def classify(server):
-    """model_id -> arm. The vision capability is what splits provider 'mlx'
-    into its two upstream libraries -- see the header."""
+    """model_id -> arm, plus the models we cannot honestly name an engine for.
+
+    Returns (by_arm, unconfirmable). ENGINE IDENTITY IS `effective_loader`, not
+    the vision capability -- and this is exactly the conflation the header says
+    the file exists to prevent, so it must not be repeated here:
+
+    - An explicit `loader = "mlx-lm"` on a dual-capable VLM still reports the
+      vision capability (loader_routing: "an explicit loader forces the
+      engine"). Splitting on the capability alone would put it in the mlx-vlm
+      arm and go green having run mlx-lm twice. `loader` is on the admin
+      response, so this case IS resolvable and is resolved.
+    - `loader = "auto"` degrades vision -> mlx-lm whenever mlx-vlm does not
+      register the model_type, and that degradation is invisible from every
+      endpoint here. Those models are returned as UNCONFIRMABLE rather than
+      claimed for an arm: a harness that names engines must be able to name
+      which one ran.
+    """
     st, models = call(server, "GET", "/v1/models", timeout=30)
     if st != 200:
         raise SystemExit(f"GET /v1/models failed: {st} {models}")
     st, admin = call(server, "GET", "/v1/admin/models", timeout=30)
-    provider_by_id = {}
+    admin_by_id = {}
     if st == 200:
         for m in (admin or {}).get("models", []):
-            provider_by_id[m.get("id")] = m.get("provider")
+            admin_by_id[m.get("id")] = m
 
-    out = {}
+    out, unconfirmable, resident = {}, {}, set()
     for entry in (models or {}).get("data", []):
         mid = entry["id"]
         caps = set(entry.get("capabilities") or [])
-        prov = provider_by_id.get(mid)
+        row = admin_by_id.get(mid) or {}
+        prov = row.get("provider") or entry.get("provider")
+        loader = ((row.get("config") or {}).get("loader")) or "auto"
+        if row.get("loaded"):
+            resident.add(mid)
         if prov == "gguf":
             out[mid] = "gguf"
         elif prov == "mlx":
-            out[mid] = "mlx-vlm" if "vision" in caps else "mlx-lm"
+            if loader in ("mlx-lm", "mlx-vlm"):
+                out[mid] = loader          # explicit: the config IS the answer
+            elif "vision" not in caps:
+                out[mid] = "mlx-lm"        # no vision -> mlx-vlm is not in play
+            else:
+                # auto + vision: routed to mlx-vlm only if mlx-vlm registers
+                # the model_type, and nothing served here can see that. Taken
+                # as mlx-vlm (the overwhelmingly common outcome) but recorded
+                # as INFERRED, so the run says which arms it could not confirm
+                # rather than quietly claiming them.
+                out[mid] = "mlx-vlm"
+                unconfirmable[mid] = "loader=auto + vision: taken as mlx-vlm, but an unregistered model_type degrades to mlx-lm and nothing here can see it"
         # anything else (embeddings, unknown) is deliberately unclassified
-    return out
+    return out, unconfirmable, resident
 
 
-def pick_models(by_arm, overrides, wanted):
-    """One model per requested arm. Prefers the smallest-looking id, because a
-    smoke test that costs a 122B load will not get run."""
+def pick_models(by_arm, overrides, wanted, resident=frozenset()):
+    """One model per requested arm.
+
+    Prefers a model that is ALREADY RESIDENT, because that is the only
+    cheapness signal available here and a smoke test that costs a 122B load
+    will not get run. The first version sorted by `len(id)` and duly picked
+    gpt-oss-120b for the mlx-lm arm -- a short name is not a small model.
+    Nothing served exposes parameter count, so `--model ARM=ID` stays the way
+    to be sure."""
     chosen = {}
     for arm in wanted:
         if arm in overrides:
             chosen[arm] = overrides[arm]
             continue
-        candidates = sorted([m for m, a in by_arm.items() if a == arm], key=lambda s: (len(s), s))
+        candidates = [m for m, a in by_arm.items() if a == arm]
         if candidates:
-            chosen[arm] = candidates[0]
+            chosen[arm] = sorted(candidates, key=lambda s: (s not in resident, len(s), s))[0]
     return chosen
 
 
@@ -267,46 +303,89 @@ def contract_checks(server, r):
 # per-engine lifecycle
 # ---------------------------------------------------------------------------
 
-def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> tuple[bool, bool, str]:
-    """POST the generate stream. If stop_after_bytes is set, DISCONNECT once
-    that much has arrived -- that is the walk-away this whole harness exists
-    to check.
+@dataclass
+class StreamResult:
+    saw_delta: bool = False       # any text arrived
+    completed: bool = False       # the body ended on its own
+    text: str = ""                # the deltas WE saw, exactly
+    tail: str = ""                # last of the body, so a failure can say why
+    http_error: str | None = None # a non-2xx, surfaced instead of raised
 
-    Returns (saw_any_delta, completed_normally, tail). `tail` is the last of
-    the body so a no-delta ending can SAY WHY -- RETURNED, not stashed in a
-    module global: the stop check below runs this on a worker thread, and a
-    global cleared-then-appended from a worker is a race waiting for the first
-    person to drive two streams at once."""
+    @property
+    def ended_complete(self) -> bool:
+        """The server's own statement that the run finished rather than failed.
+        `heylook_saved` is always last (spec §4) and the error path skips
+        message_stop entirely, so a stream can END cleanly having FAILED --
+        checking only 'did it finish' reports a dead engine as a passing arm."""
+        return '"end_reason": "complete"' in self.tail or '"end_reason":"complete"' in self.tail
+
+
+def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> StreamResult:
+    """POST the generate stream. If stop_after_bytes is set, DISCONNECT once
+    that much has arrived -- the walk-away this harness exists to check.
+
+    Accumulates the delta text WE saw, which is what makes the walk-away check
+    able to fail: comparing the persisted answer against this prefix is how you
+    tell "the run detached and finished" from "the server truncated at the
+    disconnect". Asserting only that a non-empty assistant row exists is true
+    of both.
+
+    Never raises on an HTTP status -- a 409 (run already active) or 503
+    (model_overloaded) is a result to report, not a traceback that kills every
+    later arm."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{server}/v1/conversations/{conv_id}/generate", data=data, method="POST",
         headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
     )
+    res = StreamResult()
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        res.http_error = f"HTTP {e.code}: {e.read()[:300].decode(errors='replace')}"
+        return res
+    except OSError as e:
+        res.http_error = f"{type(e).__name__}: {e}"
+        return res
+
     read = 0
-    saw = False
+    buf = b""
     tail = b""
-    resp = urllib.request.urlopen(req, timeout=timeout)
     try:
         while True:
             chunk = resp.read(256)
             if not chunk:
-                return saw, True, tail.decode(errors="replace")
+                res.completed = True
+                break
             read += len(chunk)
-            # Keep the last of the body so a no-delta ending can SAY WHY. The
-            # first run of this harness reported only "saw_delta=False" for a
-            # bad image fixture, and the cause was reachable only by digging
-            # through the server log.
-            tail = (tail + chunk)[-1200:]
-            if b"text_delta" in chunk:
-                saw = True
-            if stop_after_bytes is not None and saw and read >= stop_after_bytes:
-                return saw, False, tail.decode(errors="replace")  # walk away mid-stream
+            tail = (tail + chunk)[-1500:]
+            buf += chunk
+            # Consume whole lines only; a split JSON payload waits for its rest.
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.startswith(b"data: "):
+                    continue
+                try:
+                    evt = json.loads(line[6:])
+                except Exception:
+                    continue
+                piece = (evt.get("delta") or {}).get("text")
+                if piece:
+                    res.saw_delta = True
+                    res.text += piece
+            if stop_after_bytes is not None and res.saw_delta and read >= stop_after_bytes:
+                break  # walk away mid-stream
     finally:
         resp.close()
+        res.tail = tail.decode(errors="replace")
+    return res
 
 
 def wait_for_idle(server, conv_id, timeout=300) -> Any:
-    """Poll until the conversation stops reporting `generating`."""
+    """Poll until the conversation stops reporting `generating`. Returns the
+    conversation, or None on timeout / a run of failed GETs -- and callers must
+    treat None as NO ANSWER, never as 'idle'. Reading `(x or {})` off this
+    silently converts a stuck run into a weaker assertion that passes."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         st, conv = call(server, "GET", f"/v1/conversations/{conv_id}", timeout=30)
@@ -316,12 +395,23 @@ def wait_for_idle(server, conv_id, timeout=300) -> Any:
     return None
 
 
+def assistant_text(conv) -> str:
+    rows = [m for m in (conv or {}).get("messages", []) if m.get("role") == "assistant"]
+    return (rows[-1].get("content") or "") if rows else ""
+
+
 def arm_checks(server, r, arm, model_id, load_timeout):
     print(f"\n{DIM}-- {arm}: {model_id} ---------------------------------------{RESET}")
 
-    st, _ = call(server, "POST", f"/v1/admin/models/{model_id}/load?warm=true", timeout=load_timeout)
-    if not r.check(f"{arm}: load + warm", st == 200, f"load returned {st}"):
-        r.skip(f"{arm}: lifecycle", "model would not load")
+    st, loaded = call(server, "POST", f"/v1/admin/models/{urllib.parse.quote(model_id)}/load?warm=true",
+                      timeout=load_timeout)
+    # `warmed` matters: the endpoint returns 200 with warmed=false + warm_error
+    # when the first forward pass RAISED -- the single most informative signal
+    # a smoke test can collect, and it used to be discarded into `_`.
+    if not r.check(f"{arm}: load + warm",
+                   st == 200 and (loaded or {}).get("warmed") is not False,
+                   f"load returned {st}: {(loaded or {}).get('warm_error') or loaded}"):
+        r.skip(f"{arm}: lifecycle", "model would not load or warm")
         return
 
     st, models = call(server, "GET", "/v1/models", timeout=30)
@@ -333,10 +423,18 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     try:
         st, conv = call(server, "POST", "/v1/conversations",
                         {"title": f"smoke-{arm}", "model_id": model_id,
-                         "params": {"max_tokens": 220, "temperature": 0.7}})
+                         "params": {"max_tokens": 400, "temperature": 0.7}})
         if not r.check(f"{arm}: conversation create", st == 201, f"got {st}: {conv}"):
             return
         conv_id = conv["id"]
+
+        def say(text):
+            """Append a user turn. CHECKED: _refuse_while_generating 409s an
+            append while a run is active, and an unchecked 409 silently changes
+            what the next generation is testing."""
+            st, _ = call(server, "POST", f"/v1/conversations/{conv_id}/messages",
+                         {"role": "user", "content": text})
+            return st == 201
 
         # -- an ordinary generation completes and persists ------------------
         content = "Say hello in one short sentence."
@@ -346,61 +444,95 @@ def arm_checks(server, r, arm, model_id, load_timeout):
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                              "data": base64.b64encode(SMOKE_PNG).decode()}},
             ]
-        st, _ = call(server, "POST", f"/v1/conversations/{conv_id}/messages",
-                     {"role": "user", "content": content})
-        if not r.check(f"{arm}: user message accepted", st == 201, f"got {st}"):
+        if not r.check(f"{arm}: user message accepted", say(content), "append refused"):
             return
 
-        saw, done, tail = stream_until(server, conv_id, {"mode": "append"})
-        r.check(f"{arm}: a generation streams and completes", saw and done,
-                f"saw_delta={saw} completed={done}; stream tail: {tail[-400:]!r}")
+        res = stream_until(server, conv_id, {"mode": "append"})
+        # ended_complete, not just `completed`: the error path yields an error
+        # event, persists the partial and ends the body cleanly, so "it finished"
+        # is true of a FAILED run too.
+        r.check(f"{arm}: a generation streams and completes",
+                res.saw_delta and res.completed and res.ended_complete,
+                f"delta={res.saw_delta} completed={res.completed} "
+                f"end_reason_complete={res.ended_complete} err={res.http_error} "
+                f"tail={res.tail[-300:]!r}")
         conv = wait_for_idle(server, conv_id)
-        replies = [m for m in (conv or {}).get("messages", []) if m["role"] == "assistant"]
-        r.check(f"{arm}: the reply persisted", bool(replies) and bool(replies[-1].get("content")),
-                f"{len(replies)} assistant rows")
+        r.check(f"{arm}: the reply persisted", bool(assistant_text(conv)),
+                "no assistant content" if conv is not None else "the run never went idle")
 
-        # -- THE walk-away check: drop the connection mid-stream. The run must
-        # DETACH and commit the whole answer, not truncate. This is exactly
-        # what the client now discloses and what the stubbed suite cannot see.
-        st, _ = call(server, "POST", f"/v1/conversations/{conv_id}/messages",
-                     {"role": "user", "content": "Count slowly from one to twenty, one number per line."})
-        before = len([m for m in (wait_for_idle(server, conv_id) or {}).get("messages", [])])
-        saw, done, tail = stream_until(server, conv_id, {"mode": "append"}, stop_after_bytes=400)
-        if not saw:
-            r.skip(f"{arm}: a walked-away run finishes on the server", "no delta arrived before the disconnect")
+        # -- THE walk-away check --------------------------------------------
+        # Disconnect mid-stream. The run must DETACH and commit the WHOLE
+        # answer. The discriminating comparison is against the prefix WE saw:
+        # if the server truncated at the disconnect, the persisted answer is
+        # that prefix. Asserting only "a non-empty assistant row exists" is
+        # equally true of a truncation, which is the bug this arm exists for.
+        if not r.check(f"{arm}: second user message accepted",
+                       say("Count slowly from one to twenty, one number per line."),
+                       "append refused (is a run still active?)"):
+            return
+        res = stream_until(server, conv_id, {"mode": "append"}, stop_after_bytes=400)
+        if res.http_error or not res.saw_delta:
+            r.skip(f"{arm}: a walked-away run finishes and commits",
+                   res.http_error or "no delta arrived before the disconnect")
+            # Wait it out regardless: a run left active 409s every later append
+            # and every later check in this arm then measures THIS generation.
+            wait_for_idle(server, conv_id, timeout=300)
         else:
-            r.check(f"{arm}: disconnected mid-stream", not done, "the stream ended on its own")
+            r.check(f"{arm}: disconnected mid-stream", not res.completed,
+                    "the stream ended on its own before we could disconnect")
             conv = wait_for_idle(server, conv_id, timeout=300)
-            rows = (conv or {}).get("messages", [])
-            last = rows[-1] if rows else {}
-            r.check(f"{arm}: a walked-away run finishes and commits",
-                    conv is not None and len(rows) > before
-                    and last.get("role") == "assistant" and bool(last.get("content")),
-                    f"rows {before} -> {len(rows)}, last={last.get('role')!r} "
-                    f"len={len(last.get('content') or '')}")
+            final = assistant_text(conv)
+            if conv is None:
+                r.fail(f"{arm}: a walked-away run finishes and commits",
+                       "the run never went idle -- no answer either way")
+            else:
+                r.check(f"{arm}: a walked-away run finishes and commits",
+                        len(final) > len(res.text),
+                        f"persisted {len(final)} chars vs the {len(res.text)} we saw before "
+                        f"disconnecting -- the run was TRUNCATED at the disconnect, not detached")
 
-        # -- Stop is the OTHER thing, and must keep only the partial --------
-        st, _ = call(server, "POST", f"/v1/conversations/{conv_id}/messages",
-                     {"role": "user", "content": "Count slowly from one to fifty, one number per line."})
+        # -- Stop keeps the partial, and only the partial --------------------
+        if not r.check(f"{arm}: third user message accepted",
+                       say("Count slowly from one to two hundred, one number per line."),
+                       "append refused"):
+            return
         holder = {}
 
         def _run():
-            # Results go in `holder`, which only this thread writes and only
-            # the main thread reads AFTER join() -- no shared mutable state
-            # while both are running.
+            # Only this thread writes holder; only the main thread reads it,
+            # and only after join().
             try:
                 holder["res"] = stream_until(server, conv_id, {"mode": "append"})
-            except Exception as e:  # the abort surfaces here on some transports
+            except Exception as e:  # pragma: no cover -- transport oddities
                 holder["err"] = e
         th = threading.Thread(target=_run, daemon=True)
         th.start()
         time.sleep(3.0)
         st, _ = call(server, "DELETE", f"/v1/conversations/{conv_id}/generate", timeout=30)
-        r.check(f"{arm}: stop accepted", st in (200, 404), f"stop returned {st}")
         th.join(timeout=120)
+        finished_first = bool(holder.get("res") and holder["res"].ended_complete)
+        # 200 ONLY -- a 404 means "no active generation", i.e. nothing was
+        # stopped, and accepting it passed the Stop path without exercising it.
+        # But a 404 because the run FINISHED inside our sleep window is an
+        # unexercised check, not a failed one: a fast small model answers well
+        # inside 3s. Say so rather than either passing or failing falsely.
+        if st == 404 and finished_first:
+            r.skip(f"{arm}: stop", "the run completed before Stop could be pressed "
+                                   "(fast model) -- the Stop path was not exercised")
+            return
+        r.check(f"{arm}: stop accepted", st == 200,
+                f"stop returned {st} (404 = nothing was running, so nothing was stopped)")
+        r.check(f"{arm}: the stopped stream ended", not th.is_alive() and "err" not in holder,
+                f"thread alive={th.is_alive()} err={holder.get('err')}")
         conv = wait_for_idle(server, conv_id, timeout=120)
+        stopped_text = assistant_text(conv)
         r.check(f"{arm}: the conversation is idle after a stop", conv is not None,
                 "still reported generating")
+        # The endpoint's contract is that the partial IS persisted. Nothing used
+        # to look at the content at all, so a regression that dropped it entirely
+        # passed this arm unchanged.
+        r.check(f"{arm}: the stop persisted its partial", bool(stopped_text),
+                "the aborted run committed no content")
     finally:
         if conv_id:
             call(server, "DELETE", f"/v1/conversations/{conv_id}", timeout=60)
@@ -432,14 +564,26 @@ def main():
     contract_checks(server, r)
 
     if not args.contract_only:
-        overrides = dict(kv.split("=", 1) for kv in args.model)
-        by_arm = classify(server)
+        overrides = {}
+        for kv in args.model:
+            if "=" not in kv:
+                raise SystemExit(f"--model wants ARM=ID, got {kv!r}")
+            arm, mid = kv.split("=", 1)
+            if arm not in ARMS:
+                raise SystemExit(f"--model: unknown arm {arm!r} (choose from {', '.join(ARMS)})")
+            overrides[arm] = mid
+        by_arm, unconfirmable, resident = classify(server)
         wanted = args.arm or list(ARMS)
-        chosen = pick_models(by_arm, overrides, wanted)
+        chosen = pick_models(by_arm, overrides, wanted, resident)
         for arm in wanted:
             if arm not in chosen:
                 r.skip(f"{arm}: whole arm", "no model of this engine is served")
                 continue
+            # Say it ONCE per arm, not once per model: the engine behind an
+            # auto-routed vision model is inferred, and a harness that names
+            # engines should say when it is guessing.
+            if chosen[arm] in unconfirmable:
+                r.skip(f"{arm}: engine identity NOT confirmed", unconfirmable[chosen[arm]])
             arm_checks(server, r, arm, chosen[arm], args.load_timeout)
 
     total = r.passed + len(r.failed)
@@ -450,10 +594,21 @@ def main():
             print(f"  {RED}✗{RESET} {name}: {why}")
     else:
         print(f"{GREEN}PASS{RESET}  {r.passed}/{total} checks passed")
+    missing = [n for n, _ in r.skipped if n.endswith(": whole arm")]
     if r.skipped:
         print(f"{YELLOW}{len(r.skipped)} skipped{RESET} — a skipped ENGINE is uncovered, not green:")
         for name, why in r.skipped:
             print(f"  {YELLOW}-{RESET} {name}: {why}")
+    # The machine-readable signal has to agree with the banner. `return 1 if
+    # failed` printed PASS and exited 0 for a run where every arm was skipped,
+    # which any wrapper reads as full engine coverage -- the exact opposite of
+    # what this file promises. A run the caller NARROWED (--arm / --model /
+    # --contract-only) is a decision and exits on its failures alone.
+    narrowed = bool(args.arm or args.model or args.contract_only)
+    if missing and not narrowed:
+        print(f"{RED}UNCOVERED{RESET}  {len(missing)} engine arm(s) ran no model; "
+              "pass --arm to say that was deliberate")
+        return 2
     return 1 if r.failed else 0
 
 

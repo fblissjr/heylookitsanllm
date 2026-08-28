@@ -1337,6 +1337,21 @@ async function main() {
         'the loop save did not carry the edited prompt');
     });
 
+    await suite.check('a refusal does not eat the name you typed', async () => {
+      // The refusal used to force a drawer rebuild, which replaces the section
+      // -- so the name was gone (and on a phone the keyboard closed) at the
+      // exact moment the user was told to go do something else with it.
+      await sleep(8200);
+      await typePresetName('owned');
+      await guard.page.click(PRESET.saveNewBtn);
+      await settle(guard.page);
+      await sleep(250);
+      const kept = await guard.page.$eval(PRESET.nameInput, (el) => el.value);
+      assert(kept === 'owned', `the refusal cleared the name box (now ${JSON.stringify(kept)})`);
+      const status = await guard.page.$eval('.chat__status', (el) => el.textContent);
+      assert(/already exists/i.test(status), `no refusal was shown: ${JSON.stringify(status)}`);
+    });
+
     await suite.check('a name already in use is refused, never overwritten', async () => {
       // The accident class, removed rather than guarded: there is no typing
       // path to an overwrite any more. Save as new creates or refuses; only
@@ -2044,49 +2059,94 @@ async function main() {
         `a single paint removed ${p.maxRemoved} of ${p.maxChildren} nodes -- the message is being rebuilt, not extended`);
     });
 
-    await suite.check('leaving mid-run says the answer survives, and never says "Stopped"', async () => {
+    await suite.check('switching MODELS mid-run says the answer survives, never "Stopped"', async () => {
       // A client-side abort ends our SUBSCRIPTION; the run detaches, finishes
       // and commits the whole reply. The end used to report that as
-      // "Stopped." -- a false statement about the server, and the exact
-      // opposite of what the reader needs to know before walking away.
+      // "Stopped." -- a false statement about the server, and the opposite of
+      // what the reader needs before walking away.
+      //
+      // The stub does not model a detached run: its GET returns
+      // generating:false the instant our fetch dies, whereas a real server
+      // keeps the run alive and says generating:true (verified per engine in
+      // tests/smoke/). Since the client now believes the SERVER over its own
+      // proxies -- correctly -- the stub has to report what a real one does or
+      // this check tests the wrong world.
       drip.text = STREAM_DOC;
       drip.chunkChars = 4;
-      drip.delayMs = 25;      // long enough to still be streaming when we leave
+      drip.delayMs = 25;
       const away = await openChat(browser, base, {
-        dripGenerate: true,
-        secondModel: { id: 'text-model', caps: [] },
+        dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
-      const status = () => away.page.$eval('.chat__status', (el) => el.textContent);
-
-      // --- switching MODELS mid-run: same conversation, so the stream's own
-      // end writes the line ---
+      away.store.remote.generating = true;
       await startSend(away.page, 'go');
-      await waitFor(() => streaming(away.page), { timeout: 5000, message: 'the stream never started' });
+      await waitFor(() => streaming(away.page), { timeout: 8000, message: 'the stream never started' });
       await away.page.evaluate(() => {
         const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
         sel.value = 'text-model';
         sel.dispatchEvent(new Event('change', { bubbles: true }));
       });
       await waitStreamEnd(away.page);
-      let line = await status();
+      const line = await away.page.$eval('.chat__status', (el) => el.textContent);
       assert(!/stopped/i.test(line), `switching models mid-run reported: ${JSON.stringify(line)}`);
       assert(/keeps generating/i.test(line) && /text-model/.test(line),
         `switching models mid-run said ${JSON.stringify(line)}`);
+      assert(away.pageErrors.length === 0, `page errors: ${away.pageErrors.join(' | ')}`);
+      await away.page.close();
+    });
 
-      // --- switching CONVERSATIONS mid-run: the stream's end returns early
-      // once activeId moves, so selectConversation has to say it itself ---
-      await startSend(away.page, 'go again');
-      await waitFor(() => streaming(away.page), { timeout: 5000, message: 'the second stream never started' });
-      await away.page.evaluate(() => {
-        [...document.querySelectorAll('.conv-item__title')]
-          .find((el) => el.textContent === 'other model').click();
+    await suite.check('switching CONVERSATIONS mid-run names the one being left', async () => {
+      // Different path: finishGenerate early-returns once activeId has moved,
+      // so selectConversation has to say this itself. Its own boot, because
+      // the check above leaves the composer in its remote-generating state.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 25;
+      const swap = await openChat(browser, base, {
+        dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
-      await waitStreamEnd(away.page);
-      line = await status();
+      await startSend(swap.page, 'go');
+      await waitFor(() => streaming(swap.page), { timeout: 8000, message: 'the stream never started' });
+      await swap.page.evaluate(() => {
+        const row = [...document.querySelectorAll('.conv-item__title')]
+          .find((el) => el.textContent === 'other model');
+        if (!row) throw new Error('the second conversation is not in the sidebar');
+        row.click();
+      });
+      await waitStreamEnd(swap.page);
+      const line = await swap.page.$eval('.chat__status', (el) => el.textContent);
       assert(!/stopped/i.test(line), `switching conversations mid-run reported: ${JSON.stringify(line)}`);
       assert(/keeps generating/i.test(line) && /render suite/.test(line),
         `switching conversations mid-run said ${JSON.stringify(line)}`);
-      await away.page.close();
+      assert(swap.pageErrors.length === 0, `page errors: ${swap.pageErrors.join(' | ')}`);
+      await swap.page.close();
+    });
+
+    await suite.check('an idle server is never described as still generating', async () => {
+      // The mirror of the check above, and the reason the refactor exists:
+      // when the transport dies but the server reports the conversation IDLE,
+      // the run is over and "the reply keeps generating" would be a fresh
+      // false claim in the opposite direction. The client derives this from
+      // the server's own answer rather than from `aborted`.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 25;
+      const idle = await openChat(browser, base, {
+        dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
+      });
+      idle.store.remote.generating = false; // the server says: nothing running
+      await startSend(idle.page, 'go');
+      await waitFor(() => streaming(idle.page), { timeout: 8000, message: 'the stream never started' });
+      await idle.page.evaluate(() => {
+        const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
+        sel.value = 'text-model';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await waitStreamEnd(idle.page);
+      const line = await idle.page.$eval('.chat__status', (el) => el.textContent);
+      assert(!/keeps generating/i.test(line) && !/still generating/i.test(line),
+        `an idle conversation was described as generating: ${JSON.stringify(line)}`);
+      assert(idle.pageErrors.length === 0, `page errors: ${idle.pageErrors.join(' | ')}`);
+      await idle.page.close();
     });
 
     await suite.check('a Stop that lands after the run finished does not claim "Stopped"', async () => {

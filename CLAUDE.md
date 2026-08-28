@@ -274,8 +274,11 @@ apply/edit/save-back ITERATE LOOP stays one click -- v1.79.20 armed all of them
 and thereby charged the loop for the accident, the same click-through failure
 the rule exists to prevent, reintroduced by the fix for it -- while BLANKING
 always arms, because a NULL write leaves an override-box preset present but
-inert ("my preset disappeared"). Enter in the name box routes through the
-BUTTON, never straight to save(). AN ARM IS A PROMISE ABOUT ONE ACTION, and
+inert ("my preset disappeared"). Enter in the name box goes straight to Save
+as new, which is CORRECT now and was not before: that rule existed because a
+second entry point past an ARM is the same hole with a keyboard on it, and
+Save as new has no arm to get past -- it cannot overwrite anything. Update,
+which can, is reachable only by its own button. AN ARM IS A PROMISE ABOUT ONE ACTION, and
 that is enforced in the PRIMITIVE: `armedConfirm` takes a `target()` describing
 destination+payload, captures it at arm time and re-reads it on the confirming
 click, re-arming instead of firing if it moved. It cannot live in consumer
@@ -359,7 +362,7 @@ in git history; a contract test pins that `/v2` stays 404.)
 
 - New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`. (The OpenAPI drift guard -- `generated-api.ts` / `scripts/check_openapi_sync.sh` / the pre-commit block / `/openapi-regen` -- was retired 2026-07-09 with the legacy React app that consumed the generated TS types; v3 hand-writes `api.js`. The live schema stays at `/openapi.json` and `/docs`.)
 - Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
-- TWO named-bundle systems, one word each -- don't conflate or re-alias: **samplers** = bundled TOMLs `src/heylook_llm/data/samplers/` via `SamplerRegistry` (`samplers.py`), resolved in the provider cascade (`thinking` auto-applies for `enable_thinking` models; `vlm-*` encode mlx-vlm's ignored-param subset), reachable as `ChatRequest.sampler` / models.toml `default_sampler` / `/v1/admin/models/samplers`, discoverable via `/v1/capabilities.samplers`; roster is exact-pinned by `test_sampler_registry.py` (a new sampler must name its consumer). **Presets** = `/v1/presets` DuckDB prompt+sampler bundles (v3's preset bar -- shared `preset-bar.js`, chat + notebook, client-expanded) -- "preset" means ONLY this system now. Retired names for the registry: "profile" (collides with `/v1/performance/profile`) and "preset" (collided with the above; a ChatRequest sending `preset` gets a 400 with a migration hint, not a silent drop). CLI `--preset`/`--profile` survive only as aliases for `--sampler` on import. Details: `docs/architecture/config.md`. Which preset a document is RUNNING is `applied_preset_id` on conversations/notebooks (schema v6) -- written on explicit Apply/Save only; a document whose state merely matches a preset is labelled by live client-side matching and never stamped (storing a derived association can bind stale state to the wrong document).
+- TWO named-bundle systems, one word each -- don't conflate or re-alias: **samplers** = bundled TOMLs `src/heylook_llm/data/samplers/` via `SamplerRegistry` (`samplers.py`), resolved in the provider cascade (`thinking` auto-applies for `enable_thinking` models; `vlm-*` encode mlx-vlm's ignored-param subset), reachable as `ChatRequest.sampler` / models.toml `default_sampler` / `/v1/admin/models/samplers`, discoverable via `/v1/capabilities.samplers`; roster is exact-pinned by `test_sampler_registry.py` (a new sampler must name its consumer). **Presets** = `/v1/presets` DuckDB prompt+sampler bundles (v3's preset bar -- shared `preset-bar.js`, chat + notebook, client-expanded) -- "preset" means ONLY this system now. Retired names for the registry: "profile" (collides with `/v1/performance/profile`) and "preset" (collided with the above; a ChatRequest sending `preset` gets a 400 with a migration hint, not a silent drop). CLI `--preset`/`--profile` survive only as aliases for `--sampler` on import. Details: `docs/architecture/config.md`. Which preset a document is RUNNING is `applied_preset_id` on conversations/notebooks (schema v6) -- written on explicit Apply/Update/Save-as-new only; a document whose state merely matches a preset is labelled by live client-side matching and never stamped (storing a derived association can bind stale state to the wrong document).
 - A document's `params` is the SAMPLER BAG and everything in it reaches the model -- non-sampler state may never be stashed there (v3 keeps display prefs in a separate store for exactly this reason, and preset provenance got its own column rather than a params key). The same rule is why `samplerParams(caps)` filters capability-gated keys at the wire.
 - A HAND-COPIED CONSTANT LIST IS A DEFECT WITH A DELAY, not a style issue. This repo
   already derives rather than copies -- the reload set, the import allowlist and
@@ -404,8 +407,9 @@ in git history; a contract test pins that `/v2` stays 404.)
 - Run via `/test-suite` (backend only -- there is NO frontend unit suite: the legacy React app that carried one was deleted 2026-07-09; v3 is no-build vanilla JS checked by the opt-in browser E2E below). `tests/unit/` + `tests/contract/` are fully green (Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist. (No counts here on purpose: they rot; green-is-the-invariant doesn't.)
 - **Behavioral eval bank** (`tests/eval/`, opt-in): 13 tasks covering thinking split/leak, stop discipline, vision correctness, vision-token budgets. Run for changes touching templates/parsers/stop-tokens/vision -- `uv run python tests/eval/run.py --server <url> --models <ids>` against a RUNNING server (never spawns one). Unit tests cannot certify these subsystems (the 07-20 turn-overrun + thinking-leak bugs passed 1000+ of them). BUT the bank runs `stream=False`, so it structurally cannot see chunk-boundary behavior -- that class is owned by `TestParserInvariants` instead; reach for the bank for MODEL behavior, not parser plumbing.
 - **Live smoke** (`tests/smoke/`, opt-in, never spawns a server): the half the
-  browser suite cannot see -- it drives real `/v3` against a STUBBED `/v1`, so
-  the store's own rules and the generation lifecycle were unverified. Arms are
+  browser suite cannot see. THAT suite drives real `/v3` against a STUBBED
+  `/v1`, which left the store's own rules and the generation lifecycle
+  unverified; this one talks to a real server and no stub at all. Arms are
   ENGINES, not providers: `"mlx"` routes to TWO separate upstream repos
   (mlx-lm text / mlx-vlm vision, separate release trains) via
   `effective_loader`, so a text arm and a vision arm are different code;

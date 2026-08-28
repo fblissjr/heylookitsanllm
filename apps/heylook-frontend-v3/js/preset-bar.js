@@ -2,9 +2,11 @@
 // a system prompt + sampler params (chat conversations, notebooks). One
 // grammar everywhere:
 //
-//   - the <select> is INERT toward the document: it records the selection,
-//     prefills the save-as name, and drives the drift line -- it never
-//     writes. It does READ, though: with no explicit pick it shows the
+//   - the <select> is INERT toward the document: it records the selection and
+//     drives the drift line, the preview and Update's target -- it never
+//     writes to the document, and it no longer prefills the save-as name
+//     (that prefill is what aimed a write at whatever you were reading). It
+//     does READ, though: with no explicit pick it shows the
 //     document's applied_preset_id, so the control that asks "which preset
 //     is this?" can answer it (it used to say "Presets…" on a document that
 //     was running one, which is what sent people clicking through it)
@@ -20,7 +22,11 @@
 //     the iterate loop is deliberately exempt. Save as new is never armed --
 //     it cannot overwrite anything
 //   - re-aiming DISARMS: an arm is a promise about one target, so changing
-//     the select or the name box cancels a pending confirm
+//     the select cancels a pending confirm. The name box re-aims nothing --
+//     it feeds Save as new, which is never armed. Safety does not rest on
+//     that wiring in any case: armedConfirm's `target` re-reads destination
+//     AND payload on the confirming click, which is what catches a prompt
+//     edited in another drawer section the bar gets no events from
 //   - the prompt is an OVERRIDE BOX: a preset OWNS a system prompt and
 //     carries it onto whatever it is applied to, but a preset with NO prompt
 //     changes nothing -- the conversation keeps its own prompt (or the
@@ -38,8 +44,8 @@
 //     prompt. The per-document prompt box below is a DIFFERENT thing and
 //     says so in its own label; without the preview there was no way to see
 //     what a preset held short of applying it
-//   - the drift line says what Apply/Save would DO to the selected preset AND
-//     which half drifted (prompt, settings, or both), updated in place -- the
+//   - the drift line says what Apply/Update would DO to the selected preset
+//     AND which half drifted (prompt, settings, or both), updated in place -- the
 //     drawer's focus guard means a rebuild can't be relied on while the user
 //     is typing in a field
 //   - the dropdown marks a preset carrying no prompt as "settings only": it
@@ -90,6 +96,12 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   let previewEl = null;  // read-only view of the SELECTED preset's own prompt
   let previewSummaryEl = null;
   let previewBodyEl = null;
+  // The stored prompt the PREVIEW last rendered. updateSelected compares the
+  // freshly-fetched row against this to answer "did it change since you
+  // looked?" -- the question that must block a confirmed overwrite. It is
+  // also in Update's armedConfirm `target`, so an in-process refresh landing
+  // between arm and confirm re-arms rather than fires.
+  let shownPrompt = null;
   // The stamp -- which preset a document EXPLICITLY had applied/saved onto
   // it -- lives on the DOCUMENT (getStamp/setStamp -> applied_preset_id), so
   // provenance survives a reload and is the same on every device, like every
@@ -181,9 +193,18 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   }
 
   // Drawer onOpen hook: lazily refresh the list, repaint only if it changed.
+  // The preview and drift line are repainted DIRECTLY as well, because the
+  // rebuild above is skipped whenever focus is in the drawer -- and without
+  // that the preview kept rendering the old prompt and character count while
+  // the guard and the write both used the fresh row. "Overwrite prompt?" then
+  // got confirmed against a preview describing content that no longer
+  // existed: the precise reading failure the preview was added to end.
   function onDrawerOpen() {
     refresh().then((changed) => {
-      if (ctx.alive && changed) drawer.requestRebuild();
+      if (!ctx.alive || !changed) return;
+      drawer.requestRebuild();
+      paintPreview();
+      updateDrift();
     });
   }
 
@@ -343,8 +364,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (!previewEl) return;
     const preset = selected();
     previewEl.hidden = !preset;
-    if (!preset) return;
+    if (!preset) { shownPrompt = null; return; }
     const stored = preset.system_prompt || null;
+    shownPrompt = stored;
     previewSummaryEl.textContent = stored
       ? `"${preset.name}" system prompt — ${stored.length.toLocaleString()} characters`
       : `"${preset.name}" carries no system prompt`;
@@ -358,7 +380,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (!driftEl) return;
     const preset = selected();
     // One shared suffix, three leads: "it" is the PRESET in every case (Apply
-    // copies the preset here, Save overwrites the preset), so only the
+    // copies the preset here, Update overwrites the preset), so only the
     // statement of what drifted changes.
     const drift = preset && driftParts(preset);
     const lead = !drift ? null
@@ -435,13 +457,53 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     onStatus(`Preset "${saved.name}" ${verb}.`);
   }
 
+  // One sentence, one place. It was assembled two different ways -- a
+  // concatenation in the local check, a literal in the 409 catch -- identical
+  // today, silently divergent after any reword or a rename of the button.
+  const nameTakenNote = (name) =>
+    `A preset named "${name}" already exists — select it above and press Update to overwrite it.`;
+
   // Overwrite the SELECTED preset with the document's current prompt + panel.
   async function updateSelected() {
-    const target = selected();
-    if (!target) return;
+    const id = effectiveId();
+    if (!id) {
+      // Never silently do nothing: refresh() can null a deleted preset while
+      // the focus guard skips the rebuild that would have disabled this
+      // button, so a confirmed click can land with no target at all.
+      onStatus('No preset selected — pick one above to update.', true);
+      return;
+    }
     try {
+      // Refetch FIRST. The fetch used to live on save(); the split left it on
+      // the harmless create while the one destructive write decided AND
+      // executed against a cache refreshed only at drawer-open. A preset whose
+      // prompt was written from another tab reads here as "nothing to lose",
+      // so the arm never fires and a long prompt goes under one click.
+      await refresh();
+      if (!ctx.alive) return;
+      const target = presets.find((p) => p.id === id);
+      if (!target) {
+        onStatus('That preset no longer exists — it was deleted elsewhere.', true);
+        await refreshAndRepaint();
+        return;
+      }
+      // "Did it CHANGE since you looked", not "is this still destructive".
+      // Re-asking the guard would refuse every confirmed update, because the
+      // answer that granted the arm is still true a click later. What must
+      // block is the row moving under us: the preview showed one prompt, the
+      // server now holds another, and confirming would overwrite something
+      // the user never saw.
+      if ((target.system_prompt ?? null) !== shownPrompt) {
+        onStatus(`"${target.name}" changed elsewhere since you looked — `
+          + 'check the preview and press Update again.', true);
+        drawer.requestRebuild({ force: true });
+        return;
+      }
+      // No `name`: PUT patches only the fields it is given, and re-sending a
+      // cached name reverts a rename made on another device -- or 409s and
+      // throws the whole confirmed write away.
       const saved = await api.updatePreset(target.id, {
-        name: target.name, system_prompt: getPrompt(), params: snapshotSettings(),
+        system_prompt: getPrompt(), params: snapshotSettings(),
       });
       if (!ctx.alive) return;
       commitSaved(saved, 'updated');
@@ -465,9 +527,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       await refresh();
       if (!ctx.alive) return;
       if (presets.some((p) => p.name === name)) {
-        onStatus(`A preset named "${name}" already exists — select it above and press `
-          + 'Update to overwrite it.', true);
-        drawer.requestRebuild({ force: true });
+        // NO rebuild: force:true bypasses the focus guard, replaces the
+        // section, and the name you just typed is gone -- with the keyboard
+        // closed, on a phone -- at the exact moment you are told to go do
+        // something else with it.
+        onStatus(nameTakenNote(name), true);
         return;
       }
       const saved = await api.createPreset({
@@ -477,9 +541,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       commitSaved(saved, 'saved');
     } catch (err) {
       if (!ctx.alive) return;
-      onStatus(err.status === 409
-        ? `A preset named "${name}" already exists — select it above and press Update to overwrite it.`
-        : `Preset save failed: ${err.message}`, true);
+      onStatus(err.status === 409 ? nameTakenNote(name) : `Preset save failed: ${err.message}`, true);
     }
   }
 
@@ -545,7 +607,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // Destination AND payload: the prompt is edited in another drawer
       // section this bar gets no events from, which is why it must be re-read
       // at confirm time rather than wired to a control here.
-      () => JSON.stringify([effectiveId(), getPrompt() ?? null]),
+      // Destination, payload AND the stored value being destroyed: a refresh
+      // resolving between arm and confirm changes what the write costs, and
+      // the preview the user read is no longer what is there.
+      () => JSON.stringify([effectiveId(), getPrompt() ?? null, shownPrompt]),
     );
     const delBtn = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current }, ['Del']),
@@ -592,7 +657,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     driftEl = createEl('div', {
       class: 'preset-drift settings-note muted small', hidden: true, role: 'status',
       title: 'Presets are copies: Apply stamps the preset onto this document; '
-        + 'later edits here never change the preset until you Save it again.',
+        + 'later edits here never change the preset until you press Update.',
     });
     // Collapsed by default: it answers "what does this preset hold?" on
     // demand without pushing the rest of the drawer off-screen on a phone.

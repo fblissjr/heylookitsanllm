@@ -26,7 +26,7 @@ a different thing.
 |---|---|---|---|
 | **Global defaults** | your browser (localStorage) | what a brand-new conversation starts from, when no preset is involved | you move a slider with no conversation open |
 | **The conversation** | the server, on the conversation row | what actually gets sent to the model | you move a slider with a conversation open |
-| **The preset** | the server, in a named store | a snapshot you can copy into a conversation, or copy a conversation into | only when you press **Save** |
+| **The preset** | the server, in a named store | a snapshot you can copy into a conversation, or copy a conversation into | only when you press **Update** or **Save as new** |
 
 The system prompt has the same three layers: a draft parked in your browser
 before any conversation exists, the conversation's own prompt, and the prompt a
