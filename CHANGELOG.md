@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.28]
+
+### Added
+
+- **`tests/smoke/` — a live smoke test, opt-in, one arm per ENGINE.** `tests/e2e/render.mjs` drives the real `/v3` page against a *stubbed* `/v1`, so everything the client's preset and lifecycle work rests on — a store that refuses a duplicate preset name, params round-tripping onto a conversation, a run that detaches and finishes after the reader walks away — was unverified. This is that half. Never spawns a server (same rule as `tests/eval/`); `--contract-only` runs the storeside checks in seconds with no model load.
+  - **Arms are engines, not providers.** The provider `Literal` has three values but they are not three engines: `"mlx"` routes to *two separate upstream repos* (mlx-lm for text, mlx-vlm for vision, on separate release trains) via `effective_loader`, while `"gguf"` is one llama-server binary. "We covered mlx" is a claim about a config value, not about code. The harness runs a text arm and a vision arm separately and reports a missing arm as **uncovered**, never as green. `mlx_embedding` is out of scope (owner call).
+  - Verified against a real server on all three arms. The walk-away check — disconnect mid-stream, then confirm the run committed the *whole* answer — passes on mlx-lm, mlx-vlm and gguf, which is the first real confirmation of the behaviour v1.79.26 taught the client to disclose.
+  - The vision arm failed on its first run and the cause was the fixture: a 1×1 PNG dies in gemma's aspect-ratio-preserving resize (PIL refuses a degenerate `(1,1,1)` array) before the model is reached. It now generates a 64×64 PNG with stdlib `zlib`/`struct`. A smoke test must go red when the engine is broken, not when a fixture is degenerate.
+  - A no-delta ending now quotes the stream's own trailing bytes. The first failure reported only `saw_delta=False`, and the reason was reachable only by digging through the server log.
+
 ## [1.79.27]
 
 ### Fixed
