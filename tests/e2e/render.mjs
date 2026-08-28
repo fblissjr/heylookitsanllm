@@ -2575,6 +2575,19 @@ async function main() {
         const UNSAFE = [
           () => '[ref]: https://example.com\n\nSee [the doc][ref] for more.',
           () => 'Text with a note[^1].\n\n[^1]: the footnote body.',
+          // CommonMark HTML blocks of types 1-5 end on a CLOSING CONDITION,
+          // not on a blank line, so each of these renders as one token whole
+          // and as two if cut at the inner blank line -- and a committed
+          // prefix is never revisited, so the seam would be permanent. The
+          // generator never emitted one, which is how the boundary rule stayed
+          // provably-wrong-but-green: <div> (type 6) DOES end at a blank line
+          // and was the only html shape in BLOCKS.
+          () => '<pre>\nfoo\n\nbar\n</pre>',
+          () => '<script>\nvar a = 1;\n\nvar b = 2;\n</script>',
+          () => '<style>\n.a { color: red }\n\n.b { color: blue }\n</style>',
+          () => '<textarea>\nline one\n\nline two\n</textarea>',
+          () => '<!--\na comment\n\nstill the comment\n-->',
+          () => '<![CDATA[\nraw\n\nmore raw\n]]>',
         ];
 
         const CHUNKS = [1, 5, 23, 97];

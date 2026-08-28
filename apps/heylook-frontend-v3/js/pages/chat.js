@@ -971,7 +971,23 @@ async function cloneConversation(ctx, convId) {
     showStatus(ctx, 'Cloning conversation…');
     const cloned = await api.cloneConversation(convId);
     if (!ctx.alive) return;
-    s.conversations.unshift(cloned);
+    // RE-LIST rather than unshift the response. `POST /clone` returns the FULL
+    // conversation -- every message, and the content blocks with it -- while
+    // `s.conversations` holds LIST-shaped rows: the server deliberately drops
+    // system_prompt and params there and adds `generating`. Unshifting the
+    // clone put one row of a different shape among the others -- it pinned the
+    // whole cloned message list in memory for the session (the cost the list
+    // trim exists to avoid), and it carried no `generating` key, so
+    // `refreshAfterResume`'s `'generating' in activeRow` test answered
+    // differently for it than for every other row.
+    // Re-listing rather than hand-copying the list fields here: WHICH fields
+    // are list-shaped is the server's decision (`_CONV_LIST_NAMES`, derived by
+    // subtraction so a new column joins only deliberately), and a second copy
+    // of that list in the client is the drift this repo keeps paying for.
+    const listed = await api.listConversations({ signal: ctx.signal }).catch(() => null);
+    if (!ctx.alive) return;
+    if (listed?.conversations) s.conversations = listed.conversations;
+    else s.conversations.unshift(cloned);  // list fetch failed: a stale shape beats no row
     renderConvList(ctx);
     await selectConversation(ctx, cloned.id);
     s.rootEl.classList.remove('chat--convs-open');

@@ -133,6 +133,14 @@ export function debounce(fn, ms) {
 }
 
 // Auto-grow a textarea up to maxPx.
+//
+// NB the early return below hands sizing to CSS entirely -- INCLUDING maxPx.
+// A caller passing a cap must have a matching `max-height` inside the
+// `@supports (field-sizing: content)` block in app.css, or the cap silently
+// disappears on every browser that supports it. Three fields shipped without
+// one. A viewport-relative cap belongs there as `dvh`, not `vh`: this function
+// reads `window.innerHeight`, which follows the mobile toolbar, and `vh` does
+// not.
 export function autoGrow(textarea, maxPx = 200) {
   if (!textarea) return;
   if (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('field-sizing', 'content')) return;

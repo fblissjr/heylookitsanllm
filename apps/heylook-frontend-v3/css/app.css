@@ -845,6 +845,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   line-height: 1.5;
   max-height: 200px;
 }
+/* `field-sizing: content` lets the browser size the textarea, so autoGrow()
+   returns early where it is supported -- WITH ITS PIXEL CAP. Three of these
+   fields had no CSS max-height, so their caps were silently dropped on every
+   supporting browser: a long system prompt (the 35k-character case this
+   branch's preset work is about) pushed the rest of the drawer off-screen,
+   and editing a long message put Save/Cancel below the fold. The caps below
+   are the JS ones, and they must stay in step with autoGrow's callers.
+   .notebook__content is absent on purpose: it passes Infinity. */
 @supports (field-sizing: content) {
   .chat__composer textarea,
   .explore__composer textarea,
@@ -855,6 +863,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .message-edit__thinking {
     field-sizing: content;
   }
+  /* prompt-section.js: autoGrow(input, 480) */
+  .sysprompt-input { max-height: 480px; }
+  /* chat.js growCap(): max(400, innerHeight * 0.6). dvh, not vh -- innerHeight
+     follows the mobile toolbar and vh does not, and the buttons staying on
+     screen is the entire point of the cap. */
+  .message-edit textarea { max-height: max(400px, 60dvh); }
+  /* chat.js thinkCap(): max(160, innerHeight * 0.3) */
+  .message-edit__thinking { max-height: max(160px, 30dvh); }
 }
 
 @media (max-width: 767px) {

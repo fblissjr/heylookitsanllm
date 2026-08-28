@@ -41,6 +41,29 @@ const LIST_ITEM = /^(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 // by text arbitrarily far below them, so their presence makes every split
 // unsafe -- see the fallback in render().
 const LINK_DEF = /^ {0,3}\[[^\]]*\]:/;
+// CommonMark HTML blocks of types 1-5 END ON A CLOSING CONDITION, NOT ON A
+// BLANK LINE -- so, exactly like a link-reference definition, they reach
+// forward past the only thing this scanner treats as a block break:
+//
+//   type 1  <pre> <script> <style> <textarea>   until the matching close tag
+//   type 2  <!--                                until -->
+//   type 3  <?                                  until ?>
+//   type 4  <!LETTER                            until >
+//   type 5  <![CDATA[                           until ]]>
+//
+// `<pre>\nfoo\n\nbar\n</pre>` renders as ONE html token whole, but split at
+// `bar` -- unindented, at column 0, after a blank line, so isHardBlockStart
+// says yes -- it renders as two, and the committed prefix is never revisited,
+// so the seam is permanent. Type 6 (<div> and friends) DOES end at a blank
+// line and is deliberately not here.
+//
+// Treated as `unsafe` rather than tracked open-to-close, which is the
+// conservative half of the choice: the cost is that one message loses
+// incremental rendering, the alternative is five open/close pairs interacting
+// with fence state inside the module whose whole claim is that its cut is
+// provably safe. Per-block tracking is the refinement if a real case ever
+// makes the fallback expensive.
+const HTML_BLOCK_OPEN = /^ {0,3}(?:<(?:pre|script|style|textarea)[\s>/]|<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/i;
 
 // One reusable inert parser. <template> content is never scripted or
 // connected, and the HTML reaching it is already sanitized by renderMarkdown.
@@ -140,7 +163,7 @@ export class MarkdownStream {
       this.prevBlank = true;
       return;
     }
-    if (LINK_DEF.test(line)) this.unsafe = true;
+    if (LINK_DEF.test(line) || HTML_BLOCK_OPEN.test(line)) this.unsafe = true;
     if (this.prevBlank && this.isHardBlockStart(line)) this.boundary = start;
     const fence = FENCE_OPEN.exec(line);
     if (fence) {

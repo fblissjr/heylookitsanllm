@@ -199,9 +199,14 @@ function renderStrip(ctx) {
     );
     return;
   }
-  if (s.stripEl.querySelector('.empty-state')) {
+  // `s.chipEls.length === 0` answers "is the empty state still up?" in O(1),
+  // and it is the variable this function already maintains. It used to be a
+  // querySelector over `s.stripEl`, evaluated on EVERY append for the life of
+  // the generation -- a DOM scan across a container that ends up holding
+  // thousands of chips, on the exact path whose rewrite was about not doing
+  // work proportional to the strip per batch.
+  if (s.chipEls.length === 0) {
     s.stripEl.replaceChildren();
-    s.chipEls = [];
   }
   const currentCount = s.chipEls.length;
   if (currentCount < s.tokens.length) {
