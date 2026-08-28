@@ -330,7 +330,23 @@ function bindControl(key, meta) {
   return input;
 }
 
-export function buildSettingsPanel({ caps = [] } = {}) {
+// The panel's scope line, composed in ONE place so chat and notebook cannot
+// drift apart on the wording (they differ by a noun). `hasActive` is the
+// difference that actually matters to the reader: with a document open these
+// controls ARE that document's stored params and every edit writes to it;
+// without one they are the browser-side seed the next new document seeds from.
+// Nothing on screen said which, and selecting a document silently replaces
+// every value in the panel -- the root of the "did my settings just change?"
+// confusion (v3 user guide, rough edges).
+export function documentScopeNote(noun, hasActive) {
+  return hasActive
+    ? `Applies to this ${noun} — changes save as you make them.`
+    : `Defaults for new ${noun}s.`;
+}
+
+// `scope` is a resolved string (see documentScopeNote) or null for a surface
+// with nothing useful to say.
+export function buildSettingsPanel({ caps = [], scope = null } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
@@ -344,7 +360,13 @@ export function buildSettingsPanel({ caps = [] } = {}) {
     ]));
   }
 
-  const resetBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Reset to defaults']);
+  // "Clear all overrides", not "Reset to defaults": this sets every value to
+  // null, which hands each one back to the BACKEND cascade (global -> thinking
+  // -> models.toml). The behaviour was always right; "defaults" just read as
+  // something global while the button in fact rewrites the open document's
+  // params. No confirm -- sampler values are trivially recoverable, and a
+  // confirm here would train click-through past the ones that protect work.
+  const resetBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Clear all overrides']);
   resetBtn.addEventListener('click', () => {
     resetSettings();
     for (const { meta, control } of controls) {
@@ -355,6 +377,7 @@ export function buildSettingsPanel({ caps = [] } = {}) {
 
   return createEl('div', { class: 'settings-panel' }, [
     createEl('h3', {}, ['Sampling']),
+    scope ? createEl('div', { class: 'settings-note muted small' }, [scope]) : null,
     ...rows.core,
     rows.advanced.length
       ? createEl('details', {}, [

@@ -30,7 +30,7 @@ import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, PARAM_META } from '../settings.js';
+import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -123,6 +123,9 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => currentCaps(ctx),
       samplers: 'enabled',
+      // The panel IS this conversation's stored params once one is open, and
+      // the seed for the next new one when none is -- say which.
+      scope: () => documentScopeNote('conversation', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
       displayPrefs: DISPLAY_PREFS,

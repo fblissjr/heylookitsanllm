@@ -35,9 +35,13 @@
 //     prompt. The per-document prompt box below is a DIFFERENT thing and
 //     says so in its own label; without the preview there was no way to see
 //     what a preset held short of applying it
-//   - the drift line says what Apply/Save would DO to the selected preset,
-//     updated in place -- the drawer's focus guard means a rebuild can't be
-//     relied on while the user is typing in a field
+//   - the drift line says what Apply/Save would DO to the selected preset AND
+//     which half drifted (prompt, settings, or both), updated in place -- the
+//     drawer's focus guard means a rebuild can't be relied on while the user
+//     is typing in a field
+//   - the dropdown marks a preset carrying no prompt as "settings only": it
+//     is inert toward the prompt, and looking identical to every other entry
+//     is what made applying one read as "my preset disappeared"
 //   - a NEW document is the one exception to "the select never touches the
 //     document": it starts as the selected (or, after a reload, the stamped)
 //     preset -- prompt + params + stamp -- via presetForNewDoc(). Existing
@@ -129,6 +133,14 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // preset stored with no prompt is inert, not destructive.
   const presetPrompt = (p) => p?.system_prompt || null;
 
+  // How a preset reads in the dropdown. A promptless preset is inert toward
+  // the prompt (see above) but looked identical to any other in the list, so
+  // applying one and watching the prompt not change is the state that reads as
+  // "my preset disappeared". The preview already said so -- but you CHOOSE
+  // from the dropdown, so that is where it has to be said. Positive framing:
+  // it describes what the preset is, not what it lacks.
+  const presetLabel = (p) => (presetPrompt(p) ? p.name : `${p.name} — settings only`);
+
   // The preset a NEW document should start from (owner decision 2026-08-11:
   // the selected preset is the unit of continuity across documents). The
   // explicit bar selection wins; else the active document's stamp, so the
@@ -182,12 +194,26 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   }
 
   // DRIFT sense, for a preset the document explicitly carries: has anything
-  // this preset SPEAKS FOR changed? A promptless preset makes no claim about
-  // the prompt, so editing the prompt cannot make it "(edited)".
-  function matchesState(preset) {
+  // this preset SPEAKS FOR changed? Split into its two halves because the
+  // drift LINE has to name which -- one binary string covered both "you nudged
+  // temperature" and "you rewrote the whole prompt", so it read as alarming
+  // after a trivial edit and identical after a total rewrite.
+  //
+  // A promptless preset makes no claim about the prompt, so `prompt` is false
+  // for it by construction -- the override-box rule falls out of presetPrompt()
+  // rather than being restated here.
+  function driftParts(preset) {
     const incoming = presetPrompt(preset);
-    if (incoming && incoming !== (getPrompt() ?? null)) return false;
-    return samplersMatch(preset);
+    return {
+      prompt: Boolean(incoming && incoming !== (getPrompt() ?? null)),
+      samplers: !samplersMatch(preset),
+    };
+  }
+
+  // Derived, never a second copy of the comparison above.
+  function matchesState(preset) {
+    const { prompt, samplers } = driftParts(preset);
+    return !prompt && !samplers;
   }
 
   // IDENTITY sense, for the unstamped fallback in indicatorInfo(): does this
@@ -352,10 +378,19 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     syncIndicator(); // chip tracks the same edits the drift line does
     if (!driftEl) return;
     const preset = selected();
+    // One shared suffix, three leads: "it" is the PRESET in every case (Apply
+    // copies the preset here, Save overwrites the preset), so only the
+    // statement of what drifted changes.
+    const drift = preset && driftParts(preset);
+    const lead = !drift ? null
+      : drift.prompt && drift.samplers ? 'Prompt and settings differ'
+        : drift.prompt ? 'Prompt differs'
+          : drift.samplers ? 'Settings differ'
+            : null;
     const next = !preset ? ''
-      : matchesState(preset)
+      : !lead
         ? 'Matches current settings.'
-        : 'Differs from current settings -- Apply copies it here, Save overwrites it.';
+        : `${lead} — Apply copies it here, Save overwrites it.`;
     // write-on-change: this runs per keystroke in the prompt editors
     if (driftEl.textContent !== next) driftEl.textContent = next;
     if (driftEl.hidden !== !preset) driftEl.hidden = !preset;
@@ -454,7 +489,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       title: 'Select a saved preset', 'aria-label': 'Select a saved preset',
     }, [
       createEl('option', { value: '' }, ['Presets…']),
-      ...presets.map((p) => createEl('option', { value: p.id }, [p.name])),
+      // data-name carries the RAW name: the label is display only, while the
+      // name is an identity everywhere it is used as one (the save-as
+      // pre-fill, save()'s upsert-by-name). Nothing may read the label back.
+      ...presets.map((p) => createEl('option',
+        { value: p.id, 'data-name': p.name }, [presetLabel(p)])),
     ]);
     select.value = effectiveId() ?? '';
 

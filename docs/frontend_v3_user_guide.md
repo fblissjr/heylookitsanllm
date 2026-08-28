@@ -17,8 +17,10 @@ orienting paragraph each. For the build contract see
 ## 1. The one thing to understand first
 
 Almost every "why did it do that?" in this app comes from the same source:
-**your settings live in three places at once, and the screen does not tell you
-which one you are looking at.**
+**your settings live in three places at once.** The drawer now names which one
+you are editing, but the three layers are still the thing to hold in your head —
+they are why applying a preset, editing a knob, and saving a preset each affect
+a different thing.
 
 | Layer | Where it lives | What it is for | Changes when |
 |---|---|---|---|
@@ -32,12 +34,18 @@ preset carries.
 
 Two consequences worth internalising:
 
-- **The sampler panel is the active conversation's settings.** Selecting a
-  different conversation silently replaces every value in that panel with that
-  conversation's stored ones. Nothing animates, nothing announces it. If you
-  had "temperature 1.3" on screen and you click another conversation, the 1.3
-  is not lost — it is still on the first conversation — but the panel now shows
-  something else.
+- **The sampler panel is the active conversation's settings**, and it says so:
+  under the *Sampling* heading it reads **"Applies to this conversation —
+  changes save as you make them."** With no conversation open it reads
+  **"Defaults for new conversations."**, because that is what the panel is then
+  — the seed the next new conversation starts from.
+  Selecting a different conversation replaces every value in the panel with
+  that conversation's stored ones. If you had "temperature 1.3" on screen and
+  you click another conversation, the 1.3 is not lost — it is still on the
+  first conversation — but the panel now shows something else.
+  **Clear all overrides** empties every field, which hands each value back to
+  the server's own defaults. On an open conversation that is a change to *that
+  conversation*.
 - **A preset is a copy, never a link.** Applying one copies values in. Editing
   them afterwards does not change the preset. Changing the preset does not
   change any conversation that was made from it. There is no live binding
@@ -55,6 +63,10 @@ depth.
 
 Presets are global. They are not per-conversation, per-model, or per-page; chat
 and the notebook share one store.
+
+A preset with no system prompt is listed as **"<name> — settings only"**. That
+is not an error state — it is a preset that carries sampler values and makes no
+claim about the prompt (see *Apply*, below).
 
 ### Seeing what is in one
 
@@ -118,10 +130,13 @@ Nothing is lost and nothing is hidden. The change is on **the conversation**
 immediately (a short debounce, then a write to the server) and it is what the
 model receives on your next message.
 
-The preset is untouched. The drift line under the dropdown says which situation
-you are in:
+The preset is untouched. The drift line under the dropdown says which
+situation you are in, and which half moved:
 
-> *Differs from current settings — Apply copies it here, Save overwrites it.*
+> *Matches current settings.*
+> *Prompt differs — Apply copies it here, Save overwrites it.*
+> *Settings differ — …*
+> *Prompt and settings differ — …*
 
 Read that as: your conversation and this preset have diverged. **Apply** discards
 your changes in favour of the preset's. **Save** discards the preset's in favour
@@ -295,23 +310,12 @@ Written down because they are real, not because they are scheduled. Each is a
 place where the interface does not currently say enough for the behaviour to be
 guessable.
 
-**The sampler panel does not say whose settings it is showing.** It is the
-active conversation's, it is also the source for the next new conversation, and
-selecting a conversation overwrites it without comment. Someone tuning a value,
-switching away to check something, and coming back will find different numbers
-and no explanation. This is the root of most preset confusion; the preset
-machinery is downstream of it.
-
 **Browsing and choosing a save destination are the same control.** Selecting a
 preset to look at it pre-fills the save-as name, which is why a stray Save
 overwrites the preset you were merely inspecting. The confirmation now catches
 this, but a confirmation is a guard on a sharp edge, not the absence of one.
 Separating "which preset am I reading" from "which preset am I writing" would
 remove the edge instead.
-
-**"Differs from current settings" does not say what differs.** It cannot
-distinguish a changed prompt from a nudged temperature, so it reads as alarming
-after a trivial edit and identical after a total rewrite.
 
 **Nothing says the generation survives you leaving.** This is genuinely good
 behaviour and almost nobody will discover it, because the only place it is
@@ -332,6 +336,14 @@ the union of what different model families accept, so a wrong-for-this-model
 value reaches the model and comes back an error. The control cannot currently
 narrow itself per model.
 
-**A preset that lost its prompt looks healthy.** It stays in the list and
-applies without complaint; it simply stops affecting the prompt. The list gives
-no indication which presets carry a prompt and which do not.
+### Closed
+
+Kept as a record rather than deleted, so this section reads as a ledger.
+
+- *The sampler panel does not say whose settings it is showing* — closed in
+  v1.79.25 by the scope line under the *Sampling* heading, and by renaming
+  "Reset to defaults" to "Clear all overrides".
+- *"Differs from current settings" does not say what differs* — closed in
+  v1.79.25; the line names the prompt, the settings, or both.
+- *A preset that lost its prompt looks healthy* — closed in v1.79.25; the
+  dropdown marks it "settings only" at the point you choose it.

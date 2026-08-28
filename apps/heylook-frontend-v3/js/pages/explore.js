@@ -33,6 +33,10 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => exploreCaps(ctx),
       samplers: 'enabled',
+      // Its own literal, not documentScopeNote(): this page binds no document
+      // (no bindDocumentParams), so the panel here is the browser-side store
+      // and nothing else -- a different fact, not a different noun.
+      scope: () => 'Not saved to a document — these apply to runs on this page.',
       extras: () => [createEl('div', { class: 'settings-note muted small' },
         ['Logprobs on: top-5 alternatives per token (fixed for this view).'])],
     });

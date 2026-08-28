@@ -110,6 +110,12 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 // contribution = {
 //   caps?():    string[]                 -- model capabilities (gates enable_thinking)
 //   samplers?:  'enabled'|'disabled'|'hidden'   (default 'hidden')
+//   scope?():   string|null              -- what the sampler panel APPLIES TO,
+//                                           shown under its heading. Compose a
+//                                           document page's through
+//                                           settings.documentScopeNote(); a
+//                                           page that binds no document says
+//                                           its own thing; null says nothing
 //   sections?():Node[]                   -- lead sections (rendered first)
 //   extras?():  Node[]                   -- trailing controls (rendered last)
 //   displayPrefs?: string[]              -- DISPLAY_META keys this page honors;
@@ -205,7 +211,10 @@ function render() {
 
   const samplers = current?.samplers ?? 'hidden';
   if (samplers !== 'hidden') {
-    const panel = buildSettingsPanel({ caps: current?.caps?.() ?? [] });
+    const panel = buildSettingsPanel({
+      caps: current?.caps?.() ?? [],
+      scope: current?.scope?.() ?? null,
+    });
     if (samplers === 'disabled') {
       for (const el of panel.querySelectorAll('input, button')) el.disabled = true;
       panel.append(createEl('div', { class: 'settings-note muted small' },

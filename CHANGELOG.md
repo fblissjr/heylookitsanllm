@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.25]
+
+### Changed
+
+- **The sampler panel now says what it applies to.** It was simultaneously the open document's stored params, the seed for the next new document, and a panel that silently refilled itself on every document switch -- with nothing on screen saying which. That ambiguity is upstream of the preset machinery and accounts for most of the confusion the guards in v1.79.20-.22 were catching downstream of.
+  - A note under the *Sampling* heading: "Applies to this conversation — changes save as you make them.", or "Defaults for new conversations." when none is open. Composed in one place (`settings.documentScopeNote`) so chat and notebook cannot drift apart on wording; explore, which binds no document, states its own different fact. Reaches the panel as a new optional `scope()` on the drawer contribution.
+  - **"Reset to defaults" is now "Clear all overrides".** The behaviour was always right -- every value to null hands it back to the backend cascade -- but "defaults" read as something global while the button in fact rewrites the open document's params. No confirm: sampler values are trivially recoverable, and one there would train click-through past the confirms that protect work.
+
+- **A preset carrying no system prompt is labelled where you choose it**, as "<name> — settings only". Such a preset is inert toward the prompt by design (the override-box rule), but it looked identical to every other entry in the dropdown, so applying one and watching the prompt not change is the state that reads as "my preset disappeared". The preview said so; the dropdown, which is where the choice happens, did not. Options carry `data-name` with the raw name, so the label is display-only and nothing that treats a name as an identity reads it back.
+
+- **The drift line names which half drifted** -- "Prompt differs", "Settings differ", or "Prompt and settings differ", against one shared suffix. A single binary string covered both a nudged temperature and a rewritten prompt, so it read as alarming after a trivial edit and identical after a total rewrite. `matchesState()` now derives from the same `driftParts()` the line uses rather than keeping a second copy of the comparison, and a promptless preset scores no prompt drift by construction.
+
+- `docs/frontend_v3_user_guide.md` describes the new labels and moves these three from "known rough edges" to a "Closed" ledger beneath it. The five remaining edges are unchanged.
+
 ## [1.79.24]
 
 ### Added

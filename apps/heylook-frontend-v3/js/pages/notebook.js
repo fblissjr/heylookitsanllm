@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { messagesParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams } from '../settings.js';
+import { messagesParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -89,6 +89,7 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
       samplers: 'enabled',
+      scope: () => documentScopeNote('notebook', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],
       onOpen: s.presetBar.onDrawerOpen,
       displayPrefs: DISPLAY_PREFS,

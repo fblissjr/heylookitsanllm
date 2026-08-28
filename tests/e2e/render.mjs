@@ -1175,6 +1175,12 @@ async function main() {
       store.remote.presets.push({
         id: 'p-stable', name: 'stable', system_prompt: 'STABLE PRESET PROMPT', params: {}, updated_at: 'z',
       });
+      // Likewise promptless and likewise never written to -- "bare" acquires a
+      // prompt from the arming checks, so it cannot answer "is a promptless
+      // preset labelled?" by the time that check runs.
+      store.remote.presets.push({
+        id: 'p-samplers', name: 'samplers-only', system_prompt: null, params: {}, updated_at: 'z',
+      });
       // A second arm-worthy target, so a pending arm can be shown NOT to
       // carry across a change of selection.
       store.remote.presets.push({
@@ -1194,10 +1200,13 @@ async function main() {
       saveBtn: '.drawer--open .preset-section .preset-row:has(input.input) button',
       preview: '.drawer--open .preset-preview__body',
     };
+    // Matches data-name, NOT the option text: a preset carrying no prompt is
+    // labelled "<name> — settings only", so a text match would miss exactly
+    // the promptless fixture these checks lean on.
     const selectPreset = async (name) => {
       await guard.page.evaluate((sel, n) => {
         const el = document.querySelector(sel);
-        const opt = [...el.options].find((o) => o.textContent === n);
+        const opt = [...el.options].find((o) => o.dataset.name === n);
         if (!opt) throw new Error(`no preset option named ${n}`);
         el.value = opt.value;
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1225,6 +1234,16 @@ async function main() {
     // Hand-type a save-as name, the way a user renaming the target would --
     // this is the one control that can aim Save somewhere the select is not
     // pointing.
+    // Drive a sampler control the way the drawer's own listeners see it.
+    const setSampler = async (key, value) => {
+      await guard.page.evaluate((k, v) => {
+        const el = document.getElementById(`set-${k}`);
+        if (!el) throw new Error(`no sampler control for ${k}`);
+        el.value = v;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }, key, value);
+      await settle(guard.page);
+    };
     const typePresetName = async (name) => {
       await guard.page.evaluate((sel, n) => {
         const box = document.querySelector(sel);
@@ -1409,6 +1428,66 @@ async function main() {
       const writes = await clickSave();
       assert(writes.length === 1,
         `Save asked for confirmation although it would not change the stored prompt (${writes.length} writes)`);
+    });
+
+    // ---- the drawer says what it is doing (v1.79.25) ---------------------
+    await suite.check('the sampler panel names what it applies to', async () => {
+      // It is the active conversation's stored params, it is also the seed for
+      // the next new one, and selecting a conversation silently replaces every
+      // value in it. Nothing said which.
+      //
+      // The no-document wording ("Defaults for new conversations.") is NOT
+      // checked here and is not reachable in this harness: the stub always
+      // serves a conversation and chat auto-selects it. Left uncovered rather
+      // than faked.
+      const note = await guard.page.$eval('.drawer--open .settings-panel .settings-note',
+        (el) => el.textContent);
+      assert(/applies to this conversation/i.test(note),
+        `the sampling panel's scope note reads ${JSON.stringify(note)}`);
+    });
+
+    await suite.check('the reset button says it clears overrides', async () => {
+      // It sets every value to null, handing each back to the backend cascade,
+      // and writes that onto the open conversation -- "Reset to defaults" read
+      // as something global.
+      const label = await guard.page.$eval('.drawer--open .settings-panel button',
+        (el) => el.textContent);
+      assert(label === 'Clear all overrides', `the reset button reads ${JSON.stringify(label)}`);
+    });
+
+    await suite.check('a preset carrying no prompt says so where you pick it', async () => {
+      const opts = await guard.page.$eval(PRESET.select, (el) =>
+        [...el.options].map((o) => [o.dataset.name ?? null, o.textContent]));
+      const bare = opts.find(([n]) => n === 'samplers-only');
+      const owned = opts.find(([n]) => n === 'owned');
+      assert(bare && /settings only/i.test(bare[1]),
+        `the promptless preset renders as ${JSON.stringify(bare?.[1])}`);
+      assert(owned && owned[1] === 'owned',
+        `a preset that DOES carry a prompt was decorated: ${JSON.stringify(owned?.[1])}`);
+    });
+
+    await suite.check('the drift line names which half drifted', async () => {
+      const drift = () => guard.page.$eval('.drawer--open .preset-drift', (el) => el.textContent);
+      // Start from an exact match, then break one half at a time.
+      await selectPreset('stable');
+      await typeDocPrompt('STABLE PRESET PROMPT');
+      await setSampler('temperature', '');
+      assert(/matches current settings/i.test(await drift()),
+        `expected a match, got ${JSON.stringify(await drift())}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT, edited');
+      let line = await drift();
+      assert(/^Prompt differs/.test(line), `prompt-only edit reads ${JSON.stringify(line)}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT');
+      await setSampler('temperature', '0.7');
+      line = await drift();
+      assert(/^Settings differ/.test(line), `sampler-only edit reads ${JSON.stringify(line)}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT, edited again');
+      line = await drift();
+      assert(/^Prompt and settings differ/.test(line), `both edited reads ${JSON.stringify(line)}`);
+      await setSampler('temperature', ''); // leave the panel as we found it
     });
 
     await suite.check('no uncaught page errors (preset guard)', () => {
