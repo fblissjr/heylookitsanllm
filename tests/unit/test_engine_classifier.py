@@ -85,10 +85,29 @@ class TestDegradedServers:
         assert cov.by_engine == {"v": "mlx-vlm", "t": "mlx-lm"}
         assert set(cov.unconfirmable) == {"v", "t"}
 
-    def test_admin_401_leaves_every_model_unclassified_not_guessed(self):
-        # /v1/models carries no provider, so with the admin endpoint behind a
-        # token there is nothing to classify FROM. Guessing "mlx" here would
-        # let a token-gated server report full coverage it never had.
+    def test_admin_401_degrades_to_the_inference_it_replaced(self):
+        # Both harnesses now depend on an endpoint behind `require_admin_token`,
+        # so the token-gated server is a REAL state, not a hypothetical. It
+        # degrades rather than collapsing because `/v1/models` carries
+        # `provider` (api.list_models sets it from the config): gguf is still
+        # named outright, and mlx falls back to the capability inference and is
+        # reported as not-confirmed. A run against such a server says what it
+        # could not confirm instead of reporting a coverage hole for every
+        # model it serves.
+        cov = classify("x", get_json=_server(
+            models=[{"id": "v", "provider": "mlx", "capabilities": ["vision"]},
+                    {"id": "t", "provider": "mlx", "capabilities": []},
+                    {"id": "g", "provider": "gguf"}],
+            admin_status=401,
+        ))
+        assert cov.by_engine == {"v": "mlx-vlm", "t": "mlx-lm", "g": "gguf"}
+        assert set(cov.unconfirmable) == {"v", "t"}   # gguf needs no loader
+        assert not cov.unclassified
+
+    def test_a_model_with_no_provider_anywhere_is_unclassified_not_guessed(self):
+        # `/v1/models` omits `provider` when the router serves an id with no
+        # resolvable config. Nothing to classify FROM -- and guessing "mlx"
+        # would let a coverage hole print as a covered arm.
         cov = classify("x", get_json=_server(
             models=[{"id": "a", "capabilities": ["vision"]}],
             admin_status=401,

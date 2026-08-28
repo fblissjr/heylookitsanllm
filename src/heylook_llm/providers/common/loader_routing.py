@@ -41,7 +41,15 @@ def mlx_vlm_supports(model_type: str) -> bool:
     now called per ROW by ``GET /v1/admin/models`` (not just once per load), where
     an uncached miss re-pays a failed import -- a filesystem search -- on every
     request. A hit is already free via ``sys.modules``; the cache is for the
-    misses."""
+    misses.
+
+    It assumes mlx-vlm's AVAILABILITY is fixed for the process, which is true in
+    production and not in a test that mocks the mlx tree partway through: one
+    early probe under a mock would pin ``False`` for the session. Related scar,
+    same shape: mocking ``mlx_vlm.generate.diffusion`` made ``_detect_diffusion``'s
+    absent-dependency branch untestable. Nothing hits it today -- on Apple
+    hardware ``mlx_mocks`` skips the patch entirely -- but clear the cache rather
+    than debug it cold."""
     if not model_type:
         return False
     try:
