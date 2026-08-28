@@ -307,6 +307,32 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .preset-row { display: flex; gap: 0.4rem; }
 .preset-row select,
 .preset-row .input { flex: 1; min-width: 0; text-align: left; }
+/* read-only view of the SELECTED preset's own prompt -- deliberately styled
+   apart from .sysprompt (the editable per-document box below it), because
+   the whole failure this fixes was reading one as the other */
+.preset-preview {
+  border: 1px dashed var(--line);
+  border-radius: var(--r-card);
+  padding: 0.4rem 0.6rem;
+}
+.preset-preview summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  user-select: none;
+}
+.preset-preview__body {
+  margin-top: 0.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+.preset-preview__body--none { font-style: italic; }
 .sysprompt {
   border: 1px solid var(--line);
   border-radius: var(--r-card);

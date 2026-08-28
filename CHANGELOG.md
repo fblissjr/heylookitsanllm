@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.20]
+
+### Fixed
+
+- **Preset Save could overwrite a stored preset's system prompt on one unconfirmed click.** The preset `<select>` pre-fills the save-as name box, so picking a preset to *look* at it left that preset armed as Save's target; Save then wrote the **document's** prompt over it with an `UPDATE` that keeps no history. Live loss on 2026-08-28: one preset's stored prompt is now byte-for-byte the open conversation's prompt.
+  - The guard was on the wrong direction. `Apply` was armed ("Replace prompt?") -- it overwrites the *document*, which is recoverable by re-applying the preset. `Save` was a bare click listener and overwrites the *preset*, which is not recoverable. Per the only-loss-gates rule, Save is the one that gates: it now arms whenever a preset of that name exists and Save would not leave its prompt as it is -- replacing it with different text, or (the quieter loss) writing `NULL` over it from a document with no prompt, which leaves an override-box preset present but inert.
+  - Enter in the name box routes through the button rather than calling `save()` directly; a second entry point past the arm is the same hole with a keyboard on it.
+  - No arm when nothing is at stake (a new name, or a preset that carries no prompt) -- a confirm that fires with nothing to lose only trains click-through.
+
+- **Every preset appeared to hold the same system prompt.** The drawer renders the preset section directly above the per-document prompt box, and that box shows the **document's** prompt regardless of the selection (the select is inert by design). Labelled only "System prompt", it read as the selected preset's, so clicking through the dropdown showed one unchanging block of text -- and a Save "to keep what I'm looking at" is exactly the click above.
+  - The preset section now carries a collapsed, read-only view of the **selected preset's own** prompt (or says the preset carries none), so a preset can be inspected without applying it.
+  - The document's box names its owner: "System prompt for this conversation" / "…this notebook", via a new optional `label` on `createPromptSection`'s adapter.
+
+- **The preset select showed nothing selected on a conversation that was running a preset.** It initialised from an explicit pick only, never from the document's `applied_preset_id`, so the one control that could have answered "which preset is this?" said "Presets…" -- which is what sent the user clicking through the dropdown in the first place. It now follows the document's stamp until an explicit pick is made, and an explicit pick is remembered against the document it was made on, so switching documents falls back to the new document's stamp instead of carrying the previous document's selection.
+
+- Nothing above changes the API. `tests/e2e/render.mjs` grows five checks that assert **on the wire** -- the `PUT` that must not be sent -- because the arm relabels the button, so a DOM assertion would pass whether or not the request was held back. All five were shown red against a pre-fix copy of the tree via `E2E_V3_ROOT`, and the first one fails there with the overwrite payload in the message. The stub `/v1` store grew a preset `PUT` handler and seedable presets/stamp for them.
+
 ## [1.79.19]
 
 ### Added

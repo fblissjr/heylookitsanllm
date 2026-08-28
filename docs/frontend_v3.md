@@ -124,7 +124,7 @@ js/
   streaming.js              # SSE over /v1/chat/completions (keepalive, reader.cancel, abort-as-completion, 503 retry, mid-stream {"error"})
   settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/setDisplayPref; displayWireFields() = display prefs that ride the WIRE, never the sampler bag -- show_special_tokens); null = backend-cascade; snapshotSettings()/applySettings()
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
-  preset-bar.js             # shared drawer section (createPresetBar): select is inert, Apply is an explicit armed-confirmed copy, live drift line; used by chat + notebook
+  preset-bar.js             # shared drawer section (createPresetBar): select is inert but FOLLOWS the document's applied_preset_id until an explicit pick, Apply and Save are BOTH armed-confirmed (Save overwrites the unrecoverable side -- v1.79.20), read-only preview of the selected preset's own prompt, live drift line; used by chat + notebook
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook
   markdown.js                 # the ONLY text->HTML path (marked + DOMPurify; raw HTML is SHOWN, never rendered)
   markdown-stream.js          # incremental render for a message still streaming: safe-boundary split, committed prefix, tail-only re-render (+ appendPlainText for thinking boxes)

@@ -80,6 +80,7 @@ export default createPage({
       set: (v) => { s.systemPrompt = v ?? ''; },
       persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
       onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
+    label: 'System prompt for this notebook',
     });
 
     // Notebook consumes messagesParams() for generate-at-cursor, so it gets full

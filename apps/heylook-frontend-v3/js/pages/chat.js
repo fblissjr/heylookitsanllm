@@ -681,6 +681,7 @@ function buildPromptSection(ctx) {
     },
     persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
     onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
+    label: 'System prompt for this conversation',
   });
   return s.promptSection;
 }

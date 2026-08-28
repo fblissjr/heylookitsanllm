@@ -259,7 +259,24 @@ The system prompt is an OVERRIDE BOX (owner rule, v1.62.3): a preset OWNS a
 prompt and carries it, but a preset with an EMPTY one makes no claim and
 leaves the document's prompt alone -- empty NEVER means "set it to empty",
 which is what turned one blank Save into two presets losing their prompts.
-Only a carrying preset can arm "Replace prompt?" or count as drift. A prompt
+Only a carrying preset can arm "Replace prompt?" or count as drift.
+BOTH directions are armed (v1.79.20): Apply overwrites the DOCUMENT (recoverable
+-- re-apply the preset), Save overwrites the STORED PRESET with an UPDATE that
+keeps no history, so Save is the one only-loss actually names. It was the bare
+one, and the select PRE-FILLS the save-as name box, so picking a preset to look
+at it armed that preset as Save's target -- one click wrote the document's
+prompt over a 35k-char stored one on 2026-08-28. Save now arms whenever a preset
+of that name exists and the write would not leave its prompt as it is (different
+text, or NULL from a promptless document -- which leaves an override-box preset
+present but inert, i.e. "my preset disappeared"); Enter in the name box routes
+through the BUTTON, never straight to save(). The reason that click happened at
+all is structural: the drawer renders the preset section directly above the
+per-document prompt box, which shows the DOCUMENT's prompt whatever the select
+says, so every preset looked like it held the same text. The section now carries
+a read-only preview of the SELECTED preset's own prompt, and the document's box
+names its owner (`label` on createPromptSection's adapter). The select also
+FOLLOWS the document's `applied_preset_id` until an explicit pick, and a pick is
+remembered against the document it was made on. A prompt
 typed before any conversation exists is parked in localStorage until a
 conversation adopts it (it was page-state-only, so a reload ate it while the
 sampler params beside it survived), and `.chat__sysprompt-chip` states what
