@@ -442,7 +442,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
-stale_reload_fields}], total}`.
+stale_reload_fields,effective_loader}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
@@ -465,6 +465,19 @@ saved value differs from what the loaded process was built with (always `[]` whe
 loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
+`effective_loader` (v1.79.31) is `"mlx-lm" | "mlx-vlm"` on an mlx row and `null` on every
+other provider — WHICH MLX LIBRARY decodes this model. Provider `mlx` is two separate
+upstream repos with separate release trains, so `provider` does not name an engine, and
+`loader` in `config` is a routing HINT (`auto` degrades vision→mlx-lm when mlx-vlm does
+not register the `model_type`). DERIVED from the config plus the model dir's
+`model_type`, deliberately NOT read off a loaded provider: `MLXProvider.effective_loader`
+is null for every model that is not resident, which is the set a live harness has to
+choose its arms from. `null` for gguf (one engine, already named by `provider`) and for
+embeddings (no answer exists). Read-only, so it sits top-level beside `provider` and
+never inside `config` — a value in a provider config class becomes an editable field on
+the models page.
+Adding it moved `GET /v1/admin/models` and `GET /v1/admin/models/{id}` off the event loop
+(plain `def`): the derivation stats each served model's `config.json`.
 `GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,watch_hf_cache,
 scan_interval_seconds,models_served,warning?}`. The `[scan]` table from models.toml --
 the watch folders discovery serves from. PUT takes any subset (absent = leave alone),

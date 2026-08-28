@@ -34,6 +34,7 @@ from heylook_llm.config import (
     ScannedModelListResponse,
 )
 from heylook_llm.model_service import ModelService
+from heylook_llm.providers.common.loader_routing import effective_loader_for_config
 
 logger = logging.getLogger(__name__)
 
@@ -135,8 +136,23 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     non-default summary chip only exists because this response can tell the
     two apart. A resolved dump made every default look deliberately chosen
     (chip on every row, ``n_gpu_layers 999`` rendered as an explicit choice).
+
+    ``effective_loader`` is DERIVED, and derived from the config rather than
+    from a loaded provider: ``MLXProvider.effective_loader`` is null for every
+    model that is not resident, which is most of them, and a field that only
+    answers for resident models cannot tell a harness which engines it can
+    cover. Provider ``mlx`` is two upstream repos (mlx-lm, mlx-vlm); this is the
+    only field on the wire that says which one a row means.
     """
     loaded = mc.id in loaded_ids
+    # The RESOLVED dump, not the exclude_unset one below: the routing rule reads
+    # `loader` and `modalities`, and both are normally defaults -- absent from the
+    # stored keys on almost every entry. Derived, so it lands top-level beside
+    # `provider`, never inside `config`: this repo derives the config editor's
+    # field list from the provider classes, and a read-only value living in a
+    # config class would show up on the models page as an editable option.
+    resolved = (mc.config.model_dump() if hasattr(mc.config, 'model_dump')
+                else dict(mc.config))
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
@@ -152,6 +168,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         stale_reload_fields=(
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
+        effective_loader=effective_loader_for_config(mc.provider, resolved),
     )
 
 
@@ -187,8 +204,12 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 # staleness would land exactly where entries get WRITTEN. Both are off the loop
 # now, so the cost is admin-request latency, not stalled streams.
 #
-# Read routes stay `async def`: they are models.toml-only or read the router's
-# already-merged snapshot, and never scan (see _served_configs).
+# Read routes are models.toml-only or read the router's already-merged snapshot,
+# and never scan (see _served_configs) -- but the two that build an
+# AdminModelResponse (list, get) are `def` all the same: `effective_loader` is
+# derived per row from the model dir's config.json, so a list response is one
+# mtime-stat per served model. Small, and still disk, still per request, still
+# the event loop if it were `async`.
 # =============================================================================
 
 # --- List (fixed path, no conflict) ---
@@ -199,7 +220,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     description="List all model configurations including disabled models, with full config details.",
     response_model=AdminModelListResponse,
 )
-async def list_model_configs(request: Request):
+def list_model_configs(request: Request):
     router = request.app.state.router_instance
     loaded_ids = _get_loaded_model_ids(request)
     configs = _served_configs(request)
@@ -451,7 +472,7 @@ async def unload_model(model_id: str, request: Request):
     description="Get full configuration for a single model.",
     response_model=AdminModelResponse,
 )
-async def get_model_config(model_id: str, request: Request):
+def get_model_config(model_id: str, request: Request):
     router = request.app.state.router_instance
     config = _resolve_config(request, model_id)
     if not config:

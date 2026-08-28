@@ -18,10 +18,15 @@ does.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional
 
 
+_logged_degradations: set[str] = set()
+
+
+@lru_cache(maxsize=None)
 def mlx_vlm_supports(model_type: str) -> bool:
     """Whether mlx-vlm registers a dedicated model class for ``model_type`` (i.e.
     can load it as a real VLM): lower-case, apply MODEL_REMAPPING, then try to
@@ -30,7 +35,13 @@ def mlx_vlm_supports(model_type: str) -> bool:
     We intentionally do NOT call ``mlx_vlm.utils.get_model_and_args`` here: it
     falls back to a ``text_only`` module (and resolves speculator/dflash aliases)
     rather than raising, so "it resolved" does not mean "loadable as a VLM" -- the
-    direct module-import probe is the honest gate signal this router needs."""
+    direct module-import probe is the honest gate signal this router needs.
+
+    Cached: what mlx-vlm registers cannot change inside one process, and this is
+    now called per ROW by ``GET /v1/admin/models`` (not just once per load), where
+    an uncached miss re-pays a failed import -- a filesystem search -- on every
+    request. A hit is already free via ``sys.modules``; the cache is for the
+    misses."""
     if not model_type:
         return False
     try:
@@ -91,7 +102,36 @@ def resolve_effective_loader(
         return "mlx-vlm"
     if vlm_supports(model_type):
         return "mlx-vlm"
-    logging.info(
-        "loader=auto: model_type %r declares vision but mlx-vlm has no loader for "
-        "it; routing to mlx-lm (text)", model_type)
+    # Once per model_type per process. This used to run only at LOAD; it now runs
+    # per row of every `GET /v1/admin/models`, and an unconditional INFO there
+    # would repeat the same sentence forever without ever saying anything new.
+    if model_type not in _logged_degradations:
+        _logged_degradations.add(model_type)
+        logging.info(
+            "loader=auto: model_type %r declares vision but mlx-vlm has no loader for "
+            "it; routing to mlx-lm (text)", model_type)
     return "mlx-lm"
+
+
+def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
+    """The engine a model WOULD load with, resolved WITHOUT loading it.
+
+    ``MLXProvider.effective_loader`` is the same answer read off a live provider,
+    and is therefore null for every model that is not resident. This is the
+    unloaded-model form, for callers that have a config and no process: the admin
+    listing, and through it the live smoke harness, whose whole premise is that an
+    arm names an ENGINE rather than a provider Literal.
+
+    ``None`` for anything but ``"mlx"``: the question is *which mlx library*, and
+    it has no answer for a gguf subprocess or an embedding model. gguf is one
+    engine, already named by ``provider``.
+
+    Pure over the config plus one mtime-cached read of the model dir's
+    ``config.json`` -- no import of the model, no MLX. It agrees with the loaded
+    provider by CONSTRUCTION: both call :func:`resolve_effective_loader` with the
+    same two inputs.
+    """
+    if provider != "mlx":
+        return None
+    return resolve_effective_loader(
+        config, lambda: read_model_type(config.get("model_path", "") or ""))

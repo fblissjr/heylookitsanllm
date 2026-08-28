@@ -1411,6 +1411,18 @@ class AdminModelResponse(BaseModel):
                     "writes an entry for it.",
     )
     stale_reload_fields: List[str] = Field(default_factory=list)
+    effective_loader: Optional[Literal["mlx-lm", "mlx-vlm"]] = Field(
+        default=None,
+        description="Which MLX library actually decodes this model -- mlx-lm "
+                    "(text) or mlx-vlm (vision). Null for every non-mlx "
+                    "provider: gguf is one engine, already named by "
+                    "`provider`, and the question has no answer for an "
+                    "embedding model. DERIVED from the config (loader + "
+                    "modalities + the model dir's model_type), so it is "
+                    "answered for UNLOADED models too -- provider `mlx` is "
+                    "two separate upstream repos, and this is the only field "
+                    "that says which one a row means.",
+    )
 
 
 class AdminModelListResponse(BaseModel):

@@ -1,6 +1,6 @@
 # Plan: engine coverage
 
-last updated: 2026-08-28
+last updated: 2026-08-28 (phases 1-2 shipped, v1.79.31)
 
 ## Context
 
@@ -70,7 +70,44 @@ Two things it already earned:
   resize before the model is reached. A degenerate fixture tests the
   preprocessor, not the engine.
 
-## Phase 1 — one engine classifier, not two
+## Phase 1 — one engine classifier, not two (DONE, v1.79.31)
+
+`tests/helpers/engines.py` — `classify(server) -> Coverage`, imported by both
+`tests/smoke/run.py` and `tests/eval/run.py`. It lives in `tests/helpers/`
+rather than the `tests/lib/` this plan first named: `helpers/` already IS the
+shared-test-code import path (`mlx_mock`, `sse`), and standing up a second
+parallel directory for the same purpose is the copy this plan objects to,
+one level up. Both harnesses run as scripts, so each inserts `tests/` on
+`sys.path` itself.
+
+It was unblocked by a server change, not a test change. **`GET /v1/admin/models`
+now serves `effective_loader`** per row (`mlx-lm` | `mlx-vlm`, null for every
+non-mlx provider), DERIVED from the config rather than read off a loaded
+provider — `MLXProvider.effective_loader` is null for every model that is not
+resident, which is exactly the set a harness has to choose its arms from. So
+`classify` asks the server instead of guessing, and the `unconfirmable` bucket
+that Phase 0 had to report for every auto-routed vision model is now empty.
+The bucket stays: a server too old to serve the field still classifies, and
+still says which answers were inferred.
+
+`Coverage` also carries capabilities and residency, so `tests/eval/run.py`'s
+`fetch_models` is gone rather than duplicated.
+
+**What it found the first time it ran** (2026-08-28, 30 served models): this
+machine serves exactly ONE mlx-lm model, `gpt-oss-120b-MXFP4-Q8-mlx`. The cheap
+text arm this plan assumed — `Qwen3.5-0.8B-MLX-8bit` — is `mlx-vlm`: Qwen3.5
+declares vision and mlx-vlm registers `qwen3_5`, so it POSITIVELY routes there.
+Every sentence below that names it as the mlx-lm model was wrong, and nothing
+could have said so before, which is the point. Running the mlx-lm arm cheaply
+now needs either a small text-only MLX model or an explicit
+`loader = "mlx-lm"` pinned on a small one — the explicit-loader rule is
+honoured by the field, so a pinned model classifies as mlx-lm.
+
+Verified live: for all 17 served mlx models, the value on the wire equals what
+`MLXProvider.__init__` computes for the same id. Same rule, same two inputs —
+the check is that the two CALL SITES feed it the same thing.
+
+### What the phase called for
 
 `tests/smoke/run.py` has `classify()`; `tests/eval/run.py` has
 `fetch_models()`. They already answer overlapping questions from the same two
@@ -86,7 +123,28 @@ It belongs beside the harnesses (a shared `tests/lib/`), **not** in
 **Check:** point it at a server and assert every served model classifies, or is
 explicitly excluded. An unclassifiable model is a coverage hole with no name.
 
-## Phase 2 — coverage is reported, not assumed
+## Phase 2 — coverage is reported, not assumed (DONE, v1.79.31)
+
+Both harnesses print an engine-coverage paragraph naming, per arm, `covered` or
+`UNCOVERED` — and `UNCOVERED` distinguishes "no model of this engine is served"
+from "models are served and this run touched none of them", which is the
+quieter and more dangerous of the two.
+
+- `tests/smoke/run.py` prints it BEFORE the arms run, not after: a summary you
+  read after ten minutes of loads has already let you assume. Its exit rule was
+  already in place from Phase 0 (exit 2 on an absent arm unless narrowed).
+- `tests/eval/run.py` prints it after the summary, plus the line it most needed:
+  **how many tasks ran on NO model**, by category. The bank's
+  `required_capabilities <= model_caps` filter was silent, so a text-only
+  `--models` list ran zero vision tasks under a full-width green.
+
+The exit rule reduces differently for eval, deliberately: `--models` is
+required there and auto-picking models for a 13-task bank is the heavyweight
+auto-testing this repo declines, so **every eval run is narrowed** and coverage
+never changes its exit code. Narrowing is a decision; what Phase 2 buys there
+is that the decision's consequence is stated rather than implied.
+
+### What the phase called for
 
 **Do:**
 
@@ -141,11 +199,16 @@ Phase 1 is small and unblocks the reporting in Phase 2. Phase 3 is the
 substance and can be done a row at a time — each row is independently useful.
 Phase 4 is a paragraph.
 
-Phases 1 and 2 need no model loads. Phase 3 needs one model per arm, and the
-existing small ones suffice (`Qwen3.5-0.8B-MLX-8bit`,
-`google_gemma_4-E4B-it-bf16-mlx`, `google_gemma-4-E4B-it-qat-q4_0-gguf`) —
-keeping the whole thing runnable in minutes, which is the only version of it
-that will actually get run.
+Phases 1 and 2 needed no model loads and are done. Phase 3 needs one model per
+arm, and two of the three are cheap: `Qwen3.5-0.8B-MLX-8bit` (mlx-vlm — not
+mlx-lm, see Phase 1) and `google_gemma-4-E4B-it-qat-q4_0-gguf` (gguf).
+
+**mlx-lm has no cheap model here.** The only served mlx-lm model is
+`gpt-oss-120b-MXFP4-Q8-mlx`, so the text arm currently costs a 120B load —
+which means, realistically, that it will not get run. Cheapest fix, and worth
+doing before Phase 3: pin `loader = "mlx-lm"` on a small model in models.toml.
+An explicit loader forces the engine and `effective_loader` reports it, so the
+arm becomes real and cheap without pretending the two libraries are one.
 
 ## The failure mode this plan is guarding against
 

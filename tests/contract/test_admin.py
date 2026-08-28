@@ -27,6 +27,41 @@ class TestAdminListModels:
             assert isinstance(model["config"], dict)
 
 
+class TestAdminEffectiveLoader:
+    """`effective_loader` on the admin row: which MLX library decodes.
+
+    Provider `mlx` is TWO upstream repos (mlx-lm text, mlx-vlm vision) with
+    separate release trains, so "provider" does not name an engine. The live
+    smoke harness picks one model per ENGINE and has to do it from this
+    endpoint.
+    """
+
+    def test_answered_for_an_unloaded_model(self, client):
+        """The whole point: it is derived from the config, not read off a
+        loaded provider.
+
+        `MLXProvider.effective_loader` exists only on a resident process, so a
+        field sourced from there would be null for every model the harness has
+        not already loaded -- which is exactly the set it needs to choose from.
+        Nothing in this fixture is loaded, and the answer is still there.
+        """
+        resp = client.get("/v1/admin/models")
+        assert resp.status_code == 200
+        rows = {m["id"]: m for m in resp.json()["models"]}
+        row = rows["test-mlx-model"]
+        assert row["loaded"] is False
+        # Non-vision mlx -> the text loader, with no probe of mlx-vlm's
+        # registry and no read of a model dir that does not exist.
+        assert row["effective_loader"] == "mlx-lm"
+
+    def test_single_model_route_agrees_with_the_list(self, client):
+        """Both admin reads build the same response object; pin that they
+        keep answering the same way rather than growing a second derivation."""
+        listed = client.get("/v1/admin/models").json()["models"][0]
+        single = client.get(f"/v1/admin/models/{listed['id']}").json()
+        assert single["effective_loader"] == listed["effective_loader"]
+
+
 class TestAdminSamplers:
     """Tests for GET /v1/admin/models/samplers (list named samplers).
 

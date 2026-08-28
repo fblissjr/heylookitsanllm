@@ -1195,8 +1195,14 @@ async function main() {
     // change rather than throw.
     const PRESET = {
       select: '.drawer--open .preset-section select',
-      applyBtn: '.drawer--open .preset-section .preset-row:has(select) button:nth-of-type(1)',
-      updateBtn: '.drawer--open .preset-section .preset-row:has(select) button:nth-of-type(2)',
+      // By TITLE, not by position. `nth-of-type` silently RE-AIMS at whatever
+      // button ends up in that slot, so reordering the row -- or inserting one
+      // -- would leave every check below green while pressing the wrong
+      // control, and Update is the destructive one. The titles are stable
+      // anchors: armedConfirm relabels `textContent` when armed and never
+      // touches `title`, which is also why a text lookup is not the answer.
+      applyBtn: '.drawer--open .preset-section .preset-row button[title^="Copy this preset here"]',
+      updateBtn: '.drawer--open .preset-section .preset-row button[title^="Overwrite this preset"]',
       nameInput: '.drawer--open .preset-section .preset-row:has(input.input) input.input',
       saveNewBtn: '.drawer--open .preset-section .preset-row:has(input.input) button',
       preview: '.drawer--open .preset-preview__body',

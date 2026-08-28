@@ -45,14 +45,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
+# `tests/` on the path: this runs as a SCRIPT, not under pytest, so nothing has
+# inserted the rootdir for us. helpers/ is where shared test code already lives
+# (mlx_mock, sse).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from helpers.engines import ARMS, classify, format_coverage  # noqa: E402
 
-# The three engines. `loader` is what actually decodes; `provider` is only how
-# models.toml spells it. Keep these apart -- conflating them is the mistake
-# this file exists to prevent.
-ARMS = ("mlx-lm", "mlx-vlm", "gguf")
+GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
 
 def _png(width=64, height=64):
     """A real RGB PNG, built with stdlib only (the eval bank's rule: no deps).
@@ -110,6 +112,22 @@ def call(server, method, path, body=None, timeout=120, raw=False) -> tuple[int, 
             return e.code, payload.decode(errors="replace")
 
 
+def _dict(body):
+    """A response body as a dict, whatever `call` actually returned.
+
+    `call` yields a parsed dict on success, but None on an empty body and a raw
+    STRING when an error body is not JSON. Every read of a field therefore has
+    to survive both. It did not: one unguarded `got["params"]` turned a failed
+    GET into a TypeError that unwound the whole contract half -- a harness that
+    reports a server problem as a crash reports nothing at all.
+    """
+    return body if isinstance(body, dict) else {}
+
+
+def _params_of(body):
+    return _dict(_dict(body).get("params"))
+
+
 # ---------------------------------------------------------------------------
 # results
 # ---------------------------------------------------------------------------
@@ -138,62 +156,9 @@ class Report:
 
 
 # ---------------------------------------------------------------------------
-# discovery: which engine is each model?
+# discovery: which engine is each model?  (helpers/engines.py -- shared with
+# tests/eval/run.py, because two copies of a taxonomy is one drifting copy)
 # ---------------------------------------------------------------------------
-
-def classify(server):
-    """model_id -> arm, plus the models we cannot honestly name an engine for.
-
-    Returns (by_arm, unconfirmable). ENGINE IDENTITY IS `effective_loader`, not
-    the vision capability -- and this is exactly the conflation the header says
-    the file exists to prevent, so it must not be repeated here:
-
-    - An explicit `loader = "mlx-lm"` on a dual-capable VLM still reports the
-      vision capability (loader_routing: "an explicit loader forces the
-      engine"). Splitting on the capability alone would put it in the mlx-vlm
-      arm and go green having run mlx-lm twice. `loader` is on the admin
-      response, so this case IS resolvable and is resolved.
-    - `loader = "auto"` degrades vision -> mlx-lm whenever mlx-vlm does not
-      register the model_type, and that degradation is invisible from every
-      endpoint here. Those models are returned as UNCONFIRMABLE rather than
-      claimed for an arm: a harness that names engines must be able to name
-      which one ran.
-    """
-    st, models = call(server, "GET", "/v1/models", timeout=30)
-    if st != 200:
-        raise SystemExit(f"GET /v1/models failed: {st} {models}")
-    st, admin = call(server, "GET", "/v1/admin/models", timeout=30)
-    admin_by_id = {}
-    if st == 200:
-        for m in (admin or {}).get("models", []):
-            admin_by_id[m.get("id")] = m
-
-    out, unconfirmable, resident = {}, {}, set()
-    for entry in (models or {}).get("data", []):
-        mid = entry["id"]
-        caps = set(entry.get("capabilities") or [])
-        row = admin_by_id.get(mid) or {}
-        prov = row.get("provider") or entry.get("provider")
-        loader = ((row.get("config") or {}).get("loader")) or "auto"
-        if row.get("loaded"):
-            resident.add(mid)
-        if prov == "gguf":
-            out[mid] = "gguf"
-        elif prov == "mlx":
-            if loader in ("mlx-lm", "mlx-vlm"):
-                out[mid] = loader          # explicit: the config IS the answer
-            elif "vision" not in caps:
-                out[mid] = "mlx-lm"        # no vision -> mlx-vlm is not in play
-            else:
-                # auto + vision: routed to mlx-vlm only if mlx-vlm registers
-                # the model_type, and nothing served here can see that. Taken
-                # as mlx-vlm (the overwhelmingly common outcome) but recorded
-                # as INFERRED, so the run says which arms it could not confirm
-                # rather than quietly claiming them.
-                out[mid] = "mlx-vlm"
-                unconfirmable[mid] = "loader=auto + vision: taken as mlx-vlm, but an unregistered model_type degrades to mlx-lm and nothing here can see it"
-        # anything else (embeddings, unknown) is deliberately unclassified
-    return out, unconfirmable, resident
 
 
 def pick_models(by_arm, overrides, wanted, resident=frozenset()):
@@ -273,17 +238,19 @@ def contract_checks(server, r):
         created.append(("conv", conv["id"]))
 
         st, got = call(server, "GET", f"/v1/conversations/{conv['id']}")
+        params = _params_of(got) if st == 200 else {}
         r.check("conversation params + preset stamp round-trip",
-                st == 200 and got["params"].get("temperature") == 0.5
-                and got.get("applied_preset_id") == p1["id"],
-                f"read back params={got.get('params')} stamp={got.get('applied_preset_id')}")
+                st == 200 and params.get("temperature") == 0.5
+                and _dict(got).get("applied_preset_id") == p1["id"],
+                f"got {st}: read back params={params} stamp={_dict(got).get('applied_preset_id')}")
 
         st, _ = call(server, "PUT", f"/v1/conversations/{conv['id']}",
                      {"params": {"temperature": 0.9, "top_k": 40}})
         st, got = call(server, "GET", f"/v1/conversations/{conv['id']}")
+        params = _params_of(got) if st == 200 else {}
         r.check("a params PUT replaces the bag wholesale",
-                got["params"].get("temperature") == 0.9 and got["params"].get("top_k") == 40,
-                f"read back {got.get('params')}")
+                st == 200 and params.get("temperature") == 0.9 and params.get("top_k") == 40,
+                f"got {st}: read back {params}")
 
         # -- the list carries `generating`, which is what the composer's third
         # state (Stop for a run this page never subscribed to) is built on.
@@ -572,18 +539,25 @@ def main():
             if arm not in ARMS:
                 raise SystemExit(f"--model: unknown arm {arm!r} (choose from {', '.join(ARMS)})")
             overrides[arm] = mid
-        by_arm, unconfirmable, resident = classify(server)
+        cov = classify(server)
         wanted = args.arm or list(ARMS)
-        chosen = pick_models(by_arm, overrides, wanted, resident)
+        chosen = pick_models(cov.by_engine, overrides, wanted, cov.resident)
+        # Said BEFORE the arms run, not after: the point of the paragraph is to
+        # tell you what this run is about to be evidence FOR, and a summary you
+        # read after ten minutes of loads has already let you assume.
+        print(f"\n{DIM}-- engine coverage ---------------------------------------{RESET}")
+        print(format_coverage(cov, spanned=[a for a in ARMS if a in chosen],
+                              narrowed=bool(args.arm or args.model)))
         for arm in wanted:
             if arm not in chosen:
                 r.skip(f"{arm}: whole arm", "no model of this engine is served")
                 continue
-            # Say it ONCE per arm, not once per model: the engine behind an
-            # auto-routed vision model is inferred, and a harness that names
-            # engines should say when it is guessing.
-            if chosen[arm] in unconfirmable:
-                r.skip(f"{arm}: engine identity NOT confirmed", unconfirmable[chosen[arm]])
+            # Say it ONCE per arm, not once per model: on a server too old to
+            # serve `effective_loader` the engine is inferred from the vision
+            # capability, and a harness that names engines should say when it
+            # is guessing.
+            if chosen[arm] in cov.unconfirmable:
+                r.skip(f"{arm}: engine identity NOT confirmed", cov.unconfirmable[chosen[arm]])
             arm_checks(server, r, arm, chosen[arm], args.load_timeout)
 
     total = r.passed + len(r.failed)

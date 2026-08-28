@@ -76,3 +76,45 @@ class TestResolveEffectiveLoader:
         assert resolve_effective_loader(
             {"modalities": ["text", "vision"]}, _getter("gemma4", []),
             vlm_supports=lambda mt: True) == "mlx-vlm"
+
+
+class TestEffectiveLoaderForConfig:
+    """`effective_loader_for_config` -- the same answer, without a process.
+
+    The routing rule is `resolve_effective_loader`; this is the wrapper the
+    admin listing calls, and the only thing it adds is the provider gate and
+    the model_type read. Both are the parts that can be wrong on the wire.
+    """
+
+    def test_none_for_every_non_mlx_provider(self):
+        # The question is WHICH MLX LIBRARY. gguf is one engine and is already
+        # named by `provider`; an embedding model has no answer at all. Naming
+        # a loader for either would be a claim the field cannot support.
+        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+
+        cfg = {"loader": "auto", "modalities": ["text", "vision"]}
+        assert effective_loader_for_config("gguf", cfg) is None
+        assert effective_loader_for_config("mlx_embedding", cfg) is None
+        assert effective_loader_for_config("mlx", cfg) in ("mlx-lm", "mlx-vlm")
+
+    def test_explicit_loader_wins_over_the_vision_capability(self):
+        # The conflation this whole field exists to prevent: an explicit
+        # `loader = "mlx-lm"` on a dual-capable VLM still declares vision, so
+        # anything splitting on the capability would call it mlx-vlm and go
+        # green having run mlx-lm twice.
+        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+
+        assert effective_loader_for_config(
+            "mlx", {"loader": "mlx-lm", "modalities": ["text", "vision"]}) == "mlx-lm"
+
+    def test_missing_model_path_does_not_raise(self):
+        # Discovered entries, draft/MTP heads, half-written configs: a read
+        # that cannot happen must degrade to the vision declaration, not to a
+        # 500 on the models page.
+        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+
+        assert effective_loader_for_config(
+            "mlx", {"loader": "auto", "modalities": ["text", "vision"]}) == "mlx-vlm"
+        assert effective_loader_for_config(
+            "mlx", {"loader": "auto", "model_path": None,
+                    "modalities": ["text"]}) == "mlx-lm"

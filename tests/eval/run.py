@@ -27,6 +27,10 @@ from pathlib import Path
 
 from tasks import TASKS
 
+# `tests/` on the path: this runs as a SCRIPT, not under pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from helpers.engines import classify, format_coverage  # noqa: E402
+
 GREEN = "\x1b[32m"
 RED = "\x1b[31m"
 DIM = "\x1b[2m"
@@ -36,13 +40,12 @@ DEFAULT_SERVER = "http://localhost:8000"  # this repo's default port (moved off 
 DEFAULT_OUT = Path(__file__).parent / "results.jsonl"
 
 
-def fetch_models(server: str) -> dict[str, set[str]]:
-    """model_id -> capability set, from GET /v1/models. A model with no
-    `capabilities` key (or an empty list) is treated as text/chat only."""
-    req = urllib.request.Request(f"{server}/v1/models")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = json.load(resp)
-    return {entry["id"]: set(entry.get("capabilities") or []) for entry in body.get("data", [])}
+# `fetch_models` used to live here, reading capabilities off /v1/models. It is
+# now `helpers.engines.classify`, shared with tests/smoke/run.py, which answers
+# the same question plus the one this harness could not: which ENGINE each model
+# is. Provider "mlx" is two upstream repos, so a green run over a list of text
+# models is not evidence about mlx-vlm -- and this file used to print exactly
+# that green with nothing said.
 
 
 def run_task(server: str, model: str, task) -> dict:
@@ -120,6 +123,30 @@ def print_summary(results: list[dict]) -> None:
     print(f"\n{total_passed}/{len(results)} checks passed")
 
 
+def print_coverage(cov, requested_models: list[str], tasks, ran_tasks: set[str]) -> None:
+    """What this run is, and is not, evidence for.
+
+    An eval run is ALWAYS narrowed -- `--models` is required, and auto-picking
+    models for a 13-task bank is exactly the heavyweight auto-testing this repo
+    declines. So this never changes the exit code: narrowing is a decision, and
+    a decision does not get reported as a failure. What it does is make the
+    decision's CONSEQUENCE visible, which is the whole invariant: a live harness
+    reports the engines it exercised, and an engine with no model is uncovered,
+    never green.
+    """
+    print()
+    print("Engine coverage")
+    print(format_coverage(cov, spanned=cov.engines_of(requested_models), narrowed=True))
+    unrun = [t for t in tasks if t.name not in ran_tasks]
+    if unrun:
+        by_cat: dict[str, int] = {}
+        for t in unrun:
+            by_cat[t.category] = by_cat.get(t.category, 0) + 1
+        detail = ", ".join(f"{cat} x{n}" for cat, n in sorted(by_cat.items()))
+        print(f"  {len(unrun)} task(s) ran on NO model -- no model in this list "
+              f"has the capability they require: {detail}")
+
+
 def list_tasks() -> None:
     for t in TASKS:
         caps = ", ".join(t.required_capabilities) or "none"
@@ -151,25 +178,32 @@ def main() -> int:
         return 1
 
     try:
-        capability_map = fetch_models(args.server)
+        cov = classify(args.server)
     except Exception as e:
         print(f"Failed to reach {args.server}/v1/models: {e}", file=sys.stderr)
         print("This harness never spawns a server -- point --server at an already-running instance.", file=sys.stderr)
         return 1
 
     results: list[dict] = []
+    # Which tasks never ran because no model in the list could take them. The
+    # bank filters on `required_capabilities <= model_caps` and that filter used
+    # to be SILENT: a text-only --models list ran zero vision tasks and printed
+    # a full-width green, which is the exact shape the engine-coverage plan
+    # exists to end. Not applicable is a fine outcome; unsaid is not.
+    ran_tasks: set[str] = set()
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w") as out_f:
         for model in requested_models:
-            if model not in capability_map:
+            if model not in cov.capabilities:
                 print(f"{RED}WARNING{RESET}: model {model!r} not found in {args.server}/v1/models -- skipping", file=sys.stderr)
                 continue
-            model_caps = capability_map[model]
+            model_caps = cov.capabilities[model]
             print(f"\n{model}")
             for task in tasks:
                 if not set(task.required_capabilities) <= model_caps:
-                    continue  # model lacks a required capability -- silently not applicable
+                    continue  # model lacks a required capability -- not applicable
+                ran_tasks.add(task.name)
                 result = run_task(args.server, model, task)
                 results.append(result)
                 print_result(result)
@@ -181,6 +215,7 @@ def main() -> int:
         return 1
 
     print_summary(results)
+    print_coverage(cov, requested_models, tasks, ran_tasks)
     print(f"\nResults written to {out_path}")
     return 1 if any(not r["passed"] for r in results) else 0
 

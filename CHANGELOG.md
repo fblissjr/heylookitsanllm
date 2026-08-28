@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.31]
+
+### Added
+
+- **`effective_loader` on `GET /v1/admin/models`** (and the single-model read): `"mlx-lm" | "mlx-vlm"` on an mlx row, `null` on every other provider. Provider `mlx` is TWO upstream repos on separate release trains, so `provider` does not name an engine and `config.loader` is only a routing hint (`auto` degrades vision→mlx-lm when mlx-vlm does not register the `model_type`). DERIVED from the config plus the model dir's `model_type` — deliberately **not** read off a loaded provider, because `MLXProvider.effective_loader` is null for every model that is not resident, which is precisely the set a live harness has to pick its arms from. Read-only, so it sits top-level beside `provider` and never inside `config`, where the schema-driven editor would render it as a settable field.
+- **`tests/helpers/engines.py`** — one engine classifier, imported by both `tests/smoke/run.py` and `tests/eval/run.py`. `tests/eval`'s `fetch_models` is gone rather than duplicated; it now gets capabilities from the same call. A model classifies as an arm, as *excluded* (embeddings, by owner call), or as *unclassified* — and unclassified prints as a coverage hole with no name, which is different from a deliberate exclusion.
+- **Engine-coverage reporting in both live harnesses.** Per arm: `covered`, or `UNCOVERED` distinguishing "no model of this engine is served" from "models are served and this run touched none of them". Smoke prints it BEFORE the arms run. Eval prints it after its summary, plus the count it most needed: **how many tasks ran on NO model**, by category — the bank's `required_capabilities <= model_caps` filter was silent, so a text-only `--models` list ran zero vision tasks under a full-width green.
+
+### Fixed
+
+- `tests/smoke/run.py` read `got["params"]` off a conversation GET without a status guard, so a failed GET raised out of the whole contract half — a harness that reports a server problem as a traceback reports nothing at all. Body reads now survive the three shapes `call` can return (dict, `None`, raw error string).
+- `tests/e2e/render.mjs` aimed Apply and Update with positional `nth-of-type` selectors, which silently re-aim at whatever button lands in that slot; Update is the destructive one. They anchor on the stable `title` attributes now (`armedConfirm` relabels `textContent` when armed and never touches `title`, which is also why a text lookup is not the answer).
+
+### Changed
+
+- `GET /v1/admin/models` and `GET /v1/admin/models/{id}` are plain `def` (FastAPI threadpool) rather than `async def`: the derivation stats each served model's `config.json`, and that is disk work, per request, which an `async` handler would do on the event loop mid-stream.
+- `mlx_vlm_supports` is `lru_cache`d and the vision→mlx-lm degradation logs once per `model_type` per process. Both were free when the probe ran once per LOAD; it now runs per row of every admin list.
+
+### Found
+
+- **This machine serves exactly one mlx-lm model, `gpt-oss-120b-MXFP4-Q8-mlx`.** The cheap text arm `docs/project/plan_engine_coverage.md` assumed — `Qwen3.5-0.8B-MLX-8bit` — is **mlx-vlm**: Qwen3.5 declares vision and mlx-vlm registers `qwen3_5`, so it positively routes there. The mlx-lm arm therefore costs a 120B load today, which means it will not get run. Recorded in the plan with the cheapest fix (pin `loader = "mlx-lm"` on a small model; an explicit loader forces the engine and the new field reports it). Nothing could have surfaced this before — which is the argument for the field.
+- Verified live against a real server: for all 17 served mlx models the value on the wire equals what `MLXProvider.__init__` computes for the same id. Same rule, same two inputs; the check is that the two call sites feed it the same thing.
+
 ## [1.79.30]
 
 ### Fixed

@@ -1,11 +1,30 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.30 on the `frontend` branch; unit+contract
+Last updated: 2026-08-28 (v1.79.31 on the `frontend` branch; unit+contract
 green, model-free render suite green, live smoke green on all three engine
 arms)
 
-HANDOFF (next session start here): The codebase is at v1.79.30 on the
+HANDOFF (next session start here): The codebase is at v1.79.31 on the
 `frontend` branch.
+
+## v1.79.31 -- engine coverage phases 1-2
+
+`GET /v1/admin/models` now carries `effective_loader` per row, DERIVED from the
+config so it answers for UNLOADED models -- the provider attribute is null
+unless the model is resident, which is the opposite of what a harness choosing
+engine arms needs. `tests/helpers/engines.py` is one classifier shared by
+`tests/smoke` and `tests/eval` (eval's `fetch_models` is gone), and both
+harnesses now REPORT which engines a run spanned, with `UNCOVERED`
+distinguishing "no model served" from "served, none run". Two cheap deferred
+review findings went with it (the smoke contract's unguarded `got["params"]`,
+render.mjs's positional Apply/Update selectors).
+
+**What it found immediately:** this machine serves exactly ONE mlx-lm model,
+`gpt-oss-120b-MXFP4-Q8-mlx`. `Qwen3.5-0.8B-MLX-8bit` -- which
+`plan_engine_coverage.md` named as the cheap text arm -- is **mlx-vlm**
+(model_type `qwen3_5`, which mlx-vlm registers). So the mlx-lm arm costs a 120B
+load today and will not realistically get run. Cheapest fix, recorded in the
+plan: pin `loader = "mlx-lm"` on a small model. Worth doing before Phase 3.
 
 ## The 2026-08-28 arc (v1.79.20-.30, twelve commits)
 
@@ -61,20 +80,20 @@ Two foundational contracts established in earlier arcs remain in force:
   nothing.
 
 NEXT, in order:
-1. **Engine coverage, phases 1-4** (P2; `docs/project/plan_engine_coverage.md`).
-   Phase 0 shipped as `tests/smoke/`. Left: one shared engine classifier
-   instead of the copy now in `tests/smoke` + `tests/eval`; both harnesses
-   REPORT which engines a run spanned; then the same-feature-two-mechanisms
-   checks (audio must 400 LOUDLY on MLX, thinking capability, thinking depth,
-   chat-template source). **New, concrete, from today:** the smoke harness
-   cannot confirm which MLX library ran for an auto-routed vision model --
-   mlx-vlm degrades to mlx-lm for an unregistered `model_type` and no endpoint
-   reveals it, so the run honestly reports "engine identity NOT confirmed".
-   Exposing `effective_loader` (admin models response) closes it and is the
-   cheapest real win in the plan.
+1. **Engine coverage, phases 3-4** (P2; `docs/project/plan_engine_coverage.md`).
+   Phases 0-2 are done (v1.79.28, v1.79.31). Left: the
+   same-feature-two-mechanisms checks, one row at a time and each independently
+   useful -- audio must 400 LOUDLY on MLX (cheapest and most valuable: a silent
+   drop there is a wrong answer the user cannot see), thinking capability,
+   thinking depth, chat-template source. Then Phase 4, a paragraph in
+   `CLAUDE.md` saying what "covered" means for a release.
+   **Do first:** give mlx-lm a cheap model (pin `loader = "mlx-lm"` on a small
+   one), or Phase 3's text arm costs a 120B load every time.
 2. **Remaining review findings** (P2). Three reviews ran on 2026-08-28; the
-   critical ones are fixed in .29/.30. Known-open, all in `chat.js` unless
-   noted -- these were read and deliberately deferred, not missed:
+   critical ones are fixed in .29/.30, and the two cheapest of the deferred set
+   (render.mjs selectors, the smoke contract's unguarded body read) went out
+   with .31. Known-open, all in `chat.js`, all needing a puppeteer repro against
+   an isolated server rather than a read -- deliberately deferred, not missed:
    - `deleteConversation` fires `stopGenerate` without awaiting or checking
      its status, then `abortStream(ctx, ABANDON.DELETE)` asserts "genuinely
      ended server-side" on a request whose outcome is unknown. `stopRemote`
@@ -87,11 +106,6 @@ NEXT, in order:
    - `ABANDON.TEARDOWN` has no call site (page.js aborts `ctx.signal` and
      `linkedController` chains off it) and `abandonNote`'s generic fallback is
      near-dead. Documented as such; not yet removed.
-   - `render.mjs` aims Apply/Update with positional `nth-of-type` selectors,
-     which silently re-aim at the wrong control if the row's button order
-     changes -- the buttons carry stable `title` attributes.
-   - `tests/smoke/run.py` `contract_checks` indexes `got["params"]` without a
-     status guard, so a failed GET throws out of the contract half.
 3. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
    TODO.md). Startup `--model-id` load runs in server.py before the lifespan
    resolves `observability_level` from the DB, so telemetry is missing for
