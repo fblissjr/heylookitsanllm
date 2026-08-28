@@ -1,5 +1,9 @@
 # Frontend v3 -- orientation & backend coupling
 
+> For how the UI BEHAVES from a user's seat -- presets vs ad-hoc settings, the
+> generation lifecycle, editing, and the rough edges writing it exposed --
+> see [frontend_v3_user_guide.md](./frontend_v3_user_guide.md).
+
 Last updated: 2026-08-26 (v1.79.9-.15. Beyond the painter below: staged
 images are capped at 2048px on the longest edge before upload and base64 is
 minted at SEND rather than held (`image-prep.js`); chat and notebook share one

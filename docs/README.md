@@ -23,6 +23,9 @@ Start at its [README](./architecture/README.md).
   (design rationale, phases, parity results). Lens **fitting** + the Phase-1 spike harness moved to the `jlens-mlx` sibling repo (2026-07-10).
 
 ## Frontend (v3)
+- [frontend_v3_user_guide.md](./frontend_v3_user_guide.md) -- how the UI behaves, for the person USING it
+  (the state model behind presets vs ad-hoc settings, the generation lifecycle, editing; ends with the
+  known rough edges it exposed)
 - [frontend_v3.md](./frontend_v3.md) -- orientation + backend coupling map
 - [frontend_v3_spec.md](./frontend_v3_spec.md) -- build contract (§4 = the API contract)
 

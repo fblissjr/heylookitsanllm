@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.24]
+
+### Added
+
+- **[docs/frontend_v3_user_guide.md](./docs/frontend_v3_user_guide.md)** -- how the UI behaves, written for the person using it. Covers the settings state model, presets end to end (what one holds, what Apply copies, what Save overwrites, what happens when you change a knob and do neither), conversation management and per-conversation models, the generation lifecycle, message editing including thinking blocks, and attachments. Linked from `docs/README.md`, `docs/frontend_v3.md` and `CLAUDE.md`.
+  - It opens with the thing that explains most of the confusion: sampler settings exist in **three** places at once -- browser defaults, the conversation, the preset -- and the screen never says which one you are looking at. The system prompt has the same three. Everything else in the guide hangs off that.
+  - It ends with a **known rough edges** section rather than an appendix of caveats: places where the interface does not say enough for the behaviour to be guessable. The sampler panel not naming whose settings it shows; browse and save-destination being the same control; the drift line not saying what drifted; nothing disclosing that a generation survives you leaving; Send/Stop being one button that can mean a run you did not start; "Save & Continue" appearing and vanishing with the provider; thinking depth offering values a given model rejects; a prompt-less preset looking healthy.
+
+### Fixed
+
+- **A stale comment in `chat.js` described walking away from a generation as lossy.** `abortStream` said the server "persists the partial" on disconnect. It has not worked that way since generation outlived its response: aborting the fetch ends the *subscription*, the run detaches, finishes, and commits the **whole** answer. Only an explicit Stop keeps a partial. The comment was believed while drafting the user guide and only caught by reading `conversation_generate_api._Run` -- so the correction says what the behaviour is and names the wrong version, since that is what a future reader will otherwise re-derive.
+
 ## [1.79.23]
 
 ### Removed

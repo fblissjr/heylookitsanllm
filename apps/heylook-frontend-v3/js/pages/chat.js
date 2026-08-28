@@ -2413,9 +2413,14 @@ function stopStream(ctx) {
   });
 }
 
-// Teardown / conversation switch / model switch: kill the fetch. The
-// server's disconnect path persists the partial (detached task), and the
-// next select of that conversation re-fetches whatever it saved.
+// Teardown / conversation switch / model switch: kill the fetch. This ends
+// our SUBSCRIPTION, not the run -- the server detaches the generation and it
+// finishes and commits the WHOLE answer (conversation_generate_api._Run), so
+// the next select of that conversation gets the complete reply, not a
+// truncated one. Only an explicit Stop (DELETE .../generate -> abort_event)
+// keeps just the partial. Do not re-describe this as "persists the partial";
+// it did work that way once, and the stale comment made walking away look
+// lossy in the user guide until the server was read.
 function abortStream(ctx) {
   ctx.state.stream?.controller.abort();
 }
