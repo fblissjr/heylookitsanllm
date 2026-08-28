@@ -174,7 +174,10 @@ than blocked:
 
 - Images or audio already in the thread that the new model cannot read are
   **dropped from the request**, with a note on each affected message. The
-  conversation keeps them; the model just never sees them.
+  conversation keeps them; the model just never sees them. This is the one
+  thing that stops to ask (Cancel / Switch anyway).
+- Losing **thinking** is stated in the status line, not confirmed — a capability
+  going away destroys nothing, so it is disclosed rather than gated.
 - Attachments you have staged but not yet sent **block** the switch instead.
   The asymmetry is deliberate: history is already committed and dropping it is
   reversible by switching back, whereas a staged file silently vanishing from a
@@ -242,6 +245,11 @@ pressing Stop keeps only what had arrived.**
 
 Every message has an **Edit** action, both yours and the model's.
 
+**Save & Continue is offered but disabled** when the current model cannot do it
+— continuing your *own* message needs an MLX model — and its tooltip says why.
+It is disabled rather than hidden, and never fires on a guess: the continuation
+discards everything after the message, and that would land before the failure.
+
 **Thinking is editable too.** When an assistant message has a reasoning trace,
 the editor shows two boxes, captioned *Thinking* and *Response*. Clearing the
 thinking box removes the block entirely rather than leaving an empty one.
@@ -257,11 +265,6 @@ The editor offers up to three buttons:
   resume from there.
 
 Both destructive buttons refuse while a response is streaming, and say why.
-
-**Save & Continue does not always appear on your own messages.** Continuing a
-*user* turn only works on MLX models; the gguf/llama-server path has no way to
-express it. The button hides rather than offering an action that would fail, and
-it also hides while the model's provider is still unknown.
 
 **Delete** removes a single message and leaves the rest of the thread intact.
 
@@ -291,6 +294,10 @@ Oversized images are downscaled before they go on the wire. **Vision tokens /
 image** in the advanced settings controls how much detail the model spends on
 each image.
 
+**Thinking depth** lists the union of what different model families accept, so
+a value one model takes another will reject. The control says so, and `auto`
+always works — it leaves the model's own default alone.
+
 ---
 
 ## 7. The other pages
@@ -318,19 +325,15 @@ Written down because they are real, not because they are scheduled. Each is a
 place where the interface does not currently say enough for the behaviour to be
 guessable.
 
-**Send and Stop are one button, and it can read Stop for a run you did not
-start.** Correct — the run is yours, started in another tab or before a reload —
-but there is no cue distinguishing "stop the thing streaming in front of me"
-from "stop the thing finishing invisibly."
+**Send and Stop are one button.** The tooltip now separates "stop what you are
+watching" from "stop the run finishing on the server", but the button face reads
+the same in both cases, and a tooltip is not reachable by touch.
 
-**"Save & Continue" appearing and disappearing looks arbitrary.** The reason
-(user-turn continuation is MLX-only) is invisible at the point of use. A
-disabled button with a reason would be more honest than an absent one.
-
-**Thinking depth offers values a given model will reject.** The dropdown lists
-the union of what different model families accept, so a wrong-for-this-model
-value reaches the model and comes back an error. The control cannot currently
-narrow itself per model.
+**Thinking depth still offers values a given model will reject.** The control
+now warns that the accepted set differs per model, but it cannot narrow itself:
+the accepted values live in the model's chat template, and for gguf inside the
+GGUF's own metadata, so the backend would have to learn and expose them before
+the UI could.
 
 ### Closed
 
@@ -349,3 +352,8 @@ Kept as a record rather than deleted, so this section reads as a ledger.
 - *Nothing says the generation survives you leaving* — closed in v1.79.26, which
   also fixed the client reporting **"Stopped."** for a run that was in fact
   still generating.
+- *"Save & Continue" appearing and disappearing looks arbitrary* — closed in
+  v1.79.27; disabled with a reason instead of absent.
+- *Losing thinking on a model switch was announced only when media was also
+  being dropped* — found while closing the above, fixed in v1.79.27. A
+  text-only conversation switching to a plain model said nothing at all.

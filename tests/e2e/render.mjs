@@ -1342,7 +1342,7 @@ async function main() {
       // path to an overwrite any more. Save as new creates or refuses; only
       // Update (beside the select, under the preview) overwrites, and only
       // ever the preset it is showing.
-      await sleep(3200);
+      await sleep(8200);
       await typeDocPrompt('a prompt that is not what pristine stores');
       await selectPreset('other');          // Update is aimed at "other"
       await typePresetName('pristine');     // ...and the name box names another
@@ -1391,7 +1391,7 @@ async function main() {
       // previous check leaves the button armed, and letting the feature under
       // test be what clears it makes the first assertion fail with a message
       // about arming when the real regression is in cancelling.
-      await sleep(3200); // armedConfirm's own timeout
+      await sleep(8200); // armedConfirm's own timeout
       assert((await saveLabel()) === 'Update', `Update was still armed at the start of the check: ${await saveLabel()}`);
       await typeDocPrompt('a prompt that differs from both');
       await selectPreset('owned');
@@ -1412,7 +1412,7 @@ async function main() {
       // clear the box -- the second click used to fire whatever the button was
       // now aimed at, blanking the preset with no confirm and skipping the
       // blanking guard entirely.
-      await sleep(3200);
+      await sleep(8200);
       await typeDocPrompt('text that will be cleared in a moment');
       await selectPreset('owned');
       let writes = await clickSave();
@@ -1429,7 +1429,7 @@ async function main() {
       // Ordinary traffic: nudge a sampler, Save it back, prompt untouched.
       // Nothing is at stake, so an arm here is pure click-through training --
       // the failure this whole release is about.
-      await sleep(3200);
+      await sleep(8200);
       await typeDocPrompt('STABLE PRESET PROMPT'); // exactly what "stable" stores
       await selectPreset('stable');
       const writes = await clickSave();
@@ -1542,10 +1542,20 @@ async function main() {
       });
       assert(opened, 'could not open an editor');
       await settle(dur.page);
+      // Save & Continue is OFFERED but disabled while the provider is unknown
+      // (v1.79.27) -- fail-closed as before, but a button that silently comes
+      // and goes with the model reads as arbitrary. The claim that matters is
+      // that it cannot FIRE: the truncate it performs is destructive and would
+      // land before the 400.
       const beforeBtns = await dur.page.evaluate(() =>
-        [...document.querySelectorAll('.message-edit button')].map((b) => b.textContent));
-      assert(!beforeBtns.includes('Save & Continue'),
-        `setup: Save & Continue should be absent while the provider is unknown, got ${JSON.stringify(beforeBtns)}`);
+        [...document.querySelectorAll('.message-edit button')]
+          .map((b) => [b.textContent, b.disabled, b.title]));
+      const cont = beforeBtns.find(([label]) => label === 'Save & Continue');
+      assert(cont, `setup: no Save & Continue button at all, got ${JSON.stringify(beforeBtns)}`);
+      assert(cont[1] === true,
+        'Save & Continue is enabled while the provider is unknown -- it can fire a destructive truncate on a guess');
+      assert(cont[2] && cont[2].length > 0,
+        'the disabled Save & Continue gives no reason, which is what made it read as arbitrary');
 
       await dur.page.evaluate(() => {
         const ta = document.querySelector('.message-edit textarea');
@@ -1827,6 +1837,42 @@ async function main() {
       await waitFor(async () => (await dropLabel()) === 'This model takes text only',
         { timeout: 3000, message: async () => `after switching to the text-only conversation the label still reads "${await dropLabel()}"` });
     });
+
+    // ---- boot 8b: losing a capability is disclosed, not gated -------------
+    const think = await openChat(browser, base,
+      { caps: ['thinking'], secondModel: { id: 'text-model', caps: [] } });
+    await suite.check('losing thinking is announced even with no media to warn about', async () => {
+      // The note used to be gated on `lines.length` -- it only ever rode an
+      // existing media-drop warning, so in a TEXT-ONLY conversation switching
+      // from a thinking model to a plain one said nothing at all and the
+      // toggle just vanished. It discloses rather than gates: no Cancel /
+      // Switch-anyway prompt, because losing a capability destroys nothing.
+      const { page } = think;
+      await openDrawer(page);
+      await page.evaluate(() => {
+        const box = document.querySelector('.drawer--open #set-enable_thinking');
+        if (!box) throw new Error('no thinking control on a thinking-capable model');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await closeDrawer(page);
+      await settle(page);
+      await page.evaluate(() => {
+        const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
+        sel.value = 'text-model';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await settle(page);
+      const status = await page.$eval('.chat__status', (el) => el.textContent);
+      assert(/thinking is unavailable/i.test(status),
+        `switching away from a thinking model said ${JSON.stringify(status)}`);
+      assert(!(await page.$('.chat__switch-warning')),
+        'losing thinking raised a blocking warning -- it should disclose, not gate');
+    });
+    await suite.check('no uncaught page errors (thinking loss)', () => {
+      assert(think.pageErrors.length === 0, `page errors: ${think.pageErrors.join(' | ')}`);
+    });
+    await think.page.close();
 
     await suite.check('no uncaught page errors (conversation switch)', () => {
       assert(two.pageErrors.length === 0, `page errors: ${two.pageErrors.join(' | ')}`);

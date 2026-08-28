@@ -153,7 +153,7 @@ export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
   });
 }
 
-// Two-tap destructive confirm: first click arms the button for 3s,
+// Two-tap destructive confirm: first click arms the button briefly,
 // second click within that window runs the action. Optional `when` predicate:
 // arming only happens while it returns true -- otherwise the action runs on
 // the first click (for buttons that are only sometimes destructive, e.g.
@@ -192,7 +192,13 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, 
     armedFor = target?.() ?? null;
     btn.classList.add('btn--armed');
     btn.textContent = armedLabel;
-    timer = setTimeout(disarm, 3000);
+    // Long enough to READ the confirmation and decide on a phone. At 3s a
+    // careful reader's second tap landed as a fresh FIRST tap, which reads as
+    // "the button didn't work" -- the cost fell on exactly the people the
+    // confirmation is for. Safety does not rest on this: `target` already
+    // makes a stale arm refuse to fire, so the timer only clears a visually
+    // stale label.
+    timer = setTimeout(disarm, 8000);
   }
 
   // Cancel a pending arm. `target` makes a stale arm HARMLESS; disarm makes it

@@ -297,6 +297,11 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   gap: 0.75rem;
 }
 .settings-row .input { width: 7rem; text-align: right; }
+/* a per-field caveat, on its own line under the field's name (settings.js
+   PARAM_META `note`) -- the row stays a two-child flex */
+.settings-row__note { display: block; font-weight: 400; line-height: 1.35; }
+.settings-row:has(.settings-row__note) { align-items: flex-start; }
+.settings-row:has(.settings-row__note) .input { margin-top: 0.1rem; }
 .settings-panel details { border-top: 1px solid var(--line); padding-top: 0.5rem; }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }

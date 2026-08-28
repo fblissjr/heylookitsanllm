@@ -513,13 +513,27 @@ function switchWarnings(ctx, from, to) {
     lines.push(`This conversation has ${audio} audio clip${audio === 1 ? '' : 's'}. `
       + 'They will be dropped from every request to this model — it cannot hear them.');
   }
-  if (lines.length && getSetting('enable_thinking') === true) {
-    const fromCaps = s.models.find((m) => m.id === from)?.capabilities ?? [];
-    if (fromCaps.includes('thinking') && !caps.includes('thinking')) {
-      lines.push('Thinking is unavailable on this model; the toggle will hide.');
-    }
+  // Thinking loss RIDES an existing warning but never raises one on its own
+  // (see thinkingLossNote): losing a capability destroys nothing, and
+  // only-loss-gates says disclose that rather than interrupt a routine switch.
+  if (lines.length && thinkingLossNote(ctx, from, to)) {
+    lines.push('Thinking is unavailable on this model; the toggle will hide.');
   }
   return lines;
+}
+
+// The same fact, for the case that has no warning to ride: a text-only
+// conversation switching from a thinking model to a plain one used to say
+// NOTHING, because the line above was gated on `lines.length` -- so a real
+// capability loss was announced only when it happened to coincide with media
+// being dropped. Returns the note, or null when nothing is lost.
+function thinkingLossNote(ctx, from, to) {
+  const s = ctx.state;
+  if (getSetting('enable_thinking') !== true) return null;
+  const fromCaps = s.models.find((m) => m.id === from)?.capabilities ?? [];
+  const toCaps = s.models.find((m) => m.id === to)?.capabilities ?? [];
+  if (!fromCaps.includes('thinking') || toCaps.includes('thinking')) return null;
+  return `Thinking is unavailable on ${to} — the toggle will hide.`;
 }
 
 // Inline in the chat status area, per the switching design -- NOT a modal (a
@@ -554,14 +568,24 @@ function commitModelSwitch(ctx, to) {
   // rather than writing a line the async abort would overwrite a beat later.
   const abandoning = Boolean(s.stream);
   if (s.stream) abortStream(ctx, 'switch-model');
+  // Read by thinkingLossNote below, which needs where we came FROM -- and
+  // committedModelId is about to become the destination.
+  s.lastCommittedModelId = s.committedModelId;
   s.committedModelId = to;
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
   // worse than nothing (same rule as the dots).
   if (!abandoning) {
-    showStatus(ctx, s.loadedKnown && !s.loadedIds.has(to)
-      ? `${to} is not loaded — your first message loads it, or press Load to do it now.`
-      : '');
+    // Both facts, whichever apply: what this costs, and what it takes away.
+    // The thinking note is the ONLY announcement when the conversation has no
+    // media for switchWarnings to have warned about.
+    const notes = [];
+    if (s.loadedKnown && !s.loadedIds.has(to)) {
+      notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
+    }
+    const thinking = thinkingLossNote(ctx, s.lastCommittedModelId ?? null, to);
+    if (thinking) notes.push(thinking);
+    showStatus(ctx, notes.join(' '));
   }
   if (s.activeId) {
     api.updateConversation(s.activeId, { model_id: to })
@@ -1395,17 +1419,26 @@ function buildEditEl(ctx, msg) {
   }
   // Continuation works for BOTH roles (an assistant message is finished; a
   // user message is co-written) -- but user-role continuation is MLX-only:
-  // llama-server prefills assistant turns and has no user-turn spelling, so
-  // the button hides rather than offering a guaranteed 400. FAIL CLOSED
-  // while the provider is unknown (fetch pending or failed): showing the
-  // button on a guess costs a destructive truncate before the 400 lands.
-  const provider = s.providerById?.get(s.modelSelect.value);
-  if (msg.id && (msg.role === 'assistant' || (provider != null && provider !== 'gguf'))) {
+  // llama-server prefills assistant turns and has no user-turn spelling. Still
+  // FAIL CLOSED (never fire it on a guess -- the truncate is destructive and
+  // lands before the 400), but DISABLED WITH A REASON rather than absent: a
+  // button that silently comes and goes with the model reads as arbitrary, and
+  // the reason is invisible at exactly the moment you look for it.
+  if (msg.id) {
+    const provider = s.providerById?.get(s.modelSelect.value);
+    const blocked = msg.role === 'user'
+      ? (provider == null
+          ? 'Checking what this model supports…'
+          : provider === 'gguf'
+            ? `Continuing your own message is not supported on ${s.modelSelect.value} — that needs an MLX model.`
+            : null)
+      : null;
     const saveContinue = createEl('button', {
       class: 'btn btn--sm btn--primary',
-      title: 'Save, drop everything after, and let the model finish this message',
+      disabled: Boolean(blocked),
+      title: blocked ?? 'Save, drop everything after, and let the model finish this message',
     }, ['Save & Continue']);
-    saveContinue.addEventListener('click', () => save(false, true));
+    if (!blocked) saveContinue.addEventListener('click', () => save(false, true));
     buttons.push(saveContinue);
   }
 
@@ -1609,8 +1642,18 @@ function setRemoteGenerating(ctx, on) {
   if (s.remoteGenerating === on) return;
   s.remoteGenerating = on;
   s.sendBtn.textContent = on ? 'Stop' : 'Send';
+  // The button says the same word for two different situations. Only the
+  // tooltip can separate "stop what you are watching" from "stop a run you
+  // are not subscribed to" without a second control.
+  s.sendBtn.title = on
+    ? 'Stop the run finishing on the server for this conversation'
+    : '';
   if (on) {
-    showStatus(ctx, 'Still generating — this reply was started elsewhere and is finishing on the server.');
+    // NOT "started elsewhere": since abandoning a run is routine and now
+    // disclosed, the commonest way to see this line is a run THIS tab started
+    // and walked away from. Claiming another origin was a guess, and a wrong
+    // one most of the time.
+    showStatus(ctx, 'Still generating on the server — Stop ends it and keeps the partial.');
   } else if (s.statusEl.textContent.startsWith('Still generating')) {
     showStatus(ctx, '');
   }
@@ -2305,6 +2348,7 @@ function startStream(ctx, opts = {}) {
   scrollMessages(ctx, true);
   s.remoteGenerating = false;  // the local stream owns the button now
   s.sendBtn.textContent = 'Stop';
+  s.sendBtn.title = 'Stop this run and keep what has been generated so far';
   beforeUnloadGuard.enable();
 
   // The dead air before the first token is the one moment the user cannot
@@ -2482,6 +2526,7 @@ function releaseStream(ctx, stream) {
   beforeUnloadGuard.disable();
   if (!ctx.alive) return;
   s.sendBtn.textContent = 'Send';
+  s.sendBtn.title = '';
   // A wait line must not outlive its stream: a zero-token completion, or a
   // Stop pressed during the load, never reaches firstDelta and would strand
   // "Loading…" on screen for good. Clear it only while it is still the line

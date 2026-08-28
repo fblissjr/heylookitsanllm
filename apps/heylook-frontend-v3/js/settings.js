@@ -24,7 +24,14 @@ export const PARAM_META = {
   // rejects a value the request schema does not know. 'auto' = send nothing,
   // leaving the template's own default -- xhigh on Qwen3.8, which is why the
   // control exists at all.
-  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'reasoning_effort' },
+  // The offered list is the UNION across model families, so a value valid for
+  // one model reaches another's chat template and is rejected there -- for a
+  // gguf model a raised jinja exception comes back as a 500. The backend
+  // cannot narrow this per model (the accepted set lives in the template, and
+  // for gguf inside the GGUF's own metadata), so the honest move is to say so
+  // here rather than to imply every value works everywhere.
+  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'reasoning_effort',
+                             note: 'Accepted values differ by model — a rejected one fails the request. "auto" always works.' },
   // Target visual tokens per image; the backend snaps to what the model's
   // processor supports (gemma-4 buckets 70..1120, qwen continuous).
   vision_tokens:           { label: 'Vision tokens / image', type: 'number', min: 16, max: 16384, step: 1, section: 'advanced', requiresCap: 'vision' },
@@ -354,8 +361,13 @@ export function buildSettingsPanel({ caps = [], scope = null } = {}) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
     const control = bindControl(key, meta);
     controls.push({ key, meta, control });
+    // The note lives INSIDE the label, not as a third child: .settings-row is
+    // a two-child space-between flex row, and a third child would re-space it.
     rows[meta.section].push(createEl('div', { class: 'settings-row' }, [
-      createEl('label', { for: `set-${key}` }, [meta.label]),
+      createEl('label', { for: `set-${key}` }, [
+        meta.label,
+        meta.note ? createEl('span', { class: 'settings-row__note muted small' }, [meta.note]) : null,
+      ]),
       control,
     ]));
   }

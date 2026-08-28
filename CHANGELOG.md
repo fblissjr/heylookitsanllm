@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.27]
+
+### Fixed
+
+- **Losing thinking on a model switch was announced only when media was also being dropped.** `switchWarnings` gated the note on `lines.length`, so it could only ever ride an existing image/audio warning — in a text-only conversation, switching from a thinking model to a plain one said nothing at all and the toggle simply vanished. Found while closing the `Save & Continue` edge below. The fact now has its own path: it rides the blocking warning when one exists, and otherwise goes to the status line beside the load-cost note. Deliberately **not** promoted to a blocking warning of its own — a capability going away destroys nothing, and only-loss-gates says disclose rather than interrupt a routine switch.
+
+### Changed
+
+- **`Save & Continue` is disabled with a reason instead of absent.** Continuing your own message is MLX-only (llama-server prefills assistant turns and has no user-turn spelling), and the button used to disappear — including while the provider was still unknown — so it read as arbitrary at exactly the moment you looked for it. It is still fail-closed: disabled means it cannot fire, which matters because the continuation discards everything after the message and that truncate would land before the failure. The render suite's check moved from "is absent" to the stronger "is present, disabled, and gives a reason".
+- **`Thinking depth` says its accepted values are per-model.** The control offers the union across model families, so a value one model takes another rejects — for a gguf model a raised jinja exception comes back as a 500. The backend cannot narrow this (the accepted set lives in the chat template, and for gguf inside the GGUF's metadata), so the control states the caveat and points at `auto`, which always works. `PARAM_META` grew an optional `note`, rendered inside the field's label so `.settings-row` stays a two-child flex.
+- **An armed confirm now holds for eight seconds, not three.** On a phone, tap → read "Overwrite prompt?" → pause → tap landed as a fresh *first* tap, which reads as "the button didn't work" — the cost fell on the careful readers the confirmation exists for. Safety never rested on the timer: `target` already makes a stale arm refuse to fire, so it only clears a visually stale label.
+- **"Still generating — this reply was started elsewhere"** no longer claims an origin it cannot know. Since abandoning a run is routine and disclosed as of v1.79.26, the commonest way to see that line is a run *this* tab started and walked away from. It now reads "Still generating on the server — Stop ends it and keeps the partial." Send/Stop also carries a tooltip separating "stop what you are watching" from "stop the run finishing on the server".
+- `.gitignore` covers `*.duckdb-*`. A hand-made copy of the store lands as `conversations.duckdb-2`, which `*.duckdb` does not match — runtime data that was one `git add` away from being committed.
+
 ## [1.79.26]
 
 ### Fixed

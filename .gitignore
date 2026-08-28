@@ -56,6 +56,9 @@ apps/*/data/*
 *.sqlite3
 *.duckdb
 *.duckdb.wal
+# a hand-made copy lands as conversations.duckdb-2, which *.duckdb misses
+*.duckdb-*
+*.duckdb.wal-*
 *.jsonl
 # bench data (legacy paths)
 results.tsv
