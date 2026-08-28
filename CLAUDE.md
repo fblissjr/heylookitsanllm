@@ -418,7 +418,15 @@ in git history; a contract test pins that `/v2` stays 404.)
   "no model of this engine exists", because the first is the quiet one.
   `--contract-only` is seconds and loads nothing.
   Point it at an ISOLATED server (`scripts/dev_server.sh`) -- it writes presets
-  and conversations. The taxonomy is `tests/helpers/engines.py`, SHARED with
+  and conversations. WHAT "COVERED" MEANS FOR A RELEASE (Phase 4 standard, not
+  a CI gate -- there is no CI here and a gate nobody can run is worse than a
+  rule somebody follows): before a release touching PROVIDER, LOADER, TEMPLATE
+  or LIFECYCLE code, `tests/smoke/` runs green on all three arms, and an
+  UNCOVERED arm is named in the changelog rather than passed over. Same for a
+  Phase 3 mechanism reported uncovered -- an unmet precondition is a gap with a
+  name, and the standing one is thinking DEPTH on both MLX arms (the only
+  served MLX model advertising `reasoning_effort` is gpt-oss-120b).
+  The taxonomy is `tests/helpers/engines.py`, SHARED with
   `tests/eval/run.py` (whose `fetch_models` it replaced); it reads
   `effective_loader` off the admin row, so an engine is named by the server
   rather than inferred from the vision capability. eval also reports how many

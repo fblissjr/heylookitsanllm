@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.34]
+
+### Added
+
+- **Engine coverage Phase 3 -- the same-feature-two-mechanisms checks** (`tests/smoke/`). Four rows, each a feature with two implementations split by engine, which is exactly where reasoning from the provider Literal hides the second one.
+  - **Audio**: MLX must refuse with a **400** whose text names gguf as the way to run audio; gguf accepts it. Two details decide whether this check runs the guard at all. It goes to `POST /v1/messages`, not the conversation generate endpoint -- that path drops media the current model cannot take AT THE WIRE (the mid-conversation model-switch rule), so the provider guard is unreachable there by design and a check aimed at it would have passed without ever running it. And it is **non-streaming**, because a provider's request guards fire at the first `next()`, which on the streaming path is after the headers flush -- the same refusal then arrives as a 200 carrying an in-band `invalid_request_error` event.
+  - **Thinking capability** and **thinking depth**: a model that ADVERTISES the capability must ACCEPT the corresponding request. Depth sends `medium`, the one value in both published sets (Qwen3.8 takes xhigh|medium|low, harmony low|medium|high), which keeps the check about the mechanism rather than one model's vocabulary -- and on gguf a value the template rejects is a raised jinja exception that llama-server returns as a 500.
+  - **Chat-template source**: model-free, in the contract half, so `--contract-only` covers it in seconds. `chat_template_source` must be offered for mlx and not gguf; `chat_template_path` for gguf and not mlx. The failure mode is silence -- setting the wrong one does nothing at all and the publisher's embedded template goes on picking your prompt format.
+- **Engine coverage Phase 4**: the release standard is written into `CLAUDE.md`'s test section. Before a release touching provider, loader, template or lifecycle code, `tests/smoke/` runs green on all three arms, and an uncovered arm -- or an uncovered Phase 3 mechanism -- is named in the changelog rather than passed over. Deliberately a documented standard, not a CI gate.
+- A stdlib WAV fixture in `tests/smoke/run.py`, same rule as the PNG beside it (no deps). Well-formed on purpose: a malformed part would be rejected by the schema and that 400 reads identically to the provider's.
+
+### UNCOVERED
+
+- **Thinking depth on both MLX arms.** The only served MLX model advertising `reasoning_effort` is `gpt-oss-120b-MXFP4-Q8-mlx`, so covering it costs a 120B load. Reported as uncovered on every run rather than quietly skipped -- the rule this plan exists to enforce, applied to itself. The gguf half is covered.
+
+### Verified
+
+- All three arms green live: mlx-lm 23/23, mlx-vlm 24/24, gguf 27/27, contract 11/11. The mlx-lm arm is cheap for the first time -- a `loader = "mlx-lm"` entry on a small model, the fix the plan recommended for its own v1.79.31 finding.
+
 ## [1.79.33]
 
 ### Fixed

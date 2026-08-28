@@ -67,6 +67,36 @@ survives the reader disconnecting**, and a stop that leaves the conversation
 idle. The vision arm additionally asserts the model reports the `vision`
 capability.
 
+Plus the **same-feature-two-mechanisms** rows (plan Phase 3) — one feature with
+two implementations split by engine, which is where reasoning from the provider
+Literal hides the second one:
+
+| feature | mlx-lm / mlx-vlm | gguf |
+|---|---|---|
+| audio input | tower stripped at load — must fail **loudly** with a 400 | supported |
+| thinking capability | probes the template FILE | rides `supports_thinking` from GGUF metadata |
+| thinking depth | `apply_chat_template` kwargs | `chat_template_kwargs` |
+| chat-template source | `chat_template_source` | `chat_template_path`, taken at SPAWN |
+
+The audio row goes to `POST /v1/messages` **non-streaming**, and both halves of
+that matter. The conversation generate endpoint drops media the current model
+cannot take at the wire (the mid-conversation model-switch rule), so the
+provider guard is unreachable there BY DESIGN — a check aimed at it would pass
+without ever running it. And a provider's request guards fire at the first
+`next()`, which on the streaming path is after the headers flush, so the
+refusal arrives as a 200 carrying an in-band error event; only the
+non-streaming form is a status code.
+
+The chat-template row is model-free and runs in the contract half: the settable
+field set is derived from the provider config classes, so
+`/v1/admin/model-options` is where a mechanism leaking to the wrong provider
+would show. Its failure mode is silence — setting the wrong key does nothing,
+and the publisher's embedded template goes on picking your prompt format.
+
+Where a row's precondition is unmet it reports **uncovered**, never green. The
+standing one: thinking depth on both MLX arms, because the only served MLX
+model advertising `reasoning_effort` is a 120B.
+
 The walk-away check is the reason this file exists. A generation outlives the
 response that started it: dropping the connection ends the *subscription*
 while the run detaches, finishes, and commits the whole answer. The client

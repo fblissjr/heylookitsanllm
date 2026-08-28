@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import io
 import json
 import socket
 import struct
@@ -55,6 +56,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from helpers.engines import ARMS, classify, format_coverage  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
+
+def _wav(freq_hz=440, seconds=0.5, rate=16000):
+    """A real mono WAV, stdlib only (same rule as the PNG above).
+
+    SHORT and synthetic on purpose: nothing here judges what the model heard --
+    that is the eval bank's job. This exists so an audio part is WELL-FORMED,
+    because a malformed one gets rejected by the schema and the 400 below would
+    then be the schema's, not the provider's, while reading identically.
+    """
+    import math
+    import struct
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(
+            struct.pack("<h", int(20000 * math.sin(2 * math.pi * freq_hz * i / rate)))
+            for i in range(int(rate * seconds))))
+    return buf.getvalue()
+
 
 def _png(width=64, height=64):
     """A real RGB PNG, built with stdlib only (the eval bank's rule: no deps).
@@ -84,6 +108,7 @@ def _png(width=64, height=64):
 
 
 SMOKE_PNG = _png()
+SMOKE_WAV = _wav()
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +277,34 @@ def contract_checks(server, r):
                 st == 200 and params.get("temperature") == 0.9 and params.get("top_k") == 40,
                 f"got {st}: read back {params}")
 
+        # -- Phase 3, row 4: chat-template source. TWO mechanisms that must
+        # stay on their own providers -- `chat_template_source` is MLX-only
+        # (it force-installs a template on the tokenizer at load) and
+        # `chat_template_path` is gguf-only (`--chat-template-file`, taken at
+        # SPAWN, which is why it requires a reload). The failure mode is
+        # silence: setting the wrong one for a provider does nothing at all,
+        # and the publisher's embedded template goes on picking your prompt
+        # format. Model-free, because the settable set is DERIVED from the
+        # provider config classes and the endpoint is where that lands.
+        st, opts = call(server, "GET", "/v1/admin/model-options")
+        providers = ((opts or {}).get("providers") or {}) if st == 200 else {}
+        fields = {prov: {f.get("name") for f in (spec.get("fields") or [])}
+                  for prov, spec in providers.items()}
+        if st != 200 or not fields:
+            r.fail("the two chat-template mechanisms stay on their own providers",
+                   f"GET /v1/admin/model-options returned {st}: {str(opts)[:200]}")
+        else:
+            r.check("chat_template_source is offered for mlx and NOT for gguf",
+                    "chat_template_source" in fields.get("mlx", set())
+                    and "chat_template_source" not in fields.get("gguf", set()),
+                    f"mlx={sorted(fields.get('mlx', set()) & {'chat_template_source', 'chat_template_path'})} "
+                    f"gguf={sorted(fields.get('gguf', set()) & {'chat_template_source', 'chat_template_path'})}")
+            r.check("chat_template_path is offered for gguf and NOT for mlx",
+                    "chat_template_path" in fields.get("gguf", set())
+                    and "chat_template_path" not in fields.get("mlx", set()),
+                    f"mlx={sorted(fields.get('mlx', set()) & {'chat_template_source', 'chat_template_path'})} "
+                    f"gguf={sorted(fields.get('gguf', set()) & {'chat_template_source', 'chat_template_path'})}")
+
         # -- the list carries `generating`, which is what the composer's third
         # state (Stop for a run this page never subscribed to) is built on.
         st, lst = call(server, "GET", "/v1/conversations")
@@ -367,6 +420,119 @@ def assistant_text(conv) -> str:
     return (rows[-1].get("content") or "") if rows else ""
 
 
+# ---------------------------------------------------------------------------
+# Phase 3: the same-feature-two-mechanisms invariants
+#
+# Each of these is ONE feature with TWO implementations, split by engine. That
+# is the reason they belong here and not in a unit test: reasoning from the
+# provider Literal hides the second implementation, and only a live run of both
+# arms can show that they still agree.
+#
+# The rule for every row: where the precondition is unmet, report UNCOVERED.
+# Do not weaken a check to make it runnable.
+# ---------------------------------------------------------------------------
+
+def _messages_probe(server, model_id, content, extra=None, timeout=180):
+    """One non-streaming POST /v1/messages. Returns (status, body).
+
+    NON-streaming deliberately. The provider's request guards fire at the first
+    next(), which on the streaming path is AFTER the headers have flushed -- so
+    the same refusal arrives as a 200 carrying an in-band `error` event
+    (messages_api types it invalid_request_error, correctly). Only the
+    non-streaming form turns it into the status code these checks read.
+    """
+    body = {"model": model_id, "max_tokens": 24, "stream": False,
+            "messages": [{"role": "user", "content": content}]}
+    body.update(extra or {})
+    return call(server, "POST", "/v1/messages", body, timeout=timeout)
+
+
+def audio_checks(server, r, arm, model_id, caps):
+    """Audio input: supported on gguf, must fail LOUDLY on MLX.
+
+    MLX loads audio-capable checkpoints with skip_audio=True -- the tower is
+    stripped -- so an audio part that reached generation would be silently
+    dropped and answered text-only. That is a wrong answer the user cannot see,
+    which is why the guard raises rather than skips, and why this is the row
+    worth having first.
+
+    Sent to /v1/messages, NOT to the conversation generate endpoint. The
+    conversation path drops media the current model cannot take AT THE WIRE,
+    with a per-message disclosure (the mid-conversation model-switch rule), so
+    the provider guard is unreachable there BY DESIGN and a check aimed at it
+    would pass without ever running the guard. (Near-unreachable rather than
+    unreachable: the drop keys on the DERIVED capability, so a hand-written
+    `capabilities = ["audio"]` override on an MLX entry would route the part
+    through and hit the 400 after all.)
+    """
+    audio = [
+        {"type": "text", "text": "Answer in one word: is this a tone or speech?"},
+        {"type": "audio", "source_type": "base64", "media_type": "audio/wav",
+         "data": base64.b64encode(SMOKE_WAV).decode()},
+    ]
+    if arm == "gguf":
+        if "audio" not in caps:
+            r.skip(f"{arm}: audio is accepted", "this gguf model declares no audio modality "
+                                                "-- the supported half of the row is UNCOVERED")
+            return
+        st, body = _messages_probe(server, model_id, audio)
+        r.check(f"{arm}: audio is accepted", st == 200, f"got {st}: {str(body)[:300]}")
+        return
+
+    # mlx-lm / mlx-vlm
+    st, body = _messages_probe(server, model_id, audio, timeout=60)
+    r.check(f"{arm}: audio is REFUSED, loudly", st == 400,
+            f"got {st} -- a 200 means the audio part was dropped and the model "
+            f"answered text-only, which is the failure this check exists for. "
+            f"body: {str(body)[:300]}")
+    if st == 400:
+        # The message has to name the way out, or a loud failure is just a
+        # failure. gguf is where audio works and the text says so.
+        detail = str((body or {}).get("detail") if isinstance(body, dict) else body)
+        r.check(f"{arm}: the refusal names gguf as the way to run audio",
+                "gguf" in detail.lower(), f"detail: {detail[:200]}")
+
+
+def thinking_checks(server, r, arm, model_id, caps):
+    """Thinking, and thinking DEPTH -- one feature, two mechanisms each.
+
+    Capability:  MLX probes the model's template FILE for `enable_thinking`;
+                 gguf rides the entry's `supports_thinking`, because the
+                 template lives inside GGUF metadata with nothing cheap to scan.
+    Depth:       MLX passes `reasoning_effort` as an apply_chat_template kwarg;
+                 gguf sends it in `chat_template_kwargs`.
+
+    What is checked is that a model ADVERTISING the capability ACCEPTS the
+    corresponding request. That pairing is the invariant worth holding: a
+    capability nothing honours is a control the UI shows and the model ignores,
+    and on gguf a value the template rejects is a raised jinja exception, which
+    llama-server returns as a 500.
+    """
+    if "thinking" in caps:
+        st, body = _messages_probe(server, model_id, "Name one colour.",
+                                   {"chat_template_kwargs": {"enable_thinking": True}})
+        r.check(f"{arm}: a thinking-capable model accepts enable_thinking",
+                st == 200, f"got {st}: {str(body)[:300]}")
+    else:
+        r.skip(f"{arm}: thinking capability", "this arm's model does not advertise thinking "
+                                              "-- that mechanism is UNCOVERED on this arm")
+
+    if "reasoning_effort" in caps:
+        # "medium" is the one value in BOTH published sets (Qwen3.8 takes
+        # xhigh|medium|low, harmony low|medium|high) and the accepted set is
+        # PER MODEL -- a wrong-for-this-model value reaches the template, where
+        # llama-server turns a raised jinja exception into a 500. Picking the
+        # intersection is what keeps this a check about the MECHANISM rather
+        # than about one model's vocabulary.
+        st, body = _messages_probe(server, model_id, "Name one colour.",
+                                   {"reasoning_effort": "medium"})
+        r.check(f"{arm}: a depth-capable model accepts reasoning_effort=medium",
+                st == 200, f"got {st}: {str(body)[:300]}")
+    else:
+        r.skip(f"{arm}: thinking depth", "this arm's model does not advertise reasoning_effort "
+                                         "-- that mechanism is UNCOVERED on this arm")
+
+
 def arm_checks(server, r, arm, model_id, load_timeout):
     print(f"\n{DIM}-- {arm}: {model_id} ---------------------------------------{RESET}")
 
@@ -385,6 +551,13 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     caps = next((set(m.get("capabilities") or []) for m in models["data"] if m["id"] == model_id), set())
     if arm == "mlx-vlm":
         r.check(f"{arm}: reports the vision capability", "vision" in caps, f"caps: {sorted(caps)}")
+
+    # Phase 3 rows, before the lifecycle: they are cheap (one short
+    # non-streaming request each) and they run on a model that is now loaded
+    # and warm. A failure here says something about the ENGINE rather than
+    # about the store, so it is worth knowing before the long checks.
+    audio_checks(server, r, arm, model_id, caps)
+    thinking_checks(server, r, arm, model_id, caps)
 
     conv_id = None
     try:

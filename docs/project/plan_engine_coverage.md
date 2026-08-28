@@ -1,6 +1,6 @@
 # Plan: engine coverage
 
-last updated: 2026-08-28 (phases 1-2 shipped, v1.79.31)
+last updated: 2026-08-28 (ALL PHASES SHIPPED -- 0 at v1.79.28, 1-2 at v1.79.31, 3-4 at v1.79.34)
 
 ## Context
 
@@ -158,7 +158,54 @@ is that the decision's consequence is stated rather than implied.
 <= model_caps`) means a text-only model list produces a green run with every
 vision task quietly skipped. That is the exact shape this plan exists to end.
 
-## Phase 3 — the same-feature-two-mechanisms invariants
+## Phase 3 — the same-feature-two-mechanisms invariants (DONE, v1.79.34)
+
+All four rows shipped. Three run per arm in `tests/smoke/run.py`
+(`audio_checks`, `thinking_checks`); the fourth is model-free and lives in the
+contract half, so `--contract-only` covers it in seconds.
+
+**Audio** is the row that earned itself. Two things had to be got right:
+
+- It is sent to `POST /v1/messages` **non-streaming**, not to the conversation
+  generate endpoint. The conversation path drops media the current model cannot
+  take AT THE WIRE with a per-message disclosure (the mid-conversation
+  model-switch rule), so the provider's guard is unreachable there by design and
+  a check aimed at it would have passed without ever running the guard.
+  Near-unreachable rather than unreachable: the drop keys on the DERIVED
+  capability, so a hand-written `capabilities = ["audio"]` override on an MLX
+  entry routes the part through and does hit the 400.
+- Non-streaming because the provider's request guards fire at the first
+  `next()`, which on the streaming path is *after* the headers flush — the same
+  refusal then arrives as a 200 carrying an in-band `invalid_request_error`
+  event. Only the non-streaming form turns it into a status code.
+
+Verified live on all three arms: MLX refuses with a 400 whose text names gguf
+as the way to run audio; the gguf arm accepts it.
+
+**Thinking capability and depth** check that a model ADVERTISING the capability
+ACCEPTS the corresponding request — the pairing is the invariant, because a
+capability nothing honours is a control the UI shows and the model ignores, and
+on gguf a value the template rejects is a raised jinja exception that
+llama-server returns as a 500. Depth sends `medium`, the one value in both
+published sets (Qwen3.8 takes xhigh|medium|low, harmony low|medium|high), which
+keeps the check about the mechanism rather than one model's vocabulary.
+
+**Chat-template source** is model-free: `chat_template_source` must be offered
+for mlx and not gguf, `chat_template_path` for gguf and not mlx. The failure
+mode is silence — setting the wrong one for a provider does nothing at all, and
+the publisher's embedded template goes on picking your prompt format. The
+settable set is derived from the provider config classes, so
+`/v1/admin/model-options` is exactly where a leak would show.
+
+**Standing UNCOVERED gap:** thinking DEPTH on both MLX arms. The only served
+MLX model advertising `reasoning_effort` is `gpt-oss-120b-MXFP4-Q8-mlx`, so
+covering it costs a 120B load. Reported as uncovered on every run rather than
+quietly skipped — which is the rule this plan exists to enforce, applied to
+itself.
+
+### What the phase called for
+
+
 
 The highest-value additions, because these are places where one *feature* has
 two *implementations* and reasoning from the provider Literal hides the second.
@@ -180,7 +227,16 @@ user cannot see.
 audio-capable gguf). Where the precondition is unmet, report **uncovered** —
 same rule as a missing arm. Do not weaken a check to make it runnable.
 
-## Phase 4 — say what "covered" means for a release
+## Phase 4 — say what "covered" means for a release (DONE, v1.79.34)
+
+Written into `CLAUDE.md`'s test section: before a release touching provider,
+loader, template or lifecycle code, `tests/smoke/` runs green on all three
+arms, and an uncovered arm — or an uncovered Phase 3 mechanism — is named in
+the changelog rather than passed over.
+
+### What the phase called for
+
+
 
 Write the standard down in `CLAUDE.md`'s test section: before a release that
 touches provider, loader, template, or lifecycle code, `tests/smoke/` runs
@@ -199,16 +255,20 @@ Phase 1 is small and unblocks the reporting in Phase 2. Phase 3 is the
 substance and can be done a row at a time — each row is independently useful.
 Phase 4 is a paragraph.
 
-Phases 1 and 2 needed no model loads and are done. Phase 3 needs one model per
-arm, and two of the three are cheap: `Qwen3.5-0.8B-MLX-8bit` (mlx-vlm — not
-mlx-lm, see Phase 1) and `google_gemma-4-E4B-it-qat-q4_0-gguf` (gguf).
+All four phases are done. Every arm now has a cheap model:
 
-**mlx-lm has no cheap model here.** The only served mlx-lm model is
-`gpt-oss-120b-MXFP4-Q8-mlx`, so the text arm currently costs a 120B load —
-which means, realistically, that it will not get run. Cheapest fix, and worth
-doing before Phase 3: pin `loader = "mlx-lm"` on a small model in models.toml.
-An explicit loader forces the engine and `effective_loader` reports it, so the
-arm becomes real and cheap without pretending the two libraries are one.
+| arm | model | note |
+|---|---|---|
+| mlx-lm | `Qwen3.5-0.8B-MLX-8bit-textonly` | added in models.toml — the SAME weights as the entry below with `loader = "mlx-lm"` |
+| mlx-vlm | `Qwen3.5-0.8B-MLX-8bit` | routes to mlx-vlm: it declares vision and mlx-vlm registers `qwen3_5` |
+| gguf | `google_gemma-4-E4B-it-qat-q4_0-gguf` | also the audio-capable half of the audio row |
+
+The mlx-lm entry is the fix this plan recommended for its own finding. Two
+entries sharing one `model_path` is deliberate and is NOT the accidental
+duplicate `CLAUDE.md` warns about: discovery cannot create it (`merge_discovered`
+filters discovered-vs-explicit, never explicit-vs-explicit), and the entry
+carries a comment saying so. `heylookllm import` dedups on resolved path, so a
+reimport is the one thing likely to collapse it back — check after importing.
 
 ## The failure mode this plan is guarding against
 

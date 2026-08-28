@@ -1,11 +1,27 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.32 on the `frontend` branch; unit+contract
+Last updated: 2026-08-28 (v1.79.34 on the `frontend` branch; unit+contract
 green, model-free render suite green, live smoke green on all three engine
 arms)
 
-HANDOFF (next session start here): The codebase is at v1.79.32 on the
+HANDOFF (next session start here): The codebase is at v1.79.34 on the
 `frontend` branch.
+
+## v1.79.31-.34 -- engine coverage COMPLETE, and the lifecycle findings closed
+
+`docs/project/plan_engine_coverage.md` is fully shipped (phase 0 at .28, 1-2 at
+.31, 3-4 at .34). All three engine arms run green live and every arm now has a
+cheap model. The deferred chat.js lifecycle findings are closed at .32/.33.
+
+**The release standard (Phase 4) is now in `CLAUDE.md`:** before a release
+touching provider, loader, template or lifecycle code, `tests/smoke/` runs
+green on all three arms, and an uncovered arm -- or an uncovered Phase 3
+mechanism -- is NAMED in the changelog rather than passed over.
+
+**Standing UNCOVERED gap, by design not oversight:** thinking DEPTH on both MLX
+arms. The only served MLX model advertising `reasoning_effort` is
+`gpt-oss-120b-MXFP4-Q8-mlx`, so covering it costs a 120B load. It reports
+uncovered on every run.
 
 ## v1.79.31 -- engine coverage phases 1-2
 
@@ -80,52 +96,40 @@ Two foundational contracts established in earlier arcs remain in force:
   nothing.
 
 NEXT, in order:
-1. **Engine coverage, phases 3-4** (P2; `docs/project/plan_engine_coverage.md`).
-   Phases 0-2 are done (v1.79.28, v1.79.31). Left: the
-   same-feature-two-mechanisms checks, one row at a time and each independently
-   useful -- audio must 400 LOUDLY on MLX (cheapest and most valuable: a silent
-   drop there is a wrong answer the user cannot see), thinking capability,
-   thinking depth, chat-template source. Then Phase 4, a paragraph in
-   `CLAUDE.md` saying what "covered" means for a release.
-   **Do first:** give mlx-lm a cheap model (pin `loader = "mlx-lm"` on a small
-   one), or Phase 3's text arm costs a 120B load every time.
-2. **Remaining review findings** (P2). Three reviews ran on 2026-08-28; the
-   critical ones are fixed in .29/.30, and the two cheapest of the deferred set
-   (render.mjs selectors, the smoke contract's unguarded body read) went out
-   with .31. Known-open, all in `chat.js`, all needing a puppeteer repro against
-   an isolated server rather than a read -- deliberately deferred, not missed:
-   - `deleteConversation` fires `stopGenerate` without awaiting or checking
-     its status, then `abortStream(ctx, ABANDON.DELETE)` asserts "genuinely
-     ended server-side" on a request whose outcome is unknown. `stopRemote`
-     already models the right behaviour for `status === null`.
-   - `abortStream` does not clear `s.stream`, so a switch INTO a conversation
-     that is generating can have its `setRemoteGenerating(true)` swallowed by
-     the `if (s.stream) return` guard -- composer reads Send for a live run.
-   - `ABANDON.TEARDOWN` has no call site (page.js aborts `ctx.signal` and
-     `linkedController` chains off it) and `abandonNote`'s generic fallback is
-     near-dead. Documented as such; not yet removed.
-3. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
+1. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
+   TODO.md). Admin panel observability controls and a v3 `logs/*.jsonl` viewer
+   page; consolidate `memory.py` legacy streams into the spine once verified.
+   Promoted to the top: file logging is opt-in and OFF by default, so there is
+   currently no way to look at what the spine records without leaving the app.
+2. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
    TODO.md). Startup `--model-id` load runs in server.py before the lifespan
    resolves `observability_level` from the DB, so telemetry is missing for
    pre-warmed loads. Needs settings resolution before pre-warm, and a contract
    test pinning that `log_startup_info()` runs strictly after
-   `apply_runtime_settings()`.
-4. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
+   `apply_runtime_settings()`. Pairs naturally with 1.
+3. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
    TODO.md). The mRoPE cache gate keys on `_position_ids`/`_rope_deltas`
    attribute sniffing; add an explicit per-model `cache_reuse = true|false`
    config escape hatch in `models.toml` ahead of attribute sniffing.
    Live-verify extension reuse for quantized/rotating cache configs.
-5. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
+4. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
    TODO.md). Slim `docs/frontend_v3_spec.md` down to §4 (the living API contract)
    + decision records now that v2 is deleted. Trim `config.md` and `mlx_provider.md`.
-6. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
-   TODO.md). Admin panel observability controls and v3 `logs/*.jsonl` viewer page;
-   consolidate `memory.py` legacy streams into the spine once verified.
-7. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
+5. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
    TODO.md). Live streaming analyze endpoint (SSE) and interactive
    steering/activation patching (porting `mlxui-core` op-semantics via forward-hooks).
-8. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
+6. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
    Optional 1Password / `op read` integration for DuckDB file encryption.
+
+CLOSED THIS SESSION (was items 1-2): engine coverage, all phases; and the three
+deferred chat.js lifecycle review findings. One correction worth carrying: the
+`setRemoteGenerating` / `releaseStream` pair (.33) had **no reachable symptom**
+-- the abort unwind is microtasks and the switch awaits a GET, measured, not
+assumed. The fixes remove the invariant's dependence on that ordering; they did
+not fix an observed bug, and the render check guarding it goes green either way.
+`ABANDON.TEARDOWN` was NOT removed: `ABANDON_RANK` keys on it and it now has a
+call site (the delete whose stop never reached the server), so it is documented
+as the weakest claim rather than a dead path.
 
 UPDATE 2026-08-25 (v1.62.4-v1.79.7, 60+ commits across multiple milestones, on branch `frontend`):
 
