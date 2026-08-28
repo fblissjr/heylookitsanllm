@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.32]
+
+### Fixed
+
+- **An abort reason could be silently downgraded by a second abort.** `abortStream` was last-writer-wins on `abandonReason`, and `deleteConversation` calls it twice for one stream -- once as `delete` (the run genuinely ended server-side), then again as `switch-conversation` (the opposite claim: it detaches and finishes) when it selects the next conversation. The reasons are ranked now and the strongest wins; equal ranks still take the later value, since two switches are both "abandoned" and the newer one describes where the user actually is. No consumer reads `delete` today, which is precisely why the downgrade was invisible -- a reason is a claim, and one a later weaker call can overwrite is not one the next consumer can trust.
+
 ## [1.79.31]
 
 ### Added

@@ -1,10 +1,10 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.31 on the `frontend` branch; unit+contract
+Last updated: 2026-08-28 (v1.79.32 on the `frontend` branch; unit+contract
 green, model-free render suite green, live smoke green on all three engine
 arms)
 
-HANDOFF (next session start here): The codebase is at v1.79.31 on the
+HANDOFF (next session start here): The codebase is at v1.79.32 on the
 `frontend` branch.
 
 ## v1.79.31 -- engine coverage phases 1-2
@@ -98,8 +98,6 @@ NEXT, in order:
      its status, then `abortStream(ctx, ABANDON.DELETE)` asserts "genuinely
      ended server-side" on a request whose outcome is unknown. `stopRemote`
      already models the right behaviour for `status === null`.
-   - `abortStream` is last-writer-wins on `abandonReason`, so a second abort
-     downgrades the stronger claim of the first (delete -> switch-conversation).
    - `abortStream` does not clear `s.stream`, so a switch INTO a conversation
      that is generating can have its `setRemoteGenerating(true)` swallowed by
      the `if (s.stream) return` guard -- composer reads Send for a live run.

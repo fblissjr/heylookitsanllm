@@ -2565,6 +2565,23 @@ const ABANDON = Object.freeze({
   DELETE: 'delete',                  // genuinely ended server-side
 });
 
+// How STRONG a claim each reason makes about the run's fate. Only DELETE says
+// the run really ended server-side; the two switches say the opposite (it
+// detaches and finishes); TEARDOWN says nothing, being the default nothing
+// sets. Ranked because abortStream can be called twice for one stream and was
+// last-writer-wins, so the second call SILENTLY WEAKENED the first: delete
+// aborts the stream and then selects the next conversation, which aborts it
+// again as `switch-conversation`. Nothing reads DELETE today, which is exactly
+// why the downgrade was invisible -- a reason is a claim, and a claim that can
+// be quietly overwritten by a later, weaker one is not one the next consumer
+// can trust.
+const ABANDON_RANK = Object.freeze({
+  [ABANDON.TEARDOWN]: 0,
+  [ABANDON.CONVERSATION]: 1,
+  [ABANDON.MODEL]: 1,
+  [ABANDON.DELETE]: 2,
+});
+
 // Is `id` a model the first message would have to load? Silent when residency
 // is unknown -- a guess is worse than nothing (same rule as the dots). One
 // derivation: it had grown copies in startStream, commitModelSwitch and
@@ -2579,7 +2596,11 @@ function abortStream(ctx, reason = ABANDON.TEARDOWN) {
   if (!stream) return;
   // WHY we let go decides what the end is allowed to claim. "Stopped" is a
   // statement about the SERVER, and only two of these reasons make it true.
-  stream.abandonReason = reason;
+  // The STRONGEST reason wins, not the last one -- see ABANDON_RANK. Equal
+  // ranks still take the later value: two switches are both "abandoned", and
+  // the newer one describes where the user actually is.
+  const held = ABANDON_RANK[stream.abandonReason] ?? -1;
+  if ((ABANDON_RANK[reason] ?? 0) >= held) stream.abandonReason = reason;
   stream.controller.abort();
 }
 
