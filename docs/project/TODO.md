@@ -449,6 +449,11 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so
   long items stay on the fast kernel. Delicate; must re-pass `check_chain_vs_direct` (cos 1.0). A
   guardrail (warn + kernel-eligibility sidecar metadata) already stops the silent slow path.
+- [ ] **Engine coverage, phases 1-4** (P2): one shared engine classifier instead of the
+  copy now in `tests/smoke` + `tests/eval`; both harnesses REPORT which engines a run
+  spanned and refuse to call an absent one green; then the same-feature-two-mechanisms
+  checks (audio must 400 loudly on MLX, thinking capability, thinking depth, chat-template
+  source). Plan: `docs/project/plan_engine_coverage.md`. Phase 0 = `tests/smoke/` (done).
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
   tie-aware calibrated epsilon -- turns the one-time V1/V2 parity into a wired
   regression gate.
