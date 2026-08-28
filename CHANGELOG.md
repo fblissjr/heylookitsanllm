@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.33]
+
+### Fixed
+
+- **`deleteConversation` asserted an outcome it never waited for.** It fired `stopGenerate` and immediately claimed, via `ABANDON.DELETE`, that the run had "genuinely ended server-side" -- on a request whose status it discarded. It awaits now: 200 (stopped) and 404 (nothing active, so it already finished) both mean genuinely ended; `null` -- the DELETE never arrived -- claims nothing, which is the weakest reason in the set. `stopRemote` has modelled this for the same endpoint since v1.79.29 and the two must not diverge. Awaiting also removes the race the 409-then-retry branch below it was covering for: the conversation DELETE used to go out concurrently with the stop it depends on. Pinned by a render check that holds the stop's ANSWER back 400ms -- dispatch order was always stop-then-delete, so only a delayed answer can show whether the second waited.
+- **`setRemoteGenerating` tested for a live stream's EXISTENCE where it meant OWNERSHIP**, and `releaseStream` restored the composer to a literal `'Send'` rather than to the conversation's state. Together: switching from one generating conversation into another could leave the composer reading Send for a run that is going, with no way to stop it. Stated precisely, because it matters -- **no reachable symptom was found**. The abort unwind is microtasks and the switch awaits a GET, so the unwind always wins; that was measured, not assumed. What is fixed is that the invariant no longer depends on that ordering: a stream aimed at another conversation owns THAT conversation's button, and a released stream restores what the current document actually is. The two had to change together -- correcting the guard alone converts a timing-dependent bug into a certain one, since the abandoned stream's unwind is guaranteed to land last.
+
+### Changed
+
+- The composer button's two rest states have one speller (`setSendButton`). Text and title were written from two places, which is how "Stop" came to mean two different things with only a tooltip between them.
+
 ## [1.79.32]
 
 ### Fixed

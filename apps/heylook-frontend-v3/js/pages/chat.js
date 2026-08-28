@@ -913,8 +913,20 @@ async function deleteConversation(ctx, convId) {
   // (persists the partial, releases the claim) plus local fetch abort --
   // and give the unwind a moment before retrying once.
   if (s.stream?.targetConvId === convId) {
-    stopGenerate(convId);
-    abortStream(ctx, ABANDON.DELETE); // genuinely ended server-side, not abandoned
+    // AWAITED, and the reason follows the answer. `stopGenerate` resolves to
+    // the STATUS: 200 = stopped, 404 = nothing was active because it already
+    // finished -- both mean the run genuinely ended server-side, which is what
+    // ABANDON.DELETE asserts and, since the strongest reason now wins, the
+    // strongest thing this set can assert. `null` is the DELETE never
+    // arriving: the run is still going as far as anyone here knows, so claim
+    // nothing. `stopRemote` has modelled this for the same endpoint since
+    // v1.79.29 and the two must not diverge.
+    //
+    // Awaiting also fixes the 409 retry it sits above: the conversation DELETE
+    // used to race the stop it depends on, so the 600ms retry was covering for
+    // an ordering this function could simply have had.
+    const status = await stopGenerate(convId);
+    abortStream(ctx, status === null ? ABANDON.TEARDOWN : ABANDON.DELETE);
   }
   try {
     await api.deleteConversation(convId);
@@ -1669,6 +1681,22 @@ const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
 const isGeneratingNote = (text) =>
   text.startsWith(GENERATING_PREFIX) || text.startsWith(MODEL_SWITCH_PREFIX);
 
+// The composer button has exactly two REST states and they are written from
+// two places (a remote flag changing, and a local stream releasing). One
+// speller, because a title that drifts from its text is how "Stop" came to
+// mean two different things with nothing on screen distinguishing them.
+// The LOCAL stream's Stop is deliberately not here: it says something else
+// ("keep what has been generated so far") and is written where it is set.
+function setSendButton(s, remoteGenerating) {
+  s.sendBtn.textContent = remoteGenerating ? 'Stop' : 'Send';
+  // The button says the same word for two different situations. Only the
+  // tooltip can separate "stop what you are watching" from "stop a run you
+  // are not subscribed to" without a second control.
+  s.sendBtn.title = remoteGenerating
+    ? 'Stop the run finishing on the server for this conversation'
+    : '';
+}
+
 function setRemoteGenerating(ctx, on) {
   const s = ctx.state;
   // A LOCAL stream owns the button and the status line, so a remote flag is
@@ -1679,16 +1707,18 @@ function setRemoteGenerating(ctx, on) {
   // (and the `=== on` guard above made the latch self-perpetuating, swallowing
   // the later honest value as a no-op). The local stream's own end re-derives
   // this through resyncMessages.
-  if (s.stream) return;
+  //
+  // OWNERSHIP, not existence. A stream aimed at another conversation owns THAT
+  // conversation's button, not this one's -- so a switch INTO a generating
+  // conversation, made while the abandoned stream is still unwinding, must
+  // still be allowed to say so. In practice the unwind wins that race (it is
+  // microtasks; the switch awaits a GET), which is why no symptom was ever
+  // seen -- but "no symptom" is a fact about scheduling, and the sentence
+  // above is a claim about ownership. They should not have been the same line.
+  if (s.stream && s.stream.targetConvId === s.activeId) return;
   if (s.remoteGenerating === on) return;
   s.remoteGenerating = on;
-  s.sendBtn.textContent = on ? 'Stop' : 'Send';
-  // The button says the same word for two different situations. Only the
-  // tooltip can separate "stop what you are watching" from "stop a run you
-  // are not subscribed to" without a second control.
-  s.sendBtn.title = on
-    ? 'Stop the run finishing on the server for this conversation'
-    : '';
+  setSendButton(s, on);
   if (on) {
     // NOT "started elsewhere": since abandoning a run is routine and now
     // disclosed, the commonest way to see this line is a run THIS tab started
@@ -2546,9 +2576,11 @@ function stopStream(ctx) {
 
 // Conversation switch, model switch, delete: kill the fetch. NOT teardown --
 // page.js's unmount() aborts ctx.signal and linkedController chains the
-// stream's controller off it, so leaving the page never comes through here
-// (the `teardown` default has no call site; it is the safe value, not a
-// documented path). This ends our SUBSCRIPTION, not the run -- the server detaches the generation and it
+// stream's controller off it, so leaving the page never comes through here.
+// `teardown` is the WEAKEST claim rather than a dead one: it is the default
+// that makes a reason-less call safe, and deleteConversation now passes it
+// deliberately for the case where the stop never reached the server and there
+// is nothing to assert. This ends our SUBSCRIPTION, not the run -- the server detaches the generation and it
 // finishes and commits the WHOLE answer (conversation_generate_api._Run), so
 // the next select of that conversation gets the complete reply, not a
 // truncated one. Only an explicit Stop (DELETE .../generate -> abort_event)
@@ -2559,7 +2591,7 @@ function stopStream(ctx) {
 // call sites and two consumers -- a typo'd reason silently reads as "not that
 // one" at every consumer, which is the quietest possible failure.
 const ABANDON = Object.freeze({
-  TEARDOWN: 'teardown',              // the safe default; nothing calls it (see below)
+  TEARDOWN: 'teardown',              // the weakest claim: 'we do not know' (see below)
   CONVERSATION: 'switch-conversation',
   MODEL: 'switch-model',
   DELETE: 'delete',                  // genuinely ended server-side
@@ -2636,8 +2668,13 @@ function releaseStream(ctx, stream) {
   s.stream = null;
   beforeUnloadGuard.disable();
   if (!ctx.alive) return;
-  s.sendBtn.textContent = 'Send';
-  s.sendBtn.title = '';
+  // Restore from the CONVERSATION's state, not from a literal. This stream is
+  // over, but the document on screen may be one the server is still generating
+  // for -- switch away from a live run into another live run and the abandoned
+  // stream's unwind lands last, so a hardcoded 'Send' would erase the only
+  // control for the run that is still going. It is the same fact
+  // setRemoteGenerating already holds, so read it rather than re-derive it.
+  setSendButton(s, s.remoteGenerating);
   // A wait line must not outlive its stream: a zero-token completion, or a
   // Stop pressed during the load, never reaches firstDelta and would strand
   // "Loading…" on screen for good. Clear it only while it is still the line

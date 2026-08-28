@@ -173,8 +173,11 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   let nextId = messages.length;
   // State "another session" can change under the page: mutate from a check,
   // then resume the page and watch it adopt. Read at RESPOND time.
+  // `c2Generating` is the SECOND conversation's flag, separate from
+  // `generating` (which is c1's): the interesting state is one conversation
+  // generating while the page is subscribed to a stream in the OTHER.
   const remote = { system_prompt: null, presets: [...presets], updated_at: 't1', generating: false,
-    applied_preset_id: appliedPresetId };
+    c2Generating: false, stopDelayMs: 0, applied_preset_id: appliedPresetId };
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -192,7 +195,8 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     // model-select switch -- the two take different code paths).
     if (secondModel && url.includes('/v1/conversations/c2')) {
       return { id: 'c2', title: 'other model', model_id: secondModel.id,
-        system_prompt: null, applied_preset_id: null, params: {}, messages };
+        system_prompt: null, applied_preset_id: null, params: {},
+        generating: remote.c2Generating, messages };
     }
     if (url.includes('/v1/conversations/c1/messages')) {
       if (method === 'POST') {
@@ -355,7 +359,7 @@ async function openChat(browser, base, {
   page.on('request', (req) => {
     const url = req.url();
     if (!url.includes('/v1/')) return req.continue();
-    reqs.push({ method: req.method(), url, postData: req.postData() });
+    reqs.push({ method: req.method(), url, postData: req.postData(), at: Date.now() });
     // Conversation-scoped generation (Phase 2 wire): typed-event SSE. The
     // store mutation happens at RESPOND time so a delayed stream mutates
     // when the "server" answers, not when the request leaves.
@@ -371,8 +375,13 @@ async function openChat(browser, base, {
         else respond();
         return;
       }
-      // DELETE (Stop) -- nothing tracked in the stub; say "nothing active"
-      return req.respond({ status: 404, contentType: 'application/json', body: '{}' });
+      // DELETE (Stop) -- nothing tracked in the stub; say "nothing active".
+      // `stopDelayMs` holds back the ANSWER, which is the only way to see
+      // whether a caller waited for it or merely fired it.
+      const answer = () => req.respond({ status: 404, contentType: 'application/json', body: '{}' });
+      if (store.remote.stopDelayMs) setTimeout(answer, store.remote.stopDelayMs);
+      else answer();
+      return;
     }
     // One failed body fetch on demand (a phone waking with the radio half up).
     if (store.remote.failNextBody && req.method() === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(url)) {
@@ -2125,6 +2134,105 @@ async function main() {
         `switching conversations mid-run said ${JSON.stringify(line)}`);
       assert(swap.pageErrors.length === 0, `page errors: ${swap.pageErrors.join(' | ')}`);
       await swap.page.close();
+    });
+
+    await suite.check('switching INTO a generating conversation offers Stop, and keeps it', async () => {
+      // Two mechanisms, one symptom: the composer says Send for a run that is
+      // running. Written as ONE property because the user cannot tell them
+      // apart and neither should the check.
+      //
+      //   1. `setRemoteGenerating` returned early on ANY live `s.stream`. But
+      //      the stream we are leaving belongs to the conversation we LEFT --
+      //      it owns that conversation's button, not this one's. The guard's
+      //      own reason ("a LOCAL stream owns the button") is about our own run
+      //      in the CURRENT document, so the test is targetConvId, not mere
+      //      existence.
+      //   2. `releaseStream` then restored the button to the literal 'Send'.
+      //      That is the half with no race in it: the old stream's unwind is
+      //      GUARANTEED to land after the switch, so fixing (1) alone converts
+      //      a narrow timing bug into a certain one.
+      //
+      // Hence "and keeps it": the second assertion is the load-bearing one.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 25;
+      const sw = await openChat(browser, base, {
+        dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
+      });
+      sw.store.remote.c2Generating = true;   // the OTHER conversation is running
+      await startSend(sw.page, 'go');
+      await waitFor(() => streaming(sw.page), { timeout: 8000, message: 'the stream never started' });
+      await sw.page.evaluate(() => {
+        const row = [...document.querySelectorAll('.conv-item__title')]
+          .find((el) => el.textContent === 'other model');
+        if (!row) throw new Error('the second conversation is not in the sidebar');
+        row.click();
+      });
+      // TEXT AND TITLE. The word alone cannot tell the two Stops apart, and a
+      // LOCAL stream's Stop is on screen for the whole abandoned-stream
+      // window -- so a text-only assertion passes on the button belonging to
+      // the conversation being left, which is the vacuous reading of exactly
+      // this check. Only the remote wording means "there is a way to stop the
+      // run that is actually going".
+      const composer = () => sw.page.evaluate(
+        () => {
+          const b = [...document.querySelectorAll('.chat__composer button')]
+            .find((x) => x.textContent === 'Stop' || x.textContent === 'Send');
+          return `${b?.textContent}: ${b?.title || '(no title)'}`;
+        });
+      const REMOTE_STOP = 'Stop: Stop the run finishing on the server for this conversation';
+      await waitFor(async () => (await composer()) === REMOTE_STOP,
+        { timeout: 8000,
+          message: async () => `the composer read "${await composer()}" for a conversation the `
+            + 'server says is generating' });
+      // Past the abandoned stream's unwind: that is when releaseStream runs.
+      await waitStreamEnd(sw.page);
+      await settle(sw.page);
+      const after = await composer();
+      const errs = sw.pageErrors.slice();
+      await sw.page.close();
+      assert(after === REMOTE_STOP,
+        `the composer fell back to "${after}" when the abandoned stream released, `
+        + 'leaving no way to stop the run that is actually going');
+      assert(errs.length === 0, `page errors: ${errs.join(' | ')}`);
+    });
+
+    await suite.check('deleting a streaming conversation waits for the stop to be ANSWERED', async () => {
+      // The delete path fired `stopGenerate` and immediately asserted, via
+      // ABANDON.DELETE, that the run had "genuinely ended server-side" -- on a
+      // request whose outcome it had not waited for and would never look at.
+      // Two things wrong with that, and the ordering is the checkable one: the
+      // conversation DELETE raced the stop it depends on, so the 409-then-retry
+      // branch below it was covering for an ordering this function could just
+      // have had.
+      //
+      // Only a DELAYED answer can show the difference. Dispatch order was
+      // already stop-then-delete; what changed is whether the second waits for
+      // the first's response.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 25;
+      const del = await openChat(browser, base, { dripGenerate: true });
+      del.store.remote.stopDelayMs = 400;
+      await startSend(del.page, 'go');
+      await waitFor(() => streaming(del.page), { timeout: 8000, message: 'the stream never started' });
+      await del.page.evaluate(() => {
+        const b = document.querySelector('.conv-item--active .conv-item__delete');
+        if (!b) throw new Error('no delete control on the active conversation');
+        b.click();   // armedConfirm: first click arms,
+        b.click();   // second confirms. Both synchronous.
+      });
+      const convDel = await waitFor(
+        () => del.reqs.find((r) => r.method === 'DELETE' && /\/v1\/conversations\/c1$/.test(r.url)),
+        { timeout: 8000, message: 'the conversation was never deleted' });
+      const stop = del.reqs.find((r) => r.method === 'DELETE' && /\/generate$/.test(r.url));
+      const errs = del.pageErrors.slice();
+      await del.page.close();
+      assert(stop, 'no stop was sent for the streaming conversation being deleted');
+      assert(convDel.at - stop.at >= 300,
+        `the conversation DELETE went out ${convDel.at - stop.at}ms after the stop, whose answer `
+        + 'was held for 400ms -- it did not wait for the outcome it then asserted');
+      assert(errs.length === 0, `page errors: ${errs.join(' | ')}`);
     });
 
     await suite.check('an idle server is never described as still generating', async () => {
