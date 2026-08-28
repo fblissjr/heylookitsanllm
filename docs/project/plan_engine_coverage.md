@@ -261,7 +261,12 @@ All four phases are done. Every arm now has a cheap model:
 |---|---|---|
 | mlx-lm | `Qwen3.5-0.8B-MLX-8bit-textonly` | added in models.toml — the SAME weights as the entry below with `loader = "mlx-lm"` |
 | mlx-vlm | `Qwen3.5-0.8B-MLX-8bit` | routes to mlx-vlm: it declares vision and mlx-vlm registers `qwen3_5` |
-| gguf | `google_gemma-4-E4B-it-qat-q4_0-gguf` | also the audio-capable half of the audio row |
+| gguf | smallest gguf served (an `E4B` quant here) | also the audio-capable half of the audio row |
+
+The harness CHOOSES these: resident first, else smallest by measured weight
+size (`/fit`, file stats, no load). It used to sort by `len(id)`, which picked
+a 120B and two 27Bs for an unnarrowed run and quietly made Phase 4's standard
+unrunnable -- fixed in v1.79.35, and verified green unnarrowed at 52/52.
 
 The mlx-lm entry is the fix this plan recommended for its own finding. Two
 entries sharing one `model_path` is deliberate and is NOT the accidental

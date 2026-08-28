@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.35]
+
+### Fixed
+
+- **`tests/smoke/` picked its arms' models by `len(id)`, which is not a cost signal.** Unnarrowed on this machine it chose gpt-oss-120b for mlx-lm and 27Bs for the other two arms -- so the Phase 4 release standard shipped one commit earlier ("green on all three arms") was something nobody would run, which is the failure the whole plan is about, one level up. Selection is now resident-first, then **smallest by measured weight size**: `POST /v1/admin/models/{id}/fit` sizes from file stats with no load, and takes ~1s for a 30-model registry. A model whose size cannot be determined sorts LAST -- an unknown size must not win a contest about smallness. The old heuristic's own docstring already said "a short name is not a small model"; it was right and the code kept doing it anyway.
+
+### Verified
+
+- The unnarrowed run -- the invocation the Phase 4 standard actually mandates, and the one every earlier check in this arc had skipped by passing `--arm` -- is green: **52/52 across all three engines**, picking ~1GB, ~1GB and an E4B gguf. Four honest skips (thinking depth on both MLX arms; the Stop path on both, where the model finished inside the window).
+
 ## [1.79.34]
 
 ### Added

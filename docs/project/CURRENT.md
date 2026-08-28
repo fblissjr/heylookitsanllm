@@ -1,10 +1,10 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.34 on the `frontend` branch; unit+contract
-green, model-free render suite green, live smoke green on all three engine
-arms)
+Last updated: 2026-08-28 (v1.79.35 on the `frontend` branch; unit+contract
+green, model-free render suite green, live smoke green UNNARROWED at 52/52 --
+all three engine arms including the four Phase 3 mechanism rows)
 
-HANDOFF (next session start here): The codebase is at v1.79.34 on the
+HANDOFF (next session start here): The codebase is at v1.79.35 on the
 `frontend` branch.
 
 ## v1.79.31-.34 -- engine coverage COMPLETE, and the lifecycle findings closed

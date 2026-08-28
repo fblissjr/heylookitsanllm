@@ -97,6 +97,26 @@ Where a row's precondition is unmet it reports **uncovered**, never green. The
 standing one: thinking depth on both MLX arms, because the only served MLX
 model advertising `reasoning_effort` is a 120B.
 
+The gguf audio row's precondition is the `audio` capability, which is DERIVED
+from the entry's `modalities` -- not read out of the GGUF. So an entry that
+lost `"audio"` from its modalities would turn the supported half into a silent
+skip rather than a failure. That is the correct behaviour (an unmet
+precondition is uncovered, not red), but it means the difference between
+"uncovered because no audio model is served" and "uncovered because someone
+edited an entry" is invisible from the output. The gemma-4 gguf entries are the
+ones that carry it; if that row starts reporting uncovered, check `modalities`
+before concluding anything about the engine.
+
+## Which model each arm runs
+
+Resident first, otherwise the SMALLEST by measured weight size
+(`POST /v1/admin/models/{id}/fit` sizes from file stats -- no load; ~1s for a
+30-model registry). Selection used to sort by `len(id)`, which is not a cost
+signal: an unnarrowed run on this machine picked a 120B and two 27Bs, which
+made the release standard something nobody would run. `--model ARM=ID` is
+still the way to be sure, and a model whose size cannot be determined sorts
+LAST -- an unknown size must not win a contest about smallness.
+
 The walk-away check is the reason this file exists. A generation outlives the
 response that started it: dropping the connection ends the *subscription*
 while the run detaches, finishes, and commits the whole answer. The client
