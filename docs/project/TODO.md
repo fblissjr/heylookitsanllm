@@ -450,8 +450,8 @@ baseline fitter are GREEN (see CURRENT.md 2026-07-10).
   long items stay on the fast kernel. Delicate; must re-pass `check_chain_vs_direct` (cos 1.0). A
   guardrail (warn + kernel-eligibility sidecar metadata) already stops the silent slow path.
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
-  tie-aware calibrated epsilon, mutation-checked -- turns the one-time V1/V2 parity into a
-  wired regression gate.
+  tie-aware calibrated epsilon -- turns the one-time V1/V2 parity into a wired
+  regression gate.
 - [ ] **Visualizer track** (P3): gate cleared 2026-07-10 -- `apps/heylook-frontend-v3/DESIGN.md`
   seeded (OKLCH strength/chip system formalized; paradigm = matrix-first, Neuronpedia-style
   layer-range slider + aggregation sidebar as the growth path). SHIPPED so far

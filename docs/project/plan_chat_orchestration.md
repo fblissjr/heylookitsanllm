@@ -203,9 +203,8 @@ migrates only if it starts growing message-like structure.
   Regenerate, Stop -> edit partial -> Save & Continue, rapid Stop ->
   Regenerate.
 - `e2e:render` grows the edit-save reconcile check (Phase 0.5).
-- Each Phase 0 guard gets shown red first per the checks-and-assertions
-  rule (e.g. loud-guard test drives the action during a stubbed stream and
-  asserts the status line).
+- Each Phase 0 guard asserts on the observable it names (e.g. the loud-guard
+  test drives the action during a stubbed stream and asserts the status line).
 
 ## Open questions (owner)
 

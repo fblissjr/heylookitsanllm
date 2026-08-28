@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.23]
+
+### Removed
+
+- **The "prove it red before you trust it green" rule, from the repo entirely.** Owner call, asked for twice (2026-08-17 and again 2026-08-28: "it seems to be creating havoc"), and this time with no carve-outs -- the parser-invariant exemption the first relaxation preserved is gone too. Deleted from `CLAUDE.md` (the markdown-stream boundary rule and the parser-invariant line), `tests/e2e/README.md` and `render.mjs` ("a check that has never been seen failing is decoration"), `plan_chat_orchestration.md` ("per the checks-and-assertions rule"), `jspace_integration_plan.md` and `TODO.md` (a planned gate that had "mutation-check it" written into the step).
+  - Statements of what was actually done ("shown red against the pre-fix tree") are history and stay; only the standing instructions were removed. Two surviving mentions describe the `jlens-mlx` sibling repo's own practice, not this one's.
+  - The first ask was about an undocumented habit. Between the two asks the habit was written INTO the repo as policy and then justified itself on every read, which is what turned a corrected reflex into a standing instruction. `CLAUDE.md`'s test section now says so, so it does not grow back a third time.
+  - A deliberate red remains available as a tool -- `E2E_V3_ROOT` still points the render suite at another copy of the frontend -- for the case where you personally doubt a specific check can fail. It is not a step and not something to narrate.
+
 ## [1.79.22]
 
 ### Fixed

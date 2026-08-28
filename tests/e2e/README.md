@@ -51,10 +51,10 @@ open editors and their unsaved drafts. Server telemetry cannot see this, and
 the model-driven suites never scroll a long thread.
 
 Point it at another copy of the frontend with `E2E_V3_ROOT=/path/to/copy` —
-that exists so the checks can be shown to fail (restore a pre-fix
-`renderMessages` into a copy and watch them go red). Every check in the suite
-has been observed failing against a deliberately broken copy; one that never
-has is decoration.
+useful when you want to run the suite against a pre-fix tree, or to satisfy
+yourself that a check you doubt can actually fail. It is a tool, not a step:
+write the check and move on unless its ability to fail is genuinely in
+question.
 
 Known false positive: after an mlx version bump, the FIRST run pays Metal
 shader JIT compilation and the streaming-cadence guard can read low (seen:

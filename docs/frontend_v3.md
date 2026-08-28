@@ -53,7 +53,7 @@ overlay described the conversation being LEFT), `preventDefault` before the cap
 check (a text+image clipboard payload lost its text at a text-only model), the
 pending array orphaned across the FileReader await by a concurrent send, and a
 silent discard of drops carrying nothing attachable. Guarded by 36 checks in
-`tests/e2e/render.mjs`, each new one shown red against the tree it fixes. Previously 2026-08-11: per-model config editor -- the Models page grew a
+`tests/e2e/render.mjs`. Previously 2026-08-11: per-model config editor -- the Models page grew a
 schema-driven Configure panel consuming the v1.52-1.53 admin surface --
 `GET /v1/admin/model-options` (field type/bounds/enum/default + the six-class
 `effect` metadata + `arg`/`ui`/`shape`/`reason` hints) and

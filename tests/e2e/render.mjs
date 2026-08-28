@@ -31,10 +31,9 @@
 // back what the sagas wrote, so a canned-response stub would test fiction.
 //
 // Config: E2E_CHROME (Chrome binary), E2E_HEADFUL (show the window).
-// E2E_V3_ROOT points the suite at a DIFFERENT copy of the frontend. It exists
-// so these checks can be shown to fail: point it at a pre-fix copy of the tree
-// and confirm the guarded checks go red. A check that has never been seen
-// failing is decoration.
+// E2E_V3_ROOT points the suite at a DIFFERENT copy of the frontend -- handy for
+// running against a pre-fix tree, or for satisfying yourself that a check you
+// doubt can really fail. Available when you want it, not a required step.
 
 import http from 'node:http';
 import fs from 'node:fs';

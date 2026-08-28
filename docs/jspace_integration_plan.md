@@ -378,8 +378,7 @@ fitting scripts:
 1. **Standing golden gate for `jspace/analyze`** (highest-leverage) — `analyze()` is
    deterministic (greedy), so freeze `onset_strip` top-k ids + `features` into a golden
    JSON with a tie-aware **calibrated** epsilon (measure the worst tie-gap over N cells,
-   pick ~4.6× headroom so matmul-batch-shape ulp noise doesn't false-positive), and
-   **mutation-check** it (deliberately break the code, confirm the gate fails, revert).
+   pick ~4.6× headroom so matmul-batch-shape ulp noise doesn't false-positive).
    Turns the one-time V1/V2 parity into a wired regression gate. →
    `scripts/gen_jspace_gate_golden.py` + `tests/unit/test_jspace_gate.py` + `tests/golden/`.
 2. **Perf ledger** (Target / Gate / Baseline / ranked-Backlog-with-REJECTED-hypotheses /
