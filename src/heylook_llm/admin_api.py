@@ -151,8 +151,16 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     # `provider`, never inside `config`: this repo derives the config editor's
     # field list from the provider classes, and a read-only value living in a
     # config class would show up on the models page as an editable option.
-    resolved = (mc.config.model_dump() if hasattr(mc.config, 'model_dump')
-                else dict(mc.config))
+    #
+    # Built ONLY for mlx. `effective_loader_for_config` returns None on its first
+    # line for every other provider, so the dump was per-row work whose result was
+    # discarded for every gguf and embedding entry -- roughly half the rows here.
+    # Not worth arguing about in the abstract, but this route was moved off the
+    # event loop BECAUSE its per-row cost is real, and paying it for a value that
+    # is thrown away contradicts the reason for the move.
+    resolved = ((mc.config.model_dump() if hasattr(mc.config, 'model_dump')
+                 else dict(mc.config))
+                if mc.provider == "mlx" else {})
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
