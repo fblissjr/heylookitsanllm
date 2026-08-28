@@ -568,9 +568,12 @@ function commitModelSwitch(ctx, to) {
   // rather than writing a line the async abort would overwrite a beat later.
   const abandoning = Boolean(s.stream);
   if (s.stream) abortStream(ctx, 'switch-model');
-  // Read by thinkingLossNote below, which needs where we came FROM -- and
-  // committedModelId is about to become the destination.
-  s.lastCommittedModelId = s.committedModelId;
+  // A local, not page state: thinkingLossNote needs where we came FROM, and
+  // committedModelId is about to become the destination. It was briefly an
+  // `s.lastCommittedModelId`, which read as meaningful elsewhere while only
+  // ever being used ten lines below -- and switchWarnings(ctx, from, to)
+  // right above already takes `from` as a parameter.
+  const from = s.committedModelId;
   s.committedModelId = to;
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
@@ -583,7 +586,7 @@ function commitModelSwitch(ctx, to) {
     if (s.loadedKnown && !s.loadedIds.has(to)) {
       notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
     }
-    const thinking = thinkingLossNote(ctx, s.lastCommittedModelId ?? null, to);
+    const thinking = thinkingLossNote(ctx, from, to);
     if (thinking) notes.push(thinking);
     showStatus(ctx, notes.join(' '));
   }
@@ -2466,10 +2469,6 @@ function paintStream(ctx) {
 function stopStream(ctx) {
   const stream = ctx.state.stream;
   if (!stream) return;
-  // The user asked the SERVER to stop. Recorded here rather than inferred at
-  // the end, because the 404 branch below aborts locally too and that abort
-  // is indistinguishable from walking away without this flag.
-  stream.userStopped = true;
   stopGenerate(stream.targetConvId).then((status) => {
     // 404 = nothing active server-side. Abort locally ONLY if this stream
     // has produced no events yet (the 503-retry sleep / dispatch window).
@@ -2478,13 +2477,29 @@ function stopStream(ctx) {
     // still in flight to us; aborting then would report a completed
     // generation as "Stopped" and drop the saved rows (review 2026-08-13).
     if (status === 404 && ctx.state.stream === stream && !stream.sawEvent) {
+      // ONLY here does userStopped belong. It marks a LOCAL abort that really
+      // does mean the run is over, so the end may say "Stopped" -- and this is
+      // the one outcome of the four where nothing else can say it (a 200 is
+      // covered by end_reason 'aborted').
+      //
+      // It used to be set unconditionally at the top of this function, which
+      // re-opened the exact regression the 2026-08-13 review fixed from the
+      // other side: on a 404 WITH events the server had already finished, the
+      // stream completes with the whole answer, and the flag made the UI
+      // report "Stopped -- partial response saved." over a complete response.
+      // A null status (the DELETE never reached the server) lied the same way
+      // about a run that was still going.
+      stream.userStopped = true;
       stream.controller.abort();
     }
   });
 }
 
-// Teardown / conversation switch / model switch: kill the fetch. This ends
-// our SUBSCRIPTION, not the run -- the server detaches the generation and it
+// Conversation switch, model switch, delete: kill the fetch. NOT teardown --
+// page.js's unmount() aborts ctx.signal and linkedController chains the
+// stream's controller off it, so leaving the page never comes through here
+// (the `teardown` default has no call site; it is the safe value, not a
+// documented path). This ends our SUBSCRIPTION, not the run -- the server detaches the generation and it
 // finishes and commits the WHOLE answer (conversation_generate_api._Run), so
 // the next select of that conversation gets the complete reply, not a
 // truncated one. Only an explicit Stop (DELETE .../generate -> abort_event)
@@ -2573,21 +2588,28 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   scrollMessages(ctx);
 
   const endReason = saved?.end_reason;
+  // ORDER IS THE DESIGN here, and it is the failure side first.
+  //
   // A client-side abort is NOT a stop. Pressing Stop aborts the run server
-  // side (end_reason 'aborted', or userStopped when we also killed the fetch);
-  // deleting the conversation stops it too. Everything else -- switching
-  // model, switching conversation, leaving the page -- only ends our
+  // side (end_reason 'aborted'); deleting the conversation stops it too.
+  // Everything else -- switching model or conversation -- only ends our
   // SUBSCRIPTION, and the run finishes and commits regardless. Reporting that
-  // as "Stopped." was a false statement about the server, and the exact
-  // opposite of what the user needed to know.
-  const reallyStopped = endReason === 'aborted' || stream.userStopped
-    || stream.abandonReason === 'delete';
-  if (reallyStopped) {
-    showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
-  } else if (aborted) {
-    showStatus(ctx, abandonNote(ctx, stream));
-  } else if (endReason === 'error' || stream.inBandError) {
+  // as "Stopped." was a false statement about the server.
+  //
+  // A FAILED run that was then stopped is still a failure: this branch used to
+  // sit third, so "Stopped." overwrote the red error line in normal colour and
+  // the failure left no report at all.
+  if (endReason === 'error' || stream.inBandError) {
     // the in-band error status line stands; a partial (if any) is saved
+  } else if (endReason === 'aborted' || stream.userStopped
+             || stream.abandonReason === 'delete') {
+    showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
+  } else if (aborted && !saved) {
+    // `!saved` matters: heylook_saved is always the LAST event (spec §4), so
+    // its presence means the run ENDED, whatever our fetch did. Gating on
+    // `aborted` alone announced "the reply keeps generating" directly above a
+    // finished reply adoptSavedRows had just painted.
+    showStatus(ctx, abandonNote(ctx, stream));
   } else if (usage || saved) {
     const timing = saved?.timing;
     const parts = [`${usage?.output_tokens ?? '?'} tokens`];

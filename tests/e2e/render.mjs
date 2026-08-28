@@ -2089,6 +2089,36 @@ async function main() {
       await away.page.close();
     });
 
+    await suite.check('a Stop that lands after the run finished does not claim "Stopped"', async () => {
+      // The stub answers the stop DELETE with 404 -- exactly the real shape
+      // when the server has already finished and released its claim while
+      // heylook_saved is still in flight. sawEvent is true by then, so
+      // stopStream must NOT abort locally AND must not mark the run stopped:
+      // the stream completes carrying the whole answer.
+      //
+      // Setting userStopped at the TOP of stopStream re-opened the regression
+      // first fixed 2026-08-13 from the other side -- a COMPLETE response
+      // reported as "Stopped -- partial response saved.", with the token
+      // line lost. Two independent reviews found it; this is the check that
+      // keeps it shut.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 20;
+      const late = await openChat(browser, base, { dripGenerate: true });
+      await startSend(late.page, 'go');
+      await waitFor(() => streaming(late.page), { timeout: 8000, message: 'the stream never started' });
+      await late.page.evaluate(() => {
+        [...document.querySelectorAll('.chat__composer button')]
+          .find((b) => b.textContent === 'Stop').click();
+      });
+      await waitStreamEnd(late.page);
+      const line = await late.page.$eval('.chat__status', (el) => el.textContent);
+      assert(!/stopped/i.test(line),
+        `a run that finished completely reported ${JSON.stringify(line)} because Stop had been pressed`);
+      assert(late.pageErrors.length === 0, `page errors: ${late.pageErrors.join(' | ')}`);
+      await late.page.close();
+    });
+
     await suite.check('the streaming repaint rate is bounded, not one per frame', async () => {
       // Deltas arrive far faster than anyone reads. A per-frame painter paints
       // once per delta (they are slower than a frame); a rate-limited one

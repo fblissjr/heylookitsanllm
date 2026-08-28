@@ -267,14 +267,16 @@ def contract_checks(server, r):
 # per-engine lifecycle
 # ---------------------------------------------------------------------------
 
-# Last stream's trailing bytes, so a failure can quote the server's own words.
-errors: list[str] = []
-
-
-def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> tuple[bool, bool]:
+def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> tuple[bool, bool, str]:
     """POST the generate stream. If stop_after_bytes is set, DISCONNECT once
     that much has arrived -- that is the walk-away this whole harness exists
-    to check. Returns (saw_any_delta, completed_normally)."""
+    to check.
+
+    Returns (saw_any_delta, completed_normally, tail). `tail` is the last of
+    the body so a no-delta ending can SAY WHY -- RETURNED, not stashed in a
+    module global: the stop check below runs this on a worker thread, and a
+    global cleared-then-appended from a worker is a race waiting for the first
+    person to drive two streams at once."""
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{server}/v1/conversations/{conv_id}/generate", data=data, method="POST",
@@ -288,7 +290,7 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> t
         while True:
             chunk = resp.read(256)
             if not chunk:
-                return saw, True
+                return saw, True, tail.decode(errors="replace")
             read += len(chunk)
             # Keep the last of the body so a no-delta ending can SAY WHY. The
             # first run of this harness reported only "saw_delta=False" for a
@@ -298,11 +300,9 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> t
             if b"text_delta" in chunk:
                 saw = True
             if stop_after_bytes is not None and saw and read >= stop_after_bytes:
-                return saw, False  # walk away mid-stream
+                return saw, False, tail.decode(errors="replace")  # walk away mid-stream
     finally:
         resp.close()
-        errors.clear()
-        errors.append(tail.decode(errors="replace"))
 
 
 def wait_for_idle(server, conv_id, timeout=300) -> Any:
@@ -351,10 +351,9 @@ def arm_checks(server, r, arm, model_id, load_timeout):
         if not r.check(f"{arm}: user message accepted", st == 201, f"got {st}"):
             return
 
-        saw, done = stream_until(server, conv_id, {"mode": "append"})
+        saw, done, tail = stream_until(server, conv_id, {"mode": "append"})
         r.check(f"{arm}: a generation streams and completes", saw and done,
-                f"saw_delta={saw} completed={done}; stream tail: "
-                f"{(errors[0] if errors else '')[-400:]!r}")
+                f"saw_delta={saw} completed={done}; stream tail: {tail[-400:]!r}")
         conv = wait_for_idle(server, conv_id)
         replies = [m for m in (conv or {}).get("messages", []) if m["role"] == "assistant"]
         r.check(f"{arm}: the reply persisted", bool(replies) and bool(replies[-1].get("content")),
@@ -366,7 +365,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
         st, _ = call(server, "POST", f"/v1/conversations/{conv_id}/messages",
                      {"role": "user", "content": "Count slowly from one to twenty, one number per line."})
         before = len([m for m in (wait_for_idle(server, conv_id) or {}).get("messages", [])])
-        saw, done = stream_until(server, conv_id, {"mode": "append"}, stop_after_bytes=400)
+        saw, done, tail = stream_until(server, conv_id, {"mode": "append"}, stop_after_bytes=400)
         if not saw:
             r.skip(f"{arm}: a walked-away run finishes on the server", "no delta arrived before the disconnect")
         else:
@@ -386,6 +385,9 @@ def arm_checks(server, r, arm, model_id, load_timeout):
         holder = {}
 
         def _run():
+            # Results go in `holder`, which only this thread writes and only
+            # the main thread reads AFTER join() -- no shared mutable state
+            # while both are running.
             try:
                 holder["res"] = stream_until(server, conv_id, {"mode": "append"})
             except Exception as e:  # the abort surfaces here on some transports

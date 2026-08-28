@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.29]
+
+### Fixed
+
+- **A completed generation reported "Stopped."** — the v1.79.26 lifecycle regression, found independently by two reviews, and a re-opening of one a 2026-08-13 review had already closed from the other side. `stopStream` set `stream.userStopped` at the top, before knowing whether the server had stopped anything. Two of the four `stopGenerate` outcomes then lied: a **404 with events** means the server already finished and `heylook_saved` is still in flight (the stream completes with the whole answer), and a **null status** means the DELETE never arrived and the run is still going. Both showed "Stopped -- partial response saved." over a live or complete response, and the 404-with-events case also lost the token/timing line. The flag now lives in the one branch where a local abort really does mean stopped — `404 && !sawEvent`, beside the abort it explains. A 200 needs no flag: `end_reason: 'aborted'` already carries it.
+- **A failed run that was then stopped reported a clean stop.** The error branch sat third in the chain, so "Stopped." overwrote the red `Generation failed:` line in normal colour and the failure left no report at all. Order is now failure first.
+- **The abandon note could claim a reply was still coming over a finished one.** It was gated on `aborted` alone, but `heylook_saved` is always the last event (spec §4) — its presence means the run ENDED whatever the fetch did. Now `aborted && !saved`.
+
+### Changed
+
+- `abortStream`'s comment no longer claims teardown as a call site. `page.js`'s `unmount()` aborts `ctx.signal` and `linkedController` chains the stream's controller off it, so leaving the page never comes through `abortStream` at all — the `teardown` default is the safe value, not a documented path. Correcting a claim the review showed was false.
+- `s.lastCommittedModelId` is a local again. It was set and read ten lines apart inside `commitModelSwitch` and nowhere else, while reading as page state meaningful elsewhere — and `switchWarnings(ctx, from, to)` immediately above already takes `from` as a parameter.
+- `tests/smoke/run.py`'s stream tail is RETURNED rather than stashed in a module global. The stop check runs `stream_until` on a worker thread, and a global cleared-then-appended from a worker is a race waiting for the first person to drive two streams at once.
+- A render-suite check pins the regression: the stub already answers the stop DELETE with 404, which is exactly the real shape, so pressing Stop mid-stream and letting the run finish reproduces it directly.
+
 ## [1.79.28]
 
 ### Added
