@@ -29,8 +29,8 @@
 //     typed name; upsert-by-name is decided against a FRESH list (the local
 //     cache can hide a name the server has -> 409, or list one it no longer
 //     has -> 404). The ARM, unlike the save, is decided against the local
-//     list -- armedConfirm needs a synchronous answer, and a stale list can
-//     only mis-arm, never mis-save
+//     list -- armedConfirm needs a synchronous answer. See
+//     wouldOverwritePresetPrompt() for what that costs and where
 //   - the section carries a read-only preview of the SELECTED preset's own
 //     prompt. The per-document prompt box below is a DIFFERENT thing and
 //     says so in its own label; without the preview there was no way to see
@@ -229,10 +229,22 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   //     and an override-box preset with no prompt is present but inert --
   //     "my preset disappeared". That always arms, including on the preset
   //     the document is running: clearing the box is not editing it.
-  //  3. Otherwise, is the document already RUNNING this preset? Then this is
-  //     apply -> edit -> save it back, the iterate loop, and it stays one
-  //     click. Saving onto a preset the document is NOT running is the shape
-  //     that ate a 35k-char prompt on 2026-08-28 -- that arms.
+  //  3. Otherwise, is the document already RUNNING this preset (and is that
+  //     the preset the select is showing)? Then this is apply -> edit -> save
+  //     it back, the iterate loop, and it stays one click. Saving onto a
+  //     preset the document is NOT running is the shape that lost a 35k-char
+  //     prompt on 2026-08-28 -- that arms.
+  //
+  // The KNOWN BOUNDARY of (3), accepted rather than patched: the stamp is
+  // written by apply/save and cleared only by delete, so a document whose
+  // prompt is later replaced WHOLESALE -- retyped, or adopted from another
+  // device on resume -- still counts as running that preset, and saving
+  // writes the new prompt over the old with no confirm. That is the trade (3)
+  // exists to make; "the document is running P and you saved it" is the
+  // loop's own definition, and the alternative is a drift-magnitude
+  // threshold, which is a number nobody can defend. If this ever needs
+  // closing, clear the STAMP when the prompt stops resembling the preset --
+  // do not add a percentage here.
   //
   // The stamp is only meaningful with an active document (a stamp read with
   // none is the PREVIOUS document's -- same trap promptState() guards), and
@@ -240,7 +252,14 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   //
   // Deliberately resolved against the LOCAL list: save() re-fetches for
   // 409/404 correctness, not for this, and armedConfirm needs a synchronous
-  // answer. A list one refresh out of date can only mis-arm, never mis-save.
+  // answer. That is free for questions (1) and (2) -- a stale list can only
+  // mis-ARM there. Question (3) is the exception and the only branch that
+  // trusts IDENTITY: it resolves a name to an id, so a list stale about which
+  // row owns a name (deleted and recreated, or renamed, on another device) can
+  // grant the exemption against the wrong row and let one overwrite through
+  // unconfirmed. Narrow -- it needs a concurrent rename/recreate of the exact
+  // name the document is stamped with -- and there is no synchronous fetch to
+  // fix it with, so the mitigation is to keep (3) the only identity branch.
   function wouldOverwritePresetPrompt(name) {
     const existing = presets.find((p) => p.name === name.trim());
     const stored = existing?.system_prompt || null;
@@ -248,7 +267,15 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const incoming = getPrompt() ?? null;
     if (incoming === stored) return false;           // (1) no change either
     if (!incoming) return true;                      // (2) blanking always arms
-    return !(docId?.() && getStamp?.() === existing.id); // (3) the iterate loop
+    // (3) the iterate loop -- and it has to be the loop in FULL: the document
+    // is running this preset AND the select is showing it. Requiring the
+    // selection closes the divergence where a hand-typed name aims Save at a
+    // preset the preview and drift line are not describing -- the exemption
+    // would fire against the stamp while every visible readout named something
+    // else, which is the same "what am I actually overwriting?" confusion the
+    // preview was added to end.
+    const stamp = docId?.() ? (getStamp?.() ?? null) : null;
+    return !(stamp && existing.id === stamp && existing.id === effectiveId());
   }
 
   // The applied-preset info for the active document. An explicit stamp
@@ -439,10 +466,16 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       apply,
       'Replace prompt?',
       wouldReplacePrompt,
+      // What Apply would do: copy THIS preset over THIS prompt. Either half
+      // moving voids the arm.
+      () => JSON.stringify([effectiveId(), getPrompt() ?? null]),
     );
     const delBtn = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current }, ['Del']),
       remove,
+      'Confirm?',
+      null,
+      () => effectiveId(),
     );
 
     // Save under the typed name: matches an existing preset -> overwrite it,
@@ -456,6 +489,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       () => save(nameInput.value),
       'Overwrite prompt?',
       () => wouldOverwritePresetPrompt(nameInput.value),
+      // Save's destination is the TYPED NAME and its payload is the document
+      // prompt -- and that prompt is edited in another drawer section this bar
+      // gets no events from, which is exactly why the check has to be re-read
+      // at confirm time rather than wired to a control here.
+      () => JSON.stringify([nameInput.value.trim(), getPrompt() ?? null]),
     );
     // Enter goes through the BUTTON, not straight to save() -- a second
     // entry point past the arm is the same hole with a keyboard on it.
@@ -463,15 +501,15 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       if (e.key === 'Enter') saveBtn.click();
     });
 
-    // Re-aiming disarms. An arm is a promise about ONE target, and both the
-    // select and the name box change what Apply and Save would hit -- without
-    // this, arming on one preset and then switching leaves the second click
-    // confirming something the user never previewed, which is the same
-    // accident the arm was added to stop.
-    const reaimed = () => { applyBtn.disarm(); saveBtn.disarm(); delBtn.disarm(); };
-
+    // Re-aiming disarms -- for HONESTY, not safety (the `target` callbacks
+    // above already make a stale arm refuse to fire). A button still reading
+    // "Overwrite prompt?" while aimed at a preset you just switched away from
+    // is a lie. Each control disarms only the buttons IT re-aims: the select
+    // moves all three, the name box moves Save alone -- disarming Apply from
+    // the name box silently cancelled an apply the user was part-way through
+    // confirming, just because they started typing a save-as name.
     select.addEventListener('change', () => {
-      reaimed();
+      applyBtn.disarm(); saveBtn.disarm(); delBtn.disarm();
       pick(select.value || null);
       const p = selected();
       nameInput.value = p?.name ?? '';
@@ -479,7 +517,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       paintPreview();
       updateDrift();
     });
-    nameInput.addEventListener('input', reaimed);
+    nameInput.addEventListener('input', () => saveBtn.disarm());
 
     // .preset-drift is the E2E hook; styling rides the shared settings-note.
     // role=status: the line flips live (Matches/Differs) -- announced, not

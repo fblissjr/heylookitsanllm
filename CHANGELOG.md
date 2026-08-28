@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.22]
+
+### Fixed
+
+- **An armed confirm never re-checked what it was confirming, so the blanking guard added in v1.79.21 was bypassable in two clicks.** `armedConfirm` fired unconditionally on the second click: arm Save on a preset ("Overwrite prompt?"), clear the system-prompt box sitting below it in the same drawer, click again -- the preset was blanked with no confirmation and question (2) of the guard was never evaluated. No amount of `disarm()` wiring in the preset bar could have caught it: Save's payload is the *document's* prompt, edited in a different section the bar gets no events from.
+  - `armedConfirm` now takes an optional `target()` returning destination + payload. It is captured when the button arms and re-read on the confirming click; if it moved, the click re-arms instead of firing. The check belongs in the primitive, not in each consumer's event wiring -- the same reasoning the drawer's hide-flush rule already uses.
+  - `disarm()` stays, for a different job: `target` makes a stale arm *harmless*, `disarm` makes it *visibly gone*. A button still reading "Overwrite prompt?" while aimed elsewhere is a lie even once clicking it is safe.
+
+- **The name box disarmed Apply, which it does not aim.** Typing a save-as name while Apply sat armed silently cancelled it, so the next Apply click only re-armed and the apply never happened. Each control now disarms only the buttons it re-aims: the select moves all three, the name box moves Save alone.
+
+- **A hand-typed save-as name could earn the iterate-loop exemption against a preset nothing on screen was describing.** Selecting one preset and typing another's name aimed Save at the second while the preview and drift line described the first; if that name matched the document's stamp, the exemption applied and it overwrote in one click. The exemption now requires the loop in full -- the document runs the preset *and* the select is showing it.
+
+- **Corrected a claim that had stopped being true.** "A stale list can only mis-arm, never mis-save" held for the pure difference test, but the exemption resolves a *name to an id*, so a list stale about which row owns a name can grant it against the wrong row. Documented at the function, in the file header, and no longer restated in `CLAUDE.md`, which now points at the function rather than carrying a second copy of the branch order.
+
+- The exemption's known boundary is now written down rather than left implicit: a stamp is cleared only by delete, so a document whose prompt is later replaced wholesale still counts as running its preset. That is the trade the exemption exists to make; the note says what to do instead if it ever needs closing (clear the stamp, never add a drift percentage).
+
+### Changed
+
+- `tests/e2e/render.mjs`: `clickSave` counts **POST as well as PUT**, so a "zero requests" assertion can no longer be blind to a save that landed as a create. Preset controls resolve through one selector map instead of three ad-hoc spellings. The disarm check waits out the arm and asserts a known start state rather than inheriting an armed button from its predecessor, and the fixture comment claiming a preset was never written to -- falsified by the loop check -- was replaced with a fixture nothing writes to.
+- Three more checks: the payload-change bypass, a save that changes no prompt at all (the previously uncovered branch, which made v1.79.21's "every branch has a check" claim false), and the hand-typed-name divergence. Each was shown red against a mutation of the exact line it guards. Suite is 87/87.
+
 ## [1.79.21]
 
 ### Fixed

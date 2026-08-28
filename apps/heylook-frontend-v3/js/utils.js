@@ -158,34 +158,54 @@ export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
 // arming only happens while it returns true -- otherwise the action runs on
 // the first click (for buttons that are only sometimes destructive, e.g.
 // preset Apply, which only overwrites a prompt when one would change).
-export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null) {
+// `target` (optional) returns a comparable value describing WHAT the confirmed
+// action would do -- its destination and its payload. It is captured when the
+// button arms and re-read on the confirming click: if it moved, the arm was a
+// promise about something else, so the click re-arms instead of firing.
+//
+// This has to live in the primitive. A consumer can wire disarm() to its own
+// controls, but the thing that changes the consequence is often OUTSIDE the
+// component: the preset bar's Save writes the DOCUMENT's system prompt, which
+// is edited in a different section of the drawer, so "click Save (arms on
+// 'replace this text'), clear the prompt box, click Save (blanks the preset)"
+// confirmed a write nobody previewed and no amount of disarm() wiring in the
+// bar could have seen it. `when` alone cannot catch it either -- it answers
+// "is something at stake", which was true both times, for different reasons.
+export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, target = null) {
   const original = btn.textContent;
   let armed = false;
   let timer = null;
+  let armedFor = null; // what the pending arm is a promise ABOUT
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (armed && target && target() !== armedFor) disarm();
     if (armed || (when && !when())) {
-      clearTimeout(timer);
-      armed = false;
-      btn.classList.remove('btn--armed');
-      btn.textContent = original;
+      disarm();
       action();
-    } else {
-      armed = true;
-      btn.classList.add('btn--armed');
-      btn.textContent = armedLabel;
-      timer = setTimeout(disarm, 3000);
+      return;
     }
+    arm();
   });
-  // Cancel a pending arm. An arm is a promise about ONE target, so whenever
-  // the target can change under it (the preset bar's select and name box
-  // re-aim both Apply and Save), the consumer must call this -- otherwise the
-  // second click confirms an action the user never previewed. Exposed on the
-  // button so a caller that never re-aims can ignore it entirely.
+
+  function arm() {
+    armed = true;
+    armedFor = target?.() ?? null;
+    btn.classList.add('btn--armed');
+    btn.textContent = armedLabel;
+    timer = setTimeout(disarm, 3000);
+  }
+
+  // Cancel a pending arm. `target` makes a stale arm HARMLESS; disarm makes it
+  // VISIBLY gone, which is a different job -- a button still reading "Overwrite
+  // prompt?" while aimed somewhere else is a lie even though clicking it is now
+  // safe. Consumers call this from controls that re-aim (the preset bar's
+  // select and name box). Exposed on the button, so a caller that never
+  // re-aims can ignore it.
   function disarm() {
     if (!armed) return;
     clearTimeout(timer);
     armed = false;
+    armedFor = null;
     btn.classList.remove('btn--armed');
     btn.textContent = original;
   }
