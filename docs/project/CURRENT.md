@@ -1,11 +1,38 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.35 on the `frontend` branch; unit+contract
+Last updated: 2026-08-28 (v1.79.36 on the `frontend` branch; unit+contract
 green, model-free render suite green, live smoke green UNNARROWED at 52/52 --
 all three engine arms including the four Phase 3 mechanism rows)
 
-HANDOFF (next session start here): The codebase is at v1.79.35 on the
+HANDOFF (next session start here): The codebase is at v1.79.36 on the
 `frontend` branch.
+
+## v1.79.36 -- branch code review acted on
+
+A review of the whole `frontend` branch (73 files vs main) returned 15
+findings; each was re-verified against the code before being touched, and one
+was WRONG (v3 does not retry a blocked MODEL_BUSY for the duration of the run
+-- `MAX_BUSY_RETRIES` is 3). Twelve acted on; see the CHANGELOG for the list.
+
+The two most serious were both in the "runs outlive their response" family
+that has produced most of this branch's bugs: the idle-unload re-check could
+SIGTERM a gguf generation, and a finished run could pop a NEWER generation's
+claim, leaving that run unstoppable while the conversation reported idle.
+
+**Two are left open as owner decisions, not defects:**
+- The Clone button's `armedConfirm`. Cloning loses nothing, so by the standing
+  "only LOSS gates" rule this trains click-through -- and it sits beside Del,
+  which does guard a loss.
+- `scripts/migrate_conversations.py` against the "NEVER write migration code"
+  rule. Its docstring argues it is a one-off outside the app, which is
+  defensible, but it imports `db._SCHEMA_SQL`, so a schema change now has a
+  second file to keep working. Wants a ruling that amends the rule text rather
+  than a carve-out living in the script.
+
+`uv.lock` is STILL unstaged and now carries two things: another session's
+`uv lock --upgrade` from before this work, and the cachetools removal from it.
+They cannot be separated by hand (machine-generated). Someone has to decide
+whether to commit both together.
 
 ## v1.79.31-.34 -- engine coverage COMPLETE, and the lifecycle findings closed
 

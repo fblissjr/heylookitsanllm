@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.36]
+
+Code review of the whole `frontend` branch. Twelve findings acted on; two are left open as owner decisions (below). Each was re-verified against the code before being touched -- a subagent report is not evidence.
+
+### Fixed
+
+- **The idle-unload re-check let a gguf generation take a SIGTERM.** `unload_idle_models` computes candidates, releases the lock, then `_unload_idle` re-acquires and pops -- so anything becoming true in that window must be caught by the re-check. It tested only `generation_queue_stats()`, which is `None` for a provider that queues its own requests. gguf is exactly that, so a run starting inside the window was popped and llama-server SIGTERMed under an open stream: the "gguf had strictly less protection" hole `_is_generating` exists to close, still open on the path that does the popping. `_pinned` was missing from the re-check too.
+- **A busy model was unloaded on the very next tick after its run ended.** `_last_used_ts` is stamped at REQUEST time, so a generation longer than the idle threshold is already stale for its whole second half -- routine since runs began outliving their response. Skipping without re-stamping only deferred the unload by one tick, tearing the model down the instant the reply landed. All three refusals mean IN USE and all three now stamp.
+- **A finished run could pop a NEWER generation's claim.** The stream generator's `finally` did a bare `_ACTIVE.pop(conv_id, None)`, contradicting the invariant stated where the claim is installed -- and it is the release most able to break it, running on a detached task that outlives the response. If anything released run A while A was alive, a second POST claims as B and A's finally pops B: B is unstoppable (`DELETE` 404s), reports idle so the composer offers Send, and a third POST passes the 409 gate and writes into the same conversation.
+- **The `/v3` gzip cache held exactly one entry.** It cleared itself on every miss, so each asset of a ~20-file page load evicted the previous one; nothing was ever a hit and the level-6 compression it exists to keep off the event loop ran on every load -- the same loop delivering SSE tokens. Eviction is per-path now.
+- **`MODEL_BUSY` told the user the wrong thing.** It has two causes -- the generation queue being full, and eviction BLOCKED because every loaded model is generating -- and all three endpoints that map it to 503 replaced the raised message with a fixed sentence about the queue. The eviction raise names the models and the remedy; that now survives. One speller for all three (`busy_response.py`); the wire shape is deliberately unchanged, because v3 retries on exactly `(503, model_overloaded)` and changing the code would silently disable that.
+- **`markdown-stream`'s boundary rule was violated for CommonMark HTML blocks of types 1-5** (`<pre>`, `<script>`, `<style>`, `<textarea>`, `<!--`, `<?`, `<!X`, `<![CDATA[`). They end on a closing condition, not a blank line, so they reach forward past the only thing the scanner treats as a block break -- and a committed prefix is never revisited, so the seam is permanent. Marked `unsafe`, the same treatment a link-reference definition gets.
+- **Three textareas lost their height caps on Chrome/Edge.** `autoGrow` returns early where `field-sizing: content` is supported, handing sizing to CSS *including the cap*, and `.sysprompt-input`, `.message-edit textarea` and `.message-edit__thinking` had no CSS `max-height`. A long system prompt pushed the drawer off-screen; editing a long message put Save/Cancel below the fold.
+- **`cloneConversation` unshifted the full clone response into the list-shaped `s.conversations`** -- pinning the cloned thread in memory for the session and carrying no `generating` key, so `refreshAfterResume`'s membership test answered differently for that one row.
+- `explore`'s `renderStrip` ran a `querySelector` over the whole strip on every append; `s.chipEls.length === 0` answers the same question in O(1).
+- `MockProvider` called neither `super().__init__()` nor anything installing `BaseProvider`'s state, so the teardown guard above was untestable against it -- the trap `FakeProvider` documents avoiding, in the other mock.
+
+### Removed
+
+- `cachetools` and `python-multipart` as declared dependencies: nothing in `src/` imports either (the only `cachetools` user was the deleted `fast_image.py`; no route uses `Form`/`File`/`UploadFile`), and the `cachetools` comment named the deleted module. The OpenAPI description also advertised it as a live feature.
+
+### Changed
+
+- `admin_api`'s comments about the unload drain were made false by the generating-refusal: the drain is no longer what covers an active generation on the explicit path (it covers gate waiters and `force=True`), and the 409 now has two causes rather than one. A reload issued during any generation refuses rather than waiting the model out -- including a detached run the requester cannot see. Behaviour intended; the comments were not.
+
+### Still open (owner decisions, not defects)
+
+- The Clone button's `armedConfirm`. Cloning loses nothing, so by the standing "only LOSS gates" rule this is a click-through-training confirm -- and it sits beside Del, which does guard a loss. Left as-is pending a ruling.
+- `scripts/migrate_conversations.py` against the "NEVER write migration code" rule. Its docstring argues it is a one-off outside the app, which is defensible, but it imports `db._SCHEMA_SQL` so a schema change now has a second file to keep working. Wants an explicit ruling that amends the rule text rather than a carve-out living in the script.
+
+### Not a finding
+
+- The review said v3 auto-retries a blocked `MODEL_BUSY` "every second for the whole duration of a run". It does not: `MAX_BUSY_RETRIES` is 3, so the client gives up after about three seconds. The message was wrong; the backpressure was not.
+
 ## [1.79.35]
 
 ### Fixed

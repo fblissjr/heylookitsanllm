@@ -436,16 +436,26 @@ async def reload_model(model_id: str, request: Request, warm: bool = False):
                    f"reload after it completes.",
         )
     try:
-        # to_thread: the unload drain can wait up to 30s on active
-        # generations, and running it on the event loop would freeze the
-        # very SSE streams it is waiting to drain (guaranteed timeout +
-        # force-unload under an active Metal command buffer).
+        # to_thread: the unload drain can wait up to 30s, and running it on
+        # the event loop would freeze the very SSE streams it is waiting to
+        # drain (guaranteed timeout + force-unload under an active Metal
+        # command buffer). The drain is NOT what covers an active generation
+        # any more -- unload_model refuses that outright, below -- it covers
+        # the cases the refusal does not: requests WAITING at the generation
+        # gate (not "generating", but about to be), and force=True, which
+        # skips the refusal and lands on the drain, which is when the 30s
+        # matters most.
         # A reload of an unloaded model is just a load -- unload_model
         # returning False (not loaded) is not an error here.
         await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
-        # Pinned (RLM job / j-space analysis in progress): the caller can
-        # act on this -- it is a conflict, not a server fault.
+        # TWO causes, both conflicts the caller can act on rather than server
+        # faults: pinned (RLM job / j-space analysis in progress), and
+        # GENERATING. The second is newer and changes what this endpoint does:
+        # a reload issued during any generation now refuses rather than waiting
+        # the model out -- including a detached run the requester never started
+        # and cannot see, since a run outlives the response that began it. The
+        # raised message names the remedy (stop it, or force).
         raise HTTPException(status_code=409, detail=str(e))
     return await _load_and_warm(router, model_id, warm)
 
@@ -460,9 +470,9 @@ async def unload_model(model_id: str, request: Request):
 
     router = request.app.state.router_instance
     # Same two mechanisms as /reload (ride-along fixes, same review): the
-    # unload drain must not run ON the event loop (it waits on generations
-    # whose SSE delivery the loop drives), and a pinned model is a 409 the
-    # caller can act on, not a raw 500.
+    # unload drain must not run ON the event loop (it waits on gate waiters
+    # whose SSE delivery the loop drives), and a refusal is a 409 the caller
+    # can act on, not a raw 500. Refusals: pinned, or generating.
     try:
         unloaded = await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
@@ -540,9 +550,10 @@ async def remove_model_config(model_id: str, request: Request):
     service = _get_service(request)
     router = request.app.state.router_instance
 
-    # Unload if currently loaded -- off the event loop, and pinned = 409
-    # BEFORE the config row is deleted (removing a model an RLM job is
-    # actively running would be the worse half of the failure).
+    # Unload if currently loaded -- off the event loop, and a refusal (pinned,
+    # or generating) is a 409 BEFORE the config row is deleted: removing a
+    # model an RLM job is actively running, or one mid-generation, would be
+    # the worse half of the failure.
     try:
         await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
