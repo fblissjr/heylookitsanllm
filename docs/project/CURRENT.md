@@ -1,11 +1,49 @@
 # Current Work
 
-Last updated: 2026-08-25 (v1.79.7 on the `frontend` branch; suite 1500+
-unit+contract green, E2E chat 46/46 + pages 43/43 live-verified, model-free
-render suite 36/36 checks passing)
+Last updated: 2026-08-28 (v1.79.30 on the `frontend` branch; unit+contract
+green, model-free render suite green, live smoke green on all three engine
+arms)
 
-HANDOFF (next session start here): The codebase is at v1.79.7 on the
-`frontend` branch. The extensive post-v1.62.3 arc shipped 60+ commits
+HANDOFF (next session start here): The codebase is at v1.79.30 on the
+`frontend` branch.
+
+## The 2026-08-28 arc (v1.79.20-.30, twelve commits)
+
+Started from a bug report -- "my presets disappear, and updating one changed
+every other one". Root-caused, fixed, and then the fixes were reviewed three
+times and the reviews found more than the original bug did.
+
+**What was actually wrong.** One preset was overwritten, not many: the select
+pre-filled the save-as name, so picking a preset to LOOK at it aimed Save at
+it. Everything else the report described was display: the drawer's system-prompt
+box shows the DOCUMENT's prompt whatever the select says, so every preset
+looked identical. The lost prompt is gone (overwritten in place, no history);
+the owner declined a restore from the copy that existed.
+
+**What shipped.** Guards on the destructive direction (v1.79.20-.22), then the
+comprehension gap underneath: a scope line on the sampler panel, "settings
+only" in the dropdown, a drift line that names which half moved (.25); the
+disclosure that a run survives you leaving, and Update / Save-as-new replacing
+one overloaded control (.26); disabled-with-reason and per-model caveats (.27).
+A `docs/frontend_v3_user_guide.md` was written along the way and is what
+exposed the rough-edge list the later work closed.
+
+**What the reviews found that mattered more.** `stopStream` marked every stop
+as user-initiated before knowing whether the server stopped anything, so a
+COMPLETE generation reported "Stopped." -- re-opening a regression the
+2026-08-13 review had closed from the other side. Underneath it, `finishGenerate`
+was awaiting the server's own `generating` flag and discarding it, then
+inferring the same fact from three client-side proxies. That inference was the
+common cause of every lifecycle bug in .26-.29 and is now deleted (.30).
+
+**Two owner rules changed.**
+- The red-then-green rule is REMOVED from the repo entirely, carve-outs
+  included (.23). It had been rejected once in 2026-08-17 as an undocumented
+  habit, then written INTO the repo as policy, where it justified itself on
+  every read. `CLAUDE.md`'s test section records that it was removed so it does
+  not grow back.
+- Live coverage is now per ENGINE, not per provider: `tests/smoke/` (.28) plus
+  `docs/project/plan_engine_coverage.md`. The extensive post-v1.62.3 arc shipped 60+ commits
 covering the complete Chat Orchestration & Reliability phases (0 through 2),
 Schema v7 media-by-reference and true single-message deletion, the Messages
 API Phase 3b consumer migration (no v3 page speaks /v1/chat/completions
@@ -23,27 +61,58 @@ Two foundational contracts established in earlier arcs remain in force:
   nothing.
 
 NEXT, in order:
-1. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
+1. **Engine coverage, phases 1-4** (P2; `docs/project/plan_engine_coverage.md`).
+   Phase 0 shipped as `tests/smoke/`. Left: one shared engine classifier
+   instead of the copy now in `tests/smoke` + `tests/eval`; both harnesses
+   REPORT which engines a run spanned; then the same-feature-two-mechanisms
+   checks (audio must 400 LOUDLY on MLX, thinking capability, thinking depth,
+   chat-template source). **New, concrete, from today:** the smoke harness
+   cannot confirm which MLX library ran for an auto-routed vision model --
+   mlx-vlm degrades to mlx-lm for an unregistered `model_type` and no endpoint
+   reveals it, so the run honestly reports "engine identity NOT confirmed".
+   Exposing `effective_loader` (admin models response) closes it and is the
+   cheapest real win in the plan.
+2. **Remaining review findings** (P2). Three reviews ran on 2026-08-28; the
+   critical ones are fixed in .29/.30. Known-open, all in `chat.js` unless
+   noted -- these were read and deliberately deferred, not missed:
+   - `deleteConversation` fires `stopGenerate` without awaiting or checking
+     its status, then `abortStream(ctx, ABANDON.DELETE)` asserts "genuinely
+     ended server-side" on a request whose outcome is unknown. `stopRemote`
+     already models the right behaviour for `status === null`.
+   - `abortStream` is last-writer-wins on `abandonReason`, so a second abort
+     downgrades the stronger claim of the first (delete -> switch-conversation).
+   - `abortStream` does not clear `s.stream`, so a switch INTO a conversation
+     that is generating can have its `setRemoteGenerating(true)` swallowed by
+     the `if (s.stream) return` guard -- composer reads Send for a live run.
+   - `ABANDON.TEARDOWN` has no call site (page.js aborts `ctx.signal` and
+     `linkedController` chains off it) and `abandonNote`'s generic fallback is
+     near-dead. Documented as such; not yet removed.
+   - `render.mjs` aims Apply/Update with positional `nth-of-type` selectors,
+     which silently re-aim at the wrong control if the row's button order
+     changes -- the buttons carry stable `title` attributes.
+   - `tests/smoke/run.py` `contract_checks` indexes `got["params"]` without a
+     status guard, so a failed GET throws out of the contract half.
+3. **Pre-warm load telemetry & lifespan ordering test** (P3, `server.py` / `api.py`;
    TODO.md). Startup `--model-id` load runs in server.py before the lifespan
    resolves `observability_level` from the DB, so telemetry is missing for
    pre-warmed loads. Needs settings resolution before pre-warm, and a contract
    test pinning that `log_startup_info()` runs strictly after
    `apply_runtime_settings()`.
-2. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
+4. **mRoPE cache gate config override** (P3, `prompt_cache.py` / `models.toml`;
    TODO.md). The mRoPE cache gate keys on `_position_ids`/`_rope_deltas`
    attribute sniffing; add an explicit per-model `cache_reuse = true|false`
    config escape hatch in `models.toml` ahead of attribute sniffing.
    Live-verify extension reuse for quantized/rotating cache configs.
-3. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
+5. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
    TODO.md). Slim `docs/frontend_v3_spec.md` down to §4 (the living API contract)
    + decision records now that v2 is deleted. Trim `config.md` and `mlx_provider.md`.
-4. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
+6. **Observability config & read surfaces** (P2, `observability.py` / v3 UI;
    TODO.md). Admin panel observability controls and v3 `logs/*.jsonl` viewer page;
    consolidate `memory.py` legacy streams into the spine once verified.
-6. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
+7. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
    TODO.md). Live streaming analyze endpoint (SSE) and interactive
    steering/activation patching (porting `mlxui-core` op-semantics via forward-hooks).
-7. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
+8. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
    Optional 1Password / `op read` integration for DuckDB file encryption.
 
 UPDATE 2026-08-25 (v1.62.4-v1.79.7, 60+ commits across multiple milestones, on branch `frontend`):
