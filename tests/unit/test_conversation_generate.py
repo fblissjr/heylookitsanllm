@@ -584,6 +584,53 @@ class TestClaimLeaks:
                 del provider.check_capacity
 
 
+    @pytest.mark.asyncio
+    async def test_a_finished_run_cannot_pop_a_NEWER_claim(self, ctx):
+        """The stream's finally must release only ITS OWN claim.
+
+        `_ACTIVE` is installed with an identity-guarded releaser and the code
+        says so where the claim is made ("every release is identity-guarded so
+        none can pop a NEWER generation's claim"), but the stream generator's
+        own finally did a bare `_ACTIVE.pop(conv_id, None)` -- and that is the
+        release most able to break the invariant, because it runs on a detached
+        task that outlives the response by the whole length of an abandoned
+        run.
+
+        The consequence of popping someone else's claim is not a leak, it is
+        the opposite and worse: run B is left with no entry, so `DELETE
+        .../generate` 404s (B is unstoppable), `is_generating` reports idle so
+        the composer offers Send, and a third POST passes the 409 gate and
+        writes into the same conversation through the positional commit.
+
+        Staged by having the PROVIDER swap the claim mid-generation, which is
+        the real shape: something released A (the 60s watchdog, or response
+        cleanup racing `started`) and B claimed the conversation while A was
+        still running.
+        """
+        client, store, provider = ctx
+        conv, _ = await make_conv(store, ("user", "q1"))
+        newer = _Run(AbortEvent())
+
+        def swap_mid_run(request, abort_event=None):
+            def gen():
+                yield GenerationChunk(text="Hello", token=0)
+                _ACTIVE[conv["id"]] = newer   # the claim changed hands
+                yield GenerationChunk(text=" world", token=1)
+            return gen()
+        provider.create_chat_completion = swap_mid_run
+        try:
+            res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                    json={"mode": "append"})
+            assert res.status_code == 200
+            assert _ACTIVE.get(conv["id"]) is newer, (
+                "the finished run popped a NEWER generation's claim -- that run "
+                "is now unstoppable and the conversation reports idle while it "
+                "is still writing")
+        finally:
+            del provider.create_chat_completion
+            _ACTIVE.pop(conv["id"], None)
+
+
 @pytest.mark.unit
 class TestShowSpecialTokens:
     """v3's "Show special tokens" display pref on the wire (DESIGN.md §6).

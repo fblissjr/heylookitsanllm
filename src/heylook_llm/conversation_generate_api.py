@@ -396,6 +396,19 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
     run = _Run(abort_event)
     _ACTIVE[conv_id] = run
 
+    # The ONE releaser, defined WITH the claim rather than 130 lines further
+    # down. Every release goes through it so the identity guard cannot be
+    # forgotten at a call site, and it has to be in scope for all of them --
+    # including the `except BaseException` below, which can fire from anywhere
+    # inside the try, and the MODEL_BUSY return, which is above where this used
+    # to be defined.
+    started = {"flag": False}
+
+    def _release_claim(source: str):
+        if _ACTIVE.get(conv_id) is run:
+            logger.warning(f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
+            _ACTIVE.pop(conv_id, None)
+
     try:
         conv = await db.get_conversation(conn, conv_id)
         if conv is None:
@@ -484,7 +497,10 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 # A RETURN skips the except-BaseException release below and no
                 # stream generator exists yet -- pop here or the conversation
                 # is 409-locked forever (review finding 2026-08-13).
-                _ACTIVE.pop(conv_id, None)
+                # Identity-guarded like every other release: nothing can have
+                # re-claimed this early (the 409 gate holds), so this is for
+                # the reader, who should not have to prove that per call site.
+                _release_claim("model busy before the stream started")
                 return JSONResponse(
                     status_code=503,
                     content={"error": {
@@ -523,13 +539,6 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         # the 60s watchdog stays as the belt for any path that skips both.
         # Every release is identity-guarded so none can pop a NEWER
         # generation's claim.
-        started = {"flag": False}
-
-        def _release_claim(source: str):
-            if _ACTIVE.get(conv_id) is run:
-                logger.warning(f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
-                _ACTIVE.pop(conv_id, None)
-
         def _watchdog():
             if not started["flag"]:
                 _release_claim("watchdog (stream never started)")
@@ -551,7 +560,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
             commit_after=commit_after, dropped=dropped,
             thinking_enabled=thinking_enabled,
             strip_specials=not body.show_special_tokens,
-            perf_ctx=perf_ctx, started=started,
+            perf_ctx=perf_ctx, started=started, release=_release_claim,
         )))
         return StreamingResponse(
             _subscribe(run),
@@ -566,7 +575,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
     except BaseException:
         # Any failure before the stream starts releases the claim; the
         # stream generator's finally owns it from here on.
-        _ACTIVE.pop(conv_id, None)
+        _release_claim("failure before the stream started")
         raise
 
 
@@ -617,7 +626,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                            saved_user_row, continue_row, commit_after,
                            dropped, thinking_enabled, perf_ctx,
                            strip_specials=True,
-                           started=None) -> AsyncGenerator[str, None]:
+                           started=None, release=None) -> AsyncGenerator[str, None]:
     if started is not None:
         started["flag"] = True  # the finally below owns _ACTIVE from here on
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -737,7 +746,22 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
 
         _record_perf(perf_ctx, translator, telemetry, model_id)
     finally:
-        _ACTIVE.pop(conv_id, None)
+        # IDENTITY-GUARDED, through the caller's single releaser. This was a
+        # bare `_ACTIVE.pop(conv_id, None)`, contradicting the invariant stated
+        # where the claim is installed ("every release is identity-guarded so
+        # none can pop a NEWER generation's claim") -- and this is the release
+        # most able to break it, because it runs on a detached task that can
+        # outlive the response by the whole length of an abandoned run. If
+        # anything released run A's claim while A was still alive (the 60s
+        # watchdog, or response cleanup winning a race with `started`), a
+        # second POST could claim the conversation as B, and A's finally would
+        # then pop B: B becomes unstoppable (DELETE 404s), reports idle so the
+        # composer shows Send, and a third POST passes the 409 gate and writes
+        # into the same conversation through the positional commit.
+        if release is not None:
+            release("stream finally")
+        else:  # no caller-supplied releaser: nothing can have re-claimed
+            _ACTIVE.pop(conv_id, None)
         if not persisted:
             # Client disconnected (or the response task was cancelled) before
             # the inline persist ran. The abort has already stopped the
