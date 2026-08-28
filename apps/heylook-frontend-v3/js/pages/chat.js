@@ -548,14 +548,21 @@ function commitModelSwitch(ctx, to) {
   // conversation.model_id still misattributes it. True per-message
   // attribution is G5 in the switching design (deferred until a
   // _SCHEMA_VERSION bump adds messages.model_id).
-  if (s.stream) abortStream(ctx);
+  // Abandoning, not stopping: the run detaches and commits into THIS
+  // conversation under the old model. finishGenerate says so (abandonNote),
+  // and it also carries the load-cost clause -- so this path stays quiet
+  // rather than writing a line the async abort would overwrite a beat later.
+  const abandoning = Boolean(s.stream);
+  if (s.stream) abortStream(ctx, 'switch-model');
   s.committedModelId = to;
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
   // worse than nothing (same rule as the dots).
-  showStatus(ctx, s.loadedKnown && !s.loadedIds.has(to)
-    ? `${to} is not loaded — your first message loads it, or press Load to do it now.`
-    : '');
+  if (!abandoning) {
+    showStatus(ctx, s.loadedKnown && !s.loadedIds.has(to)
+      ? `${to} is not loaded — your first message loads it, or press Load to do it now.`
+      : '');
+  }
   if (s.activeId) {
     api.updateConversation(s.activeId, { model_id: to })
       .catch((err) => console.warn('model_id save failed', err));
@@ -863,7 +870,7 @@ async function deleteConversation(ctx, convId) {
   // and give the unwind a moment before retrying once.
   if (s.stream?.targetConvId === convId) {
     stopGenerate(convId);
-    abortStream(ctx);
+    abortStream(ctx, 'delete'); // genuinely ended server-side, not abandoned
   }
   try {
     await api.deleteConversation(convId);
@@ -884,7 +891,7 @@ async function deleteConversation(ctx, convId) {
   if (!ctx.alive) return;
   s.conversations = s.conversations.filter((c) => c.id !== convId);
   if (s.activeId === convId) {
-    abortStream(ctx);
+    abortStream(ctx, 'delete');
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
@@ -921,7 +928,14 @@ async function cloneConversation(ctx, convId) {
 async function selectConversation(ctx, convId) {
   const s = ctx.state;
   if (s.activeId === convId && s.messages.length) return;
-  if (s.stream) abortStream(ctx); // partial still persists to its own conv (server disconnect path)
+  // Named BEFORE the abort, and disclosed after the load below: finishGenerate
+  // returns early once activeId has moved, so it is not going to say this for
+  // us. The run itself is unharmed -- it detaches and commits the whole reply
+  // into the conversation being left.
+  const leaving = s.stream
+    ? (s.conversations.find((c) => c.id === s.stream.targetConvId)?.title ?? null)
+    : null;
+  if (s.stream) abortStream(ctx, 'switch-conversation');
   s.activeId = convId;
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
@@ -958,6 +972,11 @@ async function selectConversation(ctx, convId) {
     s.presetBar.syncIndicator(); // rebuild no-ops while the drawer is closed
     renderMessages(ctx);
     scrollMessages(ctx, true);
+    // Last, so the empty-status reset above cannot swallow it.
+    if (leaving) {
+      showStatus(ctx, `"${leaving}" keeps generating — it will finish on the server `
+        + 'and be there when you come back.');
+    }
   } catch (err) {
     if (ctx.alive && s.activeId === convId) {
       showStatus(ctx, `Could not load conversation: ${err.message}`, true);
@@ -2403,6 +2422,10 @@ function paintStream(ctx) {
 function stopStream(ctx) {
   const stream = ctx.state.stream;
   if (!stream) return;
+  // The user asked the SERVER to stop. Recorded here rather than inferred at
+  // the end, because the 404 branch below aborts locally too and that abort
+  // is indistinguishable from walking away without this flag.
+  stream.userStopped = true;
   stopGenerate(stream.targetConvId).then((status) => {
     // 404 = nothing active server-side. Abort locally ONLY if this stream
     // has produced no events yet (the 503-retry sleep / dispatch window).
@@ -2424,8 +2447,30 @@ function stopStream(ctx) {
 // keeps just the partial. Do not re-describe this as "persists the partial";
 // it did work that way once, and the stale comment made walking away look
 // lossy in the user guide until the server was read.
-function abortStream(ctx) {
-  ctx.state.stream?.controller.abort();
+function abortStream(ctx, reason = 'teardown') {
+  const stream = ctx.state.stream;
+  if (!stream) return;
+  // WHY we let go decides what the end is allowed to claim. "Stopped" is a
+  // statement about the SERVER, and only two of these reasons make it true.
+  stream.abandonReason = reason;
+  stream.controller.abort();
+}
+
+// What to say when we dropped the subscription and the run did NOT stop. This
+// is the app's one disclosure of its best behaviour: the generation detaches,
+// finishes, and commits the whole answer (conversation_generate_api._Run), so
+// walking away costs nothing -- and nobody could discover that, because the
+// only place it was ever mentioned was a status line you saw if you happened
+// to come back mid-run.
+function abandonNote(ctx, stream) {
+  const s = ctx.state;
+  if (stream.abandonReason === 'switch-model') {
+    const next = s.modelSelect.value;
+    const cold = s.loadedKnown && next && !s.loadedIds.has(next);
+    return 'The reply in flight keeps generating on the previous model and saves to '
+      + `this conversation. Your next message ${cold ? 'loads' : 'uses'} ${next}.`;
+  }
+  return 'Still generating on the server — the reply will be saved to this conversation.';
 }
 
 function releaseStream(ctx, stream) {
@@ -2483,8 +2528,19 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   scrollMessages(ctx);
 
   const endReason = saved?.end_reason;
-  if (aborted || endReason === 'aborted') {
+  // A client-side abort is NOT a stop. Pressing Stop aborts the run server
+  // side (end_reason 'aborted', or userStopped when we also killed the fetch);
+  // deleting the conversation stops it too. Everything else -- switching
+  // model, switching conversation, leaving the page -- only ends our
+  // SUBSCRIPTION, and the run finishes and commits regardless. Reporting that
+  // as "Stopped." was a false statement about the server, and the exact
+  // opposite of what the user needed to know.
+  const reallyStopped = endReason === 'aborted' || stream.userStopped
+    || stream.abandonReason === 'delete';
+  if (reallyStopped) {
     showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
+  } else if (aborted) {
+    showStatus(ctx, abandonNote(ctx, stream));
   } else if (endReason === 'error' || stream.inBandError) {
     // the in-band error status line stands; a partial (if any) is saved
   } else if (usage || saved) {

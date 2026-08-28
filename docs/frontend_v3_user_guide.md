@@ -97,32 +97,36 @@ a system prompt is typed work.
 Apply also **stamps** the conversation: from then on the conversation records
 that it is running that preset, and the dropdown will open on it next time.
 
-### Save
+### Update and Save as new
 
-Takes the current conversation's prompt and the entire sampler panel, and writes
-them to the preset named in the box next to the button. A name that already
-exists is overwritten. A new name creates a preset.
+Both buttons write the current conversation's prompt and the entire sampler
+panel to a preset. They differ only in *which* preset.
 
-**Selecting a preset from the dropdown pre-fills that name box.** That is the
-sharp edge in this design: browsing presets aims Save at the one you are
-browsing. Save asks for confirmation before it overwrites a preset's stored
-prompt, except in one case:
+There are **two** write buttons, and which preset you hit is decided by which
+one you press — not by what you type:
 
-- **No confirmation** when you are saving back onto the preset the conversation
-  is already running, and that preset is the one showing in the dropdown. This
-  is the ordinary loop — apply a preset, tweak the prompt, save it back — and
-  making you confirm it every time would train you to click through the
-  confirmation that matters.
+- **Update** overwrites the preset showing in the dropdown, the one the preview
+  directly above it is displaying. This is the only way to overwrite a preset.
+- **Save as new** creates one under the typed name. If that name is already in
+  use it refuses and tells you to use Update instead. It can never overwrite.
+
+Update asks for confirmation before it changes a preset's stored prompt, except
+in one case:
+
+- **No confirmation** when you are updating the preset the conversation is
+  already running. This is the ordinary loop — apply a preset, tweak the prompt,
+  update it — and making you confirm it every time would train you to click
+  through the confirmation that matters.
 - **Confirmation** for everything else that would change a stored prompt,
-  including *blanking* one. Saving from a conversation with no system prompt
+  including *blanking* one. Updating from a conversation with no system prompt
   writes an empty prompt to the preset, and a preset with no prompt does nothing
   when applied. It stays in the list but stops working, which reads as "my
   preset disappeared."
 
 The confirmation is the button itself changing to **Overwrite prompt?** for a
-few seconds. Click it again to go through. Changing the dropdown or the name box
-cancels it, and so does editing the prompt underneath — the confirmation is a
-promise about one specific write, and if the write changes, the promise is void.
+few seconds. Click it again to go through. Changing the dropdown cancels it, and
+so does editing the prompt underneath — the confirmation is a promise about one
+specific write, and if the write changes, the promise is void.
 
 ### If you change a setting and never apply or save
 
@@ -134,13 +138,13 @@ The preset is untouched. The drift line under the dropdown says which
 situation you are in, and which half moved:
 
 > *Matches current settings.*
-> *Prompt differs — Apply copies it here, Save overwrites it.*
+> *Prompt differs — Apply copies it here, Update overwrites it.*
 > *Settings differ — …*
 > *Prompt and settings differ — …*
 
 Read that as: your conversation and this preset have diverged. **Apply** discards
-your changes in favour of the preset's. **Save** discards the preset's in favour
-of yours. There is no merge and no third option.
+your changes in favour of the preset's. **Update** discards the preset's in
+favour of yours. There is no merge and no third option.
 
 Beside the model selector, a chip names the preset the conversation is running
 and appends **(edited)** once anything the preset speaks for has changed.
@@ -208,6 +212,10 @@ empty bubble. The line clears the moment the first token — or the first
 conversations, switching to another page, locking your phone, or backgrounding
 the tab all end your *subscription* to the stream. The run keeps going on the
 server and commits the complete answer when it finishes.
+
+The app tells you at the moment you leave — switching conversations says
+*"<title>" keeps generating*, and switching models says the reply in flight
+finishes on the previous model and saves here.
 
 Come back and the whole reply is there. If it is still running when you return,
 the status line says so and the Send button reads **Stop**:
@@ -310,18 +318,6 @@ Written down because they are real, not because they are scheduled. Each is a
 place where the interface does not currently say enough for the behaviour to be
 guessable.
 
-**Browsing and choosing a save destination are the same control.** Selecting a
-preset to look at it pre-fills the save-as name, which is why a stray Save
-overwrites the preset you were merely inspecting. The confirmation now catches
-this, but a confirmation is a guard on a sharp edge, not the absence of one.
-Separating "which preset am I reading" from "which preset am I writing" would
-remove the edge instead.
-
-**Nothing says the generation survives you leaving.** This is genuinely good
-behaviour and almost nobody will discover it, because the only place it is
-mentioned is a status line you see when you happen to return mid-run. Users
-reasonably assume walking away truncates the answer, and so they wait.
-
 **Send and Stop are one button, and it can read Stop for a run you did not
 start.** Correct — the run is yours, started in another tab or before a reload —
 but there is no cue distinguishing "stop the thing streaming in front of me"
@@ -347,3 +343,9 @@ Kept as a record rather than deleted, so this section reads as a ledger.
   v1.79.25; the line names the prompt, the settings, or both.
 - *A preset that lost its prompt looks healthy* — closed in v1.79.25; the
   dropdown marks it "settings only" at the point you choose it.
+- *Browsing and choosing a save destination are the same control* — closed in
+  v1.79.26. Update targets the dropdown selection; Save as new refuses a name in
+  use. There is no typing path to an overwrite.
+- *Nothing says the generation survives you leaving* — closed in v1.79.26, which
+  also fixed the client reporting **"Stopped."** for a run that was in fact
+  still generating.

@@ -304,9 +304,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* drawer lead sections shared by chat + notebook: preset bar + the
    per-document system prompt (prompt-section.js's createPromptSection) */
 .preset-section { display: flex; flex-direction: column; gap: 0.4rem; }
-.preset-row { display: flex; gap: 0.4rem; }
+/* Wraps, and the select keeps a floor. The row carries four controls since
+   Update joined it (v1.79.26), and an ARMED button relabels itself to
+   "Overwrite prompt?" -- so at phone width a nowrap row either overflows or
+   crushes the select, which is the one control naming what Update would hit.
+   flex-basis gives it a floor and the buttons drop to the next line instead. */
+.preset-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .preset-row select,
-.preset-row .input { flex: 1; min-width: 0; text-align: left; }
+.preset-row .input { flex: 1 1 8rem; min-width: 0; text-align: left; }
 /* read-only view of the SELECTED preset's own prompt -- deliberately styled
    apart from .sysprompt (the editable per-document box below it), because
    the whole failure this fixes was reading one as the other */

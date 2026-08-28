@@ -1114,7 +1114,7 @@ async function main() {
       await page.evaluate(() => { const n = document.querySelector('.drawer--open .preset-section .input'); n.focus(); n.select(); });
       await page.keyboard.type('after-resume');
       const beforeSave = reqs.length;
-      await clickByText(page, '.drawer--open .preset-row button', 'Save');
+      await clickByText(page, '.drawer--open .preset-row button', 'Save as new');
       const post = await waitFor(() => reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets')),
         { timeout: 5000, interval: 50, message: 'preset Save sent no POST' });
       const saved = JSON.parse(post.postData);
@@ -1195,9 +1195,10 @@ async function main() {
     // change rather than throw.
     const PRESET = {
       select: '.drawer--open .preset-section select',
-      applyBtn: '.drawer--open .preset-section .preset-row:has(select) button',
+      applyBtn: '.drawer--open .preset-section .preset-row:has(select) button:nth-of-type(1)',
+      updateBtn: '.drawer--open .preset-section .preset-row:has(select) button:nth-of-type(2)',
       nameInput: '.drawer--open .preset-section .preset-row:has(input.input) input.input',
-      saveBtn: '.drawer--open .preset-section .preset-row:has(input.input) button',
+      saveNewBtn: '.drawer--open .preset-section .preset-row:has(input.input) button',
       preview: '.drawer--open .preset-preview__body',
     };
     // Matches data-name, NOT the option text: a preset carrying no prompt is
@@ -1230,7 +1231,7 @@ async function main() {
       await guard.page.click(PRESET.applyBtn);
       await settle(guard.page);
     };
-    const saveLabel = () => guard.page.$eval(PRESET.saveBtn, (el) => el.textContent);
+    const saveLabel = () => guard.page.$eval(PRESET.updateBtn, (el) => el.textContent);
     // Hand-type a save-as name, the way a user renaming the target would --
     // this is the one control that can aim Save somewhere the select is not
     // pointing.
@@ -1258,7 +1259,7 @@ async function main() {
     // PUT-only filter would report that unconfirmed write as nothing at all.
     const clickSave = async () => {
       const from = guard.reqs.length;
-      await guard.page.click(PRESET.saveBtn);
+      await guard.page.click(PRESET.updateBtn);
       await settle(guard.page);
       await sleep(250); // save() awaits a refresh before it would write
       return guard.reqs.slice(from).filter((r) =>
@@ -1336,22 +1337,28 @@ async function main() {
         'the loop save did not carry the edited prompt');
     });
 
-    await suite.check('a hand-typed name that disagrees with the selection still arms', async () => {
-      // The exemption is the iterate loop, which means the loop in FULL: the
-      // document runs the preset AND the select is showing it. Selecting one
-      // preset and typing another's name into the save-as box aims Save at a
-      // preset that neither the preview nor the drift line is describing --
-      // if the stamp alone earned the exemption, that would overwrite in one
-      // click while every visible readout named something else.
+    await suite.check('a name already in use is refused, never overwritten', async () => {
+      // The accident class, removed rather than guarded: there is no typing
+      // path to an overwrite any more. Save as new creates or refuses; only
+      // Update (beside the select, under the preview) overwrites, and only
+      // ever the preset it is showing.
       await sleep(3200);
-      // The prompt must actually differ from what "pristine" stores, or branch
-      // (1) declines to arm for the right reason and the check proves nothing.
       await typeDocPrompt('a prompt that is not what pristine stores');
-      await selectPreset('other');          // the document still runs "pristine"
-      await typePresetName('pristine');     // ...but Save is aimed back at it
-      const writes = await clickSave();
+      await selectPreset('other');          // Update is aimed at "other"
+      await typePresetName('pristine');     // ...and the name box names another
+      const from = guard.reqs.length;
+      await guard.page.click(PRESET.saveNewBtn);
+      await settle(guard.page);
+      await sleep(250);
+      const writes = guard.reqs.slice(from).filter((r) =>
+        (r.method === 'PUT' && r.url.includes('/v1/presets/'))
+        || (r.method === 'POST' && r.url.endsWith('/v1/presets')));
       assert(writes.length === 0,
-        `Save hit "pristine" unconfirmed while the section was describing "other" (${writes.length} writes)`);
+        `"Save as new" wrote to a name already in use (${writes.length} writes: `
+        + `${JSON.stringify(writes.map((w) => [w.method, w.postData]))})`);
+      const status = await guard.page.$eval('.chat__status', (el) => el.textContent);
+      assert(/already exists/i.test(status) && /update/i.test(status),
+        `the refusal did not name the other action: ${JSON.stringify(status)}`);
     });
 
     await suite.check('but saving onto a preset the document does NOT run still arms', async () => {
@@ -1385,14 +1392,14 @@ async function main() {
       // test be what clears it makes the first assertion fail with a message
       // about arming when the real regression is in cancelling.
       await sleep(3200); // armedConfirm's own timeout
-      assert((await saveLabel()) === 'Save', `Save was still armed at the start of the check: ${await saveLabel()}`);
+      assert((await saveLabel()) === 'Update', `Update was still armed at the start of the check: ${await saveLabel()}`);
       await typeDocPrompt('a prompt that differs from both');
       await selectPreset('owned');
       let writes = await clickSave();
       assert(writes.length === 0, 'the first Save on "owned" should have armed');
-      assert((await saveLabel()) !== 'Save', 'the first Save did not visibly arm');
+      assert((await saveLabel()) !== 'Update', 'the first Update did not visibly arm');
       await selectPreset('other');
-      assert((await saveLabel()) === 'Save', 'picking another preset left the button visibly armed');
+      assert((await saveLabel()) === 'Update', 'picking another preset left the button visibly armed');
       writes = await clickSave();
       assert(writes.length === 0,
         `the arm carried across the selection change and overwrote "other" unconfirmed (${writes.length} writes)`);
@@ -1610,6 +1617,37 @@ async function main() {
       assert(!fit.overflow, 'an editor textarea overflows the phone viewport');
       assert(!fit.pageOverflow, 'the page scrolls horizontally at phone width');
     });
+    await suite.check('touch: the preset row fits the phone, armed or not', async () => {
+      // Update joined a row that already held a select, Apply and Del, and an
+      // armed button relabels itself to "Overwrite prompt?". At 390px a
+      // nowrap row would either overflow the drawer or crush the select --
+      // the one control that names what Update is aimed at.
+      await openDrawer(mob.page);
+      await settle(mob.page);
+      const measure = () => mob.page.evaluate(() => {
+        const row = document.querySelector('.drawer--open .preset-section .preset-row');
+        const sel = row.querySelector('select');
+        return {
+          overflow: row.scrollWidth - row.clientWidth,
+          selectWidth: sel.getBoundingClientRect().width,
+        };
+      });
+      let m = await measure();
+      assert(m.overflow <= 1, `the preset row overflows by ${m.overflow}px at phone width`);
+      assert(m.selectWidth >= 100, `the preset select is crushed to ${Math.round(m.selectWidth)}px`);
+
+      // Arm the longest label the row can show and measure again.
+      await mob.page.evaluate(() => {
+        const row = document.querySelector('.drawer--open .preset-section .preset-row');
+        [...row.querySelectorAll('button')].forEach((b) => { b.textContent = 'Overwrite prompt?'; });
+      });
+      await settle(mob.page);
+      m = await measure();
+      assert(m.overflow <= 1, `the armed preset row overflows by ${m.overflow}px at phone width`);
+      assert(m.selectWidth >= 100, `the armed preset row crushes the select to ${Math.round(m.selectWidth)}px`);
+      await closeDrawer(mob.page);
+    });
+
     await suite.check('no uncaught page errors (mobile)', () => {
       assert(mob.pageErrors.length === 0, `page errors: ${mob.pageErrors.join(' | ')}`);
     });
@@ -1958,6 +1996,51 @@ async function main() {
       // the incremental one only ever drops the trailing block or two.
       assert(p.maxRemoved <= 6,
         `a single paint removed ${p.maxRemoved} of ${p.maxChildren} nodes -- the message is being rebuilt, not extended`);
+    });
+
+    await suite.check('leaving mid-run says the answer survives, and never says "Stopped"', async () => {
+      // A client-side abort ends our SUBSCRIPTION; the run detaches, finishes
+      // and commits the whole reply. The end used to report that as
+      // "Stopped." -- a false statement about the server, and the exact
+      // opposite of what the reader needs to know before walking away.
+      drip.text = STREAM_DOC;
+      drip.chunkChars = 4;
+      drip.delayMs = 25;      // long enough to still be streaming when we leave
+      const away = await openChat(browser, base, {
+        dripGenerate: true,
+        secondModel: { id: 'text-model', caps: [] },
+      });
+      const status = () => away.page.$eval('.chat__status', (el) => el.textContent);
+
+      // --- switching MODELS mid-run: same conversation, so the stream's own
+      // end writes the line ---
+      await startSend(away.page, 'go');
+      await waitFor(() => streaming(away.page), { timeout: 5000, message: 'the stream never started' });
+      await away.page.evaluate(() => {
+        const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
+        sel.value = 'text-model';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await waitStreamEnd(away.page);
+      let line = await status();
+      assert(!/stopped/i.test(line), `switching models mid-run reported: ${JSON.stringify(line)}`);
+      assert(/keeps generating/i.test(line) && /text-model/.test(line),
+        `switching models mid-run said ${JSON.stringify(line)}`);
+
+      // --- switching CONVERSATIONS mid-run: the stream's end returns early
+      // once activeId moves, so selectConversation has to say it itself ---
+      await startSend(away.page, 'go again');
+      await waitFor(() => streaming(away.page), { timeout: 5000, message: 'the second stream never started' });
+      await away.page.evaluate(() => {
+        [...document.querySelectorAll('.conv-item__title')]
+          .find((el) => el.textContent === 'other model').click();
+      });
+      await waitStreamEnd(away.page);
+      line = await status();
+      assert(!/stopped/i.test(line), `switching conversations mid-run reported: ${JSON.stringify(line)}`);
+      assert(/keeps generating/i.test(line) && /render suite/.test(line),
+        `switching conversations mid-run said ${JSON.stringify(line)}`);
+      await away.page.close();
     });
 
     await suite.check('the streaming repaint rate is bounded, not one per frame', async () => {

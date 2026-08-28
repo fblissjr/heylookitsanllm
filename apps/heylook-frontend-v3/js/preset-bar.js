@@ -13,11 +13,12 @@
 //     preset until Save), armed-confirmed ("Replace prompt?") only when it
 //     would replace a differing non-empty prompt -- sampler knobs are
 //     trivially recoverable, the prompt is typed work
-//   - BOTH directions are armed, and Save is the one that matters: Apply
-//     overwrites the DOCUMENT (re-apply to get it back), Save overwrites the
-//     STORED PRESET with an UPDATE that keeps no history. See
+//   - Apply and Update are both armed, and Update is the one that matters:
+//     Apply overwrites the DOCUMENT (re-apply to get it back), Update
+//     overwrites the STORED PRESET with a write that keeps no history. See
 //     wouldOverwritePresetPrompt() for the three questions it asks, and why
-//     the iterate loop is deliberately exempt
+//     the iterate loop is deliberately exempt. Save as new is never armed --
+//     it cannot overwrite anything
 //   - re-aiming DISARMS: an arm is a promise about one target, so changing
 //     the select or the name box cancels a pending confirm
 //   - the prompt is an OVERRIDE BOX: a preset OWNS a system prompt and
@@ -25,12 +26,14 @@
 //     changes nothing -- the conversation keeps its own prompt (or the
 //     model's default). Empty means "does not speak for the prompt", never
 //     "set it to empty" (owner rule 2026-08-11) -- see presetPrompt() below
-//   - Save snapshots the current prompt + the whole sampler panel under the
-//     typed name; upsert-by-name is decided against a FRESH list (the local
-//     cache can hide a name the server has -> 409, or list one it no longer
-//     has -> 404). The ARM, unlike the save, is decided against the local
-//     list -- armedConfirm needs a synchronous answer. See
-//     wouldOverwritePresetPrompt() for what that costs and where
+//   - TWO writes, and which one you get is which BUTTON you press, not what
+//     you typed. Update overwrites the SELECTED preset (the one the preview
+//     is showing) and is the only path to an overwrite; Save as new creates
+//     under the typed name and REFUSES a name in use, pointing at Update.
+//     One control used to do both -- the select pre-filled the save-as name,
+//     so browsing a preset aimed a write at it -- and that is what cost a
+//     35k-char prompt on 2026-08-28. Save as new decides "is this name free"
+//     against a FRESH list, with the server's 409 as the real backstop
 //   - the section carries a read-only preview of the SELECTED preset's own
 //     prompt. The per-document prompt box below is a DIFFERENT thing and
 //     says so in its own label; without the preview there was no way to see
@@ -237,71 +240,47 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   }
 
   // The mirror of wouldReplacePrompt, for the direction that ACTUALLY loses
-  // work. Apply overwrites the DOCUMENT, which is recoverable -- the preset
-  // is still there to re-apply. Save overwrites the STORED PRESET with an
-  // UPDATE that keeps no history, so a preset's prompt is gone the moment it
-  // is written over. The guard was on the recoverable direction only; that
-  // inverted the owner's only-loss rule and cost a 35k-character prompt on
-  // 2026-08-28, when picking a preset from the select (which pre-fills this
-  // very name box) and pressing Save wrote the DOCUMENT's prompt over it.
+  // work. Apply overwrites the DOCUMENT, which is recoverable -- the preset is
+  // still there to re-apply. Update overwrites the STORED PRESET with an
+  // UPDATE that keeps no history, so its prompt is gone the moment it lands.
   //
-  // Arms when Save would not leave a stored prompt as it is -- but NOT for
-  // the loop this bar exists to serve. Three questions, in order:
+  // Its target is now unambiguous -- the selected preset, the one the preview
+  // directly above is showing -- so this asks only about that preset. The old
+  // version resolved a TYPED NAME to a row, which is what let Save aim at
+  // something nothing on screen was describing; that whole shape is gone with
+  // the name box's power to overwrite.
   //
-  //  1. Is there anything to lose? A new name, or a preset that carries no
-  //     prompt, has nothing at stake -- a confirm there only trains
-  //     click-through, which is what makes the real one worthless.
-  //  2. Would this BLANK it? A Save from a promptless document writes NULL,
+  // Three questions, in order:
+  //
+  //  1. Is there anything to lose? A preset carrying no prompt has nothing at
+  //     stake, and neither does a write that changes nothing -- a confirm
+  //     there only trains click-through, which is what makes the real one
+  //     worthless.
+  //  2. Would this BLANK it? An Update from a promptless document writes NULL,
   //     and an override-box preset with no prompt is present but inert --
-  //     "my preset disappeared". That always arms, including on the preset
-  //     the document is running: clearing the box is not editing it.
-  //  3. Otherwise, is the document already RUNNING this preset (and is that
-  //     the preset the select is showing)? Then this is apply -> edit -> save
-  //     it back, the iterate loop, and it stays one click. Saving onto a
-  //     preset the document is NOT running is the shape that lost a 35k-char
-  //     prompt on 2026-08-28 -- that arms.
+  //     "my preset disappeared". That always arms, including on the preset the
+  //     document runs: clearing the box is not editing it.
+  //  3. Otherwise, is the document already RUNNING this preset? Then this is
+  //     apply -> edit -> update, the iterate loop, and it stays one click.
   //
   // The KNOWN BOUNDARY of (3), accepted rather than patched: the stamp is
-  // written by apply/save and cleared only by delete, so a document whose
+  // written by apply/update and cleared only by delete, so a document whose
   // prompt is later replaced WHOLESALE -- retyped, or adopted from another
-  // device on resume -- still counts as running that preset, and saving
+  // device on resume -- still counts as running that preset, and updating
   // writes the new prompt over the old with no confirm. That is the trade (3)
-  // exists to make; "the document is running P and you saved it" is the
-  // loop's own definition, and the alternative is a drift-magnitude
-  // threshold, which is a number nobody can defend. If this ever needs
-  // closing, clear the STAMP when the prompt stops resembling the preset --
-  // do not add a percentage here.
-  //
-  // The stamp is only meaningful with an active document (a stamp read with
-  // none is the PREVIOUS document's -- same trap promptState() guards), and
-  // a page that supplies no getStamp simply never earns the exemption.
-  //
-  // Deliberately resolved against the LOCAL list: save() re-fetches for
-  // 409/404 correctness, not for this, and armedConfirm needs a synchronous
-  // answer. That is free for questions (1) and (2) -- a stale list can only
-  // mis-ARM there. Question (3) is the exception and the only branch that
-  // trusts IDENTITY: it resolves a name to an id, so a list stale about which
-  // row owns a name (deleted and recreated, or renamed, on another device) can
-  // grant the exemption against the wrong row and let one overwrite through
-  // unconfirmed. Narrow -- it needs a concurrent rename/recreate of the exact
-  // name the document is stamped with -- and there is no synchronous fetch to
-  // fix it with, so the mitigation is to keep (3) the only identity branch.
-  function wouldOverwritePresetPrompt(name) {
-    const existing = presets.find((p) => p.name === name.trim());
-    const stored = existing?.system_prompt || null;
+  // exists to make; "the document is running P and you saved it" is the loop's
+  // own definition, and the alternative is a drift-magnitude threshold, which
+  // is a number nobody can defend. If this ever needs closing, clear the STAMP
+  // when the prompt stops resembling the preset -- do not add a percentage.
+  function wouldOverwritePresetPrompt() {
+    const target = selected();
+    const stored = target?.system_prompt || null;
     if (!stored) return false;                       // (1) nothing to lose
     const incoming = getPrompt() ?? null;
     if (incoming === stored) return false;           // (1) no change either
     if (!incoming) return true;                      // (2) blanking always arms
-    // (3) the iterate loop -- and it has to be the loop in FULL: the document
-    // is running this preset AND the select is showing it. Requiring the
-    // selection closes the divergence where a hand-typed name aims Save at a
-    // preset the preview and drift line are not describing -- the exemption
-    // would fire against the stamp while every visible readout named something
-    // else, which is the same "what am I actually overwriting?" confusion the
-    // preview was added to end.
     const stamp = docId?.() ? (getStamp?.() ?? null) : null;
-    return !(stamp && existing.id === stamp && existing.id === effectiveId());
+    return stamp !== target.id;                      // (3) the iterate loop
   }
 
   // The applied-preset info for the active document. An explicit stamp
@@ -390,7 +369,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const next = !preset ? ''
       : !lead
         ? 'Matches current settings.'
-        : `${lead} — Apply copies it here, Save overwrites it.`;
+        : `${lead} — Apply copies it here, Update overwrites it.`;
     // write-on-change: this runs per keystroke in the prompt editors
     if (driftEl.textContent !== next) driftEl.textContent = next;
     if (driftEl.hidden !== !preset) driftEl.hidden = !preset;
@@ -430,33 +409,77 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     syncIndicator();
   }
 
-  async function save(name) {
+  // The two writes, deliberately separate. ONE control used to do both: the
+  // select pre-filled the save-as name, so browsing a preset silently aimed
+  // Save at it, and a name that happened to match overwrote by typing. That
+  // cost a 35k-char prompt on 2026-08-28. Now the destination is a property of
+  // WHICH BUTTON you press, and it is written on the button:
+  //
+  //   Update       -> always the preset in the dropdown, which the preview
+  //                   above it is showing. The only way to overwrite.
+  //   Save as new  -> always the typed name, and REFUSES a name in use.
+  //                   There is no typing path to an overwrite any more.
+  //
+  // Both land through one commit so the post-write bookkeeping cannot drift.
+  function commitSaved(saved, verb) {
+    const idx = presets.findIndex((p) => p.id === saved.id);
+    if (idx >= 0) presets[idx] = saved;
+    else presets.unshift(saved);
+    pick(saved.id);
+    // saving snapshots the current doc state -- the doc IS this preset now
+    if (docId?.()) setStamp?.(saved.id);
+    drawer.requestRebuild({ force: true });
+    // Same reason apply() calls it: the document now names this preset, and
+    // the bar chips are outside the drawer the rebuild above repaints.
+    syncIndicator();
+    onStatus(`Preset "${saved.name}" ${verb}.`);
+  }
+
+  // Overwrite the SELECTED preset with the document's current prompt + panel.
+  async function updateSelected() {
+    const target = selected();
+    if (!target) return;
+    try {
+      const saved = await api.updatePreset(target.id, {
+        name: target.name, system_prompt: getPrompt(), params: snapshotSettings(),
+      });
+      if (!ctx.alive) return;
+      commitSaved(saved, 'updated');
+    } catch (err) {
+      // A 404 means it was deleted elsewhere -- refresh so the select stops
+      // offering a row the server no longer has.
+      if (!ctx.alive) return;
+      onStatus(`Preset update failed: ${err.message}`, true);
+      refreshAndRepaint();
+    }
+  }
+
+  // Create under the typed name. Never overwrites: a taken name is a REFUSAL
+  // that names the other action, not a silent clobber. Decided against a FRESH
+  // list, because the local cache can miss a name another device just added
+  // (and the server's own 409 is the real backstop).
+  async function saveAsNew(name) {
     name = name.trim();
     if (!name) return;
-    const body = { name, system_prompt: getPrompt(), params: snapshotSettings() };
     try {
       await refresh();
       if (!ctx.alive) return;
-      const existing = presets.find((p) => p.name === name);
-      const saved = existing
-        ? await api.updatePreset(existing.id, body)
-        : await api.createPreset(body);
+      if (presets.some((p) => p.name === name)) {
+        onStatus(`A preset named "${name}" already exists — select it above and press `
+          + 'Update to overwrite it.', true);
+        drawer.requestRebuild({ force: true });
+        return;
+      }
+      const saved = await api.createPreset({
+        name, system_prompt: getPrompt(), params: snapshotSettings(),
+      });
       if (!ctx.alive) return;
-      // the server just returned the row -- patch the (just-refreshed) local
-      // list instead of fetching it a second time
-      const idx = presets.findIndex((p) => p.id === saved.id);
-      if (idx >= 0) presets[idx] = saved;
-      else presets.unshift(saved);
-      pick(saved.id);
-      // saving snapshots the current doc state -- the doc IS this preset now
-      if (docId?.()) setStamp?.(saved.id);
-      drawer.requestRebuild({ force: true });
-      // Same reason apply() calls it: the document now names this preset, and
-      // the bar chips are outside the drawer the rebuild above repaints.
-      syncIndicator();
-      onStatus(`Preset "${name}" ${existing ? 'updated' : 'saved'}.`);
+      commitSaved(saved, 'saved');
     } catch (err) {
-      if (ctx.alive) onStatus(`Preset save failed: ${err.message}`, true);
+      if (!ctx.alive) return;
+      onStatus(err.status === 409
+        ? `A preset named "${name}" already exists — select it above and press Update to overwrite it.`
+        : `Preset save failed: ${err.message}`, true);
     }
   }
 
@@ -490,8 +513,8 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     }, [
       createEl('option', { value: '' }, ['Presets…']),
       // data-name carries the RAW name: the label is display only, while the
-      // name is an identity everywhere it is used as one (the save-as
-      // pre-fill, save()'s upsert-by-name). Nothing may read the label back.
+      // name is the identity Update writes back and Save as new checks
+      // against. Nothing may read the decorated label back.
       ...presets.map((p) => createEl('option',
         { value: p.id, 'data-name': p.name }, [presetLabel(p)])),
     ]);
@@ -509,6 +532,21 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // moving voids the arm.
       () => JSON.stringify([effectiveId(), getPrompt() ?? null]),
     );
+    // Overwrites the SELECTED preset -- sits beside the select and the preview
+    // that name and show it, so the destination is what you are looking at.
+    const updateBtn = armedConfirm(
+      createEl('button', {
+        class: 'btn btn--sm', disabled: !current,
+        title: 'Overwrite this preset with the document\'s prompt and settings',
+      }, ['Update']),
+      updateSelected,
+      'Overwrite prompt?',
+      wouldOverwritePresetPrompt,
+      // Destination AND payload: the prompt is edited in another drawer
+      // section this bar gets no events from, which is why it must be re-read
+      // at confirm time rather than wired to a control here.
+      () => JSON.stringify([effectiveId(), getPrompt() ?? null]),
+    );
     const delBtn = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current }, ['Del']),
       remove,
@@ -517,27 +555,17 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       () => effectiveId(),
     );
 
-    // Save under the typed name: matches an existing preset -> overwrite it,
-    // new name -> create. Picking a preset pre-fills its name for overwrite.
+    // Creates only. Deliberately NOT pre-filled from the select any more --
+    // that pre-fill is what made browsing a preset aim a write at it.
     const nameInput = createEl('input', {
-      class: 'input', placeholder: 'Save as…', value: current?.name ?? '',
-      'aria-label': 'Preset name to save as',
+      class: 'input', placeholder: 'Save as new…',
+      'aria-label': 'Name for a new preset',
     });
-    const saveBtn = armedConfirm(
-      createEl('button', { class: 'btn btn--sm' }, ['Save']),
-      () => save(nameInput.value),
-      'Overwrite prompt?',
-      () => wouldOverwritePresetPrompt(nameInput.value),
-      // Save's destination is the TYPED NAME and its payload is the document
-      // prompt -- and that prompt is edited in another drawer section this bar
-      // gets no events from, which is exactly why the check has to be re-read
-      // at confirm time rather than wired to a control here.
-      () => JSON.stringify([nameInput.value.trim(), getPrompt() ?? null]),
-    );
-    // Enter goes through the BUTTON, not straight to save() -- a second
-    // entry point past the arm is the same hole with a keyboard on it.
+    const saveNewBtn = createEl('button', { class: 'btn btn--sm' }, ['Save as new']);
+    saveNewBtn.addEventListener('click', () => saveAsNew(nameInput.value));
+    // No arm: this cannot overwrite anything. A name in use is refused.
     nameInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveBtn.click();
+      if (e.key === 'Enter') saveAsNew(nameInput.value);
     });
 
     // Re-aiming disarms -- for HONESTY, not safety (the `target` callbacks
@@ -548,15 +576,15 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     // the name box silently cancelled an apply the user was part-way through
     // confirming, just because they started typing a save-as name.
     select.addEventListener('change', () => {
-      applyBtn.disarm(); saveBtn.disarm(); delBtn.disarm();
+      applyBtn.disarm(); updateBtn.disarm(); delBtn.disarm();
       pick(select.value || null);
       const p = selected();
-      nameInput.value = p?.name ?? '';
-      applyBtn.disabled = delBtn.disabled = !p;
+      applyBtn.disabled = updateBtn.disabled = delBtn.disabled = !p;
       paintPreview();
       updateDrift();
     });
-    nameInput.addEventListener('input', () => saveBtn.disarm());
+    // The name box no longer re-aims anything: it feeds Save as new, which
+    // is never armed. Nothing to disarm here.
 
     // .preset-drift is the E2E hook; styling rides the shared settings-note.
     // role=status: the line flips live (Matches/Differs) -- announced, not
@@ -578,10 +606,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
 
     return createEl('div', { class: 'preset-section' }, [
       createEl('h3', {}, ['Preset']),
-      createEl('div', { class: 'preset-row' }, [select, applyBtn, delBtn]),
+      createEl('div', { class: 'preset-row' }, [select, applyBtn, updateBtn, delBtn]),
       driftEl,
       previewEl,
-      createEl('div', { class: 'preset-row' }, [nameInput, saveBtn]),
+      createEl('div', { class: 'preset-row' }, [nameInput, saveNewBtn]),
     ]);
   }
 

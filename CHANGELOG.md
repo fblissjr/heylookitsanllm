@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.26]
+
+### Fixed
+
+- **The client reported "Stopped." for a generation that was still running.** A run outlives the response that started it, so aborting the fetch ends the *subscription* while the run detaches, finishes, and commits the whole answer. Switching models mid-stream aborts locally into the same conversation, which meant `finishGenerate` reached its abort branch with the conversation still active and announced a stop that had not happened — a false statement about the server, and the opposite of what the reader needed. `abortStream` now carries WHY it let go, `stopStream` marks a genuine user stop, and only a server-side abort, an explicit Stop, or a conversation delete may claim "Stopped".
+
+### Added
+
+- **The app says a generation survives you leaving**, at the moment you leave. Switching conversations names the one being left ("…keeps generating — it will finish on the server and be there when you come back"); switching models says the reply in flight finishes on the previous model and saves to this conversation, and carries the load-cost clause for the new one. This is the app's best behaviour and was undiscoverable: the only place it had ever been mentioned was a status line you saw if you happened to return mid-run. Page navigation is NOT covered and cannot be — the chat status line is gone by then.
+
+### Changed
+
+- **Overwriting a preset is no longer something you can do by typing.** The select pre-filled the save-as name, so browsing a preset silently aimed Save at it, and a typed name that happened to match overwrote — the shape that cost a 35k-character prompt. Which preset you write is now decided by which button you press:
+  - **Update** overwrites the preset in the dropdown, the one the preview directly above it is showing. The only path to an overwrite, and still armed by the same three questions (nothing to lose / would this blank it / is the document already running it).
+  - **Save as new** creates under the typed name and REFUSES a name in use, naming Update as the way to overwrite. Never armed, because it cannot destroy anything.
+  - The guard simplifies with the design: it resolved a typed name to a row, which is what let a write aim at a preset nothing on screen was describing. That case is gone rather than guarded, and its check is replaced by one asserting the refusal.
+- `.preset-row` wraps and its select keeps a `flex-basis` floor. Update joined a row that already held a select, Apply and Del, and an armed button relabels itself to "Overwrite prompt?" — at phone width a nowrap row would overflow or crush the select, the one control naming what Update would hit. Guarded by a new check in the render suite's phone boot, measured armed and unarmed.
+- The user guide describes both changes and moves two more rough edges into its Closed ledger. Three remain.
+
 ## [1.79.25]
 
 ### Changed
