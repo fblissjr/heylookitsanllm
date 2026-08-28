@@ -1171,6 +1171,11 @@ async function main() {
       store.remote.presets.push({
         id: 'p-pristine', name: 'pristine', system_prompt: 'PRISTINE PRESET PROMPT', params: {}, updated_at: 'z',
       });
+      // A second arm-worthy target, so a pending arm can be shown NOT to
+      // carry across a change of selection.
+      store.remote.presets.push({
+        id: 'p-other', name: 'other', system_prompt: 'SOME OTHER PRESET PROMPT', params: {}, updated_at: 'z',
+      });
       await openDrawer(page);
       await settle(page);
     }
@@ -1190,6 +1195,14 @@ async function main() {
         box.dispatchEvent(new Event('input', { bubbles: true }));
         box.dispatchEvent(new Event('change', { bubbles: true }));
       }, text);
+      await settle(guard.page);
+    };
+    const clickApply = async () => {
+      await guard.page.evaluate(() => {
+        const row = [...document.querySelectorAll('.drawer--open .preset-row')]
+          .find((r) => r.querySelector('select'));
+        row.querySelectorAll('button')[0].click();
+      });
       await settle(guard.page);
     };
     // By POSITION, not by text: an armed button relabels itself
@@ -1259,6 +1272,61 @@ async function main() {
         `the preview shows ${JSON.stringify(body.slice(0, 80))} -- not the selected preset's own prompt`);
       assert(!body.includes('DOCUMENT TEXT'),
         'the preview is showing the document prompt, the exact confusion this fixes');
+    });
+
+    // ---- the iterate loop stays one click (v1.79.21) ---------------------
+    // Guarding Save cost the loop this bar exists for: apply a preset, edit
+    // the prompt, save it back. That armed every time, and an arm the user
+    // meets dozens of times a day is an arm they stop reading -- which is
+    // what makes the one protecting them worthless. The exemption is narrow:
+    // the document must already be RUNNING the preset being saved onto.
+    await suite.check('saving back onto the preset the document runs does not arm', async () => {
+      await selectPreset('pristine');
+      await clickApply(); await clickApply(); // armed: it replaces a differing prompt
+      await settle(guard.page);
+      const applied = await guard.page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
+      assert(applied === 'PRISTINE PRESET PROMPT', `Apply did not carry the prompt (got ${JSON.stringify(applied.slice(0, 40))})`);
+      await typeDocPrompt('PRISTINE PRESET PROMPT -- plus my edit');
+      const puts = await clickSave();
+      assert(puts.length === 1,
+        `the apply -> edit -> save-back loop asked for confirmation (sent ${puts.length} PUTs, expected 1)`);
+      assert(JSON.parse(puts[0].postData).system_prompt === 'PRISTINE PRESET PROMPT -- plus my edit',
+        'the loop save did not carry the edited prompt');
+    });
+
+    await suite.check('but saving onto a preset the document does NOT run still arms', async () => {
+      // The shape that caused the loss: running one preset, saving onto
+      // another. The exemption
+      // must not generalise into "any Save is fine once something is stamped".
+      await selectPreset('owned');
+      const puts = await clickSave();
+      assert(puts.length === 0,
+        `Save onto an unrelated preset went through unconfirmed (${puts.length} PUTs)`);
+    });
+
+    await suite.check('and blanking the running preset still arms', async () => {
+      // Clearing the box is not editing it, so the running-preset exemption
+      // does not cover it -- a NULL write leaves the preset inert.
+      await selectPreset('pristine');
+      await typeDocPrompt('');
+      const puts = await clickSave();
+      assert(puts.length === 0,
+        `Save blanked the running preset's prompt unconfirmed (${puts.length} PUTs)`);
+    });
+
+    await suite.check('changing the target cancels a pending confirm', async () => {
+      // An arm is a promise about ONE preset. Arming on one and then picking
+      // another left the next click confirming something never previewed --
+      // the same accident in two steps. Both targets here own a prompt and
+      // neither is the one the document runs, so both must arm on their own.
+      await typeDocPrompt('a prompt that differs from both');
+      await selectPreset('owned');
+      let puts = await clickSave();
+      assert(puts.length === 0, 'the first Save on "owned" should have armed');
+      await selectPreset('other');
+      puts = await clickSave();
+      assert(puts.length === 0,
+        `the arm carried across the selection change and overwrote "other" unconfirmed (${puts.length} PUTs)`);
     });
 
     await suite.check('no uncaught page errors (preset guard)', () => {

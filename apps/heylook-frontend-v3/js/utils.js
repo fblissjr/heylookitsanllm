@@ -174,12 +174,21 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null) 
       armed = true;
       btn.classList.add('btn--armed');
       btn.textContent = armedLabel;
-      timer = setTimeout(() => {
-        armed = false;
-        btn.classList.remove('btn--armed');
-        btn.textContent = original;
-      }, 3000);
+      timer = setTimeout(disarm, 3000);
     }
   });
+  // Cancel a pending arm. An arm is a promise about ONE target, so whenever
+  // the target can change under it (the preset bar's select and name box
+  // re-aim both Apply and Save), the consumer must call this -- otherwise the
+  // second click confirms an action the user never previewed. Exposed on the
+  // button so a caller that never re-aims can ignore it entirely.
+  function disarm() {
+    if (!armed) return;
+    clearTimeout(timer);
+    armed = false;
+    btn.classList.remove('btn--armed');
+    btn.textContent = original;
+  }
+  btn.disarm = disarm;
   return btn;
 }

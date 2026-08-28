@@ -265,11 +265,22 @@ BOTH directions are armed (v1.79.20): Apply overwrites the DOCUMENT (recoverable
 keeps no history, so Save is the one only-loss actually names. It was the bare
 one, and the select PRE-FILLS the save-as name box, so picking a preset to look
 at it armed that preset as Save's target -- one click wrote the document's
-prompt over a 35k-char stored one on 2026-08-28. Save now arms whenever a preset
-of that name exists and the write would not leave its prompt as it is (different
-text, or NULL from a promptless document -- which leaves an override-box preset
-present but inert, i.e. "my preset disappeared"); Enter in the name box routes
-through the BUTTON, never straight to save(). The reason that click happened at
+prompt over a 35k-char stored one on 2026-08-28. Save's guard asks THREE
+questions in order (v1.79.21) and the order is the design: (1) is there anything
+to lose -- a new name, or a preset carrying no prompt, never arms, because an arm
+with nothing at stake is what trains click-through; (2) would this BLANK it --
+always arms, including on the preset the document runs, since clearing the box is
+not editing it and a NULL write leaves an override-box preset present but inert
+("my preset disappeared"); (3) is the document already RUNNING this preset --
+then it is the apply/edit/save-back ITERATE LOOP and stays one click. Only a save
+onto a preset the document is NOT running arms, which is exactly the shape that
+caused the loss. v1.79.20 armed all of them and thereby charged the loop for the
+accident -- the same click-through failure the rule exists to prevent,
+reintroduced by the fix for it. Enter in the name box routes through the BUTTON,
+never straight to save(). RE-AIMING DISARMS: `armedConfirm` exposes `disarm()` and
+the bar calls it from the select AND the name box, because an arm is a promise
+about ONE target -- arming on one preset then picking another used to leave the
+next click confirming something never previewed. The reason that click happened at
 all is structural: the drawer renders the preset section directly above the
 per-document prompt box, which shows the DOCUMENT's prompt whatever the select
 says, so every preset looked like it held the same text. The section now carries

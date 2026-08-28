@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.21]
+
+### Fixed
+
+- **The preset guard from v1.79.20 charged the iterate loop for the accident it was catching.** Apply a preset, edit the prompt, Save it back is the bar's whole purpose, and it armed every time. An arm met dozens of times a day is an arm nobody reads, which is what makes the one that matters worthless -- the failure mode the only-loss rule exists to prevent, reintroduced by the fix for it. `wouldOverwritePresetPrompt` now asks three questions in order: is there anything to lose (a new name, or a preset carrying no prompt, has nothing at stake); would this **blank** it (always arms -- clearing the box is not editing it, and a NULL write leaves an override-box preset present but inert); is the document already **running** this preset (then it is the iterate loop, and stays one click). Saving onto a preset the document is *not* running -- the shape that caused the loss -- still arms.
+
+- **A pending confirm survived a change of target.** Arming Apply or Save on one preset and then picking another left the next click confirming an action never previewed: the same accident in two steps. `armedConfirm` grew a `disarm()`, and the preset bar calls it from both the select and the name box, since either re-aims what the buttons would hit. This was found by a test that failed for the right reason while checking something else.
+
+- `preset-bar.js`'s header comment was rewritten to match: the select is inert toward the document but READS its stamp, both buttons are armed, re-aiming disarms, and the arm (unlike the save) is decided against the local list.
+
+- Four more wire-level checks in `tests/e2e/render.mjs`, all shown red against deliberate mutants: neutering `disarm`, widening the running-preset exemption to any stamped document, dropping the blanking guard, and removing the exemption altogether. Each branch of the new logic has a check that fails when that branch alone is broken. Suite is 84/84.
+
 ## [1.79.20]
 
 ### Fixed
