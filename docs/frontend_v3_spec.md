@@ -282,8 +282,18 @@ stays for external consumers, no v3 page calls it):
   the nested object (v1.79.41): a client generated from `/openapi.json`
   serializes every unset optional as null beside the nested `source`, and
   until .41 both the gate and its `setdefault` tested key PRESENCE, so that
-  request 422'd on the spelling the docs recommend. Flat values that are
-  actually set still win over the nested object.
+  request 422'd on the spelling the docs recommend. Filling is **per field**
+  (v1.79.42 — .41 still had a whole-block early return, so one set flat field
+  suppressed filling of all the others). Flat values that are actually set
+  still win. The nested object is ignored wholesale in exactly one case: the
+  two spellings DISAGREE about the kind of source (flat `source_type:"url"`
+  against nested `type:"base64"`), where merging would build a block the
+  caller never described.
+  A block that declares a source type and carries NO payload is a **422**
+  (v1.79.42), not a silent drop: `converters.py` requires `data` for base64
+  and `url` otherwise, and previously `continue`d past a payload-less block —
+  so the request answered 200, the text survived, and the model never saw the
+  image.
   Thinking blocks and `thinking_delta` carry the text under BOTH `thinking`
   (Anthropic's field) and `text` (v3's readers, `streaming.js`); `stop_reason`
   is now `end_turn`/`max_tokens`/`stop_sequence` rather than the provider's

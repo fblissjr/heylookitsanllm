@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.42]
+
+A second review of the 1.79.41 fixes. The headline is that 1.79.41 fixed a presence-vs-value bug by making the same mistake one level up, and that both versions of it were sitting on top of a silent drop that predates all of this.
+
+### Fixed
+
+- **A media block that declares a source type and carries no payload is now a 422 instead of vanishing.** `_require_source_type` validated only the discriminator, so `{"type":"image","source_type":"base64"}` with no `data` (and the nested `{"source":{"type":"base64","media_type":...}}` spelling of the same thing) validated clean — and then `converters.py`, which requires `source_type == "base64" and block.data` else `block.url`, hit its `continue` and dropped the block. The request answered **200**, the text parts survived, and the model never saw the image: a confident answer about a picture that was never sent. This predates the nested-source work entirely. A 422 naming the missing field is strictly better on a vision request, and it is the failure the "make the nested spelling work" releases were about in the first place.
+- **Filling from the nested `source` is PER FIELD, which is what the contract already promised.** 1.79.41 fixed the presence-testing *gate* and left the identical mistake in the whole-block early return: any set flat field suppressed filling of all the others, so a client that sets `source_type` and leaves the payload to `source` had its type resolved and its image dropped. `docs/frontend_v3_spec.md` §4 and `api_integration.md` both described per-field behaviour that did not exist. The one case the nested object is still ignored wholesale is a genuine disagreement — flat `source_type: "url"` against nested `type: "base64"` — where merging would build a block the caller never described.
+- **`tests/e2e/suites/pages.mjs` carried the same `Save` rot just fixed in `chat.mjs`.** The v1.79.41 audit was scoped to the suite that was red and missed its sibling, which `bun run e2e` also runs — the notebook preset check clicks `.preset-section button` by the exact text `Save`, replaced by `Update` / `Save as new` in v1.79.26. (Checked the rest: `pages.mjs`'s two `.model-config` `Save` clicks are correct — that button really does read `Save`.)
+- **`TestStopReasonHasOneMapper` enumerated its two routes by hand and its regex skipped annotated assignment.** The class's whole premise is that routes must not diverge, so a hand-written list is the one shape guaranteed not to notice a third route — the membership rule is now "drives `StreamingEventTranslator`", derived at import. The regex also missed `self.stop_reason: str = ...`, which `messages_api.py:87` already spells that way, so respelling a bad default as an annotated assignment evaded the check entirely.
+- **`schema/streaming.py` still advertised an `"error"` stop reason** in `MessageDeltaEvent`'s field description, removed from the vocabulary in 1.79.40. These models are documentary and `MessageDeltaEvent` is not in `components.schemas`, so nothing served it and no client branched on it — the reader being misled was a code reader, which is who that file is for.
+- **The Knobs list in `api_integration.md` promised a cascade for two fields that have none.** `show_special_tokens` and `include_performance` are plain booleans defaulting to `false`; "absent means the server's cascade decides" is the wrong model for both, and `metadata` was missing from the list entirely.
+
+### Changed
+
+- **The Clone re-entry guard is page-level, not per-conversation-id.** A per-id guard closed the double-tap and left the race its own comment named: Clone on row A then row B inside the request window is still two clones and two racing `selectConversation` awaits deciding the active document.
+- **`tests/e2e/render.mjs` now covers Clone** (102 checks). Clone needs no model and no real generation, so the model-free harness is the right home; the stub holds the clone response back so both taps land in flight. The check also pins that the guard RELEASES — a one-shot latch would satisfy the double-tap assertion and silently break cloning for the rest of the session. Shown red against the guard removed.
+
 ## [1.79.41]
 
 A review of 1.79.37-.40. Five findings, all verified against running code before being touched -- and the first one's obvious one-line fix was not sufficient, which is the entry worth reading.

@@ -25,34 +25,39 @@ def _flatten_source(values: Any) -> Any:
     """
     if not isinstance(values, dict):
         return values
-    # Only interpret `source` when the block is NOT already in the flat
-    # spelling -- and "in the flat spelling" means source_type carries a
-    # VALUE, not merely that the key is present.
+    # PER FIELD, not per block, and "absent" means NULL-OR-MISSING everywhere.
     #
-    # Testing presence broke the nested form for exactly the clients the
-    # nested form was added for. `source_type` is Optional in the published
-    # schema, so a client generated from /openapi.json -- or any pydantic
-    # client doing model_dump() without exclude_none -- serializes every
-    # absent flat field as an explicit null beside the nested object:
+    # Two mistakes have been made here in a row, both the same shape: testing
+    # whether a KEY EXISTS where the question is whether it carries a VALUE.
+    # `source_type` is Optional in the published schema, so a client generated
+    # from /openapi.json -- or any pydantic client doing model_dump() without
+    # exclude_none -- serializes every unset flat field as an explicit null
+    # beside the nested object:
     #   {"type":"image","source_type":null,"data":null,
-    #    "source":{"type":"base64",...}}
-    # A presence gate short-circuits there, nothing flattens, and the block
-    # 422s as "requires source_type" -- on the spelling docs/api_integration.md
-    # tells integrators to prefer. Serializing nulls for absent optionals is
-    # ordinary generated-client behaviour, not a malformed request.
-    if values.get("source_type") is not None:
-        return values
+    #    "source":{"type":"base64",...,"data":"..."}}
+    # v1.79.40's gate (`"source_type" in values`) short-circuited on that and
+    # 422'd the spelling the docs recommend. v1.79.41 fixed the gate and left
+    # the SAME mistake in the whole-block early return: any set flat field
+    # suppressed filling of all the others, so `source_type` alone (a client
+    # that sets the discriminator and leaves the payload to `source`) resolved
+    # the type and then dropped the image. Only a per-field rule is what the
+    # contract in frontend_v3_spec.md §4 actually promises.
     source = values.get("source")
     if not isinstance(source, dict):
         return values
+    declared = values.get("source_type")
+    nested_type = source.get("type")
+    # The one case where the nested object is ignored wholesale: the two
+    # spellings DISAGREE about what kind of source this is. Mixing a base64
+    # payload into a block that declares itself a url (or the reverse) would
+    # build a block the caller never described. The flat spelling wins and the
+    # nested one is left for field validation to accept or reject.
+    if declared is not None and declared != nested_type:
+        return values
     values = {k: v for k, v in values.items() if k != "source"}
-    # setdefault would be wrong here for the same reason presence was wrong
-    # above: it tests whether the KEY exists, and the client that motivates
-    # this whole branch sends `"data": null` rather than omitting `data`. A
-    # null flat field means "absent", so the nested value fills it.
     # Anthropic's discriminator is `source.type`; ours is `source_type`.
-    if values.get("source_type") is None:
-        values["source_type"] = source.get("type")
+    if declared is None:
+        values["source_type"] = nested_type
     for key in ("media_type", "data", "url"):
         if source.get(key) is not None and values.get(key) is None:
             values[key] = source[key]
@@ -80,11 +85,28 @@ def _require_source_type(self):
 
     Optional so a nested-`source` payload validates against /openapi.json;
     mandatory here because everything downstream reads the flat fields.
+
+    The PAYLOAD is checked here too, and that is the load-bearing half.
+    Validating only the discriminator let a block declare itself base64 and
+    carry no `data` (or url with no `url`) -- it validated clean, and then
+    converters.py, which requires `source_type == "base64" and block.data`
+    else `block.url`, hit its `continue` and dropped the block. The request
+    answered 200, the text parts survived, and the model never saw the image:
+    a confident answer about a picture that was never sent. A 422 naming the
+    missing field is strictly better than a silent drop on a vision request,
+    which is the whole reason the nested spelling was made to work at all.
     """
     if self.source_type is None:
         raise ValueError(
             f"{type(self).__name__} requires `source_type`, or a `source` "
             "object carrying `type`"
+        )
+    payload = "data" if self.source_type == "base64" else "url"
+    if getattr(self, payload, None) is None:
+        raise ValueError(
+            f"{type(self).__name__} declares source_type="
+            f"{self.source_type!r} but carries no `{payload}` -- it would be "
+            "dropped silently instead of reaching the model"
         )
     return self
 

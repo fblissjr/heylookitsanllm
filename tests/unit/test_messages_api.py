@@ -7,6 +7,7 @@ Tests cover:
 2. OpenAI response dict -> MessageResponse conversion
 3. StreamingEventTranslator event sequencing
 """
+import pathlib
 from typing import get_args
 
 import pytest
@@ -425,19 +426,77 @@ class TestAnthropicImageBlockShape:
         }).messages[0].content[0]
         assert (block.source_type, block.url) == ("url", "https://e/x.png")
 
-    def test_a_genuinely_absent_source_is_still_rejected(self):
-        # The fix must not turn "no source at all" into a silent pass: null
-        # means absent, and absent is still a 422.
+    # "Absent" has THREE spellings and an earlier version of this test pinned
+    # one of them, while reading as a guarantee about the class. The other two
+    # were accepted and then silently dropped in conversion -- a 200, the text
+    # parts intact, and a confident answer about an image the model never saw.
+    # Parametrized so adding a spelling is one line rather than a new test that
+    # nobody writes.
+    @pytest.mark.parametrize("name,block", [
+        ("no source in any spelling",
+         {"type": "image", "source_type": None}),
+        ("flat discriminator, no payload",
+         {"type": "image", "source_type": "base64"}),
+        ("flat url discriminator, no url",
+         {"type": "image", "source_type": "url"}),
+        ("nested type, no data",
+         {"type": "image", "source_type": None,
+          "source": {"type": "base64", "media_type": "image/jpeg"}}),
+        ("nested type, no data, no nulls",
+         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg"}}),
+        ("nested url type, no url",
+         {"type": "image", "source": {"type": "url"}}),
+    ])
+    def test_a_block_that_would_be_dropped_is_rejected_instead(self, name, block):
+        # converters.py requires `source_type == "base64" and data` else `url`,
+        # and otherwise `continue`s -- so a block that validates without a
+        # payload does not reach the model and nothing says so. A 422 naming
+        # the missing field is strictly better on a vision request.
         with pytest.raises(ValidationError):
-            self._req({"type": "image", "source_type": None})
+            self._req(block)
+
+    def test_a_flat_discriminator_does_not_suppress_the_nested_payload(self):
+        # The whole-block early return was the same presence-vs-value mistake
+        # one level up: a client that sets `source_type` and leaves the payload
+        # to `source` had the type resolved and the image dropped. Filling is
+        # PER FIELD, which is what the spec §4 contract promises.
+        block = self._req({
+            "type": "image", "source_type": "base64", "data": None,
+            "media_type": None,
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"},
+        }).messages[0].content[0]
+        assert (block.media_type, block.data) == ("image/jpeg", "AAAA")
 
     def test_flat_values_still_win_over_a_nested_source(self):
+        # The one case the nested object is ignored wholesale: the two
+        # spellings DISAGREE about the kind of source. Mixing a base64 payload
+        # into a block declaring itself a url would build something the caller
+        # never described, so the flat spelling wins and nothing is merged.
         block = self._req({
             "type": "image", "source_type": "url", "url": "https://flat/a.png",
             "source": {"type": "base64", "media_type": "image/jpeg", "data": "ZZ"},
         }).messages[0].content[0]
         assert (block.source_type, block.url) == ("url", "https://flat/a.png")
         assert block.data is None
+
+    def test_every_accepted_spelling_actually_reaches_the_wire(self):
+        # The oracle the other tests lack: validation succeeding is not the
+        # property anyone cares about -- the image ARRIVING is. Each spelling
+        # must produce an image part, not just a valid block.
+        spellings = [
+            {"type": "image", "source": {"type": "base64",
+                                         "media_type": "image/jpeg", "data": "AAAA"}},
+            {"type": "image", "source_type": None, "media_type": None, "data": None,
+             "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"}},
+            {"type": "image", "source_type": "base64",
+             "media_type": "image/jpeg", "data": "AAAA"},
+            {"type": "image", "source_type": None,
+             "source": {"type": "url", "url": "https://e/x.png"}},
+        ]
+        for block in spellings:
+            parts = to_chat_request(self._req(block)).messages[0].content
+            kinds = [getattr(p, "type", None) for p in parts]
+            assert "image_url" in kinds, f"{block} validated but never reached the wire"
 
 
 class TestThinkingBlockCarriesBothFields:
@@ -516,6 +575,39 @@ class TestStreamingConformance:
         assert '"end_turn"' in t.message_delta_event()
 
 
+# Repo-root relative, not CWD relative: this file is
+# tests/unit/test_messages_api.py, so parents[2] is the repo root. Resolving
+# against the process CWD made the class below raise FileNotFoundError when
+# pytest ran from anywhere else.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def _messages_grammar_routes():
+    """Every module that drives StreamingEventTranslator's stop_reason.
+
+    DERIVED, not hand-listed. A literal two-entry list is the hand-copied
+    constant CLAUDE.md calls "a defect with a delay": the premise of the class
+    below is "there are two routes on this grammar", so a third surface growing
+    a Messages stream would go unwatched by the very test written to stop
+    routes diverging. Driving the translator IS the membership rule.
+    """
+    src = _REPO_ROOT / "src" / "heylook_llm"
+    found = []
+    for p in sorted(src.rglob("*.py")):
+        text = p.read_text()
+        if "StreamingEventTranslator" in text and ".stop_reason" in text:
+            found.append(str(p.relative_to(_REPO_ROOT)))
+    assert len(found) >= 2, (
+        f"expected at least the two known Messages-grammar routes, found "
+        f"{found} -- if StreamingEventTranslator was renamed, fix this rule "
+        "rather than pinning a list"
+    )
+    return found
+
+
+MESSAGES_GRAMMAR_ROUTES = _messages_grammar_routes()
+
+
 class TestStopReasonHasOneMapper:
     """Both Messages-grammar routes must rename the provider's vocabulary.
 
@@ -528,18 +620,8 @@ class TestStopReasonHasOneMapper:
     the shared mapper is the only writer.
     """
 
-    ROUTES = [
-        "src/heylook_llm/messages_api.py",
-        "src/heylook_llm/conversation_generate_api.py",
-    ]
-
     def _source(self, path):
-        import pathlib as _p
-        # Repo-root relative, not CWD relative: this file is
-        # tests/unit/test_messages_api.py, so parents[2] is the repo root.
-        # Resolving against the process CWD made the whole class raise
-        # FileNotFoundError when pytest ran from anywhere else.
-        return (_p.Path(__file__).resolve().parents[2] / path).read_text()
+        return (_REPO_ROOT / path).read_text()
 
     def _assignments(self, path):
         import re
@@ -547,9 +629,14 @@ class TestStopReasonHasOneMapper:
         # prose mentioning the field and would have failed on a comment.
         lines = [ln for ln in self._source(path).splitlines()
                  if not ln.lstrip().startswith("#")]
-        return re.findall(r"\.stop_reason\s*=\s*(.+)", "\n".join(lines))
+        # Also match ANNOTATED assignment. messages_api.py:87 already spells
+        # it `self.stop_reason: str = "end_turn"`, so respelling a bad
+        # default that way evaded the check entirely -- the pattern was
+        # not hypothetical, it was one line away from live.
+        return re.findall(r"\.stop_reason(?:\s*:\s*[^=\n]+)?\s*=\s*(.+)",
+                          "\n".join(lines))
 
-    @pytest.mark.parametrize("path", ROUTES)
+    @pytest.mark.parametrize("path", MESSAGES_GRAMMAR_ROUTES)
     def test_every_stop_reason_write_goes_through_the_mapper(self, path):
         writes = self._assignments(path)
         assert writes, f"{path} no longer writes stop_reason -- update this test"
@@ -579,7 +666,7 @@ class TestStopReasonHasOneMapper:
                 "Messages wire verbatim"
             )
 
-    @pytest.mark.parametrize("path", ROUTES)
+    @pytest.mark.parametrize("path", MESSAGES_GRAMMAR_ROUTES)
     def test_route_imports_the_shared_mapper(self, path):
         # Assert the IMPORT, not the mere presence of the name: the call site
         # guarantees the substring, so a substring check passed even with the

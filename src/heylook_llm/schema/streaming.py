@@ -116,8 +116,15 @@ class ContentBlockStopEvent(BaseModel):
 class MessageDeltaEvent(BaseModel):
     """Final metadata: stop reason and usage stats."""
     type: Literal["message_delta"] = "message_delta"
+    # The vocabulary is StopReason (responses.py) -- "error" is NOT a member
+    # and never was reachable; it was declared on an untraced claim and removed
+    # in v1.79.40, but this description kept it one file over. These models are
+    # documentary (nothing builds or validates an event through them, and
+    # MessageDeltaEvent is not in components.schemas), so no client branched on
+    # it -- a code reader was the one being misled, which is the readership
+    # this class exists for.
     delta: Dict = Field(
-        ..., description='{"stop_reason": "end_turn"|"max_tokens"|"stop_sequence"|"error"}'
+        ..., description='{"stop_reason": "end_turn"|"max_tokens"|"stop_sequence"}'
     )
     usage: Optional[Usage] = None
 

@@ -173,6 +173,22 @@ and is filled from `source`. Before .41 this was a 422 telling you
 you are pinned to an older build, either drop the nulls or send the flat
 form. A flat field that is actually *set* still wins over the nested object.
 
+Filling is **per field** as of v1.79.42; .41 suppressed the whole nested
+object as soon as any flat field was set, so `{"source_type":"base64",
+"source":{...,"data":"..."}}` — a reasonable thing to send — resolved the
+type and then dropped the image. The nested object is ignored wholesale only
+when the two spellings **disagree** about the kind of source (flat
+`source_type:"url"` against nested `type:"base64"`), where merging them would
+build a block you never described.
+
+**A block with a source type and no payload is a 422** (v1.79.42), and was a
+**silent drop** before it. `{"type":"image","source_type":"base64"}` with no
+`data`, or a nested `source` carrying `type` and `media_type` but no `data`,
+used to validate, get discarded during conversion, and return **200** with
+the text parts intact — so the model answered about an image it never
+received. If you support older servers, check that every image you send comes
+back described rather than trusting the status code.
+
 ### Images: you resize, not the server
 
 `/v1/messages` has no `resize_max` / `resize_width` / `image_quality` /
@@ -199,12 +215,18 @@ more direct lever.
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`, `logprobs`,
 `top_logprobs`, `sampler`, `vision_tokens`, `thinking`, `reasoning_effort`,
-`show_special_tokens`, `stream`, `stream_options`, `include_performance`.
+`stream`, `stream_options`, `metadata`.
 
 Every one is optional and **absent means the server's cascade decides**.
 `max_tokens` is deliberately optional here, unlike Anthropic's required
 field — sending a client-side default silently overrides the server's
 configured floor for the model. Omit what you do not have an opinion about.
+
+**Two request flags are NOT part of that cascade** — `show_special_tokens`
+and `include_performance` are plain booleans defaulting to `false`, so absent
+means `false` permanently and no server-side config influences them. They are
+listed apart from the knobs above because "omit it and the server decides"
+is the wrong mental model for both.
 
 `sampler` takes a named bundle from `/v1/capabilities` → `samplers.available`
 (this is the `SamplerRegistry`, not a `/v1/presets` id — different system,

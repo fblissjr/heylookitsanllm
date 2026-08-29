@@ -977,11 +977,19 @@ async function cloneConversation(ctx, convId) {
   // silently made two fast taps two clones -- plus two racing selectConversation
   // awaits whose interleaving decided which one ended up active. The button is
   // small and sits on a phone, where double-tap is the norm, not the accident.
+  //
+  // PAGE-LEVEL, not per-conversation id. A per-id Set closes the double-tap and
+  // leaves the race its own comment names: Clone on row A then row B inside the
+  // request window is still two clones and two racing selectConversation awaits
+  // deciding the active document -- the identical symptom, one row over. Only
+  // one clone may be in flight at a time, which is also what the user means by
+  // the single "Cloning conversation…" status this shows.
+  //
   // Guarding HERE rather than by disabling the button: the row is re-rendered by
   // the list refresh below, so a disabled flag set on the old node would be
   // dropped mid-flight, and any future caller gets the guard for free.
-  if (s.cloningIds?.has(convId)) return;
-  (s.cloningIds ??= new Set()).add(convId);
+  if (s.cloneInFlight) return;
+  s.cloneInFlight = true;
   try {
     showStatus(ctx, 'Cloning conversation…');
     const cloned = await api.cloneConversation(convId);
@@ -1010,7 +1018,7 @@ async function cloneConversation(ctx, convId) {
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Clone failed: ${err.message}`, true);
   } finally {
-    s.cloningIds?.delete(convId);
+    s.cloneInFlight = false;
   }
 }
 

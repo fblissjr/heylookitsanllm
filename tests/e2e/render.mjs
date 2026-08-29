@@ -177,7 +177,9 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   // `generating` (which is c1's): the interesting state is one conversation
   // generating while the page is subscribed to a stream in the OTHER.
   const remote = { system_prompt: null, presets: [...presets], updated_at: 't1', generating: false,
-    c2Generating: false, stopDelayMs: 0, applied_preset_id: appliedPresetId };
+    c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0,
+    applied_preset_id: appliedPresetId };
+  let cloneCount = 0;
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -233,6 +235,14 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
         messages.push(...keep);
         return { deleted: 0, after_position: after };
       }
+    }
+    // POST /{id}/clone -- must sit ABOVE the generic c1 branch, which would
+    // otherwise swallow it and answer with the conversation body.
+    if (/\/v1\/conversations\/[^/]+\/clone$/.test(url) && method === 'POST') {
+      const id = `clone${++cloneCount}`;
+      return { id, title: 'render suite (copy)', model_id: 'test-model',
+        system_prompt: null, applied_preset_id: null, params: {},
+        generating: false, messages: [] };
     }
     if (url.includes('/v1/conversations/c1')) {
       return { id: 'c1', title: 'render suite', model_id: 'test-model',
@@ -391,6 +401,15 @@ async function openChat(browser, base, {
     // The v7 media serve endpoint: bytes, not JSON.
     if (url.includes('/media/')) {
       return req.respond({ status: 200, contentType: 'image/png', body: PNG_1PX });
+    }
+    // Held back so the second tap lands while the first clone is still in
+    // flight -- without a delay the guard is untestable, because the request
+    // completes before a human (or this harness) could tap again.
+    if (store.remote.cloneDelayMs && /\/clone$/.test(url) && req.method() === 'POST') {
+      const answer = () => req.respond({ status: 200, contentType: 'application/json',
+        body: JSON.stringify(store.handle(url, req.method(), req.postData())) });
+      setTimeout(answer, store.remote.cloneDelayMs);
+      return;
     }
     const body = JSON.stringify(store.handle(url, req.method(), req.postData()));
     const send = () => req.respond({ status: 200, contentType: 'application/json', body });
@@ -2710,6 +2729,37 @@ async function main() {
     });
 
     await md.close();
+
+    // ---- clone is not double-fired ---------------------------------------
+    // v1.79.37 removed Clone's armedConfirm (only LOSS gates -- a clone
+    // destroys nothing). The arm had ALSO been coalescing double-taps for
+    // free, since its first tap only armed, so removing it made two fast taps
+    // two conversations plus two racing selectConversation awaits deciding
+    // which ended up active. Model-free and server-free, so it belongs here
+    // rather than in the suite that needs a GPU.
+    const cl = await openChat(browser, base);
+    await suite.check('a double-tapped Clone issues exactly one clone', async () => {
+      cl.store.remote.cloneDelayMs = 400;
+      const clones = () => cl.reqs.filter(
+        (r) => r.method === 'POST' && /\/clone$/.test(r.url)).length;
+      await cl.page.waitForSelector('.conv-item__clone');
+      // Both taps inside the request window -- dispatched back to back with no
+      // await between them, which is what a phone double-tap actually is.
+      await cl.page.evaluate(() => {
+        const btn = document.querySelector('.conv-item__clone');
+        btn.click(); btn.click();
+      });
+      await sleep(150);
+      assert(clones() === 1, `double-tap issued ${clones()} clone requests, expected 1`);
+      // And the guard must RELEASE: a one-shot latch would pass the assert
+      // above and silently break cloning for the rest of the session.
+      await sleep(500);
+      await cl.page.evaluate(() => document.querySelector('.conv-item__clone').click());
+      await sleep(150);
+      assert(clones() === 2,
+        `after the first clone settled a later tap issued ${clones() - 1} more, expected 1`);
+    });
+    await cl.page.close();
   } finally {
     await browser.close();
     server.close();

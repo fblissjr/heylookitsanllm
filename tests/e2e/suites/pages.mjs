@@ -153,7 +153,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // save the current notebook state (marine-biologist prompt) as a preset
     await page.click('.preset-section .input');
     await page.type('.preset-section .input', 'nb-preset');
-    await clickByText(page, '.preset-section button', 'Save');
+    await clickByText(page, '.preset-section button', 'Save as new');
     await waitFor(async () => (await driftText(page))?.includes('Matches'),
       { message: 'drift line not "Matches" right after save' });
     // NOTEBOOK CHIP: saving stamps the association -- the chip in the editor
