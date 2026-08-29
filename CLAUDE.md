@@ -353,6 +353,37 @@ in git history; a contract test pins that `/v2` stays 404.)
 - A model's `.layers` can be a fresh-slice `@property` (pipeline-parallel Qwen3.5/deepseek/glm4_moe: `pipeline_layers = self.layers[start:end]`), NOT the list the forward iterates -- to hook/mutate blocks use the underlying list on the inner decoder (`inner.layers`/`.h`), not `model.layers`.
 - Live-verifying streaming/latency changes: the 31B dense gemma natively decodes ~10 tok/s (looks identical to the old delivery cap); use the MoE `gemma-4-26B-A4B` (~90 tok/s) as the discriminating model.
 - Stop-token/eos resolution has the same dual-source trap as chat templates: a model's full eos set can be split across tokenizer_config.json's `added_tokens_decoder` and tokenizer.json's `added_tokens` (gemma-4's `<turn|>` terminator lives only in the latter) -- read both. Raw HF tokenizers also don't absorb `generation_config.json`'s eos list, and mlx-lm's `stream_generate` auto-wraps a raw tokenizer with only the single `eos_token_id` -- `run_generation` wraps it itself (`ensure_gen_tokenizer`) with the full resolved stop set, or a model generates past its own end-of-turn.
+- MESSAGES-WIRE CONFORMANCE (v1.79.39-40): `/v1/messages` is Anthropic
+  Messages-SHAPED and was not Messages-CONFORMANT for three payloads, each of
+  which failed silently for a client written against Anthropic's spec. Media
+  blocks now accept BOTH the nested `source` object and the original flat
+  `source_type` form (`content_blocks._flatten_source`, gated on `source_type`
+  being absent so a flat block carrying an unrelated `source` key is left
+  alone); `source` is a DECLARED `MediaSource` field, not validator-only,
+  because a `mode="before"` validator contributes NOTHING to the generated
+  JSON Schema -- `/openapi.json` advertised only the flat form while the docs
+  recommended the nested one. Thinking blocks and `thinking_delta` carry the
+  text under BOTH `thinking` (Anthropic) and `text` (v3's `streaming.js`
+  reads `text` in two places); dropping either breaks one of the two readers.
+  `stop_reason` is Anthropic's vocabulary via ONE table,
+  `converters.STOP_REASON_FROM_FINISH_REASON` -- providers speak OpenAI's
+  `finish_reason` because the internal ChatRequest does, and the rename
+  happens at that boundary. THERE ARE TWO ROUTES ON THIS GRAMMAR:
+  `/v1/messages` and `/v1/conversations/{id}/generate` share
+  `StreamingEventTranslator`, so block payloads agree by construction -- but
+  each assigned `stop_reason` itself, and fixing one left the other emitting
+  `"length"` for a commit. 1700 per-path tests stayed green throughout:
+  PER-PATH BEHAVIORAL TESTS ARE STRUCTURALLY BLIND TO CROSS-PATH DIVERGENCE,
+  which is why `TestStopReasonHasOneMapper` asserts the shared mapper is the
+  only writer rather than asserting either path's output. An ABORTED generate
+  run reports `max_tokens`, not `end_turn` -- Anthropic has no cancellation
+  value and `end_turn` positively asserts the model finished. `error` is NOT
+  a stop reason: it was added on an untraced claim that api.py set it, and a
+  non-streaming failure raises HTTPException so no MessageResponse exists at
+  all. Deliberate remaining differences are enumerated in
+  `docs/api_integration.md`; that list is hand-maintained and has been wrong.
+  ASYMMETRY: the `/v1/conversations` store accepts ONLY the nested `source`,
+  so nested is the spelling that works on every surface.
 - Reasoning parsers (`reasoning_parser.py`): four ROUTING parsers (harmony/gemma channels, `<think>` markers, pass-through) that never strip anything themselves -- declared-specials stripping is ONE wrapper, `StripSpecials`, composed over the selected parser by `select_reasoning_parser` (and only when the model declares specials, so a bare parser is the no-strip case). Its rolling holdback is sized by the STRIP SET, not by any parser's own control tokens, and is prefix-set based because declared specials are not all `<`-shaped (Mistral's `[INST]` family). Behavior is pinned by PROPERTIES, not just examples (`TestParserInvariants`): output is invariant to how the stream was chunked, and text carrying no structural tokens survives intact. Both 2026-07-23 parser bugs were violations of those two properties. Design record: `docs/parser_strip_unification.md`.
 - Chat-template resolution: `providers/common/template_info.py` is the single source of truth (per-model `chat_template_source` in models.toml; auto = `chat_template.jinja` > embedded `tokenizer_config.json` > `chat_template.json`; explicit source force-installs on the tokenizer at load, auto only fills a missing one). Traps: mlx-lm `chat_template_type` python templates live on the TokenizerWrapper -- the inner tokenizer's `chat_template` attr stays None, so never gate "has a template" on that attr alone; HF's legacy list-form `chat_template` isn't parsed (string-only); import-time jinja detection is the shared `detect_chat_template_source()` (used by BOTH the CLI wizard and the `/v1/admin` import route -- don't re-inline it). An MTP/spec-decode head registered as a model legitimately has NO chat template -- the load warning is expected there.
 - mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects `enable_thinking=True` when the kwarg is ABSENT -- always pass an explicit bool. The kwarg is the cross-model thinking control: transformers forwards extra apply_chat_template kwargs as template variables (Qwen3 renders `<think>`, gemma-4 renders thought channels; others ignore it), and "template references enable_thinking" is the thinking-capability signal.

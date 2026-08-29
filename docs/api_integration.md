@@ -308,7 +308,8 @@ Structural differences worth planning for rather than discovering:
 As of v1.79.39 the payloads conform: nested `source` on media blocks,
 `thinking` on thinking blocks and their deltas, Anthropic's `stop_reason`
 vocabulary, and the same event grammar with no `[DONE]`. What remains is
-deliberate, and it is the whole list:
+deliberate — and the list below is the best current account rather than a
+guarantee, for reasons the closing note gives:
 
 - **`max_tokens` is optional.** Anthropic requires it. Here, absent means the
   server's sampler cascade decides, which is the point.

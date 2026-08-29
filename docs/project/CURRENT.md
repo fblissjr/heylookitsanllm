@@ -1,11 +1,62 @@
 # Current Work
 
-Last updated: 2026-08-28 (v1.79.37 on the `frontend` branch; unit+contract
-green, model-free render suite green, live smoke green UNNARROWED at 52/52 --
-all three engine arms including the four Phase 3 mechanism rows)
+Last updated: 2026-08-29 (v1.79.40 on the `frontend` branch; unit+contract
+green at 1704. Live smoke NOT RE-RUN since v1.79.37's 52/52 -- it gained
+three conformance rows this session that have never executed against a real
+server, so treat smoke as UNVERIFIED until someone runs it.)
 
-HANDOFF (next session start here): The codebase is at v1.79.37 on the
-`frontend` branch.
+HANDOFF (next session start here): The codebase is at v1.79.40 on the
+`frontend` branch. Two things are open and neither is blocking:
+
+1. **`uv.lock` has an uncommitted re-resolution** (mlx-vlm 0.6.16->0.6.17,
+   transformers 5.15.1->5.16.1, tokenizers 0.22.2->0.23.1, huggingface-hub,
+   pydantic) with no pyproject change and no changelog entry. It predates
+   this session -- but `uv run` syncs from it, so every check today ran
+   against THOSE versions, not the committed lock. transformers/tokenizers
+   minors are the class this repo treats as chat-template and eos-resolution
+   risk. Either commit it with a note or `git checkout uv.lock` and re-verify.
+2. **`tests/smoke/` gained `conformance_checks`** (nested image source
+   accepted, Anthropic stop_reason vocabulary, thinking block naming
+   `thinking`) -- the live half that unit tests structurally cannot cover.
+   Never executed. Run it against an isolated server before the next release.
+
+## v1.79.38-.40 -- the Messages API became Messages-conformant
+
+Started as "write a doc so another project's agent can integrate", became a
+conformance pass, then a review of that pass.
+
+**What was wrong.** `/v1/messages` is Anthropic Messages-SHAPED and was not
+Messages-CONFORMANT for three payloads, each failing silently for a client
+written against Anthropic's spec: media blocks were flat where Anthropic
+nests under `source` (so an Anthropic SDK request was a 422), thinking blocks
+and their deltas named the field `text` where Anthropic names it `thinking`
+(a conformant reader found the block and no content), and `stop_reason`
+carried the provider's OpenAI `finish_reason` vocabulary. A fourth item that
+had been called a divergence -- the absent `[DONE]` sentinel -- turned out to
+be heylook being right; Anthropic has none either.
+
+**What shipped.** Both media spellings accepted and normalized in the schema,
+with `source` a DECLARED field so `/openapi.json` advertises it; both thinking
+spellings emitted (v3's `streaming.js` reads `text`); Anthropic's stop
+vocabulary through ONE table shared by both Messages-grammar routes.
+`/openapi.json` also stopped lying: `version` had been hardcoded at 1.20.0
+for ~60 releases, `custom_openapi()` dropped every tag description by never
+passing `tags=`, and the narrative described a one-provider server.
+
+**The instructive failure.** The `stop_reason` passthrough existed in TWO
+modules; fixing `/v1/messages` left `/v1/conversations/{id}/generate` --
+v3's own chat wire -- emitting `"length"` for one commit, with 1700 tests
+green throughout, because every test asserted one path's behaviour and none
+asserted the paths AGREE. A second instructive one: v1.79.39 added an
+`error` stop reason on an UNTRACED claim that api.py set it, and copied that
+claim into four documents before a review traced it and found the member
+unreachable. Mechanism asserted rather than verified, twice in one release.
+
+**Docs.** New `docs/api_integration.md` for external consumers (the
+`heylook-provider` skill in the owner's marketplace is its consuming-side
+twin); spec §4 records the contract change; CLAUDE.md carries the mechanisms.
+The remaining deliberate differences from Anthropic are enumerated in
+api_integration.md, and that list is hand-maintained and has been wrong once.
 
 ## v1.79.36 -- branch code review acted on
 

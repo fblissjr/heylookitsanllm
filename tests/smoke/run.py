@@ -486,6 +486,68 @@ def _messages_probe(server, model_id, content, extra=None, timeout=180):
     return call(server, "POST", "/v1/messages", body, timeout=timeout)
 
 
+def conformance_checks(server, r, arm, model_id, caps):
+    """Anthropic Messages conformance, against a REAL server (v1.79.39-40).
+
+    Unit tests drive StreamingEventTranslator and the Pydantic models
+    DIRECTLY, so they prove the pieces and not the route: every one of them
+    stayed green while the two Messages-grammar routes disagreed about
+    stop_reason. These go over the wire.
+
+    The image row is the one that matters most. Before 1.79.39 the ONLY
+    accepted media spelling was heylook's flat `source_type`, so a
+    correctly-formed Anthropic request -- what an Anthropic SDK sends -- was
+    a 422 from an endpoint advertising itself as Messages-shaped.
+    """
+    # 1. stop_reason speaks Anthropic's vocabulary, not the provider's
+    #    OpenAI finish_reason. Every arm can run this one.
+    st, body = _messages_probe(server, model_id, "Say the single word: ok")
+    if r.check(f"{arm}: messages responds", st == 200, f"got {st}: {str(body)[:200]}"):
+        stop = (body or {}).get("stop_reason")
+        r.check(f"{arm}: stop_reason is Anthropic vocabulary",
+                stop in ("end_turn", "max_tokens", "stop_sequence"),
+                f"got {stop!r} -- 'stop'/'length' is the provider's OpenAI "
+                f"finish_reason reaching the wire unrenamed")
+
+    # 2. Anthropic's NESTED source object is accepted on a media block.
+    if "vision" not in caps:
+        r.skip(f"{arm}: nested image source accepted",
+               "this arm's model does not advertise vision -- the conformance "
+               "row that regressed hardest is UNCOVERED here")
+    else:
+        nested = [
+            {"type": "text", "text": "Answer in one word: what colour is this?"},
+            {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png",
+                        "data": base64.b64encode(SMOKE_PNG).decode()}},
+        ]
+        st, body = _messages_probe(server, model_id, nested)
+        r.check(f"{arm}: nested image source accepted", st == 200,
+                f"got {st} -- a 422 means the server rejected Anthropic's own "
+                f"image spelling. body: {str(body)[:300]}")
+
+    # 3. A thinking block names the field Anthropic names it. Only meaningful
+    #    where the model actually produces one.
+    if "thinking" not in caps:
+        r.skip(f"{arm}: thinking block carries `thinking`",
+               "this arm's model does not advertise thinking")
+        return
+    st, body = _messages_probe(
+        server, model_id, "Think briefly, then answer: what is 17 + 25?",
+        extra={"thinking": True, "max_tokens": 256})
+    blocks = (body or {}).get("content") or [] if st == 200 else []
+    thinking_blocks = [b for b in blocks if b.get("type") == "thinking"]
+    if not thinking_blocks:
+        r.skip(f"{arm}: thinking block carries `thinking`",
+               "the model returned no thinking block for this prompt -- "
+               "UNCOVERED, not passing")
+        return
+    r.check(f"{arm}: thinking block carries `thinking`",
+            bool(thinking_blocks[0].get("thinking")),
+            f"block has no non-empty `thinking` field (Anthropic's name); "
+            f"keys: {sorted(thinking_blocks[0])}")
+
+
 def audio_checks(server, r, arm, model_id, caps):
     """Audio input: supported on gguf, must fail LOUDLY on MLX.
 
@@ -597,6 +659,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     # about the store, so it is worth knowing before the long checks.
     audio_checks(server, r, arm, model_id, caps)
     thinking_checks(server, r, arm, model_id, caps)
+    conformance_checks(server, r, arm, model_id, caps)
 
     conv_id = None
     try:
