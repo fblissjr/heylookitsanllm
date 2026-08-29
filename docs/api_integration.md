@@ -123,6 +123,15 @@ working). Read `thinking`.
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error
 member and no branch to write for one.
 
+In practice you will see **only `end_turn` and `max_tokens`**: those are what
+both engines produce (mlx-lm and llama-server both report OpenAI's
+`stop`/`length`, renamed at the boundary). `stop_sequence` is declared and
+mapped so a provider that learns to emit it needs no change here, but nothing
+produces it today. It is kept, unlike the removed `error`, because it is a
+value Anthropic's own spec defines — a client written against that spec
+already handles it, so declaring it costs nothing, whereas `error` was a
+heylook invention that would have made clients write a branch for us.
+
 ### Image blocks
 
 Anthropic's spelling, which is what an Anthropic SDK or anyone reading
