@@ -429,15 +429,6 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
                 break
             read += len(chunk)
             tail = (tail + chunk)[-1500:]
-            # heylook_saved is one line and always last; parse it whole rather
-            # than hoping it survives the tail window.
-            if b"heylook_saved" in chunk:
-                for _ln in chunk.decode(errors="replace").splitlines():
-                    if _ln.startswith("data: ") and "heylook_saved" in _ln:
-                        try:
-                            saved_end_reason = json.loads(_ln[6:]).get("end_reason")
-                        except Exception:
-                            pass
             buf += chunk
             # Consume whole lines only; a split JSON payload waits for its rest.
             while b"\n" in buf:
@@ -448,6 +439,12 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
                     evt = json.loads(line[6:])
                 except Exception:
                     continue
+                # heylook_saved is one line and always last. Read it HERE:
+                # the body arrives in 256-byte chunks, so the payload spans
+                # many of them and any per-chunk parse sees partial JSON.
+                # This loop already waits for whole lines.
+                if evt.get("type") == "heylook_saved":
+                    saved_end_reason = evt.get("end_reason")
                 piece = (evt.get("delta") or {}).get("text")
                 if piece:
                     res.saw_delta = True
