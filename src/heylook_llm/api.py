@@ -400,7 +400,13 @@ List all language models currently available on this server.
 - Get model IDs for use in completion requests
 
 **Returns:**
-- Model IDs (e.g., "qwen2.5-coder-1.5b-instruct-4bit")
+- Model IDs. These are INSTALL-LOCAL -- the registry is override-only, so the
+  roster is whatever sits under the scanned folders on this machine. Resolve
+  them here at runtime rather than hardcoding one (this description named a
+  concrete id for years after that model was gone).
+- `provider`, `modalities`, and `capabilities` per row. Gate features on
+  `capabilities` (what this server will SERVE) rather than `modalities` (what
+  the checkpoint author declared) -- they differ on purpose.
 - OpenAI-compatible model objects
 - Only shows models marked as `enabled: true` in models.toml
     """,
@@ -556,7 +562,8 @@ def validate_request_sampler(sampler: str | None) -> None:
 Generate text completions from chat messages using the specified model.
 
 **Key Features:**
-- Automatic model loading with LRU cache (max 2 models)
+- Automatic model loading with LRU eviction (size set by `max_loaded_models`,
+  default 1 -- so a request for a different model may evict the resident one)
 - Vision model support with base64 images
 - Streaming responses (Server-Sent Events)
 - Batch processing for multiple prompts
