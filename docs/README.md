@@ -30,6 +30,9 @@ Start at its [README](./architecture/README.md).
 - [frontend_v3_spec.md](./frontend_v3_spec.md) -- build contract (§4 = the API contract)
 
 ## Guides
+- [api_integration.md](./api_integration.md) -- wiring an EXTERNAL app to this server
+  (which wire to pick, capability discovery, the flat image block, SSE, errors). A scoped
+  view of `frontend_v3_spec.md` §4, which stays authoritative for the contract
 - [rlm_guide.md](./rlm_guide.md) / [rlm_advanced.md](./rlm_advanced.md) -- recursive inference (RLM)
 - [optimization_log.md](./optimization_log.md) -- cross-session performance findings
 - [optloop_guide.md](./optloop_guide.md) -- optloop-lib benchmark harness

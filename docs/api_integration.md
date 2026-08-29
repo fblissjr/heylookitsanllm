@@ -297,6 +297,21 @@ Structural differences worth planning for rather than discovering:
 - The server loads nothing at startup, so the first request to a model pays
   its load. Expect a long first token and do not treat it as a hang.
 
+## Source of truth, and what is not watched
+
+The block shapes above are defined in `src/heylook_llm/schema/content_blocks.py`
+and the request fields in `schema/messages.py`. `/openapi.json` derives from
+both and cannot drift.
+
+The *prose* describing them can, and it now exists in several places: this
+document, the OpenAPI narrative header in `api.py`, the `/v1/capabilities`
+endpoints block, and the `heylook-provider` skill's body and references.
+**Nothing watches that set.** They are load-bearing precisely because they
+say "this is a trap", so if `ImageBlock` ever accepts Anthropic's nested
+`source` too, every one of them flips from helpful to actively misleading.
+Recorded rather than resolved: a change to the block union means grepping
+for the flat-shape claim, and the schema module is the thing to believe.
+
 ## Further reading
 
 - `GET /openapi.json` — every route, field, bound and enum, generated from
