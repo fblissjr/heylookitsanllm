@@ -278,6 +278,12 @@ stays for external consumers, no v3 page calls it):
   NESTED `source` object (`{type:"image",source:{type:"base64",media_type,data}}`)
   as well as the original flat `source_type` form -- the flat one was the only
   accepted spelling before, so a correctly-formed Messages request was a 422.
+  A flat field sent as an explicit `null` counts as ABSENT and is filled from
+  the nested object (v1.79.41): a client generated from `/openapi.json`
+  serializes every unset optional as null beside the nested `source`, and
+  until .41 both the gate and its `setdefault` tested key PRESENCE, so that
+  request 422'd on the spelling the docs recommend. Flat values that are
+  actually set still win over the nested object.
   Thinking blocks and `thinking_delta` carry the text under BOTH `thinking`
   (Anthropic's field) and `text` (v3's readers, `streaming.js`); `stop_reason`
   is now `end_turn`/`max_tokens`/`stop_sequence` rather than the provider's

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.41]
+
+A review of 1.79.37-.40. Five findings, all verified against running code before being touched -- and the first one's obvious one-line fix was not sufficient, which is the entry worth reading.
+
+### Fixed
+
+- **The nested `source` spelling still 422'd for exactly the clients it was added for.** `_flatten_source` gated on `"source_type" in values` -- key PRESENCE, not value. `source_type` is Optional in the published schema, so a client generated from `/openapi.json`, or any pydantic client doing `model_dump()` without `exclude_none`, sends `{"type":"image","source_type":null,"data":null,"source":{"type":"base64",...}}`. The gate short-circuited, nothing flattened, and the block was rejected as "requires `source_type`" -- on the exact spelling `docs/api_integration.md` tells integrators to prefer. Serializing absent optionals as nulls is ordinary generated-client behaviour, not a malformed request. **The gate was only half of it:** the `setdefault` calls below it test key presence too, so fixing the gate alone moved the failure from the discriminator to the data (`source_type` resolved, `data` stayed null). Both now treat null as absent. A null flat field is filled from the nested object; a flat field actually set still wins; a genuinely absent source is still a 422.
+- **`TestStopReasonHasOneMapper` exempted every string literal, including the one it exists to catch.** The test's stated purpose is that the two Messages-grammar routes cannot disagree again, but `if rhs.startswith('"'): continue` waved through any quoted value -- so `stop_reason = "length"`, OpenAI's vocabulary reaching the Messages wire verbatim and the precise 1.79.39 defect, passed green as long as it was spelled as a literal. Literals are now checked for membership in `StopReason`.
+- **Dropping the Clone confirm removed the only thing coalescing a double-tap.** `armedConfirm` required arm-then-fire, so two fast taps produced one clone; after 1.79.37 they produce two conversations plus two racing `selectConversation` awaits, whose interleaving decides which is active. On a phone, on a small button, double-tap is the norm. `cloneConversation` now guards re-entry per conversation id. This is not a resurrected confirm -- the owner's ruling stands, nothing is armed and nothing asks twice; it is the re-entry protection the arm had been providing as a side effect.
+- **`docs/api_integration.md` documented the pre-1.79.40 `content_block_start`.** It showed `content_block:{type}` while the emitter had moved to always including `text: ""` (plus `thinking: ""` on thinking blocks) -- which was the point of that change. `frontend_v3_spec.md` was updated for it and this file, the one external integrators are pointed at from the OpenAPI header, was not. Same hand-copied-description drift the release it documents was about.
+- **The `_flatten_source` comment justified the gate with a case that can no longer occur.** It cited a flat block carrying an unrelated dict-valued `source` key "previously ignored as an extra field" -- but 1.79.39 made `source` a declared `MediaSource`, so such a block now fails at field validation regardless of the gate. The comment now explains the real reason.
+
+### Changed
+
+- `docs/frontend_v3_spec.md` §4 records the null-means-absent rule, in the same commit as the behaviour.
+
 ## [1.79.40]
 
 Code review of the 1.79.38-39 work. Fourteen findings acted on; the pattern in most of them is that a conformance pass fixed one copy of a shape and left a second copy behind.

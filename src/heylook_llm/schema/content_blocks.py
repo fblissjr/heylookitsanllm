@@ -26,24 +26,36 @@ def _flatten_source(values: Any) -> Any:
     if not isinstance(values, dict):
         return values
     # Only interpret `source` when the block is NOT already in the flat
-    # spelling. Without this gate a flat block carrying an unrelated
-    # dict-valued `source` key -- provenance metadata, say, previously
-    # ignored as an extra field -- would have it deleted and its `type`
-    # read as the discriminator. That was harmless only by accident (the
-    # flat fields were present, so every setdefault below no-opped); one
-    # missing flat field turned it into `source_type=None` and a 422
-    # pointing at the wrong field.
-    if "source_type" in values:
+    # spelling -- and "in the flat spelling" means source_type carries a
+    # VALUE, not merely that the key is present.
+    #
+    # Testing presence broke the nested form for exactly the clients the
+    # nested form was added for. `source_type` is Optional in the published
+    # schema, so a client generated from /openapi.json -- or any pydantic
+    # client doing model_dump() without exclude_none -- serializes every
+    # absent flat field as an explicit null beside the nested object:
+    #   {"type":"image","source_type":null,"data":null,
+    #    "source":{"type":"base64",...}}
+    # A presence gate short-circuits there, nothing flattens, and the block
+    # 422s as "requires source_type" -- on the spelling docs/api_integration.md
+    # tells integrators to prefer. Serializing nulls for absent optionals is
+    # ordinary generated-client behaviour, not a malformed request.
+    if values.get("source_type") is not None:
         return values
     source = values.get("source")
     if not isinstance(source, dict):
         return values
     values = {k: v for k, v in values.items() if k != "source"}
+    # setdefault would be wrong here for the same reason presence was wrong
+    # above: it tests whether the KEY exists, and the client that motivates
+    # this whole branch sends `"data": null` rather than omitting `data`. A
+    # null flat field means "absent", so the nested value fills it.
     # Anthropic's discriminator is `source.type`; ours is `source_type`.
-    values.setdefault("source_type", source.get("type"))
+    if values.get("source_type") is None:
+        values["source_type"] = source.get("type")
     for key in ("media_type", "data", "url"):
-        if source.get(key) is not None:
-            values.setdefault(key, source[key])
+        if source.get(key) is not None and values.get(key) is None:
+            values[key] = source[key]
     return values
 
 

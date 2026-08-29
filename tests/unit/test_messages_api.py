@@ -7,8 +7,12 @@ Tests cover:
 2. OpenAI response dict -> MessageResponse conversion
 3. StreamingEventTranslator event sequencing
 """
-import pytest
+from typing import get_args
 
+import pytest
+from pydantic import ValidationError
+
+from heylook_llm.schema.responses import StopReason
 from heylook_llm.schema.content_blocks import (
     ImageBlock,
     TextBlock,
@@ -392,6 +396,49 @@ class TestAnthropicImageBlockShape:
             "base64", "audio/wav", "UklG",
         )
 
+    # A generated client serializes absent optionals as explicit nulls rather
+    # than omitting them -- ordinary behaviour for the Java/Go/TS generators
+    # and for pydantic's own model_dump() without exclude_none. Since
+    # `source_type` is Optional in the published schema, that client sends
+    # nulls BESIDE the nested object, which is the exact spelling
+    # docs/api_integration.md tells integrators to prefer. Both the gate and
+    # the assignment below it tested key PRESENCE, so the nulls survived and
+    # the block 422'd. Two tests: one per mechanism, because fixing only the
+    # gate leaves this passing at the discriminator and failing at the data.
+    NULLED = {
+        "type": "image",
+        "source_type": None, "media_type": None, "data": None, "url": None,
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"},
+    }
+
+    def test_explicit_nulls_beside_a_nested_source_still_flatten(self):
+        block = self._req(self.NULLED).messages[0].content[0]
+        assert block.source_type == "base64", "the presence gate short-circuited"
+        assert (block.media_type, block.data) == ("image/jpeg", "AAAA"), (
+            "setdefault left the explicit nulls in place"
+        )
+
+    def test_nulled_nested_url_source_flattens(self):
+        block = self._req({
+            "type": "image", "source_type": None, "url": None, "data": None,
+            "source": {"type": "url", "url": "https://e/x.png"},
+        }).messages[0].content[0]
+        assert (block.source_type, block.url) == ("url", "https://e/x.png")
+
+    def test_a_genuinely_absent_source_is_still_rejected(self):
+        # The fix must not turn "no source at all" into a silent pass: null
+        # means absent, and absent is still a 422.
+        with pytest.raises(ValidationError):
+            self._req({"type": "image", "source_type": None})
+
+    def test_flat_values_still_win_over_a_nested_source(self):
+        block = self._req({
+            "type": "image", "source_type": "url", "url": "https://flat/a.png",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": "ZZ"},
+        }).messages[0].content[0]
+        assert (block.source_type, block.url) == ("url", "https://flat/a.png")
+        assert block.data is None
+
 
 class TestThinkingBlockCarriesBothFields:
     """Anthropic names it `thinking`; v3 reads `text`. Both are populated."""
@@ -510,7 +557,21 @@ class TestStopReasonHasOneMapper:
             rhs = rhs.strip()
             # A literal from the shared vocabulary is fine (an explicit
             # end-state, e.g. an abort); a bare provider value is not.
+            #
+            # The literal must be IN that vocabulary, not merely be a literal.
+            # Exempting every quoted string waved through the exact bug this
+            # class exists to catch: `stop_reason = "length"` is OpenAI's
+            # finish_reason vocabulary reaching the Messages wire verbatim, and
+            # it passed -- it starts with a quote. Checking membership costs
+            # nothing and closes the literal-shaped path back to the defect.
             if rhs.startswith('"') or rhs.startswith("'"):
+                literal = rhs[1:].split(rhs[0])[0]
+                assert literal in get_args(StopReason), (
+                    f"{path} assigns stop_reason = {literal!r}, which is not in "
+                    f"the Messages vocabulary {get_args(StopReason)} -- a "
+                    "provider finish_reason spelled as a literal is still a "
+                    "provider finish_reason on the wire"
+                )
                 continue
             assert "to_stop_reason(" in rhs, (
                 f"{path} assigns stop_reason from {rhs!r} without "

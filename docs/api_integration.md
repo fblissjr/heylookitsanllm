@@ -214,7 +214,8 @@ Set `stream: true`. Events, in order:
 
 ```
 event: message_start          data: {type, message:{id, role, model, content:[], usage}}
-event: content_block_start    data: {type, index, content_block:{type:"text"|"thinking"}}
+event: content_block_start    data: {type, index, content_block:{type:"text", text:""}}
+                              data: {type, index, content_block:{type:"thinking", thinking:"", text:""}}
 event: content_block_delta    data: {type, index, delta:{type:"text_delta", text}}
                               data: {type, index, delta:{type:"thinking_delta", thinking, text}}
 event: content_block_stop     data: {type, index}

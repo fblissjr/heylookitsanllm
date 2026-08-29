@@ -972,6 +972,16 @@ async function cloneConversation(ctx, convId) {
     showStatus(ctx, 'Cannot clone while generation is in progress', true);
     return;
   }
+  // Re-entry guard, NOT a resurrected confirm. armedConfirm used to coalesce a
+  // double-tap for free (the first tap only armed), so dropping it in v1.79.37
+  // silently made two fast taps two clones -- plus two racing selectConversation
+  // awaits whose interleaving decided which one ended up active. The button is
+  // small and sits on a phone, where double-tap is the norm, not the accident.
+  // Guarding HERE rather than by disabling the button: the row is re-rendered by
+  // the list refresh below, so a disabled flag set on the old node would be
+  // dropped mid-flight, and any future caller gets the guard for free.
+  if (s.cloningIds?.has(convId)) return;
+  (s.cloningIds ??= new Set()).add(convId);
   try {
     showStatus(ctx, 'Cloning conversation…');
     const cloned = await api.cloneConversation(convId);
@@ -999,6 +1009,8 @@ async function cloneConversation(ctx, convId) {
     showStatus(ctx, 'Conversation cloned.');
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Clone failed: ${err.message}`, true);
+  } finally {
+    s.cloningIds?.delete(convId);
   }
 }
 
