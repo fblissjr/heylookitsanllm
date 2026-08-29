@@ -30,7 +30,12 @@ from heylook_llm.schema.content_blocks import (
     ThinkingBlock,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
-from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
+from heylook_llm.schema.responses import (
+    MessageResponse,
+    PerformanceInfo,
+    StopReason,
+    Usage,
+)
 
 
 def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
@@ -113,6 +118,36 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
     )
 
 
+# OpenAI finish_reason -> Anthropic stop_reason. ONE copy on purpose: this
+# lived as an inline if/elif here AND as a raw passthrough in
+# messages_api.py's streaming path, so the two wires disagreed about the same
+# generation -- the streaming arm reported the provider's "length" while the
+# non-streaming arm reported it too, and neither was a value the Messages
+# spec defines. Providers speak OpenAI's vocabulary because the internal
+# ChatRequest does; the boundary that renames it is here.
+STOP_REASON_FROM_FINISH_REASON: Dict[str, StopReason] = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "stop_sequence": "stop_sequence",
+    # Already-Anthropic values pass through, so a provider that learns the
+    # richer vocabulary needs no change here.
+    "end_turn": "end_turn",
+    "max_tokens": "max_tokens",
+}
+
+
+def to_stop_reason(finish_reason: Optional[str]) -> StopReason:
+    """Map a provider finish_reason onto the Messages stop_reason vocabulary.
+
+    Unknown and absent both mean "the model stopped on its own": that is what
+    an absent finish_reason has always meant on this path, and inventing a
+    new value for an unrecognised one would put a non-spec string back on the
+    wire -- the exact defect this function exists to remove.
+    """
+    default: StopReason = "end_turn"
+    return STOP_REASON_FROM_FINISH_REASON.get(finish_reason or "stop", default)
+
+
 def from_openai_response_dict(
     response_dict: Dict,
     metadata: Optional[Dict[str, str]] = None,
@@ -168,15 +203,9 @@ def from_openai_response_dict(
         )
 
     # Determine stop reason
-    finish_reason = "stop"
-    if choices:
-        fr = choices[0].get("finish_reason", "stop")
-        if fr == "length":
-            finish_reason = "length"
-        elif fr in ("stop", None):
-            finish_reason = "stop"
-        else:
-            finish_reason = "stop"
+    finish_reason = to_stop_reason(
+        choices[0].get("finish_reason") if choices else None
+    )
 
     return MessageResponse(
         id=f"msg_{uuid.uuid4().hex[:16]}",

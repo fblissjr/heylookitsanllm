@@ -2038,9 +2038,10 @@ async def get_capabilities(request: Request):
             # project points integrators.
             "messages": {
                 "endpoint": "/v1/messages",
-                "description": "Anthropic-style wire: top-level system, typed content blocks. "
-                               "Image blocks are FLAT ({type,source_type,media_type,data}), "
-                               "not Anthropic's nested source object. No server-side resize.",
+                "description": "Anthropic Messages-conformant wire: top-level system, "
+                               "typed content blocks with nested `source`, Anthropic "
+                               "stop_reason vocabulary. No server-side resize -- "
+                               "clients downscale before sending.",
                 "supports_base64": True,
                 "server_side_image_resize": False,
             },
@@ -2254,9 +2255,10 @@ Server version **{__version__}**. Default base URL `http://localhost:{DEFAULT_PO
   `system`, typed content blocks, block-structured SSE ending at
   `message_stop` with no `[DONE]`. This is the wire the bundled `/v3`
   frontend speaks and the direction the project is heading.
-  Its image block is **flat** and not Anthropic's nested `source`:
-  `{{"type":"image","source_type":"base64","media_type":"image/jpeg","data":"..."}}`.
-  It has no server-side resize -- clients downscale before sending.
+  Media blocks use Anthropic's nested `source`
+  (`{{"type":"image","source":{{"type":"base64","media_type":...,"data":...}}}}`);
+  heylook's older flat spelling is still accepted. It has no server-side
+  resize -- clients downscale before sending.
 - **`POST /v1/chat/completions`** (OpenAI API) -- OpenAI-compatible, kept
   for external consumers and existing SDK clients. Unlike Messages it can
   downscale images for you via `resize_max` / `resize_width` /
@@ -2449,7 +2451,7 @@ response = client.chat.completions.create(
             }
         },
         "messages_vision_request": {
-            "summary": "Messages wire: image block (FLAT source_type, not Anthropic's nested source)",
+            "summary": "Messages wire: image block (Anthropic's nested source)",
             "value": {
                 "model": "<a model whose capabilities include \"vision\">",
                 "messages": [
@@ -2459,9 +2461,11 @@ response = client.chat.completions.create(
                             {"type": "text", "text": "What's in this image?"},
                             {
                                 "type": "image",
-                                "source_type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": "<raw base64, no data: prefix>"
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": "<raw base64, no data: prefix>"
+                                }
                             }
                         ]
                     }

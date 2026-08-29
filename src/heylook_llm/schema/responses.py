@@ -9,6 +9,12 @@ from pydantic import BaseModel, Field
 
 from heylook_llm.schema.content_blocks import OutputContentBlock
 
+# The Messages-wire stop vocabulary, defined ONCE. Anthropic's set minus the
+# values heylook cannot produce (no tools, no server-side pause), plus
+# `error`, which has no Anthropic counterpart -- a failure is an `error`
+# EVENT there, and api.py's non-streaming failure path needs a value.
+StopReason = Literal["end_turn", "max_tokens", "stop_sequence", "error"]
+
 
 class Usage(BaseModel):
     """Token usage statistics.
@@ -61,7 +67,15 @@ class MessageResponse(BaseModel):
     role: Literal["assistant"] = "assistant"
     model: str
     content: List[OutputContentBlock]
-    stop_reason: Literal["stop", "length", "error"] = "stop"
+    # Anthropic's vocabulary, not OpenAI's. This read "stop"|"length"|"error"
+    # until v1.79.39 -- the provider's OpenAI finish_reason passed through
+    # unchanged onto an otherwise Anthropic-shaped response, so a client
+    # written against the Messages API saw a value its spec does not define.
+    # `error` has no Anthropic counterpart (a failure is an `error` EVENT
+    # there) and is kept as a heylook extension: api.py sets it on the
+    # non-streaming failure path. Map through STOP_REASON_FROM_FINISH_REASON
+    # (converters.py) rather than assigning a provider value here.
+    stop_reason: StopReason = "end_turn"
     usage: Usage
     performance: Optional[PerformanceInfo] = None
     metadata: Optional[Dict[str, str]] = Field(

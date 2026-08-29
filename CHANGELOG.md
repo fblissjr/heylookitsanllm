@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.39]
+
+`/v1/messages` now actually speaks the Messages API it advertises.
+
+### Fixed
+
+- **The image block was flat where Anthropic nests it under `source`.** An Anthropic SDK, or anyone following Anthropic's docs, sent `{"type":"image","source":{"type":"base64",...}}` and got a **422** from an endpoint whose whole premise is being Messages-shaped. Both spellings are now accepted and normalize to one internal shape in the schema (`_flatten_source`), so nothing downstream knows which arrived. The flat form stays valid -- every existing client sends it.
+- **The thinking block and its delta named the field `text`; Anthropic names it `thinking`.** A conformant reader found the block and nothing in it. Both fields are now populated on `ThinkingBlock` and on `thinking_delta`. `text` is kept deliberately: v3's `streaming.js` reads it in two places, and dropping it would blank the reasoning pane on notebook and explore. `thinking` is the conformant name and what new clients should read.
+- **`stop_reason` carried the provider's OpenAI `finish_reason` vocabulary onto the wire** -- `"stop"` / `"length"`, neither of which the Messages spec defines. Now `end_turn` / `max_tokens` / `stop_sequence`, plus `error`, which has no Anthropic counterpart (a failure is an `error` event there) and which `api.py` sets on the non-streaming failure path. The mapping is ONE table, `STOP_REASON_FROM_FINISH_REASON` in `converters.py`: it previously existed as an inline `if/elif` in the non-streaming converter AND as a raw passthrough in the streaming path, which is the hand-copied-constant defect this repo keeps re-learning -- the streaming arm had no mapping at all, so the two arms disagreed about the same generation. A comment above the non-streaming branch even claimed a mapping happened that did not.
+- **`content_block_start` now opens with its content field present and empty**, as Anthropic's does, so a client accumulating into `content_block` has something to accumulate into.
+
+### Changed
+
+- **The integration guide stops documenting traps and starts documenting differences.** Conformance deletes prose: the flat-image explanation existed in five places because it was a surprise that had to be re-explained everywhere, and it is now one line saying the older spelling still works. What remains is a short, closed list of deliberate divergences (`max_tokens` optional, `thinking` is a bool rather than Anthropic's config object, no tools, the `error` stop reason, the heylook extensions, no server-side resize, install-local model ids). Everything not on that list defers to Anthropic's published spec -- a source of truth this repo does not maintain.
+- `ImageBlock` / `AudioBlock` docstrings now state that the nested form is accepted, because a `model_validator(mode="before")` is invisible in the generated JSON Schema -- an agent reading `/openapi.json` would otherwise still conclude nested `source` was invalid.
+
 ## [1.79.38]
 
 External-integration docs, and the OpenAPI header they tell people to trust.

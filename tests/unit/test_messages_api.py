@@ -150,7 +150,8 @@ class TestFromResponseConversion:
         }
         resp = from_openai_response_dict(d)
         assert resp.model == "test-model"
-        assert resp.stop_reason == "stop"
+        # Anthropic vocabulary, not the provider's OpenAI finish_reason.
+        assert resp.stop_reason == "end_turn"
         assert resp.usage.input_tokens == 5
         assert resp.usage.output_tokens == 2
         # Content blocks should have a TextBlock
@@ -189,7 +190,7 @@ class TestFromResponseConversion:
             "usage": {"prompt_tokens": 1, "completion_tokens": 50},
         }
         resp = from_openai_response_dict(d)
-        assert resp.stop_reason == "length"
+        assert resp.stop_reason == "max_tokens"
 
     def test_response_with_performance(self):
         d = {
@@ -223,7 +224,7 @@ class TestFromResponseConversion:
         }
         resp = from_openai_response_dict(d)
         assert resp.content == []
-        assert resp.stop_reason == "stop"
+        assert resp.stop_reason == "end_turn"
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +325,145 @@ class TestStreamingEventTranslator:
         # The text parser may buffer, so check total >= expected
         assert translator.thinking_tokens >= 1
         assert translator.content_tokens >= 1
+
+
+# ---------------------------------------------------------------------------
+# Anthropic wire conformance (v1.79.39)
+#
+# /v1/messages advertises itself as Messages-shaped, and three payloads were
+# not: the image block was flat where Anthropic nests it under `source`, the
+# thinking block and its delta named the field `text` where Anthropic names
+# it `thinking`, and `stop_reason` carried the provider's OpenAI
+# finish_reason vocabulary ("stop"/"length") straight onto the wire.
+# ---------------------------------------------------------------------------
+
+
+class TestAnthropicImageBlockShape:
+    """Both spellings are accepted and normalize to one internal shape."""
+
+    ANTHROPIC = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"},
+    }
+    HEYLOOK = {
+        "type": "image",
+        "source_type": "base64",
+        "media_type": "image/jpeg",
+        "data": "AAAA",
+    }
+
+    def _req(self, block):
+        return MessageCreateRequest(
+            model="m", messages=[{"role": "user", "content": [block]}]
+        )
+
+    def test_anthropic_nested_source_is_accepted(self):
+        # This was a 422 before v1.79.39 -- a correctly-formed Messages
+        # request rejected by an endpoint claiming to speak Messages.
+        block = self._req(self.ANTHROPIC).messages[0].content[0]
+        assert block.source_type == "base64"
+        assert block.media_type == "image/jpeg"
+        assert block.data == "AAAA"
+
+    def test_flat_spelling_still_accepted(self):
+        block = self._req(self.HEYLOOK).messages[0].content[0]
+        assert (block.source_type, block.data) == ("base64", "AAAA")
+
+    def test_both_produce_identical_wire_parts(self):
+        # The point of normalizing in the schema: nothing downstream needs to
+        # know which spelling arrived.
+        assert (
+            to_chat_request(self._req(self.ANTHROPIC)).messages[0].content
+            == to_chat_request(self._req(self.HEYLOOK)).messages[0].content
+        )
+
+    def test_nested_url_source(self):
+        block = self._req({
+            "type": "image", "source": {"type": "url", "url": "https://e/x.png"},
+        }).messages[0].content[0]
+        assert (block.source_type, block.url) == ("url", "https://e/x.png")
+
+    def test_nested_audio_source(self):
+        block = MessageCreateRequest(model="m", messages=[{"role": "user", "content": [
+            {"type": "audio",
+             "source": {"type": "base64", "media_type": "audio/wav", "data": "UklG"}},
+        ]}]).messages[0].content[0]
+        assert (block.source_type, block.media_type, block.data) == (
+            "base64", "audio/wav", "UklG",
+        )
+
+
+class TestThinkingBlockCarriesBothFields:
+    """Anthropic names it `thinking`; v3 reads `text`. Both are populated."""
+
+    def test_constructed_from_text(self):
+        b = ThinkingBlock(text="abc")
+        assert b.thinking == "abc" and b.text == "abc"
+
+    def test_constructed_from_thinking(self):
+        b = ThinkingBlock(thinking="xyz")
+        assert b.text == "xyz" and b.thinking == "xyz"
+
+    def test_response_conversion_populates_both(self):
+        resp = from_openai_response_dict({
+            "model": "m",
+            "choices": [{"finish_reason": "stop",
+                         "message": {"content": "hi", "thinking": "hmm"}}],
+            "usage": {},
+        })
+        block = resp.content[0]
+        assert isinstance(block, ThinkingBlock)
+        assert block.thinking == "hmm" and block.text == "hmm"
+
+
+class TestStopReasonVocabulary:
+    """The provider speaks OpenAI; the Messages wire must not."""
+
+    @pytest.mark.parametrize("finish_reason,expected", [
+        ("stop", "end_turn"),
+        ("length", "max_tokens"),
+        ("stop_sequence", "stop_sequence"),
+        (None, "end_turn"),
+        # An unrecognised provider value must not reach the wire verbatim --
+        # that is the whole defect being fixed.
+        ("something_new", "end_turn"),
+        # Already-Anthropic values pass through unchanged.
+        ("end_turn", "end_turn"),
+        ("max_tokens", "max_tokens"),
+    ])
+    def test_mapping(self, finish_reason, expected):
+        from heylook_llm.schema.converters import to_stop_reason
+        assert to_stop_reason(finish_reason) == expected
+
+    def test_no_openai_vocabulary_survives(self):
+        from heylook_llm.schema.converters import STOP_REASON_FROM_FINISH_REASON
+        assert "stop" not in STOP_REASON_FROM_FINISH_REASON.values()
+        assert "length" not in STOP_REASON_FROM_FINISH_REASON.values()
+
+
+class TestStreamingConformance:
+    """The SSE payloads a Messages client actually reads."""
+
+    def _events(self, text):
+        from heylook_llm.messages_api import StreamingEventTranslator
+        t = StreamingEventTranslator("msg_1", "m")
+        out = t.process_chunk(text) + t.flush()
+        return "".join(out)
+
+    def test_thinking_delta_carries_thinking_field(self):
+        blob = self._events("<think>reasoning</think>answer")
+        assert '"thinking_delta"' in blob
+        # Anthropic's field name must be present, and v3's must survive.
+        assert '"thinking": "reasoning"' in blob or '"thinking":"reasoning"' in blob
+        assert '"text": "reasoning"' in blob or '"text":"reasoning"' in blob
+
+    def test_text_delta_unchanged(self):
+        blob = self._events("plain answer")
+        assert '"text_delta"' in blob
+        assert '"thinking_delta"' not in blob
+
+    def test_message_delta_uses_anthropic_stop_reason(self):
+        from heylook_llm.messages_api import StreamingEventTranslator
+        t = StreamingEventTranslator("msg_1", "m")
+        # Default with no provider signal is a natural stop.
+        assert '"end_turn"' in t.message_delta_event()

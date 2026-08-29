@@ -21,7 +21,7 @@
 #   data: {"type": "content_block_stop", "index": 0}
 #
 #   event: message_delta
-#   data: {"type": "message_delta", "delta": {"stop_reason": "stop"}, "usage": {...}}
+#   data: {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {...}}
 #
 #   event: message_stop
 #   data: {"type": "message_stop", "performance": {...}}
@@ -104,7 +104,7 @@ class MessageDeltaEvent(BaseModel):
     """Final metadata: stop reason and usage stats."""
     type: Literal["message_delta"] = "message_delta"
     delta: Dict = Field(
-        ..., description='{"stop_reason": "stop"|"length"|"error"}'
+        ..., description='{"stop_reason": "end_turn"|"max_tokens"|"stop_sequence"|"error"}'
     )
     usage: Optional[Usage] = None
 

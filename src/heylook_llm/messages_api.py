@@ -25,7 +25,11 @@ from heylook_llm.providers.base import GenerationFailed, InvalidGenerationReques
 from heylook_llm.busy_response import model_busy_response
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelNotFound
-from heylook_llm.schema.converters import from_openai_response_dict, to_chat_request
+from heylook_llm.schema.converters import (
+    from_openai_response_dict,
+    to_chat_request,
+    to_stop_reason,
+)
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
 from heylook_llm.perf_collector import (
@@ -80,7 +84,7 @@ class StreamingEventTranslator:
         self.content_tokens = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
-        self.stop_reason = "stop"
+        self.stop_reason: str = "end_turn"
 
         # Timing
         self.start_time = time.time()
@@ -217,10 +221,19 @@ class StreamingEventTranslator:
     def _block_start(self, block_type: str) -> str:
         self.block_index += 1
         self.current_block_type = block_type
+        # Anthropic opens a block with its content field present and empty
+        # ({"type":"text","text":""}), so a client that accumulates into
+        # content_block has something to accumulate into.
+        content_block = {"type": block_type}
+        if block_type == "thinking":
+            content_block["thinking"] = ""
+            content_block["text"] = ""
+        else:
+            content_block["text"] = ""
         return self._sse("content_block_start", {
             "type": "content_block_start",
             "index": self.block_index,
-            "content_block": {"type": block_type},
+            "content_block": content_block,
         })
 
     def _block_stop(self) -> str:
@@ -231,7 +244,12 @@ class StreamingEventTranslator:
 
     def _block_delta(self, block_type: str, text: str) -> str:
         if block_type == "thinking":
-            delta = {"type": "thinking_delta", "text": text}
+            # Anthropic's thinking_delta carries `thinking`, not `text`. Both
+            # go out: `thinking` is the conformant field a Messages client
+            # reads, `text` is what v3's streaming.js reads today. Dropping
+            # `text` here would blank the reasoning pane on notebook and
+            # explore, so it stays until those readers move.
+            delta = {"type": "thinking_delta", "thinking": text, "text": text}
         else:
             delta = {"type": "text_delta", "text": text}
         return self._sse("content_block_delta", {
@@ -530,10 +548,12 @@ async def _stream_messages(
             if ka:
                 yield ka
                 continue
-            # Capture provider metadata
+            # Capture provider metadata. The provider speaks OpenAI's
+            # finish_reason vocabulary; renaming it at this boundary is what
+            # keeps "length" off an Anthropic-shaped message_delta.
             chunk_finish = getattr(chunk, "finish_reason", None)
             if chunk_finish:
-                translator.stop_reason = chunk_finish
+                translator.stop_reason = to_stop_reason(chunk_finish)
             telemetry.absorb(chunk)
             # The translator owns the token counts it reports in its own
             # message_delta/usage events.

@@ -89,8 +89,8 @@ Content-Type: application/json
   "messages": [
     { "role": "user", "content": [
       { "type": "text", "text": "Describe this shot as a video prompt." },
-      { "type": "image", "source_type": "base64",
-        "media_type": "image/jpeg", "data": "<base64, no data: prefix>" }
+      { "type": "image", "source": { "type": "base64",
+        "media_type": "image/jpeg", "data": "<base64, no data: prefix>" } }
     ]}
   ],
   "max_tokens": 1024,
@@ -103,9 +103,9 @@ Response (non-streaming):
 
 ```json
 { "id": "msg_...", "type": "message", "role": "assistant", "model": "...",
-  "content": [ { "type": "thinking", "text": "..." },
+  "content": [ { "type": "thinking", "thinking": "...", "text": "..." },
                 { "type": "text", "text": "..." } ],
-  "stop_reason": "stop" | "length" | "error",
+  "stop_reason": "end_turn" | "max_tokens" | "stop_sequence" | "error",
   "usage": { "input_tokens": 0, "output_tokens": 0,
              "thinking_tokens": null, "content_tokens": null } }
 ```
@@ -115,28 +115,31 @@ Response (non-streaming):
 unless you intend to show reasoning — and never render a `thinking` block as
 if it were the answer.
 
-### Image blocks: the one thing that will cost you an afternoon
+A thinking block carries its content under **both** `thinking` (Anthropic's
+field name) and `text` (heylook's original, kept so existing readers keep
+working). Read `thinking`.
 
-heylook's image block is **flat**. It is *not* Anthropic's nested `source`
-object, despite the endpoint otherwise looking Anthropic-shaped:
+`stop_reason` is Anthropic's vocabulary, plus `error` — which has no
+Anthropic counterpart, since there a failure is an `error` event. heylook
+sets it on the non-streaming failure path.
 
-```jsonc
-// Correct — heylook
-{ "type": "image", "source_type": "base64",
-  "media_type": "image/jpeg", "data": "..." }
+### Image blocks
 
-// 422 Unprocessable Entity — Anthropic's native spelling
+Anthropic's spelling, which is what an Anthropic SDK or anyone reading
+Anthropic's docs will send:
+
+```json
 { "type": "image", "source": { "type": "base64",
   "media_type": "image/jpeg", "data": "..." } }
 ```
 
-`source_type` may also be `"url"`, in which case set `url` and omit `data`.
-Audio blocks (gguf models only — MLX rejects audio with a 400) take the same
-flat shape with `type: "audio"`.
+`source.type` may be `"url"` instead, with `url` in place of `data`. Audio
+blocks take the same shape with `type: "audio"` and reach only gguf models —
+MLX answers 400 for audio, because audio towers are stripped at load.
 
-Note the asymmetry if you also touch conversation storage: the
-`/v1/conversations` message store *does* use the nested `source` spelling.
-Two shapes, two surfaces. This section is about `/v1/messages`.
+heylook's older flat spelling (`source_type`/`media_type`/`data` directly on
+the block) is still accepted and normalizes to the same thing, so existing
+clients keep working. New code should use the nested form.
 
 `data` is raw base64 with **no `data:` URI prefix**.
 
@@ -192,7 +195,8 @@ Set `stream: true`. Events, in order:
 ```
 event: message_start          data: {type, message:{id, role, model, content:[], usage}}
 event: content_block_start    data: {type, index, content_block:{type:"text"|"thinking"}}
-event: content_block_delta    data: {type, index, delta:{type:"text_delta"|"thinking_delta", text}}
+event: content_block_delta    data: {type, index, delta:{type:"text_delta", text}}
+                              data: {type, index, delta:{type:"thinking_delta", thinking, text}}
 event: content_block_stop     data: {type, index}
 event: message_delta          data: {type, delta:{stop_reason}, usage}
 event: message_stop           data: {type, performance:{total_duration_ms, ...}}
@@ -297,20 +301,39 @@ Structural differences worth planning for rather than discovering:
 - The server loads nothing at startup, so the first request to a model pays
   its load. Expect a long first token and do not treat it as a hang.
 
-## Source of truth, and what is not watched
+## Where this still differs from Anthropic's Messages API
 
-The block shapes above are defined in `src/heylook_llm/schema/content_blocks.py`
-and the request fields in `schema/messages.py`. `/openapi.json` derives from
-both and cannot drift.
+As of v1.79.39 the payloads conform: nested `source` on media blocks,
+`thinking` on thinking blocks and their deltas, Anthropic's `stop_reason`
+vocabulary, and the same event grammar with no `[DONE]`. What remains is
+deliberate, and it is the whole list:
 
-The *prose* describing them can, and it now exists in several places: this
-document, the OpenAPI narrative header in `api.py`, the `/v1/capabilities`
-endpoints block, and the `heylook-provider` skill's body and references.
-**Nothing watches that set.** They are load-bearing precisely because they
-say "this is a trap", so if `ImageBlock` ever accepts Anthropic's nested
-`source` too, every one of them flips from helpful to actively misleading.
-Recorded rather than resolved: a change to the block union means grepping
-for the flat-shape claim, and the schema module is the thing to believe.
+- **`max_tokens` is optional.** Anthropic requires it. Here, absent means the
+  server's sampler cascade decides, which is the point.
+- **`thinking` is a bool**, not Anthropic's `{"type": "adaptive"}` config
+  object. It is the local-model `enable_thinking` template switch, a
+  different mechanism that happens to share a name.
+- **No tools.** No `tools`, `tool_use`, or `tool_result`, so no `tool_use`
+  stop reason.
+- **`stop_reason` can be `error`** — no Anthropic counterpart, since there a
+  failure is an `error` event. heylook sets it on the non-streaming failure
+  path.
+- **Extensions**: `sampler`, `vision_tokens`, `reasoning_effort`,
+  `show_special_tokens` on the request; a `heylook_logprobs` event and
+  `message_stop.performance` on the stream.
+- **No server-side image resize** (see above), and **model ids are
+  install-local**.
+
+Anything not on that list, assume Anthropic's published spec is the answer —
+it is the source of truth this document does not restate, and does not have
+to maintain.
+
+The block shapes are defined in `src/heylook_llm/schema/content_blocks.py`,
+the request fields in `schema/messages.py`, and the stop-reason mapping in
+`schema/converters.py` (`STOP_REASON_FROM_FINISH_REASON` — one copy, because
+it previously existed as an inline branch here and a raw passthrough in the
+streaming path, and the two disagreed). `/openapi.json` derives from all of
+them and cannot drift.
 
 ## Further reading
 
