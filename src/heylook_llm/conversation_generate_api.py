@@ -358,9 +358,16 @@ def _strip_history_specials(request: ChatRequest, provider) -> None:
             msg.content = strip(msg.content)
             continue
         for part in msg.content or []:
+            # getattr/setattr rather than `part.text`: the content union
+            # includes Image/AudioContentPart, which have no `text`, and the
+            # isinstance guard is on the VALUE so a checker cannot narrow the
+            # part from it. Runtime behaviour is unchanged -- getattr already
+            # returned None for those -- this just stops a false positive
+            # standing in the diagnostics panel, where standing noise is how
+            # real findings get skimmed past.
             text = getattr(part, "text", None)
             if isinstance(text, str):
-                part.text = strip(text)
+                setattr(part, "text", strip(text))
 
 
 @generate_router.post(

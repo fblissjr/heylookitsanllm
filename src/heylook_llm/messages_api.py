@@ -17,7 +17,7 @@ from contextlib import closing
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
@@ -31,7 +31,7 @@ from heylook_llm.schema.converters import (
     to_stop_reason,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
-from heylook_llm.schema.responses import MessageResponse, PerformanceInfo, Usage
+from heylook_llm.schema.responses import MessageResponse
 from heylook_llm.perf_collector import (
     ChunkTelemetry,
     RequestEvent,
