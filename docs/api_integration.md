@@ -45,12 +45,30 @@ feature flags on `capabilities`, never on `modalities`.**
 
 **But `capabilities` can over-report, so handle the refusal too.** It is
 derived from the checkpoint's own `config.json`, which the server reads and
-the model directory owns. A hand-made variant whose directory still declares
-vision blocks will advertise `vision` and then be refused at generation time
-with a 400 saying the model is text-only — observed live on 2026-08-29
-against a model whose id ends `-textonly`. Gate on `capabilities` to decide
-what to OFFER, and still treat a capability 400 as a real answer rather than
-an impossible one.
+the model directory owns — while the refusal is decided by the model **as
+loaded**, so the two can disagree. A hand-made variant whose directory still
+declares vision blocks will advertise `vision` and then be refused at
+generation time — observed live on 2026-08-29 against a model whose id ends
+`-textonly`.
+
+**That refusal has two shapes, and gating alone will not catch the second.**
+Non-streaming it is a **400**. Streaming, the provider guard fires at the
+first token — *after* the headers have flushed, so the status is already
+200 — and it arrives in-band as an `error` event typed
+`invalid_request_error` (see [§5](#5-errors)). A client that gates on
+`capabilities` and handles only the 400 renders a streamed refusal as a hang
+or as assistant text. Gate to decide what to OFFER; handle both shapes to
+decide what actually happened.
+
+**Only the MLX provider refuses.** The gguf path forwards the messages to
+`llama-server` without a capability check of its own, so a text-only GGUF
+that advertises vision does whatever that subprocess does with the block. If
+llama-server rejects it, its 400 is normalized into the same
+`InvalidGenerationRequest` and reaches you in the two shapes above; if it
+accepts and ignores the block, nothing refuses and you get the silent case —
+an answer about an image the model never used. Recorded as unsettled rather
+than omitted, because "the server refuses over-reported capabilities" reads
+as an all-clear that does not hold on that arm.
 
 **Never hardcode a model id.** The registry is override-only: anything under
 a scanned folder is served with derived defaults, so the roster changes when
