@@ -43,6 +43,15 @@ narrower — an MLX model may declare an audio modality and never get the
 audio capability, because MLX strips audio towers at load. **Gate your
 feature flags on `capabilities`, never on `modalities`.**
 
+**But `capabilities` can over-report, so handle the refusal too.** It is
+derived from the checkpoint's own `config.json`, which the server reads and
+the model directory owns. A hand-made variant whose directory still declares
+vision blocks will advertise `vision` and then be refused at generation time
+with a 400 saying the model is text-only — observed live on 2026-08-29
+against a model whose id ends `-textonly`. Gate on `capabilities` to decide
+what to OFFER, and still treat a capability 400 as a real answer rather than
+an impossible one.
+
 **Never hardcode a model id.** The registry is override-only: anything under
 a scanned folder is served with derived defaults, so the roster changes when
 the owner downloads a model, with no config edit and no restart. Resolve ids

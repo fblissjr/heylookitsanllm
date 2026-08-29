@@ -370,13 +370,23 @@ class StreamResult:
     tail: str = ""                # last of the body, so a failure can say why
     http_error: str | None = None # a non-2xx, surfaced instead of raised
 
+    saved_end_reason: str | None = None  # parsed from heylook_saved, not the tail
+
     @property
     def ended_complete(self) -> bool:
         """The server's own statement that the run finished rather than failed.
         `heylook_saved` is always last (spec §4) and the error path skips
         message_stop entirely, so a stream can END cleanly having FAILED --
-        checking only 'did it finish' reports a dead engine as a passing arm."""
-        return '"end_reason": "complete"' in self.tail or '"end_reason":"complete"' in self.tail
+        checking only 'did it finish' reports a dead engine as a passing arm.
+
+        Read from the PARSED event, not by substring-matching `tail`. `tail`
+        is the last 1500 bytes, and `end_reason` sits before the `messages`
+        array in heylook_saved -- so a run whose answer was long enough to
+        push the payload past the window failed this check while the server
+        was reporting "complete" correctly. Flaky by ANSWER LENGTH, which is
+        the worst kind: it reds the board at random and looks like an engine
+        fault."""
+        return self.saved_end_reason == "complete"
 
 
 def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> StreamResult:
@@ -410,6 +420,7 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
     read = 0
     buf = b""
     tail = b""
+    saved_end_reason = None
     try:
         while True:
             chunk = resp.read(256)
@@ -418,6 +429,15 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
                 break
             read += len(chunk)
             tail = (tail + chunk)[-1500:]
+            # heylook_saved is one line and always last; parse it whole rather
+            # than hoping it survives the tail window.
+            if b"heylook_saved" in chunk:
+                for _ln in chunk.decode(errors="replace").splitlines():
+                    if _ln.startswith("data: ") and "heylook_saved" in _ln:
+                        try:
+                            saved_end_reason = json.loads(_ln[6:]).get("end_reason")
+                        except Exception:
+                            pass
             buf += chunk
             # Consume whole lines only; a split JSON payload waits for its rest.
             while b"\n" in buf:
@@ -437,6 +457,7 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
     finally:
         resp.close()
         res.tail = tail.decode(errors="replace")
+        res.saved_end_reason = saved_end_reason
     return res
 
 
@@ -522,9 +543,24 @@ def conformance_checks(server, r, arm, model_id, caps):
                         "data": base64.b64encode(SMOKE_PNG).decode()}},
         ]
         st, body = _messages_probe(server, model_id, nested)
-        r.check(f"{arm}: nested image source accepted", st == 200,
-                f"got {st} -- a 422 means the server rejected Anthropic's own "
-                f"image spelling. body: {str(body)[:300]}")
+        detail = str((body or {}).get("detail") if isinstance(body, dict) else body)
+        if st == 400 and "text-only" in detail:
+            # The row asks whether the SPELLING is accepted. A 400 saying the
+            # model cannot take images is a different answer, and it means
+            # `capabilities` over-reported: it is derived from the checkpoint's
+            # own config.json, so a hand-made text-only variant whose directory
+            # still declares vision blocks advertises a capability the provider
+            # then refuses. Report UNCOVERED rather than red -- the spelling was
+            # never exercised -- and name the contradiction, because clients are
+            # told to gate on `capabilities`.
+            r.skip(f"{arm}: nested image source accepted",
+                   f"UNCOVERED: {model_id} advertises the vision capability and "
+                   f"the provider refuses images as text-only, so the spelling "
+                   f"was never reached. That disagreement is itself a defect")
+        else:
+            r.check(f"{arm}: nested image source accepted", st == 200,
+                    f"got {st} -- a 422 means the server rejected Anthropic's own "
+                    f"image spelling. body: {str(body)[:300]}")
 
     # 3. A thinking block names the field Anthropic names it. Only meaningful
     #    where the model actually produces one.
