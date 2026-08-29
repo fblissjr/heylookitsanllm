@@ -8,13 +8,18 @@ server, so treat smoke as UNVERIFIED until someone runs it.)
 HANDOFF (next session start here): The codebase is at v1.79.40 on the
 `frontend` branch. Two things are open and neither is blocking:
 
-1. **`uv.lock` has an uncommitted re-resolution** (mlx-vlm 0.6.16->0.6.17,
-   transformers 5.15.1->5.16.1, tokenizers 0.22.2->0.23.1, huggingface-hub,
-   pydantic) with no pyproject change and no changelog entry. It predates
-   this session -- but `uv run` syncs from it, so every check today ran
-   against THOSE versions, not the committed lock. transformers/tokenizers
-   minors are the class this repo treats as chat-template and eos-resolution
-   risk. Either commit it with a note or `git checkout uv.lock` and re-verify.
+1. **`uv.lock` stays dirty on purpose -- OWNER RULED 2026-08-29, do not
+   re-raise.** The working tree carries an uncommitted re-resolution
+   (mlx-vlm 0.6.16->0.6.17, transformers 5.15.1->5.16.1, tokenizers
+   0.22.2->0.23.1, huggingface-hub, pydantic) with no pyproject change. It
+   is deliberately left uncommitted and unreverted. Two things follow, both
+   worth knowing rather than acting on: `uv run` syncs from the working
+   tree, so local checks run against THOSE versions rather than the
+   committed lock -- a green suite here is evidence about the local
+   resolution, not about what a clean checkout would install; and the file
+   remains git-TRACKED (it must, `scripts/guard_stable_channel.sh` inspects
+   its staged blob), so this is "leave the modification alone", never
+   "gitignore it".
 2. **`tests/smoke/` gained `conformance_checks`** (nested image source
    accepted, Anthropic stop_reason vocabulary, thinking block naming
    `thinking`) -- the live half that unit tests structurally cannot cover.
