@@ -50,7 +50,11 @@ green throughout, because every test asserted one path's behaviour and none
 asserted the paths AGREE. A second instructive one: v1.79.39 added an
 `error` stop reason on an UNTRACED claim that api.py set it, and copied that
 claim into four documents before a review traced it and found the member
-unreachable. Mechanism asserted rather than verified, twice in one release.
+unreachable. These are DIFFERENT failures and it is worth not collapsing
+them: the first is a second copy nobody looked for, caught by asserting the
+two paths AGREE rather than testing each; the second is a mechanism asserted
+without reading the line that would have refuted it. One test and one habit,
+not one lesson.
 
 **Docs.** New `docs/api_integration.md` for external consumers (the
 `heylook-provider` skill in the owner's marketplace is its consuming-side
