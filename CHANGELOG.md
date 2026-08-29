@@ -28,6 +28,15 @@ Code review of the 1.79.38-39 work. Fourteen findings acted on; the pattern in m
 - **`docs/frontend_v3_spec.md` §4 now records the contract change**, which CLAUDE.md requires in the same commit and 1.79.38-39 did not do across five commits: the accepted media-block spellings, the `thinking_delta` payload, the `content_block_start` payload, and the `stop_reason` vocabulary on BOTH Messages-grammar routes.
 - **Version bumped for a wire change that shipped without one.** `adc8096` changed `conversation_generate_api`'s emitted `stop_reason` while only appending to the existing 1.79.39 changelog entry, so two builds both reported 1.79.39 and emitted different values on the conversation route. Sharper than usual because the immediately preceding commit's rationale for `version=__version__` was that `/openapi.json`'s version is the first field an integrating client reads.
 
+### Coverage
+
+This release changes `conversation_generate_api`, so the Phase 4 release standard applies: every engine arm runs, and an arm that does not is NAMED here rather than passed over.
+
+- **mlx-lm 26/26, mlx-vlm 31/31**, including the three conformance rows added this release, which had never executed before the run. The nested-image-source row passed live on mlx-vlm -- the arm that regressed hardest.
+- **gguf is UNCOVERED.** `Qwen3.8-Flash-Next-UD-Q5_K_XL` 500s at load with "llama-server exited with code 1 -- output not captured (file logging was off when this model spawned)", so the whole gguf engine is unverified for this conformance work. Diagnosing it needs `observability_level` raised above `off` and a reload BEFORE the load attempt, because the provider decides capture at spawn.
+- **Standing UNCOVERED, by design:** thinking DEPTH on both MLX arms (the only served MLX model advertising `reasoning_effort` is `gpt-oss-120b`, so covering it costs a 120B load), and the vision spelling on the text-only model.
+- `bun run e2e:chat` is red at 33/46 and is NOT a signal here: the suite has bit-rotted against v1.79.26's preset-bar rename and asserts a `body[data-page]` attribute the frontend does not have. Tracked in `docs/project/TODO.md`.
+
 ## [1.79.39]
 
 `/v1/messages` now actually speaks the Messages API it advertises.

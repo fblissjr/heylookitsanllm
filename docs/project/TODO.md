@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-08-25 (caught up through v1.79.7 on frontend branch)*
+*Last reviewed: 2026-08-29 (caught up through v1.79.40 on frontend branch)*
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
@@ -17,6 +17,35 @@ Cross-session task backlog organized by priority.
   directly with the level already set, so a refactor moving it back beside
   MemoryManager construction regresses silently. Needs a contract test that
   seeds the settings DB before app startup.
+
+## Test-harness + coverage gaps (2026-08-29, from the v1.79.38-.40 handoff)
+
+These three are carried here so they outlive the `CURRENT.md` handoff block,
+which is rewritten every session. None blocks work.
+
+- [ ] **Repair `tests/e2e/suites/chat.mjs`** (P2): red at 33/46 and the red is
+  the SUITE. Two causes confirmed statically -- it asserts `body[data-page]`,
+  an attribute that exists nowhere in the frontend, and it clicks
+  `.preset-row button` by the EXACT text `Save`, which v1.79.26 replaced with
+  `Update` / `Save as new`. The later preset checks cascade off the second.
+  `.sysprompt-input` / `.preset-row` are NOT the problem -- both are live
+  classes -- so this is renaming assertions, not re-deriving selectors. Until
+  it is repaired the suite is not a gate and its red is not a product signal.
+- [ ] **The gguf smoke arm is UNCOVERED** (P2):
+  `Qwen3.8-Flash-Next-UD-Q5_K_XL` 500s at load with "llama-server exited with
+  code 1 -- output not captured". Diagnosing it requires raising
+  `observability_level` above `off` and RELOADING before the load attempt:
+  `llama_server_provider.py:271` decides capture at SPAWN. Until then the
+  gguf engine is unverified for the v1.79.38-.40 conformance work, which is a
+  Phase 4 release-standard gap, not a nice-to-have.
+- [ ] **`/v1/models` over-reports the `vision` capability** (P3, found
+  2026-08-29, NOT fixed): `Qwen3.5-0.8B-MLX-8bit-textonly` advertises
+  `vision`, and the provider then refuses images with a 400 saying the model
+  is text-only. `capabilities` derives from the checkpoint's own
+  `config.json`, so a hand-made text-only variant whose directory still
+  declares vision blocks over-reports. `docs/api_integration.md` warns
+  clients to expect it and the smoke row reports UNCOVERED naming the
+  contradiction, but the two surfaces still disagree.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
