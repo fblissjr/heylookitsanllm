@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.38]
+
+External-integration docs, and the OpenAPI header they tell people to trust.
+
+### Added
+
+- **`docs/api_integration.md`** -- the contract for an application adding this server as an inference provider, scoped to what such a client needs (discovery, one wire, images, SSE, errors, auth) and pointing at `frontend_v3_spec.md` §4 as authoritative for the traps rather than forking its list. It leads with the one that costs an afternoon: `/v1/messages` LOOKS Anthropic-shaped and its image block is **flat** (`source_type`/`media_type`/`data` on the block), so Anthropic's nested `source` object matches no member of the block union and comes back 422. Confirmed by constructing both spellings through `MessageCreateRequest`, not read off a docstring. Also stated: `/v1/messages` deliberately has no server-side resize (clients downscale, as `image-prep.js` does) while `/v1/chat/completions` keeps `resize_max` and friends, and the stream ends at `message_stop` with no `[DONE]` on the Messages wire but with one on the OpenAI wire.
+
+### Fixed
+
+- **`/openapi.json` said the server was version 1.20.0.** Hardcoded in the `FastAPI(...)` call and ~60 releases stale, on the first field an integrating client reads. Now `version=__version__`, which also makes the version-sync hook's "no other files carry the version" true.
+- **Every tag description was silently dropped from the served schema.** `custom_openapi()` called `get_openapi()` without `tags=`, so `openapi_tags` -- ten curated descriptions -- reached nothing, and `/docs` grouped routes under bare names. Passing `tags=app.openapi_tags` restores them. The Messages API had no entry at all and now has one.
+- **The schema's narrative header described a server that no longer exists.** It documented MLX as the only backend (there are three providers), never mentioned `/v1/messages`, and its copy-pasteable examples named models retired long ago -- `llava-1.5-7b-hf-4bit`, `qwen2.5-coder-1.5b-instruct-4bit`. Rewritten to cover both wires and their divergences, the error taxonomy, the auth gates, and that startup loads nothing. Example model ids are now **placeholders on purpose**: a real id is install-local, since the registry serves whatever sits under the scanned folders, so a concrete one rots into a 400 for every reader.
+- **`/v1/capabilities` named only `/v1/chat/completions` under vision**, telling a client discovering the server that vision was that endpoint's alone -- the opposite of where integrators are pointed. Both wires are now listed with their `server_side_image_resize` difference explicit.
+
 ## [1.79.37]
 
 Both open items from the 1.79.36 review ruled on by the owner.

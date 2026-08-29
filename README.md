@@ -131,6 +131,10 @@ Interactive docs at `http://localhost:8000/docs`; live schema at
 `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`,
 `/v1/batch/chat/completions`, `/v1/jspace/analyze`.
 
+Wiring an **external app** to this server: [docs/api_integration.md](docs/api_integration.md)
+covers which endpoint to pick, capability discovery, the image block shape,
+the SSE grammar and the error taxonomy -- the parts a schema cannot express.
+
 ## Related apps
 
 - [`apps/batch-labeler/`](apps/batch-labeler/) -- standalone CLI for labeling

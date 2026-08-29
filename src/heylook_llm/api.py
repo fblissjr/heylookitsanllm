@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager, closing
 from fastapi.openapi.utils import get_openapi
 
+from heylook_llm import __version__
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.router import ModelNotFound, ModelRouter
 from heylook_llm.providers.abort import AbortEvent
@@ -160,7 +161,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="HeylookLLM - High-Performance Local LLM Server",
-    version="1.20.0",
+    # DERIVED, never hand-written: this sat at 1.20.0 for ~60 releases and is
+    # the first thing an integrating client reads off /openapi.json.
+    version=__version__,
     description="A high-performance API server for local LLM inference with OpenAI-compatible endpoints",
     lifespan=lifespan,
     docs_url="/docs",
@@ -170,6 +173,10 @@ app = FastAPI(
         {
             "name": "OpenAI API",
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
+        },
+        {
+            "name": "Messages API",
+            "description": "Anthropic Messages-style endpoint: top-level system prompt, typed content blocks, block-structured SSE. The wire this project's own frontend speaks."
         },
         {
             "name": "RLM",
@@ -2025,10 +2032,24 @@ async def get_capabilities(request: Request):
             "distinct_from": "/v1/presets (saved user prompt+sampler bundles)",
         },
         "endpoints": {
+            # Both inference wires take images. Naming only the OpenAI one
+            # here told a client discovering the server that vision was
+            # chat-completions-only, which is the opposite of where the
+            # project points integrators.
+            "messages": {
+                "endpoint": "/v1/messages",
+                "description": "Anthropic-style wire: top-level system, typed content blocks. "
+                               "Image blocks are FLAT ({type,source_type,media_type,data}), "
+                               "not Anthropic's nested source object. No server-side resize.",
+                "supports_base64": True,
+                "server_side_image_resize": False,
+            },
             "standard_vision": {
                 "endpoint": "/v1/chat/completions",
-                "description": "Standard endpoint with base64 images",
-                "supports_base64": True
+                "description": "OpenAI-compatible wire with base64 images; "
+                               "can downscale server-side via resize_max and friends",
+                "supports_base64": True,
+                "server_side_image_resize": True,
             },
             "batch_processing": {
                 "available": True,
@@ -2206,84 +2227,125 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
-        description="""
-# HeylookLLM API Documentation 🚀
+        description=f"""
+# HeylookLLM API
 
-A high-performance API server for local LLM inference with OpenAI-compatible endpoints.
+Local multimodal LLM inference on Apple Silicon. Two inference wires, one
+model registry, per-model engine choice.
 
-**Platform Support**: macOS (Apple Silicon)
-- MLX backend for text and vision inference
+Server version **{__version__}**. Default base URL `http://localhost:{DEFAULT_PORT}`.
 
-## 🎯 Key Features
+> **Integrating an external app?** Read
+> [docs/api_integration.md](https://github.com/fblissjr/heylookitsanllm/blob/main/docs/api_integration.md)
+> first. This schema is generated from the code and is authoritative for
+> field names, types and bounds; that document covers which endpoint to pick
+> and what will bite you, which a schema cannot express.
 
-### API Compatibility
-- **OpenAI API**: Full compatibility with OpenAI clients and libraries
+## Providers
 
-### Model Support
-- **MLX Models**: Optimized for Apple Silicon with Metal acceleration
-- **Vision Models**: Process images with vision-language models
-### Performance Features
-- **Smart Model Caching**: LRU cache, size set by `max_loaded_models`
-- **Async Processing**: Non-blocking request handling
-- **GPU Acceleration**: Metal (Apple Silicon)
+- **mlx** -- text and vision, via mlx-lm / mlx-vlm, Metal-accelerated.
+- **gguf** -- one `llama-server` subprocess per loaded model. Adds audio
+  input; MLX rejects audio (400), because audio towers are stripped at load.
+- **mlx_embedding** -- embeddings.
 
-## Quick Start
+## The two inference wires
 
-### 1. Check Available Models
+- **`POST /v1/messages`** (Messages API) -- Anthropic-style: top-level
+  `system`, typed content blocks, block-structured SSE ending at
+  `message_stop` with no `[DONE]`. This is the wire the bundled `/v3`
+  frontend speaks and the direction the project is heading.
+  Its image block is **flat** and not Anthropic's nested `source`:
+  `{{"type":"image","source_type":"base64","media_type":"image/jpeg","data":"..."}}`.
+  It has no server-side resize -- clients downscale before sending.
+- **`POST /v1/chat/completions`** (OpenAI API) -- OpenAI-compatible, kept
+  for external consumers and existing SDK clients. Unlike Messages it can
+  downscale images for you via `resize_max` / `resize_width` /
+  `resize_height` / `image_quality` / `preserve_alpha`.
+
+Both accept the same sampler knobs, and every knob is optional: **absent
+means the server-side sampler cascade decides**. Sending a client-side
+default for `max_tokens` silently overrides the model's configured floor.
+
+## Quick start
+
 ```bash
-curl http://localhost:8000/v1/models
+curl http://localhost:{DEFAULT_PORT}/v1/models        # what is served right now
+curl http://localhost:{DEFAULT_PORT}/v1/capabilities  # version, sampler roster
 ```
 
-### 2. Generate Text
+Model ids are **not stable across installs** -- the registry is
+override-only, so any model under a scanned folder is served with derived
+defaults. Resolve ids from `/v1/models` at runtime and gate features on each
+row's `capabilities` (what this server will actually serve) rather than its
+`modalities` (what the checkpoint author declared).
+
 ```bash
-curl http://localhost:8000/v1/chat/completions \\
+curl http://localhost:{DEFAULT_PORT}/v1/messages \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "model": "qwen2.5-coder-1.5b-instruct-4bit",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
+  -d '{{
+    "model": "<id from /v1/models>",
+    "system": "You are concise.",
+    "messages": [{{"role": "user", "content": "Hello!"}}],
+    "max_tokens": 256
+  }}'
 ```
 
-### 3. Process Images
+Vision, on the OpenAI wire, with server-side downscaling:
+
 ```bash
-curl http://localhost:8000/v1/chat/completions \\
+curl http://localhost:{DEFAULT_PORT}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "model": "your-vision-model",
-    "messages": [{"role": "user", "content": [
-      {"type": "text", "text": "What is in this image?"},
-      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
-    ]}],
+  -d '{{
+    "model": "<a model whose capabilities include \\"vision\\">",
+    "messages": [{{"role": "user", "content": [
+      {{"type": "text", "text": "What is in this image?"}},
+      {{"type": "image_url", "image_url": {{"url": "data:image/jpeg;base64,..."}}}}
+    ]}}],
     "resize_max": 1024
-  }'
+  }}'
 ```
-`resize_max` / `resize_width` / `resize_height` / `image_quality` /
-`preserve_alpha` downscale server-side before the model sees the image.
 
-## 📚 Client Libraries
+## Client libraries
 
-### OpenAI Python SDK
+The OpenAI SDKs work unmodified against `/v1/chat/completions`:
+
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="not-needed")
+client = OpenAI(base_url="http://localhost:{DEFAULT_PORT}/v1", api_key="not-needed")
 response = client.chat.completions.create(
-    model="qwen2.5-coder-1.5b-instruct-4bit",
-    messages=[{"role": "user", "content": "Hello!"}]
+    model="<id from /v1/models>",
+    messages=[{{"role": "user", "content": "Hello!"}}],
 )
 ```
 
-## Configuration
+## Errors
 
-Models are configured in `models.toml`. The server automatically loads models on demand and manages memory with LRU eviction.
+- **400** -- unknown or disabled `model`, or none given with no server
+  default. The reason and the available ids are in `detail`. Pick another
+  model.
+- **500** -- the model exists but failed to load. That model is broken.
+- **503** -- generation queue full: `{{"error":{{"code":"model_overloaded"}}}}`
+  plus `Retry-After`. Back off and retry; the server serialises generation.
+- **In-band SSE `error`** -- a failure after the response headers flushed,
+  so the status is already 200. Treat `invalid_request_error` as a 400 and
+  `api_error` as a 500, and never render its message as model output.
 
-## 📈 Performance Optimization
+## Operational notes
 
-The performance stack is part of the base install (`uv sync` / `pip install heylookitsanllm`),
-no extras required:
-- uvloop for faster async (non-Windows)
-- orjson for JSON serialization
+- **Startup loads nothing.** The first request to a model pays its load, so
+  a long first token is expected rather than a hang. `POST
+  /v1/admin/models/{{id}}/load?warm=true` pays it up front.
+- One model resident by default, LRU eviction; batch work by model.
+- Auth is opt-in and off by default: `HEYLOOK_API_KEY`
+  (`Authorization: Bearer`, loopback-exempt unless
+  `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`) gates inference,
+  `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) gates admin.
+- Send `X-Request-ID`; it is echoed back and correlates server-side logs.
+- Models are configured in `models.toml`, but entries are overrides only --
+  a new download needs no edit.
         """,
         routes=app.routes,
+        tags=app.openapi_tags,
     )
 
     # Add server information
@@ -2332,12 +2394,18 @@ no extras required:
             del _schema["$defs"]
         openapi_schema["components"]["schemas"][_name] = _schema
 
-    # Add example schemas
+    # Add example schemas.
+    #
+    # Model ids here are PLACEHOLDERS on purpose. A real id is install-local
+    # (the registry serves whatever is under the scanned folders), and the
+    # concrete ids that used to sit here outlived the models by years --
+    # a copy-pasteable example that 400s is worse than an obvious blank.
+    _MODEL_PLACEHOLDER = "<id from GET /v1/models>"
     openapi_schema["components"]["examples"] = {
         "simple_text_request": {
-            "summary": "Simple text completion",
+            "summary": "Simple text completion (OpenAI wire)",
             "value": {
-                "model": "qwen2.5-coder-1.5b-instruct-4bit",
+                "model": _MODEL_PLACEHOLDER,
                 "messages": [
                     {"role": "user", "content": "Write a hello world in Python"}
                 ],
@@ -2345,9 +2413,9 @@ no extras required:
             }
         },
         "vision_request": {
-            "summary": "Vision model request",
+            "summary": "Vision request with server-side downscaling (OpenAI wire)",
             "value": {
-                "model": "llava-1.5-7b-hf-4bit",
+                "model": "<a model whose capabilities include \"vision\">",
                 "messages": [
                     {
                         "role": "user",
@@ -2357,16 +2425,48 @@ no extras required:
                         ]
                     }
                 ],
+                "resize_max": 1024,
                 "max_tokens": 512
             }
         },
         "streaming_request": {
-            "summary": "Streaming response",
+            "summary": "Streaming response (OpenAI wire)",
             "value": {
-                "model": "qwen2.5-coder-1.5b-instruct-4bit",
+                "model": _MODEL_PLACEHOLDER,
                 "messages": [{"role": "user", "content": "Tell me a story"}],
                 "stream": True,
                 "max_tokens": 1024
+            }
+        },
+        "messages_text_request": {
+            "summary": "Messages wire: top-level system, string content",
+            "value": {
+                "model": _MODEL_PLACEHOLDER,
+                "system": "You are concise.",
+                "messages": [{"role": "user", "content": "Tell me a story"}],
+                "stream": True,
+                "max_tokens": 1024
+            }
+        },
+        "messages_vision_request": {
+            "summary": "Messages wire: image block (FLAT source_type, not Anthropic's nested source)",
+            "value": {
+                "model": "<a model whose capabilities include \"vision\">",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What's in this image?"},
+                            {
+                                "type": "image",
+                                "source_type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": "<raw base64, no data: prefix>"
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 512
             }
         }
     }
