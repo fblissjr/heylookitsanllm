@@ -36,6 +36,12 @@ bun run e2e:render   # render suite -- no server, no model, a few seconds
 
 Exit code is non-zero if any check fails.
 
+**Every entry point above must run UNSANDBOXED, `e2e:render` included.** Its
+"no server, no model" independence does not extend to the sandbox: it still
+binds a local port to serve `/v3`, and a sandboxed run dies at startup with
+`Error: listen EPERM: operation not permitted 0.0.0.0` — before any check
+runs, so it reads as a harness crash rather than a permissions problem.
+
 `e2e:render` is a **separate entry point on purpose.** It drives the real `/v3`
 chat page against a *stubbed* `/v1`, so it needs no server, no model, no Metal
 and no DB — none of the prerequisites above apply to it, and folding it into
