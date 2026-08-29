@@ -20,6 +20,8 @@ A review of 1.79.37-.40. Five findings, all verified against running code before
 ### Changed
 
 - `docs/frontend_v3_spec.md` §4 records the null-means-absent rule, in the same commit as the behaviour.
+- **`docs/api_integration.md` brought level with the wire**, by diffing it against the generated schema rather than re-reading it: the null-beside-nested payload and the `exclude_none` workaround for older servers, `stop_sequences` (which Anthropic takes on the request and this server ignores rather than honours — a port relying on it generates past its stop with no error), `include_performance` in the knobs list, and an Extensions bullet that named four of thirteen extension fields.
+- **`tests/e2e/suites/chat.mjs` unrotted.** It asserted `body[data-page]`, an attribute that exists nowhere in the frontend, so the check failed on a healthy page and the suite cascaded behind it; and it clicked `.preset-row button` by the exact text `Save`, which v1.79.26 replaced with `Update` / `Save as new`. The first now pins the router's real observable (`aria-current="page"` on the nav link). Every other selector and clicked label in the suite was audited against the frontend and resolves. STILL NOT RUN GREEN — the suite spawns a server and loads a model, so a live run is owed before it counts as a gate again.
 
 ## [1.79.40]
 

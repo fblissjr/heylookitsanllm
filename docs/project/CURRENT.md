@@ -11,7 +11,7 @@ Last updated: 2026-08-29. v1.79.41 on the `frontend` branch.
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | UNCOVERED -- llama-server exits 1 for this build | at `a274682` |
-| `bun run e2e:chat` | 33/46 -- SUITE ROT, not product. See item 2 | recorded at `0efc326` |
+| `bun run e2e:chat` | 33/46, then repaired -- NOT re-run. See item 2 | red recorded at `0efc326` |
 
 The two model-free suites were re-run at the end of the session; the four
 rows needing a live server carry the commit they were measured at, because
@@ -32,36 +32,33 @@ HANDOFF (next session start here): three things are open; none blocks work.
    its staged blob), so this is "leave the modification alone", never
    "gitignore it".
 
-2. **`tests/e2e/suites/chat.mjs` HAS BIT-ROTTED and is not a usable gate.**
-   Run 2026-08-29 against a real server + gemma-4-26B-A4B: 33/46. Two rot
-   causes are confirmed by reading the suite against the current frontend,
-   and neither is a product fault:
+2. **`tests/e2e/suites/chat.mjs` was rotted, is repaired, and has NOT been
+   re-run.** The 33/46 red of 2026-08-29 was the SUITE, not the app. Two
+   causes, both now fixed:
 
-   - `body[data-page]` is asserted (`chat.mjs:209`) and the attribute exists
-     nowhere in `apps/heylook-frontend-v3/` -- grep returns nothing.
-   - `clickByText(page, '.preset-row button', 'Save')` (`chat.mjs:653`, `726`)
-     cannot match. `handleByText` requires an EXACT trimmed-text match, and
-     v1.79.26 split that one control into `Update` and `Save as new`; no
-     button in the bar reads `Save`. Every later preset check reads state
-     that the unsaved preset was supposed to create, so they cascade.
+   - It asserted `body[data-page]` (`chat.mjs:209`) and that attribute exists
+     nowhere in `apps/heylook-frontend-v3/`. `app.js`'s `navigate()` marks the
+     active route with `nav-item--active` + `aria-current="page"` on the nav
+     link; the check now pins that, which is load-bearing a11y rather than a
+     test-only hook.
+   - It clicked `.preset-row button` by the EXACT text `Save` (`:653`, `:726`
+     -- `handleByText` requires an exact trimmed match), and v1.79.26
+     (`850d9c0`) replaced that button with `Update` / `Save as new`. Both call
+     sites type a fresh name and assert the new preset appears, so `Save as
+     new` is the intended target. Every later preset check cascaded off this.
 
-   **An earlier version of this block gave a wrong cause and is corrected
-   here**: it said the suite drives `.sysprompt-input` / `.preset-row`, which
-   "survive only as dead rules in `app.css`". Both are LIVE classes the JS
-   emits (`js/prompt-section.js:41`, `js/preset-bar.js:674`+`677`), and
-   `.preset-drift` -- named there as evidence of divergence -- is a
-   deliberate E2E hook that `tests/e2e/lib/dom.mjs` already uses. The repair
-   is renaming two assertions, not re-deriving the suite's selectors.
+   Every other literal selector and clicked label in the suite was audited
+   against the current frontend and resolves, so those two were the whole
+   static gap.
 
-   Only one commit in this range touches `chat.js` at all -- `7e63f7b`, the
-   Clone-confirm removal -- and Clone is not among the failing features
-   (presets, system prompt, conversation switching, max_tokens seeding).
-   Corroboration that the app is fine: the model-free render suite drives the
-   SAME real `/v3` page at 101/101 including its uncaught-page-error check
-   (re-run 2026-08-29 after the last commit), and the one failing row that
-   touches the generate path (mid-stream disconnect persists the partial)
-   passes server-side in smoke on both MLX arms. Repairing it is its own
-   task; until then do not read its red as a product signal.
+   **What is owed:** a live run. The suite spawns a server and loads a model,
+   which is against the standing testing-cost rule to do unprompted, so the
+   repair is static only -- 46/46 is not claimed and this is not a gate again
+   until someone runs it. Corroboration that the app itself is fine is
+   unchanged: the model-free render suite drives the SAME real `/v3` page at
+   101/101 including its uncaught-page-error check, and the one failing row
+   that touches the generate path (mid-stream disconnect persists the partial)
+   passes server-side in smoke on both MLX arms.
 
 3. **The gguf smoke arm is UNCOVERED and nobody knows why.**
    `Qwen3.8-Flash-Next-UD-Q5_K_XL` returns 500 at load: "llama-server exited

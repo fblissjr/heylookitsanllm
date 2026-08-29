@@ -23,14 +23,14 @@ Cross-session task backlog organized by priority.
 These three are carried here so they outlive the `CURRENT.md` handoff block,
 which is rewritten every session. None blocks work.
 
-- [ ] **Repair `tests/e2e/suites/chat.mjs`** (P2): red at 33/46 and the red is
-  the SUITE. Two causes confirmed statically -- it asserts `body[data-page]`,
-  an attribute that exists nowhere in the frontend, and it clicks
-  `.preset-row button` by the EXACT text `Save`, which v1.79.26 replaced with
-  `Update` / `Save as new`. The later preset checks cascade off the second.
-  `.sysprompt-input` / `.preset-row` are NOT the problem -- both are live
-  classes -- so this is renaming assertions, not re-deriving selectors. Until
-  it is repaired the suite is not a gate and its red is not a product signal.
+- [ ] **Run `tests/e2e/suites/chat.mjs` green** (P2): the two rot causes are
+  FIXED in v1.79.41 -- the `body[data-page]` assertion (that attribute exists
+  nowhere in the frontend) now pins `aria-current="page"` on the nav link, and
+  the two `.preset-row button` clicks target `Save as new` rather than the
+  `Save` that v1.79.26 renamed. Every other selector and label in the suite
+  was audited and resolves. What is left is the live run: the suite spawns a
+  server and loads a model, so it was not run unprompted. Until someone runs
+  it, 46/46 is unclaimed and the suite is not a gate.
 - [ ] **The gguf smoke arm is UNCOVERED** (P2):
   `Qwen3.8-Flash-Next-UD-Q5_K_XL` 500s at load with "llama-server exited with
   code 1 -- output not captured". Diagnosing it requires raising
