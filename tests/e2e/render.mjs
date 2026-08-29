@@ -92,7 +92,7 @@ async function streamDrip(req, res, drip) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
   const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   ev('message_start', { type: 'message_start', message: { id: drip.rowId, content: [] } });
-  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } });
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
   for (let i = 0; i < drip.text.length; i += drip.chunkChars) {
     ev('content_block_delta', {
       type: 'content_block_delta', index: 0,
@@ -312,7 +312,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
     return [
       ev('message_start', { type: 'message_start', message: { id: row.id, content: [] } }),
-      ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+      ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
       ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } }),
       ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
       ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 1, output_tokens: 2 } }),

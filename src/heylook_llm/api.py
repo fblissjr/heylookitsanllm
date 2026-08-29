@@ -18,6 +18,7 @@ from heylook_llm.providers.base import GenerationFailed, InvalidGenerationReques
 from heylook_llm.busy_response import model_busy_response
 from heylook_llm.config import (
     DEFAULT_PORT,
+    PROVIDER_CONFIG_CLASSES,
     ChatRequest, ChatCompletionResponse, PerformanceMetrics,
     BatchChatRequest, BatchChatResponse, BatchStats, SystemMetricsResponse,
     CacheInfo, CacheListResponse, CacheClearRequest, CacheClearResponse,
@@ -2205,17 +2206,24 @@ async def root():
             "openapi": "/openapi.json"
         },
         "endpoints": _get_api_endpoints(),
+        # Derived, not hand-listed: PROVIDER_CONFIG_CLASSES is the single
+        # source of truth for the provider set, and this key claimed MLX was
+        # the only one for the three releases since the gguf provider landed.
+        # Same staleness class as the OpenAPI header and the /v1/capabilities
+        # endpoints map, on the surface a client reaches FIRST.
         "features": {
-            "model_providers": ["MLX (Apple Silicon)"],
+            "model_providers": sorted(PROVIDER_CONFIG_CLASSES),
             "vision_models": True,
+            "audio_input": "gguf models only",
             "streaming": True,
             "batch_processing": True,
-            "model_caching": "LRU (max 2 models)"
+            "model_caching": "LRU (size set by max_loaded_models, default 1)"
         },
         "quick_start": {
-            "1": "GET /v1/models - List available models",
-            "2": "POST /v1/chat/completions - Chat with a model",
-            "3": "GET /docs - Interactive API documentation"
+            "1": "GET /v1/models - what this server is serving right now",
+            "2": "POST /v1/messages - generate (Anthropic Messages-shaped)",
+            "3": "POST /v1/chat/completions - generate (OpenAI-compatible)",
+            "4": "GET /docs - interactive API documentation"
         }
     }
 

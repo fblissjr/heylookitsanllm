@@ -486,25 +486,48 @@ class TestStopReasonHasOneMapper:
         "src/heylook_llm/conversation_generate_api.py",
     ]
 
+    def _source(self, path):
+        import pathlib as _p
+        # Repo-root relative, not CWD relative: this file is
+        # tests/unit/test_messages_api.py, so parents[2] is the repo root.
+        # Resolving against the process CWD made the whole class raise
+        # FileNotFoundError when pytest ran from anywhere else.
+        return (_p.Path(__file__).resolve().parents[2] / path).read_text()
+
     def _assignments(self, path):
-        import pathlib
         import re
-        src = pathlib.Path(path).read_text()
-        # Every write to a translator's stop_reason, with its right-hand side.
-        return re.findall(r"\.stop_reason\s*=\s*(.+)", src)
+        # Strip comments and docstring-ish lines first: the raw regex matched
+        # prose mentioning the field and would have failed on a comment.
+        lines = [ln for ln in self._source(path).splitlines()
+                 if not ln.lstrip().startswith("#")]
+        return re.findall(r"\.stop_reason\s*=\s*(.+)", "\n".join(lines))
 
     @pytest.mark.parametrize("path", ROUTES)
     def test_every_stop_reason_write_goes_through_the_mapper(self, path):
         writes = self._assignments(path)
         assert writes, f"{path} no longer writes stop_reason -- update this test"
         for rhs in writes:
+            rhs = rhs.strip()
+            # A literal from the shared vocabulary is fine (an explicit
+            # end-state, e.g. an abort); a bare provider value is not.
+            if rhs.startswith('"') or rhs.startswith("'"):
+                continue
             assert "to_stop_reason(" in rhs, (
-                f"{path} assigns stop_reason from {rhs.strip()!r} without "
+                f"{path} assigns stop_reason from {rhs!r} without "
                 "to_stop_reason() -- a provider finish_reason would reach the "
                 "Messages wire verbatim"
             )
 
     @pytest.mark.parametrize("path", ROUTES)
     def test_route_imports_the_shared_mapper(self, path):
-        import pathlib
-        assert "to_stop_reason" in pathlib.Path(path).read_text()
+        # Assert the IMPORT, not the mere presence of the name: the call site
+        # guarantees the substring, so a substring check passed even with the
+        # import deleted -- which is a NameError at runtime. A comment
+        # mentioning the name satisfied it too.
+        src = self._source(path)
+        assert "from heylook_llm.schema.converters import" in src
+        assert any(
+            "to_stop_reason" in ln
+            for ln in src.splitlines()
+            if ln.startswith(("from ", "    to_stop_reason", "import "))
+        ), f"{path} calls to_stop_reason without importing it"

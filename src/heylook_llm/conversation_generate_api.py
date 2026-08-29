@@ -712,6 +712,17 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
 
         if abort_event.is_set() and end_reason == "complete":
             end_reason = "aborted"
+            # Say so in the SSE grammar too, not only in heylook_saved. A
+            # cancelled generation was emitting `end_turn` -- which positively
+            # asserts the model finished its turn -- on the same stream whose
+            # heylook_saved.end_reason said "aborted". A consumer keying on
+            # the shared Messages grammar (the spec tells them this route
+            # speaks it) could not tell a completed turn from a cancelled one.
+            # `max_tokens` is the closest spec-defined "stopped early for a
+            # reason that is not the model's own end": Anthropic has no
+            # cancellation value because cancellation there is a dropped
+            # connection, not a stop reason.
+            translator.stop_reason = "max_tokens"
 
         for event_str in translator.flush():
             yield event_str

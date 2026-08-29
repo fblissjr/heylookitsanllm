@@ -105,7 +105,7 @@ Response (non-streaming):
 { "id": "msg_...", "type": "message", "role": "assistant", "model": "...",
   "content": [ { "type": "thinking", "thinking": "...", "text": "..." },
                 { "type": "text", "text": "..." } ],
-  "stop_reason": "end_turn" | "max_tokens" | "stop_sequence" | "error",
+  "stop_reason": "end_turn" | "max_tokens" | "stop_sequence",
   "usage": { "input_tokens": 0, "output_tokens": 0,
              "thinking_tokens": null, "content_tokens": null } }
 ```
@@ -119,9 +119,9 @@ A thinking block carries its content under **both** `thinking` (Anthropic's
 field name) and `text` (heylook's original, kept so existing readers keep
 working). Read `thinking`.
 
-`stop_reason` is Anthropic's vocabulary, plus `error` — which has no
-Anthropic counterpart, since there a failure is an `error` event. heylook
-sets it on the non-streaming failure path.
+`stop_reason` is Anthropic's vocabulary. A non-streaming failure does not
+produce a response at all — it is an HTTP 4xx/5xx — so there is no error
+member and no branch to write for one.
 
 ### Image blocks
 
@@ -271,7 +271,7 @@ request is correlated in the server's logs.
 | `contents[]` | `messages[]` |
 | `role: "model"` | `role: "assistant"` |
 | `parts[].text` | `{ "type": "text", "text": ... }` |
-| `parts[].inlineData{mimeType,data}` | `{ "type": "image", "source_type": "base64", "media_type": ..., "data": ... }` |
+| `parts[].inlineData{mimeType,data}` | `{ "type": "image", "source": { "type": "base64", "media_type": ..., "data": ... } }` |
 | `generationConfig.maxOutputTokens` | `max_tokens` (optional — omit to keep the server cascade) |
 | `generationConfig.temperature/topP/topK` | `temperature` / `top_p` / `top_k`, flat on the body |
 | `candidates[].content.parts[].text` (stream) | `content_block_delta` → `delta.text` |
@@ -317,18 +317,29 @@ deliberate, and it is the whole list:
   different mechanism that happens to share a name.
 - **No tools.** No `tools`, `tool_use`, or `tool_result`, so no `tool_use`
   stop reason.
-- **`stop_reason` can be `error`** — no Anthropic counterpart, since there a
-  failure is an `error` event. heylook sets it on the non-streaming failure
-  path.
+- **Thinking blocks carry no `signature`.** Anthropic's is
+  `{type, thinking, signature}` and emits a `signature_delta`; heylook emits
+  neither. Nothing to verify, nothing to echo back.
+- **No `stop_sequence` field.** `message_delta.delta` carries `stop_reason`
+  alone, and `message_start.message` omits both `stop_reason` and
+  `stop_sequence`.
+- **`logprobs` is a content block**, not only a stream extension: a
+  non-streaming response can carry a `logprobs` block in `content` when
+  `logprobs: true` was set.
 - **Extensions**: `sampler`, `vision_tokens`, `reasoning_effort`,
   `show_special_tokens` on the request; a `heylook_logprobs` event and
   `message_stop.performance` on the stream.
+- **`message_start.usage.input_tokens` is 0.** The event is emitted before
+  the first chunk is absorbed, so prompt tokens are not known yet. Anthropic
+  puts input tokens there; read them off `message_delta.usage` instead.
 - **No server-side image resize** (see above), and **model ids are
   install-local**.
 
-Anything not on that list, assume Anthropic's published spec is the answer —
-it is the source of truth this document does not restate, and does not have
-to maintain.
+That list is maintained by hand and has been wrong before — v1.79.39
+shipped it claiming to be closed while omitting the four items above, and
+told readers to assume Anthropic's spec for anything else. Treat it as the
+best current account rather than a guarantee: where it and the running
+server disagree, `/openapi.json` and the source are the answer.
 
 The block shapes are defined in `src/heylook_llm/schema/content_blocks.py`,
 the request fields in `schema/messages.py`, and the stop-reason mapping in

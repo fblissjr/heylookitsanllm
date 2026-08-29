@@ -25,6 +25,16 @@ def _flatten_source(values: Any) -> Any:
     """
     if not isinstance(values, dict):
         return values
+    # Only interpret `source` when the block is NOT already in the flat
+    # spelling. Without this gate a flat block carrying an unrelated
+    # dict-valued `source` key -- provenance metadata, say, previously
+    # ignored as an extra field -- would have it deleted and its `type`
+    # read as the discriminator. That was harmless only by accident (the
+    # flat fields were present, so every setdefault below no-opped); one
+    # missing flat field turned it into `source_type=None` and a 422
+    # pointing at the wrong field.
+    if "source_type" in values:
+        return values
     source = values.get("source")
     if not isinstance(source, dict):
         return values
@@ -35,6 +45,36 @@ def _flatten_source(values: Any) -> Any:
         if source.get(key) is not None:
             values.setdefault(key, source[key])
     return values
+
+
+class MediaSource(BaseModel):
+    """Anthropic's nested media source object.
+
+    Declared as a real field rather than left to the ``mode="before"``
+    validator alone: a validator contributes NOTHING to the generated JSON
+    Schema, so /openapi.json advertised only the flat fields while the docs
+    told integrators to prefer the nested form. A client generated from the
+    schema, or any schema-validating proxy, would have rejected the exact
+    spelling the docs recommend.
+    """
+    type: Literal["base64", "url"]
+    media_type: Optional[str] = None
+    data: Optional[str] = None
+    url: Optional[str] = None
+
+
+def _require_source_type(self):
+    """`source_type` is optional in the SCHEMA and mandatory in FACT.
+
+    Optional so a nested-`source` payload validates against /openapi.json;
+    mandatory here because everything downstream reads the flat fields.
+    """
+    if self.source_type is None:
+        raise ValueError(
+            f"{type(self).__name__} requires `source_type`, or a `source` "
+            "object carrying `type`"
+        )
+    return self
 
 
 # ---------------------------------------------------------------------------
@@ -66,8 +106,11 @@ class ImageBlock(BaseModel):
     ``data`` is raw base64 with no ``data:`` URI prefix.
     """
     type: Literal["image"] = "image"
-    source_type: Literal["base64", "url"] = Field(
-        ..., description="How the image data is provided"
+    source_type: Optional[Literal["base64", "url"]] = Field(
+        default=None,
+        description="How the image data is provided. Required UNLESS the "
+                    "Anthropic-style nested `source` object is given, from "
+                    "which it is derived.",
     )
     media_type: Optional[str] = Field(
         None, description="MIME type, e.g. 'image/jpeg'. Required for base64."
@@ -79,7 +122,14 @@ class ImageBlock(BaseModel):
         None, description="Image URL (when source_type='url')"
     )
 
+    source: Optional[MediaSource] = Field(
+        default=None,
+        description="Anthropic's nested source object. Flattened onto the "
+                    "fields above before validation; never echoed back.",
+    )
+
     _flatten = model_validator(mode="before")(_flatten_source)
+    _require = model_validator(mode="after")(_require_source_type)
 
 
 class AudioBlock(BaseModel):
@@ -92,8 +142,11 @@ class AudioBlock(BaseModel):
     the gguf/llama-server provider consumes it (MLX rejects audio).
     """
     type: Literal["audio"] = "audio"
-    source_type: Literal["base64", "url"] = Field(
-        ..., description="How the audio data is provided"
+    source_type: Optional[Literal["base64", "url"]] = Field(
+        default=None,
+        description="How the audio data is provided. Required UNLESS the "
+                    "Anthropic-style nested `source` object is given, from "
+                    "which it is derived.",
     )
     media_type: Optional[str] = Field(
         default=None, description="MIME type, e.g. 'audio/wav'. Advisory -- codecs are sniffed."
@@ -105,7 +158,14 @@ class AudioBlock(BaseModel):
         default=None, description="Audio URL (when source_type='url')"
     )
 
+    source: Optional[MediaSource] = Field(
+        default=None,
+        description="Anthropic's nested source object. Flattened onto the "
+                    "fields above before validation; never echoed back.",
+    )
+
     _flatten = model_validator(mode="before")(_flatten_source)
+    _require = model_validator(mode="after")(_require_source_type)
 
 
 # Union of all block types that can appear in a user message
@@ -139,6 +199,13 @@ class ThinkingBlock(BaseModel):
             self.text = self.thinking
         elif self.text and not self.thinking:
             self.thinking = self.text
+        elif not self.thinking and not self.text:
+            # Both defaults exist only so the constructor can be given
+            # either spelling. Neither being set means a reasoning block
+            # carrying nothing, which renders as an empty thinking pane --
+            # `text` was required before the dual spelling and this keeps
+            # that guarantee.
+            raise ValueError("ThinkingBlock requires 'thinking' or 'text'")
         return self
 
 

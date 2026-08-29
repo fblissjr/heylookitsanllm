@@ -9,11 +9,19 @@ from pydantic import BaseModel, Field
 
 from heylook_llm.schema.content_blocks import OutputContentBlock
 
-# The Messages-wire stop vocabulary, defined ONCE. Anthropic's set minus the
-# values heylook cannot produce (no tools, no server-side pause), plus
-# `error`, which has no Anthropic counterpart -- a failure is an `error`
-# EVENT there, and api.py's non-streaming failure path needs a value.
-StopReason = Literal["end_turn", "max_tokens", "stop_sequence", "error"]
+# The Messages-wire stop vocabulary, defined ONCE: Anthropic's set minus the
+# values heylook cannot produce (no tools, no server-side pause).
+#
+# `error` is deliberately NOT here. v1.79.39 added it on the stated grounds
+# that "api.py sets it on the non-streaming failure path", which was not
+# true and was repeated into three documents before anyone traced it:
+# MessageResponse has exactly one construction site (converters.to_stop_reason
+# feeds it) and that function cannot return "error"; api.py's `stop_reason=
+# "error"` is a kwarg to _maybe_log_request_event -- a JSONL telemetry field,
+# not a response. A non-streaming failure RAISES HTTPException, so no
+# MessageResponse is built at all. An unreachable enum member is worse than
+# no member: an integrator writes and tests a branch the server cannot enter.
+StopReason = Literal["end_turn", "max_tokens", "stop_sequence"]
 
 
 class Usage(BaseModel):
@@ -71,10 +79,8 @@ class MessageResponse(BaseModel):
     # until v1.79.39 -- the provider's OpenAI finish_reason passed through
     # unchanged onto an otherwise Anthropic-shaped response, so a client
     # written against the Messages API saw a value its spec does not define.
-    # `error` has no Anthropic counterpart (a failure is an `error` EVENT
-    # there) and is kept as a heylook extension: api.py sets it on the
-    # non-streaming failure path. Map through STOP_REASON_FROM_FINISH_REASON
-    # (converters.py) rather than assigning a provider value here.
+    # Map through STOP_REASON_FROM_FINISH_REASON (converters.py) rather than
+    # assigning a provider value here.
     stop_reason: StopReason = "end_turn"
     usage: Usage
     performance: Optional[PerformanceInfo] = None

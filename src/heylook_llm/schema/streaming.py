@@ -12,10 +12,10 @@
 #   data: {"type": "message_start", "message": {...}}
 #
 #   event: content_block_start
-#   data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}}
+#   data: {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "", "text": ""}}
 #
 #   event: content_block_delta
-#   data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "text": "..."}}
+#   data: {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "...", "text": "..."}}
 #
 #   event: content_block_stop
 #   data: {"type": "content_block_stop", "index": 0}
@@ -43,8 +43,14 @@ class TextDelta(BaseModel):
 
 
 class ThinkingDelta(BaseModel):
+    # BOTH spellings ride the wire (messages_api._block_delta): `thinking` is
+    # Anthropic's field name, `text` is heylook's original and is what v3's
+    # streaming.js reads. These models are DOCUMENTARY -- nothing builds or
+    # validates an event through them -- which is exactly why they drifted
+    # for one commit after the emitter changed.
     type: Literal["thinking_delta"] = "thinking_delta"
-    text: str
+    thinking: str = ""
+    text: str = ""
 
 
 class LogprobsDelta(BaseModel):
@@ -64,8 +70,15 @@ ContentDelta = Union[TextDelta, ThinkingDelta, LogprobsDelta]
 # ---------------------------------------------------------------------------
 
 class ContentBlockInfo(BaseModel):
-    """Minimal info about a content block when it starts."""
+    """Minimal info about a content block when it starts.
+
+    The block opens with its content field present and empty, as Anthropic's
+    does, so a client accumulating into `content_block` has something to
+    accumulate into. A thinking block carries both spellings.
+    """
     type: str  # "text", "thinking", "logprobs"
+    text: str = ""
+    thinking: str = ""
 
 
 class MessageStartEvent(BaseModel):

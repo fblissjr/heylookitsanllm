@@ -274,6 +274,18 @@ stays for external consumers, no v3 page calls it):
   behavior, so no existing consumer changes. Notebook sends it from the
   global display pref (`displayWireFields()`, settings.js); explore speaks
   this same wire and deliberately does not, being a token-ARRAY surface.
+- **Anthropic conformance (v1.79.39-40):** media blocks accept Anthropic's
+  NESTED `source` object (`{type:"image",source:{type:"base64",media_type,data}}`)
+  as well as the original flat `source_type` form -- the flat one was the only
+  accepted spelling before, so a correctly-formed Messages request was a 422.
+  Thinking blocks and `thinking_delta` carry the text under BOTH `thinking`
+  (Anthropic's field) and `text` (v3's readers, `streaming.js`); `stop_reason`
+  is now `end_turn`/`max_tokens`/`stop_sequence` rather than the provider's
+  OpenAI `"stop"`/`"length"`, mapped through one table
+  (`converters.STOP_REASON_FROM_FINISH_REASON`) shared with the generate
+  route below. `content_block_start` opens with its content field present and
+  empty (`{type:"text",text:""}`). Remaining deliberate differences from
+  Anthropic are enumerated in [api_integration.md](./api_integration.md).
 - Streaming: the Messages SSE grammar (message_start / content_block_* /
   message_delta / message_stop) plus the namespaced extensions: `event:
   heylook_logprobs` `data:{type,tokens:[{token,logprob,top_logprobs:[{token,
@@ -334,7 +346,9 @@ stays for external consumers, no v3 page calls it):
   accepts `{type:"input_audio", input_audio:{data:<RAW base64, NOT a data
   URL>, format?:"wav"|"mp3"|...}}` content parts (or `url` instead of
   `data`); the Messages API accepts the block form `{type:"audio",
-  source_type:"base64"|"url", media_type?, data?|url?}`. Only models with
+  source:{type:"base64"|"url", media_type?, data?|url?}}` -- or the original
+  flat `{type:"audio", source_type:"base64"|"url", media_type?, data?|url?}`,
+  both accepted since v1.79.39. Only models with
   the `audio` capability (gguf/llama-server) serve it — MLX models return
   400. The v3 attach affordance is capability-gated on `vision`/`audio`
   (shipped v1.43.0: gated attach button + dynamic accept list, audio chips
@@ -373,12 +387,19 @@ truncate→stream→persist sequences):**
     + cap gates) and may carry `model` to generate with a non-stamped model.
   - Wire: Messages SSE grammar (`message_start` / `content_block_start|delta|
     stop` / `message_delta` / `message_stop`, same translator as
-    `/v1/messages`) plus ONE namespaced extension event, always LAST:
+    `/v1/messages` -- so it inherits the v1.79.39 conformance changes above,
+    including `thinking_delta` carrying both spellings) plus ONE namespaced
+    extension event, always LAST:
     `event: heylook_saved` `data: {type, conversation_id, mode,
     end_reason:"complete"|"aborted"|"error", messages:[<full stored rows>],
     dropped_media:{images,audio}, timing:{peak_memory_gb, kv_cache_bytes,
     queue_wait_ms, draft_acceptance}}` — the client's post-stream state is
-    ASSIGNMENT from `messages`, never position arithmetic. In-band typed
+    ASSIGNMENT from `messages`, never position arithmetic. An ABORTED run also
+    reports `stop_reason:"max_tokens"` on `message_delta` (v1.79.40): it used
+    to say `end_turn`, positively asserting the model finished, on the same
+    stream whose `heylook_saved.end_reason` said `aborted` -- Anthropic has no
+    cancellation value, so the nearest honest one is "stopped early for a
+    reason that is not the model's own end". In-band typed
     `error` events precede it on failure (invalid_request_error /
     api_error, same grammar as `/v1/messages`).
   - Persistence is server-owned: completion, abort, AND client disconnect
