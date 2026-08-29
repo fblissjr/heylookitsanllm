@@ -1,14 +1,19 @@
 # Current Work
 
-Last updated: 2026-08-29 (v1.79.40 on the `frontend` branch; unit+contract
-green at 1704. Live smoke NOT RE-RUN since v1.79.37's 52/52 -- it gained
-three conformance rows this session; smoke RUN 2026-08-29 on both MLX arms,
-mlx-lm 26/26 and mlx-vlm 31/31, gguf UNCOVERED because llama-server exits 1
-for this build. Browser chat E2E is red for suite rot, not product -- see
-the handoff.)
+Last updated: 2026-08-29. v1.79.40 on the `frontend` branch.
 
-HANDOFF (next session start here): The codebase is at v1.79.40 on the
-`frontend` branch. Two things are open and neither is blocking:
+**Verification state, as of the last commit:**
+
+| Suite | Result |
+|---|---|
+| unit + contract | 1704 passed |
+| `bun run e2e:render` (model-free) | 101/101 |
+| `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED |
+| `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED |
+| `tests/smoke/` gguf arm | UNCOVERED -- llama-server exits 1 for this build |
+| `bun run e2e:chat` | 33/46 -- SUITE ROT, not product. See item 2 |
+
+HANDOFF (next session start here): three things are open; none blocks work.
 
 1. **`uv.lock` stays dirty on purpose -- OWNER RULED 2026-08-29, do not
    re-raise.** The working tree carries an uncommitted re-resolution
@@ -22,6 +27,7 @@ HANDOFF (next session start here): The codebase is at v1.79.40 on the
    remains git-TRACKED (it must, `scripts/guard_stable_channel.sh` inspects
    its staged blob), so this is "leave the modification alone", never
    "gitignore it".
+
 2. **`tests/e2e/suites/chat.mjs` HAS BIT-ROTTED and is not a usable gate.**
    Run 2026-08-29 against a real server + gemma-4-26B-A4B: 33/46, and the 13
    failures are the SUITE, not the app. It asserts `body[data-page]`, which
@@ -29,19 +35,32 @@ HANDOFF (next session start here): The codebase is at v1.79.40 on the
    `.preset-row`, which survive only as dead rules in `app.css` -- the JS
    builds its classes through `createEl` and emits different names
    (`preset-preview__body`, `preset-drift`). The first failure is the page
-   attribute, and the rest cascade from selectors that cannot match. None of
+   attribute and the rest cascade from selectors that cannot match. None of
    the failing features (presets, system prompt, conversation switching,
    max_tokens seeding) were touched by v1.79.38-40. Corroboration that the
    app is fine: the model-free render suite drives the SAME real `/v3` page
    at 101/101 including its uncaught-page-error check, and the one failing
    row that touches the generate path (mid-stream disconnect persists the
-   partial) passes server-side in smoke on both MLX arms. Fixing the suite is
-   its own task; until then do not read its red as a product signal.
+   partial) passes server-side in smoke on both MLX arms. Repairing it is its
+   own task; until then do not read its red as a product signal.
 
-3. **`tests/smoke/` gained `conformance_checks`** (nested image source
-   accepted, Anthropic stop_reason vocabulary, thinking block naming
-   `thinking`) -- the live half that unit tests structurally cannot cover.
-   Never executed. Run it against an isolated server before the next release.
+3. **The gguf smoke arm is UNCOVERED and nobody knows why.**
+   `Qwen3.8-Flash-Next-UD-Q5_K_XL` returns 500 at load: "llama-server exited
+   with code 1 -- output not captured (file logging was off when this model
+   spawned)". Diagnosing it needs `observability_level` raised above `off`
+   and a reload BEFORE the load attempt, since the gguf provider decides
+   whether to capture llama-server output at SPAWN time. Until then the
+   whole gguf engine is unverified for the v1.79.38-40 conformance work.
+
+**One product defect found and NOT fixed** (recorded here because it
+undermines advice this repo gives integrators): `Qwen3.5-0.8B-MLX-8bit-textonly`
+advertises the `vision` capability on `/v1/models`, and the provider then
+refuses images with a 400 saying the model is text-only. `capabilities` is
+derived from the checkpoint's own `config.json`, so a hand-made variant whose
+directory still declares vision blocks over-reports. `docs/api_integration.md`
+now warns clients to expect it, and the smoke row reports UNCOVERED naming the
+contradiction -- but the underlying disagreement between the two surfaces is
+still there.
 
 ## v1.79.38-.40 -- the Messages API became Messages-conformant
 
