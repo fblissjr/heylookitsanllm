@@ -445,3 +445,18 @@ a skill (`heylook-provider`, in the owner's `fb-claude-skills` marketplace):
 same rules, plus a capability probe and working client code, loaded on demand
 rather than pasted. Install with
 `/plugin install heylook-provider@fb-claude-skills`.
+
+**That skill and this document are TWINS and must move together.** They
+describe one contract from the two ends, so a change to the wire belongs in
+both in the same pass. When they disagree, the tiebreak is by kind: on a
+**shape** (a field, an enum, a payload) `/openapi.json` wins, because it is
+generated and neither prose copy is; on a **story** (why a thing behaves as
+it does, which failures are silent, what a client must handle) one of the two
+is simply stale and the code settles it.
+
+This is not theoretical. On 2026-08-29 the skill's review found that gating
+on `capabilities` was insufficient, and the identical gap was live in §1
+here — a streamed refusal arrives in-band, not as the 400 this document
+named. Neither review found it alone; the same author had read past it in
+both files. Diffing one against the code, rather than reading either on its
+own, is what produced it.
