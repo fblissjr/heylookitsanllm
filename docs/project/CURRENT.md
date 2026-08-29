@@ -1,13 +1,13 @@
 # Current Work
 
-Last updated: 2026-08-29. v1.79.40 on the `frontend` branch.
+Last updated: 2026-08-29. v1.79.41 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
 | Suite | Result | When |
 |---|---|---|
-| unit + contract | 1704 passed | re-run after the last commit |
-| `bun run e2e:render` (model-free) | 101/101 | re-run after the last commit |
+| unit + contract | 1708 passed | re-run at v1.79.41 |
+| `bun run e2e:render` (model-free) | 101/101 | re-run at v1.79.41 |
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | UNCOVERED -- llama-server exits 1 for this build | at `a274682` |
@@ -80,6 +80,34 @@ directory still declares vision blocks over-reports. `docs/api_integration.md`
 now warns clients to expect it, and the smoke row reports UNCOVERED naming the
 contradiction -- but the underlying disagreement between the two surfaces is
 still there.
+
+## v1.79.41 -- the conformance work reviewed
+
+Five findings across .37-.40, each re-verified against running code before
+being touched. Two are worth carrying forward.
+
+**The nested `source` spelling still 422'd for the clients it was added for.**
+`_flatten_source` gated on key PRESENCE, and `source_type` is Optional in the
+published schema, so a client generated from `/openapi.json` sends explicit
+nulls beside the nested object and was rejected on the exact spelling the docs
+recommend. **The obvious one-line fix was not sufficient** -- the `setdefault`
+calls underneath test presence too, so repairing only the gate moved the
+failure from the discriminator to the data and would have looked fixed. That
+is the durable part: when a bug is "this code tests presence where it means
+value", the same mistake is usually spelled more than once in the same
+function.
+
+**A test exempted the defect it was written for.**
+`TestStopReasonHasOneMapper` waved through any string literal, so
+`stop_reason = "length"` -- OpenAI's vocabulary on the Messages wire, the
+precise 1.79.39 bug -- passed green as long as it was spelled as a literal.
+An exemption written for one legitimate case (an explicit abort end-state)
+admitted the whole class. Literals are now checked for membership.
+
+Also: dropping the Clone confirm in .37 removed the double-tap coalescing the
+arm had been providing as a side effect (two taps, two conversations, two
+racing selects), now a re-entry guard rather than a resurrected confirm; and
+two doc drifts of the same kind the release was about.
 
 ## v1.79.38-.40 -- the Messages API became Messages-conformant
 
