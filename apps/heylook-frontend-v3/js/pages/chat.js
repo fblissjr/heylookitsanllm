@@ -827,12 +827,17 @@ function renderConvList(ctx) {
       e.stopPropagation();
       startRename(ctx, conv, title);
     });
-    // Armed confirm requires two deliberate taps, preventing accidental clones on mobile.
-    const copy = armedConfirm(
-      createEl('button', { class: 'btn btn--sm btn--ghost conv-item__clone', title: 'Clone conversation' }, ['Copy']),
-      () => cloneConversation(ctx, conv.id),
-      'Copy?',
-    );
+    // NOT an armed confirm (owner call, v1.79.37). Only LOSS gates: a clone
+    // destroys nothing and one Del undoes it, so the second tap was buying
+    // inconvenience, not safety -- and it sat immediately beside Del, whose arm
+    // does guard a loss, teaching that these buttons ask twice as a matter of
+    // course. The outcome is disclosed instead ("Conversation cloned.").
+    const copy = createEl('button',
+      { class: 'btn btn--sm btn--ghost conv-item__clone', title: 'Clone conversation' }, ['Copy']);
+    copy.addEventListener('click', (e) => {
+      e.stopPropagation();   // armedConfirm used to do this; the row is clickable
+      cloneConversation(ctx, conv.id);
+    });
     const del = armedConfirm(
       createEl('button', { class: 'btn btn--sm btn--ghost conv-item__delete' }, ['Del']),
       () => deleteConversation(ctx, conv.id),

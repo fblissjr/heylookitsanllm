@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.37]
+
+Both open items from the 1.79.36 review ruled on by the owner.
+
+### Removed
+
+- **The Clone button's armed confirm.** Only LOSS gates: a clone destroys nothing and one Del undoes it, so the second tap bought inconvenience rather than safety -- and it sat immediately beside Del, whose arm does guard a loss, teaching that these buttons ask twice as a matter of course. The outcome is disclosed instead, which is what the rule prescribes here ("Conversation cloned." already existed). Clone stays a one-tap action that stops event propagation, which is what `armedConfirm` was doing for it besides.
+- **`scripts/migrate_conversations.py`** and its `scripts/README.md` section. It was the hand-run escape hatch for carrying a conversation store across a schema bump; the rule it sat against ("NEVER write migration code") stands unamended, and the store's own policy is what it always was -- `db.Store` recreates on a version mismatch. **Consequence, stated rather than left implicit:** opening an older store with newer code now DROPS `conversations`, `messages`, `media_blobs` and `notebooks` with no prompt, no backup and no escape hatch. That is the intended posture for this deploy (solo, no conversation data to preserve); it is only a loss if that posture changes.
+
 ## [1.79.36]
 
 Code review of the whole `frontend` branch. Twelve findings acted on; two are left open as owner decisions (below). Each was re-verified against the code before being touched -- a subagent report is not evidence.
@@ -30,7 +39,7 @@ Code review of the whole `frontend` branch. Twelve findings acted on; two are le
 
 - `admin_api`'s comments about the unload drain were made false by the generating-refusal: the drain is no longer what covers an active generation on the explicit path (it covers gate waiters and `force=True`), and the 409 now has two causes rather than one. A reload issued during any generation refuses rather than waiting the model out -- including a detached run the requester cannot see. Behaviour intended; the comments were not.
 
-### Still open (owner decisions, not defects)
+### Owner decisions (both ruled in 1.79.37)
 
 - The Clone button's `armedConfirm`. Cloning loses nothing, so by the standing "only LOSS gates" rule this is a click-through-training confirm -- and it sits beside Del, which does guard a loss. Left as-is pending a ruling.
 - `scripts/migrate_conversations.py` against the "NEVER write migration code" rule. Its docstring argues it is a one-off outside the app, which is defensible, but it imports `db._SCHEMA_SQL` so a schema change now has a second file to keep working. Wants an explicit ruling that amends the rule text rather than a carve-out living in the script.
