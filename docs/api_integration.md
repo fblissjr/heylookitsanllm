@@ -163,6 +163,16 @@ nested shape, so it is the one that works everywhere.
 
 `data` is raw base64 with **no `data:` URI prefix**.
 
+**Sending the flat fields as explicit `null` alongside `source` is fine**
+(v1.79.41). A client generated from `/openapi.json`, or any pydantic client
+calling `model_dump()` without `exclude_none`, serializes every unset
+optional rather than omitting it, so it puts `"source_type": null,
+"data": null` beside the nested object. A null flat field counts as absent
+and is filled from `source`. Before .41 this was a 422 telling you
+`source_type` was required — on the spelling this page recommends — so if
+you are pinned to an older build, either drop the nulls or send the flat
+form. A flat field that is actually *set* still wins over the nested object.
+
 ### Images: you resize, not the server
 
 `/v1/messages` has no `resize_max` / `resize_width` / `image_quality` /
@@ -189,7 +199,7 @@ more direct lever.
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`, `logprobs`,
 `top_logprobs`, `sampler`, `vision_tokens`, `thinking`, `reasoning_effort`,
-`show_special_tokens`, `stream`, `stream_options`.
+`show_special_tokens`, `stream`, `stream_options`, `include_performance`.
 
 Every one is optional and **absent means the server's cascade decides**.
 `max_tokens` is deliberately optional here, unlike Anthropic's required
@@ -326,9 +336,11 @@ Structural differences worth planning for rather than discovering:
 
 As of v1.79.39 the payloads conform: nested `source` on media blocks,
 `thinking` on thinking blocks and their deltas, Anthropic's `stop_reason`
-vocabulary, and the same event grammar with no `[DONE]`. What remains is
-deliberate — and the list below is the best current account rather than a
-guarantee, for reasons the closing note gives:
+vocabulary, and the same event grammar with no `[DONE]`. v1.79.41 finished
+the media-block half — until then the nested form still 422'd for a client
+that serializes absent optionals as nulls, which is most generated ones.
+What remains is deliberate — and the list below is the best current account
+rather than a guarantee, for reasons the closing note gives:
 
 - **`max_tokens` is optional.** Anthropic requires it. Here, absent means the
   server's sampler cascade decides, which is the point.
@@ -346,9 +358,20 @@ guarantee, for reasons the closing note gives:
 - **`logprobs` is a content block**, not only a stream extension: a
   non-streaming response can carry a `logprobs` block in `content` when
   `logprobs: true` was set.
-- **Extensions**: `sampler`, `vision_tokens`, `reasoning_effort`,
-  `show_special_tokens` on the request; a `heylook_logprobs` event and
-  `message_stop.performance` on the stream.
+- **`stop_sequences` is not accepted.** Anthropic takes it on the request;
+  heylook's request model has no such field, so it is ignored rather than
+  honoured — a port that relies on it will silently generate past the
+  sequence you meant to stop at. (This is separate from the response-side
+  omission above.)
+- **Extensions**: thirteen request fields have no Anthropic equivalent —
+  the sampling knobs (`min_p`, `repetition_penalty`,
+  `repetition_context_size`, `presence_penalty`, `seed`), the inspection
+  ones (`logprobs`, `top_logprobs`, `show_special_tokens`,
+  `include_performance`), and `sampler`, `vision_tokens`,
+  `reasoning_effort`, `stream_options`. All are listed under
+  [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`; this
+  bullet named four of them until v1.79.41. On the stream: a
+  `heylook_logprobs` event and `message_stop.performance`.
 - **`message_start.usage.input_tokens` is 0.** The event is emitted before
   the first chunk is absorbed, so prompt tokens are not known yet. Anthropic
   puts input tokens there; read them off `message_delta.usage` instead.
