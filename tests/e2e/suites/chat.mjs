@@ -205,8 +205,17 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('default page is chat', async () => {
-    const page_ = await page.evaluate(() => document.body.dataset.page);
-    assert(page_ === 'chat', `body[data-page]=${page_}`);
+    // ASSERT WHAT THE ROUTER ACTUALLY WRITES. This read `document.body.dataset
+    // .page` for as long as anyone can trace, and that attribute exists nowhere
+    // in the frontend -- so the check reported `undefined !== 'chat'` on a
+    // perfectly healthy page and took the rest of the suite down behind it.
+    // app.js's navigate() marks the active route by toggling
+    // `nav-item--active` and setting aria-current="page" on the nav link; that
+    // is the observable, and it is load-bearing a11y (DESIGN.md §7) rather
+    // than a test-only hook, so it is the right thing to pin.
+    const active = await page.$eval('#nav-desktop .nav-item[aria-current="page"]',
+      (el) => el.dataset.route).catch(() => null);
+    assert(active === 'chat', `active nav route=${active}`);
     await page.waitForSelector('.chat');
   });
 
@@ -650,7 +659,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     await setSettingsInput(page, 'Temperature', '0.31');
     await page.click('.preset-section .input');
     await page.type('.preset-section .input', 'e2e-preset');
-    await clickByText(page, '.preset-row button', 'Save');
+    await clickByText(page, '.preset-row button', 'Save as new');
     await waitFor(async () => (await presetOptionValue('e2e-preset')) !== null,
       { message: 'saved preset not listed in the select' });
     // fresh save selects the preset and matches by construction
@@ -723,7 +732,7 @@ export async function runChatSuite({ suite, ctx, config }) {
       el.value = 'e2e-promptless';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await clickByText(page, '.preset-row button', 'Save');
+    await clickByText(page, '.preset-row button', 'Save as new');
     await waitFor(async () => (await presetOptionValue('e2e-promptless')) !== null,
       { message: 'promptless preset not listed in the select' });
 
