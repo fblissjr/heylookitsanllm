@@ -138,8 +138,10 @@ blocks take the same shape with `type: "audio"` and reach only gguf models —
 MLX answers 400 for audio, because audio towers are stripped at load.
 
 heylook's older flat spelling (`source_type`/`media_type`/`data` directly on
-the block) is still accepted and normalizes to the same thing, so existing
-clients keep working. New code should use the nested form.
+the block) is still accepted here and normalizes to the same thing, so
+existing clients keep working. New code should use the nested form — and if
+you ever also write to `/v1/conversations`, that store accepts **only** the
+nested shape, so it is the one that works everywhere.
 
 `data` is raw base64 with **no `data:` URI prefix**.
 

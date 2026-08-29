@@ -106,7 +106,7 @@ async function streamDrip(req, res, drip) {
   // complete) but it makes "what was on screen" a moving target for a check.
   if (drip.tailPauseMs) await sleep(drip.tailPauseMs);
   ev('content_block_stop', { type: 'content_block_stop', index: 0 });
-  ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } });
+  ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 1, output_tokens: 2 } });
   ev('message_stop', { type: 'message_stop', performance: {} });
   if (drip.omitSaved) { res.end(); return; }  // transport died before the last word
   ev('heylook_saved', {
@@ -315,7 +315,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
       ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
       ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } }),
       ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
-      ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'stop' }, usage: { input_tokens: 1, output_tokens: 2 } }),
+      ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 1, output_tokens: 2 } }),
       ev('message_stop', { type: 'message_stop', performance: {} }),
       ev('heylook_saved', { type: 'heylook_saved', conversation_id: 'c1', mode, end_reason: 'complete', messages: [{ ...row }], dropped_media: { images: 0, audio: 0 }, timing: {} }),
     ].join('');

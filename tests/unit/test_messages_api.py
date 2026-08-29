@@ -467,3 +467,44 @@ class TestStreamingConformance:
         t = StreamingEventTranslator("msg_1", "m")
         # Default with no provider signal is a natural stop.
         assert '"end_turn"' in t.message_delta_event()
+
+
+class TestStopReasonHasOneMapper:
+    """Both Messages-grammar routes must rename the provider's vocabulary.
+
+    This is the defect that actually shipped: /v1/messages and
+    /v1/conversations/{id}/generate share StreamingEventTranslator, so the
+    block deltas agree by construction -- but each assigned
+    `translator.stop_reason` from the provider itself, and fixing one in
+    v1.79.39 left the other emitting "length" for one more commit. Per-path
+    behavioural tests cannot see a disagreement between paths; this asserts
+    the shared mapper is the only writer.
+    """
+
+    ROUTES = [
+        "src/heylook_llm/messages_api.py",
+        "src/heylook_llm/conversation_generate_api.py",
+    ]
+
+    def _assignments(self, path):
+        import pathlib
+        import re
+        src = pathlib.Path(path).read_text()
+        # Every write to a translator's stop_reason, with its right-hand side.
+        return re.findall(r"\.stop_reason\s*=\s*(.+)", src)
+
+    @pytest.mark.parametrize("path", ROUTES)
+    def test_every_stop_reason_write_goes_through_the_mapper(self, path):
+        writes = self._assignments(path)
+        assert writes, f"{path} no longer writes stop_reason -- update this test"
+        for rhs in writes:
+            assert "to_stop_reason(" in rhs, (
+                f"{path} assigns stop_reason from {rhs.strip()!r} without "
+                "to_stop_reason() -- a provider finish_reason would reach the "
+                "Messages wire verbatim"
+            )
+
+    @pytest.mark.parametrize("path", ROUTES)
+    def test_route_imports_the_shared_mapper(self, path):
+        import pathlib
+        assert "to_stop_reason" in pathlib.Path(path).read_text()

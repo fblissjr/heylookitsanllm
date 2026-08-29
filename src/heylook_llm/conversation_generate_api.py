@@ -57,6 +57,7 @@ from heylook_llm.capabilities import effective_capabilities
 from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.db import get_db as _get_db
 from heylook_llm.messages_api import StreamingEventTranslator
+from heylook_llm.schema.converters import to_stop_reason
 from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.perf_collector import (
@@ -671,7 +672,13 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                     continue
                 chunk_finish = getattr(chunk, "finish_reason", None)
                 if chunk_finish:
-                    translator.stop_reason = chunk_finish
+                    # Same boundary rename as /v1/messages: this route speaks
+                    # the Messages SSE grammar, so the provider's OpenAI
+                    # finish_reason must not reach the wire. This was the
+                    # SECOND copy of that passthrough and it outlived the fix
+                    # to the first by one commit -- both now call the shared
+                    # mapper, so the two routes cannot disagree again.
+                    translator.stop_reason = to_stop_reason(chunk_finish)
                 telemetry.absorb(chunk)
                 translator.prompt_tokens = telemetry.prompt_tokens
                 translator.completion_tokens = telemetry.completion_tokens
