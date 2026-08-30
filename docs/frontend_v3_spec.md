@@ -128,7 +128,16 @@ previous page → `replaceChildren()` on `#main` → import route module → `mo
 route registration rather than post-hoc DOM queries.
 
 ### 3c. API layer (`api.js`, ~50 lines) — keep, generate from a table
-Core `request(method, path, body)`: builds `X-Request-ID` (`crypto.randomUUID` + fallback), sets
+Core `request(method, path, body)`: builds `X-Request-ID` (`crypto.randomUUID` + fallback; the two
+streaming paths in `streaming.js` send one too). That header became load-bearing for someone else in
+v1.79.44: `/v1/messages` now HONOURS an inbound `X-Request-ID` rather than generating its own and
+ignoring it, and `DELETE /v1/requests/{request_id}` cancels an in-flight generation addressed by that
+exact value. **v3 needs none of it and should not grow a use for it.** The endpoint exists because a
+NON-STREAMING request writes nothing until it finishes, so an abandoned client is undetectable; every
+v3 generation streams, and streaming is already cancellable by hanging up (chat stops through
+`DELETE /v1/conversations/{id}/generate`, notebook and explore through `controller.abort()`). v3 also
+generates its id per call and never retains it, so it does not hold the handle it sends -- correct
+rather than an oversight, and stated here so nobody "fixes" it. Sets
 `Content-Type`, JSON-stringifies body, throws `Error(detail)` on non-ok (parse `{detail}`, fall back to
 `statusText`). Generate the ~20 wrappers from a route table instead of hand-writing each. **Must also cover
 the 3 endpoints v2's api.js omits** (they're called ad hoc today): streaming chat, batch, perf profile —
@@ -415,7 +424,12 @@ truncate→stream→persist sequences):**
     to say `end_turn`, positively asserting the model finished, on the same
     stream whose `heylook_saved.end_reason` said `aborted` -- Anthropic has no
     cancellation value, so the nearest honest one is "stopped early for a
-    reason that is not the model's own end". In-band typed
+    reason that is not the model's own end". As of v1.79.44 BOTH
+    Messages-grammar routes do this: `/v1/messages` gained the same rule
+    (streaming and non-streaming) when it became cancellable, because the
+    defect reappears on any path that can stop between tokens. v3 reads
+    `end_reason`, not `stop_reason`, so this changes nothing here -- it
+    matters for external clients, who have only the latter. In-band typed
     `error` events precede it on failure (invalid_request_error /
     api_error, same grammar as `/v1/messages`).
   - Persistence is server-owned: completion, abort, AND client disconnect
@@ -643,7 +657,7 @@ no cheap file to scan (best-effort — a thinking-capable GGUF whose template ig
 variable shows the control and the kwarg goes unread). Sent whenever set, NOT gated on
 thinking being on: harmony reads it unconditionally and has no enable_thinking at all.
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. An explicit `loader = "mlx-lm"` on a dual-capable VLM now correctly reports no `vision` too. NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).

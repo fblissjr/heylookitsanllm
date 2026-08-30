@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.45]
+
+Follow-through on the v3 side of the last two releases, plus a startup banner that had been lying since routers arrived.
+
+### Fixed
+
+- **The startup banner listed 12 of 48 endpoints and looked complete.** `get_api_endpoints` walked `app.routes` keeping anything with a `.path`, but a router mounted via `include_router` appears there as an `_IncludedRouter` carrying neither `.path` nor a `.routes` list to recurse into — so every endpoint behind a router was invisible. It omitted `/v1/messages` (the wire this project's own frontend speaks), all of `/v1/conversations`, `/v1/presets` and `/v1/admin`, and the `/v1/requests` route added one release earlier. Same shape as the `GET /` staleness fixed in 1.79.40: the first thing an operator reads, confidently describing a server that is not this one. Derived from the OpenAPI schema now — the surface this repo already treats as authoritative — and the line prints a count plus the `/docs` link rather than 48 comma-separated paths, since a banner that long buries the two lines above it. Pinned by a property test (whatever the app serves under `/v1` is what the banner reports), not a count that would need editing per route.
+
+### Changed
+
+- **`docs/frontend_v3_spec.md` §4 brought level with 1.79.43-.44.** The spec is the authoritative backend contract for v3 and the rule is that it moves in the same commit as any contract change; two releases went out without it. Records where the MLX `vision` capability now comes from (the loader router, so the advertised capability and the provider's 400 cannot disagree — and `modalities` is deliberately unchanged, which is why chat's history-media disclosure reads capabilities and not modalities), that both Messages-grammar routes now report `max_tokens` on an aborted run, and what `X-Request-ID` and `DELETE /v1/requests/{id}` mean for v3 — namely nothing, stated explicitly so nobody wires it up. Every v3 generation streams, and streaming has always been cancellable by hanging up.
+
+### Verified (no code change needed)
+
+- **The v3 frontend needs no changes for 1.79.43-.44.** Checked each surface rather than assumed: v3 reads `end_reason`, never `stop_reason`, so the abort-vocabulary fix does not reach it; chat cancels through the conversation route and notebook/explore through `controller.abort()`, so the new cancel endpoint is redundant here; and the models page is schema-driven off `/v1/admin/model-options`, where `use_sidecar_chat_template` already publishes as a boolean with `default: true` and renders through the existing tri-state control.
+- **Exactly one served model's capabilities changed.** `Qwen3.5-0.8B-MLX-8bit-textonly` went `vision` → no `vision` (18 MLX models examined, it is the only one). Its twin at the same path keeps `vision`, which is the point — the entry differs only by `loader = "mlx-lm"`. In v3 this means the attach button, the paste/drop staging gate and the drop overlay now correctly refuse that model instead of accepting an image the server would 400. The frontend was already right; the server had been lying to it.
+
 ## [1.79.44]
 
 Cancellation for non-streaming requests, and the 1.79.43 review acted on -- including one finding that would have silently broken image input on a served vision model.

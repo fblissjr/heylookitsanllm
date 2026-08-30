@@ -26,12 +26,23 @@ except ImportError:
 
 
 def get_api_endpoints(app_instance):
-    """Extract API endpoint paths from app routes for display."""
-    endpoints = []
-    for route in app_instance.routes:
-        if hasattr(route, "path") and route.path.startswith("/v1/"):
-            endpoints.append(route.path)
-    return sorted(set(endpoints))
+    """Every ``/v1`` path this app serves, from the OpenAPI schema.
+
+    NOT by walking ``app.routes``, which is what this did and why the banner
+    was wrong: a router mounted with ``include_router`` appears there as an
+    ``_IncludedRouter`` with no ``.path`` and no ``.routes`` to recurse into,
+    so every endpoint behind a router was invisible. It printed 12 of 48 --
+    omitting ``/v1/messages`` (the wire this project's own frontend speaks),
+    every conversation and preset route, and all of ``/v1/admin`` -- while
+    looking like a complete list. That is the same shape as the ``GET /``
+    staleness fixed in 1.79.40: the first thing an operator reads,
+    confidently describing a server that is not this one.
+
+    The schema is the authoritative surface (this repo's own rule: the live
+    surface is code + /openapi.json), and FastAPI caches it, so building it
+    here costs the same work the first ``/openapi.json`` request would.
+    """
+    return sorted(p for p in app_instance.openapi()["paths"] if p.startswith("/v1/"))
 
 
 def _log_disk_usage(args):
@@ -388,7 +399,11 @@ def main():
     # Display startup info with dynamic endpoint discovery
     endpoints = get_api_endpoints(app)
     print(f"Starting API server on {args.host}:{args.port}")
-    print(f"Available endpoints: {', '.join(endpoints)}")
+    # A count and a pointer, not 48 comma-separated paths. The list is long
+    # enough now that printing it in full buries the two lines above it, and
+    # /docs cannot go stale the way a startup banner just did.
+    print(f"Available endpoints: {len(endpoints)} under /v1 "
+          f"-- browse at http://{args.host}:{args.port}/docs")
 
     # LAN hardening hint (S1.6): when bound to a non-loopback address, the
     # server is reachable by every host on the local network. Plain HTTP is
