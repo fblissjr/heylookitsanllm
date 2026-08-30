@@ -4,9 +4,10 @@
 The gap this closes: a STREAMING request is cancellable by hanging up (the
 server is writing chunks, so it notices the peer is gone), while a
 NON-STREAMING one writes nothing until the generation finishes and therefore
-never notices. Measured on this server at 1.79.42: a 73.1s generation whose
-client aborted at 5.0s still ran to completion and left the next request
-waiting 57.9s behind it.
+never notices, so the run continues to completion and blocks whatever is
+queued behind it on a server that serialises generation. (Motivated by a
+consuming client's timings, deliberately not reproduced here: uncontrolled
+measurements do not belong in tracked files.)
 
 Scope, stated plainly because it is easy to over-read: this makes an
 abandoned run STOPPABLE, not self-stopping. A client that hangs up without

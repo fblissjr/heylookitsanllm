@@ -42,7 +42,17 @@ def get_api_endpoints(app_instance):
     surface is code + /openapi.json), and FastAPI caches it, so building it
     here costs the same work the first ``/openapi.json`` request would.
     """
-    return sorted(p for p in app_instance.openapi()["paths"] if p.startswith("/v1/"))
+    try:
+        paths = app_instance.openapi().get("paths", {})
+    except Exception as e:
+        # A BANNER MUST NEVER TAKE THE SERVER DOWN. Schema generation can raise
+        # (a duplicate operation id, an unresolvable response model added
+        # later); before this it surfaced as a 500 on /openapi.json while
+        # inference kept serving, and calling it from main() would have turned
+        # that into "the server does not start". Degrade to no list.
+        logging.debug("endpoint list unavailable: %s", e)
+        return []
+    return sorted(p for p in paths if p.startswith("/v1/"))
 
 
 def _log_disk_usage(args):

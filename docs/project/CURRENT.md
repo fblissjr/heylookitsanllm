@@ -1,21 +1,17 @@
 # Current Work
 
-Last updated: 2026-08-30. v1.79.43 on the `frontend` branch.
+Last updated: 2026-08-30. v1.79.46 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
 | Suite | Result | When |
 |---|---|---|
-| unit + contract | 1737 passed (1601 + 136) | re-run at v1.79.43 |
+| unit + contract | 1780 passed (1637 + 143) | re-run at v1.79.46 |
 | `bun run e2e:render` (model-free) | 102/102 | at v1.79.42 |
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
-| `tests/smoke/` gguf arm | **30/30 on each of two models** | re-run at v1.79.43 |
-| `bun run e2e:chat` | 33/46 -- RUN, still red. See item 2 | re-run at v1.79.43 |
-
-The gguf and chat rows moved this session because both were finally run
-against a live server. The two MLX smoke arms still carry the commit they
-were measured at; nothing since has been able to move them without a server.
+| `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
+| `bun run e2e:chat` | 33/46 -- RUN, still red. See item 2 | at v1.79.43 |
 
 NOTE ON RUNNING THE SUITE LOCALLY: `tests/contract/` opens the real
 `data/conversations.duckdb` and DuckDB takes an exclusive lock, so every

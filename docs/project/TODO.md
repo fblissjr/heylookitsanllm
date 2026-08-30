@@ -80,9 +80,12 @@ they imply is theirs, not a decision here.
 - [ ] **Cancelling a NON-streaming request is impossible today** (P2, real):
   `/v1/messages` non-streaming builds the whole response before writing
   anything, so nothing polls `request.is_disconnected()` and an abandoned
-  client's generation runs to completion. Measured: a 73.1s generation
-  aborted client-side at 5.0s left the next request waiting 57.9s; the same
-  abort on a STREAMING request freed the server in 0.1s. On a server that
+  client's generation runs to completion. Observed by a consuming client: an aborted
+  non-streaming run kept the GPU busy for its full remaining length and the
+  next request waited behind it, while the same abort on a STREAMING request
+  freed the server at once. (Their timings are deliberately not recorded --
+  uncontrolled for model, quant, context and machine, and this repo keeps
+  performance numbers out of tracked files.) On a server that
   serialises generation, that abandoned run blocks everything behind it. Two
   candidate shapes, neither chosen: poll `is_disconnected()` between tokens on
   the non-streaming path, or `DELETE /v1/requests/{request_id}` keyed on the

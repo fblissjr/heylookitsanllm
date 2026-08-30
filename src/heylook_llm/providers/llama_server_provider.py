@@ -229,8 +229,22 @@ class LlamaServerProvider(BaseProvider):
         as it did before this existed. That is also what keeps ``_build_args``
         usable with paths that do not exist, which its drift test relies on.
         """
+        if not model_path:
+            return None
         try:
-            candidate = Path(model_path).expanduser().parent / "chat_template.jinja"
+            weights = Path(model_path).expanduser()
+            # Gate on the MODEL FILE existing, not just on the sidecar. An empty
+            # or bare-filename model_path makes `.parent` the process CWD, so a
+            # stray chat_template.jinja wherever the server happened to be
+            # started could become a model's prompt format -- the same
+            # CWD-relative trap that made file logging opt-in. Requiring the
+            # weights to be present means discovery only ever reads a real model
+            # directory, and it also keeps `_build_args` honest for callers
+            # passing paths that do not exist (the argv/metadata drift test),
+            # which get a clean None instead of whatever sits beside them.
+            if not weights.is_file():
+                return None
+            candidate = weights.parent / "chat_template.jinja"
             return candidate if candidate.is_file() else None
         except (OSError, ValueError):
             return None
@@ -293,8 +307,13 @@ class LlamaServerProvider(BaseProvider):
                 # rather than spawn against a file we could not inspect.
                 text = ""
             if not self._template_handles_media(text):
+                # getattr: the provider is also constructed via __new__ in the
+                # argv/metadata drift test, which never runs BaseProvider's
+                # __init__, so model_id may not exist. A log line must not be
+                # the thing that raises.
                 logging.warning(
-                    f"[GGUF] {self.model_id}: IGNORING the sidecar chat template "
+                    f"[GGUF] {getattr(self, 'model_id', '<unconstructed>')}: "
+                    f"IGNORING the sidecar chat template "
                     f"{sidecar} -- this model is served with a projector "
                     f"(mmproj/vision) and that template contains no media "
                     f"markers, so using it would load the vision tower and then "

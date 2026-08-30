@@ -119,7 +119,21 @@ class TestVisionCapabilityMatchesTheProviderGuard:
 
 @pytest.mark.unit
 class TestVisionCapabilityFailsOpen:
-    def test_an_unreadable_model_dir_keeps_the_declared_capability(self, tmp_path):
+    def test_a_thin_entry_with_an_unreadable_dir_reports_no_vision(self, tmp_path):
+        """The COMMON shape, and the one the docstring used to describe
+        wrongly. A thin entry writes no `modalities`, so validation derives
+        them from the dir; when that cannot be read it falls back to
+        ["text"] and the loader router never reaches its fail-open branch.
+        Correct -- an unreadable checkpoint is not evidence of a vision tower
+        -- but it is NOT the "keeps the capability" the docstring claimed, and
+        only the explicit-modalities case below ever exercised that path."""
+        from heylook_llm.capabilities import effective_capabilities
+
+        mc, config = _entry(tmp_path / "not-downloaded-yet")
+        assert config.modalities == ["text"]
+        assert "vision" not in effective_capabilities(mc)
+
+    def test_an_unreadable_model_dir_keeps_an_EXPLICIT_declared_capability(self, tmp_path):
         """Inherited from the router on purpose: only POSITIVE non-support
         drops the engine to mlx-lm, so a path that cannot be read (an HF repo
         id, a not-yet-downloaded dir) must not silently strip vision off a

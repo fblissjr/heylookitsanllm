@@ -5,8 +5,12 @@ Exists so a client can cancel a NON-STREAMING request. A streaming request is
 already cancellable by hanging up: the server is writing chunks, so it notices
 the peer is gone. A non-streaming request writes nothing until the generation
 finishes, so an abandoned client is never detected and the run continues to
-completion -- measured on this server at 1.79.42 as a 73.1s generation whose
-client aborted at 5.0s and which still blocked the next request for 57.9s.
+completion -- and on a server that serialises generation, it blocks everything
+queued behind it. (A consuming client's timings motivated this; they are NOT
+recorded here. They were uncontrolled for model, quant, context and machine,
+and this repo's rule is that no performance numbers live in tracked files --
+the mechanism is what justifies the code, and the mechanism does not need
+them.)
 
 This registry does NOT close that measurement's case on its own, and it is
 worth being precise about which half it closes. It gives a client an explicit
@@ -50,7 +54,13 @@ from .providers.abort import AbortEvent
 # is the ONE place the rule lives -- /v1/messages and /v1/chat/completions
 # both call it, and a second copy is how the two would come to disagree about
 # what a request id may contain.
-_ID_SAFE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+# `fullmatch`, and no `$`. Python's `$` ALSO matches just before a trailing
+# newline, so `re.match(r"^...$", "abc\n")` is truthy -- an id ending in a
+# newline sailed through the guard whose whole job is stopping a forged log
+# line. The parametrized test covered an INTERIOR newline and passed. Only the
+# trailing case was open, which is the one an HTTP client is most likely to
+# produce by accident.
+_ID_SAFE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
 def resolve_request_id(header_value: str | None, *, prefix: str) -> str:
@@ -63,7 +73,7 @@ def resolve_request_id(header_value: str | None, *, prefix: str) -> str:
     every other purpose (logs, correlation) and simply cannot be cancelled by
     a client that never chose it.
     """
-    if header_value and _ID_SAFE.match(header_value):
+    if header_value and _ID_SAFE.fullmatch(header_value):
         return header_value
     return f"{prefix}-{uuid.uuid4()}"
 
@@ -172,5 +182,17 @@ async def tracked_stream(agen, request_id: str, abort_event: AbortEvent):
     exception identically.
     """
     with track_request(request_id, abort_event):
-        async for item in agen:
-            yield item
+        try:
+            async for item in agen:
+                yield item
+        finally:
+            # Close the WRAPPED generator before the registration drops.
+            # Starlette never calls aclose on a response body_iterator (it just
+            # `async for`s it), and an `async for` interrupted by GeneratorExit
+            # does not close the iterable either -- so without this the id
+            # disappeared while the real generator was still suspended, still
+            # holding the generation gate and the executor lease. A DELETE in
+            # that window answered 404 on a demonstrably live run, which is the
+            # opposite of the "the client learns it was too late" contract this
+            # module documents.
+            await agen.aclose()

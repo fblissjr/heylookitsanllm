@@ -4,8 +4,9 @@
 Built because a NON-streaming request had no cancellation at all. A stream is
 cancellable by hanging up -- the server is writing, so it notices the peer is
 gone -- while a non-streaming call writes nothing until it finishes and so
-never notices. Measured at 1.79.42 by a consuming client: a 73.1s generation
-aborted at 5.0s ran to completion and left the next request waiting 57.9s.
+never notices, so an abandoned run continues and blocks what is queued
+behind it. (A consuming client's timings prompted this; they are not recorded
+here -- uncontrolled measurements do not belong in tracked files.)
 
 The rules worth pinning are the ones a plain ``dict[str, AbortEvent]`` would
 get wrong, and they all follow from the id being CLIENT-supplied rather than
@@ -38,10 +39,20 @@ class TestCancellingById:
         assert RequestRegistry().cancel("never-existed") == 0
 
     def test_a_finished_request_becomes_unknown(self):
-        reg, ev = RequestRegistry(), AbortEvent()
-        with track_request("req-1", ev):
-            pass
-        assert reg.cancel("req-1") == 0
+        """Against the MODULE registry, which is the one `track_request` writes
+        to. This asserted against a fresh local `RequestRegistry()` that
+        `track_request` never touches, so it passed for the wrong reason --
+        `unregister` could have been deleted outright and it would still be
+        green. It names the module's central lifetime rule; it has to actually
+        exercise it."""
+        from heylook_llm.request_registry import get_request_registry
+
+        reg = get_request_registry()
+        ev = AbortEvent()
+        with track_request("req-finished", ev):
+            assert reg.cancel("req-finished") == 1   # live: cancellable
+        assert reg.cancel("req-finished") == 0       # finished: unknown
+        assert "req-finished" not in reg.live_ids()
 
     def test_duplicate_ids_both_cancel(self):
         """The id is CLIENT-supplied, so uniqueness is not ours to assume: a
@@ -147,6 +158,11 @@ class TestRequestIdResolution:
 
     @pytest.mark.parametrize("bad", [
         "has space", "has\nnewline", "semi;colon", "x" * 129, "",
+        # TRAILING newline specifically: Python's `$` also matches just before
+        # one, so `re.match(r"^...$", "abc\n")` is TRUTHY and an id ending in a
+        # newline sailed straight through the log-forging guard. The interior
+        # case above passed throughout and hid it.
+        "abc\n", "abc\r\n", "abc\r",
     ])
     def test_a_malformed_id_is_replaced_rather_than_trusted(self, bad):
         """These reach logs and the JSONL telemetry streams. A newline could

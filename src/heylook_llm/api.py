@@ -866,7 +866,7 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         # bytes on the wire until it finishes, so an explicit cancel is the
         # only way to stop it.
         with track_request(request_id, abort_event):
-            result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
+            result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event)
         diag_event("generation_complete", request_id=request_id,
                    total_ms=round((time.time() - request_start_time) * 1000, 1))
         response_headers = {"X-Request-ID": request_id}
@@ -1405,7 +1405,7 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
 
     yield "data: [DONE]\n\n"
 
-async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None):
+async def non_stream_response(generator, chat_request: ChatRequest, router, request_id, request_start_time, provider=None, perf_ctx: dict | None = None, abort_event=None):
     full_text = ""
     token_count = 0
     pre_thinking_parts: list[str] = []  # chunk.thinking -- engine pre-split reasoning
@@ -1506,8 +1506,18 @@ async def non_stream_response(generator, chat_request: ChatRequest, router, requ
     # Build choice with optional logprobs. finish_reason is mlx-lm's own
     # (the streaming path forwards the same field): "length" here is the only
     # way a client can tell a max_tokens truncation from a natural stop.
+    finish_reason = telemetry.finish_reason or "stop"
+    # A CANCELLED run must not report "stop", which asserts the model finished.
+    # This path became cancellable in v1.79.44 (DELETE /v1/requests/{id}) and
+    # kept the old fallback, so the OpenAI wire got the cancellability without
+    # the honesty -- the identical defect fixed on /v1/messages in that same
+    # commit, one route over, which is this repo's most-repeated shape.
+    # Guarded rather than unconditional: an engine that DID report "length" or
+    # a stop sequence is a more specific truth and keeps priority.
+    if abort_event is not None and abort_event.is_set() and finish_reason == "stop":
+        finish_reason = "length"
     choice = {"message": message, "index": 0,
-              "finish_reason": telemetry.finish_reason or "stop"}
+              "finish_reason": finish_reason}
     if logprobs_collector and logprobs_collector.content:
         choice["logprobs"] = logprobs_collector.to_dict()
 
@@ -2210,17 +2220,30 @@ async def clear_caches(request: Request, body: CacheClearRequest = Body(default=
 
 
 def _get_api_endpoints():
-    """Dynamically discover all /v1/ endpoints from registered routes."""
+    """Every `/v1` endpoint, for the `GET /` discovery payload.
+
+    From the OpenAPI schema, NOT by walking ``app.routes``. This walked the
+    routes and reported 12 of 48: a router mounted with ``include_router``
+    appears there as an ``_IncludedRouter`` with no ``.path``, so everything
+    behind a router was invisible -- ``/v1/messages``, every conversation,
+    preset and notebook route, all 19 admin routes, and the cancel endpoint.
+    v1.79.45 fixed exactly this in ``server.py``'s startup banner and left
+    THIS copy, the one on the surface a client reaches first, still wrong. Two
+    walks of the same thing, one fixed, is the shape this repo keeps paying
+    for; both now read the schema, which is the surface that cannot drift from
+    what is actually served.
+    """
     endpoints = {}
-    for route in app.routes:
-        path = getattr(route, 'path', '')
-        if path.startswith('/v1/'):
-            # Get methods (GET, POST, etc.)
-            methods = getattr(route, 'methods', {'GET'})
-            method = next(iter(methods)) if methods else 'GET'
-            # Create endpoint name from path
-            name = path.replace('/v1/', '').replace('/', '_')
-            endpoints[name] = {"method": method, "path": path}
+    for path, operations in app.openapi().get("paths", {}).items():
+        if not path.startswith("/v1/"):
+            continue
+        # A path can carry several methods; the schema keys them explicitly
+        # rather than the arbitrary set-ordering the route walk picked from.
+        for method in operations:
+            if method.lower() not in ("get", "post", "put", "patch", "delete"):
+                continue  # skip `parameters`, `summary` and friends
+            name = path.replace("/v1/", "").replace("/", "_").strip("_")
+            endpoints.setdefault(name, {"method": method.upper(), "path": path})
     return endpoints
 
 

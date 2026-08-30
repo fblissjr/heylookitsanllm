@@ -335,8 +335,45 @@ deployment is open.
 - `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates admin routes.
   An integration should not need it.
 
-Send `X-Request-ID` on every request. It is echoed back and it is how a
-request is correlated in the server's logs.
+Send `X-Request-ID` on every request. It is echoed back, it is how a request
+is correlated in the server's logs, and **it is the handle you cancel by**.
+
+### Cancelling a request
+
+`DELETE /v1/requests/{request_id}` stops a generation that is still running.
+
+The id is the one **you** sent. A request that arrived without the header got
+a server-generated id, and on the non-streaming path you never learn it in
+time -- so sending `X-Request-ID` is the precondition for being able to cancel
+at all. The server accepts `[A-Za-z0-9._:-]`, up to 128 characters; anything
+else is replaced with a generated id, and the non-streaming response echoes
+back the id actually tracked, so compare it if a cancel unexpectedly 404s.
+
+This matters most for **non-streaming** calls. A streaming request is already
+cancellable by hanging up -- the server is writing chunks, so it notices the
+peer is gone. A non-streaming one writes nothing until the generation
+finishes, so an abandoned client is invisible and the run continues, holding
+the GPU and blocking whatever is queued behind it. There is no disconnect
+polling: hanging up on a non-streaming request does **not** stop it. Call
+DELETE.
+
+Responses:
+
+- `200 {"cancelled": N, "request_id": "..."}` -- N generations were signalled.
+  It is a count, not a boolean, because ids are client-supplied and two
+  in-flight requests may share one; cancelling the id cancels both.
+- `404` -- nothing is running under that id, most often because it already
+  finished. Treat it as "too late", not as an error.
+
+Cancellation is cooperative: the decode loop stops at the next token
+boundary, so a run blocked in a long prompt prefill stops when that finishes,
+not instantly. The cancelled request still returns a normal response carrying
+whatever was generated, and it reports `stop_reason: "max_tokens"` on
+`/v1/messages` (`finish_reason: "length"` on `/v1/chat/completions`). **There
+is no distinct cancellation value** -- Anthropic's vocabulary has none, since
+cancellation there is a dropped connection rather than an end state. So a
+cancelled run is indistinguishable on the wire from a budget exhaustion:
+track your own cancel, do not infer it from the response.
 
 ---
 

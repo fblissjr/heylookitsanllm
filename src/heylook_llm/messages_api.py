@@ -17,7 +17,7 @@ from contextlib import closing
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
@@ -375,13 +375,24 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         # the run continues; registering the abort signal under the client's
         # own id is what makes it nameable from another connection.
         with track_request(request_id, abort_event):
-            return await _non_stream_messages(
+            result = await _non_stream_messages(
                 generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
                 provider=provider, thinking_enabled=thinking_enabled,
                 continuing=chat_request.is_continuation(),
                 logprobs_collector=logprobs_collector,
                 abort_event=abort_event,
             )
+        # Echo the id the server actually tracked. This is the one path DELETE
+        # /v1/requests/{id} exists for, and it was the one giving the client no
+        # way to learn its header had been rejected (a space, a slash, >128
+        # chars -> a server-generated id). Without it, a later DELETE 404s with
+        # nothing to explain why -- the "believing it stopped something"
+        # failure the endpoint's own description says it prevents.
+        # model_dump_json, not JSONResponse(model_dump()): the latter
+        # re-serializes the whole tree (repo convention).
+        return Response(content=result.model_dump_json(),
+                        media_type="application/json",
+                        headers={"X-Request-ID": request_id})
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +474,12 @@ async def _non_stream_messages(
     # choice". Set through `finish_reason` rather than by assigning
     # `stop_reason` directly, so it still goes through the ONE mapper
     # `TestStopReasonHasOneMapper` exists to keep as the only writer.
-    if abort_event is not None and abort_event.is_set():
+    # Guarded on the DEFAULT, exactly like the streaming half below. Overwriting
+    # unconditionally would clobber a genuine `length` or stop-sequence when a
+    # DELETE lands between the last token and the response build -- and the two
+    # halves of one rule quietly disagreeing is worse than either policy.
+    if (abort_event is not None and abort_event.is_set()
+            and finish_reason == "stop"):
         finish_reason = "length"
     message: dict = {"role": "assistant", "content": content_text}
     if thinking is not None:

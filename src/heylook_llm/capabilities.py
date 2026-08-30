@@ -86,10 +86,20 @@ def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> boo
     reported: an explicit ``loader = "mlx-lm"`` on a genuinely dual-capable
     VLM refuses images too, and used to advertise them.
 
-    Inherits the router's fail-open direction deliberately -- an unreadable
-    ``config.json`` yields ``mlx-vlm`` and keeps the capability, so
-    uncertainty leaves a working VLM alone and only POSITIVE non-support
-    (mlx-vlm registers no loader for this ``model_type``) drops it.
+    The router's fail-open rule applies at ITS layer only, and the earlier
+    claim here that "an unreadable config.json keeps the capability" was false
+    for the common case. ``MLXModelConfig._resolve_modalities`` derives
+    modalities AT VALIDATION and falls back to ``["text"]`` when the directory
+    cannot be read, so a THIN entry -- which is most of them -- has already
+    lost ``vision`` before ``resolve_effective_loader`` is reached, and its
+    ``"vision" not in modalities -> mlx-lm`` branch settles it. Fail-open is
+    real only for an entry that spells its ``modalities`` out explicitly, the
+    shape CLAUDE.md calls the rare one.
+
+    That is the right behaviour -- an unreadable checkpoint is not evidence of
+    a vision tower, and advertising one we cannot confirm is the over-report
+    this function exists to stop -- but it is not what "fails open" describes,
+    so it is written down as what it is.
     """
     if effective_loader is not None:
         return effective_loader == "mlx-vlm"
