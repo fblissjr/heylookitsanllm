@@ -256,8 +256,13 @@ def test_gguf_arg_spellings_are_unique_and_plausible():
     # than the field, the timeout never reaches llama). They are
     # requires_reload because a reload genuinely changes them -- the property
     # that matters -- not because they map to a flag.
+    # use_sidecar_chat_template is a third kind: a POLICY toggle deciding
+    # whether chat_template_path's flag gets emitted from a discovered file at
+    # all. It has no spelling of its own precisely because it selects the
+    # VALUE for someone else's flag, and giving it one would put two fields on
+    # --chat-template-file.
     assert argless == ["extra_args", "host", "port", "server_binary",
-                       "startup_timeout_s"], (
+                       "startup_timeout_s", "use_sidecar_chat_template"], (
         f"gguf reload-required fields with no `arg` spelling: {argless}"
     )
 

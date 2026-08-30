@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.43]
+
+Three of the four open handoff items closed against a running server, plus a
+gguf template default. The gguf smoke arm went from UNCOVERED to green without
+a code change -- the binary had already been rebuilt.
+
+### Added
+
+- **A `chat_template.jinja` sitting beside a .gguf is now used by default** (`use_sidecar_chat_template`, on). llama-server otherwise reads the template EMBEDDED in the GGUF, which is whatever the quantizer baked in -- and this repo has measured two publishers shipping materially different templates for identical weights. A sidecar jinja is the readable, diffable, editable answer, so it wins over the embedded one. Precedence is a three-way ladder: an explicit `chat_template_path` (someone naming a file on purpose) still outranks a file that merely happens to be in the directory, and the embedded template stays reachable via `use_sidecar_chat_template = false` -- a downloaded snapshot dir is not somewhere to have to vandalize to get the documented default back. Discovery is scoped to the model file's own directory and degrades to a clean miss on anything unreadable, so `_build_args` still works with paths that do not exist (its drift test relies on that). Bounded in practice: 3 of the 14 served gguf models carry such a file today. Every spawn now LOGS which of the three sources is in force, because a template can now change without models.toml changing -- dropping a file next to the weights is enough -- and an unannounced prompt-format change is the kind that resurfaces later as "the model got worse" with nothing to point at.
+
+### Fixed
+
+- **`/v1/models` advertised `vision` on a model the provider then refused images for.** `Qwen3.5-0.8B-MLX-8bit-textonly` sets `loader = "mlx-lm"` on a checkpoint whose directory declares a vision tower; the capability read the DECLARATION while `MLXProvider`'s guard reads `is_vlm`. Both were reading something real, and a client doing exactly what the API docs say -- gate on `capabilities` -- got a 400 anyway. The capability is now derived through `effective_loader_for_config`, the same resolver `MLXProvider.__init__` calls, so the two agree by construction rather than by two rules kept in step by hand. It also picks up a case nobody had reported: an explicit `loader = "mlx-lm"` on a genuinely dual-capable VLM refuses images too, and used to advertise them. `modalities` is unchanged -- the checkpoint still declares what it declares; description and served capability are different fields on purpose. Fails OPEN, inheriting the router's own direction: an unreadable `config.json` keeps the capability, so only positive non-support drops it.
+
+### Verified
+
+- **The gguf smoke arm is covered, and needed no fix.** The Aug-29 failure was `llama-server exited with code 1`; the model's architecture is `qwen4exp`, and the canonical build has since been rebuilt from a checkout that supports it. Both conformance rows are now covered live, across two models because no single served model exercises both: `google_gemma-4-E4B-it-qat-q4_0-gguf` 30/30 (audio accepted; thinking block UNCOVERED -- that model returned none), `unsloth_Qwen3.8-27B-UD-Q8_K_XL` 30/30 (thinking block carries `thinking`; audio UNCOVERED -- no audio modality). The capture path in the handoff was confirmed working: raising `observability_level` above `off` did produce the llama-server log that the failure message said was missing.
+- **`bun run e2e:chat` was run, and is still 33/46.** The v1.79.41 repair fixed two real selector rots and the claim that they were "the whole static gap" was wrong. The deeper cause is architectural, not a selector: `tests/e2e/lib/browser.mjs` seeds sampler settings into `localStorage` and expects the chat settings panel to reflect them, but since v1.65-66 chat hydrates that panel from the DOCUMENT (`hydrateDocParams` -> `applySettings(doc.params)`), so selecting a conversation overwrites the seed. `seeded max_tokens is reflected in the settings panel` fails with the document's value, and the preset and system-prompt checks rest on the same stale model of where chat state lives. Recorded rather than repaired: this is a suite rewrite, not a patch, and it stays out of gate status until it is done.
+
 ## [1.79.42]
 
 A second review of the 1.79.41 fixes. The headline is that 1.79.41 fixed a presence-vs-value bug by making the same mistake one level up, and that both versions of it were sitting on top of a silent drop that predates all of this.

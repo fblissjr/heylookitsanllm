@@ -31,11 +31,20 @@ engine-PRE-SPLIT reasoning, e.g. llama-server's reasoning_content; errors RAISE
 GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-server
 runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
 heylook's parsers to pass-through -- never re-parse another engine's split output);
-the template llama-server uses is the one EMBEDDED IN THE GGUF, so the quant publisher
-picks your prompt format and `chat_template_source` (MLX-only, template_info.py) does
-NOT reach this provider -- `chat_template_path` (v1.68.0, `--chat-template-file`) is the
-override, requires_reload because llama-server takes it at SPAWN, which is also why no
-per-request/per-preset form exists (per-request lever = `chat_template_kwargs`).
+the template is resolved as a THREE-WAY LADDER at spawn (v1.79.43) and every spawn logs
+which rung won: explicit `chat_template_path` (v1.68.0, `--chat-template-file`) beats a
+`chat_template.jinja` DISCOVERED beside the .gguf, which beats the one EMBEDDED IN THE
+GGUF. Sidecar-beats-embedded is the default because the embedded template is whatever
+the quantizer baked in while a sidecar is the file you can read, diff and edit;
+`use_sidecar_chat_template = false` keeps the embedded one WITHOUT deleting a file out of
+a downloaded snapshot dir. Consequence worth holding: a template can now change with no
+models.toml change at all -- dropping a file next to the weights is enough -- which is
+why the spawn log exists, and why any measurement that varies by prompt format must
+establish WHICH TEMPLATE each arm ran against before concluding anything about the model.
+`chat_template_source` (MLX-only, template_info.py) still does NOT reach this provider and
+is deliberately a different name for a different mechanism. All of it is requires_reload
+because llama-server takes the template at SPAWN, which is also why no per-request/
+per-preset form exists (per-request lever = `chat_template_kwargs`).
 Publishers differ on the SAME weights and it is not cosmetic (measured live on
 Qwen3.8-27B, both templates, 2026-08-17): ggml-org embeds Qwen's official template
 byte-identically (8952 bytes), unsloth a patched one (9993) adding a `developer` role
@@ -340,7 +349,7 @@ in git history; a contract test pins that `/v2` stays 404.)
 - A VLM's forward returns a `LanguageModelOutput`, not raw logits, and caches `_position_ids`/`_rope_deltas` on its language model. Wrap it with `wrap_language_model()` (model_wrappers.py) before driving it with mlx-lm; position state is reset in `run_generation` via `_reset_vlm_positions()`.
 - VLM prompt formatting: `mlx_vlm.prompt_utils.apply_chat_template`; inputs: `mlx_vlm.utils.prepare_inputs`. `prepare_vlm_inputs_parallel()` returns a 4-tuple `(images, formatted_prompt, has_images, image_urls)`.
 - Vision feature cache (`providers/common/vision_feature_cache.py`): models with `encode_image()` accept `cached_image_features` to skip the vision tower; LRU keyed by image URL (pixel-hash fallback for base64).
-- Load-library selection is `MLXProvider.effective_loader` (`providers/common/loader_routing.py`), derived from the config's `modalities` + `loader` fields -- NOT the raw `vision` bool, which is now a derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader == "mlx-vlm")`. `loader="auto"` routes vision->mlx-vlm iff mlx-vlm registers the `model_type`, else mlx-lm (degrades only on POSITIVE non-support; an explicit `loader` forces the engine). Modality DESCRIPTION (`model_importer.detect_modalities`: config `*_config` blocks + `image_token_id`/`image_token_index`/`audio_token_id`...) is deliberately separate from this library-aware routing. It is ON THE WIRE as `effective_loader` on the `/v1/admin/models` row (v1.79.31), derived via `effective_loader_for_config` so it answers for UNLOADED models -- the provider ATTRIBUTE is null unless the model is resident, which is the opposite of what a live harness picking engine arms needs. Null for every non-mlx provider (gguf is one engine, named by `provider`). Because it reads each model dir's `config.json`, the two admin READ routes that build a model response are plain `def` (threadpool), not `async def`.
+- Load-library selection is `MLXProvider.effective_loader` (`providers/common/loader_routing.py`), derived from the config's `modalities` + `loader` fields -- NOT the raw `vision` bool, which is now a derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader == "mlx-vlm")`. `loader="auto"` routes vision->mlx-vlm iff mlx-vlm registers the `model_type`, else mlx-lm (degrades only on POSITIVE non-support; an explicit `loader` forces the engine). Modality DESCRIPTION (`model_importer.detect_modalities`: config `*_config` blocks + `image_token_id`/`image_token_index`/`audio_token_id`...) is deliberately separate from this library-aware routing. The REPORTED `vision` capability derives from it too (v1.79.43, capabilities.py): the provider's image guard reads `is_vlm`, so reading the checkpoint's DECLARATION instead let `/v1/models` advertise images a 400 then refused -- one resolver for both surfaces is what makes them agree by construction. `modalities` still carries the declaration; description and served capability are different fields on purpose. It is ON THE WIRE as `effective_loader` on the `/v1/admin/models` row (v1.79.31), derived via `effective_loader_for_config` so it answers for UNLOADED models -- the provider ATTRIBUTE is null unless the model is resident, which is the opposite of what a live harness picking engine arms needs. Null for every non-mlx provider (gguf is one engine, named by `provider`). Because it reads each model dir's `config.json`, the two admin READ routes that build a model response are plain `def` (threadpool), not `async def`.
 - Embedding backbone: `mlx_lm.utils._get_classes(config_dict)` (private API, takes a dict) -> extract `.model`. Gemma needs `sqrt(hidden_size)` embedding scaling (gated on `model_type.startswith("gemma")`).
 - Prompt cache is a per-model SINGLE SLOT of immutable (state, meta_state) snapshots (v1.75.0, Q7 -- the radix tree is deleted): extension continues, divergence goes through mlx-lm's `trim_prompt_cache`, and non-trimmable layers (hybrid ArraysCache, rotated windows) re-prefill rather than slice -- hybrids are now CORRECT, not "limited". NEVER store or hand out live cache OBJECTS: arrays are immutable, objects are not, and a quarantined zombie generator keeps mutating its own (that was live-verified process-poisoning). See [docs/architecture/mlx_provider.md](./docs/architecture/mlx_provider.md) §4.2.
 - `mlx_lm.generate.GenerationResponse` is a non-slotted dataclass -- attach per-request metadata via `response.X = value` (`# type: ignore[attr-defined]`), read via `getattr`.

@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-08-29 (caught up through v1.79.40 on frontend branch)*
+*Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch)*
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
@@ -18,34 +18,49 @@ Cross-session task backlog organized by priority.
   MemoryManager construction regresses silently. Needs a contract test that
   seeds the settings DB before app startup.
 
-## Test-harness + coverage gaps (2026-08-29, from the v1.79.38-.40 handoff)
+## Test-harness + coverage gaps (2026-08-29, worked 2026-08-30)
 
-These three are carried here so they outlive the `CURRENT.md` handoff block,
-which is rewritten every session. None blocks work.
+Carried here so they outlive the `CURRENT.md` handoff block, which is
+rewritten every session. Two of the three closed on 2026-08-30.
 
-- [ ] **Run `tests/e2e/suites/chat.mjs` green** (P2): the two rot causes are
-  FIXED in v1.79.41 -- the `body[data-page]` assertion (that attribute exists
-  nowhere in the frontend) now pins `aria-current="page"` on the nav link, and
-  the two `.preset-row button` clicks target `Save as new` rather than the
-  `Save` that v1.79.26 renamed. Every other selector and label in the suite
-  was audited and resolves. What is left is the live run: the suite spawns a
-  server and loads a model, so it was not run unprompted. Until someone runs
-  it, 46/46 is unclaimed and the suite is not a gate.
-- [ ] **The gguf smoke arm is UNCOVERED** (P2):
-  `Qwen3.8-Flash-Next-UD-Q5_K_XL` 500s at load with "llama-server exited with
-  code 1 -- output not captured". Diagnosing it requires raising
-  `observability_level` above `off` and RELOADING before the load attempt:
-  `llama_server_provider.py:271` decides capture at SPAWN. Until then the
-  gguf engine is unverified for the v1.79.38-.40 conformance work, which is a
-  Phase 4 release-standard gap, not a nice-to-have.
-- [ ] **`/v1/models` over-reports the `vision` capability** (P3, found
-  2026-08-29, NOT fixed): `Qwen3.5-0.8B-MLX-8bit-textonly` advertises
-  `vision`, and the provider then refuses images with a 400 saying the model
-  is text-only. `capabilities` derives from the checkpoint's own
-  `config.json`, so a hand-made text-only variant whose directory still
-  declares vision blocks over-reports. `docs/api_integration.md` warns
-  clients to expect it and the smoke row reports UNCOVERED naming the
-  contradiction, but the two surfaces still disagree.
+- [ ] **Rewrite `tests/e2e/suites/chat.mjs` around where chat state actually
+  lives** (P2): the suite was RUN on 2026-08-30 and is still 33/46, so the
+  v1.79.41 "the two selector rots were the whole static gap" claim is
+  refuted. The real cause is architectural: `tests/e2e/lib/browser.mjs` seeds
+  sampler settings into `localStorage` and expects the chat settings panel to
+  reflect them, but since v1.65-66 chat hydrates that panel from the DOCUMENT
+  (`hydrateDocParams` -> `applySettings(doc.params)`), so selecting a
+  conversation overwrites the seed before the first assertion. The preset and
+  system-prompt checks rest on the same stale model. This is a rewrite, not a
+  patch; until it lands the suite is not a gate. The app is NOT implicated --
+  `bun run e2e:render` drives the same real `/v3` page at 102/102 including
+  its uncaught-page-error check.
+- [x] **The gguf smoke arm -- COVERED 2026-08-30, no code fix needed.** The
+  `llama-server exited with code 1` failure was the model's architecture
+  (`qwen4exp`); the canonical build has since been rebuilt from a checkout
+  that supports it. 30/30 on each of two models -- the conformance rows split
+  across them because no single served model has both audio and a thinking
+  block. The handoff's own diagnosis recipe (raise `observability_level`,
+  reload, then load) was confirmed to produce the missing log.
+- [x] **`/v1/models` over-reporting `vision` -- FIXED v1.79.43.** The
+  capability now derives through `effective_loader_for_config`, the same
+  resolver `MLXProvider.__init__` calls, so the advertised capability and the
+  provider's image guard cannot disagree. Fails open on an unreadable
+  `config.json`, inheriting the loader router's "only positive non-support
+  degrades" rule rather than inventing a second policy.
+
+## gguf chat templates (2026-08-30)
+
+- [ ] **Re-check the `reasoning_effort` 500 claim** (P3): CLAUDE.md states
+  Qwen3.8 accepts `xhigh|medium|low` and RAISES otherwise, surfacing as a 500
+  from llama-server. A consuming session measured all four of
+  `low|medium|high|xhigh` accepted on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` at
+  v1.79.42 with no 500 at any level. Either the claim is narrower than
+  stated or it varies by quant/template -- and it is now further confounded,
+  because v1.79.43 makes a sidecar `chat_template.jinja` win over the
+  embedded template, and that model has one. Establish which template each
+  measurement ran against BEFORE editing the claim; the two arms of this are
+  different templates, not different servers.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 

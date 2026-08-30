@@ -1,82 +1,76 @@
 # Current Work
 
-Last updated: 2026-08-29. v1.79.41 on the `frontend` branch.
+Last updated: 2026-08-30. v1.79.43 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
 | Suite | Result | When |
 |---|---|---|
-| unit + contract | 1708 passed | re-run at v1.79.41 |
-| `bun run e2e:render` (model-free) | 101/101 | re-run at v1.79.41 |
+| unit + contract | 1737 passed (1601 + 136) | re-run at v1.79.43 |
+| `bun run e2e:render` (model-free) | 102/102 | at v1.79.42 |
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
-| `tests/smoke/` gguf arm | UNCOVERED -- llama-server exits 1 for this build | at `a274682` |
-| `bun run e2e:chat` | 33/46, then repaired -- NOT re-run. See item 2 | red recorded at `0efc326` |
+| `tests/smoke/` gguf arm | **30/30 on each of two models** | re-run at v1.79.43 |
+| `bun run e2e:chat` | 33/46 -- RUN, still red. See item 2 | re-run at v1.79.43 |
 
-The two model-free suites were re-run at the end of the session; the four
-rows needing a live server carry the commit they were measured at, because
-nothing since has been able to move them without a server.
+The gguf and chat rows moved this session because both were finally run
+against a live server. The two MLX smoke arms still carry the commit they
+were measured at; nothing since has been able to move them without a server.
 
-HANDOFF (next session start here): three things are open; none blocks work.
+NOTE ON RUNNING THE SUITE LOCALLY: `tests/contract/` opens the real
+`data/conversations.duckdb` and DuckDB takes an exclusive lock, so every
+contract test errors in setup while any server is running against the default
+DB. That is not a regression -- run them with an isolated
+`HEYLOOK_DB_PATH`, which needs an unsandboxed invocation (an env-var prefix
+does not match the sandbox's `uv run` exemption).
+
+HANDOFF (next session start here): two things are open; neither blocks work.
 
 1. **`uv.lock` stays dirty on purpose -- OWNER RULED 2026-08-29, do not
    re-raise.** The working tree carries an uncommitted re-resolution
-   (mlx-vlm 0.6.16->0.6.17, transformers 5.15.1->5.16.1, tokenizers
-   0.22.2->0.23.1, huggingface-hub, pydantic) with no pyproject change. It
-   is deliberately left uncommitted and unreverted. Two things follow, both
-   worth knowing rather than acting on: `uv run` syncs from the working
-   tree, so local checks run against THOSE versions rather than the
-   committed lock -- a green suite here is evidence about the local
+   (mlx-vlm, transformers, tokenizers, huggingface-hub, pydantic) with no
+   pyproject change. It is deliberately left uncommitted and unreverted. Two
+   things follow, both worth knowing rather than acting on: `uv run` syncs
+   from the working tree, so local checks run against THOSE versions rather
+   than the committed lock -- a green suite here is evidence about the local
    resolution, not about what a clean checkout would install; and the file
    remains git-TRACKED (it must, `scripts/guard_stable_channel.sh` inspects
    its staged blob), so this is "leave the modification alone", never
    "gitignore it".
 
-2. **`tests/e2e/suites/chat.mjs` was rotted, is repaired, and has NOT been
-   re-run.** The 33/46 red of 2026-08-29 was the SUITE, not the app. Two
-   causes, both now fixed:
+2. **`bun run e2e:chat` is 33/46 and the v1.79.41 repair was not the fix.**
+   That release fixed two real selector rots and claimed they were "the whole
+   static gap". Running the suite showed otherwise. The deeper cause is
+   architectural rather than a selector: `tests/e2e/lib/browser.mjs` seeds
+   sampler settings into `localStorage` and expects the chat settings panel to
+   reflect them, but since v1.65-66 chat hydrates that panel from the
+   DOCUMENT (`hydrateDocParams` -> `applySettings(doc.params)`), so selecting
+   a conversation overwrites the seed before the first assertion runs. The
+   `seeded max_tokens` check fails with the document's value, and the preset
+   and system-prompt checks rest on the same stale model of where chat state
+   lives. This is a suite REWRITE, not a patch. Until it is done the suite is
+   not a gate, and the app is not implicated: the model-free render suite
+   drives the same real `/v3` page at 102/102 including its uncaught-page-
+   error check, and the generate-path rows pass server-side in smoke.
 
-   - It asserted `body[data-page]` (`chat.mjs:209`) and that attribute exists
-     nowhere in `apps/heylook-frontend-v3/`. `app.js`'s `navigate()` marks the
-     active route with `nav-item--active` + `aria-current="page"` on the nav
-     link; the check now pins that, which is load-bearing a11y rather than a
-     test-only hook.
-   - It clicked `.preset-row button` by the EXACT text `Save` (`:653`, `:726`
-     -- `handleByText` requires an exact trimmed match), and v1.79.26
-     (`850d9c0`) replaced that button with `Update` / `Save as new`. Both call
-     sites type a fresh name and assert the new preset appears, so `Save as
-     new` is the intended target. Every later preset check cascaded off this.
+**CLOSED THIS SESSION** (were items 2, 3 and the standing product defect):
 
-   Every other literal selector and clicked label in the suite was audited
-   against the current frontend and resolves, so those two were the whole
-   static gap.
-
-   **What is owed:** a live run. The suite spawns a server and loads a model,
-   which is against the standing testing-cost rule to do unprompted, so the
-   repair is static only -- 46/46 is not claimed and this is not a gate again
-   until someone runs it. Corroboration that the app itself is fine is
-   unchanged: the model-free render suite drives the SAME real `/v3` page at
-   101/101 including its uncaught-page-error check, and the one failing row
-   that touches the generate path (mid-stream disconnect persists the partial)
-   passes server-side in smoke on both MLX arms.
-
-3. **The gguf smoke arm is UNCOVERED and nobody knows why.**
-   `Qwen3.8-Flash-Next-UD-Q5_K_XL` returns 500 at load: "llama-server exited
-   with code 1 -- output not captured (file logging was off when this model
-   spawned)". Diagnosing it needs `observability_level` raised above `off`
-   and a reload BEFORE the load attempt, since the gguf provider decides
-   whether to capture llama-server output at SPAWN time. Until then the
-   whole gguf engine is unverified for the v1.79.38-40 conformance work.
-
-**One product defect found and NOT fixed** (recorded here because it
-undermines advice this repo gives integrators): `Qwen3.5-0.8B-MLX-8bit-textonly`
-advertises the `vision` capability on `/v1/models`, and the provider then
-refuses images with a 400 saying the model is text-only. `capabilities` is
-derived from the checkpoint's own `config.json`, so a hand-made variant whose
-directory still declares vision blocks over-reports. `docs/api_integration.md`
-now warns clients to expect it, and the smoke row reports UNCOVERED naming the
-contradiction -- but the underlying disagreement between the two surfaces is
-still there.
+- **The gguf smoke arm is covered and needed no code fix.** The recorded
+  failure was `llama-server exited with code 1`; the model's architecture is
+  `qwen4exp` and the canonical llama.cpp build has since been rebuilt from a
+  checkout that supports it. It now loads in seconds. Both conformance rows
+  are covered live, across TWO models because no single served model
+  exercises both: `google_gemma-4-E4B-it-qat-q4_0-gguf` covers audio and
+  reports the thinking block UNCOVERED (that model returned none),
+  `unsloth_Qwen3.8-27B-UD-Q8_K_XL` covers the thinking block and reports
+  audio UNCOVERED (no audio modality). The handoff's diagnosis recipe was
+  itself confirmed: raising `observability_level` above `off` produced the
+  llama-server log the failure message said was missing.
+- **`/v1/models` no longer over-reports `vision`.** The capability is derived
+  through `effective_loader_for_config` -- the same resolver `MLXProvider`
+  uses -- so the advertised capability and the provider's image guard agree
+  by construction. See the changelog for why the two-rules shape was the
+  actual defect.
 
 ## v1.79.41 -- the conformance work reviewed
 

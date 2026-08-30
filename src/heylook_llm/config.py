@@ -666,6 +666,29 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "arg": "--chat-template-file"},
     )
+    # Sidecar discovery (v1.79.43, owner ask). When `chat_template_path` is
+    # unset and the model file's OWN directory contains `chat_template.jinja`,
+    # that file is passed as --chat-template-file instead of falling through
+    # to the template embedded in the GGUF.
+    #
+    # Why on by default: the embedded template is whatever the QUANTIZER baked
+    # in, and this repo already documents publishers shipping materially
+    # different templates for identical weights. A `chat_template.jinja` sitting
+    # beside the weights is the publisher's (or the operator's) LATER, more
+    # legible answer -- it is the file you can read, diff and edit, which the
+    # embedded one is not.
+    #
+    # Why a field and not just "delete the file": a downloaded snapshot dir is
+    # not somewhere to have to vandalize to get the documented default back,
+    # and the embedded template is a legitimate choice -- see the class docstring
+    # on the two Qwen3.8 publishers. Set this False to keep the embedded one
+    # while leaving the sidecar on disk.
+    #
+    # Deliberately NOT named `chat_template_source`: that is the MLX-side field
+    # with a different vocabulary and a different resolution order, and it does
+    # not reach this provider. Two mechanisms, two names.
+    use_sidecar_chat_template: bool = Field(
+        default=True, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # sidecar drafter (e.g. gemma mtp-*.gguf). `-md`, not the `--model-draft`
     # alias: `arg` must be the spelling the provider ACTUALLY emits, so a UI or
     # a derived emitter reproduces the real command line rather than an

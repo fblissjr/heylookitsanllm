@@ -164,6 +164,49 @@ class LlamaServerProvider(BaseProvider):
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
+    @staticmethod
+    def _sidecar_chat_template(model_path: str) -> Optional[Path]:
+        """``chat_template.jinja`` sitting beside the .gguf, or None.
+
+        The GGUF's own embedded template is whatever the quantizer baked in,
+        and the same weights reach us from different publishers with different
+        templates (see GGUFModelConfig's docstring). A sidecar jinja next to
+        the weights is the readable, diffable answer, so it WINS over the
+        embedded one -- but never over an explicit ``chat_template_path``,
+        which is someone naming a file on purpose.
+
+        Probes only the model file's own directory: a split GGUF's shards all
+        live there, so this is the same folder either way. Returns None rather
+        than raising for every unreadable case -- discovery finding nothing is
+        the ordinary path, and must degrade to the embedded template exactly
+        as it did before this existed. That is also what keeps ``_build_args``
+        usable with paths that do not exist, which its drift test relies on.
+        """
+        try:
+            candidate = Path(model_path).expanduser().parent / "chat_template.jinja"
+            return candidate if candidate.is_file() else None
+        except (OSError, ValueError):
+            return None
+
+    def _resolve_chat_template(self) -> tuple[Optional[str], str]:
+        """The template file to spawn with, and a word for WHERE it came from.
+
+        Three outcomes, and the caller logs which one happened: a template is
+        the single biggest determinant of what the model actually sees, and
+        switching it silently -- which is what dropping a file into a model
+        directory now does -- is the kind of change that shows up later as
+        "the model got worse" with nothing to point at.
+        """
+        cfg = self.config
+        explicit = cfg.get("chat_template_path")
+        if explicit:
+            return str(Path(explicit).expanduser()), "configured"
+        if cfg.get("use_sidecar_chat_template", True):
+            sidecar = self._sidecar_chat_template(cfg.get("model_path", ""))
+            if sidecar is not None:
+                return str(sidecar), "sidecar"
+        return None, "embedded in the GGUF"
+
     def _build_args(self, binary: Path, port: int) -> list:
         cfg = self.config
         args = [
@@ -182,12 +225,14 @@ class LlamaServerProvider(BaseProvider):
         # Absent -> llama-server uses the template embedded in the GGUF, which
         # is whatever the quantizer baked in. See GGUFModelConfig's docstring
         # for why that is a real choice and not a formality.
-        if cfg.get("chat_template_path"):
-            # expanduser: `~` is an accepted spelling on this config surface
-            # (server_binary expands it), and llama-server gets argv directly
-            # with no shell, so an unexpanded `~` would reach it literally.
-            args += ["--chat-template-file",
-                     str(Path(cfg["chat_template_path"]).expanduser())]
+        # Absent config + no sidecar -> llama-server uses the embedded template.
+        # expanduser happens inside _resolve_chat_template: `~` is an accepted
+        # spelling on this config surface (server_binary expands it), and
+        # llama-server gets argv directly with no shell, so an unexpanded `~`
+        # would reach it literally.
+        template_arg, _ = self._resolve_chat_template()
+        if template_arg:
+            args += ["--chat-template-file", template_arg]
         if cfg.get("draft_model_path"):
             args += ["-md", cfg["draft_model_path"]]
         if cfg.get("spec_type"):
@@ -263,6 +308,17 @@ class LlamaServerProvider(BaseProvider):
                 f"{template}, which is not a readable file. Fix the path or "
                 f"remove the field to use the template embedded in the GGUF."
             )
+
+        # Say which template is in force, every spawn. A sidecar is discovered
+        # from the filesystem, so the answer can change without models.toml
+        # changing -- dropping a chat_template.jinja next to the weights is now
+        # enough to alter the prompt format. Unannounced, that is a behaviour
+        # change with no artifact naming it; this line is the artifact.
+        resolved_template, template_origin = self._resolve_chat_template()
+        logging.info(
+            f"[GGUF] {self.model_id}: chat template {template_origin}"
+            + (f" ({resolved_template})" if resolved_template else "")
+        )
 
         # Subprocess output honors the file-logging master switch: at
         # observability_level=off (the default) NOTHING is written under

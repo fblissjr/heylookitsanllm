@@ -14,10 +14,14 @@ Capabilities are deliberately narrower than ``modalities``: modalities are
 the author's DESCRIPTION of the checkpoint, capabilities are gated to what
 this server will serve it as. An MLX gemma declares an audio modality and
 never gets the audio capability, because MLX strips audio towers at load.
+The same gap is why the MLX vision capability is resolved through the loader
+router rather than read off the declaration -- see :func:`_mlx_serves_vision`.
 """
 
 from functools import lru_cache
 from pathlib import Path
+
+from heylook_llm.providers.common.loader_routing import effective_loader_for_config
 
 
 @lru_cache(maxsize=64)
@@ -63,6 +67,36 @@ def template_supports_reasoning_effort(model_path: str) -> bool:
         return False
 
 
+def _mlx_serves_vision(model_config) -> bool:
+    """Whether the MLX provider will actually ACCEPT an image for this model.
+
+    NOT the same question as "the checkpoint declares vision", and reporting
+    the declaration is what let two surfaces contradict each other: a
+    hand-made text-only variant whose directory still carries the vision
+    blocks (``Qwen3.5-0.8B-MLX-8bit-textonly``, found 2026-08-29) advertised
+    the capability on ``/v1/models``, and ``MLXProvider`` then refused the
+    image with a 400 naming the model text-only. A client that does exactly
+    what the API docs tell it to -- gate on ``capabilities`` -- got the
+    refusal anyway.
+
+    ``MLXProvider``'s guard reads ``is_vlm``, which IS
+    ``effective_loader == "mlx-vlm"``, so deriving the capability from the
+    same resolver makes the two agree BY CONSTRUCTION rather than by two
+    rules kept in step by hand. It also picks up the case nobody had
+    reported: an explicit ``loader = "mlx-lm"`` on a genuinely dual-capable
+    VLM refuses images too, and used to advertise them.
+
+    Inherits the router's fail-open direction deliberately -- an unreadable
+    ``config.json`` yields ``mlx-vlm`` and keeps the capability, so
+    uncertainty leaves a working VLM alone and only POSITIVE non-support
+    (mlx-vlm registers no loader for this ``model_type``) drops it.
+    """
+    config = model_config.config
+    resolved = (config.model_dump() if hasattr(config, "model_dump")
+                else dict(config) if isinstance(config, dict) else {})
+    return effective_loader_for_config(model_config.provider, resolved) == "mlx-vlm"
+
+
 def infer_model_capabilities(model_config) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
@@ -73,8 +107,9 @@ def infer_model_capabilities(model_config) -> list[str]:
     if provider == "mlx":
         capabilities.append("chat")
 
-        # Check for vision capability
-        if hasattr(config, "vision") and config.vision:
+        # Vision is what the LOADER ROUTER says, not what the checkpoint
+        # declares -- the provider's own image guard reads the same answer.
+        if _mlx_serves_vision(model_config):
             capabilities.append("vision")
 
         # Thinking capability is DERIVED: the enable_thinking default-on
