@@ -67,7 +67,7 @@ def template_supports_reasoning_effort(model_path: str) -> bool:
         return False
 
 
-def _mlx_serves_vision(model_config) -> bool:
+def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> bool:
     """Whether the MLX provider will actually ACCEPT an image for this model.
 
     NOT the same question as "the checkpoint declares vision", and reporting
@@ -91,13 +91,15 @@ def _mlx_serves_vision(model_config) -> bool:
     uncertainty leaves a working VLM alone and only POSITIVE non-support
     (mlx-vlm registers no loader for this ``model_type``) drops it.
     """
+    if effective_loader is not None:
+        return effective_loader == "mlx-vlm"
     config = model_config.config
     resolved = (config.model_dump() if hasattr(config, "model_dump")
                 else dict(config) if isinstance(config, dict) else {})
     return effective_loader_for_config(model_config.provider, resolved) == "mlx-vlm"
 
 
-def infer_model_capabilities(model_config) -> list[str]:
+def infer_model_capabilities(model_config, effective_loader: str | None = None) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
     provider = model_config.provider
@@ -109,7 +111,7 @@ def infer_model_capabilities(model_config) -> list[str]:
 
         # Vision is what the LOADER ROUTER says, not what the checkpoint
         # declares -- the provider's own image guard reads the same answer.
-        if _mlx_serves_vision(model_config):
+        if _mlx_serves_vision(model_config, effective_loader):
             capabilities.append("vision")
 
         # Thinking capability is DERIVED: the enable_thinking default-on
@@ -164,7 +166,7 @@ def infer_model_capabilities(model_config) -> list[str]:
     return capabilities
 
 
-def effective_capabilities(model_config) -> list[str]:
+def effective_capabilities(model_config, effective_loader: str | None = None) -> list[str]:
     """The capabilities to REPORT for a model.
 
     An explicit ``ModelConfig.capabilities`` list is an override and
@@ -173,4 +175,4 @@ def effective_capabilities(model_config) -> list[str]:
     """
     if model_config.capabilities:
         return model_config.capabilities
-    return infer_model_capabilities(model_config)
+    return infer_model_capabilities(model_config, effective_loader)

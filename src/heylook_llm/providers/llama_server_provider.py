@@ -29,6 +29,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -164,6 +165,52 @@ class LlamaServerProvider(BaseProvider):
             s.bind(("127.0.0.1", 0))
             return s.getsockname()[1]
 
+    # A template that handles media has to BRANCH on a content part's type,
+    # and that structure is the same across families even though the tokens
+    # emitted are not. This is the primary test precisely because a token list
+    # is vocabulary-bound and this is not: measured 2026-08-30 across the three
+    # sidecars served here, Qwen3.8 emits `<|vision_start|><|image_pad|>` and
+    # Muse-Glimmer emits `<|patch|>`, sharing NO tokens -- while both spell the
+    # branch `part['type'] == 'image'`. A token allowlist scores the second one
+    # as media-blind, which is the exact false refusal this shape avoids.
+    _MEDIA_BRANCH = re.compile(
+        r"""==\s*['"](image|image_url|video|audio|input_audio)['"]""", re.I)
+
+    # Secondary: templates that emit a media token unconditionally rather than
+    # behind a type test (gemma's `<start_of_image>` sits inline). Kept as an
+    # OR so a family using neither spelling is the only miss.
+    _MEDIA_MARKERS = (
+        "vision_start", "image_pad", "video_pad", "audio_pad", "__media__",
+        "start_of_image", "start_of_audio", "image_soft_token",
+        "<image>", "<img", "<audio>", "<|image", "<|audio", "<|video",
+        "<|patch",
+    )
+
+    @classmethod
+    def _template_handles_media(cls, text: str) -> bool:
+        """Whether a jinja template does anything with non-text content parts.
+
+        Failure direction is deliberate and asymmetric: an unrecognised
+        template reads as media-blind, which costs the sidecar its promotion
+        and leaves the pre-1.79.43 behaviour (the embedded template) in force.
+        A false refusal is a cosmetic loss; a false acceptance loads a vision
+        tower and then renders prompts that can never reference an image,
+        which nothing downstream flags and which surfaces only as a model
+        confidently answering about a picture it never received.
+        """
+        return bool(cls._MEDIA_BRANCH.search(text)) or any(
+            marker in text.lower() for marker in cls._MEDIA_MARKERS)
+
+    def _is_media_served(self) -> bool:
+        """Whether THIS entry is served with a projector attached.
+
+        `mmproj_path` is the operative half -- it is what makes llama-server
+        load a vision tower -- and `modalities` is checked too so an entry
+        declaring vision without a projector still gets the guard.
+        """
+        cfg = self.config
+        return bool(cfg.get("mmproj_path")) or "vision" in (cfg.get("modalities") or [])
+
     @staticmethod
     def _sidecar_chat_template(model_path: str) -> Optional[Path]:
         """``chat_template.jinja`` sitting beside the .gguf, or None.
@@ -188,26 +235,91 @@ class LlamaServerProvider(BaseProvider):
         except (OSError, ValueError):
             return None
 
-    def _resolve_chat_template(self) -> tuple[Optional[str], str]:
-        """The template file to spawn with, and a word for WHERE it came from.
+    @staticmethod
+    def _sidecar_default() -> bool:
+        """The `use_sidecar_chat_template` default, READ OFF THE FIELD.
 
-        Three outcomes, and the caller logs which one happened: a template is
-        the single biggest determinant of what the model actually sees, and
-        switching it silently -- which is what dropping a file into a model
-        directory now does -- is the kind of change that shows up later as
-        "the model got worse" with nothing to point at.
+        Not hand-copied as a literal here: production passes a validated
+        `model_dump()` so the key is always present, but the provider also
+        accepts RAW dicts (the argv/metadata drift test builds one directly,
+        and the unit tests do too), and those hit this fallback. A copied
+        `True` would mean flipping the field's default left every raw-dict
+        caller on the old behaviour, with the suite green while the shipped
+        default and the enforced default disagreed.
+        """
+        from ..config import GGUFModelConfig
+        return bool(GGUFModelConfig.model_fields["use_sidecar_chat_template"].default)
+
+    def _resolve_chat_template(self) -> tuple[Optional[str], str]:
+        """The template file to spawn with, and a phrase for WHERE it came from.
+
+        The caller logs the phrase: a template is the single biggest
+        determinant of what the model actually sees, and switching it silently
+        -- which is what dropping a file into a model directory now does -- is
+        the kind of change that shows up later as "the model got worse" with
+        nothing to point at.
+
+        A sidecar does NOT win when taking it would cost the model a modality
+        it is being served with. Found live 2026-08-30: all three sidecar-
+        carrying gguf models here are multimodal, and one of them ships a
+        sidecar with no media markers at all -- so the unguarded rule would
+        have loaded that model's projector and then rendered its prompts
+        through a template that can never reference an image. A silently
+        text-only vision model is a worse outcome than an unfashionable
+        template, so the guard resolves that collision toward the embedded one
+        and says so loudly.
         """
         cfg = self.config
         explicit = cfg.get("chat_template_path")
         if explicit:
             return str(Path(explicit).expanduser()), "configured"
-        if cfg.get("use_sidecar_chat_template", True):
-            sidecar = self._sidecar_chat_template(cfg.get("model_path", ""))
-            if sidecar is not None:
-                return str(sidecar), "sidecar"
-        return None, "embedded in the GGUF"
 
-    def _build_args(self, binary: Path, port: int) -> list:
+        use_sidecar = cfg.get("use_sidecar_chat_template")
+        if use_sidecar is None:
+            use_sidecar = self._sidecar_default()
+        if not use_sidecar:
+            return None, "embedded in the GGUF"
+
+        sidecar = self._sidecar_chat_template(cfg.get("model_path", ""))
+        if sidecar is None:
+            return None, "embedded in the GGUF"
+
+        if self._is_media_served():
+            try:
+                text = sidecar.read_text(errors="replace")
+            except OSError:
+                # Unreadable at the moment of the check: same conservative
+                # direction as an unrecognised marker -- decline the promotion
+                # rather than spawn against a file we could not inspect.
+                text = ""
+            if not self._template_handles_media(text):
+                logging.warning(
+                    f"[GGUF] {self.model_id}: IGNORING the sidecar chat template "
+                    f"{sidecar} -- this model is served with a projector "
+                    f"(mmproj/vision) and that template contains no media "
+                    f"markers, so using it would load the vision tower and then "
+                    f"render prompts that can never reference an image. Using "
+                    f"the GGUF's embedded template instead. Set "
+                    f"chat_template_path explicitly to override this refusal."
+                )
+                return None, "embedded in the GGUF (sidecar skipped: no media handling)"
+
+        return str(sidecar), "sidecar"
+
+    def _build_args(self, binary: Path, port: int,
+                    chat_template: Optional[str] = None,
+                    template_resolved: bool = False) -> list:
+        """Build the spawn argv.
+
+        ``chat_template``/``template_resolved`` let ``load_model`` resolve the
+        template ONCE and hand the answer down. Without that, argv and the
+        spawn log each probed the filesystem ~85 lines apart, so a sidecar
+        created or removed between the two calls made the log describe a
+        command line that was never issued -- and the log is the only record,
+        since llama-server's own stdout goes to DEVNULL at the default
+        observability level. Callers that pass nothing (the argv/metadata
+        drift test) still resolve inline.
+        """
         cfg = self.config
         args = [
             str(binary),
@@ -230,7 +342,8 @@ class LlamaServerProvider(BaseProvider):
         # spelling on this config surface (server_binary expands it), and
         # llama-server gets argv directly with no shell, so an unexpanded `~`
         # would reach it literally.
-        template_arg, _ = self._resolve_chat_template()
+        template_arg = (chat_template if template_resolved
+                        else self._resolve_chat_template()[0])
         if template_arg:
             args += ["--chat-template-file", template_arg]
         if cfg.get("draft_model_path"):
@@ -291,7 +404,9 @@ class LlamaServerProvider(BaseProvider):
         binary = self._resolve_binary()
         host = self.config.get("host", "127.0.0.1")
         port = int(self.config.get("port") or 0) or self._free_port()
-        args = self._build_args(binary, port)
+        # ONE resolution for both argv and the log below.
+        resolved_template, template_origin = self._resolve_chat_template()
+        args = self._build_args(binary, port, resolved_template, True)
 
         # Pre-flight the chat template override HERE, not in _build_args (which
         # stays pure -- it is exercised by the argv/metadata drift test with
@@ -305,8 +420,11 @@ class LlamaServerProvider(BaseProvider):
         if template and not Path(template).expanduser().is_file():
             raise FileNotFoundError(
                 f"[GGUF] {self.model_id}: chat_template_path points at "
-                f"{template}, which is not a readable file. Fix the path or "
-                f"remove the field to use the template embedded in the GGUF."
+                f"{template}, which is not a readable file. Fix the path, "
+                f"or remove the field to fall back to the normal resolution "
+                f"(a chat_template.jinja beside the .gguf if there is one, "
+                f"else the template embedded in the GGUF) -- removing it no "
+                f"longer means the embedded template unconditionally."
             )
 
         # Say which template is in force, every spawn. A sidecar is discovered
@@ -314,7 +432,6 @@ class LlamaServerProvider(BaseProvider):
         # changing -- dropping a chat_template.jinja next to the weights is now
         # enough to alter the prompt format. Unannounced, that is a behaviour
         # change with no artifact naming it; this line is the artifact.
-        resolved_template, template_origin = self._resolve_chat_template()
         logging.info(
             f"[GGUF] {self.model_id}: chat template {template_origin}"
             + (f" ({resolved_template})" if resolved_template else "")

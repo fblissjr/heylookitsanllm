@@ -22,7 +22,14 @@ Usage::
     uv run python scripts/ram_report.py --model <id> --quiet --headroom 8
 
 ``--quiet`` prints one line and exits 1 when the model does not fit, which is
-the form ``dev_server.sh`` consumes.
+the form ``dev_server.sh`` consumes. It exits 2 with nothing on stdout when
+the model could not be sized at all -- an unknown id, or files that no longer
+read. That is a bad ``--model``, not a memory refusal, and the two must stay
+distinguishable to the caller.
+
+``--model`` resolves through the SERVER's registry merge, not models.toml
+alone: models.toml is override-only, so most served models are never written
+into it.
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ from typing import Optional
 # Make the package importable when run as a plain script from the repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from heylook_llm.model_registry import discover, merge_discovered  # noqa: E402
 from heylook_llm.ram_fit import (  # noqa: E402
     GB,
     FitReport,
@@ -90,11 +98,27 @@ def top_holders(limit: int = 12) -> list[tuple[str, float, int]]:
 # ---------------------------------------------------------------------------
 
 def load_model_config(model_id: str, models_toml: Path) -> Optional[dict]:
+    """Resolve an id the way the SERVER resolves it, not the way models.toml reads.
+
+    models.toml is OVERRIDE-ONLY (``model_registry``): every model under
+    ``[scan].folders`` is served with derived defaults and is never written
+    down. A models.toml-only lookup is therefore blind to most of what is
+    servable -- which is how sizing a discovered model made the dev_server
+    pre-flight refuse to start with "not in models.toml" for a model the
+    server happily serves.
+
+    Same merge, same precedence (explicit entries win, discovery can only
+    add) as ``ModelRouter._load_config``, reused rather than restated, so
+    this script and the server cannot disagree about which config an id
+    names. It costs a folder scan on every ``--model`` call; that is seconds
+    against the multi-minute load this pre-flight gates.
+    """
     try:
         doc = tomllib.loads(models_toml.read_text())
     except OSError:
         return None
-    for entry in doc.get("models", []):
+    merged = merge_discovered(doc, discover(doc))
+    for entry in merged.get("models", []):
         if entry.get("id") == model_id:
             return entry.get("config", {})
     return None
@@ -132,6 +156,21 @@ def config_from_path(path: Path) -> dict:
 # Rendering (the CLI face of ram_fit's structured report)
 # ---------------------------------------------------------------------------
 
+def unsizeable_reason(report: FitReport) -> Optional[str]:
+    """Why this report is a non-answer rather than a verdict, or None.
+
+    A model that sizes to zero was not measured -- a dead path, an unmounted
+    volume, a shard set that no longer reads. Zero GiB clears every ceiling,
+    so without this check the gate that exists to refuse a load waves the
+    unreadable case through as OK (verified: a `[[models]]` entry pointing at
+    a nonexistent .gguf printed "RAM pre-flight OK ~0 GiB" and exited 0).
+    Fail closed: unsizeable is a bad --model, never a pass.
+    """
+    if report.weights_gb > 0:
+        return None
+    return "; ".join(report.sizing_notes) or "no weight files found"
+
+
 def render_fit(report: FitReport) -> list[str]:
     lines: list[str] = []
     for line in report.lines:
@@ -166,7 +205,8 @@ def render_fit(report: FitReport) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--model", help="models.toml entry id to size")
+    ap.add_argument("--model", help="served model id to size (a models.toml "
+                                    "entry, or one discovered under [scan].folders)")
     ap.add_argument("--path", type=Path, help="model dir or .gguf to size (need not be imported)")
     ap.add_argument("--headroom", type=float, default=8.0,
                     help="GiB to leave for KV cache + compute buffers (default: 8)")
@@ -181,7 +221,11 @@ def main() -> int:
     if args.model:
         config = load_model_config(args.model, args.models_toml)
         if config is None:
-            print(f"model '{args.model}' not found in {args.models_toml}", file=sys.stderr)
+            print(
+                f"model '{args.model}' is not served: no {args.models_toml} "
+                f"entry and nothing under [scan].folders derives that id",
+                file=sys.stderr,
+            )
             return 2
         label = args.model
     elif args.path:
@@ -196,6 +240,12 @@ def main() -> int:
             print(f"{usable_gb():.0f} GiB reclaimable")
             return 0
         report = fit_for_config(config, args.headroom)
+        # Reason on stderr, stdout left EMPTY, exit 2 -- the same shape an
+        # unknown id uses, because dev_server.sh reads empty stdout as "bad
+        # --model" and anything else as a memory refusal. This is the former.
+        if (why := unsizeable_reason(report)) is not None:
+            print(f"could not size model '{label}': {why}", file=sys.stderr)
+            return 2
         verdict = "OK" if report.fits else "FAILED"
         print(
             f"RAM pre-flight {verdict}: {label} ~{report.weights_gb:.0f} GiB "
@@ -238,6 +288,9 @@ def main() -> int:
         print(f"  headroom requested   {args.headroom:6.1f} GiB")
         for line in render_fit(report):
             print(line)
+        if (why := unsizeable_reason(report)) is not None:
+            print(f"\n  => CANNOT SIZE ({why}) -- no verdict, not a pass")
+            return 2
         print(f"\n  => {'FITS' if report.fits else 'DOES NOT FIT'}")
         return 0 if report.fits else 1
     return 0

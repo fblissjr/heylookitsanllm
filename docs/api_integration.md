@@ -43,13 +43,21 @@ narrower — an MLX model may declare an audio modality and never get the
 audio capability, because MLX strips audio towers at load. **Gate your
 feature flags on `capabilities`, never on `modalities`.**
 
-**But `capabilities` can over-report, so handle the refusal too.** It is
-derived from the checkpoint's own `config.json`, which the server reads and
-the model directory owns — while the refusal is decided by the model **as
-loaded**, so the two can disagree. A hand-made variant whose directory still
-declares vision blocks will advertise `vision` and then be refused at
-generation time — observed live on 2026-08-29 against a model whose id ends
-`-textonly`.
+**Handle the refusal anyway, even though the known over-report is fixed.**
+Until v1.79.43 the MLX `vision` capability was derived from the checkpoint's
+own `config.json` while the refusal was decided by the model **as loaded**, so
+the two could disagree: a hand-made variant whose directory still declared
+vision blocks advertised `vision` and was then refused — observed live on
+2026-08-29 against a model whose id ends `-textonly`. Since v1.79.43 both
+answers come from one resolver and cannot diverge for MLX.
+
+That is a reason to relax, not to stop handling it. The guarantee covers the
+MLX path only — a gguf model's request is forwarded to `llama-server`, which
+decides for itself — and an explicit `capabilities` override in `models.toml`
+is honoured verbatim, so an operator can still assert something the server
+will not deliver. A client that gates on `capabilities` **and** handles a 400
+is correct on every version; one that gates alone is correct only on
+new servers, on MLX, and only where nobody hand-wrote an override.
 
 **That refusal has two shapes, and gating alone will not catch the second.**
 Non-streaming it is a **400**. Streaming, the provider guard fires at the

@@ -90,24 +90,28 @@ they imply is theirs, not a decision here.
   non-streaming deliberately -- a late refusal arrives in-band as an `error`
   event after headers flush, which a naive reader renders as model output --
   so "just stream" is not a neutral answer for them.
-- [ ] **Constrained decoding (`response_format` / grammar)** (P3, large --
-  and DO NOT size it on the original numbers): there is no server-side way to
-  constrain output shape, so clients append a JSON Schema to the system prompt
-  and parse defensively. The first report cited 2 of 5 runs producing
-  malformed or invented-reference output. **The reporter has since withdrawn
-  most of that**: a chunk of it was an unstated PRECONDITION in their own
-  prompt -- with no reference slots attached the prompt said nothing about
-  references, and the model filled the silence by inventing a citation. Stating
-  the absence took three hard failures to zero. So the headline number was
-  measuring a prompt bug, not a missing server feature, and anyone sizing this
-  work on it would be sizing on a retracted figure.
-  The residual case is narrower and still real, in the reporter's own framing:
-  a grammar makes shape errors UNREPRESENTABLE where a prompt fix makes them
-  less frequent, and on an intermittent failure that difference is whether you
-  can tell the two apart. gguf is the cheap half (llama-server already takes
-  `json_schema` / `grammar` on its completion endpoint); MLX needs logit
-  masking and is a real build. Would want a per-model capability so clients can
-  gate and keep the prompt-trailer fallback.
+- [x] **Constrained decoding -- DECIDED AGAINST 2026-08-30, do not re-raise.**
+  OWNER RULING: grammar-constrained decoding makes output quality worse in
+  general, so this is not a feature this server wants -- not "not yet", and
+  not a sizing question. Recorded as a decision rather than deleted, because
+  it arrived with numbers attached and will otherwise be re-proposed by the
+  next person who reads them.
+  The reporter INDEPENDENTLY WITHDREW it the same day, and their reasoning is
+  the part worth keeping: they had framed it as "shape errors become
+  unrepresentable", which treats schema conformance as the only axis, and
+  their own app's first invariant is descriptive prose quality. In their
+  words, they "optimised for the checkable one because it was the one I had
+  numbers for". They also retracted the evidence: the shape-failure table is
+  still accurate as data but most of it was fixed prompt-side (an unstated
+  precondition -- with no reference slots attached their prompt said nothing
+  about references and the model invented a citation), so it was never demand
+  for a grammar feature.
+  The only residual either side would entertain, and NOBODY is asking for it:
+  an opt-in per-request, per-model-capability form, so a caller could pick
+  shape-safety for a job where prose quality is irrelevant (extraction,
+  classification) while leaving ordinary generation unconstrained. That is a
+  different, smaller feature and would have to earn its own case -- not
+  inherit this one's.
 - [ ] **`requests_active` is null for gguf, so no client can tell busy from
   idle** (P3): `GET /v1/admin/models/{id}/status` reports the MLX-side
   generation gate, and llama-server queues its own requests, so the field is
@@ -115,6 +119,48 @@ they imply is theirs, not a decision here.
   client fell back to timing a trivial generation -- which queues, so the
   probe changes what it measures. Exposing queue depth somewhere honest would
   close it.
+
+## Sidecar-template follow-ups (2026-08-30 code review, v1.79.43)
+
+Acted-on findings are in the changelog. These three were judged real and left
+open; each names what would settle it.
+
+- [ ] **A sidecar swap is invisible to `stale_reload_fields`** (P2): that
+  field is the repo's own "saved value differs from what the running process
+  has" truth, and it derives from models.toml. A `chat_template.jinja`
+  created, edited or deleted next to a loaded model's weights changes what a
+  respawn would use while models.toml is untouched, so the Models page shows
+  the model fully in sync. The spawn log says what you GOT; nothing says what
+  is running has gone stale. Done when a template file's mtime/presence feeds
+  the staleness answer, or the limitation is recorded as accepted with a
+  reason.
+- [ ] **Re-measure the Qwen3.8-27B template facts** (P3): CLAUDE.md records,
+  as live-measured, that ggml-org embeds the official template at 8952 bytes
+  and unsloth a patched 9993, and that the difference decides whether two
+  leading system messages render or 500. That entry's sidecar is 9708 bytes --
+  a THIRD template -- so as of v1.79.43 the entry no longer runs the template
+  that prose describes. Done when the two-leading-system-messages probe is
+  re-run against the sidecar and CLAUDE.md either confirms or splits the
+  claim. Note this compounds the `reasoning_effort` re-check above: both are
+  template-dependent and the default flip moved the variable underneath them.
+- [ ] **`_build_args` reaches the filesystem now** (P3): it is documented as
+  pure and exercised by `tests/unit/test_gguf_argv_matches_metadata.py` with
+  paths that do not exist. Sidecar discovery probes the model file's parent,
+  and that test uses `model_path="/tmp/model.gguf"` -- so a
+  world-writable `/tmp/chat_template.jinja` would make every parametrized
+  case emit a spurious `--chat-template-file`. Nothing creates that file
+  today. Done when the drift test builds under a tmp_path it owns, or
+  `_build_args` takes the template as a required argument so it cannot probe.
+- [ ] **"Fails open" is overstated for the vision capability** (P3): the
+  guarantee is that only POSITIVE non-support drops `vision`, but
+  `mlx_vlm_supports` returns a clean False when mlx-vlm is merely absent or
+  broken -- so an install condition reads as a model property and every
+  `loader=auto` VLM loses the capability at once, with one INFO line per
+  model_type as the only signal. Sharpened by the uncommitted uv.lock already
+  bumping mlx-vlm, which makes `uv lock --upgrade` a thing that can change
+  which models advertise vision. Done when an import failure is
+  distinguished from an unregistered model_type, or the docs stop claiming
+  the stronger guarantee.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 

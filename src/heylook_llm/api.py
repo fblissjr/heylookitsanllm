@@ -37,6 +37,7 @@ from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
 from heylook_llm.samplers import SamplerNotFound
 from heylook_llm.capabilities import effective_capabilities
+from heylook_llm.request_registry import resolve_request_id, track_request, tracked_stream
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     parse_reasoning,
@@ -180,6 +181,10 @@ app = FastAPI(
             "description": "Anthropic Messages-style endpoint: top-level system prompt, typed content blocks, block-structured SSE. The wire this project's own frontend speaks."
         },
         {
+            "name": "Requests",
+            "description": "Cancel an in-flight generation by the X-Request-ID the client sent -- the only way to stop a NON-streaming run, which writes nothing until it finishes and so never notices an abandoned client"
+        },
+        {
             "name": "RLM",
             "description": "Recursive Language Model inference -- iterative code-driven exploration of long contexts"
         },
@@ -231,6 +236,11 @@ app.add_middleware(
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
+
+# Request cancellation (top-level resource: the conversation-scoped
+# DELETE /v1/conversations/{id}/generate cannot name a plain /v1/messages call)
+from heylook_llm.requests_api import requests_router
+app.include_router(requests_router)
 
 # Import and include RLM router
 from heylook_llm.rlm import rlm_router
@@ -413,8 +423,17 @@ List all language models currently available on this server.
     response_description="List of available models in OpenAI-compatible format",
     tags=["OpenAI API"]
 )
-async def list_models(request: Request):
-    """Get the list of available models in OpenAI format with capabilities."""
+def list_models(request: Request):
+    """Get the list of available models in OpenAI format with capabilities.
+
+    Plain ``def`` (FastAPI threadpool), NOT ``async def``: deriving
+    capabilities reads each model dir's ``config.json`` -- the template probes
+    have always done so, and since v1.79.43 the vision capability resolves
+    through the loader router, which stats the dir too. That is the same
+    per-row filesystem cost that moved the two admin read routes off the event
+    loop; the reads are mtime/lru cached and cheap on a warm local disk, and
+    unbounded on a slow or network-mounted one.
+    """
     router = request.app.state.router_instance
     models_data = []
 
@@ -610,8 +629,12 @@ Generate text completions from chat messages using the specified model.
 )
 async def create_chat_completion(request: Request, chat_request: ChatRequest):
     router = request.app.state.router_instance
-    # Use client-provided request ID or generate one
-    request_id = request.headers.get("x-request-id") or f"req-{uuid.uuid4()}"
+    # Client-provided request ID, else generated. Through the shared resolver
+    # so this endpoint and /v1/messages agree on what a request id may contain
+    # -- the id reaches logs and telemetry, and is the handle
+    # DELETE /v1/requests/{id} cancels by.
+    request_id = resolve_request_id(
+        request.headers.get("x-request-id"), prefix="req")
 
     request_start_time = time.time()
 
@@ -832,12 +855,18 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event),
+            tracked_stream(
+                stream_response_generator_async(generator, chat_request, router, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event),
+                request_id, abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
         )
     else:
-        result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
+        # Registered for the whole blocking consume: this is the path with no
+        # bytes on the wire until it finishes, so an explicit cancel is the
+        # only way to stop it.
+        with track_request(request_id, abort_event):
+            result = await non_stream_response(generator, chat_request, router, request_id, request_start_time, provider=provider, perf_ctx=perf_ctx)
         diag_event("generation_complete", request_id=request_id,
                    total_ms=round((time.time() - request_start_time) * 1000, 1))
         response_headers = {"X-Request-ID": request_id}

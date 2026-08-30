@@ -24,6 +24,7 @@ from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.busy_response import model_busy_response
 from heylook_llm.optimizations import fast_json as json
+from heylook_llm.request_registry import resolve_request_id, track_request, tracked_stream
 from heylook_llm.router import ModelNotFound
 from heylook_llm.schema.converters import (
     from_openai_response_dict,
@@ -282,7 +283,12 @@ content_block_delta, content_block_stop, message_delta, message_stop).
 )
 async def create_message(request: Request, msg_request: MessageCreateRequest):
     router = request.app.state.router_instance
-    request_id = f"msg-{uuid.uuid4()}"
+    # Honour the client's X-Request-ID. This endpoint used to always generate
+    # its own, which meant the id a client sends -- and which the docs tell it
+    # to send -- named nothing the server could find. DELETE /v1/requests/{id}
+    # cancels by exactly this value, so a rewritten id would be uncancellable.
+    request_id = resolve_request_id(
+        request.headers.get("x-request-id"), prefix="msg")
     request_start_time = time.time()
 
     # Convert to internal ChatRequest
@@ -353,17 +359,29 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         chat_request, provider, request_id, streaming=msg_request.stream)
 
     if msg_request.stream:
+        # Tracking lives INSIDE the async generator, not here: the response
+        # body outlives this function, so a `with` block around the return
+        # would unregister before a single token was produced.
         return StreamingResponse(
-            _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), logprobs_collector=logprobs_collector),
+            tracked_stream(
+                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), logprobs_collector=logprobs_collector),
+                request_id, abort_event),
             media_type="text/event-stream",
+            headers={"X-Request-ID": request_id},
         )
     else:
-        return await _non_stream_messages(
-            generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
-            provider=provider, thinking_enabled=thinking_enabled,
-            continuing=chat_request.is_continuation(),
-            logprobs_collector=logprobs_collector,
-        )
+        # The case this exists for. Nothing is written to the connection until
+        # the generation finishes, so an abandoned client is undetectable and
+        # the run continues; registering the abort signal under the client's
+        # own id is what makes it nameable from another connection.
+        with track_request(request_id, abort_event):
+            return await _non_stream_messages(
+                generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
+                provider=provider, thinking_enabled=thinking_enabled,
+                continuing=chat_request.is_continuation(),
+                logprobs_collector=logprobs_collector,
+                abort_event=abort_event,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +398,7 @@ async def _non_stream_messages(
     thinking_enabled: bool = False,
     continuing: bool = False,
     logprobs_collector=None,
+    abort_event=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
@@ -433,6 +452,19 @@ async def _non_stream_messages(
     # mlx-lm's own reason: "length" (budget exhausted) must not read as "stop"
     # -- from_openai_response_dict maps it to the Messages stop_reason.
     finish_reason = telemetry.finish_reason or "stop"
+    # A CANCELLED run must not claim the model finished its turn. Without this
+    # the generator simply ends early and `stop_reason` falls through to
+    # `end_turn`, which positively asserts completion -- the precise defect
+    # v1.79.40 fixed on the conversation-generate route, reappearing here the
+    # moment this path became cancellable (v1.79.44). Same value for the same
+    # reason: Anthropic has no cancellation stop reason, because cancellation
+    # there is a dropped connection rather than an end state, so `max_tokens`
+    # is the closest spec-defined "stopped early, and not by the model's own
+    # choice". Set through `finish_reason` rather than by assigning
+    # `stop_reason` directly, so it still goes through the ONE mapper
+    # `TestStopReasonHasOneMapper` exists to keep as the only writer.
+    if abort_event is not None and abort_event.is_set():
+        finish_reason = "length"
     message: dict = {"role": "assistant", "content": content_text}
     if thinking is not None:
         message["thinking"] = thinking
@@ -610,6 +642,18 @@ async def _stream_messages(
             "error": {"type": "api_error", "message": str(e)},
         })
         return
+
+    # Same rule as the non-streaming path above and as
+    # conversation_generate_api: a cancelled stream must not report the
+    # model's own end. An aborted run stops between tokens, so the last chunk
+    # carries no finish_reason and `stop_reason` would stay at its `end_turn`
+    # default -- a consumer keying on the shared Messages grammar could not
+    # tell a cancelled turn from a completed one. Only overridden when the
+    # provider said nothing: a real `length`/`stop_sequence` from the engine
+    # is a more specific truth and keeps priority.
+    if (abort_event is not None and abort_event.is_set()
+            and translator.stop_reason == "end_turn"):
+        translator.stop_reason = "max_tokens"
 
     # Flush parser
     for event_str in translator.flush():

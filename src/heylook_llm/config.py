@@ -625,10 +625,16 @@ class GGUFModelConfig(BaseModel):
     -- the provider surfaces pre-split thinking via GenerationChunk.thinking
     and reports template_info() = None.
 
-    Chat templating defaults to the jinja EMBEDDED IN THE GGUF, which means
-    whoever quantized the file chose the prompt format, and publishers ship
-    materially different templates for the same weights. ``chat_template_path``
-    is the override, so picking a quant no longer silently picks a format.
+    Chat templating resolves as a THREE-WAY LADDER (v1.79.43):
+    ``chat_template_path`` (an explicit file) beats a ``chat_template.jinja``
+    discovered beside the .gguf, which beats the jinja EMBEDDED IN THE GGUF.
+    The embedded one means whoever quantized the file chose the prompt format,
+    and publishers ship materially different templates for the same weights --
+    which is why a readable sidecar wins by default, and why
+    ``use_sidecar_chat_template = false`` exists for the case where the
+    embedded template is the one you want. NB picking a quant can still
+    silently pick a format: now it is the quant's snapshot DIRECTORY that
+    does it, if one ships a sidecar. Every spawn logs which rung won.
 
     Measured on Qwen3.8-27B (live, both templates, 2026-08-17): ggml-org
     embeds Qwen's official template byte-identically (8952 bytes); unsloth

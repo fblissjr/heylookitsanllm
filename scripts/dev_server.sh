@@ -135,9 +135,12 @@ case "$CMD" in
       echo "$PREFLIGHT"
     else
       case "$PREFLIGHT" in
-        # A model missing from models.toml exits 2 with no verdict line; that
-        # is a bad --model, not a memory refusal, so say which it was.
-        "") echo "RAM pre-flight: could not size model '$MODEL' (not in models.toml?). Not starting." >&2 ;;
+        # A model that could not be SIZED exits 2 with no verdict line; that
+        # is a bad --model, not a memory refusal, so say which it was. The id
+        # is resolved through the server's own registry merge, so "unknown"
+        # means neither a models.toml entry NOR discovered under
+        # [scan].folders -- models.toml alone was never the right question.
+        "") echo "RAM pre-flight: could not size model '$MODEL' (unknown id, or its files no longer read -- reason above). Not starting." >&2 ;;
         *)  echo "$PREFLIGHT (another server/agent may hold a model). Not starting." >&2 ;;
       esac
       echo "  run: uv run python scripts/ram_report.py --model $MODEL   # for the full breakdown" >&2

@@ -542,18 +542,25 @@ def conformance_checks(server, r, arm, model_id, caps):
         st, body = _messages_probe(server, model_id, nested)
         detail = str((body or {}).get("detail") if isinstance(body, dict) else body)
         if st == 400 and "text-only" in detail:
-            # The row asks whether the SPELLING is accepted. A 400 saying the
-            # model cannot take images is a different answer, and it means
-            # `capabilities` over-reported: it is derived from the checkpoint's
-            # own config.json, so a hand-made text-only variant whose directory
-            # still declares vision blocks advertises a capability the provider
-            # then refuses. Report UNCOVERED rather than red -- the spelling was
-            # never exercised -- and name the contradiction, because clients are
-            # told to gate on `capabilities`.
+            # The row asks whether the SPELLING is accepted, and a 400 saying
+            # the model cannot take images means it was never reached -- so
+            # UNCOVERED rather than red either way. What this branch means
+            # CHANGED at v1.79.43: the capability and the provider's guard now
+            # come from one resolver, so an MLX model reaching here is no
+            # longer the ordinary over-report it was written for. It is now
+            # either an explicit `capabilities` override in models.toml
+            # (honoured verbatim, so an operator can still assert something the
+            # server will not serve) or a real regression in that shared
+            # derivation. Kept, and kept loud, because the second reading is
+            # the one worth catching -- a run that lands here should be
+            # investigated, not filed as a known wart.
             r.skip(f"{arm}: nested image source accepted",
                    f"UNCOVERED: {model_id} advertises the vision capability and "
                    f"the provider refuses images as text-only, so the spelling "
-                   f"was never reached. That disagreement is itself a defect")
+                   f"was never reached. Since v1.79.43 those two answers share "
+                   f"one resolver, so this is either a hand-written "
+                   f"`capabilities` override or a regression -- not the "
+                   f"derived-from-config.json over-report it used to be")
         else:
             r.check(f"{arm}: nested image source accepted", st == 200,
                     f"got {st} -- a 422 means the server rejected Anthropic's own "

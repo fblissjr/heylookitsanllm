@@ -633,7 +633,14 @@ class TestStopReasonHasOneMapper:
         # it `self.stop_reason: str = "end_turn"`, so respelling a bad
         # default that way evaded the check entirely -- the pattern was
         # not hypothetical, it was one line away from live.
-        return re.findall(r"\.stop_reason(?:\s*:\s*[^=\n]+)?\s*=\s*(.+)",
+        # `=(?!=)` -- a COMPARISON is not a write. Without the lookahead,
+        # `if translator.stop_reason == "end_turn":` was read as an assignment
+        # of `= "end_turn"):`, which matches neither the literal branch nor
+        # the mapper branch and failed. Guarding a write by first reading the
+        # field is the natural way to express "only override the default",
+        # so the check has to tell reads from writes or it forbids the shape
+        # rather than the defect.
+        return re.findall(r"\.stop_reason(?:\s*:\s*[^=\n]+)?\s*=(?!=)\s*(.+)",
                           "\n".join(lines))
 
     @pytest.mark.parametrize("path", MESSAGES_GRAMMAR_ROUTES)

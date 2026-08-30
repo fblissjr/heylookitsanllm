@@ -80,6 +80,85 @@ class TestSidecarTemplatePrecedence:
 
 
 @pytest.mark.unit
+class TestASidecarMayNotCostTheModelItsProjector:
+    """The guard that stopped this feature shipping broken.
+
+    Found live 2026-08-30: all three sidecar-carrying gguf models on this
+    machine are MULTIMODAL, and `unsloth_Muse-Glimmer-30B-GGUF` ships a
+    sidecar containing the bare words "image" and "video" and no media
+    control tokens at all. Unguarded, the default would have loaded that
+    model's projector and then rendered every prompt through a template that
+    can never reference an image -- a vision model quietly answering as a
+    text one, which nothing downstream would flag.
+    """
+
+    _TEXT_ONLY = "{% for m in messages %}{{ m['content'] }}{% endfor %}"
+    _WITH_MEDIA = ("{% for m in messages %}{% if m.image %}"
+                   "<|vision_start|><|image_pad|><|vision_end|>{% endif %}"
+                   "{{ m['content'] }}{% endfor %}")
+
+    def _dir(self, tmp_path, template: str):
+        (tmp_path / "model-Q8_0.gguf").write_bytes(b"GGUF")
+        (tmp_path / "chat_template.jinja").write_text(template)
+        return tmp_path / "model-Q8_0.gguf"
+
+    def test_a_projector_model_refuses_a_media_blind_sidecar(self, tmp_path):
+        model = self._dir(tmp_path, self._TEXT_ONLY)
+        path, origin = _provider(
+            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
+            modalities=["text", "vision"])._resolve_chat_template()
+        assert path is None
+        assert "sidecar skipped" in origin
+
+    def test_a_projector_model_accepts_a_media_aware_sidecar(self, tmp_path):
+        """The guard must not become a blanket ban: two of the three real
+        sidecars DO carry the markers, and those are the ones the owner asked
+        for."""
+        model = self._dir(tmp_path, self._WITH_MEDIA)
+        path, origin = _provider(
+            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
+            modalities=["text", "vision"])._resolve_chat_template()
+        assert path == str(tmp_path / "chat_template.jinja")
+        assert origin == "sidecar"
+
+    def test_a_text_model_takes_a_media_blind_sidecar_happily(self, tmp_path):
+        """A template with no media markers is exactly right for a model with
+        no projector -- the guard keys on what would be LOST, not on the
+        template alone."""
+        model = self._dir(tmp_path, self._TEXT_ONLY)
+        path, origin = _provider(model)._resolve_chat_template()
+        assert path == str(tmp_path / "chat_template.jinja")
+        assert origin == "sidecar"
+
+    def test_the_bare_word_image_is_not_media_handling(self, tmp_path):
+        """The precise shape of the real defect. A substring test for "image"
+        would have waved the Muse-Glimmer sidecar through; markers are what a
+        projector can actually bind to."""
+        model = self._dir(
+            tmp_path,
+            "{# describe the image or video #}{% for m in messages %}"
+            "{{ m['content'] }}{% endfor %}")
+        path, _ = _provider(
+            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
+            modalities=["text", "vision"])._resolve_chat_template()
+        assert path is None
+
+    def test_an_explicit_path_is_never_second_guessed(self, tmp_path):
+        """The guard exists because discovery is implicit. Naming a file is
+        not, so the refusal must not extend to it -- the warning even tells
+        operators to use this as the override."""
+        model = self._dir(tmp_path, self._TEXT_ONLY)
+        chosen = tmp_path / "chosen.jinja"
+        chosen.write_text(self._TEXT_ONLY)
+        path, origin = _provider(
+            model, chat_template_path=str(chosen),
+            mmproj_path=str(tmp_path / "mmproj.gguf"),
+            modalities=["text", "vision"])._resolve_chat_template()
+        assert path == str(chosen)
+        assert origin == "configured"
+
+
+@pytest.mark.unit
 class TestSidecarDiscoveryDegradesQuietly:
     def test_a_nonexistent_model_path_finds_nothing_and_does_not_raise(self):
         """`_build_args` is exercised with paths that do not exist (the
@@ -135,3 +214,19 @@ class TestTheFieldIsClassified:
         extra = GGUFModelConfig.model_fields["use_sidecar_chat_template"].json_schema_extra
         assert isinstance(extra, dict)
         assert extra.get("effect") == EFFECT_REQUIRES_RELOAD
+
+    def test_the_provider_reads_the_default_off_the_field(self):
+        """No hand-copied literal. The provider also accepts RAW dicts (the
+        argv/metadata drift test builds one, and so do the provider unit
+        tests), and those hit the fallback -- so a copied `True` would mean
+        flipping the field's default left every raw-dict caller on the old
+        behaviour with the suite still green."""
+        from unittest.mock import patch
+
+        from heylook_llm.config import GGUFModelConfig
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        field = GGUFModelConfig.model_fields["use_sidecar_chat_template"]
+        assert LlamaServerProvider._sidecar_default() is bool(field.default)
+        with patch.object(field, "default", False):
+            assert LlamaServerProvider._sidecar_default() is False

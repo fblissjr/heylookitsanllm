@@ -161,13 +161,19 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     resolved = ((mc.config.model_dump() if hasattr(mc.config, 'model_dump')
                  else dict(mc.config))
                 if mc.provider == "mlx" else {})
+    # ONE resolution, three consumers. `effective_capabilities` derives the
+    # vision capability from this same value (v1.79.43), so letting it resolve
+    # its own would rebuild the dump and re-run the router per mlx row -- on
+    # the route whose comment directly above explains that its per-row cost is
+    # why it was moved off the event loop.
+    effective_loader = effective_loader_for_config(mc.provider, resolved)
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
         description=mc.description,
         tags=mc.tags,
         enabled=mc.enabled,
-        capabilities=effective_capabilities(mc),
+        capabilities=effective_capabilities(mc, effective_loader),
         config=(mc.config.model_dump(exclude_unset=True)
                 if hasattr(mc.config, 'model_dump') else dict(mc.config)),
         loaded=loaded,
@@ -176,7 +182,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         stale_reload_fields=(
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
-        effective_loader=effective_loader_for_config(mc.provider, resolved),
+        effective_loader=effective_loader,
     )
 
 

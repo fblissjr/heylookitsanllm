@@ -163,7 +163,23 @@ restore `__pydantic_fields_set__` or they leak back as "stored");
 "saved-but-process-runs-old-value" truth (never rebuild it client-side).
 API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
-settings), telemetry (frontend ingestion). DuckDB store (`db.py`: conversations +
+settings), telemetry (frontend ingestion), requests (cancellation).
+CANCELLATION (v1.79.44, `request_registry.py`): a STREAMING request is cancellable by
+hanging up -- the server is writing, so it notices the peer is gone -- while a
+NON-STREAMING one writes nothing until it finishes and never notices, so an abandoned
+run continued to completion and blocked everything behind it. `DELETE
+/v1/requests/{request_id}` sets that run's existing `AbortEvent` (the plumbing was
+already there; what was missing was a way to NAME a running request from outside it).
+It makes a run STOPPABLE, not self-stopping -- a client that hangs up without calling
+DELETE still leaves it running, and disconnect polling was deliberately NOT built
+(owner call: an explicit endpoint cannot mistake a proxy hiccup for a departed client
+and kill a live generation). The id is CLIENT-supplied, so `/v1/messages` had to stop
+generating its own and honour `X-Request-ID` (via the one shared `resolve_request_id`,
+which bounds and charset-restricts it -- these reach logs and JSONL, and a newline
+would forge a log line), and the registry maps an id to a SET: two live requests can
+share an id, and a single-slot map would let the second orphan the first. A streaming
+body outlives its route function, so it is registered by wrapping the generator
+(`tracked_stream`), never by a `with` around the return. DuckDB store (`db.py`: conversations +
 notebooks + presets + `settings`, single serialized writer thread, transactional ops;
 `HEYLOOK_DB_PATH` override; dynamic field names gated by `_UPDATABLE_*_FIELDS`
 frozensets; a `_SCHEMA_VERSION` bump DROPS all tables -- `settings`/`presets` are
@@ -457,7 +473,18 @@ in git history; a contract test pins that `/v2` stays 404.)
   UNCOVERED, never green -- and "served but not run" prints differently from
   "no model of this engine exists", because the first is the quiet one.
   `--contract-only` is seconds and loads nothing.
-  Point it at an ISOLATED server (`scripts/dev_server.sh`) -- it writes presets
+  Point it at an ISOLATED server (`scripts/dev_server.sh` -- whose RAM
+  pre-flight sizes through `scripts/ram_report.py`, which resolves a model
+  through the SAME `discover()`/`merge_discovered()` the router uses, so a
+  DISCOVERED model sizes like an explicit one. It did not until v1.79.44: it
+  read models.toml alone, which is override-only, so `--model
+  <discovered-id>` refused to start with "not in models.toml?" on a model the
+  server serves. The related trap is worth more than the fix -- `ram_fit`
+  returns 0.0 GiB for a path it cannot read, and 0 GiB clears every ceiling,
+  so a broken `model_path` printed `RAM pre-flight OK: ~0 GiB` and exited 0:
+  the gate waving through the exact case it exists to refuse. An unsizeable
+  model is now exit 2 with a reason, distinct from a memory refusal. The same
+  zero-size hole is still open in `/v1/admin/{id}/fit`) -- it writes presets
   and conversations. WHAT "COVERED" MEANS FOR A RELEASE (Phase 4 standard, not
   a CI gate -- there is no CI here and a gate nobody can run is worse than a
   rule somebody follows): before a release touching PROVIDER, LOADER, TEMPLATE

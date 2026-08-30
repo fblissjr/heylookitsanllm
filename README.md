@@ -61,8 +61,11 @@ subprocess -- one API, one UI, per-model engine choice.
   disclosed in the UI, never confirmed away.
 - **GGUF needs a llama-server binary**, built by
   `uv run scripts/build_llama.py` (`uv sync` cannot build C++). One subprocess
-  per loaded model. The chat template is the one embedded in the GGUF by the
-  quant publisher -- `chat_template_path` is the per-model override. An
+  per loaded model. The chat template is a `chat_template.jinja` sitting
+  beside the .gguf if there is one, else the template embedded in the GGUF by
+  the quant publisher; `chat_template_path` overrides both, and
+  `use_sidecar_chat_template = false` keeps the embedded one without deleting
+  the file. Every spawn logs which of the three it used. An
   omitted `max_tokens` gets a 4096 default (an explicit value always wins);
   llama-server's own "unlimited" default is never passed through.
 - **Telemetry is off by default** (`observability_level`, settable via
