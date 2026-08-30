@@ -62,6 +62,43 @@ rewritten every session. Two of the three closed on 2026-08-30.
   measurement ran against BEFORE editing the claim; the two arms of this are
   different templates, not different servers.
 
+## API asks from a consuming client (2026-08-30, measured, UNDECIDED)
+
+A session integrating heylook as a second inference provider sent
+measurements against v1.79.42. Recorded, not accepted -- each is an owner
+call. Its numbers are specific and reproducible; the reasoning about what
+they imply is theirs, not a decision here.
+
+- [ ] **Cancelling a NON-streaming request is impossible today** (P2, real):
+  `/v1/messages` non-streaming builds the whole response before writing
+  anything, so nothing polls `request.is_disconnected()` and an abandoned
+  client's generation runs to completion. Measured: a 73.1s generation
+  aborted client-side at 5.0s left the next request waiting 57.9s; the same
+  abort on a STREAMING request freed the server in 0.1s. On a server that
+  serialises generation, that abandoned run blocks everything behind it. Two
+  candidate shapes, neither chosen: poll `is_disconnected()` between tokens on
+  the non-streaming path, or `DELETE /v1/requests/{request_id}` keyed on the
+  `X-Request-ID` clients are already told to send. NB the client chose
+  non-streaming deliberately -- a late refusal arrives in-band as an `error`
+  event after headers flush, which a naive reader renders as model output --
+  so "just stream" is not a neutral answer for them.
+- [ ] **Constrained decoding (`response_format` / grammar)** (P3, large):
+  there is no server-side way to constrain output shape, so clients append a
+  JSON Schema to the system prompt and parse defensively. Their measurement,
+  same prompt and model, varying only `reasoning_effort`: 2 of 5 runs produced
+  malformed or invented-reference output, and a smaller model failed every
+  time. gguf is the cheap half (llama-server already takes `json_schema` /
+  `grammar` on its completion endpoint); MLX needs logit masking and is a real
+  build. Would want a per-model capability so clients can gate and keep the
+  prompt-trailer fallback.
+- [ ] **`requests_active` is null for gguf, so no client can tell busy from
+  idle** (P3): `GET /v1/admin/models/{id}/status` reports the MLX-side
+  generation gate, and llama-server queues its own requests, so the field is
+  genuinely null for that provider rather than accidentally unpopulated. The
+  client fell back to timing a trivial generation -- which queues, so the
+  probe changes what it measures. Exposing queue depth somewhere honest would
+  close it.
+
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
 - [x] **Stream-end blank frame -- DONE v1.72.2**: post-stream adoption now
