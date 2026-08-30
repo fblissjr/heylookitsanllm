@@ -11,7 +11,7 @@ Last updated: 2026-08-30. v1.79.46 on the `frontend` branch.
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
-| `bun run e2e:chat` | 33/46 -- RUN, still red. See item 2 | at v1.79.43 |
+| `bun run e2e:chat` | 37/46 -- rot fixed, 9 behavioural left. See item 2 | at v1.79.46 |
 
 NOTE ON RUNNING THE SUITE LOCALLY: `tests/contract/` opens the real
 `data/conversations.duckdb` and DuckDB takes an exclusive lock, so every
@@ -34,20 +34,35 @@ HANDOFF (next session start here): two things are open; neither blocks work.
    its staged blob), so this is "leave the modification alone", never
    "gitignore it".
 
-2. **`bun run e2e:chat` is 33/46 and the v1.79.41 repair was not the fix.**
-   That release fixed two real selector rots and claimed they were "the whole
-   static gap". Running the suite showed otherwise. The deeper cause is
-   architectural rather than a selector: `tests/e2e/lib/browser.mjs` seeds
-   sampler settings into `localStorage` and expects the chat settings panel to
-   reflect them, but since v1.65-66 chat hydrates that panel from the
-   DOCUMENT (`hydrateDocParams` -> `applySettings(doc.params)`), so selecting
-   a conversation overwrites the seed before the first assertion runs. The
-   `seeded max_tokens` check fails with the document's value, and the preset
-   and system-prompt checks rest on the same stale model of where chat state
-   lives. This is a suite REWRITE, not a patch. Until it is done the suite is
-   not a gate, and the app is not implicated: the model-free render suite
-   drives the same real `/v3` page at 102/102 including its uncaught-page-
-   error check, and the generate-path rows pass server-side in smoke.
+2. **`bun run e2e:chat` is 37/46 — the ROT is fixed, nine behavioural
+   failures remain.** Three distinct rot causes have now been found and
+   closed: the `body[data-page]` selector and the `Save` button rename
+   (v1.79.41-.42), and the one that was doing the most damage — two checks
+   asserting `system_prompt` off `GET /v1/conversations`, which stopped
+   carrying it on 2026-08-26 (`3b44c61`). That third one was a CASCADE ROOT:
+   the failing `waitFor` sat directly above `openDrawer(page)` ("leave the
+   drawer open for the preset checks"), so every preset check after it failed
+   on a missing panel. Also rewritten: the seeded-`max_tokens` check, which
+   asserted a localStorage seed reaches the panel — untrue since v1.65-66,
+   where chat hydrates from the document and `mergeKnown` rebuilds from empty,
+   so adopting a document REPLACES the cache. It now asserts the stronger
+   modern rule (a reload that re-seeds localStorage still shows the
+   conversation's value).
+
+   **What is left is NOT rot** and needs live browser inspection per test, not
+   static analysis. Ruled out already for the preset chain: `.preset-drift`
+   still exists and is labelled the E2E hook; `samplersMatch` compares
+   field-by-field correctly; `preset-bar.js:404` does subscribe to
+   `onSettingsChange`; panel inputs bind `change` and the helper dispatches
+   `change`; and neither Temperature nor Max tokens carries a `note` that
+   would break the helpers' exact label match. The nine:
+   preset save/apply drift line not flipping (the chain root now), promptless
+   preset not listed, two applied-preset chip checks, preset inheritance on a
+   new conversation, preset delete, conversation switching, the mid-stream
+   disconnect partial, and the image round-trip. Until they are diagnosed the
+   suite is not a gate — and the app is still not implicated: `e2e:render`
+   drives the same real `/v3` page at 102/102 including its uncaught-page-error
+   check, and the generate-path rows pass server-side in smoke.
 
 **CLOSED THIS SESSION** (were items 2, 3 and the standing product defect):
 

@@ -112,6 +112,26 @@ async function newFreshConversation(page) {
   return id;
 }
 
+// The suite's current conversation, fetched SINGLY.
+//
+// `GET /v1/conversations` deliberately omits system_prompt and params (3b44c61,
+// 2026-08-26: the sidebar reads neither and both are unbounded on a response
+// that ships on page load and on every foreground). Two checks below asserted
+// `conversations.some(c => c.system_prompt === ...)` against that list and had
+// been unsatisfiable since -- written 2026-07-09 and correct for seven weeks.
+// The body carries both; that is what "fetch the conversation to get either"
+// means. Resolved by newest created_at, the same rule newFreshConversation
+// uses, because these checks run against the one conversation the suite made.
+async function currentConversation(page) {
+  return page.evaluate(async () => {
+    const { conversations } = await (await fetch('/v1/conversations')).json();
+    const newest = conversations.reduce(
+      (a, b) => (a && a.created_at > b.created_at ? a : b), null);
+    if (!newest) return null;
+    return (await fetch(`/v1/conversations/${newest.id}`)).json();
+  });
+}
+
 // Client-observed streaming cadence, measured INSIDE the page. The Phase 1 fix
 // (asyncio.wait instead of a 0.1s poll in async_generator_with_abort) is
 // invisible to server-side telemetry -- only a client timing the stream can
@@ -593,9 +613,30 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
   });
 
-  await suite.check('seeded max_tokens is reflected in the settings panel', async () => {
-    const val = await settingsInputValue(page, 'Max tokens');
-    assert(val === String(config.maxTokens), `max_tokens input="${val}", expected ${config.maxTokens}`);
+  await suite.check('the DOCUMENT\'s params win over the localStorage seed', async () => {
+    // This asserted that `ctx.open()`'s localStorage seed showed in the panel,
+    // which stopped being true at v1.65-66: chat hydrates the panel from the
+    // conversation (`hydrateDocParams` -> `applySettings(doc.params)`), and
+    // `mergeKnown` rebuilds from empty, so adopting a document REPLACES the
+    // seeded cache rather than merging into it. The check was describing the
+    // pre-v1.65 architecture and could not pass.
+    //
+    // The rule worth having is the one that replaced it, and it is stronger:
+    // the document is authoritative for sampler params, so a page load that
+    // re-seeds localStorage must STILL show the conversation's value.
+    const conv = await currentConversation(page);
+    assert(conv?.id, 'no conversation to seed params on');
+    await page.evaluate(async (id) => {
+      await fetch(`/v1/conversations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ params: { max_tokens: 4321 } }),
+      });
+    }, conv.id);
+    await ctx.open();            // reload; re-seeds localStorage with config.maxTokens
+    await openDrawer(page, '.chat__settings-btn');
+    await waitFor(async () => (await settingsInputValue(page, 'Max tokens')) === '4321',
+      { message: `panel did not adopt the document's max_tokens (seed was ${config.maxTokens})` });
   });
 
   await suite.check('settings edit writes through to localStorage', async () => {
@@ -631,11 +672,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.type('.sysprompt-input', SYS_PROMPT);
     // Deliberately NO blur: state commits per keystroke and the PUT is
     // debounced -- the old blur-only commit is the bug this regression guards.
-    await waitFor(async () => page.evaluate(async (sys) => {
-      const res = await fetch('/v1/conversations');
-      const { conversations } = await res.json();
-      return conversations.some((c) => c.system_prompt === sys);
-    }, SYS_PROMPT), { message: 'system prompt not saved server-side' });
+    await waitFor(async () => {
+      const conv = await currentConversation(page);
+      return conv?.system_prompt === SYS_PROMPT;
+    }, { message: 'system prompt not saved server-side' });
   });
 
   await suite.check('sysprompt typed text survives Escape-close', async () => {
@@ -645,11 +685,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.type('.sysprompt-input', ' Be terse.');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.drawer--open'), { timeout: 5000 });
-    await waitFor(async () => page.evaluate(async () => {
-      const res = await fetch('/v1/conversations');
-      const { conversations } = await res.json();
-      return conversations.some((c) => (c.system_prompt ?? '').includes('Be terse.'));
-    }), { message: 'text typed before Escape-close never reached the server' });
+    await waitFor(async () => {
+      const conv = await currentConversation(page);
+      return (conv?.system_prompt ?? '').includes('Be terse.');
+    }, { message: 'text typed before Escape-close never reached the server' });
     await openDrawer(page);  // leave the drawer open for the preset checks
     const val = await page.$eval('.sysprompt-input', (el) => el.value);
     assert(val.includes('Be terse.'), 'reopened drawer lost the typed text');
