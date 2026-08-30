@@ -55,12 +55,20 @@ rewritten every session. Two of the three closed on 2026-08-30.
   Qwen3.8 accepts `xhigh|medium|low` and RAISES otherwise, surfacing as a 500
   from llama-server. A consuming session measured all four of
   `low|medium|high|xhigh` accepted on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` at
-  v1.79.42 with no 500 at any level. Either the claim is narrower than
-  stated or it varies by quant/template -- and it is now further confounded,
-  because v1.79.43 makes a sidecar `chat_template.jinja` win over the
-  embedded template, and that model has one. Establish which template each
-  measurement ran against BEFORE editing the claim; the two arms of this are
-  different templates, not different servers.
+  v1.79.42 with no 500 at any level, and has since WITHDRAWN it as a
+  correction -- four values on one model does not generalise to a claim about
+  the model or the server version when the variable is the chat TEMPLATE.
+  One unknown is now closed: they re-checked `/v1/capabilities` and their
+  server was still v1.79.42, so their arm ran against the EMBEDDED template,
+  pre-sidecar-precedence. That model has a sidecar, so on v1.79.43 the same
+  calls render through a different template.
+  What is left is a genuinely open question, not a contradiction: the existing
+  claim and their measurement can BOTH be true, about different templates.
+  `reasoning_effort` is a chat-template variable and the documented 500 is a
+  jinja exception raised inside the template, so "which values raise" is a
+  property of the template, never of the model or the server. Any re-check
+  must record which template was in force -- v1.79.43 logs it at every spawn
+  -- or it varies a control neither arm held.
 
 ## API asks from a consuming client (2026-08-30, measured, UNDECIDED)
 
@@ -82,15 +90,24 @@ they imply is theirs, not a decision here.
   non-streaming deliberately -- a late refusal arrives in-band as an `error`
   event after headers flush, which a naive reader renders as model output --
   so "just stream" is not a neutral answer for them.
-- [ ] **Constrained decoding (`response_format` / grammar)** (P3, large):
-  there is no server-side way to constrain output shape, so clients append a
-  JSON Schema to the system prompt and parse defensively. Their measurement,
-  same prompt and model, varying only `reasoning_effort`: 2 of 5 runs produced
-  malformed or invented-reference output, and a smaller model failed every
-  time. gguf is the cheap half (llama-server already takes `json_schema` /
-  `grammar` on its completion endpoint); MLX needs logit masking and is a real
-  build. Would want a per-model capability so clients can gate and keep the
-  prompt-trailer fallback.
+- [ ] **Constrained decoding (`response_format` / grammar)** (P3, large --
+  and DO NOT size it on the original numbers): there is no server-side way to
+  constrain output shape, so clients append a JSON Schema to the system prompt
+  and parse defensively. The first report cited 2 of 5 runs producing
+  malformed or invented-reference output. **The reporter has since withdrawn
+  most of that**: a chunk of it was an unstated PRECONDITION in their own
+  prompt -- with no reference slots attached the prompt said nothing about
+  references, and the model filled the silence by inventing a citation. Stating
+  the absence took three hard failures to zero. So the headline number was
+  measuring a prompt bug, not a missing server feature, and anyone sizing this
+  work on it would be sizing on a retracted figure.
+  The residual case is narrower and still real, in the reporter's own framing:
+  a grammar makes shape errors UNREPRESENTABLE where a prompt fix makes them
+  less frequent, and on an intermittent failure that difference is whether you
+  can tell the two apart. gguf is the cheap half (llama-server already takes
+  `json_schema` / `grammar` on its completion endpoint); MLX needs logit
+  masking and is a real build. Would want a per-model capability so clients can
+  gate and keep the prompt-trailer fallback.
 - [ ] **`requests_active` is null for gguf, so no client can tell busy from
   idle** (P3): `GET /v1/admin/models/{id}/status` reports the MLX-side
   generation gate, and llama-server queues its own requests, so the field is
