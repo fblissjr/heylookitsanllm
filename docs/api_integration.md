@@ -200,6 +200,22 @@ a superset of the other, for two separate reasons — do not collapse them.
     the builder reproduces it one layer up, so the converter's absent-key
     path is never reached. Open on the server side, deliberately unfixed
     here — it is a wire change, not a doc fix.
+- **`total_duration_ms` is measured from a DIFFERENT ORIGIN in each mode,
+  and this is the one most likely to mislead you.** Non-streaming measures
+  from request arrival, so it INCLUDES FIFO queue wait and any model load.
+  Streaming measures from the point the stream translator is built, which is
+  after the provider is in hand, so it EXCLUDES both — the streaming path
+  does not have access to the earlier timestamp at all. On a cold load the
+  same work can report tens of seconds in one mode and a few in the other.
+  Do not compare the two across modes, and do not divide tokens by it to
+  sanity-check the engine's rates on the non-streaming path — that is the
+  wall-clock division this section warns about, wearing a server-side name.
+- **`queue_wait_ms` absent means zero, not unknown.** Both modes emit it as
+  `value or None`, so a request that waited no time in the generation gate —
+  the normal case on an idle server — omits the key. If you are netting queue
+  wait out of TTFT, treat absent as 0. (`prompt_tps` has the opposite defect
+  above: it reports an unmeasured value as a measured zero. Absent and zero
+  are unreliable in opposite directions on these two fields.)
 - **Everything else is symmetric now.** Before .54 it was not, in two
   different ways, and both were invisible: the rates were declared REQUIRED
   while `message_stop` never sent them (so a client generated from the schema
