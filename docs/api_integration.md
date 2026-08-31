@@ -179,15 +179,27 @@ a superset of the other, for two separate reasons — do not collapse them.
   so there is nothing non-streaming to measure. Non-streaming they arrive as
   explicit `null`; do not render them on that path. That absence is stable —
   rely on it.
-- **The other: a rate the engine did not report is OMITTED on the stream and
-  SYNTHESIZED non-streaming.** The non-streaming builder runs
-  `generation_tps` through `headline_tps`, which falls back to
-  tokens-over-elapsed, so it produces a figure even when the engine reported
-  none. The streaming payload passes the engine's value through and drops it
-  if there isn't one. Same field name, different guarantee — so on a run
-  where the engine reports no rate you get a number from one mode and nothing
-  from the other. Measured, not reasoned: a contract run produced
-  `generation_tps` non-streaming and no such key on the stream.
+- **The other: an unmeasured rate is OMITTED on the stream and PRESENT
+  non-streaming — and the two rates fail differently.** Streaming drops both
+  when the engine reported nothing (`telemetry.X or None`, and the emitter
+  skips nulls). Non-streaming keeps both, by two different mechanisms, so do
+  not read them as one rule:
+  - `generation_tps` is SYNTHESIZED. The builder runs it through
+    `headline_tps`, which falls back to tokens-over-elapsed, so you get a
+    plausible figure the engine never produced. Measured, not reasoned: a
+    contract run produced `generation_tps` non-streaming and no such key on
+    the stream.
+  - `prompt_tps` is ZEROED. The builder assigns it raw — no `headline_tps`,
+    no null-coalesce — and the accumulator defaults it to `0.0` and latches
+    only on a truthy value. So an engine that reports no prefill rate gives
+    you `prompt_tps: 0.0`, which is indistinguishable from a measured zero
+    and reads as an infinitely slow prefill. **Treat `prompt_tps == 0` as
+    "unknown", not as a measurement, on every version including .54 and
+    .55.** v1.79.54 fixed this exact trap in the converter's
+    `.get(key, 0)` default, which is why the release LOOKS like it closed it;
+    the builder reproduces it one layer up, so the converter's absent-key
+    path is never reached. Open on the server side, deliberately unfixed
+    here — it is a wire change, not a doc fix.
 - **Everything else is symmetric now.** Before .54 it was not, in two
   different ways, and both were invisible: the rates were declared REQUIRED
   while `message_stop` never sent them (so a client generated from the schema

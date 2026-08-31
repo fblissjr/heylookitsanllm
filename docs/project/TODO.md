@@ -38,6 +38,32 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   telemetry must not break inference. Not a full model round-trip: keys are
   the guarantee, types were never enforced on that path.
 
+## `prompt_tps` is zeroed, not omitted, when unmeasured (2026-08-31)
+
+- [ ] **The non-streaming Messages builder emits `prompt_tps: 0.0` for a rate
+  the engine never reported** (P2): `messages_api.py:568` assigns
+  `telemetry.prompt_tps` RAW — no `headline_tps`, no `or None`, unlike
+  `generation_tps` on the line below it and unlike both rates on the streaming
+  side. `ChunkTelemetry.prompt_tps` defaults to `0.0` and latches only on a
+  truthy value (`perf_collector.py:65`, `71-79`), so an engine reporting no
+  prefill rate produces a wire `0.0` that a client cannot distinguish from a
+  measured zero — it reads as an infinitely slow prefill.
+  This is the trap v1.79.54 fixed in the converter (`.get(key, 0)` →
+  `.get(key)`), which is why .54 LOOKS like it closed it: the builder hands
+  the converter a real `0.0`, so the absent-key path is never reached. Both
+  the guide and the consuming twin had recorded it as fixed from .54 and have
+  been corrected.
+  Found by reading source while verifying c636dce, then independently
+  verified at three sites by the `heylook-provider` session. NOT fixed here
+  deliberately: it changes what the wire carries, `.54` and `.55` already
+  moved this payload twice, and the sequencing is the owner's. Two candidate
+  fixes: route it through `headline_tps` for symmetry with `generation_tps`
+  (synthesizes a prefill rate, which may be worse than nothing), or `or None`
+  it for symmetry with the streaming side (honest, and the field is already
+  Optional). The second looks right — a synthesized prefill rate has no
+  wall-clock analogue worth reporting.
+  Documented per field in `docs/api_integration.md` §3 in the meantime.
+
 ## E2E pages suite: 42/43 (2026-08-31)
 
 - [ ] **`notebook preset bar: save, drift, armed apply` fails** (P2):
