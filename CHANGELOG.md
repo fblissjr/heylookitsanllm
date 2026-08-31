@@ -113,6 +113,16 @@ One builder for the Messages `performance` object, and one rule for reading it.
   None`, dropping the key whenever a request waited no time in the FIFO gate —
   the normal case on an idle server — so absent meant both "no wait" and "not
   measured". The exact mirror of the `prompt_tps` defect, on the same object.
+  **CORRECTION (v1.79.59): this was a REGRESSION, not a fix, and the premise
+  above is false.** The wait is an elapsed-counter difference, so an idle gate
+  reports a tiny nonzero float and never `0.0` — the "measured zero on an idle
+  server" this entry set out to rescue does not exist. What emits exactly
+  `0.0` is the unmeasured set and only it, and the gguf provider never assigns
+  the field at all, so .58 published a non-answer as an answer on every gguf
+  request. `or None` was correct. Left standing rather than rewritten: this
+  entry and its correction together are the record that the wrong conclusion
+  was reached twice from one untested premise, in opposite directions, and a
+  tidied history would hide that.
 - **`POST /v1/conversations/{id}/generate` reports telemetry on
   `message_stop`.** It called `message_stop_event()` bare, so the second route
   on the shared Messages grammar carried durations alone while `/v1/messages`
