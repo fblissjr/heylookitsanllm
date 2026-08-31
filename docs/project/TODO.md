@@ -2,7 +2,8 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch)*
+*Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch);
+docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
