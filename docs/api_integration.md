@@ -169,16 +169,25 @@ measurements taken around prefill and decode, so they are a better number
 than dividing tokens by your own wall clock, which includes queue wait and
 any model load.
 
-**As of v1.79.54 both modes carry the same set**, with one deliberate
-exception, and `/openapi.json` describes it honestly. Every field on
-`PerformanceInfo` is optional, so a generated client compiles against either
-mode.
+**As of v1.79.54 both modes draw from the same declared set**, and
+`/openapi.json` describes it honestly: every field on `PerformanceInfo` is
+optional, so a generated client compiles against either mode. Neither mode is
+a superset of the other, for two separate reasons — do not collapse them.
 
 - **The exception: `thinking_duration_ms` and `content_duration_ms` are
   streaming only, BY DESIGN.** The block translator times them as it emits,
   so there is nothing non-streaming to measure. Non-streaming they arrive as
   explicit `null`; do not render them on that path. That absence is stable —
   rely on it.
+- **The other: a rate the engine did not report is OMITTED on the stream and
+  SYNTHESIZED non-streaming.** The non-streaming builder runs
+  `generation_tps` through `headline_tps`, which falls back to
+  tokens-over-elapsed, so it produces a figure even when the engine reported
+  none. The streaming payload passes the engine's value through and drops it
+  if there isn't one. Same field name, different guarantee — so on a run
+  where the engine reports no rate you get a number from one mode and nothing
+  from the other. Measured, not reasoned: a contract run produced
+  `generation_tps` non-streaming and no such key on the stream.
 - **Everything else is symmetric now.** Before .54 it was not, in two
   different ways, and both were invisible: the rates were declared REQUIRED
   while `message_stop` never sent them (so a client generated from the schema
@@ -193,6 +202,12 @@ non-streaming before **v1.79.50**; the rates were absent from `message_stop`
 and the three telemetry keys absent from non-streaming responses before
 **v1.79.54**. Treat every one of them as optional and you are correct on
 every version.
+
+**Since v1.79.55 the streaming payload cannot carry a key `PerformanceInfo`
+does not declare** — the emitter filters to the model's fields and logs
+anything it drops. Practically: your generated types will not silently lose a
+telemetry value the way they lost three of them before .54. A new field will
+appear in the schema before it appears on the wire, not after.
 
 **`peak_memory_gb` is MLX-only**, on every path and in both modes. It is
 `mx.get_peak_memory()`, reported per chunk by the MLX engine; the gguf
@@ -582,8 +597,8 @@ sounding safer.
   cancels every request sharing it ([§6](#6-auth)).
 - Cancel non-streaming runs explicitly. Hanging up does not stop one
   ([§6](#cancelling-a-request)).
-- Null-check `performance`. It is absent when the generation produced no
-  tokens, and its two modes are not supersets of each other
+- Null-check `performance`, and null-check every field on it. Neither mode
+  is a superset of the other and the reasons differ per field
   ([§3](#3-the-call)).
 - Resize images client-side.
 - Send `max_tokens` if you need a bound, omit it if you do not.

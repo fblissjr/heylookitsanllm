@@ -71,6 +71,24 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   middleware so every response carries it and the helper stays ignorant of
   it. The second is probably right and is the larger change.
 
+## generation_tps means two different things (2026-08-31)
+
+- [ ] **The two Messages modes compute the same field differently** (P3):
+  non-streaming runs it through `headline_tps`, which falls back to
+  tokens-over-elapsed when the engine reported no rate; the streaming
+  `message_stop` passes the engine value through and omits it when there is
+  none. So one mode synthesizes a figure the other withholds, under one field
+  name. MEASURED against the contract server: `generation_tps` present
+  non-streaming, absent on the stream, same request shape. Not a wire bug --
+  both are defensible readings of "generation tps" -- but a client comparing
+  the two modes is comparing different quantities, and a client that only
+  streams sees the field vanish on runs where the engine is quiet. Options:
+  give the translator the same `headline_tps` fallback (symmetry, but it
+  makes the streaming number partly client-side arithmetic), or document the
+  difference per mode (done in api_integration.md §3) and leave it. Found
+  while checking a "streaming is a strict superset" claim that a textual
+  check had agreed with and a behavioural one refuted.
+
 ## Docs twins (2026-08-31)
 
 - [x] **The `heylook-provider` skill has moved with the wire** -- CLOSED
