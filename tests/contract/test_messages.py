@@ -231,3 +231,46 @@ class TestShowSpecialTokens:
             text = "".join(b.get("text", "") for b in resp.json()["content"]
                            if b["type"] == "text")
             assert (self.SPECIAL in text) is flag
+
+class TestNonStreamingPerformance:
+    """What a NON-STREAMING client can actually read off `performance`.
+
+    The Messages wire returns this object unconditionally (there is no
+    `include_performance` on it since v1.79.49), so its contents are a
+    contract, not an option. Three of the six declared PerformanceInfo fields
+    used to arrive null here while the streaming half of the same wire filled
+    them, which a consuming client hit before any test did.
+    """
+
+    def _perf(self, client):
+        resp = client.post("/v1/messages", json={
+            "model": "test-mlx-model",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 8,
+        })
+        assert resp.status_code == 200
+        return resp.json()["performance"]
+
+    def test_performance_is_unconditional(self, client):
+        assert self._perf(client) is not None
+
+    def test_peak_memory_reaches_the_non_streaming_response(self, client):
+        """The fake's last chunk carries peak_memory=1.25; this asserts it
+        survives ChunkTelemetry -> the builder -> PerformanceInfo. This was
+        the field the non-streaming builder dropped."""
+        assert self._perf(client)["peak_memory_gb"] == 1.25
+
+    def test_rates_and_duration_are_present(self, client):
+        perf = self._perf(client)
+        for key in ("prompt_tps", "generation_tps", "total_duration_ms"):
+            assert perf[key] is not None, key
+
+    def test_thinking_and_content_durations_are_streaming_only(self, client):
+        """Pinned as ABSENT deliberately, not overlooked: the translator times
+        those blocks as it emits them, so nothing non-streaming can produce
+        them. Documented in api_integration.md §3 as streaming-only; if this
+        goes green with a value, the doc is what needs updating."""
+        perf = self._perf(client)
+        assert perf["thinking_duration_ms"] is None
+        assert perf["content_duration_ms"] is None
+

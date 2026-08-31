@@ -201,7 +201,11 @@ def create_mock_processor(with_tokenizer: bool = True):
 class FakeChunk:
     """Fake generation chunk with .text and .token_id attributes."""
 
-    def __init__(self, text: str, token_id: int = 0):
+    def __init__(self, text: str, token_id: int = 0, peak_memory: float = 0.0):
         self.text = text
         self.token_id = token_id
         self.token = token_id
+        # ChunkTelemetry.absorb() reads `peak_memory` off each chunk and keeps
+        # the max. Without it here no test could tell a response that carries
+        # peak memory from one that silently drops it.
+        self.peak_memory = peak_memory

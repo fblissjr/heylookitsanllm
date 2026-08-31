@@ -75,7 +75,8 @@ class FakeProvider(BaseProvider):
         """
         yield FakeChunk("Hello", token_id=1)
         yield FakeChunk(", ", token_id=2)
-        yield FakeChunk("world!", token_id=3)
+        # Last chunk carries peak memory, as a real GenerationChunk does.
+        yield FakeChunk("world!", token_id=3, peak_memory=1.25)
 
 
 # ---------------------------------------------------------------------------

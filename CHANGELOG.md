@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.50]
+
+### Fixed
+
+- **`peak_memory_gb` was null on non-streaming `/v1/messages`.** `PerformanceInfo`
+  declares it and three of the four response paths fill it — the streaming half
+  of this same wire (in `message_stop`'s timing) and both halves of the OpenAI
+  wire. The non-streaming Messages builder assigned three keys and overwrote
+  `performance` wholesale, so the converter filled this one from a `.get()`
+  that always missed. A client on that path got a declared field that was
+  permanently blank with no reason why — the same shape as the flag removed in
+  .49, one field over. The value was already sitting in `ChunkTelemetry`;
+  `or None` matches the streaming spelling, so absent telemetry stays omitted
+  rather than becoming a fake `0.0`.
+  Caught by the consuming-side twin skill reviewing .49's own documentation —
+  the evidence was in this session's own measurement output (`'peak_memory_gb':
+  None`) and had been read past.
+- **`thinking_duration_ms` and `content_duration_ms` are streaming-only** and
+  stay that way: the block translator times them as it emits, so there is
+  nothing on the non-streaming path to measure. Now pinned as absent rather
+  than left ambiguous, and documented as such.
+
+### Changed
+
+- **The contract suite's `FakeChunk` carries `peak_memory`**, the field
+  `ChunkTelemetry.absorb()` actually reads. Without it no test could tell a
+  response that carries peak memory from one that silently drops it, which is
+  why 1700 tests were green across the whole life of this bug. The fake's last
+  chunk now emits it, and `TestNonStreamingPerformance` asserts it survives
+  telemetry → builder → `PerformanceInfo`.
+- **`docs/api_integration.md` §3** now says four of six fields are populated
+  non-streaming and names the two that are not, rather than listing all six as
+  though they were one set. TTFT is stated as unobservable rather than
+  unprovided — the distinction is what stops a reader deriving it from
+  `total_duration_ms`.
+
 ## [1.79.49]
 
 ### Removed

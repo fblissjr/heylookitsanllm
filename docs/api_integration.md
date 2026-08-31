@@ -155,14 +155,23 @@ field name) and `text` (heylook's original, kept so existing readers keep
 working). Read `thinking`.
 
 **A non-streaming response also carries `performance`**, always — you do not
-ask for it and cannot turn it off. It holds `prompt_tps`, `generation_tps`,
-`total_duration_ms` and `peak_memory_gb`, plus thinking/content durations
-where they apply. The rates are the engine's own measurements taken around
+ask for it and cannot turn it off. Four of its six fields are populated on
+this path: `prompt_tps`, `generation_tps`, `total_duration_ms` and
+`peak_memory_gb`. The rates are the engine's own measurements taken around
 prefill and decode, so they are a better number than dividing tokens by your
-own wall clock, which includes queue wait and any model load. What is NOT
-there is time-to-first-token: it is computed server-side and kept, not
-returned, so non-streaming TTFT is genuinely unobservable to a client.
-Aggregates live at `GET /v1/performance/profile/{1h|6h|24h|7d}`.
+own wall clock, which includes queue wait and any model load.
+
+The other two, `thinking_duration_ms` and `content_duration_ms`, are
+**streaming-only** and arrive `null` here. They are timed by the block
+translator as it emits, so there is nothing non-streaming to measure them
+against — do not render them on this path. (`peak_memory_gb` was null here
+too until v1.79.50; if you are on an older server, expect it blank.)
+
+What is not there at all is time-to-first-token. It is computed server-side
+and kept, never returned, so non-streaming TTFT is genuinely **unobservable**
+— not merely unprovided, which matters because it stops you deriving it from
+`total_duration_ms`. Aggregates live at
+`GET /v1/performance/profile/{1h|6h|24h|7d}`.
 
 `stop_reason` is Anthropic's vocabulary. A non-streaming failure does not
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error
