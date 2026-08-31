@@ -38,6 +38,65 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   telemetry must not break inference. Not a full model round-trip: keys are
   the guarantee, types were never enforced on that path.
 
+## MODEL_BUSY reaches six routes that do not speak the 503 (2026-08-31)
+
+- [ ] **Eight `get_provider` call sites across six routes answer backpressure
+  with the wrong status** (P1 for jspace and the batch branch, P2 for the
+  rest). `busy_response.py` exists so this answer has one speller; v1.79.53
+  found the fourth caller and rewrote its census to say "four". The census is
+  still an undercount of the OBLIGATION. Enumerated by AST over
+  `router.get_provider(...)` reachable from a route, with enclosing-handler
+  resolution:
+  - `/v1/embeddings` (`embeddings.py:216` -> `api.py:1826`): **500**
+  - `/v1/hidden_states` (`hidden_states.py:633` -> `api.py:1928`): **500**
+  - `/v1/hidden_states/structured` (`hidden_states.py:713` -> `api.py:2026`): **500**
+  - `/v1/jspace/analyze` (`jspace_api.py:80-82`): **400** -- the worst of the
+    set, because it tells a client its REQUEST is malformed for a transient
+    self-clearing condition
+  - `/v1/rlm/completions` non-streaming (`rlm.py:909` -> `:1052`): 503 with the
+    right status but a bare `{"detail": ...}` -- no `Retry-After`, no
+    `model_overloaded` envelope
+  - `/v1/rlm/completions` streaming (`rlm.py:945` -> `:1023`): 200 with an
+    in-band `rlm_error` event
+  - `/v1/chat/completions` with `processing_mode != "conversation"`
+    (`batch_processor.py:172`, `:499`): **500** -- the batch branch at
+    `api.py:668-712` sits OUTSIDE the try whose MODEL_BUSY handler is at
+    `:795`. Sequential mode (`batch_processor.py:254`) is worse still: its own
+    `except Exception` stringifies the busy message into `group.error` and
+    returns **200**.
+  NOT fixed: which of these deserve the full envelope is a design call, and
+  the rlm/batch ones may want a different answer from the inference routes.
+  THE DURABLE FIX IS NOT A LONGER CENSUS. Anchor on the TRIGGER, not the
+  helper: "every `get_provider` call reachable from a route answers MODEL_BUSY
+  through `busy_response`" has an enumerable population, so a test can hold it
+  and a new route cannot join silently. That is also the general answer to the
+  question the .53 postmortem recorded as unanswerable -- absence is
+  mechanically checkable once you name the thing that CREATES the obligation.
+
+## `/v1/admin/{id}/fit` still waves through an unsizeable model (2026-08-31)
+
+- [ ] **The zero-size hole CLAUDE.md flags as open is open, and the reason is
+  a hand-rolled narrower copy of a predicate that already exists** (P2).
+  `scripts/ram_report.py:159` defines `unsizeable_reason(report)`, the general
+  form: `weights_gb > 0` or it is a non-answer, whatever the notes say. Its
+  docstring states the stakes exactly ("Zero GiB clears every ceiling, so
+  without this check the gate that exists to refuse a load waves the
+  unreadable case through as OK"). `admin_api.py:331` does not call it. It
+  hand-writes `report.weights_gb == 0.0 and "model_path does not exist" in
+  report.sizing_notes` -- which needs BOTH a zero AND that exact note string.
+  `size_config_gb` only emits that note from the `else` branch (path missing
+  entirely). A directory that EXISTS but holds no `*.safetensors`/`*.gguf` --
+  an interrupted download, a path one level too high, a checkpoint in another
+  format -- returns `(0.0, [])`, so the guard does not fire.
+  Measured, not reasoned: a temp dir containing only `config.json` gives
+  `weights_gb: 0.0`, `sizing_notes: []`, `verdict: "pass"`, `fits: True`; the
+  route guard evaluates False and the CLI's `unsizeable_reason` returns
+  "no weight files found". The gate answers PASS for a model it could not
+  size.
+  Fix: move `unsizeable_reason` into `ram_fit.py` beside the report it reads
+  and have both callers ask it. The string-matching form is also coupled to
+  wording in another module, so rephrasing a note silently disarms the route.
+
 ## `prompt_tps` is zeroed, not omitted, when unmeasured (2026-08-31)
 
 - [ ] **The non-streaming Messages builder emits `prompt_tps: 0.0` for a rate
