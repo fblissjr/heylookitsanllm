@@ -53,31 +53,34 @@ class PerformanceInfo(BaseModel):
     was repaired for in the same release. Referenced only by MessageResponse,
     MessageStopEvent and converters.from_openai_response_dict.
 
-    Since v1.79.54 both modes DRAW FROM this one declared set and every field
-    is optional, so a generated client compiles against either. That is the
-    whole of what the shared declaration buys. **NEITHER MODE IS A SUPERSET OF
-    THE OTHER**, the reasons differ PER FIELD, and they must not be collapsed
-    into one sentence -- which is what the passage that stood here did, twice
-    over: it described the pre-.54 contract ("streaming does not send the two
-    rates, which this class still declares required") eight lines above the
-    Optional fields contradicting both halves, and a first repair then
-    replaced it with a flat claim of symmetry, which is equally false.
+    ONE CONTRACT, as of v1.79.58:
 
-    The per-field account is ``docs/api_integration.md`` §3 and lives THERE,
-    once. Do not restate it here -- a second copy in a docstring is how the
-    sentence above came to describe a contract that had not existed for two
-    releases.
+        Every field, when present, is a real measurement of exactly the thing
+        its name says. Absent means this mode or engine could not measure it.
 
-    Two structural facts that belong with the type rather than the guide:
-    - the emitted key set of the STREAMING payload is filtered to this class's
-      fields by ``messages_api.message_stop_event`` (v1.79.55), so the wire
-      cannot carry a key declared nowhere here. The reverse is NOT enforced:
-      a field declared here and emitted by nothing is invisible to that
-      filter, which is what ``peak_memory_gb`` was until v1.79.50.
-    - the OTHER route on this grammar, ``POST /v1/conversations/{id}/generate``,
-      calls ``message_stop_event()`` with NO timing, so its performance object
-      carries the durations alone; that route's chunk telemetry rides
-      ``heylook_saved.timing``, which is what v3's chat page reads.
+    That replaced a per-field asymmetry table, and the table is the thing worth
+    remembering. Four field names here did not denote a single measurement --
+    ``total_duration_ms`` had two origins, ``generation_tps`` was a real
+    measurement in one mode and a wall-clock fallback in the other,
+    ``prompt_tps`` shipped an unmeasured 0.0 as if measured, ``queue_wait_ms``
+    hid a measured zero as absence. Every one was documented rather than
+    fixed, and documentation cannot help a client holding a number it cannot
+    identify. Renaming and filtering at the single builder removes the
+    question instead of answering it.
+
+    ``perf_collector.build_performance`` is the ONE place this is spelled, for
+    both modes and both routes on the Messages grammar. Do not restate its
+    per-field reasoning here: a second copy in a docstring is how the passage
+    that stood here came to describe a contract two releases dead, twice over
+    (once by going stale, once by a repair that replaced it with a flat claim
+    of symmetry that was equally false).
+
+    One structural fact that belongs with the type: a single emit site is what
+    makes DECLARED-BUT-NEVER-EMITTED checkable. v1.79.55 filtered emitted down
+    to declared and was blind to the reverse -- which is exactly what
+    ``peak_memory_gb`` was until .50 and the two rates were until .54. With one
+    builder the two sets can be compared in both directions, and
+    ``tests/unit/test_message_stop_payload.py`` does.
     """
     # OPTIONAL, not required (v1.79.54). They were declared required while the
     # STREAMING payload never sent them, so a client generated from
@@ -94,8 +97,28 @@ class PerformanceInfo(BaseModel):
     content_duration_ms: Optional[int] = Field(
         default=None, description="Time spent generating content"
     )
-    total_duration_ms: Optional[int] = Field(
-        default=None, description="Total generation time"
+    # RETIRED total_duration_ms (v1.79.58). "Total" is an origin-relative
+    # name and it had two origins: request arrival non-streaming, stream start
+    # streaming -- so the same work reported tens of seconds in one mode and a
+    # few in the other, and nothing on the wire said which you held. Replaced
+    # by two names that each denote one span rather than aliased to one of
+    # them: two spellings for one value is the defect class v1.79.48 cited
+    # when it MOVED the load route instead of aliasing it.
+    # (The OpenAI wire's own `config.GenerationTiming.total_duration_ms` is a
+    # different model on a different wire and is untouched.)
+    request_duration_ms: Optional[int] = Field(
+        default=None,
+        description=(
+            "Wall time from request arrival to completion, INCLUDING FIFO "
+            "queue wait and any model load. User-perceived latency."
+        ),
+    )
+    generation_duration_ms: Optional[int] = Field(
+        default=None,
+        description=(
+            "Wall time spent generating, EXCLUDING queue wait and model load. "
+            "The denominator to use for throughput."
+        ),
     )
     # DECLARED as of v1.79.54. The streaming payload has always merged these
     # three in, and the model did not declare them -- so a client generated

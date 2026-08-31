@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.58]
+
+One builder for the Messages `performance` object, and one rule for reading it.
+
+### Changed
+
+- **BREAKING (Messages wire): `total_duration_ms` is retired**, replaced by
+  `request_duration_ms` and `generation_duration_ms`. "Total" is an
+  origin-relative name and it had two origins — request arrival non-streaming,
+  stream start streaming — so the same work reported tens of seconds in one
+  mode and a few in the other with nothing on the wire saying which you held.
+  Replaced rather than aliased: two spellings for one value is the defect
+  class v1.79.48 cited when it MOVED the load route instead of aliasing it.
+  `request_duration_ms` includes queue wait and model load (user-perceived
+  latency); `generation_duration_ms` excludes both (the throughput
+  denominator). Both modes now report both.
+  The OpenAI wire's own `config.GenerationTiming.total_duration_ms` is a
+  different model on a different wire and is untouched.
+- **The wire no longer synthesizes a rate.** Non-streaming ran
+  `generation_tps` through `headline_tps`, which falls back to
+  tokens-over-elapsed, so it produced a plausible figure the engine never
+  measured while the stream omitted it — one field name, two guarantees,
+  indistinguishable to a client. Both modes now carry the engine's own
+  measurement or nothing. `headline_tps` stays for the internal perf records,
+  where a best-effort number is right and its provenance is not on a wire.
+- **`prompt_tps` no longer ships an unmeasured zero.** It was assigned raw
+  non-streaming while `ChunkTelemetry` defaults it to `0.0`, so an engine that
+  reported no prefill rate produced `prompt_tps: 0.0` — indistinguishable from
+  a measurement, and reading as an infinitely slow prefill. v1.79.54 fixed
+  this trap in the *converter* and is therefore the release that made it look
+  closed; the builder reproduced it one layer up, so the converter's
+  absent-key path was never reached.
+- **`queue_wait_ms` keeps a measured zero.** Both modes emitted `value or
+  None`, dropping the key whenever a request waited no time in the FIFO gate —
+  the normal case on an idle server — so absent meant both "no wait" and "not
+  measured". The exact mirror of the `prompt_tps` defect, on the same object.
+- **`POST /v1/conversations/{id}/generate` reports telemetry on
+  `message_stop`.** It called `message_stop_event()` bare, so the second route
+  on the shared Messages grammar carried durations alone while `/v1/messages`
+  carried the full set — the per-path divergence `TestStopReasonHasOneMapper`
+  exists for, on the payload next door.
+
+### Added
+
+- **`perf_collector.build_performance`** — the single emit site for both modes
+  and both routes. The absent-vs-zero rule is per field and keys on whether
+  ZERO IS A MEANINGFUL MEASUREMENT of the quantity: durations and queue wait
+  are emitted unconditionally (a zero wait is a real wait, and no path records
+  a long one as 0.0); rates, peak memory and KV bytes spell zero as absence,
+  because zero there only ever means "never reported". `ChunkTelemetry`'s
+  truthy-latch — which cannot tell 0.0 from unreported — is deliberate and
+  unchanged; the rule works around it explicitly rather than pretending it
+  does not exist.
+- v1.79.55's declared-field filter moves inside that builder, and
+  `messages_api._declared_performance` is deleted.
+
+### Fixed
+
+- **The direction v1.79.55 could not see is now checkable.** That filter
+  enforced emitted ⊆ declared and was structurally blind to
+  declared-but-never-emitted — which is exactly what `peak_memory_gb` was
+  until .50 and both rates were until .54. A single emit site makes the two
+  sets comparable both ways, and `test_every_declared_field_is_reachable`
+  compares them.
+- `tests/unit/test_message_stop_payload.py` was rewritten rather than
+  extended: its whole subject was drift entering through a caller-supplied
+  `timing` dict, and there is no such dict any more.
+
+### Docs
+
+- `docs/api_integration.md` §3's per-field asymmetry table collapses to one
+  rule: **every field present is a real measurement of exactly the thing its
+  name says; absent means this mode or engine could not measure it.** Two
+  spellings of absent (streaming omits the key, non-streaming returns explicit
+  `null`), same meaning. A duplicate paragraph stating that second fact
+  separately was removed rather than left beside the new one.
+- `docs/frontend_v3_spec.md`'s Messages passage was wrong in two ways at once
+  — it claimed `message_stop` never sends the rates (false since .54) and
+  named `total_duration_ms`. It now points at §3 instead of restating it.
+
 ## [1.79.57]
 
 ### Fixed

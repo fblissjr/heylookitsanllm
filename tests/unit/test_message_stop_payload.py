@@ -1,89 +1,186 @@
-"""The streaming `message_stop` payload against the model that declares it.
+"""The Messages `performance` object against the model that declares it.
 
-`MessageStopEvent.performance` is typed `Optional[PerformanceInfo]`, but the
-payload is assembled as a RAW DICT by `StreamingEventTranslator` and written
-straight out by `_sse` -- nothing validates one against the other. That is why
-two mismatches lived there undetected: the model declared `prompt_tps` and
-`generation_tps` REQUIRED while the stream never sent them, and the stream
-sent `kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` which the model
-never declared, so a client generated from `/openapi.json` dropped three
-telemetry values off every message_stop without an error.
+`MessageStopEvent.performance` is typed `Optional[PerformanceInfo]` but the
+payload is a raw dict written straight out by `_sse`, so nothing validates one
+against the other. Two mismatches lived there undetected: the model declared
+both rates REQUIRED while the stream never sent them, and the stream sent
+three telemetry keys the model never declared -- so a client generated from
+`/openapi.json` dropped them off every message_stop without an error.
 
-v1.79.54 made the two agree. This pins that they STAY agreeing, which the
-emit path cannot do on its own: it is the construction guarantee replacing a
-hand-maintained claim, and the reason it is a subset check rather than a list
-is that a list here would be the same census that let the drift happen.
+WHAT CHANGED IN v1.79.58, and why this file was rewritten rather than
+extended. Until then there were TWO builders, and drift entered at the CALL
+SITE through a caller-supplied `timing` dict. A test could not close that: any
+test supplies its own dict, so it asserted "given declared keys, the output is
+declared" -- true by construction and green through the exact bug. There is no
+caller-supplied dict any more. `perf_collector.build_performance` spells every
+field itself, for both modes and both routes.
+
+That single emit site is what makes the SECOND direction checkable for the
+first time. v1.79.55 filtered emitted down to declared and was structurally
+blind to declared-but-never-emitted -- which is precisely what
+`peak_memory_gb` was until .50 and both rates were until .54. With one builder
+the two sets can be compared in both directions, and
+`test_every_declared_field_is_reachable` is that comparison.
 """
+
+import json
 
 import pytest
 
-from heylook_llm.schema.responses import PerformanceInfo
 from heylook_llm.messages_api import StreamingEventTranslator
+from heylook_llm.perf_collector import ChunkTelemetry, build_performance
+from heylook_llm.schema.responses import PerformanceInfo
+
+
+def _fully_measured() -> ChunkTelemetry:
+    """A run in which the engine reported everything it can report."""
+    t = ChunkTelemetry()
+    t.prompt_tps = 120.5
+    t.generation_tps = 34.5
+    t.peak_memory_gb = 12.25
+    t.kv_cache_bytes = 4096
+    t.queue_wait_ms = 7.5
+    t.draft_tokens = 10
+    t.draft_accepted = 5
+    return t
 
 
 @pytest.mark.unit
-class TestMessageStopMatchesItsModel:
-    def _payload(self, timing):
+class TestThePayloadAndItsModelAgreeBothWays:
+    def test_every_emitted_key_is_declared(self):
+        perf = build_performance(
+            _fully_measured(),
+            request_duration_ms=1000,
+            generation_duration_ms=900,
+            thinking_duration_ms=100,
+            content_duration_ms=800,
+        )
+        undeclared = set(perf) - set(PerformanceInfo.model_fields)
+        assert not undeclared, f"emitted but undeclared: {undeclared}"
+
+    def test_every_declared_field_is_reachable(self):
+        """The direction v1.79.55's filter could not see.
+
+        A field declared here and emitted by NOTHING is a promise on
+        `/openapi.json` that no run can keep -- `peak_memory_gb` was exactly
+        that until .50, and both rates until .54, and in each case the filter
+        was green because it only ever looked the other way. One emit site is
+        what makes this askable at all.
+        """
+        perf = build_performance(
+            _fully_measured(),
+            request_duration_ms=1000,
+            generation_duration_ms=900,
+            thinking_duration_ms=100,
+            content_duration_ms=800,
+        )
+        never_emitted = set(PerformanceInfo.model_fields) - set(perf)
+        assert not never_emitted, (
+            f"declared on PerformanceInfo but no run can produce them: "
+            f"{never_emitted} -- either build_performance should emit them or "
+            "they should not be declared"
+        )
+
+    def test_an_undeclared_key_is_dropped_and_logged(self, caplog, monkeypatch):
+        """Degrading silently would be the failure this exists to end.
+
+        The drop keeps the wire correct; the log is the only thing that tells
+        anyone. It goes through ordinary `logging` on purpose -- the JSONL
+        spine is off by default and would have swallowed it.
+        """
+        real = PerformanceInfo.model_fields
+        monkeypatch.setattr(
+            PerformanceInfo, "model_fields",
+            {k: v for k, v in real.items() if k != "queue_wait_ms"},
+        )
+        with caplog.at_level("ERROR"):
+            perf = build_performance(_fully_measured(), request_duration_ms=1)
+        assert "queue_wait_ms" not in perf, "an undeclared key reached the wire"
+        assert any("queue_wait_ms" in r.getMessage() for r in caplog.records), (
+            "the drop was silent"
+        )
+
+    def test_a_clean_payload_logs_nothing(self, caplog):
+        """An error path that fires on every normal generation is a log nobody
+        reads, which is the same as no log at all."""
+        with caplog.at_level("ERROR"):
+            build_performance(_fully_measured(), request_duration_ms=1)
+        assert not [r for r in caplog.records if "performance" in r.getMessage()]
+
+
+@pytest.mark.unit
+class TestAbsentMeansUnmeasurable:
+    """The contract: present = measured exactly what the name says."""
+
+    def test_a_measured_zero_queue_wait_survives(self):
+        """The mirror of the prompt_tps defect, and the commonest case there is.
+
+        `queue_wait_ms or None` dropped the key whenever a request waited no
+        time in the FIFO gate -- i.e. on any idle server -- so absent meant
+        both "no wait" and "not measured". Zero IS the measurement here: no
+        path records a long wait as 0.0.
+        """
+        t = ChunkTelemetry()  # queue_wait_ms defaults to 0.0
+        perf = build_performance(t, request_duration_ms=10)
+        assert perf["queue_wait_ms"] == 0.0
+
+    def test_an_unreported_rate_is_absent_not_zero(self):
+        """`prompt_tps` shipped a raw 0.0 non-streaming, indistinguishable
+        from a measured zero -- which reads as an infinitely slow prefill. A
+        rate of exactly zero is not a measurement of anything."""
+        t = ChunkTelemetry()  # prompt_tps defaults to 0.0, never latched
+        perf = build_performance(t, request_duration_ms=10)
+        assert "prompt_tps" not in perf
+        assert "generation_tps" not in perf
+
+    def test_no_rate_is_ever_synthesized(self):
+        """Non-streaming ran `generation_tps` through `headline_tps`, so it
+        produced a plausible figure the engine never measured while the stream
+        omitted it -- one name, two guarantees, indistinguishable on the wire.
+        """
+        t = ChunkTelemetry()
+        t.completion_tokens = 500
+        perf = build_performance(t, request_duration_ms=1000,
+                                 generation_duration_ms=1000)
+        assert "generation_tps" not in perf, (
+            "a rate was synthesized from the duration -- headline_tps belongs "
+            "to the internal perf records, not to this wire"
+        )
+
+    def test_a_span_the_caller_cannot_measure_is_omitted(self):
+        perf = build_performance(_fully_measured(), request_duration_ms=100)
+        assert "generation_duration_ms" not in perf
+        assert "thinking_duration_ms" not in perf
+
+
+@pytest.mark.unit
+class TestBothRoutesOnTheGrammarUseTheBuilder:
+    def _perf(self, **kw):
         t = StreamingEventTranslator("msg_x", "test-model")
-        sse = t.message_stop_event(timing=timing)
-        import json
-        # `event: message_stop\ndata: {...}\n\n`
+        sse = t.message_stop_event(_fully_measured(), **kw)
         line = [l for l in sse.splitlines() if l.startswith("data:")][0]
         return json.loads(line[len("data:"):])["performance"]
 
-    def test_every_emitted_key_is_declared_on_performance_info(self):
-        """A key the stream sends and the model does not declare is INVISIBLE
-        to a generated client -- it arrives and is dropped, with nothing
-        reporting it. That is the more dangerous direction of the two."""
-        payload = self._payload({
-            "prompt_tps": 12.5, "generation_tps": 34.5, "peak_memory_gb": 1.0,
-            "kv_cache_bytes": 4096, "queue_wait_ms": 7.5, "draft_acceptance": 0.5,
-        })
-        undeclared = set(payload) - set(PerformanceInfo.model_fields)
-        assert not undeclared, f"message_stop sends undeclared fields: {undeclared}"
+    def test_message_stop_reports_the_generation_span(self):
+        perf = self._perf()
+        assert "generation_duration_ms" in perf
+        # The translator's clock starts when the stream does, which is AFTER
+        # get_provider -- so it can never be the request span.
+        assert "request_duration_ms" not in perf
 
-    def test_an_undeclared_key_is_dropped_rather_than_emitted(self):
-        """The version of the first test that can actually FAIL.
+    def test_message_stop_reports_the_request_span_when_given_one(self):
+        import time
+        perf = self._perf(request_start_time=time.time() - 5)
+        assert perf["request_duration_ms"] >= 4900
+        assert perf["generation_duration_ms"] < perf["request_duration_ms"]
 
-        The one above passes a timing dict of keys chosen to be declared, so
-        it asserts "given good input, the output is good" -- true by
-        construction and green through the exact bug, which entered at the
-        CALL SITE by someone adding a key the model did not declare. This
-        feeds the bad input directly.
+    def test_total_duration_ms_is_gone(self):
+        """Retired rather than aliased (v1.79.58).
+
+        Two spellings for one value is the defect class v1.79.48 cited when it
+        MOVED the load route instead of aliasing it. "Total" was the
+        ambiguous name -- it meant request arrival in one mode and stream
+        start in the other.
         """
-        payload = self._payload({"peak_memory_gb": 1.0, "totally_new_metric": 42})
-        assert "totally_new_metric" not in payload
-        assert payload["peak_memory_gb"] == 1.0, "the good keys must survive the filter"
-
-    def test_the_drop_is_logged_as_an_error(self, caplog):
-        """Degrading silently would be the failure this exists to end. The
-        wire stays correct either way; the log is the only thing that tells a
-        developer they lost a field."""
-        import logging as _logging
-        with caplog.at_level(_logging.ERROR):
-            self._payload({"totally_new_metric": 42})
-        assert any("totally_new_metric" in r.getMessage() for r in caplog.records), \
-            "dropping an undeclared field must name it in the log"
-
-    def test_a_clean_payload_logs_nothing(self, caplog):
-        """The error path must not fire on every normal generation -- a log
-        that always fires is a log nobody reads."""
-        import logging as _logging
-        with caplog.at_level(_logging.ERROR):
-            self._payload({"peak_memory_gb": 1.0, "queue_wait_ms": 3.0})
-        assert not [r for r in caplog.records if r.levelno >= _logging.ERROR]
-
-    def test_no_declared_field_is_required(self):
-        """The mirror direction: a REQUIRED field this payload can omit makes
-        the schema unsatisfiable for the mode. Both rates were required while
-        the stream never sent them."""
-        required = [n for n, f in PerformanceInfo.model_fields.items() if f.is_required()]
-        assert not required, f"message_stop cannot guarantee: {required}"
-
-    def test_absent_telemetry_is_omitted_not_null(self):
-        """The streaming spelling, which differs from non-streaming on purpose
-        and is documented as such -- pinned so the two do not silently
-        converge without the doc moving."""
-        payload = self._payload({"peak_memory_gb": None, "kv_cache_bytes": None})
-        assert "peak_memory_gb" not in payload
-        assert "kv_cache_bytes" not in payload
+        assert "total_duration_ms" not in self._perf()
+        assert "total_duration_ms" not in PerformanceInfo.model_fields

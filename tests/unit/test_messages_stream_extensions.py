@@ -198,7 +198,11 @@ class TestMessageStopTiming:
         stop = next(d for ev, d in sse_events(res.text) if ev == "message_stop")
         perf = stop["performance"]
         assert "peak_memory_gb" not in perf and "kv_cache_bytes" not in perf
-        assert "total_duration_ms" in perf  # the native field is untouched
+        # The span the stream can always measure is still there. A measured
+        # zero queue wait is NOT absent -- that is the v1.79.58 rule, and this
+        # run really did wait zero.
+        assert "generation_duration_ms" in perf
+        assert perf["queue_wait_ms"] == 0.0
 
 
 @pytest.mark.unit

@@ -9,6 +9,7 @@ GET /v1/performance/profile/{time_range}.
 import threading
 import time
 from collections import deque
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -90,6 +91,107 @@ class ChunkTelemetry:
         # arrives on the FINAL chunk only -- a later chunk without one must
         # not erase it, so this latches rather than overwrites
         self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason
+
+
+def build_performance(
+    telemetry: "ChunkTelemetry",
+    *,
+    request_duration_ms: Optional[int] = None,
+    generation_duration_ms: Optional[int] = None,
+    thinking_duration_ms: Optional[int] = None,
+    content_duration_ms: Optional[int] = None,
+) -> dict:
+    """The Messages-wire ``performance`` object, built in ONE place.
+
+    THE CONTRACT THIS ENFORCES, which is the whole point:
+
+        Every field, when present, is a real measurement of exactly the thing
+        its name says. Absent means this mode or engine could not measure it.
+
+    Before v1.79.58 there were TWO builders -- the non-streaming dict in
+    ``messages_api`` and ``message_stop_event``'s -- that had to agree by
+    hand, and did not, in four separate ways that a schema cannot express:
+    ``total_duration_ms`` timed from request arrival in one and from stream
+    start in the other; ``generation_tps`` the engine's number in one and a
+    wall-clock fallback in the other; ``prompt_tps`` null-coalesced in one and
+    raw in the other; ``queue_wait_ms`` dropping a measured zero in both. Each
+    was a field name that did not denote a single measurement, so a client
+    holding a number could not tell which one it had.
+
+    WHY THE ABSENT-VS-ZERO RULE IS PER FIELD RATHER THAN GLOBAL.
+    ``ChunkTelemetry`` latches on truthy and cannot distinguish "the engine
+    reported 0.0" from "the engine never reported" -- that is deliberate (it
+    protects first-chunk-only snapshots and sparse vision chunks) and is not
+    changed here. So the rule keys on whether ZERO IS A MEANINGFUL
+    MEASUREMENT of the quantity:
+
+    * durations and ``queue_wait_ms``: yes. A request that waited no time in
+      the FIFO gate really did wait zero, and there is no path on which a
+      long wait is recorded as 0.0 -- so these are emitted unconditionally and
+      absent genuinely means unmeasurable. Dropping the zero (the old ``or
+      None``) hid a measurement on the commonest case there is, an idle
+      server.
+    * rates, ``peak_memory_gb``, ``kv_cache_bytes``: no. A rate of exactly
+      zero would mean no tokens in unbounded time, and zero bytes of KV cache
+      is not a state a run reaches. Zero there only ever means "never
+      reported", so it is spelled as absence.
+
+    NO SYNTHESIS. ``generation_tps`` carries the engine's own measurement or
+    nothing at all; it does not fall back to ``headline_tps``. A derived
+    stand-in and a measurement under one field name is the ambiguity this
+    function exists to remove -- ``headline_tps`` stays for the internal perf
+    records, where a best-effort number is the right answer and its provenance
+    is not on a wire.
+
+    Filtering to ``PerformanceInfo``'s declared fields (v1.79.55) lives here
+    now, because this is the single emit site -- which is also what makes the
+    OTHER direction checkable for the first time: a field declared and emitted
+    by nothing was invisible while there were two builders, and that was the
+    v1.79.50 and .54 bug.
+    """
+    from heylook_llm.schema.responses import PerformanceInfo
+
+    perf: dict = {}
+    # Zero is a real answer for these.
+    for key, value in (
+        ("request_duration_ms", request_duration_ms),
+        ("generation_duration_ms", generation_duration_ms),
+        ("thinking_duration_ms", thinking_duration_ms),
+        ("content_duration_ms", content_duration_ms),
+    ):
+        if value is not None:
+            perf[key] = value
+    perf["queue_wait_ms"] = telemetry.queue_wait_ms
+
+    # Zero here only ever means "never reported".
+    if telemetry.prompt_tps:
+        perf["prompt_tps"] = telemetry.prompt_tps
+    if telemetry.generation_tps:
+        perf["generation_tps"] = telemetry.generation_tps
+    if telemetry.peak_memory_gb:
+        perf["peak_memory_gb"] = telemetry.peak_memory_gb
+    if telemetry.kv_cache_bytes:
+        perf["kv_cache_bytes"] = telemetry.kv_cache_bytes
+    if telemetry.draft_tokens:
+        perf["draft_acceptance"] = telemetry.draft_accepted / telemetry.draft_tokens
+
+    declared = set(PerformanceInfo.model_fields)
+    undeclared = set(perf) - declared
+    if undeclared:
+        # Degrade, never raise (owner call, v1.79.55): this runs at the end of
+        # a possibly long, expensive generation, and killing the terminal
+        # event would leave a client holding the whole answer and waiting for
+        # a stream that never closes. Ordinary logging, which reaches the
+        # console regardless of observability_level.
+        logging.error(
+            "[PERF] dropped undeclared performance field(s) %s -- add them to "
+            "PerformanceInfo (schema/responses.py) or stop sending them; a "
+            "client generated from /openapi.json has no field for them and "
+            "would drop them silently",
+            ", ".join(sorted(undeclared)),
+        )
+        perf = {k: v for k, v in perf.items() if k in declared}
+    return perf
 
 
 def net_ttft_ms(raw_ttft_ms: float, queue_wait_ms: float) -> float:

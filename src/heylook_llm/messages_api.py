@@ -38,6 +38,7 @@ from heylook_llm.perf_collector import (
     ChunkTelemetry,
     RequestEvent,
     get_perf_collector,
+    build_performance,
     headline_tps,
     net_ttft_ms,
 )
@@ -196,83 +197,50 @@ class StreamingEventTranslator:
             "usage": usage,
         })
 
-    def message_stop_event(self, timing: dict | None = None) -> str:
-        """Emit terminal message_stop with performance data.
+    def message_stop_event(
+        self,
+        telemetry: "ChunkTelemetry | None" = None,
+        *,
+        request_start_time: float | None = None,
+    ) -> str:
+        """Emit terminal ``message_stop`` with the performance object.
 
-        ``timing`` merges caller-supplied telemetry fields (peak memory, KV
-        bytes, queue wait, draft acceptance -- the heylook extension names
-        shared with heylook_saved.timing) into the performance object; None
-        values are skipped so absent telemetry never renders as null.
+        Takes the TELEMETRY, not a pre-built ``timing`` dict. That is the
+        change: a caller-supplied dict was where the drift entered, because
+        each of the two builders on this wire spelled the same fields
+        differently and no test could see it (any test supplies its own dict,
+        so it asserts "given declared keys, the output is declared" and stays
+        green through the bug). The spelling now lives once, in
+        ``perf_collector.build_performance``.
 
-        THE EMITTED KEYS ARE ``PerformanceInfo``'S FIELDS, BY CONSTRUCTION
-        (v1.79.55). ``MessageStopEvent.performance`` is typed as that model
-        but this payload is assembled as a raw dict and written straight out,
-        so for four releases nothing checked one against the other and they
-        disagreed BOTH ways: the model declared the two rates required while
-        this never sent them, and this sent three telemetry keys the model
-        never declared -- which a client generated from ``/openapi.json``
-        dropped off every message_stop, silently. .54 made the two agree by
-        hand; this makes them unable to disagree.
-
-        The drift always entered at the CALL SITE, in the ``timing`` dict --
-        which is why a test could not close it: any test supplies its own
-        timing, so it asserts "given declared keys, the output is declared"
-        and stays green through the exact bug. Verified: with this filter
-        removed, the subset test still passes and only the tests written
-        against the bad input go red. The constraint has to live where the
-        payload is built.
-
-        DEGRADES, NEVER RAISES (owner call). An undeclared key is a
-        programming error, but telemetry must not break a generation -- and
-        this fires at the END of a possibly long, expensive run, where killing
-        the terminal event would leave a client holding the whole answer and
-        waiting forever for a stream that never closes. So the key is dropped,
-        the wire stays correct, and the error is logged. Ordinary ``logging``,
-        which reaches the console regardless of ``observability_level`` -- the
-        JSONL spine is off by default and would have swallowed it.
+        ``request_start_time`` is optional because not every caller has one --
+        ``/v1/conversations/{id}/generate`` does, ``/v1/messages`` does, a bare
+        translator constructed in a test does not. When it is absent the
+        request span is simply not reported, which under this wire's contract
+        means exactly what it says: not measurable here.
         """
         end_time = time.time()
-        total_ms = int((end_time - self.start_time) * 1000)
-
-        perf: dict = {"total_duration_ms": total_ms}
+        thinking_ms = content_ms = None
         if self.thinking_start is not None:
             t_end = self.thinking_end or end_time
-            perf["thinking_duration_ms"] = int((t_end - self.thinking_start) * 1000)
+            thinking_ms = int((t_end - self.thinking_start) * 1000)
         if self.content_start is not None:
-            perf["content_duration_ms"] = int((end_time - self.content_start) * 1000)
-        for key, value in (timing or {}).items():
-            if value is not None:
-                perf[key] = value
+            content_ms = int((end_time - self.content_start) * 1000)
 
-        perf = self._declared_performance(perf)
+        perf = build_performance(
+            telemetry if telemetry is not None else ChunkTelemetry(),
+            # The translator's own clock starts when the stream does, which is
+            # AFTER get_provider -- so it is the generation span, never the
+            # request span. Naming it that way is the fix: it used to be
+            # reported as `total_duration_ms`, the same key the non-streaming
+            # builder filled from request arrival.
+            generation_duration_ms=int((end_time - self.start_time) * 1000),
+            request_duration_ms=(int((end_time - request_start_time) * 1000)
+                                 if request_start_time is not None else None),
+            thinking_duration_ms=thinking_ms,
+            content_duration_ms=content_ms,
+        )
         return self._sse("message_stop", {"type": "message_stop", "performance": perf})
-
-    @staticmethod
-    def _declared_performance(perf: dict) -> dict:
-        """Filter to what ``PerformanceInfo`` declares, and say so when it bites.
-
-        Filtering is deliberately done on the KEY SET rather than by round-
-        tripping through the model: a bad VALUE (wrong type) would make
-        construction raise, and swallowing that would be the silent behaviour
-        this exists to end -- while letting it propagate would break the
-        stream, which the owner ruled against. Keys are the guarantee being
-        bought here; types were never enforced on this path and pretending
-        otherwise would overstate it.
-        """
-        from heylook_llm.schema.responses import PerformanceInfo
-
-        declared = set(PerformanceInfo.model_fields)
-        undeclared = set(perf) - declared
-        if undeclared:
-            logging.error(
-                "[MESSAGES] message_stop dropped undeclared performance field(s) %s -- "
-                "add them to PerformanceInfo (schema/responses.py) or stop sending "
-                "them; a client generated from /openapi.json has no field for them "
-                "and would drop them silently",
-                ", ".join(sorted(undeclared)),
-            )
-            return {k: v for k, v in perf.items() if k in declared}
-        return perf
 
     # -- Private helpers ----------------------------------------------------
 
@@ -494,6 +462,7 @@ async def _non_stream_messages(
                     if tid is not None and lp is not None:
                         logprobs_collector.add_token(tid, lp)
 
+    generation_start = time.time()
     try:
         await asyncio.to_thread(consume)
     except InvalidGenerationRequest as e:
@@ -559,37 +528,21 @@ async def _non_stream_messages(
         },
     }
 
-    # Performance metrics. Rates are mlx-lm's own measurements (taken tightly
-    # around prefill/decode); the old prompt_tps here divided prompt tokens by
-    # WHOLE-request elapsed, which is not a rate of anything.
+    # Performance: the SAME builder the streaming half uses, so the two
+    # payloads cannot disagree by hand (v1.79.58). `generation_start` is
+    # recorded just before the consume loop below -- it is what lets this mode
+    # report a generation span at all; it never could before, which is why
+    # `total_duration_ms` here meant something different from the same key on
+    # the stream.
     elapsed = time.time() - request_start_time
     total_tokens = (telemetry.completion_tokens or token_count)
     if elapsed > 0 and total_tokens > 0:
-        openai_dict["performance"] = {
-            "prompt_tps": telemetry.prompt_tps,
-            "generation_tps": headline_tps(telemetry.generation_tps, total_tokens, elapsed, telemetry.queue_wait_ms),
-            "total_duration_ms": int(elapsed * 1000),
-            # PerformanceInfo declares this and the streaming half of this
-            # wire fills it (message_stop's timing); this builder was the one
-            # dropping it, so a non-streaming client rendering it got a blank
-            # field with no reason why. `or None` matches the streaming
-            # spelling. Two scope notes the first version of this comment got
-            # wrong: the OpenAI wire returns a DIFFERENT model
-            # (config.PerformanceMetrics), not this one; and the value is
-            # MLX-only in every mode -- LlamaServerProvider never sets
-            # `peak_memory`, so gguf reads null here and always did.
-            "peak_memory_gb": telemetry.peak_memory_gb or None,
-            # Absent here by OMISSION, not design (v1.79.54): the streaming
-            # half has always merged these three in, this builder never did,
-            # and PerformanceInfo did not declare them -- so they could not
-            # have arrived even if it had. Same class as peak_memory_gb before
-            # .50: a value already sitting in telemetry that one of the two
-            # builders dropped. Both modes carry the same set now.
-            "kv_cache_bytes": telemetry.kv_cache_bytes or None,
-            "queue_wait_ms": telemetry.queue_wait_ms or None,
-            "draft_acceptance": (telemetry.draft_accepted / telemetry.draft_tokens)
-            if telemetry.draft_tokens else None,
-        }
+        openai_dict["performance"] = build_performance(
+            telemetry,
+            request_duration_ms=int(elapsed * 1000),
+            generation_duration_ms=(int((time.time() - generation_start) * 1000)
+                                    if generation_start is not None else None),
+        )
 
     response = from_openai_response_dict(
         openai_dict,
@@ -757,20 +710,9 @@ async def _stream_messages(
     # message_delta + message_stop (timing/KV telemetry rides message_stop's
     # performance object -- the extension the v3 status lines read)
     yield translator.message_delta_event()
-    yield translator.message_stop_event(timing={
-        # The rates were in scope here the whole time and were never emitted,
-        # while PerformanceInfo declared them REQUIRED -- so this payload could
-        # not satisfy its own declared model, and a streaming client following
-        # the guide's "prefer the engine's rates over a wall-clock division"
-        # had nothing to prefer. Both modes carry them now.
-        "prompt_tps": telemetry.prompt_tps or None,
-        "generation_tps": telemetry.generation_tps or None,
-        "peak_memory_gb": telemetry.peak_memory_gb or None,
-        "kv_cache_bytes": telemetry.kv_cache_bytes or None,
-        "queue_wait_ms": telemetry.queue_wait_ms or None,
-        "draft_acceptance": (telemetry.draft_accepted / telemetry.draft_tokens)
-        if telemetry.draft_tokens else None,
-    })
+    yield translator.message_stop_event(
+        telemetry, request_start_time=perf_ctx["request_start_time"] if perf_ctx else None
+    )
 
     logging.info(f"[MESSAGES] {request_id[:12]} stream complete")
 

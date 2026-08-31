@@ -323,15 +323,21 @@ stays for external consumers, no v3 page calls it):
   /generate's, where heylook_saved may still follow).
 - Non-streaming: content blocks incl. a `logprobs` block when requested
   (wired v1.74.0 — the docstring promised it earlier than it existed), plus
-  a `performance` object. Its fields are NOT the streaming set and neither
-  mode is a superset: non-streaming carries `prompt_tps` / `generation_tps`
-  (which `message_stop` never sends) and `total_duration_ms`, and since
-  v1.79.50 also `peak_memory_gb`; it does NOT carry the thinking/content
-  durations, which are streaming-only. It is `null` outright when the
+  a `performance` object. Since v1.79.58 BOTH modes draw from one builder
+  (`perf_collector.build_performance`) under one rule — every field present
+  is a real measurement of exactly what its name says; absent (streaming) or
+  `null` (non-streaming) means this mode or engine could not measure it. The
+  per-field account lives in `docs/api_integration.md` §3 and only there;
+  this passage previously restated it and was wrong in two ways at once
+  (it claimed `message_stop` never sends the rates, false since v1.79.54, and
+  named `total_duration_ms`, retired in .58 for having two origins).
+  The two spans are `request_duration_ms` (includes queue wait + model load)
+  and `generation_duration_ms` (excludes both). The thinking/content
+  durations remain streaming-only. The object is `null` outright when the
   generation produced no tokens (the builder is gated on a token count), so
-  the field is Optional and must be null-checked. `peak_memory_gb` is
-  MLX-only in EVERY mode — `LlamaServerProvider` never sets `peak_memory`,
-  so a gguf model reads null there and always has.
+  it must be null-checked. `peak_memory_gb` is MLX-only in EVERY mode —
+  `LlamaServerProvider` never sets `peak_memory`, so a gguf model reads null
+  there and always has.
   NB `PerformanceInfo` declares both rates REQUIRED while the streaming
   payload omits them; a generated client needs them loosened by hand.
 - Request field removed v1.79.49: `include_performance` is gone from

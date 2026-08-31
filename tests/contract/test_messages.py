@@ -271,8 +271,23 @@ class TestNonStreamingPerformance:
         """
         perf = self._perf(client)
         assert perf["prompt_tps"] == 42.5
-        assert perf["generation_tps"] > 0
-        assert perf["total_duration_ms"] is not None
+        # The fake reports a PREFILL rate and no DECODE rate, which is what
+        # makes this pair worth asserting together: the measured one arrives
+        # verbatim, and the unmeasured one is ABSENT rather than synthesized.
+        # Until v1.79.58 this line read `generation_tps > 0` and passed only
+        # because `headline_tps` invented a figure from wall-clock that the
+        # engine never produced -- a derived stand-in and a measurement
+        # sharing one field name, indistinguishable to a client.
+        # NON-STREAMING SPELLS UNMEASURED AS EXPLICIT null, streaming spells
+        # it as an absent key -- the response goes through PerformanceInfo,
+        # which materialises every declared field. Same meaning, two
+        # spellings, and both are "the engine did not report this".
+        assert perf["generation_tps"] is None, (
+            "a decode rate appeared for a run whose engine never reported one "
+            "-- headline_tps used to invent one from wall-clock here"
+        )
+        assert perf["request_duration_ms"] is not None
+        assert "total_duration_ms" not in perf, "retired in v1.79.58"
 
     def test_the_three_telemetry_keys_reach_this_path_too(self, client):
         """Declared on PerformanceInfo and built here as of v1.79.54.

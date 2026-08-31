@@ -288,7 +288,10 @@ class TestStreamingEventTranslator:
     def test_message_stop_event(self, translator):
         event = translator.message_stop_event()
         assert "message_stop" in event
-        assert "total_duration_ms" in event
+        # The translator's clock starts with the stream, so the span it can
+        # always report is the GENERATION one. `total_duration_ms` was retired
+        # in v1.79.58 for meaning request-arrival in the other mode.
+        assert "generation_duration_ms" in event
 
     def test_block_index_increments(self, translator):
         """Each new block should get an incremented index."""

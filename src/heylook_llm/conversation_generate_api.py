@@ -736,7 +736,14 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
             yield event_str
         if end_reason != "error":
             yield translator.message_delta_event()
-            yield translator.message_stop_event()
+            # Passes its telemetry now (v1.79.58). This route shares the
+            # Messages grammar with /v1/messages but called this bare, so its
+            # performance object carried durations alone while the other
+            # carried the full set -- the same per-path divergence
+            # TestStopReasonHasOneMapper exists for, on the payload next door.
+            yield translator.message_stop_event(
+                telemetry,
+                request_start_time=perf_ctx["request_start_time"] if perf_ctx else None)
 
         saved_row = await persist()
         persisted = True

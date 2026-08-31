@@ -162,75 +162,66 @@ first token) returns `"performance": null`. The response model declares it
 `Optional`, so null-check it; the earlier version of this paragraph said
 "always" and was wrong.
 
-It carries `prompt_tps`, `generation_tps`, `total_duration_ms`,
-`peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` —
-whichever of them the run actually produced. The rates are the engine's own
-measurements taken around prefill and decode, so they are a better number
-than dividing tokens by any elapsed time that spans the whole request. **The
-hazard is the SPAN, not whose clock measured it** — an elapsed time covering
-queue wait and model load is the wrong denominator no matter who produced it,
-and the server hands you one: non-streaming `total_duration_ms` covers both.
-So the denominator sitting in this same object is one of the numbers this
-sentence warns against. See the `total_duration_ms` bullet below before
-dividing by anything.
+It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
+`generation_duration_ms`, `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`
+and `draft_acceptance`, plus the two streaming-only phase durations.
 
-**As of v1.79.54 both modes draw from the same declared set**, and
-`/openapi.json` describes it honestly: every field on `PerformanceInfo` is
-optional, so a generated client compiles against either mode. Neither mode is
-a superset of the other, for two separate reasons — do not collapse them.
+**As of v1.79.58 there is ONE rule, and it replaces the per-field table this
+section used to carry:**
 
-- **The exception: `thinking_duration_ms` and `content_duration_ms` are
-  streaming only, BY DESIGN.** The block translator times them as it emits,
-  so there is nothing non-streaming to measure. Non-streaming they arrive as
-  explicit `null`; do not render them on that path. That absence is stable —
-  rely on it.
-- **The other: an unmeasured rate is OMITTED on the stream and PRESENT
-  non-streaming — and the two rates fail differently.** Streaming drops both
-  when the engine reported nothing (`telemetry.X or None`, and the emitter
-  skips nulls). Non-streaming keeps both, by two different mechanisms, so do
-  not read them as one rule:
-  - `generation_tps` is SYNTHESIZED. The builder runs it through
-    `headline_tps`, which falls back to tokens-over-elapsed, so you get a
-    plausible figure the engine never produced. Measured, not reasoned: a
-    contract run produced `generation_tps` non-streaming and no such key on
-    the stream.
-  - `prompt_tps` is ZEROED. The builder assigns it raw — no `headline_tps`,
-    no null-coalesce — and the accumulator defaults it to `0.0` and latches
-    only on a truthy value. So an engine that reports no prefill rate gives
-    you `prompt_tps: 0.0`, which is indistinguishable from a measured zero
-    and reads as an infinitely slow prefill. **Treat `prompt_tps == 0` as
-    "unknown", not as a measurement, on every version including .54 and
-    .55.** v1.79.54 fixed this exact trap in the converter's
-    `.get(key, 0)` default, which is why the release LOOKS like it closed it;
-    the builder reproduces it one layer up, so the converter's absent-key
-    path is never reached. Open on the server side, deliberately unfixed
-    here — it is a wire change, not a doc fix.
-- **`total_duration_ms` is measured from a DIFFERENT ORIGIN in each mode,
-  and this is the one most likely to mislead you.** Non-streaming measures
-  from request arrival, so it INCLUDES FIFO queue wait and any model load.
-  Streaming measures from the point the stream translator is built, which is
-  after the provider is in hand, so it EXCLUDES both — the streaming path
-  does not have access to the earlier timestamp at all. On a cold load the
-  same work can report tens of seconds in one mode and a few in the other.
-  Do not compare the two across modes, and do not divide tokens by it to
-  sanity-check the engine's rates on the non-streaming path — that is the
-  wall-clock division this section warns about, wearing a server-side name.
-- **`queue_wait_ms` absent means zero, not unknown.** Both modes emit it as
-  `value or None`, so a request that waited no time in the generation gate —
-  the normal case on an idle server — omits the key. If you are netting queue
-  wait out of TTFT, treat absent as 0. (`prompt_tps` has the opposite defect
-  above: it reports an unmeasured value as a measured zero. Absent and zero
-  are unreliable in opposite directions on these two fields.)
-- **Everything else is symmetric now.** Before .54 it was not, in two
-  different ways, and both were invisible: the rates were declared REQUIRED
-  while `message_stop` never sent them (so a client generated from the schema
-  got two required fields that mode could not satisfy), and
-  `kv_cache_bytes`/`queue_wait_ms`/`draft_acceptance` were sent on the stream
-  while the model did not declare them (so a generated client dropped three
-  telemetry values off every `message_stop`, silently, which is the more
-  dangerous of the two).
+> Every field, when present, is a real measurement of exactly the thing its
+> name says. Absent means this mode or engine could not measure it.
 
-Version caveats if you support older servers: `peak_memory_gb` was null
+Two spellings of absent, same meaning: streaming omits the key, non-streaming
+returns explicit `null` (its response goes through `PerformanceInfo`, which
+materialises every declared field). Null-check either way and you are correct.
+
+**The two spans, which is the part to read if you read nothing else.**
+`total_duration_ms` is GONE. It meant request-arrival in one mode and
+stream-start in the other, so the same work reported tens of seconds in one
+and a few in the other with nothing on the wire saying which you held. It is
+replaced by two names that each mean one thing, rather than aliased to either:
+
+- **`request_duration_ms`** — arrival to completion, INCLUDING queue wait and
+  any model load. This is user-perceived latency. It is *not* a throughput
+  denominator.
+- **`generation_duration_ms`** — time spent generating, EXCLUDING queue wait
+  and model load. This is the throughput denominator.
+
+Both modes report both spans. If you are on a server older than .58 you will
+see `total_duration_ms` instead; treat it as `request_duration_ms`
+non-streaming and `generation_duration_ms` streaming, which is exactly the
+ambiguity the rename removed.
+
+**Rates are the engine's own measurement or nothing.** `prompt_tps` and
+`generation_tps` come from mlx-lm's own instrumentation around prefill and
+decode. If the engine did not report one, the field is absent (or null) — the
+server no longer substitutes a wall-clock figure. Before .58 the non-streaming
+path ran `generation_tps` through a fallback that produced a plausible number
+the engine never measured, while the stream omitted it: one field name, two
+guarantees, indistinguishable. If you need a rate the engine did not give you,
+compute it yourself from `generation_duration_ms` — and knowing that you did
+is the point.
+
+- **`prompt_tps == 0` no longer happens.** Before .58 an unreported prefill
+  rate shipped as a literal `0.0` non-streaming, which reads as an infinitely
+  slow prefill. It is absent/null now. On .54–.57, treat `0` as unknown.
+- **`queue_wait_ms` is always present, and `0` is a measurement.** A request
+  that waited no time in the FIFO gate really did wait zero; before .58 the
+  key was dropped in that case, so absent meant both "no wait" and "not
+  measured" — on the commonest case there is, an idle server.
+- **`thinking_duration_ms` and `content_duration_ms` are streaming only, by
+  design.** The block translator times them as it emits; there is nothing
+  non-streaming to measure. This is the one asymmetry left, and under the rule
+  above it is not an exception — it is a span that mode genuinely cannot
+  measure.
+- **`peak_memory_gb` is MLX-only** (see below), so absent there means gguf,
+  not "not measured this time".
+
+Version caveats if you support older servers: `total_duration_ms` was the
+only span before **v1.79.58** and is absent from newer servers — read
+`request_duration_ms`/`generation_duration_ms` when present and fall back to
+it when not; `peak_memory_gb` was null
 non-streaming before **v1.79.50**; the rates were absent from `message_stop`
 and the three telemetry keys absent from non-streaming responses before
 **v1.79.54**. Treat every one of them as optional and you are correct on
@@ -250,17 +241,11 @@ provider never sets it, because the generation happens inside a
 have different remedies and only one is a version question. If you see it
 null on an MLX model, that is the version question.
 
-**The two modes spell absence differently**, which matters if you parse both.
-Streaming omits an absent telemetry field from `message_stop.performance`
-entirely; non-streaming renders it as an explicit `null`, because the
-response model declares the field. Treat missing and null as the same
-condition.
-
 What is not there at all is time-to-first-token, and non-streaming it is not
 merely unreturned — it is **never measured**. The non-streaming path records
 `first_token_ms = 0.0` as a literal; nothing computes it. So it is genuinely
 unobservable, which matters because it stops you deriving it from
-`total_duration_ms`.
+`request_duration_ms` (arrival to done) or `generation_duration_ms`.
 
 Do not reach for `GET /v1/performance/profile/{1h|6h|24h|7d}` to recover it
 either. That aggregate averages `first_token_ms` across every request in the
@@ -445,7 +430,7 @@ event: content_block_delta    data: {type, index, delta:{type:"text_delta", text
                               data: {type, index, delta:{type:"thinking_delta", thinking, text}}
 event: content_block_stop     data: {type, index}
 event: message_delta          data: {type, delta:{stop_reason}, usage}
-event: message_stop           data: {type, performance:{total_duration_ms, ...}}
+event: message_stop           data: {type, performance:{generation_duration_ms, ...}}
 ```
 
 There is **no `data: [DONE]` terminator** — `message_stop` ends the stream.
