@@ -178,9 +178,11 @@ different things.** Do not read the asymmetry as one design.
   between loosening the model and emitting the rates. Generate types from the
   schema and you get two required fields that mode never sends — make them
   optional by hand.
-- **The thinking/content durations are streaming only BY DESIGN.** The block
-  translator times them as it emits, so there is nothing non-streaming to
-  measure. Their absence is stable; rely on it.
+- **`thinking_duration_ms` and `content_duration_ms` are streaming only BY
+  DESIGN.** The block translator times them as it emits, so there is nothing
+  non-streaming to measure. Non-streaming they arrive as explicit `null`,
+  not omitted; do not render them on that path. Their absence is stable —
+  rely on it.
 - **`kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` are streaming
   only BY OMISSION.** They ride `message_stop.performance` and are simply not
   built on the non-streaming path — the same class of gap that left
@@ -189,11 +191,8 @@ different things.** Do not read the asymmetry as one design.
   declared on `PerformanceInfo` at all, so a client generated from the schema
   has no field for them and will drop them silently off the stream.
 
-The other two, `thinking_duration_ms` and `content_duration_ms`, are
-**streaming-only** and arrive `null` here. They are timed by the block
-translator as it emits, so there is nothing non-streaming to measure them
-against — do not render them on this path. (`peak_memory_gb` was null here
-too until v1.79.50; if you are on an older server, expect it blank.)
+One version caveat on the list above: `peak_memory_gb` was null on the
+non-streaming path too until v1.79.50. On an older server, expect it blank.
 
 **`peak_memory_gb` is MLX-only**, on every path and in both modes. It is
 `mx.get_peak_memory()`, reported per chunk by the MLX engine; the gguf
