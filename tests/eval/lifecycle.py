@@ -75,7 +75,7 @@ def check_model(base: str, model_id: str) -> list[str]:
     def bad(msg):
         failures.append(f"[{model_id}] {msg}")
 
-    status, _ = call(base, "POST", f"/v1/admin/models/{model_id}/load?warm=true", timeout=900)
+    status, _ = call(base, "POST", f"/v1/models/{model_id}/load?warm=true", timeout=900)
     if status != 200:
         bad(f"could not load: {status}")
         return failures

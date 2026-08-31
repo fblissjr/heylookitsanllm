@@ -215,6 +215,44 @@ the text parts intact — so the model answered about an image it never
 received. If you support older servers, check that every image you send comes
 back described rather than trusting the status code.
 
+### Paying the model load up front
+
+**The load runs before the response begins.** Both wires resolve the
+provider first and only then start writing, so while a cold model is being
+read off disk there is nothing on the connection at all — no headers, no
+`message_start`, no keepalive. Streaming does not help: the stream has not
+started yet. A non-streaming client sees one long opaque POST and cannot
+tell a loading model from a hung server.
+
+Call this first and the wait moves into a request you can label:
+
+```http
+POST /v1/models/{id}/load
+```
+
+It is the same `get_provider` the generate call makes, so it adds no work —
+it relocates it. A resident model answers in a round trip, so you can send
+it unconditionally and skip the residency check entirely. Unknown or
+disabled id answers **400**, the same as the generate call would, one step
+earlier.
+
+`?warm=true` additionally runs a one-token generation, which pays the first
+forward pass (Metal kernel JIT). That takes the server's FIFO generation
+gate, so it can queue behind another request's long run — right for a
+startup or model-switch readiness call, wrong for a per-request pre-flight.
+Bare `/load` never touches the gate.
+
+**This is not an admin route** (it was until v1.79.48). It is gated like
+inference, on the principle that a client which can generate can already
+trigger a load and an eviction by naming a model in the body — so requiring
+an admin token bought no protection and only stopped a client from doing
+explicitly what it could do implicitly. `unload` and `reload` are still
+admin, because those stop a model out from under other clients.
+
+One thing this does not fix: with `max_loaded_models=1` the load may evict
+whatever is resident. That is the disclosed cost of choosing a model, not an
+error.
+
 ### Images: you resize, not the server
 
 `/v1/messages` has no `resize_max` / `resize_width` / `image_quality` /
@@ -342,6 +380,12 @@ is correlated in the server's logs, and **it is the handle you cancel by**.
 
 `DELETE /v1/requests/{request_id}` stops a generation that is still running.
 
+**The endpoint is v1.79.44, on both wires.** Nothing was cancellable by id
+before that. `/v1/chat/completions` read `X-Request-ID` earlier, but only for
+log correlation — a client that was already sending the header had no way to
+act on it, so "we already send the id" is not evidence you already had
+cancellation.
+
 The id is the one **you** sent. A request that arrived without the header got
 a server-generated id, and on the non-streaming path you never learn it in
 time -- so sending `X-Request-ID` is the precondition for being able to cancel
@@ -415,7 +459,9 @@ Structural differences worth planning for rather than discovering:
 - Treat 503 as backpressure, in-band `error` events as terminal, and
   `thinking` blocks as not-the-answer.
 - The server loads nothing at startup, so the first request to a model pays
-  its load. Expect a long first token and do not treat it as a hang.
+  its load, and the load happens before any bytes are written. Do not treat
+  that silence as a hang — better, pay it explicitly with `POST
+  /v1/models/{id}/load` (see [§3](#paying-the-model-load-up-front)).
 
 ## Where this still differs from Anthropic's Messages API
 

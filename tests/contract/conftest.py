@@ -141,6 +141,20 @@ class MockRouter:
     def unload_model(self, model_id):
         return self.providers.pop(model_id, None) is not None
 
+    def unload_all(self):
+        ids = list(self.providers)
+        self.providers.clear()
+        return ids
+
+    def stale_reload_fields(self, model_id):
+        # Real ModelRouter has this (router.py:564) and the admin list route
+        # calls it for every LOADED row. The fake lacked it, so any test that
+        # loaded a model before listing got a 500 -- unreachable while the
+        # load tests lived inside test_admin.py and ran after the list tests,
+        # and newly reachable once they moved to their own file. A fake that
+        # only answers the calls made in one file ordering is not a fake.
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Mock ModelService

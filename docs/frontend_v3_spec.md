@@ -592,7 +592,7 @@ uses (`capabilities.py`, extracted 2026-08-07). It previously reported the store
 one — so the Models page listed no capabilities at all while chat, one endpoint over,
 gated its entire UI on them.
 
-`POST /{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
+`POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
 (Backend also exposes toggle/status/validate/samplers/bulk-default-sampler/discovered — the

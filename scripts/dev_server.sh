@@ -7,7 +7,7 @@
 # Guarantees:
 #   - Isolated DB (HEYLOOK_DB_PATH under the state dir) -- never touches real data.
 #   - Logs to a file, never a pipe (piping to head SIGPIPE-wedges the server).
-#   - Readiness is SERVER-OWNED: POST /v1/admin/models/{id}/load?warm=true is
+#   - Readiness is SERVER-OWNED: POST /v1/models/{id}/load?warm=true is
 #     the one canonical load+warm call (tests/e2e/lib/server.mjs uses the same
 #     contract) -- this script never re-invents poll/warm semantics.
 #   - RAM pre-flight: refuses to start if the model + headroom exceeds what the
@@ -172,7 +172,7 @@ case "$CMD" in
     fi
 
     # Load (+ optionally warm) via the ONE canonical server-side call --
-    # POST /v1/admin/models/{id}/load?warm= owns readiness semantics (weights
+    # POST /v1/models/{id}/load?warm= owns readiness semantics (weights
     # in LRU + first-forward-pass Metal JIT through the real generation
     # path). tests/e2e/lib/server.mjs is the node client of the same
     # contract; keep the two in sync only via that endpoint, never by
@@ -181,7 +181,7 @@ case "$CMD" in
     if ! ( cd "$REPO_ROOT" && uv run python - "$BASE" "$MODEL" "$WARM" <<'PY' )
 import json, sys, urllib.parse, urllib.request
 base, model, warm = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
-url = f"{base}/v1/admin/models/{urllib.parse.quote(model, safe='')}/load?warm={'true' if warm else 'false'}"
+url = f"{base}/v1/models/{urllib.parse.quote(model, safe='')}/load?warm={'true' if warm else 'false'}"
 with urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=900) as r:
     data = json.load(r)
 if warm and data.get("warmed"):

@@ -29,7 +29,7 @@ Non-negotiables (enforced by the script, but they apply to you too):
   `uv run python` urllib (sandboxed curl can't reach localhost) -- all inside
   the script; do not re-derive them. Load+warm readiness is SERVER-owned:
   the script (and tests/e2e/lib/server.mjs) call the one canonical
-  `POST /v1/admin/models/{id}/load?warm=true` endpoint; never hand-roll
+  `POST /v1/models/{id}/load?warm=true` endpoint; never hand-roll
   poll-the-model-list or warm-generation logic.
 - Model ids carry quant suffixes; list exact ids from models.toml first and
   default to the fast MoE gemma-4-26B-A4B variant for behavior checks.

@@ -82,7 +82,10 @@ const ROUTES = {
   // warm=true additionally runs a 1-token generation through the real
   // generation path -- the server-owned readiness call (v1.38.0), so the
   // first real message doesn't pay the Metal kernel JIT.
-  adminLoadModel:    ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/load${warm ? '?warm=true' : ''}`],
+  // NOT an admin route since v1.79.48: loading is what a generate request
+  // already does, so it is gated like inference. Name kept -- every caller
+  // is the models/chat Load button, and renaming buys nothing.
+  adminLoadModel:    ['POST', (id, warm) => `/v1/models/${encodeURIComponent(id)}/load${warm ? '?warm=true' : ''}`],
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
   // ONE server-owned unload+load(+warm): a browser-driven pair could strand
   // the model unloaded if the tab died between the calls. Load's shape.

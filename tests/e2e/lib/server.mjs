@@ -1,7 +1,7 @@
 // Spawn heylookllm with an ISOLATED conversation DB (HEYLOOK_DB_PATH) so the
 // suites -- which create and clear conversations/notebooks -- never touch real
 // data. Readiness = /v1/models responds, then ONE canonical server-side call:
-// POST /v1/admin/models/{id}/load?warm=true (loads weights + runs a 1-token
+// POST /v1/models/{id}/load?warm=true (loads weights + runs a 1-token
 // generation through the real generation path, paying the Metal-kernel JIT).
 // The server owns load/warm semantics; scripts/dev_server.sh is the bash
 // client of the same contract -- never re-invent poll/warm logic here.
@@ -61,7 +61,7 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
   // Phase 2: canonical server-side load+warm. Blocks until weights are in the
   // LRU and a 1-token generation has run (Metal kernels JIT'd).
   await (async () => {
-    const url = `${base}/v1/admin/models/${encodeURIComponent(modelId)}/load?warm=true`;
+    const url = `${base}/v1/models/${encodeURIComponent(modelId)}/load?warm=true`;
     const { status, body } = await fetchJson(url, { method: 'POST' }, deadline - Date.now());
     if (exited) throw new Error(`server exited during load/warm (code=${exited.code}); see ${logPath}`);
     if (status !== 200) throw new Error(`load?warm=true returned ${status} for ${modelId}: ${JSON.stringify(body)}; see ${logPath}`);

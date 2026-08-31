@@ -181,6 +181,10 @@ app = FastAPI(
             "description": "OpenAI-compatible endpoints for maximum compatibility with existing tools and libraries"
         },
         {
+            "name": "Models",
+            "description": "Model lifecycle an INFERENCE client may drive: load (and optionally warm) a model before generating, so a cold multi-GB load happens in a request the client can show progress against rather than inside an opaque generate call. Gated like inference, not like admin -- a generate request already loads and can evict"
+        },
+        {
             "name": "Messages API",
             "description": "Anthropic Messages-style endpoint: top-level system prompt, typed content blocks, block-structured SSE. The wire this project's own frontend speaks."
         },
@@ -240,6 +244,11 @@ app.add_middleware(
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
+
+# Model load for inference clients (NOT admin: a generate request already
+# loads and can evict, so the admin token was gating nothing)
+from heylook_llm.model_ops_api import model_ops_router
+app.include_router(model_ops_router)
 
 # Request cancellation (top-level resource: the conversation-scoped
 # DELETE /v1/conversations/{id}/generate cannot name a plain /v1/messages call)
@@ -2407,9 +2416,13 @@ response = client.chat.completions.create(
 
 ## Operational notes
 
-- **Startup loads nothing.** The first request to a model pays its load, so
-  a long first token is expected rather than a hang. `POST
-  /v1/admin/models/{{id}}/load?warm=true` pays it up front.
+- **Startup loads nothing**, and the load runs BEFORE the response begins --
+  nothing is written to the connection while it does, on either wire. A cold
+  model therefore looks like a hang. `POST /v1/models/{{id}}/load` pays it up
+  front in a call you can show progress against; it is the same
+  `get_provider` the generate call makes, so it adds no work. Add
+  `?warm=true` for a readiness call that also pays the first forward pass --
+  it takes the generation gate, so keep it out of a per-request pre-flight.
 - One model resident by default, LRU eviction; batch work by model.
 - Auth is opt-in and off by default: `HEYLOOK_API_KEY`
   (`Authorization: Bearer`, loopback-exempt unless

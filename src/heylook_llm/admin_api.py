@@ -3,6 +3,11 @@
 
 All endpoints under /v1/admin/models/ -- separated from the OpenAI-compatible
 /v1/models endpoint to avoid breaking existing integrations.
+
+``load`` is the one lifecycle op that is NOT here: it moved to
+``POST /v1/models/{id}/load`` (model_ops_api.py) because the admin gate
+protected nothing an inference request could not already do. ``unload`` and
+``reload`` stay, because they stop a model out from under other clients.
 """
 
 import logging
@@ -33,6 +38,7 @@ from heylook_llm.config import (
     ScanConfigResponse,
     ScannedModelListResponse,
 )
+from heylook_llm.model_ops_api import load_and_warm
 from heylook_llm.model_service import ModelService
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
 
@@ -348,68 +354,6 @@ def toggle_model(model_id: str, request: Request):
 
 
 @admin_router.post(
-    "/{model_id:path}/load",
-    summary="Load Model",
-    description="Explicitly load a model into the LRU cache.",
-)
-async def load_model(model_id: str, request: Request, warm: bool = False):
-    """Load a model; with ``warm=true`` also run a 1-token generation.
-
-    ``warm`` exists so spawn harnesses (scripts/dev_server.sh,
-    tests/e2e/lib/server.mjs) have ONE canonical readiness call instead of
-    each inventing poll-the-model-list + hand-rolled warm requests: load
-    puts weights in the LRU; the warm generation additionally pays the
-    first-forward-pass cost (Metal kernel JIT) through the normal
-    generation path (FIFO gate, sampler cascade). Returns 200 with
-    ``warmed: false`` + ``warm_error`` if the warm generation fails --
-    the model is loaded and the server usable either way.
-    """
-    router = request.app.state.router_instance
-    return await _load_and_warm(router, model_id, warm)
-
-
-async def _load_and_warm(router, model_id: str, warm: bool) -> dict:
-    """The one load(+warm) body -- shared by /load and /reload so the warm
-    contract cannot fork between them."""
-    try:
-        import asyncio
-        provider = await asyncio.to_thread(router.get_provider, model_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
-
-    result: dict = {"status": "loaded", "model_id": model_id}
-    if warm:
-        from heylook_llm.config import ChatMessage, ChatRequest
-
-        warm_request = ChatRequest(
-            model=model_id,
-            messages=[ChatMessage(role="user", content="hi")],
-            max_tokens=1,
-            stream=False,
-        )
-
-        def _consume() -> None:
-            gen = provider.create_chat_completion(warm_request)
-            try:
-                for _ in gen:
-                    pass
-            finally:
-                gen.close()
-
-        start = time.time()
-        try:
-            await asyncio.to_thread(_consume)
-            result["warmed"] = True
-            result["warm_ms"] = int((time.time() - start) * 1000)
-        except Exception as e:
-            result["warmed"] = False
-            result["warm_error"] = str(e)[:500]
-    return result
-
-
-@admin_router.post(
     "/{model_id:path}/reload",
     summary="Reload Model",
     description=(
@@ -429,7 +373,7 @@ async def reload_model(model_id: str, request: Request, warm: bool = False):
         await asyncio.to_thread(router.reload_config)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Config reload failed: {e}")
-    # A load already in flight would be silently JOINED by _load_and_warm
+    # A load already in flight would be silently JOINED by load_and_warm
     # (built from the pre-save config snapshot) while this route reports a
     # reload that never happened -- refuse honestly instead. Best-effort:
     # a load STARTING between this check and the load below still joins;
@@ -463,7 +407,7 @@ async def reload_model(model_id: str, request: Request, warm: bool = False):
         # and cannot see, since a run outlives the response that began it. The
         # raised message names the remedy (stop it, or force).
         raise HTTPException(status_code=409, detail=str(e))
-    return await _load_and_warm(router, model_id, warm)
+    return await load_and_warm(router, model_id, warm)
 
 
 @admin_router.post(

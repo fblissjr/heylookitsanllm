@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.48]
+
+Model load stops being an admin operation.
+
+### Changed
+
+- **`POST /v1/admin/models/{id}/load` moved to `POST /v1/models/{id}/load`,
+  gated on `require_api_key` instead of `require_admin_token`.** The admin
+  gate protected nothing: `/v1/messages` and `/v1/chat/completions` both call
+  the same `router.get_provider(model_id)` on the way in, so any client that
+  can generate already triggers a multi-GB load and, at
+  `max_loaded_models=1`, an eviction — just by naming a model in the body.
+  The token only stopped a client from doing EXPLICITLY and OBSERVABLY what
+  it could already do implicitly. Whoever may generate may load.
+- **Why a client wants it:** the load runs BEFORE the response begins, so
+  during a cold load nothing is on the connection at all — no headers, no
+  `message_start`, no keepalive — on either wire. Streaming does not cover
+  it, because the stream has not started. A non-streaming consumer sees one
+  opaque POST and cannot distinguish a loading model from a hung server.
+  Calling `/load` first relocates that wait into a request the client can
+  label, and adds no work: it is the same `get_provider` call.
+- **A MOVE, not an alias.** Two URLs for one operation is the duplication
+  this repo keeps paying for, so the admin path is gone and every in-repo
+  caller moved with it: v3's `api.js`, `scripts/dev_server.sh`,
+  `tests/e2e/lib/server.mjs`, `tests/smoke/run.py`, `tests/eval/lifecycle.py`,
+  plus the five docs that memorize the URL as the canonical readiness call
+  (CLAUDE.md, the v3 spec, the e2e README, the dev-server skill, and the
+  OpenAPI narrative). `test_the_old_admin_path_is_gone` pins it at 405 — the
+  admin catch-all still owns that URL for other verbs — asserted as 405
+  rather than loosened to `in (404, 405)`, which would pass if the route
+  came back.
+- **`unload` and `reload` stay admin** (they stop a model out from under
+  other clients, including SIGTERM to a gguf subprocess), and so does
+  `GET /v1/admin/models`, which discloses `model_path` and full per-model
+  config. The shared `load_and_warm` body moved to the new
+  `model_ops_api.py`; admin's `/reload` imports it, so the warm contract
+  still cannot fork.
+
+### Fixed
+
+- **The contract suite's `MockRouter` was missing `stale_reload_fields`**, so
+  `GET /v1/admin/models` answered 500 for any LOADED row. Unreachable while
+  the load tests lived inside `test_admin.py` and ran after the list tests;
+  newly reachable the moment they moved to their own file. A fake that only
+  answers the calls one file ordering happens to make is not a fake. Also
+  added `unload_all`, whose absence had been logging a teardown traceback on
+  every contract run.
+- **The load tests now leave the router as they found it.** The `client`
+  fixture is session-scoped, so a model loaded in one file stayed loaded for
+  every later one — and `test_admin.py` has a case whose whole subject is an
+  UNLOADED model. Green in collection order, reverse order, and alone.
+
+### Added
+
+- **`docs/api_integration.md` §3 "Paying the model load up front"** — the
+  invisible cold-load window, the unconditional pre-flight, why `?warm=true`
+  is wrong per-request (it takes the generation gate), and the eviction
+  caveat. Written for a non-streaming consumer, which is the case the wire
+  serves worst.
+- **§6 now dates the cancel endpoint.** It is v1.79.44 on BOTH wires;
+  `/v1/chat/completions` read `X-Request-ID` earlier but only for log
+  correlation, so "we already send the id" was not evidence of having had
+  cancellation. Reported by the consuming-side twin skill, which nearly
+  shipped the same wrong inference.
+
 ## [1.79.47]
 
 An audit of `/openapi.json` and `docs/api_integration.md` against the .43-.46

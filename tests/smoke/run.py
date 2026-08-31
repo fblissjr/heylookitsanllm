@@ -677,7 +677,7 @@ def thinking_checks(server, r, arm, model_id, caps):
 def arm_checks(server, r, arm, model_id, load_timeout):
     print(f"\n{DIM}-- {arm}: {model_id} ---------------------------------------{RESET}")
 
-    st, loaded = call(server, "POST", f"/v1/admin/models/{urllib.parse.quote(model_id)}/load?warm=true",
+    st, loaded = call(server, "POST", f"/v1/models/{urllib.parse.quote(model_id)}/load?warm=true",
                       timeout=load_timeout)
     # `warmed` matters: the endpoint returns 200 with warmed=false + warm_error
     # when the first forward pass RAISED -- the single most informative signal
