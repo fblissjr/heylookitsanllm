@@ -10,7 +10,15 @@ route, it did NOT come here, and its ``except Exception`` turned the same
 condition into a **500** carrying the same sentence. A consuming client
 classified on status and sent a transient wait down its unknown-model branch.
 A module whose whole purpose is one speller cannot tell you who is not using
-it, so the count is written down and a new caller has to update it. That is this repo's named
+it, so the count is written down and a new caller has to update it.
+
+**THAT LIST IS A CENSUS, NOT A GUARANTEE.** Nothing enforces it: no test
+asserts that every route which can raise ``MODEL_BUSY`` arrives here, and a
+fifth added tomorrow would be absent from both this docstring and the wire
+without anything going red. Read it as "who had remembered to call this as
+of v1.79.53", never as "what the mechanism ensures" -- mistaking the second
+for the first is precisely how .48 through .52 shipped. Having one speller
+guarantees the callers AGREE; it guarantees nothing about who calls. That is this repo's named
 defect class (see CLAUDE.md: a hand-copied constant list is a defect with a
 delay), and it had already drifted: two copies said "Retry shortly.", one said
 "Please retry in a moment.", and none of them said what the server had actually
