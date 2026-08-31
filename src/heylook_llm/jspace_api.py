@@ -18,6 +18,7 @@ from heylook_llm.jspace.analyze import analyze as run_analyze
 from heylook_llm.jspace.registry import LensRegistry
 from heylook_llm.providers.common.generation_core import _get_generation_stream
 from heylook_llm.streaming_utils import _executor_pool
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,13 @@ async def jspace_analyze(request: Request, body: AnalyzeRequest):
     router_instance = request.app.state.router_instance
     try:
         provider = router_instance.get_provider(body.model)
+    except ModelBusyError:
+        # 400 said the CLIENT'S REQUEST was malformed for a transient,
+        # self-clearing condition -- the worst of the six wrong answers found
+        # on 2026-08-31, because a client is told not to retry something that
+        # would have succeeded a second later. Let it reach the app-level
+        # handler: 503 + Retry-After + model_overloaded (v1.79.57).
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"could not load {body.model!r}: {e}")
     if getattr(provider, "model", None) is None:

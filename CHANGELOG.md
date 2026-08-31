@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.57]
+
+### Fixed
+
+- **Six routes answered backpressure with the wrong status.** MODEL_BUSY is
+  transient and self-clearing; these told clients otherwise —
+  `/v1/embeddings`, `/v1/hidden_states` and `/v1/hidden_states/structured`
+  answered **500** (the status those routes use for a genuinely broken model),
+  `/v1/jspace/analyze` answered **400** (telling a client its *request* was
+  malformed for a condition that would have cleared on its own), and
+  `/v1/chat/completions` in batch mode answered **500** — or, in sequential
+  mode, **200** with the busy sentence stringified into a per-group `error`
+  field, which is the hardest shape of all to classify.
+- **The cause is the one v1.79.53 named but did not close.** `busy_response.py`
+  is the one speller, and a helper cannot make anyone call it. `.53` corrected
+  its docstring's caller count from three to four; the count was accurate and
+  useless, because an enumerated caller list is a record of who remembered,
+  not a description of the mechanism.
+
+### Changed
+
+- **The correct answer is now the DEFAULT, not something to remember.**
+  `api.py` registers an app-level `exception_handler(ModelBusyError)`, so a
+  route that does nothing answers 503 + `Retry-After` + `model_overloaded` for
+  free. That inverts the failure mode: a new route must actively *swallow* to
+  get this wrong, instead of actively remembering to get it right. The six
+  routes above now let the exception out rather than converting it.
+- **Dispatch is on the TYPE.** Both causes already raised `ModelBusyError`
+  (the gate's `check_capacity()` and the router's blocked eviction), so the
+  four `"MODEL_BUSY" in str(e)` checks were four hand-copied spellings of a
+  magic string — this repo's named defect class, sitting on the one condition
+  it most needed not to miss. Behaviour at those four sites is unchanged.
+- **`busy_response.py`'s docstring names the TRIGGER instead of the callers**:
+  *every `router.get_provider(...)` reachable from a route answers MODEL_BUSY
+  through this module*. That sentence has an enumerable population — the call
+  sites — so "who should have called this and did not" is answerable. The
+  census could not answer it, which is why it was replaced rather than
+  corrected again.
+
+### Added
+
+- **`tests/unit/test_model_busy_reaches_the_handler.py`** — asserts the
+  app-level handler is registered (its removal would regress every route at
+  once, silently) and that no `try` whose own body calls `get_provider`
+  swallows `ModelBusyError`. The static check is deliberately LOCAL: a
+  whole-package call-graph version was written and discarded after it marked
+  127 functions reachable and flagged 37 handlers, nearly all fine — a check
+  needing an exemption list is the census again wearing the clothes of a test.
+  Its one exemption (the router's startup pre-warm) is executable, so it
+  stops matching if that call ever moves into a request path.
+- **`tests/contract/test_model_busy_statuses.py`** — the behavioural half.
+  Four of the six defects lived in a route wrapping a helper, where the inner
+  handler re-raised correctly and the outer converted to a 500; that is not a
+  local property and only calling the route can see it. Confirmed able to
+  fail: with one guard removed the embeddings check reports the original 500
+  and the other two stay green.
+- Both test files state what they do NOT cover, since a check whose reach is
+  unstated gets read as covering more than it does.
+
+### Not done, deliberately
+
+- **rlm is left as it was**, and both sites now say so in a comment rather
+  than leaving silence to be read as coverage. Non-streaming it answers 503
+  with the right status and the wrong shape (no `Retry-After`, no envelope);
+  streaming it becomes an in-band `rlm_error` with no status. rlm speaks its
+  own SSE grammar rather than the Messages one, so the right answer depends on
+  who consumes it.
+
 ## [1.79.56]
 
 ### Fixed

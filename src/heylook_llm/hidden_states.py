@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from pydantic import BaseModel, Field
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 
 class HiddenStatesRequest(BaseModel):
@@ -683,6 +684,13 @@ async def create_hidden_states(
     except NotImplementedError as e:
         # Re-raise NotImplementedError for proper error handling in API layer
         raise
+    except ModelBusyError:
+        # Backpressure is not a failure of THIS request -- let it reach the
+        # app-level ModelBusyError handler, which answers 503 +
+        # Retry-After + model_overloaded. Without this line the broad
+        # handler below reports a transient, self-clearing condition as
+        # a 500 (v1.79.57).
+        raise
     except Exception as e:
         logging.error(f"Error extracting hidden states: {e}")
         raise
@@ -802,6 +810,13 @@ async def create_structured_hidden_states(
         return StructuredHiddenStatesResponse(**response_data)
 
     except NotImplementedError:
+        raise
+    except ModelBusyError:
+        # Backpressure is not a failure of THIS request -- let it reach the
+        # app-level ModelBusyError handler, which answers 503 +
+        # Retry-After + model_overloaded. Without this line the broad
+        # handler below reports a transient, self-clearing condition as
+        # a 500 (v1.79.57).
         raise
     except Exception as e:
         logging.error(f"Error extracting structured hidden states: {e}")

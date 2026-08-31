@@ -3,6 +3,7 @@ import logging
 from typing import Dict, List, Union, Optional, Any
 from pydantic import BaseModel, Field
 import numpy as np
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 class EmbeddingRequest(BaseModel):
     input: Union[str, List[str]] = Field(..., description="Text(s) to embed")
@@ -251,6 +252,13 @@ async def create_embeddings(
             )
         )
         
+    except ModelBusyError:
+        # Backpressure is not a failure of THIS request -- let it reach the
+        # app-level ModelBusyError handler, which answers 503 +
+        # Retry-After + model_overloaded. Without this line the broad
+        # handler below reports a transient, self-clearing condition as
+        # a 500 (v1.79.57).
+        raise
     except Exception as e:
         logging.error(f"Error creating embeddings: {e}")
         raise

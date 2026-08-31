@@ -10,6 +10,8 @@ explicitly what it could do implicitly. It is gated like inference now.
 
 import pytest
 
+from heylook_llm.providers.common.generation_gate import ModelBusyError
+
 
 @pytest.fixture(autouse=True)
 def _unload_after(client):
@@ -92,7 +94,13 @@ class TestBusyIsBackpressureNotBreakage:
         router = client.app.state.router_instance
 
         def boom(model_id):
-            raise RuntimeError(
+            # ModelBusyError, which is what router._evict_lru_model actually
+            # raises -- not a bare RuntimeError carrying the same words. The
+            # API dispatches on the TYPE since v1.79.57, and a fixture that
+            # cannot carry the real type cannot see a routing bug (the
+            # FakeChunk lesson: a stand-in too thin to hold the attribute
+            # under test is not under-covered, it is unable to fail).
+            raise ModelBusyError(
                 "MODEL_BUSY: cannot make room -- ['other-model'] is generating. "
                 "Stop the generation or wait for it to finish.")
 

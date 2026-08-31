@@ -22,6 +22,8 @@ import asyncio
 import time
 
 import pytest
+
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -567,7 +569,7 @@ class TestClaimLeaks:
         conv, _ = await make_conv(store, ("user", "q1"))
 
         def busy():
-            raise RuntimeError("MODEL_BUSY")
+            raise ModelBusyError("MODEL_BUSY")
         provider.check_capacity = busy
         try:
             res = await client.post(f"/v1/conversations/{conv['id']}/generate",

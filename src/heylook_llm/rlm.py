@@ -906,6 +906,15 @@ class RLMEngine:
         request_id = f"rlm-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
 
+        # KNOWINGLY UNHANDLED (v1.79.57): MODEL_BUSY from this get_provider does
+        # NOT reach busy_response.py. Non-streaming, the route's
+        # `except RuntimeError -> HTTPException(503)` gives the right status with
+        # the wrong shape (no Retry-After, no model_overloaded envelope, a bare
+        # `detail` string); streaming, it becomes an in-band `rlm_error` event with
+        # no status at all. Left as-is by owner decision when the other six routes
+        # were fixed -- rlm speaks its own SSE grammar, not the Messages one, so
+        # the right answer depends on who consumes it. Recorded here so silence is
+        # not read as coverage.
         provider = self.router.get_provider(request.model)
         self.router.pin_model(request.model)
 
@@ -942,6 +951,15 @@ class RLMEngine:
         """Run the RLM loop, yielding SSE events."""
         request_id = f"rlm-{uuid.uuid4().hex[:12]}"
 
+        # KNOWINGLY UNHANDLED (v1.79.57): MODEL_BUSY from this get_provider does
+        # NOT reach busy_response.py. Non-streaming, the route's
+        # `except RuntimeError -> HTTPException(503)` gives the right status with
+        # the wrong shape (no Retry-After, no model_overloaded envelope, a bare
+        # `detail` string); streaming, it becomes an in-band `rlm_error` event with
+        # no status at all. Left as-is by owner decision when the other six routes
+        # were fixed -- rlm speaks its own SSE grammar, not the Messages one, so
+        # the right answer depends on who consumes it. Recorded here so silence is
+        # not read as coverage.
         provider = self.router.get_provider(request.model)
         self.router.pin_model(request.model)
 

@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from heylook_llm.config import ChatRequest, ChatMessage, ChatCompletionResponse
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 
 class ProcessingMode(str, Enum):
@@ -300,6 +301,13 @@ class BatchProcessor:
                 
                 group.end_time = time.time()
                 
+            except ModelBusyError:
+                # Backpressure must not become a 200 carrying the busy
+                # sentence in a per-group error field -- a success status with
+                # a transient failure inside it is the hardest shape for a
+                # client to classify. Aborts the batch and reaches the
+                # app-level handler as a 503 (v1.79.57).
+                raise
             except Exception as e:
                 logging.error(f"Error processing message group: {e}")
                 group.error = str(e)

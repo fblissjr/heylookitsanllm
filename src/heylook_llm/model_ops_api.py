@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ async def load_and_warm(router, model_id: str, warm: bool):
         # added a fourth route that did not. `provider` is deliberately not
         # passed: get_provider is what raised, so there is none to ask for a
         # queue capacity -- the helper's None branch covers exactly that.
-        if "MODEL_BUSY" in str(e):
+        if isinstance(e, ModelBusyError):
             return model_busy_response(e)
         raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
     except Exception as e:

@@ -70,6 +70,7 @@ from heylook_llm.perf_collector import (
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     parse_reasoning,
@@ -501,7 +502,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
             generator = await asyncio.to_thread(
                 provider.create_chat_completion, chat_request, abort_event)
         except RuntimeError as e:
-            if "MODEL_BUSY" in str(e):
+            if isinstance(e, ModelBusyError):
                 # A RETURN skips the except-BaseException release below and no
                 # stream generator exists yet -- pop here or the conversation
                 # is 409-locked forever (review finding 2026-08-13).

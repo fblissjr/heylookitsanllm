@@ -1,28 +1,36 @@
 """The 503 a MODEL_BUSY raise becomes, in one place.
 
-FOUR endpoints turn ``MODEL_BUSY`` into a 503 -- ``/v1/chat/completions``,
-``/v1/messages``, ``POST /v1/conversations/{id}/generate`` and (since
-v1.79.53) ``POST /v1/models/{id}/load`` -- and each had its own hand-written
-copy of the body and headers.
+THE RULE IS ABOUT THE TRIGGER, NOT ABOUT WHO CALLS THIS (v1.79.57):
 
-The fourth is why this docstring counts them at all now: v1.79.48 added that
-route, it did NOT come here, and its ``except Exception`` turned the same
-condition into a **500** carrying the same sentence. A consuming client
-classified on status and sent a transient wait down its unknown-model branch.
-A module whose whole purpose is one speller cannot tell you who is not using
-it, so the count is written down and a new caller has to update it.
+    Every ``router.get_provider(...)`` reachable from a route answers
+    MODEL_BUSY through this module.
 
-**THAT LIST IS A CENSUS, NOT A GUARANTEE.** Nothing enforces it: no test
-asserts that every route which can raise ``MODEL_BUSY`` arrives here, and a
-fifth added tomorrow would be absent from both this docstring and the wire
-without anything going red. Read it as "who had remembered to call this as
-of v1.79.53", never as "what the mechanism ensures" -- mistaking the second
-for the first is precisely how .48 through .52 shipped. Having one speller
-guarantees the callers AGREE; it guarantees nothing about who calls. That is this repo's named
-defect class (see CLAUDE.md: a hand-copied constant list is a defect with a
-delay), and it had already drifted: two copies said "Retry shortly.", one said
-"Please retry in a moment.", and none of them said what the server had actually
-raised.
+That sentence has an enumerable population -- ``get_provider`` call sites,
+readable from source -- so the remainder after subtracting the compliant ones
+IS the answer to "who should have called this and did not".
+``tests/unit/test_model_busy_reaches_the_handler.py`` asks exactly that.
+
+The docstring used to open with a COUNT of endpoints instead, and that is the
+thing worth remembering. v1.79.53 corrected the count from three to four; a
+sweep the same day found SIX MORE routes answering backpressure with a 500, a
+400, and in one case a 200 with the busy sentence stringified into a data
+field. The count was accurate and useless. **An enumerated caller list reads
+as a description of the mechanism when it is a record of who remembered.**
+Having one speller guarantees the callers AGREE; it guarantees nothing about
+who calls -- and a module whose whole purpose is being the one speller is
+structurally unable to tell you who is not using it.
+
+So the mechanism no longer depends on remembering. ``api.py`` registers an
+app-level ``exception_handler(ModelBusyError)``, and the dispatch is on the
+TYPE (both causes already raised ``ModelBusyError``; the four
+``"MODEL_BUSY" in str(e)`` checks were four copies of a magic string). A route
+that does nothing now answers correctly. The only way to get it wrong is to
+SWALLOW the exception in a broad handler, which is a single local property and
+is what the test above enforces.
+
+The wording drift this module originally fixed is still worth knowing: two
+copies said "Retry shortly.", one said "Please retry in a moment.", and none
+of them said what the server had actually raised.
 
 That last part is the bug this module fixes. ``MODEL_BUSY`` has TWO causes and
 they are not the same situation:

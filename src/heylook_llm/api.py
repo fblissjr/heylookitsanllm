@@ -16,6 +16,7 @@ from heylook_llm.router import ModelNotFound, ModelRouter
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 from heylook_llm.config import (
     DEFAULT_PORT,
     PROVIDER_CONFIG_CLASSES,
@@ -230,6 +231,26 @@ app = FastAPI(
         }
     ]
 )
+
+# MODEL_BUSY -> 503, for every route that does not swallow it (v1.79.57).
+#
+# THE POINT IS THE DEFAULT. `busy_response.py` has been the one speller since
+# v1.79.53, but a helper cannot make anyone call it: v1.79.48 added a fourth
+# route that never did, and its `except Exception` turned backpressure into a
+# 500 for five releases. Six MORE routes were doing the same when this handler
+# was written -- answering 500, 400, and in one case 200 with the busy
+# sentence stringified into a data field.
+#
+# A helper you must remember to call has a census. A handler registered here
+# has a POPULATION: every route that lets the exception out. That inverts the
+# failure mode -- a new route now has to actively swallow to get this wrong,
+# instead of having to actively remember to get it right. The remaining hole
+# is exactly that swallow, and it is what tests/unit/test_model_busy_reaches_
+# the_handler.py asserts against.
+@app.exception_handler(ModelBusyError)
+async def _model_busy_handler(request: Request, exc: ModelBusyError):
+    return model_busy_response(exc)
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -793,8 +814,12 @@ async def create_chat_completion(request: Request, chat_request: ChatRequest):
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request, abort_event)
 
     except RuntimeError as e:
-        # Check if this is a MODEL_BUSY error
-        if "MODEL_BUSY" in str(e):
+        # TYPED, not a substring (v1.79.57). Both causes -- the gate's
+        # check_capacity() and the router's blocked eviction -- already raise
+        # ModelBusyError; `"MODEL_BUSY" in str(e)` was four hand-copied
+        # spellings of a magic string, which is this repo's named defect class
+        # sitting on the one condition it most needed not to miss.
+        if isinstance(e, ModelBusyError):
             logging.warning(f"Model busy for request {request_id[:8]}: {e}")
             log_request_complete(request_id, success=False, error_msg="Model busy")
             diag_event("request_error", request_id=request_id, level="warn",
@@ -1823,6 +1848,8 @@ async def create_embeddings_endpoint(
 
         return response.model_dump()
 
+    except ModelBusyError:
+        raise  # -> app-level 503; a 500 here would call backpressure a failure
     except Exception as e:
         logging.error(f"Error creating embeddings: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1925,6 +1952,8 @@ async def extract_hidden_states_endpoint(
     except ValueError as e:
         # Invalid request parameters
         raise HTTPException(status_code=400, detail=str(e))
+    except ModelBusyError:
+        raise  # -> app-level 503; a 500 here would call backpressure a failure
     except Exception as e:
         logging.error(f"Error extracting hidden states: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2022,6 +2051,8 @@ async def extract_structured_hidden_states(
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ModelBusyError:
+        raise  # -> app-level 503; a 500 here would call backpressure a failure
     except Exception as e:
         logging.error(f"Error extracting structured hidden states: {e}")
         raise HTTPException(status_code=500, detail=str(e))

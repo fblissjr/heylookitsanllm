@@ -33,8 +33,11 @@ class ModelBusyError(RuntimeError):
     """Raised when the generation queue is full.
 
     Subclasses ``RuntimeError`` and embeds the literal ``MODEL_BUSY`` in its
-    message so the API layer's existing ``"MODEL_BUSY" in str(e)`` checks map it
-    to HTTP 503.
+    message. The API layer dispatches on the TYPE as of v1.79.57 -- there is an
+    app-level ``exception_handler`` for this class in ``api.py``, so any route
+    that lets it out answers 503 without doing anything. The substring is kept
+    in the message because it is what a log reader greps for, and because the
+    router raises this from a second site; nothing should key on it again.
     """
 
 

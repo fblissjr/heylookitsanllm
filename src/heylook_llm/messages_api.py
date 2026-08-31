@@ -23,6 +23,7 @@ from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.providers.common.generation_gate import ModelBusyError
 from heylook_llm.optimizations import fast_json as json
 from heylook_llm.request_registry import resolve_request_id, track_request, tracked_stream
 from heylook_llm.router import ModelNotFound
@@ -373,7 +374,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         generator = await asyncio.to_thread(provider.create_chat_completion, chat_request, abort_event)
 
     except RuntimeError as e:
-        if "MODEL_BUSY" in str(e):
+        if isinstance(e, ModelBusyError):
             # One speller for all three endpoints -- see busy_response.py.
             return model_busy_response(e, provider)
         raise HTTPException(status_code=500, detail=str(e))
