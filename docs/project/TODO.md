@@ -40,8 +40,8 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## MODEL_BUSY reaches six routes that do not speak the 503 (2026-08-31)
 
-- [x] **CLOSED v1.79.57.** Eight `get_provider` call sites across six routes
-  answered backpressure with the wrong status. `busy_response.py` exists so this answer has one speller; v1.79.53
+- [x] **CLOSED v1.79.57.** `get_provider` call sites across six routes
+  answered backpressure with the wrong status, enumerated below. `busy_response.py` exists so this answer has one speller; v1.79.53
   found the fourth caller and rewrote its census to say "four". The census is
   still an undercount of the OBLIGATION. Enumerated by AST over
   `router.get_provider(...)` reachable from a route, with enclosing-handler

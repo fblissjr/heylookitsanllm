@@ -136,9 +136,10 @@ One builder for the Messages `performance` object, and one rule for reading it.
   app-level handler is registered (its removal would regress every route at
   once, silently) and that no `try` whose own body calls `get_provider`
   swallows `ModelBusyError`. The static check is deliberately LOCAL: a
-  whole-package call-graph version was written and discarded after it marked
-  127 functions reachable and flagged 37 handlers, nearly all fine — a check
-  needing an exemption list is the census again wearing the clothes of a test.
+  whole-package call-graph version was written and discarded after simple-name
+  fixpoint matching marked most of the package reachable and flagged a long
+  list of handlers that were nearly all fine — a check needing an exemption
+  list is the census again wearing the clothes of a test.
   Its one exemption (the router's startup pre-warm) is executable, so it
   stops matching if that call ever moves into a request path.
 - **`tests/contract/test_model_busy_statuses.py`** — the behavioural half.

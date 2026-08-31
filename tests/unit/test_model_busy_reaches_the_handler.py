@@ -37,11 +37,12 @@ covering more than it does -- which is the failure this whole file is about.
   856bb27 (immediately before v1.79.57) it reports ``jspace_api.py`` and
   ``batch_processor.py``, the two direct-site defects that release fixed.
 
-  A whole-package call-graph version of this was written and DISCARDED. Simple
-  -name fixpoint matching marked 127 functions reachable, including
-  ``service_manager.uninstall_service_linux`` and ``memory.tick``, and flagged
-  37 handlers of which nearly all were fine. That check would have needed an
-  exemption list -- which is the census again, wearing the clothes of a test.
+  A whole-package call-graph version of this was written and DISCARDED.
+  Simple-name fixpoint matching over-approximated badly -- it marked most of
+  the package reachable, including ``service_manager.uninstall_service_linux``
+  and ``memory.tick``, and flagged a long list of handlers that were nearly
+  all fine. That check would have needed an exemption list -- which is the
+  census again, wearing the clothes of a test.
 
 * WHAT NEITHER COVERS: a route that wraps a get_provider-calling HELPER in its
   own broad handler. That is where four of the six 2026-08-31 defects actually
