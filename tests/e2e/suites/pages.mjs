@@ -448,7 +448,13 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // whole point; asserting immediately passes even with the bug.
     await page.setRequestInterception(true);
     const fail = (req) => {
-      if (req.method() === 'POST' && /\/v1\/admin\/models\/.*\/load/.test(req.url())) {
+      // Path moved off the admin gate in v1.79.48. This is a REGEX, so the
+      // escaped `admin\/models` form did not match the plain-string sweep that
+      // moved the other six callers -- and the stale interceptor made the
+      // synthetic 500 never fire, so Load SUCCEEDED and the test reported
+      // "load failure raised no error note at all", which reads like a product
+      // bug in the page rather than a stale harness.
+      if (req.method() === 'POST' && /\/v1\/models\/.*\/load/.test(req.url())) {
         req.respond({
           status: 500,
           contentType: 'application/json',

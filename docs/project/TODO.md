@@ -44,6 +44,22 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   giving an OMISSION and an open DECISION equal standing, which is what the
   §3 rewrite now separates.
 
+## E2E pages suite: 42/43 (2026-08-31)
+
+- [ ] **`notebook preset bar: save, drift, armed apply` fails** (P2):
+  "drift line did not flip after a prompt edit", 15s timeout. Found by running
+  `bun run e2e:pages` live -- the suite was last RECORDED at 43/43, so that
+  number is now stale the same way the chat suite's 46/46 was. NOT diagnosed:
+  it was not investigated beyond establishing it is not from this session's
+  work (today's only frontend change was one URL string in `api.js`;
+  `preset-bar.js`, `prompt-section.js` and `pages.mjs` were untouched, last
+  moved in v1.79.42 and v1.79.30). A plausible-but-UNVERIFIED lead worth
+  checking first: the chat suite's rot was `tests/e2e/lib/browser.mjs` seeding
+  state into localStorage while pages hydrate from the DOCUMENT since
+  v1.65-66, and the notebook preset bar is the same shared factory, so drift
+  detection may be comparing against a seed the page already overwrote. Do not
+  treat that as the cause without confirming it.
+
 ## Docs twins (2026-08-31)
 
 - [x] **The `heylook-provider` skill has moved with the wire** -- CLOSED
