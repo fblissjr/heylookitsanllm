@@ -52,6 +52,7 @@ from heylook_llm.ram_fit import (  # noqa: E402
     fit_for_config,
     metal_ceilings,
     reclaimable_gb,
+    unsizeable_reason,
     usable_gb,
 )
 
@@ -155,21 +156,6 @@ def config_from_path(path: Path) -> dict:
 # ---------------------------------------------------------------------------
 # Rendering (the CLI face of ram_fit's structured report)
 # ---------------------------------------------------------------------------
-
-def unsizeable_reason(report: FitReport) -> Optional[str]:
-    """Why this report is a non-answer rather than a verdict, or None.
-
-    A model that sizes to zero was not measured -- a dead path, an unmounted
-    volume, a shard set that no longer reads. Zero GiB clears every ceiling,
-    so without this check the gate that exists to refuse a load waves the
-    unreadable case through as OK (verified: a `[[models]]` entry pointing at
-    a nonexistent .gguf printed "RAM pre-flight OK ~0 GiB" and exited 0).
-    Fail closed: unsizeable is a bad --model, never a pass.
-    """
-    if report.weights_gb > 0:
-        return None
-    return "; ".join(report.sizing_notes) or "no weight files found"
-
 
 def render_fit(report: FitReport) -> list[str]:
     lines: list[str] = []

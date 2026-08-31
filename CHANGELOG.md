@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.56]
+
+### Fixed
+
+- **`POST /v1/admin/models/{id}/fit` answered `pass` for a model it could not
+  size.** Zero GiB clears every ceiling, so an unsizeable model is a
+  NON-ANSWER, not a verdict — and this is the gate that exists to refuse a
+  load. The route required BOTH `weights_gb == 0.0` AND the exact note
+  `"model_path does not exist"`, which `size_config_gb` emits only from its
+  path-missing branch. A directory that EXISTS and holds no
+  `*.safetensors`/`*.gguf` — an interrupted download, a path one level too
+  high, a checkpoint in another format — sizes to `(0.0, [])`, so the guard
+  never fired. Measured against a temp dir containing only `config.json`:
+  `weights_gb: 0.0`, `sizing_notes: []`, `verdict: "pass"`, `fits: true`.
+- **The cause was a hand-written narrower copy of a predicate that already
+  existed.** `unsizeable_reason` — "did this size to zero, whatever the notes
+  say" — was defined in `scripts/ram_report.py`, so the CLI asked the general
+  question and the route asked a narrower one. It now lives in `ram_fit.py`
+  beside the `FitReport` it reads, and both callers ask it. That also removes
+  a cross-module string coupling: rewording a note in `ram_fit.py` would have
+  silently disarmed the route with nothing going red.
+- The 422 now carries the REASON rather than a fixed sentence. "no weight
+  files found" and "model_path does not exist" are different diagnoses and a
+  caller could not tell them apart from a bare 422.
+
+### Added
+
+- `test_existing_dir_with_no_weight_files_422s` — the half the old guard
+  could not see. The missing-path case was already covered and stayed green
+  through this bug's whole life.
+
 ## [1.79.55]
 
 ### Changed

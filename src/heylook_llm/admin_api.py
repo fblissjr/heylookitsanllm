@@ -307,7 +307,7 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
     # ram_fit caches it after the first call.
     from dataclasses import asdict
 
-    from heylook_llm.ram_fit import fit_for_config
+    from heylook_llm.ram_fit import fit_for_config, unsizeable_reason
 
     mc = _resolve_config(request, model_id)
     if mc is None:
@@ -327,10 +327,17 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
     # treats the working set as advisory.
     hard_working_set = mc.provider != "gguf"
     report = fit_for_config(config, body.headroom_gb, hard_working_set=hard_working_set)
-    if report.weights_gb == 0.0 and "model_path does not exist" in report.sizing_notes:
+    # A report that sizes to zero is a NON-ANSWER, not a pass -- 0 GiB clears
+    # every ceiling, so returning it would be this gate waving through the
+    # exact case it exists to refuse. Asked through the shared predicate
+    # rather than re-derived: the hand-written form here required both a zero
+    # AND the exact note "model_path does not exist", which `size_config_gb`
+    # emits only when the path is missing entirely -- so an existing directory
+    # holding no weight files answered "pass" (v1.79.56).
+    if (why := unsizeable_reason(report)) is not None:
         raise HTTPException(
             status_code=422,
-            detail={"field": "model_path", "error": "model_path does not exist"},
+            detail={"field": "model_path", "error": why},
         )
     return FitResponse(**asdict(report))
 

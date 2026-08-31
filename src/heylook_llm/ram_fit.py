@@ -267,6 +267,38 @@ class FitReport:
         return self.verdict != "fail"
 
 
+def unsizeable_reason(report: FitReport) -> Optional[str]:
+    """Why this report is a non-answer rather than a verdict, or None.
+
+    A model that sizes to zero was not measured -- a dead path, an unmounted
+    volume, a shard set that no longer reads, a directory holding no weight
+    files at all. Zero GiB clears every ceiling, so without this check the
+    gate that exists to refuse a load waves the unreadable case through as OK
+    (verified: a `[[models]]` entry pointing at a nonexistent .gguf printed
+    "RAM pre-flight OK ~0 GiB" and exited 0).
+    Fail closed: unsizeable is a bad model, never a pass.
+
+    LIVES HERE, NOT AT A CALLER (v1.79.56). It was defined in
+    ``scripts/ram_report.py``, so the CLI asked the general question --
+    "did this size to zero, whatever the notes say" -- while
+    ``/v1/admin/{id}/fit`` hand-wrote a narrower one: ``weights_gb == 0.0``
+    AND the exact string ``"model_path does not exist"`` in the notes.
+    ``size_config_gb`` only emits that note when the path is missing
+    ENTIRELY, so a directory that exists and holds no ``*.safetensors`` /
+    ``*.gguf`` -- an interrupted download, a path one level too high, a
+    checkpoint in another format -- returned ``(0.0, [])``, the route's guard
+    did not fire, and the endpoint answered ``verdict: "pass"`` for a model it
+    could not size. Measured against a temp dir containing only config.json.
+
+    The narrower copy was also coupled to WORDING in another module: rewording
+    that note would have silently disarmed the route, with nothing going red.
+    Both callers ask this now, so there is one answer to "is this a verdict".
+    """
+    if report.weights_gb > 0:
+        return None
+    return "; ".join(report.sizing_notes) or "no weight files found"
+
+
 def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
                  sizing_notes: Optional[list[str]] = None) -> FitReport:
     """Check ``size_gb`` + ``headroom_gb`` against every ceiling that can

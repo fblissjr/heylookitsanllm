@@ -41,6 +41,34 @@ class TestFitEndpoint:
         assert res.status_code == 422
         assert res.json()["detail"]["field"] == "model_path"
 
+    def test_existing_dir_with_no_weight_files_422s(self, client, tmp_path):
+        """The half the "does not exist" guard could not see (v1.79.56).
+
+        The route used to require BOTH `weights_gb == 0.0` AND the exact note
+        `"model_path does not exist"`, which `size_config_gb` emits only from
+        its path-missing branch. A directory that EXISTS and holds no
+        `*.safetensors`/`*.gguf` -- an interrupted download, a path one level
+        too high, a checkpoint in another format -- sizes to `(0.0, [])`, so
+        the guard did not fire and the endpoint answered `verdict: "pass"`
+        for a model it could not size. Zero GiB clears every ceiling, so that
+        is the gate waving through the exact case it exists to refuse.
+        """
+        empty = tmp_path / "interrupted-download"
+        empty.mkdir()
+        (empty / "config.json").write_text("{}")  # looks like a model dir
+        res = client.post(
+            "/v1/admin/models/test-mlx-model/fit",
+            json={"config_overrides": {"model_path": str(empty)}},
+        )
+        assert res.status_code == 422, (
+            f"an unsizeable model answered {res.status_code}: {res.json()}"
+        )
+        assert res.json()["detail"]["field"] == "model_path"
+        # The REASON is carried, not a fixed sentence -- "no weight files
+        # found" and "model_path does not exist" are different diagnoses and
+        # the caller cannot tell them apart from a bare 422.
+        assert res.json()["detail"]["error"] == "no weight files found"
+
     def test_fit_report_shape_and_mlx_hard_flag(self, client, stable_ceilings):
         res = client.post(
             "/v1/admin/models/test-mlx-model/fit",
