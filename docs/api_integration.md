@@ -96,7 +96,18 @@ Two inference endpoints. Both are supported; they are not interchangeable.
 | Thinking flag | `thinking` | `enable_thinking` |
 | Server-side image resize | **no** | yes (`resize_max` and friends) |
 | Streaming | Messages SSE grammar | OpenAI chunk grammar, `data: [DONE]` |
+| Timing fields | `request_duration_ms` + `generation_duration_ms` | `total_duration_ms` |
 | Used by this repo's own UI | yes (notebook, explore) | no page calls it |
+
+**If you speak BOTH wires, the timing vocabularies now differ**, and this is
+the one row above that will bite silently. v1.79.58 retired
+`total_duration_ms` on `/v1/messages` because it named two different spans in
+the two modes; the OpenAI wire's own `GenerationTiming` still declares it and
+is deliberately untouched, since that wire has one mode and no ambiguity to
+resolve. So a dual-wire client reads `total_duration_ms` from
+`/v1/chat/completions` and the two named spans from `/v1/messages`. Do not
+write one accessor for both — on the OpenAI wire the field is a whole-request
+elapsed, which is `request_duration_ms`, not the throughput denominator.
 
 **Default to `/v1/messages`.** It is where this project is going, it is the
 wire its own frontend speaks, and its block structure maps cleanly onto

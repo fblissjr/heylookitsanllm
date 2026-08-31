@@ -81,6 +81,12 @@ One builder for the Messages `performance` object, and one rule for reading it.
   spellings of absent (streaming omits the key, non-streaming returns explicit
   `null`), same meaning. A duplicate paragraph stating that second fact
   separately was removed rather than left beside the new one.
+- **The retirement is Messages-only, and §2 now says so.** The OpenAI wire's
+  `GenerationTiming.total_duration_ms` is deliberately untouched — that wire
+  has one mode and no ambiguity to resolve — so a client speaking BOTH now
+  needs both vocabularies. Reported by the consuming-skill session, which read
+  "GenerationTiming is untouched" as "nothing to check"; untouched is exactly
+  what makes it a divergence once the other side moves.
 - `docs/frontend_v3_spec.md`'s Messages passage was wrong in two ways at once
   — it claimed `message_stop` never sends the rates (false since .54) and
   named `total_duration_ms`. It now points at §3 instead of restating it.
