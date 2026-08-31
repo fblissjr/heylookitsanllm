@@ -106,7 +106,6 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         presence_penalty=request.presence_penalty,
         max_tokens=request.max_tokens,
         stream=request.stream,
-        include_performance=request.include_performance,
         seed=request.seed,
         enable_thinking=request.thinking,
         reasoning_effort=request.reasoning_effort,

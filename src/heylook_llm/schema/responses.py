@@ -46,7 +46,9 @@ class Usage(BaseModel):
 class PerformanceInfo(BaseModel):
     """Generation performance metrics.
 
-    Returned when include_performance=true in the request.
+    On the OpenAI wire this is returned only when include_performance=true.
+    On the Messages wire it is UNCONDITIONAL -- that wire has no such flag
+    (v1.79.49), because it always carried telemetry in both modes anyway.
     """
     prompt_tps: float = Field(..., description="Prompt processing tokens per second")
     generation_tps: float = Field(..., description="Generation tokens per second")

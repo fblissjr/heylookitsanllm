@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.49]
+
+### Removed
+
+- **`include_performance` is gone from the Messages wire.** It was a declared
+  request field that controlled nothing on the surface declaring it. MEASURED
+  before removal: a non-streaming `/v1/messages` returned the `performance`
+  object with `include_performance: false` in the body, while
+  `/v1/chat/completions` honoured the flag (absent → no object). The Messages
+  builder populates `openai_dict["performance"]` gated only on elapsed time
+  and token counts being positive, and never reads the field; the converter
+  dutifully forwarded it to a `ChatRequest` nothing on that path consults.
+  Dropped rather than gated: this wire returns telemetry unconditionally in
+  BOTH modes — streaming emits `message_stop.performance` on every generation
+  — so gating the non-streaming half alone would have split the two Messages
+  modes against each other, and gating both would break v3, whose status
+  lines read that event. Unconditional telemetry is the design here; the flag
+  was the thing that did not fit. Still honoured on `/v1/chat/completions`,
+  where absent really does mean no performance block. Not a wire break:
+  `MessageCreateRequest` ignores unknown fields, so a client still sending it
+  is unaffected — it simply keeps doing nothing.
+
+### Fixed
+
+- **The schema-parity test carried a rationale for a mechanism that does not
+  exist.** `include_timing` was exempted as "spelled `include_performance` on
+  Messages" — wrong twice: `ChatRequest` carries BOTH fields, so no rename
+  ever happened, and `include_timing` is only ever forwarded to
+  `BatchRequest`, making it the same batch-only class as `processing_mode`.
+  That file's docstring says a declared-but-false asymmetry is precisely what
+  it exists to catch, and it had already caught one (an endpoint,
+  `/v1/messages/multipart`, that never existed) while carrying this one.
+
+### Changed
+
+- **`docs/api_integration.md`**: the "two request flags" paragraph is one flag
+  now, with a note that sending the removed one is harmless and always was
+  inert; the extensions count went thirteen → twelve; and §3 documents what a
+  non-streaming response actually carries — `performance` is unconditional
+  (`prompt_tps`, `generation_tps`, `total_duration_ms`, `peak_memory_gb`),
+  the rates are the engine's own rather than a wall-clock division, and TTFT
+  is deliberately NOT in it, so non-streaming time-to-first-token is
+  unobservable to a client. That last point was a consuming client's open
+  question.
+
 ## [1.79.48]
 
 Model load stops being an admin operation.

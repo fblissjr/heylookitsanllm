@@ -154,6 +154,16 @@ A thinking block carries its content under **both** `thinking` (Anthropic's
 field name) and `text` (heylook's original, kept so existing readers keep
 working). Read `thinking`.
 
+**A non-streaming response also carries `performance`**, always — you do not
+ask for it and cannot turn it off. It holds `prompt_tps`, `generation_tps`,
+`total_duration_ms` and `peak_memory_gb`, plus thinking/content durations
+where they apply. The rates are the engine's own measurements taken around
+prefill and decode, so they are a better number than dividing tokens by your
+own wall clock, which includes queue wait and any model load. What is NOT
+there is time-to-first-token: it is computed server-side and kept, not
+returned, so non-streaming TTFT is genuinely unobservable to a client.
+Aggregates live at `GET /v1/performance/profile/{1h|6h|24h|7d}`.
+
 `stop_reason` is Anthropic's vocabulary. A non-streaming failure does not
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error
 member and no branch to write for one.
@@ -286,11 +296,16 @@ Every one is optional and **absent means the server's cascade decides**.
 field — sending a client-side default silently overrides the server's
 configured floor for the model. Omit what you do not have an opinion about.
 
-**Two request flags are NOT part of that cascade** — `show_special_tokens`
-and `include_performance` are plain booleans defaulting to `false`, so absent
-means `false` permanently and no server-side config influences them. They are
-listed apart from the knobs above because "omit it and the server decides"
-is the wrong mental model for both.
+**One request flag is NOT part of that cascade** — `show_special_tokens` is a
+plain boolean defaulting to `false`, so absent means `false` permanently and
+no server-side config influences it. It is listed apart from the knobs above
+because "omit it and the server decides" is the wrong mental model for it.
+
+(`include_performance` used to be named here too. It was removed from this
+wire in v1.79.49 because it controlled nothing: Messages returns telemetry
+unconditionally in both modes. Sending it is harmless — unknown fields are
+ignored, not rejected — but it does nothing, and it never did. It is still
+honoured on `/v1/chat/completions`.)
 
 `sampler` takes a named bundle from `/v1/capabilities` → `samplers.available`
 (this is the `SamplerRegistry`, not a `/v1/presets` id — different system,
@@ -494,14 +509,14 @@ rather than a guarantee, for reasons the closing note gives:
   honoured — a port that relies on it will silently generate past the
   sequence you meant to stop at. (This is separate from the response-side
   omission above.)
-- **Extensions**: thirteen request fields have no Anthropic equivalent —
+- **Extensions**: twelve request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), the inspection
-  ones (`logprobs`, `top_logprobs`, `show_special_tokens`,
-  `include_performance`), and `sampler`, `vision_tokens`,
-  `reasoning_effort`, `stream_options`. All are listed under
-  [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`; this
-  bullet named four of them until v1.79.41. On the stream: a
+  ones (`logprobs`, `top_logprobs`, `show_special_tokens`), and `sampler`,
+  `vision_tokens`, `reasoning_effort`, `stream_options`. All are listed
+  under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`;
+  this bullet named four of them until v1.79.41, and thirteen until
+  v1.79.49 dropped `include_performance` from this wire. On the stream: a
   `heylook_logprobs` event and `message_stop.performance`.
 - **`message_start.usage.input_tokens` is 0.** The event is emitted before
   the first chunk is absorbed, so prompt tokens are not known yet. Anthropic

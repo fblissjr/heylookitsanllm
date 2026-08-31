@@ -122,7 +122,7 @@ class MessageCreateRequest(BaseModel):
     # existing consumer sends by omitting the field -- strips, as before.
     # Deliberately NOT tri-state: nothing distinguishes absent from false, and a
     # third state no branch reads is one every future call site has to re-derive
-    # as meaningless (`include_performance` below is the in-file precedent). Affects the text returned (and, on the
+    # as meaningless. Affects the text returned (and, on the
     # conversation surface, the text PERSISTED), never what is sent to the
     # model and never generation itself.
     show_special_tokens: bool = Field(
@@ -137,10 +137,14 @@ class MessageCreateRequest(BaseModel):
                     "see conversation_generate_api._strip_history_specials).",
     )
 
-    # Performance
-    include_performance: bool = Field(
-        default=False, description="Include performance metrics (tps, memory) in response"
-    )
+    # NO `include_performance` here, deliberately (removed v1.79.49). This wire
+    # returns telemetry UNCONDITIONALLY in both modes -- streaming emits
+    # `message_stop.performance`, non-streaming carries a `performance` object
+    # -- so the flag controlled nothing on the surface that declared it. Gating
+    # only the non-streaming half would have split the two modes against each
+    # other, and gating both would break v3's status lines, which read
+    # message_stop.performance on every generation. It stays on the OpenAI wire
+    # (`ChatRequest.include_performance`), where it is honoured.
 
     # Metadata passthrough
     metadata: Optional[Dict[str, str]] = Field(

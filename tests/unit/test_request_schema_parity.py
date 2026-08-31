@@ -53,7 +53,26 @@ OPENAI_ONLY = {
     "resize_height": "server-side downscale; Messages clients resize before sending",
     "image_quality": "server-side downscale; Messages clients resize before sending",
     "preserve_alpha": "server-side downscale; Messages clients resize before sending",
-    "include_timing": "spelled `include_performance` on Messages",
+    # This read "spelled `include_performance` on Messages" -- wrong twice.
+    # ChatRequest carries BOTH fields, so the rename never happened; and
+    # include_timing is only ever forwarded to BatchRequest (api.py builds it
+    # from this field and nothing else reads it), which makes it the same
+    # batch-only class as the two entries above. A rationale that names a
+    # mechanism which does not exist is exactly what this file's docstring
+    # says it exists to catch -- it caught one before (an endpoint,
+    # /v1/messages/multipart, that never existed) and carried this one.
+    "include_timing": "batch-only; forwarded to BatchRequest, like processing_mode",
+    "include_performance": (
+        "removed from the Messages wire in v1.79.49. That wire returns "
+        "telemetry UNCONDITIONALLY in both modes -- streaming emits "
+        "message_stop.performance, non-streaming carries a performance object "
+        "-- so the flag it declared controlled nothing. Measured before "
+        "removal: include_performance=false still returned the object. Gating "
+        "the non-streaming half alone would have split the two Messages modes; "
+        "gating both would break v3, which reads message_stop.performance on "
+        "every generation. Honoured on the OpenAI wire, where absent really "
+        "does mean no performance block."
+    ),
 }
 
 MESSAGES_ONLY = {
