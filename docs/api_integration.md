@@ -302,6 +302,16 @@ it unconditionally and skip the residency check entirely. Unknown or
 disabled id answers **400**, the same as the generate call would, one step
 earlier.
 
+**It answers 503 when the server cannot make room** — another model is
+resident and generating, and at `max_loaded_models=1` there is no slot. Same
+`model_overloaded` envelope and `Retry-After` as the inference routes, so
+classify it the same way: back off and retry, do not touch your model
+roster. Before v1.79.53 this route returned that condition as a **500** with
+the identical sentence, which is a client-visible trap on an older server:
+the only thing separating it from a genuine load failure is the substring
+`MODEL_BUSY` in `detail`. If you support servers below .53, key on that
+token rather than on the status.
+
 `?warm=true` additionally runs a one-token generation, which pays the first
 forward pass (Metal kernel JIT). That takes the server's FIFO generation
 gate, so it can queue behind another request's long run — right for a
@@ -413,6 +423,7 @@ telemetry merged into `message_stop.performance` — `peak_memory_gb`,
 |---|---|
 | Unknown or disabled `model`, or no `model` and no server default | **400** with the reason and the available ids in `detail` |
 | Model load failed (corrupt weights, unsupported architecture) | **500** |
+| Cannot make room — another model is resident and generating | **503**, same envelope as a full queue (v1.79.53+; a **500** carrying `MODEL_BUSY` before that) |
 | Generation queue full | **503**, body `{error:{code:"model_overloaded"}}`, plus `Retry-After` and `X-RateLimit-*` headers |
 | Bad request body | **422** (FastAPI validation) |
 | Failure *after* the stream opened | in-band `event: error`, `data: {type:"error", error:{type, message}}` |

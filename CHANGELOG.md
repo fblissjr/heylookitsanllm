@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.53]
+
+### Fixed
+
+- **`POST /v1/models/{id}/load` reported backpressure as a 500.** When another
+  model is resident and generating there is no slot to load into, and the
+  router raises `MODEL_BUSY`. `/v1/messages` turns that into a **503** with
+  `Retry-After` and the `model_overloaded` envelope; this route's
+  `except Exception` turned the identical condition, carrying the identical
+  sentence, into a **500** — the status this route uses for "the model exists
+  and genuinely failed to load". The only thing separating the two was a
+  substring.
+  Measured live against 1.79.52 by a consuming client, which classified on
+  status, sent a transient self-clearing wait down its unknown-model branch,
+  and told its user to refresh the model roster. It now keys on the
+  `MODEL_BUSY` token because it cannot trust 500 on that route.
+- **The module that exists to prevent exactly this had a stale count of its
+  users.** `busy_response.py` opens "Three endpoints turn MODEL_BUSY into a
+  503" and names them; v1.79.48 added a fourth route that did not come here.
+  A module whose purpose is one speller cannot tell you who is NOT using it,
+  so the count is now written down as four with the reason, and a new caller
+  has to update it. This is the repo's named defect class arriving from the
+  unusual direction: not a hand-copied second implementation, but a shared
+  implementation a new caller simply never reached.
+
+### Changed
+
+- **`docs/api_integration.md`**: §3's load section and §5's error table now
+  carry the 503, including the pre-.53 behaviour, because a client supporting
+  older servers has to key on the `MODEL_BUSY` substring rather than the
+  status. The guide previously read 500 as "this model is broken" and 503 as
+  "backpressure, retry" — correct advice that this route made wrong.
+
 ## [1.79.52]
 
 ### Changed

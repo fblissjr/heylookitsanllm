@@ -38,6 +38,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from heylook_llm.auth import require_api_key
+from heylook_llm.busy_response import model_busy_response
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,11 @@ model_ops_router = APIRouter(
         "readiness, not as a per-request pre-flight. Returns 200 with "
         "`warmed: false` + `warm_error` if only the warm generation failed -- "
         "the model is loaded and usable either way. 400 for an unknown or "
-        "disabled id, the same answer the generate call would give."
+        "disabled id, the same answer the generate call would give. **503** "
+        "with `Retry-After` when the model cannot be made room for because "
+        "another is generating -- the same backpressure envelope the "
+        "inference routes return, so a client classifies it the same way. A "
+        "500 here is a genuine load failure and nothing else."
     ),
 )
 async def load_model(model_id: str, request: Request, warm: bool = False):
@@ -72,14 +77,37 @@ async def load_model(model_id: str, request: Request, warm: bool = False):
     return await load_and_warm(router, model_id, warm)
 
 
-async def load_and_warm(router, model_id: str, warm: bool) -> dict:
-    """The one load(+warm) body -- shared by this route and admin's /reload,
-    so the warm contract cannot fork between them."""
+async def load_and_warm(router, model_id: str, warm: bool):
+    """Returns the load result dict, or a 503 JSONResponse when the model
+    is busy -- FastAPI passes a returned Response straight through, and
+    both callers (`/v1/models/{id}/load`, admin `/reload`) return this
+    verbatim, so both inherit the shared backpressure envelope."""
+    # The one load(+warm) body -- shared by this route and admin's /reload,
+    # so neither the warm contract nor the busy answer can fork between them.
     try:
         import asyncio
         provider = await asyncio.to_thread(router.get_provider, model_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        # MODEL_BUSY is BACKPRESSURE, not a broken model. It reached the
+        # generic handler below and came back as a 500 carrying the same
+        # sentence /v1/messages returns as a 503 -- so the same transient,
+        # self-clearing condition had two status codes across two routes, and
+        # the only thing separating this 500 from the genuine "that model
+        # exists and failed to load" was a substring. A consuming client
+        # classified on status, sent a wait down its unknown-model branch and
+        # told the user to refresh the roster (measured against 1.79.52 and
+        # reported 2026-08-31).
+        #
+        # busy_response.py exists precisely so this answer has ONE speller;
+        # its own docstring names the three endpoints that use it, and .48
+        # added a fourth route that did not. `provider` is deliberately not
+        # passed: get_provider is what raised, so there is none to ask for a
+        # queue capacity -- the helper's None branch covers exactly that.
+        if "MODEL_BUSY" in str(e):
+            return model_busy_response(e)
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
 

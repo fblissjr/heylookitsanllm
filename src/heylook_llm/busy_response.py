@@ -1,8 +1,16 @@
 """The 503 a MODEL_BUSY raise becomes, in one place.
 
-Three endpoints turn ``MODEL_BUSY`` into a 503 -- ``/v1/chat/completions``,
-``/v1/messages`` and ``POST /v1/conversations/{id}/generate`` -- and each had
-its own hand-written copy of the body and headers. That is this repo's named
+FOUR endpoints turn ``MODEL_BUSY`` into a 503 -- ``/v1/chat/completions``,
+``/v1/messages``, ``POST /v1/conversations/{id}/generate`` and (since
+v1.79.53) ``POST /v1/models/{id}/load`` -- and each had its own hand-written
+copy of the body and headers.
+
+The fourth is why this docstring counts them at all now: v1.79.48 added that
+route, it did NOT come here, and its ``except Exception`` turned the same
+condition into a **500** carrying the same sentence. A consuming client
+classified on status and sent a transient wait down its unknown-model branch.
+A module whose whole purpose is one speller cannot tell you who is not using
+it, so the count is written down and a new caller has to update it. That is this repo's named
 defect class (see CLAUDE.md: a hand-copied constant list is a defect with a
 delay), and it had already drifted: two copies said "Retry shortly.", one said
 "Please retry in a moment.", and none of them said what the server had actually

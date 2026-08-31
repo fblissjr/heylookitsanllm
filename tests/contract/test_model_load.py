@@ -73,3 +73,57 @@ class TestModelLoadWarm:
         resp = client.get("/v1/models")
         assert resp.status_code == 200
         assert isinstance(resp.json()["data"], list)
+
+
+class TestBusyIsBackpressureNotBreakage:
+    """MODEL_BUSY must answer 503, not 500.
+
+    Both are "the load did not happen", and a client cannot tell them apart
+    from the status alone if they share one -- a 500 on this route means the
+    model exists and is genuinely broken, while MODEL_BUSY is transient and
+    self-clearing. v1.79.48 added this route without wiring it to
+    `busy_response`, so the same condition `/v1/messages` reports as 503 came
+    back here as 500 carrying the identical sentence. Measured against a live
+    1.79.52 by a consuming client, which classified on status and told its
+    user to refresh the model roster.
+    """
+
+    def _busy(self, client, monkeypatch):
+        router = client.app.state.router_instance
+
+        def boom(model_id):
+            raise RuntimeError(
+                "MODEL_BUSY: cannot make room -- ['other-model'] is generating. "
+                "Stop the generation or wait for it to finish.")
+
+        monkeypatch.setattr(router, "get_provider", boom)
+        return client.post("/v1/models/test-mlx-model/load")
+
+    def test_busy_is_503(self, client, monkeypatch):
+        assert self._busy(client, monkeypatch).status_code == 503
+
+    def test_busy_carries_the_shared_envelope(self, client, monkeypatch):
+        """Same body shape and headers as the inference routes, because it is
+        literally the same function -- asserted so a future hand-rolled copy
+        here has to disagree with a test."""
+        resp = self._busy(client, monkeypatch)
+        assert resp.json()["error"]["code"] == "model_overloaded"
+        assert resp.headers.get("Retry-After") == "1"
+
+    def test_busy_keeps_the_reason_the_router_gave(self, client, monkeypatch):
+        """The eviction-blocked cause names which model is busy and what to do
+        about it; collapsing it to a generic queue-full sentence was the defect
+        busy_response was created to fix."""
+        assert "is generating" in self._busy(client, monkeypatch).json()["error"]["message"]
+
+    def test_a_real_load_failure_is_still_500(self, client, monkeypatch):
+        """The 503 must not swallow the case this route's 500 is FOR."""
+        router = client.app.state.router_instance
+
+        def boom(model_id):
+            raise RuntimeError("safetensors header is corrupt")
+
+        monkeypatch.setattr(router, "get_provider", boom)
+        resp = client.post("/v1/models/test-mlx-model/load")
+        assert resp.status_code == 500
+
