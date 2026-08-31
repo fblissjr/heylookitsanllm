@@ -522,6 +522,16 @@ async def _non_stream_messages(
             # MLX-only in every mode -- LlamaServerProvider never sets
             # `peak_memory`, so gguf reads null here and always did.
             "peak_memory_gb": telemetry.peak_memory_gb or None,
+            # Absent here by OMISSION, not design (v1.79.54): the streaming
+            # half has always merged these three in, this builder never did,
+            # and PerformanceInfo did not declare them -- so they could not
+            # have arrived even if it had. Same class as peak_memory_gb before
+            # .50: a value already sitting in telemetry that one of the two
+            # builders dropped. Both modes carry the same set now.
+            "kv_cache_bytes": telemetry.kv_cache_bytes or None,
+            "queue_wait_ms": telemetry.queue_wait_ms or None,
+            "draft_acceptance": (telemetry.draft_accepted / telemetry.draft_tokens)
+            if telemetry.draft_tokens else None,
         }
 
     response = from_openai_response_dict(
@@ -691,6 +701,13 @@ async def _stream_messages(
     # performance object -- the extension the v3 status lines read)
     yield translator.message_delta_event()
     yield translator.message_stop_event(timing={
+        # The rates were in scope here the whole time and were never emitted,
+        # while PerformanceInfo declared them REQUIRED -- so this payload could
+        # not satisfy its own declared model, and a streaming client following
+        # the guide's "prefer the engine's rates over a wall-clock division"
+        # had nothing to prefer. Both modes carry them now.
+        "prompt_tps": telemetry.prompt_tps or None,
+        "generation_tps": telemetry.generation_tps or None,
         "peak_memory_gb": telemetry.peak_memory_gb or None,
         "kv_cache_bytes": telemetry.kv_cache_bytes or None,
         "queue_wait_ms": telemetry.queue_wait_ms or None,

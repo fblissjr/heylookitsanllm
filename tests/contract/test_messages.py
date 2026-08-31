@@ -274,6 +274,20 @@ class TestNonStreamingPerformance:
         assert perf["generation_tps"] > 0
         assert perf["total_duration_ms"] is not None
 
+    def test_the_three_telemetry_keys_reach_this_path_too(self, client):
+        """Declared on PerformanceInfo and built here as of v1.79.54.
+
+        They rode `message_stop` from the start and were absent here by
+        OMISSION -- and the model did not declare them, so they could not have
+        arrived even if the builder had set them. The fake reports no KV bytes
+        or queue wait, so this asserts the KEYS exist on the model rather than
+        values the fake cannot produce; `test_peak_memory_reaches_the_non_
+        streaming_response` is the one that follows a value end to end.
+        """
+        perf = self._perf(client)
+        for key in ("kv_cache_bytes", "queue_wait_ms", "draft_acceptance"):
+            assert key in perf, key
+
     def test_thinking_and_content_durations_are_streaming_only(self, client):
         """Pinned as ABSENT deliberately, not overlooked: the translator times
         those blocks as it emits them, so nothing non-streaming can produce

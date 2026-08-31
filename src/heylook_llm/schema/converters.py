@@ -192,13 +192,21 @@ def from_openai_response_dict(
     performance = None
     perf_dict = response_dict.get("performance")
     if perf_dict:
+        # `.get(key)` throughout, never `.get(key, 0)`: the rates defaulted to
+        # 0 while the model declared them required, which made a DROPPED rate
+        # indistinguishable from a measured zero -- and that is exactly what
+        # made `test_rates_and_duration_are_present` unable to fail (v1.79.51).
+        # Absent now means None, which the model declares and a client can see.
         performance = PerformanceInfo(
-            prompt_tps=perf_dict.get("prompt_tps", 0),
-            generation_tps=perf_dict.get("generation_tps", 0),
+            prompt_tps=perf_dict.get("prompt_tps"),
+            generation_tps=perf_dict.get("generation_tps"),
             peak_memory_gb=perf_dict.get("peak_memory_gb"),
             thinking_duration_ms=perf_dict.get("thinking_duration_ms"),
             content_duration_ms=perf_dict.get("content_duration_ms"),
             total_duration_ms=perf_dict.get("total_duration_ms"),
+            kv_cache_bytes=perf_dict.get("kv_cache_bytes"),
+            queue_wait_ms=perf_dict.get("queue_wait_ms"),
+            draft_acceptance=perf_dict.get("draft_acceptance"),
         )
 
     # Determine stop reason

@@ -21,28 +21,22 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## Schema-vs-payload gaps on message_stop (2026-08-31)
 
-- [ ] **`MessageStopEvent.performance` is wrong in BOTH directions** (P2):
-  it is typed `Optional[PerformanceInfo]`, and the streaming payload is built
-  as a raw dict by `StreamingEventTranslator._sse`, so nothing validates it
-  against that model. Consequences, both live: `PerformanceInfo` declares
-  `prompt_tps` and `generation_tps` REQUIRED and the stream never sends them
-  (caught by the .47-.50 review, recorded as unresolved in the .51
-  changelog); and the stream DOES send `kv_cache_bytes`, `queue_wait_ms` and
-  `draft_acceptance`, which the model does not declare, so a client generated
-  from `/openapi.json` drops them silently. The second half is the newer
-  finding and the more dangerous direction by the argument used to settle the
-  422 question: an undeclared-but-sent field is invisible to a generated
-  client, where a declared-but-unsent one is only a dead branch.
-  Three fixes are entangled and should be decided together rather than one at
-  a time: whether the rates become optional or get emitted; whether the three
-  telemetry keys join `PerformanceInfo` (which would also let the
-  NON-streaming builder carry them, closing the omission documented in
-  api_integration.md §3); and whether `message_stop` should be validated
-  through its own model at all, since being a raw dict is why neither
-  mismatch was visible. Surfaced by the consuming-side twin skill, which had
-  written the three telemetry keys as "streaming only" beside the rates --
-  giving an OMISSION and an open DECISION equal standing, which is what the
-  §3 rewrite now separates.
+- [x] **`MessageStopEvent.performance` was wrong in BOTH directions** --
+  RESOLVED v1.79.54 by unifying rather than by picking one of the three
+  entangled fixes. `PerformanceInfo` now declares all nine fields with NONE
+  required; `message_stop` emits the two rates it always had in scope; the
+  non-streaming builder emits the three telemetry keys it was omitting. So
+  both payloads are subsets of one declared model and a generated client
+  compiles against either mode.
+  The third sub-decision -- whether `message_stop` should be VALIDATED
+  through its own model rather than written as a raw dict -- was deliberately
+  NOT taken. Being a raw dict is why the drift was invisible, but restructuring
+  the emit path is a larger change than the mismatch warranted, and the
+  cheaper substitute is in place: `tests/unit/test_message_stop_payload.py`
+  asserts every emitted key is declared and that no declared field is
+  required. That is a construction guarantee where the previous protection
+  was a hand-maintained claim -- the same census-vs-guarantee distinction
+  that produced the .53 busy bug.
 
 ## E2E pages suite: 42/43 (2026-08-31)
 

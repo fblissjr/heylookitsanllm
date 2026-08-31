@@ -3,12 +3,36 @@
 # Shared fixtures for contract tests. Creates a FastAPI TestClient backed by
 # mock router and service objects -- no real models, no MLX hardware needed.
 
+import os
 import sys
+import tempfile
 from collections import OrderedDict
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from starlette.testclient import TestClient
+
+# Isolate the App DB before ANYTHING imports heylook_llm.db or builds the app.
+#
+# Without this the suite falls through to db.py's default, `data/conversations
+# .duckdb` -- the REAL store, repo-relative. A running dev server holds that
+# file lock, so the whole suite errors out with
+# `IOException: Could not set lock on data/conversations.duckdb` (87 of them,
+# observed 2026-08-31). CLAUDE.md says any failure is a regression and there
+# is no pre-existing-failure allowlist, so that reads as 87 regressions of
+# whatever branch you happen to be on -- the suite's green was silently
+# conditional on no server running.
+#
+# Set at IMPORT time, not in a fixture: the `app` fixture is session-scoped
+# and opens the connection during lifespan, so a fixture would have to win an
+# ordering race that nothing enforces. `tests/e2e` already isolates the same
+# way; this brings the contract suite in line with it.
+#
+# Contract tests must never touch real conversations regardless -- the lock is
+# what made the omission visible, not what makes it wrong.
+_DB_DIR = tempfile.mkdtemp(prefix="heylook-contract-db-")
+os.environ["HEYLOOK_DB_PATH"] = str(Path(_DB_DIR) / "contract.duckdb")
 
 from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks, real_mlx_available
 from heylook_llm.config import AppConfig

@@ -162,37 +162,37 @@ first token) returns `"performance": null`. The response model declares it
 `Optional`, so null-check it; the earlier version of this paragraph said
 "always" and was wrong.
 
-Up to four of its six fields are populated on this path: `prompt_tps`,
-`generation_tps`, `total_duration_ms` and `peak_memory_gb`. The rates are the
-engine's own measurements taken around prefill and decode, so they are a
-better number than dividing tokens by your own wall clock, which includes
-queue wait and any model load.
+It carries `prompt_tps`, `generation_tps`, `total_duration_ms`,
+`peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` —
+whichever of them the run actually produced. The rates are the engine's own
+measurements taken around prefill and decode, so they are a better number
+than dividing tokens by your own wall clock, which includes queue wait and
+any model load.
 
-**The two modes carry different fields, and the differences are three
-different things.** Do not read the asymmetry as one design.
+**As of v1.79.54 both modes carry the same set**, with one deliberate
+exception, and `/openapi.json` describes it honestly. Every field on
+`PerformanceInfo` is optional, so a generated client compiles against either
+mode.
 
-- **The rates are non-streaming only.** `message_stop.performance` never
-  carries `prompt_tps` or `generation_tps`. This one is UNRESOLVED, not
-  settled: `/openapi.json` declares both REQUIRED on `PerformanceInfo`, which
-  the streaming payload does not satisfy, and the fix is a pending choice
-  between loosening the model and emitting the rates. Generate types from the
-  schema and you get two required fields that mode never sends — make them
-  optional by hand.
-- **`thinking_duration_ms` and `content_duration_ms` are streaming only BY
-  DESIGN.** The block translator times them as it emits, so there is nothing
-  non-streaming to measure. Non-streaming they arrive as explicit `null`,
-  not omitted; do not render them on that path. Their absence is stable —
+- **The exception: `thinking_duration_ms` and `content_duration_ms` are
+  streaming only, BY DESIGN.** The block translator times them as it emits,
+  so there is nothing non-streaming to measure. Non-streaming they arrive as
+  explicit `null`; do not render them on that path. That absence is stable —
   rely on it.
-- **`kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` are streaming
-  only BY OMISSION.** They ride `message_stop.performance` and are simply not
-  built on the non-streaming path — the same class of gap that left
-  `peak_memory_gb` null there until v1.79.50. Do NOT key on their absence:
-  it is a gap someone intends to close, not a contract. They are also not
-  declared on `PerformanceInfo` at all, so a client generated from the schema
-  has no field for them and will drop them silently off the stream.
+- **Everything else is symmetric now.** Before .54 it was not, in two
+  different ways, and both were invisible: the rates were declared REQUIRED
+  while `message_stop` never sent them (so a client generated from the schema
+  got two required fields that mode could not satisfy), and
+  `kv_cache_bytes`/`queue_wait_ms`/`draft_acceptance` were sent on the stream
+  while the model did not declare them (so a generated client dropped three
+  telemetry values off every `message_stop`, silently, which is the more
+  dangerous of the two).
 
-One version caveat on the list above: `peak_memory_gb` was null on the
-non-streaming path too until v1.79.50. On an older server, expect it blank.
+Version caveats if you support older servers: `peak_memory_gb` was null
+non-streaming before **v1.79.50**; the rates were absent from `message_stop`
+and the three telemetry keys absent from non-streaming responses before
+**v1.79.54**. Treat every one of them as optional and you are correct on
+every version.
 
 **`peak_memory_gb` is MLX-only**, on every path and in both modes. It is
 `mx.get_peak_memory()`, reported per chunk by the MLX engine; the gguf
@@ -411,9 +411,12 @@ a `thinking` block, closes it, then opens a `text` block. Key on
 Two heylook extensions ride the same stream: `event: heylook_logprobs`
 (one per token when `logprobs: true`; entries share the shape of the OpenAI
 wire's `logprobs.content` so a migrating parser keeps working), and extra
-telemetry merged into `message_stop.performance` — `peak_memory_gb`,
-`kv_cache_bytes`, `queue_wait_ms`, `draft_acceptance`. Absent telemetry is
-**omitted, never null**.
+telemetry merged into `message_stop.performance` — `prompt_tps`,
+`generation_tps` (both since v1.79.54), `peak_memory_gb`, `kv_cache_bytes`,
+`queue_wait_ms`, `draft_acceptance`. Absent telemetry is **omitted, never
+null** here; the non-streaming response spells the same absence as an
+explicit `null`, because its fields are declared on a model. Treat missing
+and null as one condition.
 
 ---
 

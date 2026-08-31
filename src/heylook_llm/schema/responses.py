@@ -61,8 +61,14 @@ class PerformanceInfo(BaseModel):
       the merged chunk telemetry -- but NOT the two rates, which this class
       still declares required.
     """
-    prompt_tps: float = Field(..., description="Prompt processing tokens per second")
-    generation_tps: float = Field(..., description="Generation tokens per second")
+    # OPTIONAL, not required (v1.79.54). They were declared required while the
+    # STREAMING payload never sent them, so a client generated from
+    # /openapi.json got two required fields that mode could not satisfy. Both
+    # paths emit them now, but a run that produced no tokens has no rate to
+    # report, and a required field the server sometimes cannot fill is a lie
+    # in the other direction.
+    prompt_tps: Optional[float] = Field(default=None, description="Prompt processing tokens per second")
+    generation_tps: Optional[float] = Field(default=None, description="Generation tokens per second")
     peak_memory_gb: Optional[float] = Field(default=None, description="Peak memory usage in GB")
     thinking_duration_ms: Optional[int] = Field(
         default=None, description="Time spent in thinking phase"
@@ -71,7 +77,22 @@ class PerformanceInfo(BaseModel):
         default=None, description="Time spent generating content"
     )
     total_duration_ms: Optional[int] = Field(
-        None, description="Total generation time"
+        default=None, description="Total generation time"
+    )
+    # DECLARED as of v1.79.54. The streaming payload has always merged these
+    # three in, and the model did not declare them -- so a client generated
+    # from the schema had no field for them and dropped them off every
+    # message_stop, silently. Declaring them is also what lets the
+    # NON-streaming builder carry them, which closes the other half: they were
+    # absent there by omission, not by design.
+    kv_cache_bytes: Optional[int] = Field(
+        default=None, description="KV cache size in bytes at the end of the run"
+    )
+    queue_wait_ms: Optional[float] = Field(
+        default=None, description="Time spent waiting in the FIFO generation queue"
+    )
+    draft_acceptance: Optional[float] = Field(
+        default=None, description="Speculative-decoding acceptance rate, when a drafter ran"
     )
 
 

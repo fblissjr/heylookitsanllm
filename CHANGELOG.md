@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.54]
+
+Two things the owner called pressing: the contract suite's green was
+conditional on no server running, and `message_stop` disagreed with the model
+that declares it in both directions.
+
+### Fixed
+
+- **The contract suite errored wholesale whenever a dev server was running.**
+  `tests/contract/conftest.py` never set `HEYLOOK_DB_PATH`, so it fell through
+  to `db.py`'s default — `data/conversations.duckdb`, the REAL store,
+  repo-relative. A running server holds that lock and the suite produced 87
+  `IOException: Could not set lock` errors. CLAUDE.md says any failure is a
+  regression and there is no pre-existing-failure allowlist, so that read as
+  87 regressions of whatever branch you were on. Set at conftest IMPORT time,
+  not in a fixture: the `app` fixture is session-scoped and opens the
+  connection during lifespan, so a fixture would have to win an ordering race
+  nothing enforces. Verified by running the suite with no external env var and
+  confirming the real store's mtime is unchanged. `tests/unit` never had this
+  — it passes `:memory:` explicitly.
+- **`message_stop` disagreed with `PerformanceInfo` in BOTH directions, and
+  neither was visible.** The event is typed `Optional[PerformanceInfo]` but
+  the payload is assembled as a raw dict and written straight out, so nothing
+  validated one against the other. The model declared `prompt_tps` and
+  `generation_tps` REQUIRED while the stream never sent them — a client
+  generated from `/openapi.json` got two required fields that mode could not
+  satisfy. And the stream sent `kv_cache_bytes`, `queue_wait_ms` and
+  `draft_acceptance`, which the model did not declare — so a generated client
+  dropped three telemetry values off every `message_stop`, silently, which is
+  the more dangerous direction.
+  Resolved by UNIFYING rather than by picking one of the three entangled
+  fixes: every `PerformanceInfo` field is now optional, `message_stop` emits
+  the two rates it always had in scope, and the non-streaming builder emits
+  the three keys it was omitting. Both payloads are subsets of one declared
+  model.
+- **The converter defaulted the rates to `0`.** `perf_dict.get(key, 0)` made a
+  DROPPED rate indistinguishable from a measured zero — which is precisely
+  what made `test_rates_and_duration_are_present` unable to fail (v1.79.51).
+  Absent is `None` now, which the model declares.
+
+### Added
+
+- **`tests/unit/test_message_stop_payload.py`** — asserts every key the
+  streaming payload emits is declared on `PerformanceInfo`, that no declared
+  field is required, and that absent telemetry is omitted rather than
+  nulled. This is the construction guarantee replacing a hand-maintained
+  claim: the same census-vs-guarantee distinction that produced the .53 busy
+  bug, applied before it could produce another. Deliberately a SUBSET check
+  rather than an expected field list — a list here would be the census again.
+
+### Not done, deliberately
+
+- **`message_stop` is still a raw dict**, not validated through its own model.
+  Being a raw dict is WHY the drift was invisible, but restructuring the emit
+  path is a larger change than the mismatch warranted, and the test above
+  covers the failure mode at a fraction of the cost. Recorded so the tradeoff
+  is visible rather than forgotten.
+
+### Changed
+
+- **`docs/api_integration.md`** §3's three-way asymmetry passage collapses:
+  two of the three differences no longer exist. One deliberate exception
+  remains (the thinking/content durations are streaming-only because nothing
+  non-streaming can measure them). Version caveats kept for clients
+  supporting older servers — treat every field as optional and you are correct
+  on every version. §4 lists the rates as riding `message_stop` since .54.
+
 ## [1.79.53]
 
 ### Fixed
