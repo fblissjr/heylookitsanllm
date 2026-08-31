@@ -202,7 +202,9 @@ class TestMessageStopTiming:
         # zero queue wait is NOT absent -- that is the v1.79.58 rule, and this
         # run really did wait zero.
         assert "generation_duration_ms" in perf
-        assert perf["queue_wait_ms"] == 0.0
+        # An unmeasured queue wait is ABSENT, not a published 0.0 (v1.79.59 --
+        # .58 had this backwards on a premise that measurement refuted).
+        assert "queue_wait_ms" not in perf
 
 
 @pytest.mark.unit

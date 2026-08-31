@@ -338,8 +338,11 @@ stays for external consumers, no v3 page calls it):
   it must be null-checked. `peak_memory_gb` is MLX-only in EVERY mode —
   `LlamaServerProvider` never sets `peak_memory`, so a gguf model reads null
   there and always has.
-  NB `PerformanceInfo` declares both rates REQUIRED while the streaming
-  payload omits them; a generated client needs them loosened by hand.
+  NB every `PerformanceInfo` field is Optional since v1.79.54 and the stream
+  has sent both rates since then, so a generated client needs no hand-editing.
+  (This note previously said the opposite and survived the v1.79.58 rewrite of
+  the paragraph directly above it — the same beside-not-instead miss that
+  rewrite was correcting.)
 - Request field removed v1.79.49: `include_performance` is gone from
   `MessageCreateRequest`. It controlled nothing — this wire returns telemetry
   unconditionally in both modes — and unknown fields are ignored, so a client

@@ -2,13 +2,23 @@
 
 THE RULE IS ABOUT THE TRIGGER, NOT ABOUT WHO CALLS THIS (v1.79.57):
 
-    Every ``router.get_provider(...)`` reachable from a route answers
+    Every ``router.get_provider(...)`` reachable from a route SHOULD answer
     MODEL_BUSY through this module.
 
-That sentence has an enumerable population -- ``get_provider`` call sites,
-readable from source -- so the remainder after subtracting the compliant ones
-IS the answer to "who should have called this and did not".
-``tests/unit/test_model_busy_reaches_the_handler.py`` asks exactly that.
+SHOULD, not DOES -- and the weaker verb is the honest one. That sentence has
+an enumerable population (``get_provider`` call sites, readable from source),
+so the remainder after subtracting the compliant ones IS the answer to "who
+should have called this and did not". ``tests/unit/
+test_model_busy_reaches_the_handler.py`` asks it for the sites it can see.
+
+KNOWN NON-COMPLIANT, so this docstring cannot be read as a guarantee either:
+``batch_processor``'s PARALLEL modes still catch this in a broad handler and
+return 200 with the busy sentence in a per-group ``error`` field, and ``rlm``
+answers a bare 503 non-streaming and an in-band ``rlm_error`` streaming. Both
+are out of scope by owner decision, recorded in ``docs/project/TODO.md``. The
+first draft of this paragraph asserted the rule as fact -- which would have
+made it the very thing it replaced, a census read as a construction guarantee,
+one release after that failure mode was named here.
 
 The docstring used to open with a COUNT of endpoints instead, and that is the
 thing worth remembering. v1.79.53 corrected the count from three to four; a

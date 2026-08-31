@@ -197,7 +197,11 @@ replaced by two names that each mean one thing, rather than aliased to either:
   any model load. This is user-perceived latency. It is *not* a throughput
   denominator.
 - **`generation_duration_ms`** — time spent generating, EXCLUDING queue wait
-  and model load. This is the throughput denominator.
+  and model load. This is the throughput denominator. The queue wait is
+  subtracted server-side (v1.79.59): both builders start their clock before
+  the generator is first advanced, and the FIFO gate is acquired on that first
+  advance, so the raw span contained the wait it promises to exclude. On .58
+  exactly, a request that queued 30s and generated 5 reported 35000 here.
 
 Both modes report both spans. If you are on a server older than .58 you will
 see `total_duration_ms` instead; treat it as `request_duration_ms`
@@ -217,10 +221,17 @@ is the point.
 - **`prompt_tps == 0` no longer happens.** Before .58 an unreported prefill
   rate shipped as a literal `0.0` non-streaming, which reads as an infinitely
   slow prefill. It is absent/null now. On .54–.57, treat `0` as unknown.
-- **`queue_wait_ms` is always present, and `0` is a measurement.** A request
-  that waited no time in the FIFO gate really did wait zero; before .58 the
-  key was dropped in that case, so absent meant both "no wait" and "not
-  measured" — on the commonest case there is, an idle server.
+- **`queue_wait_ms` absent means NOT MEASURED, and `0` never appears.** The
+  wait is an elapsed-counter difference, so even an idle gate reports a tiny
+  nonzero float (live: 0.0044, 0.0037, 0.0024 ms). The only things that would
+  produce an exact `0` are the cases where nothing measured it — **gguf never
+  measures it at all**, because it bypasses this server's FIFO gate and queues
+  inside `llama-server`, so a gguf request that really waited seconds has no
+  wait to report. So: absent on gguf always, absent on MLX only when the run
+  produced no chunk. (v1.79.58 briefly published that zero on the reasoning
+  that it rescued a measurement on idle servers; measurement showed the idle
+  case was never zero, so the release was inverting a correct behaviour.
+  Restored in .59.)
 - **`thinking_duration_ms` and `content_duration_ms` are streaming only, by
   design.** The block translator times them as it emits; there is nothing
   non-streaming to measure. This is the one asymmetry left, and under the rule
@@ -626,9 +637,9 @@ sounding safer.
   cancels every request sharing it ([§6](#6-auth)).
 - Cancel non-streaming runs explicitly. Hanging up does not stop one
   ([§6](#cancelling-a-request)).
-- Null-check `performance`, and null-check every field on it. Neither mode
-  is a superset of the other and the reasons differ per field
-  ([§3](#3-the-call)).
+- Null-check `performance`, and null-check every field on it. Present means
+  measured; absent (streaming) or `null` (non-streaming) means this mode or
+  engine could not measure it ([§3](#3-the-call)).
 - Resize images client-side.
 - Send `max_tokens` if you need a bound, omit it if you do not.
 - Treat 503 as backpressure, in-band `error` events as terminal, and

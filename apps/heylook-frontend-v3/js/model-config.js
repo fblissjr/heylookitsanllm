@@ -307,11 +307,17 @@ function buildFitMeter({ model, overrides, onGate }) {
       render(report);
     } catch (err) {
       if (err.name === 'AbortError') return;
-      // 422 = the (candidate) model_path doesn't exist -- name it; anything
-      // else is just "unavailable". NEVER fall back to a client-side guess.
+      // 422 = the server could not SIZE this model, and it says why. The
+      // reason was hardcoded to "model_path does not exist" here, which was
+      // the only 422 the route produced until v1.79.56 widened it to every
+      // unsizeable report -- so an interrupted download that leaves a
+      // config.json and no weights was told its path did not exist, when it
+      // does. Render the server's reason; NEVER fall back to a client-side
+      // guess about which one it was.
       verdictEl.className = 'cfg-fit__verdict';
-      verdictEl.textContent = err.status === 422
-        ? 'fit unavailable — model_path does not exist'
+      const why = err.detail?.error;
+      verdictEl.textContent = (err.status === 422 && why)
+        ? `fit unavailable — ${why}`
         : 'fit unavailable';
       rowsEl.replaceChildren();
       onGate?.(null);

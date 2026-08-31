@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.59]
+
+Acting on a code review and two verification passes over v1.79.56-.58. Two of
+the three fixes are against defects those releases introduced.
+
+### Fixed
+
+- **`queue_wait_ms`: .58 inverted a correct behaviour on a false premise.**
+  It reasoned that emitting the zero rescued a measurement on an idle server.
+  Measurement refuted it: the wait is an elapsed-counter difference, so an
+  idle gate reports a tiny NONZERO float — live runs gave 0.0044, 0.0037 and
+  0.0024 ms, never 0.0. The set emitting exactly `0.0` is the UNMEASURED set
+  and only it. **The gguf provider never assigns the field at all** — it
+  bypasses this server's FIFO gate and queues inside `llama-server` at
+  `-np 1`, so a gguf request that really waited seconds was publishing
+  `queue_wait_ms: 0.0`, a non-answer dressed as an answer, on every single
+  request. An MLX run that yields no chunk loses the tag the same way, since
+  it rides the first one. Restored to absence-means-unmeasured, which also
+  puts the two wires back into agreement: `api.py` gates the same quantity on
+  `> 0` and was never changed.
+  Two tests asserted the defect as correct and were rewritten. Both used a
+  bare `ChunkTelemetry` — the unmeasured state — as if it were the
+  idle-server state.
+- **`generation_duration_ms` contained the queue wait its own description
+  promises to exclude.** `MLXProvider.create_chat_completion` is a GENERATOR
+  FUNCTION, so calling it runs no body and `_gen_gate.acquire()` happens on
+  the first `next()` — inside the caller's consume loop, after the clock
+  started. Both builders time the span from before that advance, so the raw
+  span contained the wait. A request queued 30s and generating 5 reported
+  35000 as the throughput denominator, and a client dividing by it got a
+  seventh of the true rate. That is the defect .58 set out to remove,
+  reproduced inside the field built to remove it. Netted centrally in
+  `build_performance`, clamped at 0, because a span whose meaning depends on
+  which call site produced it is exactly what that function exists to end.
+- **The models page reported the wrong reason for an unsizeable model.**
+  v1.79.56 widened `/fit`'s 422 from "path missing" to every unsizeable
+  report and put the reason in `detail.error`; `model-config.js` still
+  hardcoded "model_path does not exist" for any 422, so an interrupted
+  download that leaves a `config.json` was told its path did not exist when it
+  does. `httpError` now preserves a structured `detail` (FastAPI's is not
+  always a string — stringifying this one gave `[object Object]`), and the
+  panel renders the server's reason.
+
+### Changed
+
+- **`busy_response.py` no longer states its rule as fact.** It read "Every
+  `get_provider` reachable from a route answers MODEL_BUSY through this
+  module"; that is false while batch's parallel modes and rlm are
+  non-compliant, so the paragraph asserting it was a census read as a
+  construction guarantee — one release after that failure mode was named in
+  the same file. Now SHOULD, with the known exceptions listed.
+- **v1.79.57's entry carries a correction.** It claimed six routes now let the
+  exception out; `processing_mode: "parallel"` does not.
+
+### Docs
+
+- `docs/api_integration.md` §3 flips the `queue_wait_ms` rule and gives
+  `generation_duration_ms` its netting caveat. §8's checklist line still
+  described the pre-.58 per-field table — found by a claim audit, and the
+  fourth instance in one day of a correction landing beside the claim it
+  corrects rather than replacing it.
+- `docs/frontend_v3_spec.md` had a stale NB ("both rates REQUIRED") three
+  lines below the paragraph .58 rewrote. Same miss, same session.
+
+### Not done, deliberately
+
+- **Batch and rlm MODEL_BUSY are out of scope** (owner decision), including
+  parallel mode's 200 and sequential's discarding of completed work. Recorded
+  in `docs/project/TODO.md` with the fix that probably supersedes all of them:
+  `batch_processor` never calls `pin_model`, while rlm and jspace both do, and
+  a pinned model cannot be evicted between groups.
+
 ## [1.79.58]
 
 One builder for the Messages `performance` object, and one rule for reading it.
@@ -118,6 +190,13 @@ One builder for the Messages `performance` object, and one rule for reading it.
   free. That inverts the failure mode: a new route must actively *swallow* to
   get this wrong, instead of actively remembering to get it right. The six
   routes above now let the exception out rather than converting it.
+  **CORRECTION (v1.79.59):** that is true of `processing_mode: "sequential"`
+  and NOT of `"parallel"`/`"parallel_with_context"`, which still return 200
+  with the busy sentence in a per-group `error` field -- the exact shape this
+  entry calls the hardest to classify. The release fixed one batch mode and
+  its changelog claimed all of them. Left unfixed by owner decision and
+  recorded in `docs/project/TODO.md`; the docstring in `busy_response.py` no
+  longer states the rule as fact.
 - **Dispatch is on the TYPE.** Both causes already raised `ModelBusyError`
   (the gate's `check_capacity()` and the router's blocked eviction), so the
   four `"MODEL_BUSY" in str(e)` checks were four hand-copied spellings of a

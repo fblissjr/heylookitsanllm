@@ -112,17 +112,52 @@ class TestThePayloadAndItsModelAgreeBothWays:
 class TestAbsentMeansUnmeasurable:
     """The contract: present = measured exactly what the name says."""
 
-    def test_a_measured_zero_queue_wait_survives(self):
-        """The mirror of the prompt_tps defect, and the commonest case there is.
+    def test_an_unmeasured_queue_wait_is_absent(self):
+        """v1.79.58 published this zero; v1.79.59 took it back, on measurement.
 
-        `queue_wait_ms or None` dropped the key whenever a request waited no
-        time in the FIFO gate -- i.e. on any idle server -- so absent meant
-        both "no wait" and "not measured". Zero IS the measurement here: no
-        path records a long wait as 0.0.
+        .58 reasoned that "a request that waited no time really did wait zero,
+        so dropping the zero hides a measurement on an idle server". That
+        premise was false. The wait is an elapsed `perf_counter` difference,
+        so an idle gate yields a tiny NONZERO float -- live runs on an idle
+        server reported 0.0044, 0.0037 and 0.0024 ms, never 0.0. The set that
+        emits exactly 0.0 is the unmeasured set and only it: gguf never assigns
+        the field (it bypasses this gate entirely), and an MLX run yielding no
+        chunk loses the tag, which rides the first one.
+
+        So this asserts the ORIGINAL behaviour, restored. The test that stood
+        here asserted the defect, using a bare ChunkTelemetry -- the unmeasured
+        state -- as if it were the idle-server state.
         """
-        t = ChunkTelemetry()  # queue_wait_ms defaults to 0.0
+        t = ChunkTelemetry()  # never latched: the UNMEASURED state
         perf = build_performance(t, request_duration_ms=10)
-        assert perf["queue_wait_ms"] == 0.0
+        assert "queue_wait_ms" not in perf, (
+            "an unmeasured queue wait was published as a measured 0.0 -- on "
+            "gguf that is every single request"
+        )
+
+    def test_a_real_queue_wait_survives(self):
+        t = ChunkTelemetry()
+        t.queue_wait_ms = 0.0044          # what an IDLE gate actually reports
+        perf = build_performance(t, request_duration_ms=10)
+        assert perf["queue_wait_ms"] == 0.0044
+
+    def test_the_generation_span_excludes_the_queue_wait(self):
+        """Its own description promises "EXCLUDING queue wait and model load".
+
+        Both callers time the span from before the generator is first
+        advanced, and `create_chat_completion` is a GENERATOR FUNCTION, so the
+        gate is acquired on that first `next()` -- inside the consume loop,
+        after the clock started. The raw span therefore contains the wait.
+        """
+        t = ChunkTelemetry()
+        t.queue_wait_ms = 30_000.0        # 30s behind another generation
+        perf = build_performance(t, request_duration_ms=35_000,
+                                 generation_duration_ms=35_000)
+        assert perf["generation_duration_ms"] == 5_000, (
+            "the throughput denominator still contains the queue wait; a "
+            "client dividing by it reports a fraction of the true rate"
+        )
+        assert perf["request_duration_ms"] == 35_000, "the wide span keeps it"
 
     def test_an_unreported_rate_is_absent_not_zero(self):
         """`prompt_tps` shipped a raw 0.0 non-streaming, indistinguishable

@@ -11,13 +11,22 @@ export function requestId() {
 export async function httpError(res) {
   let detail = res.statusText;
   let code = null;
+  let structured = null;
   try {
     const data = await res.json();
-    detail = data.error?.message || data.detail || data.error?.code || detail;
+    // FastAPI's `detail` is not always a string. The fit route answers
+    // {detail:{field, error}}, and stringifying that gives "[object Object]",
+    // so the structured reason has to survive on the error rather than be
+    // flattened into the message. Kept as `err.detail` for callers that can
+    // render a field-scoped reason; `message` stays a string for the rest.
+    structured = (data.detail && typeof data.detail === 'object') ? data.detail : null;
+    const detailText = structured ? (structured.error ?? null) : data.detail;
+    detail = data.error?.message || detailText || data.error?.code || detail;
     code = data.error?.code ?? null;
   } catch { /* non-JSON error body */ }
   const err = new Error(detail);
   err.status = res.status;
+  err.detail = structured;
   err.code = code;
   err.retryAfter = Number(res.headers.get('Retry-After')) || null;
   return err;

@@ -122,19 +122,33 @@ def build_performance(
     ``ChunkTelemetry`` latches on truthy and cannot distinguish "the engine
     reported 0.0" from "the engine never reported" -- that is deliberate (it
     protects first-chunk-only snapshots and sparse vision chunks) and is not
-    changed here. So the rule keys on whether ZERO IS A MEANINGFUL
-    MEASUREMENT of the quantity:
+    changed here. So the rule keys on whether a run can ever PRODUCE a
+    genuine zero for the quantity:
 
-    * durations and ``queue_wait_ms``: yes. A request that waited no time in
-      the FIFO gate really did wait zero, and there is no path on which a
-      long wait is recorded as 0.0 -- so these are emitted unconditionally and
-      absent genuinely means unmeasurable. Dropping the zero (the old ``or
-      None``) hid a measurement on the commonest case there is, an idle
-      server.
-    * rates, ``peak_memory_gb``, ``kv_cache_bytes``: no. A rate of exactly
-      zero would mean no tokens in unbounded time, and zero bytes of KV cache
-      is not a state a run reaches. Zero there only ever means "never
-      reported", so it is spelled as absence.
+    * durations: yes, a span can really be zero, and the caller passes an
+      explicit ``int`` or ``None``, so absence is the caller's own statement
+      that the span was not measurable.
+    * everything read off ``telemetry`` -- both rates, ``peak_memory_gb``,
+      ``kv_cache_bytes`` and ``queue_wait_ms``: no. Zero there only ever
+      means "never reported", so it is spelled as absence.
+
+    ``queue_wait_ms`` IS IN THE SECOND GROUP, AND v1.79.58 BRIEFLY PUT IT IN
+    THE FIRST ON A PREMISE THAT WAS FALSE (fixed v1.79.59). The reasoning was
+    "a request that waited no time really did wait zero, so dropping the zero
+    hides a measurement on an idle server". Measured, which is what settled
+    it: ``mlx_provider`` computes the wait as an elapsed
+    ``time.perf_counter()`` difference, so an IDLE gate yields a tiny NONZERO
+    float -- live runs on an idle server reported 0.0044, 0.0037 and 0.0024 ms,
+    never 0.0. The measurement that change claimed to rescue does not exist.
+    What DOES emit exactly 0.0 is the unmeasured set, and only it: the gguf
+    provider never assigns the field at all (it bypasses this gate and queues
+    inside llama-server at ``-np 1``, so a request that really waited seconds
+    still reads 0.0), and an MLX run that yields no chunk loses the tag
+    entirely because it rides the first one. So the old spelling was correct:
+    absent means unmeasured, and publishing the zero published a non-answer as
+    an answer -- on the gguf arm, every single time.
+    It also kept the two wires agreeing: ``api.py`` gates the same quantity on
+    ``> 0`` for the OpenAI wire and was never changed.
 
     NO SYNTHESIS. ``generation_tps`` carries the engine's own measurement or
     nothing at all; it does not fall back to ``headline_tps``. A derived
@@ -152,6 +166,23 @@ def build_performance(
     from heylook_llm.schema.responses import PerformanceInfo
 
     perf: dict = {}
+    # THE GENERATION SPAN IS NETTED OF QUEUE WAIT HERE, ONCE (v1.79.59).
+    # Both callers time it from before the generator is first advanced, and
+    # `MLXProvider.create_chat_completion` IS A GENERATOR FUNCTION -- calling it
+    # runs no body, so `_gen_gate.acquire()` happens on that first `next()`,
+    # inside the caller's consume loop. The raw span therefore CONTAINS the
+    # FIFO wait, which is exactly what this field's description promises to
+    # exclude: two concurrent non-streaming requests, the second waiting 30s
+    # and generating for 5, reported 35000 as the throughput denominator and a
+    # client dividing by it got a seventh of the true rate. That is the defect
+    # v1.79.58 set out to remove, reproduced inside the field built to remove
+    # it. Netted centrally rather than at each caller because a span whose
+    # meaning depends on which call site produced it is the whole thing this
+    # function exists to end. Clamped at 0, the same shape as `net_ttft_ms`.
+    if generation_duration_ms is not None and telemetry.queue_wait_ms:
+        generation_duration_ms = max(
+            0, generation_duration_ms - int(telemetry.queue_wait_ms))
+
     # Zero is a real answer for these.
     for key, value in (
         ("request_duration_ms", request_duration_ms),
@@ -161,9 +192,9 @@ def build_performance(
     ):
         if value is not None:
             perf[key] = value
-    perf["queue_wait_ms"] = telemetry.queue_wait_ms
-
-    # Zero here only ever means "never reported".
+    # Zero here only ever means "never reported" -- see the docstring.
+    if telemetry.queue_wait_ms:
+        perf["queue_wait_ms"] = telemetry.queue_wait_ms
     if telemetry.prompt_tps:
         perf["prompt_tps"] = telemetry.prompt_tps
     if telemetry.generation_tps:

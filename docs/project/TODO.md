@@ -121,6 +121,38 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   synthesized, `queue_wait_ms` stopped hiding a measured zero, and
   `total_duration_ms` was retired for having two origins.
 
+## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
+
+- [ ] **`processing_mode: "parallel"` still returns 200 with the busy sentence
+  in a per-group `error` field** (P2): `batch_processor.py:413`'s broad handler
+  catches `ModelBusyError` from `_process_single_request_sync`. This is
+  verbatim the shape v1.79.57's changelog calls "the hardest shape of all to
+  classify" -- .57 fixed sequential mode and never traced who calls the third
+  `get_provider` site. Found by a code review and an independent trace, not by
+  either of .57's own tests: the static one's predicate is "a `try` whose OWN
+  body calls get_provider" and parallel's calls a helper a frame down, which
+  that file's docstring already names as its blind spot; the behavioural one
+  exercises `sequential` only and the word `parallel` appears nowhere in
+  `tests/contract/`.
+- [ ] **Sequential mode's fix discards completed work** (P3): the `raise` added
+  in .57 exits before `BatchResponse` is built, so every group that already
+  succeeded is thrown away and the retry re-runs the whole batch. `completions`
+  is function-local and there is no streaming path. Correct reporting bought
+  with silent work loss, and no test covers it -- the contract case sends one
+  message, i.e. the zero-completed-groups case where the tradeoff is free.
+- [ ] **rlm answers a bare 503 / an in-band `rlm_error`** (P3): right status,
+  wrong shape non-streaming (no `Retry-After`, no envelope); no status at all
+  streaming. Both sites are commented in `rlm.py`.
+- **THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
+  calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` both pin with
+  try/finally for exactly this multi-round-over-one-model shape, and batch is
+  the outlier. A pinned model cannot be evicted between groups, so the only
+  surviving MODEL_BUSY is the initial `get_provider`, where nothing has been
+  computed yet and raising costs nothing. That removes the trigger instead of
+  choosing how to report it, and fixes parallel and sequential together. The
+  cost to weigh: a long batch would block other clients' model switches for
+  its duration.
+
 ## Non-streaming TTFT is an unmeasured zero (2026-08-31)
 
 - [ ] **`first_token_ms = 0.0` is a literal on the non-streaming path** (P3):
