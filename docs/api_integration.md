@@ -414,8 +414,17 @@ The id is the one **you** sent. A request that arrived without the header got
 a server-generated id, and on the non-streaming path you never learn it in
 time -- so sending `X-Request-ID` is the precondition for being able to cancel
 at all. The server accepts `[A-Za-z0-9._:-]`, up to 128 characters; anything
-else is replaced with a generated id, and the non-streaming response echoes
-back the id actually tracked, so compare it if a cancel unexpectedly 404s.
+else is replaced with a generated id, and the response echoes back the id
+actually tracked, so compare it if a cancel unexpectedly 404s.
+
+That echo has its own history, narrower than the endpoint's.
+`/v1/chat/completions` has echoed it on both modes since long before
+cancellation existed (for log correlation). `/v1/messages` generated its own
+id until v1.79.44, echoed it on the **streaming** path from .44, and on the
+**non-streaming** path only from **v1.79.46** — which is the one path the
+cancel endpoint exists for. So on a .44 or .45 server a non-streaming
+Messages client cannot read back the id it was tracked under, and a rejected
+header is undetectable there.
 
 This matters most for **non-streaming** calls. A streaming request is already
 cancellable by hanging up -- the server is writing chunks, so it notices the
