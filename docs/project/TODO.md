@@ -45,7 +45,10 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## API surface questions for the owner (2026-08-31)
 
-- [ ] **`include_performance` does nothing on `/v1/messages`** (P2): MEASURED
+- [x] **`include_performance` does nothing on `/v1/messages`** -- RESOLVED
+  v1.79.49 by REMOVING the field from the Messages wire (owner call: drop it
+  unless there is value or it is an easy fix -- there was none and it was).
+  Original finding, kept because the measurement is the useful part: MEASURED
   against the contract server -- a non-streaming Messages response carries the
   `performance` object even when the request sends `include_performance:
   false`, while `/v1/chat/completions` honours the flag (absent -> no object).
