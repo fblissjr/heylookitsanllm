@@ -60,6 +60,23 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   detection may be comparing against a seed the page already overwrote. Do not
   treat that as the cause without confirming it.
 
+## The busy 503 does not echo X-Request-ID (2026-08-31)
+
+- [ ] **`model_busy_response` never sets `X-Request-ID`** (P3): confirmed by
+  reading -- it builds its own `JSONResponse` with only `Retry-After` and the
+  `X-RateLimit-*` headers, so all FOUR routes that return a 503 omit the echo.
+  `docs/api_integration.md` §6 says the id "is echoed back" without
+  qualification, so the doc is wrong for this response. Reported by a
+  consuming client that measured it (harmless for them -- they know the id
+  they sent; the case it matters for is a proxy or log correlator that only
+  sees responses). NOT fixed on the spot deliberately: the change touches the
+  shared envelope every busy path returns, and it is worth checking whether
+  anything already correlates on its absence before altering what four routes
+  emit. Two honest fixes: pass the request id into `model_busy_response` at
+  all four call sites (each has one in scope), or set the header in a
+  middleware so every response carries it and the helper stays ignorant of
+  it. The second is probably right and is the larger change.
+
 ## Docs twins (2026-08-31)
 
 - [x] **The `heylook-provider` skill has moved with the wire** -- CLOSED
