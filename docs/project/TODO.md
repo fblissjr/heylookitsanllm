@@ -28,15 +28,15 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   non-streaming builder emits the three telemetry keys it was omitting. So
   both payloads are subsets of one declared model and a generated client
   compiles against either mode.
-  The third sub-decision -- whether `message_stop` should be VALIDATED
-  through its own model rather than written as a raw dict -- was deliberately
-  NOT taken. Being a raw dict is why the drift was invisible, but restructuring
-  the emit path is a larger change than the mismatch warranted, and the
-  cheaper substitute is in place: `tests/unit/test_message_stop_payload.py`
-  asserts every emitted key is declared and that no declared field is
-  required. That is a construction guarantee where the previous protection
-  was a hand-maintained claim -- the same census-vs-guarantee distinction
-  that produced the .53 busy bug.
+  The third sub-decision -- constraining the payload rather than trusting a
+  test -- was TAKEN in v1.79.55 after the substitute turned out to be
+  decorative. The .54 test could not fail: drift enters at the call site via
+  the `timing` dict, and any test supplies its own, so it asserted "given
+  declared keys, the output is declared". `message_stop_event` now filters to
+  the model's declared fields, dropping and LOGGING anything else. It degrades
+  rather than raising, because it fires at the end of a long generation and
+  telemetry must not break inference. Not a full model round-trip: keys are
+  the guarantee, types were never enforced on that path.
 
 ## E2E pages suite: 42/43 (2026-08-31)
 

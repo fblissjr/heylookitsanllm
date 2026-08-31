@@ -42,6 +42,37 @@ class TestMessageStopMatchesItsModel:
         undeclared = set(payload) - set(PerformanceInfo.model_fields)
         assert not undeclared, f"message_stop sends undeclared fields: {undeclared}"
 
+    def test_an_undeclared_key_is_dropped_rather_than_emitted(self):
+        """The version of the first test that can actually FAIL.
+
+        The one above passes a timing dict of keys chosen to be declared, so
+        it asserts "given good input, the output is good" -- true by
+        construction and green through the exact bug, which entered at the
+        CALL SITE by someone adding a key the model did not declare. This
+        feeds the bad input directly.
+        """
+        payload = self._payload({"peak_memory_gb": 1.0, "totally_new_metric": 42})
+        assert "totally_new_metric" not in payload
+        assert payload["peak_memory_gb"] == 1.0, "the good keys must survive the filter"
+
+    def test_the_drop_is_logged_as_an_error(self, caplog):
+        """Degrading silently would be the failure this exists to end. The
+        wire stays correct either way; the log is the only thing that tells a
+        developer they lost a field."""
+        import logging as _logging
+        with caplog.at_level(_logging.ERROR):
+            self._payload({"totally_new_metric": 42})
+        assert any("totally_new_metric" in r.getMessage() for r in caplog.records), \
+            "dropping an undeclared field must name it in the log"
+
+    def test_a_clean_payload_logs_nothing(self, caplog):
+        """The error path must not fire on every normal generation -- a log
+        that always fires is a log nobody reads."""
+        import logging as _logging
+        with caplog.at_level(_logging.ERROR):
+            self._payload({"peak_memory_gb": 1.0, "queue_wait_ms": 3.0})
+        assert not [r for r in caplog.records if r.levelno >= _logging.ERROR]
+
     def test_no_declared_field_is_required(self):
         """The mirror direction: a REQUIRED field this payload can omit makes
         the schema unsatisfiable for the mode. Both rates were required while

@@ -201,7 +201,35 @@ class StreamingEventTranslator:
         ``timing`` merges caller-supplied telemetry fields (peak memory, KV
         bytes, queue wait, draft acceptance -- the heylook extension names
         shared with heylook_saved.timing) into the performance object; None
-        values are skipped so absent telemetry never renders as null."""
+        values are skipped so absent telemetry never renders as null.
+
+        THE EMITTED KEYS ARE ``PerformanceInfo``'S FIELDS, BY CONSTRUCTION
+        (v1.79.55). ``MessageStopEvent.performance`` is typed as that model
+        but this payload is assembled as a raw dict and written straight out,
+        so for four releases nothing checked one against the other and they
+        disagreed BOTH ways: the model declared the two rates required while
+        this never sent them, and this sent three telemetry keys the model
+        never declared -- which a client generated from ``/openapi.json``
+        dropped off every message_stop, silently. .54 made the two agree by
+        hand; this makes them unable to disagree.
+
+        The drift always entered at the CALL SITE, in the ``timing`` dict --
+        which is why a test could not close it: any test supplies its own
+        timing, so it asserts "given declared keys, the output is declared"
+        and stays green through the exact bug. Verified: with this filter
+        removed, the subset test still passes and only the tests written
+        against the bad input go red. The constraint has to live where the
+        payload is built.
+
+        DEGRADES, NEVER RAISES (owner call). An undeclared key is a
+        programming error, but telemetry must not break a generation -- and
+        this fires at the END of a possibly long, expensive run, where killing
+        the terminal event would leave a client holding the whole answer and
+        waiting forever for a stream that never closes. So the key is dropped,
+        the wire stays correct, and the error is logged. Ordinary ``logging``,
+        which reaches the console regardless of ``observability_level`` -- the
+        JSONL spine is off by default and would have swallowed it.
+        """
         end_time = time.time()
         total_ms = int((end_time - self.start_time) * 1000)
 
@@ -215,7 +243,35 @@ class StreamingEventTranslator:
             if value is not None:
                 perf[key] = value
 
+        perf = self._declared_performance(perf)
         return self._sse("message_stop", {"type": "message_stop", "performance": perf})
+
+    @staticmethod
+    def _declared_performance(perf: dict) -> dict:
+        """Filter to what ``PerformanceInfo`` declares, and say so when it bites.
+
+        Filtering is deliberately done on the KEY SET rather than by round-
+        tripping through the model: a bad VALUE (wrong type) would make
+        construction raise, and swallowing that would be the silent behaviour
+        this exists to end -- while letting it propagate would break the
+        stream, which the owner ruled against. Keys are the guarantee being
+        bought here; types were never enforced on this path and pretending
+        otherwise would overstate it.
+        """
+        from heylook_llm.schema.responses import PerformanceInfo
+
+        declared = set(PerformanceInfo.model_fields)
+        undeclared = set(perf) - declared
+        if undeclared:
+            logging.error(
+                "[MESSAGES] message_stop dropped undeclared performance field(s) %s -- "
+                "add them to PerformanceInfo (schema/responses.py) or stop sending "
+                "them; a client generated from /openapi.json has no field for them "
+                "and would drop them silently",
+                ", ".join(sorted(undeclared)),
+            )
+            return {k: v for k, v in perf.items() if k in declared}
+        return perf
 
     # -- Private helpers ----------------------------------------------------
 

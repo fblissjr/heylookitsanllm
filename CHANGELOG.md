@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.55]
+
+### Changed
+
+- **`message_stop`'s emitted keys are now `PerformanceInfo`'s fields by
+  construction.** .54 made the payload and the model agree by hand and left a
+  test as the protection. That test could not fail: the drift always enters at
+  the CALL SITE, in the `timing` dict, and any test supplies its own timing —
+  so it asserted "given declared keys, the output is declared", which is true
+  by construction and stays green through the exact bug. Confirmed rather than
+  reasoned: with the new filter removed, the subset test still passes and only
+  the tests written against bad input go red.
+  The constraint now lives where the payload is built. An undeclared key is
+  dropped and logged, so the wire cannot carry a field a generated client has
+  no home for.
+- **It degrades, it does not raise** (owner call). An undeclared key is a
+  programming error, but this fires at the END of a possibly long, expensive
+  generation — raising would leave a client holding the whole answer and
+  waiting forever for a stream that never closes, and telemetry breaking
+  inference is against this repo's standing posture. The error goes through
+  ordinary `logging`, which reaches the console regardless of
+  `observability_level`; the JSONL spine is off by default and would have
+  swallowed it.
+- **Filtering is on the KEY SET, not a model round-trip.** A bad *value*
+  (wrong type) would make construction raise; swallowing that would be the
+  silent behaviour this exists to end, and propagating it would break the
+  stream. Keys are the guarantee being bought, types were never enforced on
+  this path, and claiming otherwise would overstate it.
+
+### Added
+
+- `test_an_undeclared_key_is_dropped_rather_than_emitted` and
+  `test_the_drop_is_logged_as_an_error` — the versions of the .54 check that
+  can actually go red, feeding the bad input directly instead of a dict of
+  keys chosen to be declared. Plus `test_a_clean_payload_logs_nothing`,
+  because an error path that fires on every normal generation is a log nobody
+  reads.
+
 ## [1.79.54]
 
 Two things the owner called pressing: the contract suite's green was
