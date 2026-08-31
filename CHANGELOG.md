@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.47]
+
+An audit of `/openapi.json` and `docs/api_integration.md` against the .43-.46
+wire. The document held up; the generated schema had drifted in four places,
+all of them prose a client reads and none of them derived.
+
+### Fixed
+
+- **`/v1/messages` carried its tag twice.** `["Messages API", "Messages API"]`
+  in the generated JSON: the router already declares the tag and the route
+  decorator declared it again. Harmless to Swagger, not harmless to a client
+  generated from the schema.
+- **The `Config` tag told clients operational settings resolve `env > DB >
+  default`.** There is deliberately no env layer -- `settings.py` says so in
+  its module docstring and the `GET /v1/admin/config` description says so in
+  the same schema, so the document contradicted itself for anyone reading the
+  tag first. Three copies of the wrong precedence (the tag, the startup log
+  line, the `include_router` comment); all now say `DB > default` and why.
+- **The schema header did not mention cancellation.** A whole router shipped
+  in .44 and the narrative an integrating client reads first still said
+  `X-Request-ID` was for log correlation. It now names `DELETE
+  /v1/requests/{id}`, that the header is the precondition on the
+  non-streaming path, and that responses echo it on both wires. `422` added
+  to the header's error list, which had 400/500/503 and the in-band SSE case
+  but not the one a malformed body actually produces.
+
+### Changed
+
+- **`FastAPI(description=...)` was dead code.** `custom_openapi()` replaces it
+  wholesale, so the one-line summary sitting there could never reach a client
+  -- a trap for whoever edits it next expecting a change. Replaced with a
+  pointer to the real source.
+- **The `/v1/messages` route description named only `text` and `image`
+  blocks.** Audio blocks exist on the gguf arm (MLX answers 400).
+
+### Verified unchanged
+
+- `docs/api_integration.md` is level with the code: its knob list is exactly
+  the 20 non-`model`/`messages`/`system` fields of `MessageCreateRequest`, the
+  "thirteen extensions" count is thirteen, `samplers.available` is the real
+  path, `stop_sequence` is a response `Literal` member with no request field
+  and no `message_delta` field, and the `/v1/models` row shape is the one the
+  route builds. The .44 cancellation section and the .43 vision-resolver
+  paragraph were already written.
+- The consuming-side twin (`heylook-provider` in the owner's marketplace) is
+  NOT level -- see `docs/project/TODO.md`. It lives in another repo, so it is
+  recorded here rather than fixed here.
+
 ## [1.79.46]
 
 Acting on the review of .43-.45. The theme is that this branch shipped the same defect three times and left a second copy of a fix it had just made.

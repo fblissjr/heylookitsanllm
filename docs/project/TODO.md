@@ -18,6 +18,19 @@ Cross-session task backlog organized by priority.
   MemoryManager construction regresses silently. Needs a contract test that
   seeds the settings DB before app startup.
 
+## Docs twins (2026-08-31)
+
+- [ ] **The `heylook-provider` skill has not moved with the wire** (P2):
+  `docs/api_integration.md` names it as the consuming-side twin and says a
+  change to the wire belongs in both in the same pass. v1.79.44 added
+  `DELETE /v1/requests/{request_id}` and made `/v1/messages` honour
+  `X-Request-ID`; the doc was updated in .44/.46 and the skill was not. Its
+  `SKILL.md` and `references/wire_reference.md` still say only that the header
+  is echoed back and correlates logs -- so an agent wiring a client from the
+  skill cannot cancel a non-streaming run and does not know the header is the
+  precondition for it. The skill lives in the `fb-claude-skills` repo, not
+  this one; fixing it is an edit over there plus a marketplace update.
+
 ## Test-harness + coverage gaps (2026-08-29, worked 2026-08-30)
 
 Carried here so they outlive the `CURRENT.md` handoff block, which is

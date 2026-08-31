@@ -125,7 +125,8 @@ async def lifespan(app: FastAPI):
     from heylook_llm.db import get_connection
     app.state.db = await get_connection()
 
-    # Wire the observability spine from the settings layer (env > DB > default)
+    # Wire the observability spine from the settings layer (DB > default --
+    # operational settings have no env-var override layer, by design)
     # and disclose what's being written (open-source: user must see it's local).
     from heylook_llm.config_api import apply_runtime_settings, observability_log_dir
     _obs = await apply_runtime_settings(app.state.db)
@@ -166,7 +167,10 @@ app = FastAPI(
     # DERIVED, never hand-written: this sat at 1.20.0 for ~60 releases and is
     # the first thing an integrating client reads off /openapi.json.
     version=__version__,
-    description="A high-performance API server for local LLM inference with OpenAI-compatible endpoints",
+    # The real description is the narrative in custom_openapi() below, which
+    # replaces this wholesale. Left as one line so the two cannot drift:
+    # editing THIS string changes nothing a client ever reads.
+    description="See the generated description in custom_openapi().",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -194,7 +198,7 @@ app = FastAPI(
         },
         {
             "name": "Config",
-            "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, resolved env > DB > default"
+            "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, resolved DB > default. There is deliberately no env-var override layer: an env var silently beating a value set here would be invisible in the UI that set it"
         },
         {
             "name": "Telemetry",
@@ -268,7 +272,7 @@ app.include_router(notebook_router)
 from heylook_llm.preset_api import preset_router
 app.include_router(preset_router)
 
-# Operational settings admin (App-DB settings table; env > DB > default)
+# Operational settings admin (App-DB settings table; DB > default, no env layer)
 from heylook_llm.config_api import config_router
 app.include_router(config_router)
 
@@ -2393,6 +2397,8 @@ response = client.chat.completions.create(
   default. The reason and the available ids are in `detail`. Pick another
   model.
 - **500** -- the model exists but failed to load. That model is broken.
+- **422** -- the request body failed validation. The offending field and
+  reason are in `detail`.
 - **503** -- generation queue full: `{{"error":{{"code":"model_overloaded"}}}}`
   plus `Retry-After`. Back off and retry; the server serialises generation.
 - **In-band SSE `error`** -- a failure after the response headers flushed,
@@ -2409,7 +2415,10 @@ response = client.chat.completions.create(
   (`Authorization: Bearer`, loopback-exempt unless
   `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`) gates inference,
   `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) gates admin.
-- Send `X-Request-ID`; it is echoed back and correlates server-side logs.
+- Send `X-Request-ID`. It is echoed back on both wires, it correlates the
+  server-side logs, and it is the handle `DELETE /v1/requests/{{id}}` cancels
+  by -- the only way to stop a NON-streaming run, which writes nothing until
+  it finishes and so never notices an abandoned client.
 - Models are configured in `models.toml`, but entries are overrides only --
   a new download needs no edit.
         """,

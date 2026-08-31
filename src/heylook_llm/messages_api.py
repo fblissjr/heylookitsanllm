@@ -270,8 +270,9 @@ class StreamingEventTranslator:
     description="""
 Create a message using the Messages API format.
 
-Accepts typed content blocks (text, image) and returns structured output
-blocks (text, thinking, logprobs). System prompt is a top-level parameter,
+Accepts typed content blocks (text, image, and audio on the gguf arm --
+MLX answers 400 for audio) and returns structured output blocks (text,
+thinking, logprobs). System prompt is a top-level parameter,
 not embedded in the messages array.
 
 Supports streaming via `stream: true`, which returns Server-Sent Events
@@ -279,7 +280,8 @@ with distinct event types (message_start, content_block_start,
 content_block_delta, content_block_stop, message_delta, message_stop).
     """,
     response_model=MessageResponse,
-    tags=["Messages API"],
+    # No tags= here: the router already carries ["Messages API"], and a second
+    # copy on the route emitted it twice in /openapi.json.
 )
 async def create_message(request: Request, msg_request: MessageCreateRequest):
     router = request.app.state.router_instance
