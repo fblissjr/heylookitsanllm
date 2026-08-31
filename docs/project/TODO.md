@@ -40,9 +40,8 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## MODEL_BUSY reaches six routes that do not speak the 503 (2026-08-31)
 
-- [ ] **Eight `get_provider` call sites across six routes answer backpressure
-  with the wrong status** (P1 for jspace and the batch branch, P2 for the
-  rest). `busy_response.py` exists so this answer has one speller; v1.79.53
+- [x] **CLOSED v1.79.57.** Eight `get_provider` call sites across six routes
+  answered backpressure with the wrong status. `busy_response.py` exists so this answer has one speller; v1.79.53
   found the fourth caller and rewrote its census to say "four". The census is
   still an undercount of the OBLIGATION. Enumerated by AST over
   `router.get_provider(...)` reachable from a route, with enclosing-handler
@@ -64,8 +63,11 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
     `:795`. Sequential mode (`batch_processor.py:254`) is worse still: its own
     `except Exception` stringifies the busy message into `group.error` and
     returns **200**.
-  NOT fixed: which of these deserve the full envelope is a design call, and
-  the rlm/batch ones may want a different answer from the inference routes.
+  FIXED for all but rlm (owner call), and not by a longer census: `api.py`
+  registers an app-level `exception_handler(ModelBusyError)`, so a route that
+  does nothing answers 503 for free and the only way to get it wrong is to
+  actively swallow. rlm keeps its bare 503 / in-band `rlm_error`, with both
+  sites commented so silence is not read as coverage.
   THE DURABLE FIX IS NOT A LONGER CENSUS. Anchor on the TRIGGER, not the
   helper: "every `get_provider` call reachable from a route answers MODEL_BUSY
   through `busy_response`" has an enumerable population, so a test can hold it
@@ -75,8 +77,8 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## `/v1/admin/{id}/fit` still waves through an unsizeable model (2026-08-31)
 
-- [ ] **The zero-size hole CLAUDE.md flags as open is open, and the reason is
-  a hand-rolled narrower copy of a predicate that already exists** (P2).
+- [x] **CLOSED v1.79.56.** The zero-size hole was open because the route
+  hand-rolled a narrower copy of a predicate that already existed.
   `scripts/ram_report.py:159` defines `unsizeable_reason(report)`, the general
   form: `weights_gb > 0` or it is a non-answer, whatever the notes say. Its
   docstring states the stakes exactly ("Zero GiB clears every ceiling, so
@@ -93,14 +95,15 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   route guard evaluates False and the CLI's `unsizeable_reason` returns
   "no weight files found". The gate answers PASS for a model it could not
   size.
-  Fix: move `unsizeable_reason` into `ram_fit.py` beside the report it reads
-  and have both callers ask it. The string-matching form is also coupled to
-  wording in another module, so rephrasing a note silently disarms the route.
+  FIXED exactly that way: `unsizeable_reason` lives in `ram_fit.py` beside
+  the `FitReport` it reads, both callers ask it, and the 422 carries the
+  reason rather than a fixed sentence.
 
 ## `prompt_tps` is zeroed, not omitted, when unmeasured (2026-08-31)
 
-- [ ] **The non-streaming Messages builder emits `prompt_tps: 0.0` for a rate
-  the engine never reported** (P2): `messages_api.py:568` assigns
+- [x] **CLOSED v1.79.58** (with three sibling defects — see the changelog).
+  The non-streaming Messages builder emitted `prompt_tps: 0.0` for a rate the
+  engine never reported. `messages_api.py:568` assigns
   `telemetry.prompt_tps` RAW — no `headline_tps`, no `or None`, unlike
   `generation_tps` on the line below it and unlike both rates on the streaming
   side. `ChunkTelemetry.prompt_tps` defaults to `0.0` and latches only on a
@@ -112,16 +115,26 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   the converter a real `0.0`, so the absent-key path is never reached. Both
   the guide and the consuming twin had recorded it as fixed from .54 and have
   been corrected.
-  Found by reading source while verifying c636dce, then independently
-  verified at three sites by the `heylook-provider` session. NOT fixed here
-  deliberately: it changes what the wire carries, `.54` and `.55` already
-  moved this payload twice, and the sequencing is the owner's. Two candidate
-  fixes: route it through `headline_tps` for symmetry with `generation_tps`
-  (synthesizes a prefill rate, which may be worse than nothing), or `or None`
-  it for symmetry with the streaming side (honest, and the field is already
-  Optional). The second looks right — a synthesized prefill rate has no
-  wall-clock analogue worth reporting.
-  Documented per field in `docs/api_integration.md` §3 in the meantime.
+  Fixed by the second candidate (absent, not synthesized) and generalised:
+  one builder, `perf_collector.build_performance`, spells every field for both
+  modes and both routes under one rule. `generation_tps` stopped being
+  synthesized, `queue_wait_ms` stopped hiding a measured zero, and
+  `total_duration_ms` was retired for having two origins.
+
+## Non-streaming TTFT is an unmeasured zero (2026-08-31)
+
+- [ ] **`first_token_ms = 0.0` is a literal on the non-streaming path** (P3):
+  nothing measures it, so TTFT is genuinely unobservable there — and
+  `/v1/performance/profile`'s `_bottlenecks` averages that field across every
+  request in the window with no streaming filter, so the zeros drag the
+  reported figure toward zero on any mixed workload.
+  This is the same unmeasured-zero family as the `prompt_tps` defect closed in
+  v1.79.58, and the fix is one timestamp on the first chunk in the consume
+  loop that release already touched. Left out DELIBERATELY: it lands in the
+  perf records rather than the wire payload, which is a different consumer
+  with its own aggregate semantics, and bundling it would have made a wire
+  release also a telemetry release. Recorded so it is visible rather than
+  forgotten.
 
 ## E2E pages suite: 42/43 (2026-08-31)
 
