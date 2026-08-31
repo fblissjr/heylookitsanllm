@@ -168,15 +168,26 @@ engine's own measurements taken around prefill and decode, so they are a
 better number than dividing tokens by your own wall clock, which includes
 queue wait and any model load.
 
-**Those two rates are non-streaming only.** The streaming half of this wire
-does not emit them: `message_stop.performance` carries `total_duration_ms`,
-the thinking/content durations, and the merged telemetry
-(`peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`, `draft_acceptance`) —
-no `prompt_tps`, no `generation_tps`. Note this is the opposite direction
-from the durations below, so neither mode is a superset of the other. Be
-aware that `/openapi.json` currently declares both rates as REQUIRED on
-`PerformanceInfo`, which the streaming payload does not satisfy — if you
-generate types from the schema, make them optional by hand.
+**The two modes carry different fields, and the differences are three
+different things.** Do not read the asymmetry as one design.
+
+- **The rates are non-streaming only.** `message_stop.performance` never
+  carries `prompt_tps` or `generation_tps`. This one is UNRESOLVED, not
+  settled: `/openapi.json` declares both REQUIRED on `PerformanceInfo`, which
+  the streaming payload does not satisfy, and the fix is a pending choice
+  between loosening the model and emitting the rates. Generate types from the
+  schema and you get two required fields that mode never sends — make them
+  optional by hand.
+- **The thinking/content durations are streaming only BY DESIGN.** The block
+  translator times them as it emits, so there is nothing non-streaming to
+  measure. Their absence is stable; rely on it.
+- **`kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` are streaming
+  only BY OMISSION.** They ride `message_stop.performance` and are simply not
+  built on the non-streaming path — the same class of gap that left
+  `peak_memory_gb` null there until v1.79.50. Do NOT key on their absence:
+  it is a gap someone intends to close, not a contract. They are also not
+  declared on `PerformanceInfo` at all, so a client generated from the schema
+  has no field for them and will drop them silently off the stream.
 
 The other two, `thinking_duration_ms` and `content_duration_ms`, are
 **streaming-only** and arrive `null` here. They are timed by the block
