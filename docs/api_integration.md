@@ -624,8 +624,12 @@ Structural differences worth planning for rather than discovering:
 
 This is an index, not a summary. Every line links the section that states the
 rule precisely, because a checklist restating a caveat always states it more
-loosely — three times in one day, in this document, always in the direction of
-sounding safer.
+loosely, and always in the direction of sounding safer. That has happened
+repeatedly in this document — including to the `performance` line below, which
+went on describing a per-field table after §3 had replaced it with one rule,
+with its anchor still resolving because only the target's CONTENT moved. An
+anchor checker reports that green. Link, and state the rule where it is
+stated; do not restate it here.
 
 - Resolve model ids at runtime, and gate features on `capabilities` **and**
   handle the refusal anyway — gating alone is correct only on MLX, only on
