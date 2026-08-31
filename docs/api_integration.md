@@ -166,12 +166,12 @@ It carries `prompt_tps`, `generation_tps`, `total_duration_ms`,
 `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms` and `draft_acceptance` —
 whichever of them the run actually produced. The rates are the engine's own
 measurements taken around prefill and decode, so they are a better number
-than dividing tokens by a wall clock that includes queue wait and any model
-load. Note WHICH wall clock that warning covers: not just the one you keep
-client-side. `total_duration_ms` is a server-supplied wall clock, and on the
-non-streaming path it folds in those same two spans — so the denominator
-sitting in this very object reproduces the error this sentence warns against.
-The bullet on `total_duration_ms` below has the mechanism; read it before
+than dividing tokens by any elapsed time that spans the whole request. **The
+hazard is the SPAN, not whose clock measured it** — an elapsed time covering
+queue wait and model load is the wrong denominator no matter who produced it,
+and the server hands you one: non-streaming `total_duration_ms` covers both.
+So the denominator sitting in this same object is one of the numbers this
+sentence warns against. See the `total_duration_ms` bullet below before
 dividing by anything.
 
 **As of v1.79.54 both modes draw from the same declared set**, and
