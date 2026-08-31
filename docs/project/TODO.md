@@ -149,22 +149,28 @@ measurements against v1.79.42. Recorded, not accepted -- each is an owner
 call. Its numbers are specific and reproducible; the reasoning about what
 they imply is theirs, not a decision here.
 
-- [ ] **Cancelling a NON-streaming request is impossible today** (P2, real):
-  `/v1/messages` non-streaming builds the whole response before writing
-  anything, so nothing polls `request.is_disconnected()` and an abandoned
-  client's generation runs to completion. Observed by a consuming client: an aborted
-  non-streaming run kept the GPU busy for its full remaining length and the
-  next request waited behind it, while the same abort on a STREAMING request
-  freed the server at once. (Their timings are deliberately not recorded --
-  uncontrolled for model, quant, context and machine, and this repo keeps
-  performance numbers out of tracked files.) On a server that
-  serialises generation, that abandoned run blocks everything behind it. Two
-  candidate shapes, neither chosen: poll `is_disconnected()` between tokens on
-  the non-streaming path, or `DELETE /v1/requests/{request_id}` keyed on the
-  `X-Request-ID` clients are already told to send. NB the client chose
-  non-streaming deliberately -- a late refusal arrives in-band as an `error`
-  event after headers flush, which a naive reader renders as model output --
-  so "just stream" is not a neutral answer for them.
+- [x] **Cancelling a NON-streaming request -- SHIPPED v1.79.44, closed
+  2026-08-31.** The second of the two candidate shapes below was chosen:
+  `DELETE /v1/requests/{request_id}`, keyed on the client's `X-Request-ID`,
+  which `/v1/messages` was also made to honour in the same release (it had
+  been generating its own id, so the id a client sent named nothing). NOT the
+  disconnect-polling shape -- owner call: an explicit endpoint cannot mistake
+  a proxy hiccup for a departed client and kill a live generation. Since
+  extended: .46 made the non-streaming response echo the id back, .52 answers
+  422 for a malformed one (it could never have been tracked) rather than
+  conflating it with "already finished". The reporting client has it wired
+  and measured it working.
+  Left in place rather than deleted because the ORIGINAL analysis is the
+  reason the fix took the shape it did, and because this entry was still
+  marked open and P2 five releases after it shipped -- a backlog claiming a
+  capability is missing is the same rotted-status defect this repo keeps
+  finding in prose, in the file that is supposed to be the status.
+  Original: `/v1/messages` non-streaming builds the whole response before
+  writing anything, so nothing polls `request.is_disconnected()` and an
+  abandoned client's generation ran to completion, blocking everything behind
+  it on a server that serialises generation. The client chose non-streaming
+  deliberately -- a late refusal arrives in-band as an `error` event after
+  headers flush -- so "just stream" was never a neutral answer for them.
 - [x] **Constrained decoding -- DECIDED AGAINST 2026-08-30, do not re-raise.**
   OWNER RULING: grammar-constrained decoding makes output quality worse in
   general, so this is not a feature this server wants -- not "not yet", and
