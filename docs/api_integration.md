@@ -434,12 +434,24 @@ deployment is open.
 - `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates admin routes.
   An integration should not need it.
 
-Send `X-Request-ID` on every request. It is echoed back, it is how a request
-is correlated in the server's logs, and **it is the handle you cancel by**.
+Send `X-Request-ID` on every request, and **make it unique per request** — a
+fresh UUID each time, not one stable id per session or per client. This is
+not the ordinary log-correlation habit, and the difference is destructive:
+the id is the handle you cancel by, the server maps one id to a SET of live
+requests, and cancelling it cancels **every** request sharing it. A client
+that reuses one id and then cancels a single run kills everything it has in
+flight. It is echoed back, and it is how a request is correlated in the
+server's logs.
 
 ### Cancelling a request
 
 `DELETE /v1/requests/{request_id}` stops a generation that is still running.
+
+**It is behind the inference gate**, not the admin one: when `HEYLOOK_API_KEY`
+is set, send the same `Authorization: Bearer <key>` you send on
+`/v1/messages`. Loopback is exempt by default like the rest of inference, so
+this only bites off-machine — which is exactly where a client has to guess.
+No admin token is involved.
 
 **The endpoint is v1.79.44, on both wires.** Nothing was cancellable by id
 before that. `/v1/chat/completions` read `X-Request-ID` earlier, but only for
