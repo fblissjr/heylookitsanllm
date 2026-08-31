@@ -171,7 +171,8 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## generation_tps means two different things (2026-08-31)
 
-- [ ] **The two Messages modes compute the same field differently** (P3):
+- [x] **CLOSED v1.79.58**, by neither option it listed. The two Messages
+  modes computed the same field differently (P3):
   non-streaming runs it through `headline_tps`, which falls back to
   tokens-over-elapsed when the engine reported no rate; the streaming
   `message_stop` passes the engine value through and omits it when there is
@@ -180,12 +181,17 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   non-streaming, absent on the stream, same request shape. Not a wire bug --
   both are defensible readings of "generation tps" -- but a client comparing
   the two modes is comparing different quantities, and a client that only
-  streams sees the field vanish on runs where the engine is quiet. Options:
-  give the translator the same `headline_tps` fallback (symmetry, but it
-  makes the streaming number partly client-side arithmetic), or document the
-  difference per mode (done in api_integration.md §3) and leave it. Found
-  while checking a "streaming is a strict superset" claim that a textual
-  check had agreed with and a behavioural one refuted.
+  streams sees the field vanish on runs where the engine is quiet.
+  BOTH LISTED OPTIONS WERE REJECTED. Giving the translator the same fallback
+  would have made BOTH numbers partly client-side arithmetic; documenting it
+  leaves a client holding a figure it cannot identify. This entry's own
+  framing is why -- "both are defensible readings" is the problem, not a
+  mitigation: a field name that admits two defensible readings has no
+  reading at all on the wire. It now carries the engine's measurement or
+  nothing, in both modes; `headline_tps` stays for the internal perf records,
+  where a best-effort number is right and its provenance is not published.
+  Found while checking a "streaming is a strict superset" claim that a
+  textual check had agreed with and a behavioural one refuted.
 
 ## Docs twins (2026-08-31)
 
