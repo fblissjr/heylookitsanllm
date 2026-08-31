@@ -21,51 +21,16 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## Docs twins (2026-08-31)
 
-- [~] **The `heylook-provider` skill has not moved with the wire** (P2 --
-  REPORTED FIXED 2026-08-31, NOT VERIFIABLE FROM THIS REPO). The skill
-  session reports shipping 0.5.0 with cancellation and
-  `verified_against: 1.79.47`, committed. Could not confirm: the copies on
-  this machine are the marketplace clone (1.79.42) and the plugin cache
-  (0.4.4/0.4.5, 1.79.41), none of which carry a `DELETE /v1/requests`
-  reference -- consistent with a commit in a repo not checked out here plus
-  an unrefreshed marketplace, and equally consistent with nothing having
-  landed. Close it after a marketplace update makes a 0.5.0 with that string
-  readable locally. Original report follows.
-
-  **What was reported** (P2):
-  `docs/api_integration.md` names it as the consuming-side twin and says a
-  change to the wire belongs in both in the same pass. v1.79.44 added
-  `DELETE /v1/requests/{request_id}` and made `/v1/messages` honour
-  `X-Request-ID`; the doc was updated in .44/.46 and the skill was not. Its
-  `SKILL.md` and `references/wire_reference.md` still say only that the header
-  is echoed back and correlates logs -- so an agent wiring a client from the
-  skill cannot cancel a non-streaming run and does not know the header is the
-  precondition for it. The skill lives in the `fb-claude-skills` repo, not
-  this one; fixing it is an edit over there plus a marketplace update.
-
-## API surface questions for the owner (2026-08-31)
-
-- [x] **`include_performance` does nothing on `/v1/messages`** -- RESOLVED
-  v1.79.49 by REMOVING the field from the Messages wire (owner call: drop it
-  unless there is value or it is an easy fix -- there was none and it was).
-  Original finding, kept because the measurement is the useful part: MEASURED
-  against the contract server -- a non-streaming Messages response carries the
-  `performance` object even when the request sends `include_performance:
-  false`, while `/v1/chat/completions` honours the flag (absent -> no object).
-  The field is declared on `MessageCreateRequest`, converted through
-  `converters.py:109`, and then never consulted on that path: the builder
-  populates `openai_dict["performance"]` whenever elapsed and token counts are
-  non-zero. So a declared request field controls nothing on the wire it is
-  declared on, and `docs/api_integration.md` is wrong where it says absent
-  means false permanently. Two honest resolutions and they are not equivalent:
-  GATE it (the flag means what it says, and a client that wants telemetry must
-  ask -- breaks nobody, since nothing can be relying on data it did not
-  request), or DROP the field from the Messages request model and document
-  that this wire always carries telemetry, matching the streaming path, which
-  emits `message_stop.performance` unconditionally too. Owner call: the second
-  is arguably the truer description of the design, the first is the smaller
-  surprise. Surfaced by a consuming client asking what the server knows that
-  it was guessing at.
+- [x] **The `heylook-provider` skill has moved with the wire** -- CLOSED
+  2026-08-31, verified locally rather than on report. The marketplace clone on
+  this machine now reads `verified_against: "heylookitsanllm 1.79.50"` and
+  carries `DELETE /v1/requests` in `SKILL.md`, `wire_reference.md` and its
+  README; it read 1.79.42 with no such string while the work was unpushed. The
+  skill session had reported it shipped three times before this and each report
+  was unverifiable from here, which was the right call to hold -- the commits
+  were real but local, so nothing on this machine could distinguish "shipped"
+  from "not shipped" until the owner pushed. Standing note for next time: a
+  peer's "shipped" means shipped in a checkout you may not be able to read.
 
 ## Test-harness + coverage gaps (2026-08-29, worked 2026-08-30)
 
