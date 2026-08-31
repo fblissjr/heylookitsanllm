@@ -53,13 +53,26 @@ class PerformanceInfo(BaseModel):
     was repaired for in the same release. Referenced only by MessageResponse,
     MessageStopEvent and converters.from_openai_response_dict.
 
-    Not symmetric across the two Messages modes, and neither is a superset:
-    - non-streaming fills prompt_tps, generation_tps, total_duration_ms and
-      (MLX only) peak_memory_gb, and is absent entirely when the generation
-      produced no tokens;
-    - streaming fills total_duration_ms, the thinking/content durations, and
-      the merged chunk telemetry -- but NOT the two rates, which this class
-      still declares required.
+    SYMMETRY, as of v1.79.54-.55. The passage that stood here described the
+    state this class was repaired OUT of -- "streaming does not send the two
+    rates, which this class still declares required" -- eight lines above the
+    field definitions that contradict both halves. That is the same
+    declaration-only defect this model sits at the centre of, so: current
+    truth, and check the fields below before trusting this paragraph.
+    - non-streaming (``converters.from_openai_response_dict``) fills all nine,
+      and the object is absent entirely when the run produced no tokens;
+    - streaming (``messages_api.message_stop_event``, whose emitted key set is
+      filtered to this model's declared fields) fills the same nine, minus
+      whatever telemetry the run did not produce. The thinking/content
+      durations remain streaming-only because nothing on the non-streaming
+      path measures them -- the one deliberate asymmetry left.
+    Every field is optional, so both payloads are subsets of one model.
+
+    CAVEAT, a real difference and not this model's doing: the OTHER route on
+    this grammar, ``POST /v1/conversations/{id}/generate``, calls
+    ``message_stop_event()`` with NO timing, so its performance object carries
+    the durations alone. That route's chunk telemetry rides
+    ``heylook_saved.timing`` instead, which is what v3's chat page reads.
     """
     # OPTIONAL, not required (v1.79.54). They were declared required while the
     # STREAMING payload never sent them, so a client generated from
