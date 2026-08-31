@@ -21,7 +21,18 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## Docs twins (2026-08-31)
 
-- [ ] **The `heylook-provider` skill has not moved with the wire** (P2):
+- [~] **The `heylook-provider` skill has not moved with the wire** (P2 --
+  REPORTED FIXED 2026-08-31, NOT VERIFIABLE FROM THIS REPO). The skill
+  session reports shipping 0.5.0 with cancellation and
+  `verified_against: 1.79.47`, committed. Could not confirm: the copies on
+  this machine are the marketplace clone (1.79.42) and the plugin cache
+  (0.4.4/0.4.5, 1.79.41), none of which carry a `DELETE /v1/requests`
+  reference -- consistent with a commit in a repo not checked out here plus
+  an unrefreshed marketplace, and equally consistent with nothing having
+  landed. Close it after a marketplace update makes a 0.5.0 with that string
+  readable locally. Original report follows.
+
+  **What was reported** (P2):
   `docs/api_integration.md` names it as the consuming-side twin and says a
   change to the wire belongs in both in the same pass. v1.79.44 added
   `DELETE /v1/requests/{request_id}` and made `/v1/messages` honour
@@ -31,6 +42,27 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   skill cannot cancel a non-streaming run and does not know the header is the
   precondition for it. The skill lives in the `fb-claude-skills` repo, not
   this one; fixing it is an edit over there plus a marketplace update.
+
+## API surface questions for the owner (2026-08-31)
+
+- [ ] **`include_performance` does nothing on `/v1/messages`** (P2): MEASURED
+  against the contract server -- a non-streaming Messages response carries the
+  `performance` object even when the request sends `include_performance:
+  false`, while `/v1/chat/completions` honours the flag (absent -> no object).
+  The field is declared on `MessageCreateRequest`, converted through
+  `converters.py:109`, and then never consulted on that path: the builder
+  populates `openai_dict["performance"]` whenever elapsed and token counts are
+  non-zero. So a declared request field controls nothing on the wire it is
+  declared on, and `docs/api_integration.md` is wrong where it says absent
+  means false permanently. Two honest resolutions and they are not equivalent:
+  GATE it (the flag means what it says, and a client that wants telemetry must
+  ask -- breaks nobody, since nothing can be relying on data it did not
+  request), or DROP the field from the Messages request model and document
+  that this wire always carries telemetry, matching the streaming path, which
+  emits `message_stop.performance` unconditionally too. Owner call: the second
+  is arguably the truer description of the design, the first is the smaller
+  surprise. Surfaced by a consuming client asking what the server knows that
+  it was guessing at.
 
 ## Test-harness + coverage gaps (2026-08-29, worked 2026-08-30)
 
