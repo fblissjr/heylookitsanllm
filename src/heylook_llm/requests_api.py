@@ -27,7 +27,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from heylook_llm.auth import require_api_key
-from heylook_llm.request_registry import get_request_registry
+from heylook_llm.request_registry import (
+    REQUEST_ID_PATTERN,
+    get_request_registry,
+    is_valid_request_id,
+)
 
 requests_router = APIRouter(tags=["Requests"], dependencies=[Depends(require_api_key)])
 
@@ -64,9 +68,25 @@ another, leaving a running generation nothing can name.
     response_description="How many in-flight generations were signalled",
     responses={
         404: {"description": "No in-flight request with that id"},
+        422: {"description": "Malformed id -- could never have been tracked"},
     },
 )
 async def cancel_request(request_id: str):
+    # A malformed id is a CLIENT defect, not a stale reference, and this is the
+    # only path param in the API whose charset the server itself defines: the
+    # POST end rewrites an unusable X-Request-ID to a generated one, so an id
+    # that fails here was never tracked and never could have been. Answering
+    # 404 conflated that with "the run already finished" -- so a client quietly
+    # generating bad ids saw permanent 404s and concluded cancellation was
+    # broken. Asked through the resolver's own predicate, never a second regex.
+    if not is_valid_request_id(request_id):
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Malformed request id: must match {REQUEST_ID_PATTERN}. "
+                    f"An id of this shape is never tracked -- the server "
+                    f"replaces an unusable X-Request-ID with a generated one, "
+                    f"so no generation could be running under it."),
+        )
     cancelled = get_request_registry().cancel(request_id)
     if not cancelled:
         raise HTTPException(

@@ -8,6 +8,8 @@ and a `cancelled` count rather than a bare boolean, because client-supplied
 ids are not assumed unique.
 """
 
+import pathlib
+
 import pytest
 
 from heylook_llm.providers.abort import AbortEvent
@@ -74,3 +76,43 @@ class TestMessagesHonoursTheClientId:
         )
         assert r.status_code == 200
         assert r.headers.get("X-Request-ID") == "client-chosen-id"
+
+class TestMalformedIdIsNotAMiss:
+    """A malformed id answers 422, not 404.
+
+    The distinction is the point, not the status code: the POST end replaces
+    an unusable X-Request-ID with a generated one, so an id of this shape was
+    never tracked and never could be. Answering 404 made that indistinguishable
+    from "the run already finished", and a client quietly generating bad ids
+    would read permanent 404s as "cancellation does not work".
+    """
+
+    def test_malformed_id_is_422(self, client):
+        resp = client.delete("/v1/requests/not%20a%20valid%20id")
+        assert resp.status_code == 422
+
+    def test_a_trailing_newline_is_malformed(self, client):
+        """The `$`-vs-fullmatch trap, from the other end.
+
+        v1.79.46 fixed `resolve_request_id` accepting a trailing newline
+        (Python's `$` matches before one). The cancel route asks through the
+        same predicate, so it inherits the fix -- this pins that it is asked
+        through it rather than through a second, re-anchored regex.
+        """
+        resp = client.delete("/v1/requests/abc%0A")
+        assert resp.status_code == 422
+
+    def test_a_well_formed_but_unknown_id_is_still_404(self, client):
+        """The 422 must not swallow the case the endpoint mostly answers."""
+        resp = client.delete("/v1/requests/msg-not-running-abc123")
+        assert resp.status_code == 404
+
+    def test_the_charset_is_not_duplicated(self):
+        """The route must ask the resolver's predicate, not its own copy."""
+        import heylook_llm.requests_api as mod
+        src = pathlib.Path(mod.__file__).read_text()
+        assert "is_valid_request_id" in src
+        assert "A-Za-z0-9" not in src, (
+            "requests_api re-declares the id charset; it must come from "
+            "request_registry so the two ends cannot disagree")
+

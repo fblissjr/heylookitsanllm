@@ -62,6 +62,25 @@ from .providers.abort import AbortEvent
 # produce by accident.
 _ID_SAFE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
+# The rule as TEXT, for error messages that must tell a client what is allowed.
+# Derived from the compiled pattern rather than retyped: a hand-written
+# "[A-Za-z0-9._:-], max 128" beside the regex is a second copy that goes stale
+# the first time the charset changes, and it goes stale SILENTLY because no
+# test reads an error string.
+REQUEST_ID_PATTERN = _ID_SAFE.pattern
+
+
+def is_valid_request_id(value: str) -> bool:
+    """Whether a string is a usable request id.
+
+    Exists so the CANCEL route asks the same question the resolver asks
+    rather than growing its own regex. It uses ``fullmatch`` for the reason
+    the comment above gives, and a caller that re-implemented the charset
+    would eventually disagree with the end that assigns it -- which is the
+    defect this repo names "a hand-copied constant list".
+    """
+    return bool(_ID_SAFE.fullmatch(value))
+
 
 def resolve_request_id(header_value: str | None, *, prefix: str) -> str:
     """The id to track this request under.
@@ -73,7 +92,7 @@ def resolve_request_id(header_value: str | None, *, prefix: str) -> str:
     every other purpose (logs, correlation) and simply cannot be cancelled by
     a client that never chose it.
     """
-    if header_value and _ID_SAFE.fullmatch(header_value):
+    if header_value and is_valid_request_id(header_value):
         return header_value
     return f"{prefix}-{uuid.uuid4()}"
 

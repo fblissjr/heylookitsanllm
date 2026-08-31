@@ -490,6 +490,14 @@ Responses:
   in-flight requests may share one; cancelling the id cancels both.
 - `404` -- nothing is running under that id, most often because it already
   finished. Treat it as "too late", not as an error.
+- `422` (v1.79.52) -- the id is malformed and could never have been tracked.
+  This is a **client bug, not a race**: the server replaces an unusable
+  `X-Request-ID` with a generated one at the request end, so an id of this
+  shape was never in the registry. Before .52 this answered 404 like any
+  other miss, which meant a client quietly generating bad ids saw permanent
+  "too late" responses and could reasonably conclude cancellation did not
+  work. If you see this, fix your id generation; retrying will not help.
+  The response `detail` carries the pattern.
 
 Cancellation is cooperative: the decode loop stops at the next token
 boundary, so a run blocked in a long prompt prefill stops when that finishes,

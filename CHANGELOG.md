@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.52]
+
+### Changed
+
+- **`DELETE /v1/requests/{id}` answers 422 for a malformed id instead of
+  404.** The distinction is the point, not the status: `request_id` is the
+  only path param in this API whose charset the SERVER defines -- the request
+  end rewrites an unusable `X-Request-ID` to a generated one -- so an id that
+  fails the charset was never tracked and never could be. Answering 404 made
+  that indistinguishable from "the run already finished", and a client quietly
+  generating bad ids would read permanent 404s as "cancellation does not
+  work". Everywhere else a path param is a server-issued id, where an
+  unrecognised value IS just a stale reference and 404 stays correct.
+- **Side effect worth naming: the route's declared 422 is now reachable.** A
+  code review found `/openapi.json` advertising a 422 there that nothing could
+  produce -- FastAPI generates it for the path param, and an unconstrained
+  `str` cannot fail validation. The same is true of 16 other operations
+  (measured: 17 of 52 declared 422s are unreachable, all of them
+  no-body-plus-bare-string-params). Those are deliberately LEFT ALONE. Owner
+  decision: stripping them would mean a second place that shapes the schema,
+  and a derived rule cannot see a `Depends` that validates -- removing a
+  REACHABLE 422 is the dangerous direction, since it leaves a client with no
+  branch for a status it can receive. A declared-but-unfired response costs a
+  client a dead branch; an undeclared-but-fired one costs it an unhandled
+  status. This route was fixed on its own merits, not for schema tidiness.
+
+### Fixed
+
+- **The charset was about to exist in three places.** `is_valid_request_id`
+  is now the one predicate both the resolver and the cancel route ask, and
+  `REQUEST_ID_PATTERN` is derived from the compiled regex so the 422's own
+  error message cannot drift from it. The first draft of this change spelled
+  `[A-Za-z0-9._:-]` into the error string -- caught by its own test, which
+  asserts `requests_api` re-declares no charset. An error message is exactly
+  where a copy rots unnoticed, because nothing reads error strings.
+  The cancel route also inherits the v1.79.46 `fullmatch` fix by construction:
+  a trailing-newline id is malformed at both ends, pinned by a test named for
+  that trap rather than left to a second, re-anchored regex.
+
 ## [1.79.51]
 
 Acting on an xhigh code review of .47-.50. Every finding was against what
