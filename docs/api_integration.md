@@ -167,6 +167,20 @@ translator as it emits, so there is nothing non-streaming to measure them
 against — do not render them on this path. (`peak_memory_gb` was null here
 too until v1.79.50; if you are on an older server, expect it blank.)
 
+**`peak_memory_gb` is MLX-only**, on every path and in both modes. It is
+`mx.get_peak_memory()`, reported per chunk by the MLX engine; the gguf
+provider never sets it, because the generation happens inside a
+`llama-server` subprocess that does not report it. So a null there means
+*this model runs on the other backend*, not *this server is old* — the two
+have different remedies and only one is a version question. If you see it
+null on an MLX model, that is the version question.
+
+**The two modes spell absence differently**, which matters if you parse both.
+Streaming omits an absent telemetry field from `message_stop.performance`
+entirely; non-streaming renders it as an explicit `null`, because the
+response model declares the field. Treat missing and null as the same
+condition.
+
 What is not there at all is time-to-first-token. It is computed server-side
 and kept, never returned, so non-streaming TTFT is genuinely **unobservable**
 — not merely unprovided, which matters because it stops you deriving it from
