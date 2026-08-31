@@ -543,7 +543,24 @@ Structural differences worth planning for rather than discovering:
 
 ## 8. Before you ship
 
-- Resolve model ids at runtime; gate features on `capabilities`.
+This is an index, not a summary. Every line links the section that states the
+rule precisely, because a checklist restating a caveat always states it more
+loosely — three times in one day, in this document, always in the direction of
+sounding safer.
+
+- Resolve model ids at runtime, and gate features on `capabilities` **and**
+  handle the refusal anyway — gating alone is correct only on MLX, only on
+  new servers, and only where no `capabilities` override was hand-written.
+  The refusal has two shapes and the streamed one is not a 400
+  ([§1](#1-discovery-three-surfaces-and-what-each-one-can-tell-you)).
+- Give every request a **unique** `X-Request-ID`. One stable id per session
+  is the ordinary logging habit and it is destructive here: cancelling an id
+  cancels every request sharing it ([§6](#6-auth)).
+- Cancel non-streaming runs explicitly. Hanging up does not stop one
+  ([§6](#cancelling-a-request)).
+- Null-check `performance`. It is absent when the generation produced no
+  tokens, and its two modes are not supersets of each other
+  ([§3](#3-the-call)).
 - Resize images client-side.
 - Send `max_tokens` if you need a bound, omit it if you do not.
 - Treat 503 as backpressure, in-band `error` events as terminal, and
