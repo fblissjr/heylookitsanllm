@@ -154,12 +154,29 @@ A thinking block carries its content under **both** `thinking` (Anthropic's
 field name) and `text` (heylook's original, kept so existing readers keep
 working). Read `thinking`.
 
-**A non-streaming response also carries `performance`**, always — you do not
-ask for it and cannot turn it off. Four of its six fields are populated on
-this path: `prompt_tps`, `generation_tps`, `total_duration_ms` and
-`peak_memory_gb`. The rates are the engine's own measurements taken around
-prefill and decode, so they are a better number than dividing tokens by your
-own wall clock, which includes queue wait and any model load.
+**A non-streaming response also carries `performance`** — there is no flag
+for it, so you cannot turn it on or off. It is `null` in one case: the
+builder is gated on the generation having produced at least one token, so a
+run that emits none (an immediate stop token, or a cancel landing before the
+first token) returns `"performance": null`. The response model declares it
+`Optional`, so null-check it; the earlier version of this paragraph said
+"always" and was wrong.
+
+Up to four of its six fields are populated on this path: `prompt_tps`,
+`generation_tps`, `total_duration_ms` and `peak_memory_gb`. The rates are the
+engine's own measurements taken around prefill and decode, so they are a
+better number than dividing tokens by your own wall clock, which includes
+queue wait and any model load.
+
+**Those two rates are non-streaming only.** The streaming half of this wire
+does not emit them: `message_stop.performance` carries `total_duration_ms`,
+the thinking/content durations, and the merged telemetry
+(`peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`, `draft_acceptance`) —
+no `prompt_tps`, no `generation_tps`. Note this is the opposite direction
+from the durations below, so neither mode is a superset of the other. Be
+aware that `/openapi.json` currently declares both rates as REQUIRED on
+`PerformanceInfo`, which the streaming payload does not satisfy — if you
+generate types from the schema, make them optional by hand.
 
 The other two, `thinking_duration_ms` and `content_duration_ms`, are
 **streaming-only** and arrive `null` here. They are timed by the block
@@ -181,11 +198,17 @@ entirely; non-streaming renders it as an explicit `null`, because the
 response model declares the field. Treat missing and null as the same
 condition.
 
-What is not there at all is time-to-first-token. It is computed server-side
-and kept, never returned, so non-streaming TTFT is genuinely **unobservable**
-— not merely unprovided, which matters because it stops you deriving it from
-`total_duration_ms`. Aggregates live at
-`GET /v1/performance/profile/{1h|6h|24h|7d}`.
+What is not there at all is time-to-first-token, and non-streaming it is not
+merely unreturned — it is **never measured**. The non-streaming path records
+`first_token_ms = 0.0` as a literal; nothing computes it. So it is genuinely
+unobservable, which matters because it stops you deriving it from
+`total_duration_ms`.
+
+Do not reach for `GET /v1/performance/profile/{1h|6h|24h|7d}` to recover it
+either. That aggregate averages `first_token_ms` across every request in the
+window with no streaming filter, so on a mixed workload the zeros from
+non-streaming requests pull the reported figure toward zero. It is a real
+number only if everything in the window streamed. If you need TTFT, stream.
 
 `stop_reason` is Anthropic's vocabulary. A non-streaming failure does not
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error

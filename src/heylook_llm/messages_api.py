@@ -512,13 +512,15 @@ async def _non_stream_messages(
             "prompt_tps": telemetry.prompt_tps,
             "generation_tps": headline_tps(telemetry.generation_tps, total_tokens, elapsed, telemetry.queue_wait_ms),
             "total_duration_ms": int(elapsed * 1000),
-            # PerformanceInfo declares this and every other response path fills
-            # it -- the streaming half of this same wire (message_stop's
-            # timing), and both halves of the OpenAI wire. This builder was the
-            # only one dropping it, so `peak_memory_gb` arrived null on exactly
-            # one of the four, and a non-streaming client rendering it got a
-            # blank field with no reason why. `or None` matches the streaming
-            # spelling: absent telemetry is omitted, never a fake 0.0.
+            # PerformanceInfo declares this and the streaming half of this
+            # wire fills it (message_stop's timing); this builder was the one
+            # dropping it, so a non-streaming client rendering it got a blank
+            # field with no reason why. `or None` matches the streaming
+            # spelling. Two scope notes the first version of this comment got
+            # wrong: the OpenAI wire returns a DIFFERENT model
+            # (config.PerformanceMetrics), not this one; and the value is
+            # MLX-only in every mode -- LlamaServerProvider never sets
+            # `peak_memory`, so gguf reads null here and always did.
             "peak_memory_gb": telemetry.peak_memory_gb or None,
         }
 

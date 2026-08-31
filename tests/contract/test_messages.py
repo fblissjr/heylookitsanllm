@@ -260,10 +260,19 @@ class TestNonStreamingPerformance:
         the field the non-streaming builder dropped."""
         assert self._perf(client)["peak_memory_gb"] == 1.25
 
-    def test_rates_and_duration_are_present(self, client):
+    def test_rates_and_duration_survive_to_the_response(self, client):
+        """Asserts VALUES, not non-nullness.
+
+        The `is not None` version of this could not fail: `converters` fills
+        both rates with `.get(key, 0)` and `PerformanceInfo` declares them as
+        required floats, so a dropped rate arrives as `0.0` and passes. The
+        fake's first chunk carries `prompt_tps=42.5` precisely so that a
+        dropped rate is distinguishable from the fake's own zero.
+        """
         perf = self._perf(client)
-        for key in ("prompt_tps", "generation_tps", "total_duration_ms"):
-            assert perf[key] is not None, key
+        assert perf["prompt_tps"] == 42.5
+        assert perf["generation_tps"] > 0
+        assert perf["total_duration_ms"] is not None
 
     def test_thinking_and_content_durations_are_streaming_only(self, client):
         """Pinned as ABSENT deliberately, not overlooked: the translator times

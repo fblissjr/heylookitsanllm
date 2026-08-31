@@ -2,7 +2,7 @@
 
 heylook exposes one internal request model (`ChatRequest`, which is also the
 OpenAI wire and what providers are driven with) and one Anthropic-shaped wire
-(`MessageCreateRequest`, which converts into it). 19 of their fields overlap,
+(`MessageCreateRequest`, which converts into it). 18 of their fields overlap,
 so every new knob is a decision made TWICE -- and getting it wrong is silent:
 the field simply does not exist on the other surface, and the client that
 speaks it loses the control with no error.

@@ -73,10 +73,13 @@ class FakeProvider(BaseProvider):
         route's generator.close() -- which releases the generation gate -- works.
         ``abort_event`` matches the provider contract (per-request cancel signal).
         """
-        yield FakeChunk("Hello", token_id=1)
-        yield FakeChunk(", ", token_id=2)
-        # Last chunk carries peak memory, as a real GenerationChunk does.
-        yield FakeChunk("world!", token_id=3, peak_memory=1.25)
+        # A real GenerationChunk carries peak_memory on EVERY chunk (the MLX
+        # engine reports mx.get_peak_memory() each time), not only the last --
+        # so every chunk carries one here, rising, which also exercises
+        # ChunkTelemetry's max() latch rather than just its last write.
+        yield FakeChunk("Hello", token_id=1, peak_memory=0.5, prompt_tps=42.5)
+        yield FakeChunk(", ", token_id=2, peak_memory=1.25)
+        yield FakeChunk("world!", token_id=3, peak_memory=0.9)
 
 
 # ---------------------------------------------------------------------------

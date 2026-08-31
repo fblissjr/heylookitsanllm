@@ -34,7 +34,7 @@ class Message(BaseModel):
 class StreamOptions(BaseModel):
     """Options that control streaming behavior."""
     include_usage: bool = Field(
-        False, description="Include token usage statistics in the final stream event"
+        default=False, description="Include token usage statistics in the final stream event"
     )
 
 
@@ -50,7 +50,7 @@ class MessageCreateRequest(BaseModel):
       OpenAI wire keeps them for clients that want the server to do it)
     """
     model: Optional[str] = Field(
-        None,
+        default=None,
         description="Model ID. If omitted, uses loaded model or default_model from config.",
     )
     messages: List[Message]

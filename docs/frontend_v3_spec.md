@@ -322,7 +322,24 @@ stays for external consumers, no v3 page calls it):
   null). An in-band `error` event ENDS a /v1/messages generation (unlike
   /generate's, where heylook_saved may still follow).
 - Non-streaming: content blocks incl. a `logprobs` block when requested
-  (wired v1.74.0 — the docstring promised it earlier than it existed).
+  (wired v1.74.0 — the docstring promised it earlier than it existed), plus
+  a `performance` object. Its fields are NOT the streaming set and neither
+  mode is a superset: non-streaming carries `prompt_tps` / `generation_tps`
+  (which `message_stop` never sends) and `total_duration_ms`, and since
+  v1.79.50 also `peak_memory_gb`; it does NOT carry the thinking/content
+  durations, which are streaming-only. It is `null` outright when the
+  generation produced no tokens (the builder is gated on a token count), so
+  the field is Optional and must be null-checked. `peak_memory_gb` is
+  MLX-only in EVERY mode — `LlamaServerProvider` never sets `peak_memory`,
+  so a gguf model reads null there and always has.
+  NB `PerformanceInfo` declares both rates REQUIRED while the streaming
+  payload omits them; a generated client needs them loosened by hand.
+- Request field removed v1.79.49: `include_performance` is gone from
+  `MessageCreateRequest`. It controlled nothing — this wire returns telemetry
+  unconditionally in both modes — and unknown fields are ignored, so a client
+  still sending it is unaffected. It remains honoured on
+  `/v1/chat/completions`, which returns a DIFFERENT model
+  (`config.PerformanceMetrics`, not `PerformanceInfo`).
 
 **Conversations** (prefix `/v1/conversations`, no auth):
 - `GET /` → `{conversations:[{id,title,model_id,applied_preset_id,created_at,updated_at,generating}], total}` — **no messages, and NO `system_prompt` or `params`** (v1.79.26, `3b44c61`). Both are unbounded and the sidebar reads neither, and the list ships on page load AND on every foreground because resume re-lists. `GET /{id}` is how you get either — a client that reads them off a list row gets `undefined`, silently. The list carries `generating`, which the single-conversation body does not; v3 reads exactly that one field off the row and everything else through the single fetch (`adoptConversationMeta`). **This spec said otherwise until 2026-08-30**: the change updated `test_conversation_api.py` and neither this line nor `tests/e2e/suites/chat.mjs`, whose two `conversations.some(c => c.system_prompt === ...)` assertions have been unsatisfiable since — a shape assumption, which is why v1.79.41's audit of every selector and clicked label in that suite reported them all resolving and was right.

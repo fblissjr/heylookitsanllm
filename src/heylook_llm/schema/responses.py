@@ -46,18 +46,29 @@ class Usage(BaseModel):
 class PerformanceInfo(BaseModel):
     """Generation performance metrics.
 
-    On the OpenAI wire this is returned only when include_performance=true.
-    On the Messages wire it is UNCONDITIONAL -- that wire has no such flag
-    (v1.79.49), because it always carried telemetry in both modes anyway.
+    MESSAGES WIRE ONLY. The OpenAI wire returns a different model --
+    ``config.PerformanceMetrics``, gated on ``include_performance`` -- and the
+    previous version of this docstring described THAT model's behaviour here,
+    which is the mechanism-that-does-not-exist defect the schema-parity test
+    was repaired for in the same release. Referenced only by MessageResponse,
+    MessageStopEvent and converters.from_openai_response_dict.
+
+    Not symmetric across the two Messages modes, and neither is a superset:
+    - non-streaming fills prompt_tps, generation_tps, total_duration_ms and
+      (MLX only) peak_memory_gb, and is absent entirely when the generation
+      produced no tokens;
+    - streaming fills total_duration_ms, the thinking/content durations, and
+      the merged chunk telemetry -- but NOT the two rates, which this class
+      still declares required.
     """
     prompt_tps: float = Field(..., description="Prompt processing tokens per second")
     generation_tps: float = Field(..., description="Generation tokens per second")
     peak_memory_gb: Optional[float] = Field(default=None, description="Peak memory usage in GB")
     thinking_duration_ms: Optional[int] = Field(
-        None, description="Time spent in thinking phase"
+        default=None, description="Time spent in thinking phase"
     )
     content_duration_ms: Optional[int] = Field(
-        None, description="Time spent generating content"
+        default=None, description="Time spent generating content"
     )
     total_duration_ms: Optional[int] = Field(
         None, description="Total generation time"

@@ -5,14 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.51]
+
+Acting on an xhigh code review of .47-.50. Every finding was against what
+SURROUNDED the one-line .50 fix -- the documentation shipped with it, the test
+written to guard it, and the comments explaining it. The fix itself was
+confirmed correct, and independently confirmed live by a consuming client on a
+1.79.50 server.
+
+### Fixed
+
+- **`docs/api_integration.md` said non-streaming `performance` is returned
+  "always -- you do not ask for it and cannot turn it off".** The builder is
+  gated on the generation having produced at least one token, so a run that
+  emits none returns `"performance": null`, and `MessageResponse.performance`
+  is `Optional` in the published schema. The guide and the schema disagreed
+  and the schema was right.
+- **The two rates are non-streaming ONLY, and the guide recommended them to
+  streaming clients.** `message_stop.performance` carries
+  `total_duration_ms`, the thinking/content durations and the merged chunk
+  telemetry -- never `prompt_tps` or `generation_tps`. So a client following
+  the advice to prefer the engine's rates over a wall-clock division, and
+  then switching to streaming, lost both and was left with exactly the
+  division the paragraph warned against. Neither mode is a superset of the
+  other; the guide, the spec and the model docstring now all say so.
+- **The TTFT paragraph was wrong in a way that pointed at a diluted number.**
+  It said TTFT is "computed server-side and kept"; the non-streaming path
+  records `first_token_ms = 0.0` as a LITERAL -- nothing measures it. And it
+  sent readers to `/v1/performance/profile`, whose `_bottlenecks` averages
+  `first_token_ms` across the window with no streaming filter, so those zeros
+  drag the reported figure toward zero on any mixed workload. (`_trends` has
+  the equivalent success-only guard; `_bottlenecks` does not. Left as a
+  server-side decision, documented client-side.)
+- **`PerformanceInfo`'s docstring described a model this wire never
+  returns** -- it explained `include_performance` behaviour on "the OpenAI
+  wire", which returns `config.PerformanceMetrics` instead. Written in .49,
+  one commit after repairing the schema-parity test for the identical defect
+  class: a rationale naming a mechanism that does not exist. The .50 changelog
+  entry and the `messages_api` comment repeated the conflation and are
+  corrected too.
+- **`peak_memory_gb`'s scope was over-stated in the code comment** the same
+  way it had been in the guide: it is MLX-only in EVERY mode, because
+  `LlamaServerProvider` never sets `peak_memory`. A gguf null there is a
+  backend fact, never a version question. Reported by a consuming client that
+  measured both backends against one server.
+- **The schema-parity docstring's "19 of their fields overlap" is 18** since
+  .49 removed one. Stale in the one file whose stated job is catching
+  declared-but-false claims about these two schemas.
+- **Positional `Field(None, ...)` defaults** in `PerformanceInfo`,
+  `StreamOptions` and `MessageCreateRequest` -- leftovers from the 2026-07-20
+  sweep, sitting in the classes this work touched. Keyword form per the repo
+  rule, so pyright stops flagging every construction.
+
+### Changed
+
+- **`test_rates_and_duration_are_present` could not fail, so it is gone.**
+  `converters` fills both rates with `.get(key, 0)` and `PerformanceInfo`
+  declares them non-Optional, so a DROPPED rate arrives as `0.0` and
+  `is not None` passes. It was written an hour after the same lesson was
+  drawn from `FakeChunk`, and had the same shape. Replaced by
+  `test_rates_and_duration_survive_to_the_response`, which asserts a VALUE:
+  the fake's first chunk now carries `prompt_tps=42.5`, so a dropped rate is
+  distinguishable from the fake's own zero.
+- **`FakeChunk` carries `peak_memory` on EVERY chunk**, rising, which is how a
+  real `GenerationChunk` behaves -- the previous comment claimed fidelity for
+  a last-chunk-only shape that no real chunk has. The rising values also
+  exercise `ChunkTelemetry`'s `max()` latch rather than only its last write.
+- **`docs/frontend_v3_spec.md` §4** records the .49 field removal and the .50
+  response change. CLAUDE.md requires the spec to move in the same commit as a
+  contract change and it did not; recorded here rather than fixed quietly.
+
+### Known, not fixed
+
+- **Five places assemble telemetry for the wire** (`messages_api` twice,
+  `conversation_generate_api`, `api.py` twice) and .50 hand-added a key to one
+  of them, which is the structure CLAUDE.md's "hand-copied constant list"
+  rule describes. The non-streaming dict still omits `kv_cache_bytes`,
+  `queue_wait_ms` and `draft_acceptance` that the streaming half merges in, so
+  the same silent-null class is open one field over. Deriving one builder from
+  `ChunkTelemetry` is the fix and is a bigger change than a review response.
+- **`PerformanceInfo` declares both rates required while the streaming
+  payload omits them.** A client generating types from `/openapi.json` gets
+  two required fields that mode never sends. Documented as a caveat rather
+  than resolved, because the fix is a decision: loosen the model, or emit the
+  rates on `message_stop`.
+- **The contract suite errors wholesale when a dev server is running** -- 87
+  `IOException: Could not set lock on data/conversations.duckdb`, because it
+  connects to the real DB path. With `HEYLOOK_DB_PATH` isolated it is 149
+  passed. Anyone running `/test-suite` with a server up reads these as
+  regressions of whatever branch they are on.
+
 ## [1.79.50]
 
 ### Fixed
 
 - **`peak_memory_gb` was null on non-streaming `/v1/messages`.** `PerformanceInfo`
-  declares it and three of the four response paths fill it — the streaming half
-  of this same wire (in `message_stop`'s timing) and both halves of the OpenAI
-  wire. The non-streaming Messages builder assigned three keys and overwrote
+  declares it and the streaming half of this same wire fills it (in
+  `message_stop`'s timing). (This entry originally said "both halves of the
+  OpenAI wire" too — wrong, and corrected in .51: the OpenAI wire returns a
+  DIFFERENT model, `config.PerformanceMetrics`.) The non-streaming Messages
+  builder assigned three keys and overwrote
   `performance` wholesale, so the converter filled this one from a `.get()`
   that always missed. A client on that path got a declared field that was
   permanently blank with no reason why — the same shape as the flag removed in
