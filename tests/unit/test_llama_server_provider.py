@@ -762,3 +762,80 @@ class TestReasoningEffort:
         import pydantic
         with pytest.raises(pydantic.ValidationError):
             req(enable_thinking=True, reasoning_effort="xtreme")
+
+
+# ---------------------------------------------------------------------------
+# The process generation gate (v1.79.60)
+# ---------------------------------------------------------------------------
+#
+# Claim: a request forwarded to llama-server takes the process FIFO gate first
+# and holds it until the stream is exhausted, so a second request queues on
+# this side instead of sitting in llama-server's own queue past the 120s read
+# timeout and coming back as a 500. Field-observed 2026-09-01: three requests
+# in a row behind one abandoned thinking-mode run each answered "unreachable:
+# timed out", and the model reported loaded the moment the run ended.
+
+import urllib.error
+
+from heylook_llm.providers.base import GenerationFailed
+from heylook_llm.providers.common.generation_gate import GenerationGate, ModelBusyError
+
+
+class TestGenerationGate:
+    def _gated(self, monkeypatch, frames=None):
+        p = make_provider()
+        p._base_url = "http://127.0.0.1:1"
+        # A private single-flight gate, so the test neither shares nor leaks
+        # state through the process-wide one.
+        p._gen_gate = GenerationGate(max_waiting=0)
+        monkeypatch.setattr(
+            llama_mod.urllib.request, "urlopen",
+            lambda *a, **k: _stream_bytes(*(frames or CANNED)),
+        )
+        return p
+
+    def test_gate_is_taken_when_driven_and_released_after_the_stream(self, monkeypatch):
+        p = self._gated(monkeypatch)
+        gen = p.create_chat_completion(req())
+        assert p._gen_gate.busy is False, "nothing is acquired until the generator is driven"
+        next(gen)
+        assert p._gen_gate.busy is True, "held across the stream"
+        list(gen)
+        assert p._gen_gate.busy is False, "released on exhaustion"
+
+    def test_gate_is_released_when_the_forward_fails(self, monkeypatch):
+        p = self._gated(monkeypatch)
+
+        def timed_out(*a, **k):
+            raise urllib.error.URLError("timed out")
+
+        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", timed_out)
+        with pytest.raises(GenerationFailed):
+            list(p.create_chat_completion(req()))
+        assert p._gen_gate.busy is False
+
+    def test_gate_is_released_when_the_stream_is_closed_early(self, monkeypatch):
+        p = self._gated(monkeypatch)
+        gen = p.create_chat_completion(req())
+        next(gen)
+        gen.close()
+        assert p._gen_gate.busy is False
+
+    def test_check_capacity_answers_busy_while_another_generation_holds_the_gate(self):
+        p = make_provider()
+        p._gen_gate = GenerationGate(max_waiting=0)
+        p.check_capacity()  # idle: admitted
+        p._gen_gate.acquire()
+        try:
+            with pytest.raises(ModelBusyError):
+                p.check_capacity()
+            assert p.generation_queue_stats()["active"] == 1
+        finally:
+            p._gen_gate.release()
+        assert p.generation_queue_stats()["active"] == 0
+
+    def test_two_providers_share_the_process_gate(self):
+        # One GPU. A gate per provider would let a gguf run and an MLX run
+        # overlap, which is the concurrency the gate exists to prevent.
+        assert make_provider()._gen_gate is make_provider()._gen_gate
+

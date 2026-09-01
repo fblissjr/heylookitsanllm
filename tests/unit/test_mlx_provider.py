@@ -996,7 +996,8 @@ class TestCheckCapacity:
 
         # The gate is a process-global singleton: max_queue_depth is read from
         # the FIRST provider created. Reset it so this provider is that first one.
-        mp._GENERATION_GATE = None
+        from heylook_llm.providers.common.generation_gate import reset_process_gate
+        reset_process_gate()
         provider = mp.MLXProvider(
             model_id="d",
             config={"model_path": "/fake", "vision": False, "max_queue_depth": 3},

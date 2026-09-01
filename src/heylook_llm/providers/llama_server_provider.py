@@ -20,8 +20,14 @@
 #   max_tokens is ALWAYS sent (llama-server's default is unlimited).
 # - -np 1 by OUR choice (full context per slot, matches heylook's
 #   serialized semantics) -- not a compat requirement.
-# - No shared MLX FIFO gate: llama-server queues its own requests.
-#   check_capacity() stays the base no-op.
+# - Shares the process FIFO generation gate (v1.79.60). It used to rely on
+#   llama-server queueing its own requests, and that queue is invisible to
+#   heylook: a second request forwarded while the first was still generating
+#   sat in it past the 120s read timeout and came back as a 500 "unreachable:
+#   timed out", i.e. "this model is broken", for a backend that was merely
+#   busy. With -np 1 there is exactly one slot, so heylook's own gate is the
+#   correct model of it: acquire in arrival order, and answer the same
+#   MODEL_BUSY -> 503 contract the MLX path does from check_capacity().
 # - Pure stdlib (urllib/subprocess/socket): the provider must import and
 #   run on machines with no MLX and no extra deps.
 
@@ -42,6 +48,7 @@ from typing import Dict, Generator, Optional
 from .. import observability
 from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
+from .common.generation_gate import get_process_gate
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 
 # Every live llama-server we spawned, so no exit path can leak one.
@@ -105,6 +112,21 @@ class LlamaServerProvider(BaseProvider):
         self._proc: Optional[subprocess.Popen] = None
         self._log_handle = None
         self._base_url: Optional[str] = None
+        # The process-wide gate (one GPU), same config key as MLX.
+        self._gen_gate = get_process_gate(int(self.config.get("max_queue_depth", 8)))
+
+    def check_capacity(self) -> None:
+        """Reject (ModelBusyError -> 503) when the FIFO queue is already full.
+
+        Same contract as MLXProvider.check_capacity. Before v1.79.60 this was
+        the base no-op and a busy llama-server surfaced as a 500 after the read
+        timeout, which a client cannot tell from a broken model.
+        """
+        self._gen_gate.check_capacity()
+
+    def generation_queue_stats(self) -> dict:
+        """Snapshot of the FIFO generation queue (active/waiting/capacity)."""
+        return self._gen_gate.snapshot()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -732,17 +754,30 @@ class LlamaServerProvider(BaseProvider):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        # Take the process gate BEFORE forwarding, and hold it for the whole
+        # stream. llama-server has one slot (-np 1); a request forwarded while
+        # that slot is busy waits in llama-server's own queue, which emits no
+        # keepalive until the stream starts, so heylook's 120s read timeout
+        # fires on a backend that is merely busy. Gating here means the wait
+        # happens in arrival order on this side, where check_capacity() can
+        # answer 503 and a cancelled waiter is released, and the read timeout
+        # goes back to meaning what its comment says: wedged.
+        self._gen_gate.acquire()
         try:
-            response = urllib.request.urlopen(http_request, timeout=self._request_timeout())
-        except urllib.error.HTTPError as e:
-            detail = self._error_detail(e)
-            if e.code == 400:
-                raise InvalidGenerationRequest(detail)
-            raise GenerationFailed(detail)
-        except (urllib.error.URLError, OSError) as e:
-            raise GenerationFailed(
-                f"llama-server for '{self.model_id}' unreachable: {e}"
-            )
+            try:
+                response = urllib.request.urlopen(http_request, timeout=self._request_timeout())
+            except urllib.error.HTTPError as e:
+                detail = self._error_detail(e)
+                if e.code == 400:
+                    raise InvalidGenerationRequest(detail)
+                raise GenerationFailed(detail)
+            except (urllib.error.URLError, OSError) as e:
+                raise GenerationFailed(
+                    f"llama-server for '{self.model_id}' unreachable: {e}"
+                )
+        except BaseException:
+            self._gen_gate.release()
+            raise
         try:
             # generation_active spans the YIELDING, so the router can see this
             # model as busy and refuse to SIGTERM llama-server out from under
@@ -758,6 +793,7 @@ class LlamaServerProvider(BaseProvider):
                 response.close()
             except Exception:
                 pass
+            self._gen_gate.release()
 
     @staticmethod
     def _error_detail(e: urllib.error.HTTPError) -> str:

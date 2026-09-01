@@ -31,7 +31,7 @@ from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
 from .common.loader_routing import resolve_effective_loader, read_model_type
-from .common.generation_gate import GenerationGate, GenerationCancelled
+from .common.generation_gate import GenerationGate, GenerationCancelled, get_process_gate
 from .common.template_info import (
     install_chat_template,
     is_explicit_source,
@@ -103,16 +103,11 @@ generation_stream = mx.new_thread_local_stream(mx.default_device())
 # with max_loaded_models>1 two providers would run concurrent generations on the
 # shared Metal command queue. Shared across every MLXProvider instance; the first
 # provider created sets max_queue_depth (process-wide, documented in config).
-_GENERATION_GATE = None
-_GENERATION_GATE_LOCK = threading.Lock()
-
-
 def _get_generation_gate(max_waiting: int) -> "GenerationGate":
-    global _GENERATION_GATE
-    with _GENERATION_GATE_LOCK:
-        if _GENERATION_GATE is None:
-            _GENERATION_GATE = GenerationGate(max_waiting=max_waiting)
-        return _GENERATION_GATE
+    # Moved to generation_gate.get_process_gate so the llama-server provider
+    # can share it (v1.79.60). Kept as a name because tests and comments here
+    # refer to it.
+    return get_process_gate(max_waiting)
 
 
 def _resolve_enable_thinking(effective_request: dict) -> bool:

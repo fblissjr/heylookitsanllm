@@ -64,11 +64,12 @@ def mock_mlx():
         # The generation gate is a process-global singleton (shared across all
         # providers -- one GPU). Reset it per test so each test's provider
         # creates a fresh gate with its own max_queue_depth config.
-        try:
-            import heylook_llm.providers.mlx_provider as _mp
-            _mp._GENERATION_GATE = None
-        except Exception:
-            pass
+        # The singleton lives in generation_gate since v1.79.60 (the gguf
+        # provider shares it); resetting the old mlx_provider attribute did
+        # nothing after the move, which is the kind of dead reset that keeps a
+        # suite green while isolating nothing.
+        from heylook_llm.providers.common.generation_gate import reset_process_gate
+        reset_process_gate()
         yield modules
 
 

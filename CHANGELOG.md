@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.60]
+
+A busy llama-server backend now answers 503, not 500.
+
+- **The llama-server provider shares the process generation gate.** It used
+  to rely on llama-server queueing its own requests, and that queue is
+  invisible to heylook: a request forwarded while the single slot (`-np 1`)
+  was still generating waited in it past `_SSE_READ_TIMEOUT_S` (120s, which
+  emits no keepalive until a stream starts) and came back as a 500
+  "llama-server for '...' unreachable: timed out". A client built to the
+  documented contract reads 500 as "this model is broken, choose another" and
+  stops retrying. Observed 2026-09-01 by a consumer running thinking-mode
+  generations on a gguf model: one abandoned non-streaming run turned the next
+  three requests into hard failures, and `POST /v1/models/{id}/load` answered
+  200 the moment it finished. The provider now acquires the same FIFO gate
+  the MLX path uses before forwarding and releases it when the stream ends,
+  so a second request queues in arrival order on this side, `check_capacity()`
+  answers `MODEL_BUSY` -> 503 with `Retry-After` when the queue is full, and
+  `generation_queue_stats()` reports the queue for the backpressure headers.
+  The 120s read timeout goes back to meaning what its comment says: wedged.
+  `get_process_gate` moved from `mlx_provider.py` to `generation_gate.py`,
+  which is what let the gguf path have no gate at all; `_get_generation_gate`
+  stays as a name. Pinned by `TestGenerationGate` in
+  `tests/unit/test_llama_server_provider.py`: the gate is held across the
+  stream and released after it, released on a forward failure, and
+  `check_capacity()` raises while another generation holds it.
+
+  What this does not change: a non-streaming client that hangs up still
+  leaves the server generating until the run ends or `DELETE
+  /v1/requests/{id}` stops it. That is the documented behaviour, and the gate
+  now makes its cost visible as queueing rather than as a false 500.
+
 ## [1.79.59]
 
 Acting on a code review and two verification passes over v1.79.56-.58. Two of

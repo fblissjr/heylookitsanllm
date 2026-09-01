@@ -20,7 +20,36 @@ thread. The implementation therefore does not rely on lock ownership.
 import collections
 import threading
 
-__all__ = ["GenerationGate", "ModelBusyError", "GenerationCancelled"]
+__all__ = ["GenerationGate", "ModelBusyError", "GenerationCancelled", "get_process_gate"]
+
+# ONE gate for the process -- one GPU. Every provider that generates shares
+# it, so MLX chat, MLX batch and a llama-server subprocess never run
+# concurrently and every one of them answers the same busy contract. It used
+# to live in mlx_provider.py, which is how the gguf path came to have no gate
+# at all: a request forwarded to a busy llama-server sat in that server's own
+# queue until heylook's 120s read timeout fired and turned "busy" into a 500
+# saying the model was broken (field-observed 2026-09-01, three requests in a
+# row behind one abandoned run). The first caller's max_waiting wins, the way
+# it always did.
+_PROCESS_GATE = None
+_PROCESS_GATE_LOCK = threading.Lock()
+
+
+def get_process_gate(max_waiting: int) -> "GenerationGate":
+    global _PROCESS_GATE
+    with _PROCESS_GATE_LOCK:
+        if _PROCESS_GATE is None:
+            _PROCESS_GATE = GenerationGate(max_waiting=max_waiting)
+        return _PROCESS_GATE
+
+
+def reset_process_gate() -> None:
+    """Drop the singleton. Tests only: the next provider created is the one
+    whose max_queue_depth the gate takes, and a gate left over from another
+    test carries that test's depth and possibly its held slot."""
+    global _PROCESS_GATE
+    with _PROCESS_GATE_LOCK:
+        _PROCESS_GATE = None
 
 
 class GenerationCancelled(Exception):
