@@ -21,6 +21,7 @@ through.
 from __future__ import annotations
 
 import pytest
+from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 
 from heylook_llm.samplers import (
     SamplerNotFound,
@@ -201,7 +202,7 @@ class TestResolveEffectiveSampling:
         from heylook_llm.samplers import resolve_effective_sampling
 
         merged = resolve_effective_sampling(self._req(), {})
-        assert merged["temperature"] == 0.7
+        assert merged["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
         assert merged["max_tokens"] == 4096
 
     def test_vendor_overlay_beats_floor(self):
@@ -249,7 +250,7 @@ class TestResolveEffectiveSampling:
         from heylook_llm.samplers import resolve_effective_sampling
 
         merged = resolve_effective_sampling(self._req(), {"default_sampler": "gone"})
-        assert merged["temperature"] == 0.7  # cascade survived
+        assert merged["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # cascade survived
 
     def test_unknown_request_sampler_raises(self):
         from heylook_llm.samplers import SamplerNotFound, resolve_effective_sampling

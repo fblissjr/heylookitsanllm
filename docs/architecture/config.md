@@ -186,8 +186,10 @@ wraps it to add the cached vendor-layer read and MLX runtime-default fields;
 layer). Layers, each overriding only the fields it sets:
 
 1. **Global hardcoded floor** -- `GLOBAL_SAMPLER_FLOOR` (samplers.py):
-   `temperature 0.7`, `top_p 1.0`, `top_k 0`, `min_p 0.0`,
-   `max_tokens 4096`, `repetition_penalty 1.0`, `presence_penalty 0.0`.
+   `temperature 1.0`, `top_p 0.95`, `top_k 0`, `min_p 0.0`,
+   `max_tokens 4096`, `repetition_penalty 1.0`, `presence_penalty 0.0`
+   (v1.79.60, owner ruling: low temperature flattens generative prose;
+   0.7/1.0 before that).
    This is a true fallback: it only survives for models that ship no
    `generation_config.json` (next layer).
    1. **Vendor layer** (v1.45.0) -- `load_vendor_sampling` (samplers.py)

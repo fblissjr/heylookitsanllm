@@ -11,6 +11,7 @@ import threading
 import time
 
 import pytest
+from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 
 from heylook_llm.config import ChatMessage, ChatRequest
 from helpers.mlx_mock import create_mock_model, create_mock_processor, create_mock_vlm_model
@@ -182,7 +183,7 @@ class TestApplyModelDefaults:
             messages=[ChatMessage(role="user", content="hi")],
         )
         effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.7  # global floor (chat-sane)
+        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # global floor
         assert effective["max_tokens"] == 4096
 
     def test_request_overrides_defaults(self, mock_mlx_provider):
@@ -220,7 +221,7 @@ class TestApplyModelDefaults:
         effective = provider._apply_model_defaults(req)
         assert effective["presence_penalty"] == 1.5
         assert effective["enable_thinking"] is True
-        assert effective["temperature"] == 0.7  # floor, NOT Qwen's 0.6
+        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # floor, NOT Qwen's 0.6
 
     def test_request_thinking_triggers_overlay(self, mock_mlx):  # noqa: ARG001
         """Claim: a request flipping thinking ON engages the anti-loop
@@ -267,7 +268,7 @@ class TestApplyModelDefaults:
 
     def test_vendor_generation_config_layer(self, mock_mlx, tmp_path):  # noqa: ARG001
         """Claim: the model dir's generation_config.json supplies per-model
-        decode tuning above the floor (gemma 1.0/64/0.95 vs floor 0.7/0/1.0);
+        decode tuning above the floor (gemma 1.0/64/0.95 vs the floor);
         without it every model runs one-size floor sampling."""
         import json
 
@@ -1026,7 +1027,7 @@ class TestApplyModelDefaultsGetattr:
         )
         effective = mock_mlx_provider._apply_model_defaults(req)
         # temperature is not set on request, so default should apply
-        assert effective["temperature"] == 0.7
+        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
 
     def test_all_scalar_fields_extracted(self, mock_mlx_provider):
         """All 9 scalar fields should be extractable from request."""

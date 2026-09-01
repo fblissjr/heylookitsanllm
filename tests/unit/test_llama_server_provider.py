@@ -27,6 +27,7 @@ from heylook_llm.providers import llama_server_provider as llama_mod
 
 from heylook_llm.config import ChatRequest, ModelConfig, GGUFModelConfig, PROVIDER_CONFIG_CLASSES
 from heylook_llm.providers.base import GenerationChunk
+from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 
 
@@ -337,7 +338,7 @@ class TestPayload:
     def test_floor_applied_and_max_tokens_always_sent(self):
         p = make_provider()
         payload = p._build_payload(req())
-        assert payload["temperature"] == 0.7
+        assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
         assert payload["max_tokens"] == 4096  # llama default is UNLIMITED; must always send
         assert payload["stream"] is True
         assert payload["stream_options"] == {"include_usage": True}
@@ -394,7 +395,7 @@ class TestPayload:
         post-startup registry drift) -- it must not 400 every request."""
         p = make_provider(default_sampler="gone-from-registry")
         payload = p._build_payload(req())
-        assert payload["temperature"] == 0.7
+        assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
 
     def test_request_sampler_suppresses_default_sampler(self):
         """Shared-resolver semantics: naming a request sampler replaces the
@@ -407,7 +408,7 @@ class TestPayload:
         from heylook_llm.samplers import get_sampler_registry
 
         det_temp = get_sampler_registry()._presets["deterministic"]["temperature"]
-        assert det_temp != 0.7  # must differ from the floor for this to prove anything
+        assert det_temp != GLOBAL_SAMPLER_FLOOR["temperature"]  # must differ from the floor for this to prove anything
         p = make_provider(default_sampler="deterministic")
         payload = p._build_payload(req())
         assert payload["temperature"] == det_temp

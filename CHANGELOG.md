@@ -37,6 +37,14 @@ A busy llama-server backend now answers 503, not 500.
   /v1/requests/{id}` stops it. That is the documented behaviour, and the gate
   now makes its cost visible as queueing rather than as a false 500.
 
+- **The global sampler floor is temperature 1.0, top_p 0.95.** Owner ruling:
+  low temperature is worse for generative prose, and the 0.7/1.0 floor was a
+  chat-sane guess rather than a measurement. This is layer 1 only; a model's
+  own `generation_config.json` (vendor layer), models.toml fields, named
+  samplers and request fields still override it as before, so a Qwen3
+  thinking model that ships 0.6/0.95 still runs at 0.6 on MLX. The tests that
+  pinned the floor by value now read the constant.
+
 ## [1.79.59]
 
 Acting on a code review and two verification passes over v1.79.56-.58. Two of

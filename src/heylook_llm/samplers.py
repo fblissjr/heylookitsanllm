@@ -220,13 +220,17 @@ def known_preset_names() -> Iterable[str]:
 
 
 # Layer-1 sampler floor: what a request gets when neither the request, a
-# named sampler, nor the model config says anything. Chat-sane values (the
-# old 0.1/512 floor made freshly imported models near-greedy and truncated
-# long answers mid-sentence). Shared by ALL providers -- MLX overlays it in
-# _apply_model_defaults, the llama-server provider in _build_payload.
+# named sampler, nor the model config says anything. Shared by ALL providers
+# -- MLX overlays it in _apply_model_defaults, the llama-server provider in
+# _build_payload. Owner ruling 2026-09-01 (v1.79.60): temperature 1.0 and
+# top_p 0.95, because a narrowed distribution flattens generative prose and
+# low temperature was judged worse on real output; the 0.7/1.0 before it was
+# a chat-sane guess, and the 0.1/512 before that made freshly imported models
+# near-greedy and truncated long answers mid-sentence. The vendor layer below
+# still overlays a model's own generation_config.json where one ships.
 GLOBAL_SAMPLER_FLOOR = {
-    'temperature': 0.7,
-    'top_p': 1.0,
+    'temperature': 1.0,
+    'top_p': 0.95,
     'top_k': 0,
     'min_p': 0.0,
     'max_tokens': 4096,
