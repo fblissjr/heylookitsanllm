@@ -109,17 +109,27 @@ class TestThinkingResume:
         out = _append_thinking_resume("<|im_start|>assistant\n", "so far", info)
         assert out == "<|im_start|>assistant\n<think>\nso far"
 
-    def test_families_without_a_resumable_parser_refuse_loudly(self):
+    def test_channel_families_reopen_their_own_channel(self):
+        # v1.79.63: gemma re-opens <|channel>thought, harmony the analysis
+        # channel; the matching parser is armed to start inside it.
+        from types import SimpleNamespace
+        from heylook_llm.providers.mlx_provider import _append_thinking_resume
+        gemma = SimpleNamespace(has_thinking_markers=False, has_harmony_structure=False,
+                                has_gemma_channel_structure=True)
+        assert _append_thinking_resume("<|turn>model\n", "so far", gemma) \
+            == "<|turn>model\n<|channel>thought\nso far"
+        harmony = SimpleNamespace(has_thinking_markers=False, has_harmony_structure=True,
+                                  has_gemma_channel_structure=False)
+        assert _append_thinking_resume("<|start|>assistant", "so far", harmony) \
+            == "<|start|>assistant<|channel|>analysis<|message|>so far"
+
+    def test_a_template_with_no_thinking_structure_refuses_loudly(self):
         from types import SimpleNamespace
         from heylook_llm.providers.base import InvalidGenerationRequest
         from heylook_llm.providers.mlx_provider import _append_thinking_resume
-        for info in (
-            SimpleNamespace(has_thinking_markers=False, has_harmony_structure=True,
-                            has_gemma_channel_structure=False),
-            SimpleNamespace(has_thinking_markers=False, has_harmony_structure=False,
-                            has_gemma_channel_structure=True),
-            None,
-        ):
+        plain = SimpleNamespace(has_thinking_markers=False, has_harmony_structure=False,
+                                has_gemma_channel_structure=False)
+        for info in (plain, None):
             with pytest.raises(InvalidGenerationRequest, match="not supported"):
                 _append_thinking_resume("<|start|>assistant", "so far", info)
 

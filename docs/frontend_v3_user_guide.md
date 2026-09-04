@@ -288,9 +288,13 @@ beside the composer does the same for the next message you would send. Both
 need the model to be loaded; neither loads it for you.
 
 Resuming inside a thought is engine-level on gguf (llama-server does it
-natively) and works for `<think>`-style templates on MLX; a gemma-channel or
-harmony model on MLX refuses a thinking-only continue and says to put
-something in the response box or regenerate.
+natively) and works on every MLX family the server parses (`<think>`
+templates, gemma-4 thought channels, harmony). A template with no thinking
+structure at all refuses a thinking-only continue and says to put something
+in the response box or regenerate.
+
+Preview prompt is on user messages too: it shows what Save & Regenerate
+would send, with the box as it is.
 
 The editor offers up to three buttons:
 
@@ -385,13 +389,14 @@ the accepted values live in the model's chat template, and for gguf inside the
 GGUF's own metadata, so the backend would have to learn and expose them before
 the UI could.
 
-**Resuming inside a thought on MLX covers `<think>` templates only.** A
-gemma-channel or harmony model refuses a thinking-only Save & Continue with a
-message; the parsers for those families have no "already inside the block"
-state yet.
-
 **The prompt preview omits images on MLX.** The vision path renders through
 mlx-vlm and has no text-only render; the preview shows the text template.
+
+**A resumed thought can lose the space at the seam.** Both engines prefill
+the thinking box verbatim and the model picks the next token itself, so a
+box ending mid-phrase ("First I") sometimes continues without a space
+("Ineed"). Ending the box on a complete word, or with a trailing space, gives
+the model a cleaner seam.
 
 ### Closed
 
@@ -406,7 +411,8 @@ Kept as a record rather than deleted, so this section reads as a ledger.
 - *Nothing showed what wraps the thinking when you edit or continue* —
   closed in v1.79.62 by Preview prompt.
 - *Save & Continue on a reply stopped mid-thought started a second thought* —
-  closed in v1.79.62; it resumes the first.
+  closed in v1.79.62; it resumes the first. Gemma-channel and harmony models
+  on MLX joined in v1.79.63.
 
 - *The sampler panel does not say whose settings it is showing* — closed in
   v1.79.25 by the scope line under the *Sampling* heading, and by renaming

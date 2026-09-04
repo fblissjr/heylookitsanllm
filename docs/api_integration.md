@@ -165,6 +165,14 @@ A thinking block carries its content under **both** `thinking` (Anthropic's
 field name) and `text` (heylook's original, kept so existing readers keep
 working). Read `thinking`.
 
+**Replaying thinking blocks is accepted** (v1.79.63). Send the assistant's
+`thinking` blocks back in history the way Anthropic's tool loop requires and
+they reach the model as prior reasoning, rendered however the model's own
+chat template renders it (Qwen3.8 keeps every turn's, gemma-4 only tool-call
+turns'). Before v1.79.63 the first replayed block was a 422. A trailing
+assistant message with a `thinking` block and no text continues generation
+inside that thought (see the continuation notes).
+
 **A non-streaming response also carries `performance`** — there is no flag
 for it, so you cannot turn it on or off. It is `null` in one case: the
 builder is gated on the generation having produced at least one token, so a

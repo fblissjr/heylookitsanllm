@@ -39,3 +39,23 @@ class TestListModels:
         resp = client.get("/v1/models")
         providers = {m["id"]: m.get("provider") for m in resp.json()["data"]}
         assert providers["test-mlx-model"] == "mlx"
+
+
+class TestThinkingDefaultOnModelRows:
+    """v1.79.63: every /v1/models entry carries `thinking_default`, the
+    cascade's answer for an empty request -- the same value the admin row
+    reports, so a page reading either list labels 'model default' the same."""
+
+    def test_present_and_bool_on_every_entry(self, client):
+        data = client.get("/v1/models").json()["data"]
+        assert data
+        for entry in data:
+            assert isinstance(entry["thinking_default"], bool)
+            if "thinking" not in entry.get("capabilities", []):
+                assert entry["thinking_default"] is False
+
+    def test_agrees_with_the_admin_row(self, client):
+        listed = {m["id"]: m["thinking_default"] for m in client.get("/v1/models").json()["data"]}
+        admin = {m["id"]: m["thinking_default"] for m in client.get("/v1/admin/models").json()["models"]}
+        for mid, value in listed.items():
+            assert admin.get(mid) == value, mid

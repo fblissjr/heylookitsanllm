@@ -90,3 +90,45 @@ class TestReconstructThinking:
 
 
 # TestPrefillConvention removed 2026-07-06: tautological (asserted its own inline math, never called the production path in mlx_provider). Real coverage now lives in tests/unit/test_mlx_provider.py::TestResolveAddGenerationPrompt, which calls the extracted resolve_add_generation_prompt() helper directly.
+
+
+@pytest.mark.unit
+class TestThinkingForTemplate:
+    """v1.79.63: prior thinking goes to the template the way THAT template
+    takes it. Three branches, and the None case keeps the old behaviour."""
+
+    def _info(self, **kw):
+        from types import SimpleNamespace
+        base = dict(has_thinking_markers=False, reads_reasoning_content=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_template_that_reads_reasoning_content_gets_the_key(self):
+        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
+        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"},
+                                    self._info(reads_reasoning_content=True, has_thinking_markers=True))
+        assert out == {"role": "assistant", "content": "a", "reasoning_content": "t"}
+
+    def test_marker_template_without_the_key_gets_tags_reconstructed(self):
+        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
+        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"},
+                                    self._info(has_thinking_markers=True))
+        assert out["content"] == "<think>\nt\n</think>\na" and "thinking" not in out
+
+    def test_family_with_neither_drops_it(self):
+        # gemma-4 before its template read reasoning_content, or any plain
+        # template: <think> text the model never emits is noise, not history.
+        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
+        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"}, self._info())
+        assert out == {"role": "assistant", "content": "a"}
+
+    def test_none_keeps_the_legacy_reconstruction(self):
+        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
+        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"}, None)
+        assert out["content"].startswith("<think>")
+
+    def test_non_assistant_thinking_is_dropped_everywhere(self):
+        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
+        out = thinking_for_template({"role": "user", "content": "q", "thinking": "t"},
+                                    self._info(reads_reasoning_content=True))
+        assert out == {"role": "user", "content": "q"}

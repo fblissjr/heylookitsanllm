@@ -203,6 +203,12 @@ class AudioBlock(BaseModel):
 
 
 # Union of all block types that can appear in a user message
+# ThinkingBlock joins the INPUT union in v1.79.63 (it is defined below, so
+# the union is assembled after it): an Anthropic-shaped client replays the
+# assistant's thinking blocks in history -- required by Anthropic's own tool
+# loop -- and this server 422'd the whole request on the first one. They
+# convert to ChatMessage.thinking, which the providers now render the way
+# each template takes it (reasoning_content / <think> reconstruction).
 InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock]
 
 
@@ -302,3 +308,6 @@ class HiddenStatesBlock(BaseModel):
 
 # Union of all block types that can appear in an assistant response
 OutputContentBlock = Union[TextBlock, ThinkingBlock, LogprobsBlock, HiddenStatesBlock]
+# Re-assembled here because ThinkingBlock is defined after the input blocks;
+# messages.py imports this name, so the forward reference is a plain rebind.
+InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]  # type: ignore[misc]

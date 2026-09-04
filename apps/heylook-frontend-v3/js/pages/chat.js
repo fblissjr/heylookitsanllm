@@ -490,10 +490,7 @@ async function refreshLoadedIds(ctx) {
   }
   fillModelSelect(ctx);
   refreshLoadBtn(ctx);
-  // The admin rows carry thinking_default: the composer's thinking button
-  // and the drawer's "Model default (on|off)" label both read it.
   refreshThinkBtn(ctx);
-  drawer.requestRebuild();
   // Provider just became known, and an editor opened before it landed is
   // missing its Save & Continue button. Re-render so the row catches up here
   // rather than at whatever unrelated render happens next. Only rows whose
@@ -792,10 +789,14 @@ function refreshThinkBtn(ctx) {
     : `Thinking: ${on ? 'on' : 'off'}`;
 }
 
-// The model's own thinking default, off the admin row (null until known).
+// The model's own thinking default: on the /v1/models row since v1.79.63
+// (so it is known from the first paint), the admin row as a fallback.
 function currentThinkingDefault(ctx) {
   const s = ctx.state;
-  return s.adminRows?.get(s.modelSelect.value)?.thinking_default ?? null;
+  const id = s.modelSelect.value;
+  const listed = s.models.find((m) => m.id === id)?.thinking_default;
+  if (listed === true || listed === false) return listed;
+  return s.adminRows?.get(id)?.thinking_default ?? null;
 }
 
 function currentProvider(ctx) {
@@ -1756,24 +1757,32 @@ function buildEditEl(ctx, msg) {
   ];
   buttons[0].addEventListener('click', cancel);
   buttons[1].addEventListener('click', () => save(false));
-  // "Preview prompt": what Save & Continue WOULD send, rendered from the
-  // boxes as they are now (nothing saved). Assistant rows only -- that is
-  // the continuation shape both engines can render; the marker question
-  // ("what wraps the thinking?") is answered by the render itself.
+  // "Preview prompt": what the editor's primary action WOULD send, rendered
+  // from the boxes as they are now (nothing saved). An assistant row
+  // previews Save & Continue (continue mode from this row); a user row
+  // previews Save & Regenerate (regenerate from the row after it, or a
+  // plain append when it is last) with the edited text overlaid. The marker
+  // question ("what wraps the thinking?") is answered by the render itself.
   let previewHost = null;
-  if (msg.id && msg.role === 'assistant') {
+  if (msg.id) {
     previewHost = createEl('div', { class: 'prompt-preview message-edit__preview', hidden: true });
     const previewBtn = createEl('button', {
       class: 'btn btn--sm btn--ghost',
-      title: 'Show the exact text the model would be sent by Save & Continue, from these boxes as they are now',
+      title: msg.role === 'assistant'
+        ? 'Show the exact text the model would be sent by Save & Continue, from these boxes as they are now'
+        : 'Show the exact text the model would be sent by Save & Regenerate, with this box as it is now',
     }, ['Preview prompt']);
     previewBtn.addEventListener('click', async () => {
       const close = () => { previewHost.hidden = true; previewHost.replaceChildren(); };
-      const edits = { content: textarea.value };
+      const edits = { message_id: msg.id, content: textarea.value };
       if (thinkArea) edits.thinking = thinkArea.value || null;
+      const nextMsg = s.messages.find((m) => m.position > msg.position);
+      const shape = msg.role === 'assistant'
+        ? { mode: 'continue', message_id: msg.id }
+        : nextMsg ? { mode: 'regenerate', message_id: nextMsg.id } : { mode: 'append' };
       try {
         const body = await api.previewPrompt(s.activeId, {
-          mode: 'continue', message_id: msg.id, edits,
+          ...shape, edits,
           overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) },
         });
         if (!ctx.alive) return;

@@ -991,6 +991,23 @@ class TestPromptPreview:
         assert stored["messages"][-1]["content"] == "stale"  # edits never persisted
 
     @pytest.mark.asyncio
+    async def test_edits_can_name_any_row_for_a_regenerate_preview(self, ctx):
+        # A USER row being edited ahead of Save & Regenerate: the anchor is
+        # the reply after it (excluded), and the edited text is overlaid on
+        # the user row wherever it sits (v1.79.63).
+        client, store, provider = ctx
+        conv, rows = await make_conv(store, ("user", "old question"), ("assistant", "old answer"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "regenerate", "message_id": rows[1]["id"],
+            "edits": {"message_id": rows[0]["id"], "content": "new question"}})
+        assert res.status_code == 200, res.text
+        assert res.json()["prompt"] == "<|user|>new question\n<|assistant|>"
+        # An unknown edited row is a 404, not a silent no-op.
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "append", "edits": {"message_id": "nope", "content": "x"}})
+        assert res.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_preview_never_loads_a_model(self, ctx):
         client, store, provider = ctx
         conv, _ = await make_conv(store, ("user", "q1"))

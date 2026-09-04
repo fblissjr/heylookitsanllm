@@ -439,8 +439,9 @@ truncate→stream→persist sequences):**
     inside the open thinking block on both engines -- the new thinking is
     appended to the row's trace, and content follows once the model closes
     it. An anchor with content continues the content (thinking rendered
-    closed before it). MLX resumes `<think>`-marker families only; gemma
-    channels / harmony 400 in-band with the workaround named.
+    closed before it). All three MLX families resume (v1.79.63: the channel
+    parsers start inside their channel); a template with no thinking
+    structure at all 400s in-band with the workaround named.
   - `overrides` layers one-shot sampler values over `params` (same allowlist
     + cap gates) and may carry `model` to generate with a non-stamped model.
   - Wire: Messages SSE grammar (`message_start` / `content_block_start|delta|
@@ -488,13 +489,14 @@ truncate→stream→persist sequences):**
     debounced/async — overrides carry the user's live intent past that
     window. A client with no such window can omit them.
 - `POST /{id}/prompt` `{mode, message_id?, user_content?, overrides?,
-  edits?:{content?,thinking?}}` → `{prompt, model_id, provider, mode,
-  continuation:"thinking"|"content"|null, dropped_media, char_count}`
+  edits?:{message_id?,content?,thinking?}}` → `{prompt, model_id, provider,
+  mode, continuation:"thinking"|"content"|null, dropped_media, char_count}`
   (v1.79.62). The exact string generate would feed the model, rendered by
   the model's own engine (llama-server `/apply-template`; the MLX tokenizer's
   template through the same builder generation uses). Same rows, same
   builder, same overrides; `user_content` renders as the next user turn and
-  `edits` as if saved onto a continue anchor -- nothing is persisted. 409
+  `edits` as if saved onto the row it names (v1.79.63; absent `message_id`
+  = the continue anchor; an unknown id is 404) -- nothing is persisted. 409
   when the model is not resident: a preview never loads a model. MLX renders
   the text template only (images in history are not represented). v3 calls
   it from the assistant editor ("Preview prompt", continue mode from the
@@ -561,7 +563,8 @@ saved value differs from what the loaded process was built with (always `[]` whe
 loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
-`thinking_default` (v1.79.62, every provider, always a bool): what thinking resolves to
+`thinking_default` (v1.79.62, every provider, always a bool; also on every `/v1/models`
+entry since v1.79.63, same value): what thinking resolves to
 for this model when a request says nothing -- the sampling cascade's own answer for an
 empty request (`config.enable_thinking`, else a `default_sampler` that turns it on, else
 the thinking CAPABILITY, which is the v1.79.62 fallback: a model that can think, thinks).

@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.63]
+
+The loose ends of v1.79.62, tied off -- and, found while tying them, the
+MLX presence penalty was writing out of bounds on the GPU.
+
+### Fixed
+
+- **The MLX presence penalty corrupted GPU memory and faulted Metal.**
+  mlx-lm hands a logits processor `logits[:, -1, :]`, shape `(1, vocab)`;
+  `_apply_presence_penalty` scattered `counts.at[tokens]` along axis 0,
+  whose size is 1, so every token id past 0 was an out-of-bounds Metal
+  write. MLX does not bounds-check a GPU scatter: memory corrupted until a
+  command buffer faulted mid-generation ("victim of GPU error/recovery"),
+  and the process was poisoned from then on -- every later reply, any
+  settings, came back as multilingual garbage. Reproduced deterministically
+  on gemma-4-26B-A4B (MLX) by any request carrying a presence penalty:
+  thinking off + `presence_penalty: 1.5` faulted; thinking on + `0` never
+  did. The penalty only runs when set -- and the thinking sampler overlay
+  sets 1.5 whenever thinking is on -- so "thinking on MLX gemma = garbage
+  and a Metal fault" was this, not the model. (The 2026-08 verdict that the
+  heretic gemma quants were "abliteration-damaged on thinking" rests on the
+  same symptom and should be re-read in that light.) The scatter now runs
+  on the vocab axis with a 1-D presence vector; the unit tests only ever
+  used 1-D logits, which is why they were green, and now pin the real shape.
+- **MLX rendered `<think>` text into gemma-4 prompts.** With thinking now
+  riding history (v1.79.62), the MLX path's one reconstruction --
+  `<think>\n...\n</think>\n` prepended into content -- reached every
+  family, and gemma-4 never emits those tags. Its own template reads
+  `reasoning_content` (and strips channel markers from content), so prior
+  thinking is now handed to the template the way THAT template takes it
+  (`vlm_inputs.thinking_for_template`, keyed on the new
+  `ModelTemplateInfo.reads_reasoning_content`): the key where the template
+  reads it (gemma-4, Qwen3+), reconstructed tags for a `<think>` template
+  that does not, nothing for a family with neither. Threaded through the
+  text, vision, diffusion and batch paths.
+- **Resuming inside a thought now covers every served family on MLX.** The
+  gemma and harmony channel parsers take an `initial_thinking` state, so a
+  thinking-only Save & Continue re-opens `<|channel>thought` /
+  `<|channel|>analysis<|message|>` and the first token files as reasoning.
+  v1.79.62 refused those two families.
+- **Every completed generation logged a WARNING** ("claim released by stream
+  finally") -- the normal release path. DEBUG now; the belt paths (watchdog,
+  response cleanup, pre-stream failure) keep WARNING.
+
+### Notes
+
+- Live-verified on gemma-4-26B-A4B (MLX, dev server): before the fix, a
+  chain of thinking-off / off / on / off gave sane / sane / Metal fault /
+  garbage; after it, thinking on by default, an explicit 1.5 penalty, and a
+  mid-thought resume all complete with no fault. A resumed thought can lose
+  the space at the seam ("First I" + "need"): the model's own first token,
+  not a strip -- both engines prefill the trace verbatim.
+
+### Changed
+
+- **`thinking_default` is on `/v1/models` rows too**, the same cascade answer
+  the admin row carries, so chat and notebook label "Model default (on|off)"
+  from the first paint rather than after the residency fetch. The chat page
+  no longer rebuilds an open drawer on every residency refresh.
+- **Prompt preview from a user turn.** `edits` may name any row
+  (`message_id`); the editor's Preview prompt now works on user messages
+  (Save & Regenerate's prompt, with the box as it is) as well as assistant
+  ones.
+- **`/v1/messages` accepts replayed thinking blocks.** Anthropic's own tool
+  loop requires a client to send the assistant's `thinking` blocks back;
+  this server 422'd on the first one (`InputContentBlock` had no
+  ThinkingBlock). They now convert to the message's `thinking` and reach
+  the template like any other prior reasoning.
+
 ## [1.79.62]
 
 Thinking on the wire, an honest thinking default, a prompt you can read, and

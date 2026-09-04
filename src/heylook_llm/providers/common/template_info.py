@@ -78,6 +78,15 @@ class ModelTemplateInfo:
     # thinking is enabled (Qwen3.5 style) -- the model output then starts
     # inside the block, so the parser must start in thinking state.
     prefills_thinking: bool = False
+    # Template reads ``reasoning_content`` off a message (Qwen3+, gemma-4):
+    # the model's OWN way to replay prior reasoning. When set, a history
+    # message's thinking is handed to the template under that key and the
+    # template decides how (and whether) to render it -- Qwen3.8 keeps every
+    # turn's, gemma-4 only tool-call turns' and STRIPS channel markers from
+    # content. When unset, a ``<think>``-marker family gets the tags
+    # reconstructed into content instead; any other family gets nothing,
+    # because tags it never emits are noise (v1.79.63).
+    reads_reasoning_content: bool = False
 
 
 # Signal patterns learned from real model templates (not hardcoded
@@ -97,6 +106,7 @@ _GEMMA_CHANNEL_CLOSE_PATTERN = re.compile(r"<channel\|>")
 # channels) supports the toggle; models without it ignore the kwarg.
 _ENABLE_THINKING_PATTERN = re.compile(r"\benable_thinking\b")
 _REASONING_EFFORT_PATTERN = re.compile(r"\breasoning_effort\b")
+_REASONING_CONTENT_PATTERN = re.compile(r"\breasoning_content\b")
 # An UNCLOSED <think> emission (no </think> within the same short literal):
 # templates that pre-fill the open tag into the generation prompt. The
 # thinking-DISABLED empty block ('<think>\n\n</think>') closes within a few
@@ -169,6 +179,7 @@ def read_template_info(
     prefills_thinking = bool(
         has_thinking and _PREFILL_THINK_PATTERN.search(template)
     )
+    reads_reasoning_content = bool(_REASONING_CONTENT_PATTERN.search(template))
 
     return ModelTemplateInfo(
         chat_template=template,
@@ -180,6 +191,7 @@ def read_template_info(
         supports_enable_thinking=supports_enable_thinking,
         supports_reasoning_effort=supports_reasoning_effort,
         prefills_thinking=prefills_thinking,
+        reads_reasoning_content=reads_reasoning_content,
     )
 
 

@@ -127,9 +127,16 @@ block and continues the content. The prefill ECHO is on BOTH channels -- reasoni
 back minus its leading whitespace (measured on b10814) -- so `_continuation_echo_chars`
 returns a pair and the reasoning strip is sized lstripped (can only under-strip). MLX
 resumes a thought by rendering a fresh generation prompt with thinking ON and appending
-the trace after the opener (`_append_thinking_resume`, `<think>` families only; gemma
-channel / harmony refuse -- their parsers have no "already inside" state); the parser
-takes `resumes_thinking`. Preview = `provider.render_prompt()` (gguf `/apply-template`,
+the trace after the family's opener (`_append_thinking_resume`: `<think>\n`,
+`<|channel>thought\n`, `<|channel|>analysis<|message|>`); all three routing parsers take
+`resumes_thinking` / `initial_thinking` (v1.79.63). HISTORY thinking on MLX goes to the
+template the way THAT template takes it (`vlm_inputs.thinking_for_template`, keyed on
+`ModelTemplateInfo.reads_reasoning_content`): `reasoning_content` where the template reads
+it -- gemma-4's does, and renders it only for tool-call turns while STRIPPING channel
+markers from content; Qwen3.8's keeps every turn's by default (`preserve_thinking`) --
+reconstructed `<think>` tags for a marker template that does not, and NOTHING for a family
+with neither: baking `<think>` text into a gemma prompt was the v1.79.62 regression.
+Preview = `provider.render_prompt()` (gguf `/apply-template`,
 MLX the same `build_prompt` generation uses) behind `POST /v1/conversations/{id}/prompt`,
 which renders RESIDENT models only -- a preview must never load one.
 THINKING DEFAULT (v1.79.62): the cascade resolves request > models.toml `enable_thinking`
@@ -388,6 +395,13 @@ in git history; a contract test pins that `/v2` stays 404.)
 - Load-library selection is `MLXProvider.effective_loader` (`providers/common/loader_routing.py`), derived from the config's `modalities` + `loader` fields -- NOT the raw `vision` bool, which is now a derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader == "mlx-vlm")`. `loader="auto"` routes vision->mlx-vlm iff mlx-vlm registers the `model_type`, else mlx-lm (degrades only on POSITIVE non-support; an explicit `loader` forces the engine). Modality DESCRIPTION (`model_importer.detect_modalities`: config `*_config` blocks + `image_token_id`/`image_token_index`/`audio_token_id`...) is deliberately separate from this library-aware routing. The REPORTED `vision` capability derives from it too (v1.79.43, capabilities.py): the provider's image guard reads `is_vlm`, so reading the checkpoint's DECLARATION instead let `/v1/models` advertise images a 400 then refused -- one resolver for both surfaces is what makes them agree by construction. `modalities` still carries the declaration; description and served capability are different fields on purpose. It is ON THE WIRE as `effective_loader` on the `/v1/admin/models` row (v1.79.31), derived via `effective_loader_for_config` so it answers for UNLOADED models -- the provider ATTRIBUTE is null unless the model is resident, which is the opposite of what a live harness picking engine arms needs. Null for every non-mlx provider (gguf is one engine, named by `provider`). Because it reads each model dir's `config.json`, the two admin READ routes that build a model response are plain `def` (threadpool), not `async def`.
 - Embedding backbone: `mlx_lm.utils._get_classes(config_dict)` (private API, takes a dict) -> extract `.model`. Gemma needs `sqrt(hidden_size)` embedding scaling (gated on `model_type.startswith("gemma")`).
 - Prompt cache is a per-model SINGLE SLOT of immutable (state, meta_state) snapshots (v1.75.0, Q7 -- the radix tree is deleted): extension continues, divergence goes through mlx-lm's `trim_prompt_cache`, and non-trimmable layers (hybrid ArraysCache, rotated windows) re-prefill rather than slice -- hybrids are now CORRECT, not "limited". NEVER store or hand out live cache OBJECTS: arrays are immutable, objects are not, and a quarantined zombie generator keeps mutating its own (that was live-verified process-poisoning). See [docs/architecture/mlx_provider.md](./docs/architecture/mlx_provider.md) §4.2.
+- A LOGITS PROCESSOR RECEIVES `(tokens, logits)` WITH LOGITS SHAPED `(1, vocab)` -- mlx-lm
+  passes `logits[:, -1, :]`, batch axis kept. Index the VOCAB axis (`logits.shape[-1]`,
+  1-D scratch vectors that broadcast), never `zeros_like(logits).at[tokens]`: that scatters
+  along the size-1 batch axis, and MLX does not bounds-check a Metal scatter, so it is
+  silent memory corruption followed by a mid-generation Metal fault and a poisoned
+  process (v1.79.63, presence penalty, gemma-4-26B). Unit tests with 1-D logits stay
+  green against it; test the shape mlx-lm sends.
 - `mlx_lm.generate.GenerationResponse` is a non-slotted dataclass -- attach per-request metadata via `response.X = value` (`# type: ignore[attr-defined]`), read via `getattr`.
 - `mx.set_wired_limit(...)` is set at startup, but the per-generation `wired_limit()` CM is still needed for stream sync. Call `mx.reset_peak_memory()` at `run_generation` start to scope `mx.get_peak_memory()` per request.
 - Verify a library is actually broken before working around it.

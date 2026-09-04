@@ -24,7 +24,7 @@ from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenera
 from ..cache_defaults import resolve_cache_config
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
-from .common.vlm_inputs import _reconstruct_thinking
+from .common.vlm_inputs import thinking_for_template
 from .common.model_wrappers import wrap_language_model
 from .common.generation_core import generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
@@ -154,16 +154,16 @@ def _thinking_resume_opener(template_info) -> str | None:
     None when the family has no resumable block. Read off ModelTemplateInfo
     -- the same probe the reasoning parser is selected from, so the opener
     appended here is the one the parser will treat as already open.
-    Harmony's analysis channel is deliberately absent: its parser has no
-    'start inside the channel' state, and appending an opener the parser
-    does not know is open would misfile the whole trace as content.
+    All three served families since v1.79.63: the channel parsers take an
+    initial-thinking state now, so the opener appended here is one the
+    selected parser starts inside of.
     """
     if template_info is None:
         return None
     if getattr(template_info, "has_harmony_structure", False):
-        return None
+        return "<|channel|>analysis<|message|>"
     if getattr(template_info, "has_gemma_channel_structure", False):
-        return None  # GemmaChannelParser has no initial-thinking state either
+        return "<|channel>thought\n"
     if getattr(template_info, "has_thinking_markers", False):
         return "<think>\n"
     return None
@@ -374,7 +374,12 @@ class UnifiedTextStrategy:
             if isinstance(msg_dict.get('content'), list):
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
-            msg_dict = _reconstruct_thinking(msg_dict)
+            # Prior thinking, the way THIS template takes it: reasoning_content
+            # where the template reads it (gemma-4, Qwen3+), reconstructed
+            # <think> tags for a marker template that does not, nothing for a
+            # family that has neither (v1.79.63 -- before, every family got
+            # <think> text baked into content, gemma-4 included).
+            msg_dict = thinking_for_template(msg_dict, self.template_info)
             messages_for_template.append(msg_dict)
         return messages_for_template
 
@@ -545,8 +550,9 @@ class VLMVisionStrategy:
     MLX generation.
     """
 
-    def __init__(self, model_config=None):
+    def __init__(self, model_config=None, template_info=None):
         self.model_config = model_config or {}
+        self.template_info = template_info  # how history thinking is rendered
         self._batch_vision_processor = None
         self._cached_wrapper = None
         self._vision_cache = VisionFeatureCache(max_entries=20)
@@ -705,7 +711,7 @@ class VLMVisionStrategy:
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
             vlm_apply_chat_template, model=model, enable_thinking=enable_thinking,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=reasoning_effort, template_info=self.template_info,
         )
 
 
@@ -751,8 +757,9 @@ class DiffusionStrategy:
     see it. Parsers strip non-structural specials from routed text themselves.
     """
 
-    def __init__(self, model_config=None):
+    def __init__(self, model_config=None, template_info=None):
         self.model_config = model_config or {}
+        self.template_info = template_info
         self._batch_vision_processor = None
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
@@ -779,6 +786,7 @@ class DiffusionStrategy:
             vlm_apply_chat_template, model=model,
             enable_thinking=_resolve_enable_thinking(effective_request),
             reasoning_effort=effective_request.get("reasoning_effort"),
+            template_info=self.template_info,
         )
 
         inputs = vlm_prepare_inputs(
@@ -1150,13 +1158,15 @@ class MLXProvider(BaseProvider):
             template_info=getattr(self, "_template_info", None),
         )
         if self.is_vlm:
-            self._strategies['vision'] = VLMVisionStrategy(model_config=self.config)
+            self._strategies['vision'] = VLMVisionStrategy(
+                model_config=self.config, template_info=getattr(self, "_template_info", None))
         # Diffusion handles BOTH its text and vision requests -- the denoising
         # loop takes pixel_values directly, so there is no separate vision
         # split. 'text' stays registered regardless: warmup resolves its
         # generation model through UnifiedTextStrategy._get_generation_model.
         if self.is_diffusion:
-            self._strategies['diffusion'] = DiffusionStrategy(model_config=self.config)
+            self._strategies['diffusion'] = DiffusionStrategy(
+                model_config=self.config, template_info=getattr(self, "_template_info", None))
 
     def _detect_images_optimized(self, messages: List) -> bool:
         """Single-pass scan for images with early termination."""
@@ -1296,8 +1306,8 @@ class MLXProvider(BaseProvider):
                 if isinstance(msg_dict.get('content'), list):
                     text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                     msg_dict['content'] = ' '.join(text_parts)
-                # Reconstruct thinking tags for assistant messages with edited thinking
-                msg_dict = _reconstruct_thinking(msg_dict)
+                # Prior thinking, the way this template takes it (v1.79.63)
+                msg_dict = thinking_for_template(msg_dict, getattr(self, '_template_info', None))
                 messages_for_template.append(msg_dict)
 
             # Same continuation resolution as the single-request path

@@ -224,7 +224,9 @@ class PromptPreviewRequest(BaseModel):
     message_id: str | None = None
     user_content: str | list[dict] | None = None
     overrides: dict = Field(default_factory=dict)
-    # Unsaved editor text for the ANCHOR row (continue mode). Keys present
+    # Unsaved editor text overlaid on ONE stored row before the render: the
+    # row named by `message_id` (any mode -- a user turn being edited ahead
+    # of Save & Regenerate, say), else the continue anchor. Keys present
     # replace the stored value (null thinking = no thinking); absent = stored.
     edits: dict | None = None
 
@@ -477,7 +479,12 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
 
     def _release_claim(source: str):
         if _ACTIVE.get(conv_id) is run:
-            logger.warning(f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
+            # The stream's own finally is the NORMAL release -- every run ends
+            # there. It logged at WARNING for a year and made each completed
+            # generation look like a recovery; only the belt paths (watchdog,
+            # response cleanup, pre-stream failure) are worth a warning.
+            level = logging.DEBUG if source == "stream finally" else logging.WARNING
+            logger.log(level, f"[CONV-GEN {conv_id[:8]}] claim released by {source}")
             _ACTIVE.pop(conv_id, None)
 
     try:
@@ -671,6 +678,21 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
     caps = effective_capabilities(model_config)
 
     msgs: list[dict] = list(conv.get("messages") or [])
+    edits = dict(body.edits or {})
+    edited_id = edits.pop("message_id", None)
+
+    def overlay(row: dict) -> dict:
+        row = dict(row)
+        if "content" in edits:
+            row["content_blocks"] = [{"type": "text", "text": edits.get("content") or ""}]
+        if "thinking" in edits:
+            row["thinking"] = edits.get("thinking") or None
+        return row
+
+    if edited_id is not None:
+        if not any(m["id"] == edited_id for m in msgs):
+            raise HTTPException(status_code=404, detail="Edited message not found")
+        msgs = [overlay(m) if m["id"] == edited_id else m for m in msgs]
     continue_row: dict | None = None
     if body.mode == "append":
         if body.user_content is not None and body.user_content != "":
@@ -696,12 +718,9 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
                 raise HTTPException(status_code=400, detail=(
                     "Cannot regenerate the first message: nothing precedes it"))
         else:
-            anchor = dict(anchor)
-            edits = body.edits or {}
-            if "content" in edits:
-                anchor["content_blocks"] = [{"type": "text", "text": edits.get("content") or ""}]
-            if "thinking" in edits:
-                anchor["thinking"] = edits.get("thinking") or None
+            # No message_id in `edits` = the anchor is the edited row.
+            if edited_id is None:
+                anchor = overlay(anchor)
             prompt_rows = [m for m in msgs if m["position"] < anchor["position"]] + [anchor]
             continue_row = anchor
 

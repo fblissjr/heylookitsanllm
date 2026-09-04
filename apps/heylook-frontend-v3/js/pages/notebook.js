@@ -88,6 +88,11 @@ export default createPage({
     // lead the panel.
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
+      // The tri-state thinking control labels "Model default" with the
+      // server's answer, off the /v1/models row (v1.79.63).
+      modelDefaults: () => ({
+        enable_thinking: ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value)?.thinking_default ?? null,
+      }),
       samplers: 'enabled',
       scope: () => documentScopeNote('notebook', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],

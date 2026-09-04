@@ -33,8 +33,18 @@ def _apply_presence_penalty(logits: mx.array, tokens: mx.array, penalty: float) 
     All shapes are determined by vocab_size (fixed per model), so this
     is fully compilable with no recompilation across decode steps.
     """
-    counts = mx.zeros_like(logits)
-    counts = counts.at[tokens].add(1.0)
+    # Scatter along the VOCAB axis, whatever leads it. mlx-lm hands a logits
+    # processor ``logits[:, -1, :]`` -- shape ``(1, vocab)`` -- and the
+    # original ``zeros_like(logits).at[tokens]`` scattered along axis 0, whose
+    # size is 1: every token id past 0 was an out-of-bounds GPU write. MLX
+    # does not bounds-check a Metal scatter, so it corrupted memory until a
+    # command buffer faulted mid-generation ("victim of GPU error/recovery")
+    # and poisoned the process; gemma-4-26B on MLX reproduced it on the third
+    # or fourth token of any request carrying a presence penalty (2026-09-04),
+    # which is every thinking-on request through the thinking overlay. A
+    # 1-D presence vector broadcasts over any leading batch axis.
+    vocab = logits.shape[-1]
+    counts = mx.zeros((vocab,), dtype=logits.dtype).at[tokens].add(1.0)
     # Clamp to presence: 1.0 if seen at least once, 0.0 otherwise
     present = mx.minimum(counts, 1.0)
     return logits - penalty * present

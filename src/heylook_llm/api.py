@@ -495,6 +495,16 @@ def list_models(request: Request):
             capabilities = effective_capabilities(model_config)
             if capabilities:
                 model_entry["capabilities"] = capabilities
+            # What thinking resolves to with nothing said -- the cascade's
+            # own answer (samplers.thinking_default), the same one the admin
+            # row reports, so a page reading either list labels its "model
+            # default" choice with the value generation will use.
+            from heylook_llm.samplers import thinking_default as _thinking_default
+            cfg = model_config.config
+            resolved = (cfg.model_dump() if hasattr(cfg, "model_dump")
+                        else dict(cfg) if isinstance(cfg, dict) else {})
+            model_entry["thinking_default"] = _thinking_default(
+                resolved, thinking_capable="thinking" in capabilities)
 
         models_data.append(model_entry)
 

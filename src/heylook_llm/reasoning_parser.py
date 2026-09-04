@@ -226,11 +226,13 @@ class HarmonyChannelParser:
     handled by ``StripSpecials``, not here.
     """
 
-    def __init__(self):
-        self._buffer = ""
-        self._state = "preamble"
-        self._channel_name_buf = ""
-        self._current_channel: str | None = None
+    def __init__(self, initial_thinking: bool = False):
+        # ``initial_thinking``: the stream starts INSIDE the analysis channel
+        # (v1.79.63) -- the provider re-opened ``<|channel|>analysis<|message|>``
+        # and appended a partial trace to resume, so the first token is
+        # reasoning, not preamble.
+        self._initial_thinking = initial_thinking
+        self.reset()
 
     def process_chunk(
         self, text: str, token_id: int | None = None
@@ -245,9 +247,13 @@ class HarmonyChannelParser:
 
     def reset(self) -> None:
         self._buffer = ""
-        self._state = "preamble"
         self._channel_name_buf = ""
-        self._current_channel = None
+        if self._initial_thinking:
+            self._state = "in_message"
+            self._current_channel = "analysis"
+        else:
+            self._state = "preamble"
+            self._current_channel = None
 
     def _drain(self, final: bool) -> list[ParserDelta]:
         if final:
@@ -365,11 +371,12 @@ class GemmaChannelParser:
     content, ``thought`` routes to thinking.
     """
 
-    def __init__(self):
-        self._buffer = ""
-        self._state = "content"
-        self._channel_name_buf = ""
-        self._current_channel: str | None = None
+    def __init__(self, initial_thinking: bool = False):
+        # ``initial_thinking``: the stream starts INSIDE an open ``thought``
+        # channel (v1.79.63) -- the provider rendered ``<|channel>thought\n``
+        # plus a partial trace to resume it, so the first token is reasoning.
+        self._initial_thinking = initial_thinking
+        self.reset()
 
     def process_chunk(
         self, text: str, token_id: int | None = None
@@ -384,9 +391,13 @@ class GemmaChannelParser:
 
     def reset(self) -> None:
         self._buffer = ""
-        self._state = "content"
         self._channel_name_buf = ""
-        self._current_channel = None
+        if self._initial_thinking:
+            self._state = "in_body"
+            self._current_channel = "thought"
+        else:
+            self._state = "content"
+            self._current_channel = None
 
     def _drain(self, final: bool) -> list[ParserDelta]:
         if final:
@@ -557,9 +568,9 @@ def select_reasoning_parser(
     thinking and no content, so the provider re-opened the block and
     appended that thinking -- the model's first token continues the
     reasoning, and the parser must start in thinking state whatever the
-    template's prefill habit is. Only the ``<think>``-marker parser can be
-    armed this way; the channel parsers have no start state and a provider
-    refuses the resume for them rather than misfile the whole trace.
+    template's prefill habit is. All three routing parsers take it (the
+    channel parsers since v1.79.63): harmony starts inside ``analysis``,
+    gemma inside ``thought``, the marker parser inside ``<think>``.
 
     Declared specials are stripped by ONE wrapper (``StripSpecials``) that
     every routing parser composes -- a model that declares none gets the
@@ -582,9 +593,9 @@ def select_reasoning_parser(
 
     parser: ReasoningParser
     if getattr(template_info, "has_harmony_structure", False):
-        parser = HarmonyChannelParser()
+        parser = HarmonyChannelParser(initial_thinking=resumes_thinking)
     elif getattr(template_info, "has_gemma_channel_structure", False):
-        parser = GemmaChannelParser()
+        parser = GemmaChannelParser(initial_thinking=resumes_thinking)
     elif getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
         parser = HybridThinkingParser(

@@ -666,3 +666,19 @@ class TestStopTokenValidation:
         info = read_template_info(tmp_path, source="jinja")
         assert "<turn|>" in info.chat_template
         assert info.template_source == "jinja"
+
+
+class TestReadsReasoningContent:
+    """v1.79.63: whether the template reads `reasoning_content` decides how a
+    history message's thinking is handed over (see vlm_inputs.thinking_for_template)."""
+
+    def test_probe_on_and_off(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+        reads = ("{% for m in messages %}{% if m.reasoning_content %}<think>{{ m.reasoning_content }}"
+                 "</think>{% endif %}{{ m.content }}{% endfor %}")
+        _write_model_dir(tmp_path, jinja=reads, tokenizer_config=_HARMONY_TOKENIZER_CONFIG)
+        assert read_template_info(tmp_path, source=None).reads_reasoning_content is True
+        other = tmp_path / "other"; other.mkdir()
+        _write_model_dir(other, jinja="{% for m in messages %}{{ m.content }}{% endfor %}",
+                         tokenizer_config=_HARMONY_TOKENIZER_CONFIG)
+        assert read_template_info(other, source=None).reads_reasoning_content is False

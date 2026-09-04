@@ -52,6 +52,24 @@ class TestPresencePenaltyProcessor:
         # Token 5 should be penalized exactly once (-2.0, not -10.0)
         assert result.tolist()[5] == pytest.approx(-2.0)
 
+    def test_mlx_lm_logits_shape_is_penalized_on_the_vocab_axis(self):
+        """mlx-lm hands processors ``logits[:, -1, :]`` -- shape (1, vocab).
+        The scatter used to run along axis 0 (size 1), so every token id past
+        0 was an out-of-bounds GPU write: memory corruption, then a Metal
+        fault mid-generation, then a poisoned process (gemma-4-26B, 2026-09-04).
+        The 1-D tests above never saw it. Pin the real shape."""
+        proc = make_presence_penalty_processor(1.0)
+        tokens = mx.array([5, 10])
+        logits = mx.zeros((1, 20))
+        result = proc(tokens, logits)
+        assert result.shape == (1, 20)
+        row = result.tolist()[0]
+        assert row[5] == pytest.approx(-1.0) and row[10] == pytest.approx(-1.0)
+        assert row[0] == pytest.approx(0.0) and row[19] == pytest.approx(0.0)
+        # and the dtype the model produces survives the penalty
+        half = proc(tokens, mx.zeros((1, 20), dtype=mx.float16))
+        assert half.dtype == mx.float16
+
     def test_penalty_value_scales(self):
         proc = make_presence_penalty_processor(0.5)
         tokens = mx.array([3])

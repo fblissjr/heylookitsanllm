@@ -55,10 +55,17 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         if isinstance(msg.content, str):
             chat_messages.append(ChatMessage(role=msg.role, content=msg.content))
         else:
-            # Convert content blocks to OpenAI content_parts
+            # Convert content blocks to OpenAI content_parts. Thinking blocks
+            # (v1.79.63) leave the content list for ChatMessage.thinking --
+            # the providers hand that to the template as reasoning, which is
+            # what a replayed Anthropic thinking block means.
             content_parts = []
+            thinking_parts: List[str] = []
             for block in msg.content:
-                if isinstance(block, TextBlock):
+                if isinstance(block, ThinkingBlock):
+                    if block.thinking:
+                        thinking_parts.append(block.thinking)
+                elif isinstance(block, TextBlock):
                     content_parts.append({"type": "text", "text": block.text})
                 elif isinstance(block, ImageBlock):
                     if block.source_type == "base64" and block.data:
@@ -87,7 +94,10 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
                         "type": "input_audio",
                         "input_audio": input_audio,
                     })
-            chat_messages.append(ChatMessage(role=msg.role, content=content_parts))
+            chat_messages.append(ChatMessage(
+                role=msg.role, content=content_parts,
+                thinking=("".join(thinking_parts) or None) if msg.role == "assistant" else None,
+            ))
 
     # Map stream_options
     stream_options = None

@@ -894,3 +894,56 @@ class TestParserInvariants:
                 content, thinking = _collect(self._parser(kind), self._splits(text, rng))
                 assert content == text, f"[{kind}] lost text: {text!r} -> {content!r}"
                 assert thinking == ""
+
+
+class TestChannelParsersResumeInsideThinking:
+    """v1.79.63: a mid-thought resume re-opens the channel in the PROMPT and
+    appends the partial trace, so the stream's first token is reasoning.
+    Both channel parsers take `initial_thinking` for it; reset() keeps it."""
+
+    def test_gemma_starts_inside_thought(self):
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+        parser = GemmaChannelParser(initial_thinking=True)
+        content, thinking = _collect(parser, [" and so on.\n<channel|>The answer."])
+        assert thinking == " and so on.\n"
+        assert content == "The answer."
+        parser.reset()
+        content, thinking = _collect(parser, ["more<channel|>x"])
+        assert (thinking, content) == ("more", "x")
+
+    def test_gemma_default_still_starts_in_content(self):
+        from heylook_llm.reasoning_parser import GemmaChannelParser
+        content, thinking = _collect(GemmaChannelParser(), ["plain text"])
+        assert (content, thinking) == ("plain text", "")
+
+    def test_harmony_starts_inside_analysis(self):
+        from heylook_llm.reasoning_parser import HarmonyChannelParser
+        parser = HarmonyChannelParser(initial_thinking=True)
+        content, thinking = _collect(parser, [
+            " keep reasoning<|end|><|start|>assistant<|channel|>final<|message|>Done.<|return|>"])
+        assert thinking == " keep reasoning"
+        assert content == "Done."
+
+    def test_factory_arms_the_channel_parsers(self):
+        from heylook_llm.reasoning_parser import (
+            GemmaChannelParser, HarmonyChannelParser, select_reasoning_parser)
+
+        class Gemma:
+            has_harmony_structure = False
+            has_gemma_channel_structure = True
+            has_thinking_markers = False
+            prefills_thinking = False
+            special_tokens = frozenset()
+
+        class Harmony(Gemma):
+            has_harmony_structure = True
+            has_gemma_channel_structure = False
+
+        g = select_reasoning_parser(Gemma(), thinking_enabled=True, continuing=True,
+                                    resumes_thinking=True)
+        assert isinstance(g, GemmaChannelParser)
+        assert _collect(g, ["t<channel|>c"]) == ("c", "t")
+        h = select_reasoning_parser(Harmony(), thinking_enabled=True, continuing=True,
+                                    resumes_thinking=True)
+        assert isinstance(h, HarmonyChannelParser)
+        assert _collect(h, ["t<|end|>"]) == ("", "t")

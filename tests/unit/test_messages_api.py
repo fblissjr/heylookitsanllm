@@ -55,6 +55,34 @@ class TestToRequestConversion:
         assert chat_req.messages[0].role == "system"
         assert chat_req.messages[0].content == "You are helpful."
 
+    def test_replayed_thinking_blocks_become_message_thinking(self):
+        # v1.79.63: an Anthropic-shaped client replays the assistant's
+        # thinking blocks in history (its own tool loop requires it); this
+        # used to 422 on the first one. They become ChatMessage.thinking.
+        from heylook_llm.schema.content_blocks import ThinkingBlock, TextBlock
+        req = MessageCreateRequest(
+            model="test",
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content=[
+                    ThinkingBlock(thinking="so far"), TextBlock(text="answer")]),
+                Message(role="user", content="next"),
+            ],
+        )
+        chat_req = to_chat_request(req)
+        assistant = chat_req.messages[1]
+        assert assistant.thinking == "so far"
+        assert [p.type for p in assistant.content] == ["text"]
+        # And from raw JSON, the way a client sends it (spelled `thinking`).
+        raw = MessageCreateRequest.model_validate({
+            "model": "test",
+            "messages": [{"role": "user", "content": "q"},
+                         {"role": "assistant", "content": [
+                             {"type": "thinking", "thinking": "partial"}]}],
+        })
+        last = to_chat_request(raw).messages[-1]
+        assert last.thinking == "partial" and last.content == []
+
     def test_with_thinking_enabled(self):
         req = MessageCreateRequest(
             model="test",

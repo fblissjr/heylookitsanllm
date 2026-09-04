@@ -15,6 +15,36 @@ from typing import List, Tuple
 from PIL import Image
 
 
+def thinking_for_template(msg_dict: dict, template_info=None) -> dict:
+    """Hand an assistant message's ``thinking`` to the chat template the way
+    THIS template can take it (v1.79.63):
+
+    - the template reads ``reasoning_content`` -> pass it under that key and
+      let the template render (or drop) it: Qwen3.8 keeps every turn's
+      reasoning, gemma-4 only tool-call turns' and strips channel markers
+      from content;
+    - a ``<think>``-marker template that does not -> reconstruct the tags
+      into content (the pre-v1.79.63 behaviour, and still right for Qwen3);
+    - anything else -> drop it. Baking ``<think>`` text into a gemma or
+      harmony prompt is noise the model never emitted.
+
+    ``template_info=None`` (no probe available) keeps the old reconstruction,
+    so the OpenAI-compatible path behaves as it always did. The ``thinking``
+    key never reaches the template either way.
+    """
+    thinking = msg_dict.get('thinking')
+    if not thinking or msg_dict.get('role') != 'assistant':
+        msg_dict.pop('thinking', None)
+        return msg_dict
+    if template_info is None or getattr(template_info, 'has_thinking_markers', False) \
+            and not getattr(template_info, 'reads_reasoning_content', False):
+        return _reconstruct_thinking(msg_dict)
+    msg_dict.pop('thinking', None)
+    if getattr(template_info, 'reads_reasoning_content', False):
+        msg_dict['reasoning_content'] = thinking
+    return msg_dict
+
+
 def _reconstruct_thinking(msg_dict: dict) -> dict:
     """Reconstruct model-specific thinking tags in assistant message content.
 
@@ -39,6 +69,7 @@ def prepare_vlm_inputs_parallel(
     model=None,
     enable_thinking=None,
     reasoning_effort=None,
+    template_info=None,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
@@ -91,14 +122,14 @@ def prepare_vlm_inputs_parallel(
             # Combine text parts
             combined_content = " ".join(text_parts) if text_parts else ""
             msg_dict = {"role": msg.role, "content": combined_content}
-            # Reconstruct thinking for assistant messages
+            # Prior thinking, the way this template takes it (see helper)
             if hasattr(msg, 'thinking') and msg.thinking:
-                msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)
             text_messages.append(msg_dict)
         elif isinstance(content, str):
             msg_dict = {"role": msg.role, "content": content}
             if hasattr(msg, 'thinking') and msg.thinking:
-                msg_dict = _reconstruct_thinking({**msg_dict, 'thinking': msg.thinking})
+                msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)
             text_messages.append(msg_dict)
 
     # Load all images in parallel
