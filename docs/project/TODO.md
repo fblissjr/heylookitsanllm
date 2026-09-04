@@ -243,8 +243,13 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 Carried here so they outlive the `CURRENT.md` handoff block, which is
 rewritten every session. Two of the three closed on 2026-08-30.
 
-- [ ] **Rewrite `tests/e2e/suites/chat.mjs` around where chat state actually
-  lives** (P2): the suite was RUN on 2026-08-30 and is still 33/46, so the
+- [x] **Rewrite `tests/e2e/suites/chat.mjs` around where chat state actually
+  lives** (P2) -- CLOSED 2026-09-04 without the rewrite: 48/48 on gemma-4-26B
+  MLX and Qwen3.8 gguf (`91725c0`, `10b1124`). The localStorage seed is fine
+  once `enable_thinking: false` rides in it; the rest were stale expectations
+  (decorated preset labels, drift wording, disconnect policy, row picking) and
+  one real defect (sidebar row buttons ate the title). Original text kept:
+  the suite was RUN on 2026-08-30 and is still 33/46, so the
   v1.79.41 "the two selector rots were the whole static gap" claim is
   refuted. The real cause is architectural: `tests/e2e/lib/browser.mjs` seeds
   sampler settings into `localStorage` and expects the chat settings panel to
