@@ -40,8 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renders a preview with the draft and highlighted markers; and a full
   stop-mid-thought, Preview prompt, Save & Continue round trip asserts the
   preview ends inside the open thinking block and the resumed row carries
-  the stopped prefix exactly once. Run on gemma-4-26B-A4B (MLX) and on the
-  reported model, Qwen3.8-27B (gguf).
+  the stopped prefix exactly once. 48/48 on gemma-4-26B-A4B (MLX) and on
+  the reported model, Qwen3.8-27B (gguf), through system Chrome. The
+  streaming-cadence guard reads the probe's usage and accepts one-token
+  chunks at a slow model's own pace (Qwen3.8's ~52ms gaps false-failed it).
 
 ## [1.79.63]
 

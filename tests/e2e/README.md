@@ -156,10 +156,12 @@ after a close will flake on the transition windows.
   measures client-observed inter-chunk gaps via an in-page fetch — the Phase 1
   delivery fix is invisible to server-side telemetry, so only a client timing
   the stream can catch a regression back to the ~100ms poll ceiling. It asserts
-  median gap < 50ms and > 30 tok/s, which needs a FAST model. The default MoE
-  passes with margin (~11ms, ~88/s); a natively-slow dense model (e.g. the 31B
-  gemma at ~10 tok/s) would false-fail — override `E2E_MODEL` only with a fast
-  model, or expect this one check to flag. It is also sensitive to **machine
+  median gap < 50ms and > 30 tok/s, which describe a FAST model. The default MoE
+  passes with margin (~11ms, ~88/s). Since v1.79.64 the guard also reads the
+  probe's `usage`: when chunks carry ~1 token each, delivery is per-token by
+  construction and the model's own pace is accepted (a 27B Q8 gguf at ~19 tok/s
+  reads 52ms gaps and is not quantized); what it still catches is multi-token
+  chunks at ~100ms spacing. It is also sensitive to **machine
   load**: a Mac Studio thermally/memory-throttled by many back-to-back 26B E2E
   spawns decodes far slower (200–300ms gaps observed), which false-flags this one
   check even though delivery isn't regressed. If it's the *only* failure, re-run

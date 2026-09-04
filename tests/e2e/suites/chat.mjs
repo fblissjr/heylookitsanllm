@@ -296,11 +296,27 @@ export async function runChatSuite({ suite, ctx, config }) {
     const c = await measureStreamCadence(page, config.model, 64);
     assert(c.ok, `probe request failed (status=${c.status})`);
     assert(c.chunks >= CADENCE_MIN_CHUNKS, `too few content chunks to measure (${c.chunks})`);
+    // The quantization SIGNATURE is chunks that carry several tokens each at
+    // ~100ms spacing. A natively slow model (a 27B Q8 on llama-server decodes
+    // ~19 tok/s, one token every ~52ms) sends ONE token per chunk at the
+    // model's own pace, which the gap/rate thresholds alone cannot tell from
+    // quantization (v1.79.64: Qwen3.8 read 52ms and false-failed). So when
+    // usage shows ~1 token per chunk, delivery is per-token by construction
+    // and the pace is the model's; the thresholds still bite whenever chunks
+    // carry more than one token.
+    const perChunk = c.usage?.output_tokens && c.chunks ? c.usage.output_tokens / c.chunks : null;
+    const perToken = perChunk != null && perChunk <= 1.5;
+    if (perToken && (c.median >= CADENCE_MAX_MEDIAN_MS || c.rate <= CADENCE_MIN_RATE)) {
+      console.log(`      cadence: ${c.chunks} chunks, median gap ${c.median.toFixed(1)}ms, ${c.rate.toFixed(1)}/s -- `
+        + `${perChunk.toFixed(2)} tok/chunk: per-token delivery at the model's own pace (slow model, not quantized)`);
+      return;
+    }
     assert(c.median != null && c.median < CADENCE_MAX_MEDIAN_MS,
       `median inter-chunk gap ${c.median?.toFixed(1)}ms >= ${CADENCE_MAX_MEDIAN_MS}ms (poll-quantization signature is ~100ms)`);
     assert(c.rate > CADENCE_MIN_RATE,
       `client decode rate ${c.rate?.toFixed(1)}/s <= ${CADENCE_MIN_RATE}/s (old poll ceiling was ~10/s)`);
-    console.log(`      cadence: ${c.chunks} chunks, median gap ${c.median.toFixed(1)}ms, ${c.rate.toFixed(1)}/s`);
+    console.log(`      cadence: ${c.chunks} chunks, median gap ${c.median.toFixed(1)}ms, ${c.rate.toFixed(1)}/s`
+      + (perChunk != null ? `, ${perChunk.toFixed(2)} tok/chunk` : ''));
   });
 
   await suite.check('conversation appears in sidebar with derived title', async () => {
