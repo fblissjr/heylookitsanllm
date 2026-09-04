@@ -422,6 +422,21 @@ const ICON_IMAGE =
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>'
   + '<path d="m21 15-5-5L5 21"/></svg>';
+// Sidebar row actions (v1.79.64): pencil, two sheets, bin.
+const ICON_RENAME =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const ICON_COPY =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<rect x="9" y="9" width="13" height="13" rx="2"/>'
+  + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_TRASH =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>'
+  + '<path d="M10 11v6"/><path d="M14 11v6"/></svg>';
 // An eye: "show me what the model sees".
 const ICON_PROMPT =
   '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
@@ -1091,7 +1106,19 @@ function renderConvList(ctx) {
     });
     // dblclick is desktop-only (double-tap zooms on iOS); a reveal-on-hover/touch
     // button gives touch a rename path. Same visibility grammar as Del.
-    const ren = createEl('button', { class: 'btn btn--sm btn--ghost conv-item__edit', title: 'Rename' }, ['Ren']);
+    //
+    // ICON buttons (v1.79.64), not "Ren"/"Copy"/"Del" text: three text
+    // buttons took 128px of a 223px row and left the TITLE 67px -- the
+    // selectable part of a conversation row was a third of it, and a click
+    // at the row's centre landed on Rename (measured in Chrome; it is also
+    // why two E2E checks that clicked a row by its centre entered rename
+    // mode). They stay visibility-hidden until hover so the layout never
+    // shifts; aria-label + title carry the name (DESIGN.md §7).
+    const ren = createEl('button', {
+      class: 'btn btn--icon btn--ghost conv-item__edit',
+      title: 'Rename', 'aria-label': 'Rename conversation',
+    });
+    ren.innerHTML = ICON_RENAME;
     ren.addEventListener('click', (e) => {
       e.stopPropagation();
       startRename(ctx, conv, title);
@@ -1101,16 +1128,23 @@ function renderConvList(ctx) {
     // inconvenience, not safety -- and it sat immediately beside Del, whose arm
     // does guard a loss, teaching that these buttons ask twice as a matter of
     // course. The outcome is disclosed instead ("Conversation cloned.").
-    const copy = createEl('button',
-      { class: 'btn btn--sm btn--ghost conv-item__clone', title: 'Clone conversation' }, ['Copy']);
+    const copy = createEl('button', {
+      class: 'btn btn--icon btn--ghost conv-item__clone',
+      title: 'Clone conversation', 'aria-label': 'Clone conversation',
+    });
+    copy.innerHTML = ICON_COPY;
     copy.addEventListener('click', (e) => {
       e.stopPropagation();   // armedConfirm used to do this; the row is clickable
       cloneConversation(ctx, conv.id);
     });
-    const del = armedConfirm(
-      createEl('button', { class: 'btn btn--sm btn--ghost conv-item__delete' }, ['Del']),
-      () => deleteConversation(ctx, conv.id),
-    );
+    const delBtn = createEl('button', {
+      class: 'btn btn--icon btn--ghost conv-item__delete',
+      title: 'Delete conversation', 'aria-label': 'Delete conversation',
+    });
+    delBtn.innerHTML = ICON_TRASH;
+    // armedConfirm relabels to "Confirm?" while armed and restores the icon
+    // markup on disarm (utils.js keeps innerHTML, not textContent).
+    const del = armedConfirm(delBtn, () => deleteConversation(ctx, conv.id));
     const item = createEl('div', {
       class: `conv-item${conv.id === s.activeId ? ' conv-item--active' : ''}`,
     }, [title, ren, copy, del]);

@@ -180,7 +180,10 @@ export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
 // bar could have seen it. `when` alone cannot catch it either -- it answers
 // "is something at stake", which was true both times, for different reasons.
 export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, target = null) {
-  const original = btn.textContent;
+  // innerHTML, not textContent: an ICON button (static SVG markup we author,
+  // e.g. the sidebar's Del) must come back as the icon after a disarm, not
+  // as an empty button. The armed label itself is still plain text.
+  const original = btn.innerHTML;
   let armed = false;
   let timer = null;
   let armedFor = null; // what the pending arm is a promise ABOUT
@@ -221,7 +224,7 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, 
     armed = false;
     armedFor = null;
     btn.classList.remove('btn--armed');
-    btn.textContent = original;
+    btn.innerHTML = original;
   }
   btn.disarm = disarm;
   return btn;

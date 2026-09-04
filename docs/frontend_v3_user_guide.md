@@ -392,12 +392,6 @@ the UI could.
 **The prompt preview omits images on MLX.** The vision path renders through
 mlx-vlm and has no text-only render; the preview shows the text template.
 
-**A resumed thought can lose the space at the seam.** Both engines prefill
-the thinking box verbatim and the model picks the next token itself, so a
-box ending mid-phrase ("First I") sometimes continues without a space
-("Ineed"). Ending the box on a complete word, or with a trailing space, gives
-the model a cleaner seam.
-
 ### Closed
 
 Kept as a record rather than deleted, so this section reads as a ledger.
@@ -412,7 +406,8 @@ Kept as a record rather than deleted, so this section reads as a ledger.
   closed in v1.79.62 by Preview prompt.
 - *Save & Continue on a reply stopped mid-thought started a second thought* —
   closed in v1.79.62; it resumes the first. Gemma-channel and harmony models
-  on MLX joined in v1.79.63.
+  on MLX joined in v1.79.63, and the missing space at the seam ("Ineed") went
+  in v1.79.64 — it was a first-token strip on the MLX path, not the model.
 
 - *The sampler panel does not say whose settings it is showing* — closed in
   v1.79.25 by the scope line under the *Sampling* heading, and by renaming

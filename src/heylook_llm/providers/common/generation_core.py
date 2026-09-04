@@ -22,6 +22,7 @@ Error handling:
 """
 
 import logging
+from contextlib import contextmanager
 import threading
 from collections import deque
 from typing import Any, Generator
@@ -233,6 +234,49 @@ def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_mana
     return prompt_cache, tokens_to_process, generation_cache
 
 
+@contextmanager
+def continuation_detokenizer(tokenizer, continuing: bool):
+    """Keep the FIRST token's leading space when ``continuing`` (v1.79.64).
+
+    mlx-lm's streaming detokenizers drop a leading space on the first text
+    they flush (SPM: ``trim_space`` while ``self.text`` is empty; BPE:
+    ``_maybe_trim_space`` on an empty buffer). Right for a fresh turn, where
+    the space after the role marker is an artifact -- wrong for a continuation,
+    where the model's first token completes a prefilled "First I" and the
+    space in " need" is real. ``TokenizerWrapper.detokenizer`` builds a fresh
+    instance per access, and ``stream_generate`` accesses it exactly once
+    and calls ``reset()`` on it, so the class factory is swapped for the
+    duration of one generation (the process-global gate serialises them)
+    with one whose ``reset`` seeds a one-char sentinel into ``text`` and
+    advances ``offset`` past it: every trim test reads a non-empty buffer,
+    every ``last_segment`` starts after the sentinel, and no caller ever
+    sees it. Restored in ``finally`` whatever happens to the generator.
+    """
+    factory_attr = "_detokenizer_class"
+    original = getattr(tokenizer, factory_attr, None)
+    if not continuing or original is None:
+        yield
+        return
+
+    def seeded(tok):
+        detok = original(tok)
+        base_reset = detok.reset
+
+        def reset():
+            base_reset()
+            detok.text = "\x00"
+            detok.offset = 1
+
+        detok.reset = reset
+        return detok
+
+    setattr(tokenizer, factory_attr, seeded)
+    try:
+        yield
+    finally:
+        setattr(tokenizer, factory_attr, original)
+
+
 def generate_text(
     model,
     tokenizer,
@@ -242,6 +286,7 @@ def generate_text(
     draft_model=None,
     cache_manager=None,
     abort_event=None,
+    continuing: bool = False,
 ) -> Generator:
     """High-level entry point for text-based generation.
 
@@ -259,6 +304,7 @@ def generate_text(
         sampler, processors,
         model_id=model_id, draft_model=draft_model,
         cache_manager=cache_manager, abort_event=abort_event,
+        continuing=continuing,
     )
 
 
@@ -274,6 +320,7 @@ def run_generation(
     cache_manager=None,
     abort_event=None,
     pre_filled_cache=None,
+    continuing: bool = False,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
@@ -397,7 +444,8 @@ def run_generation(
         extra_generate_kwargs['prefill_step_size'] = prefill_step_size
 
     try:
-        with wired_limit(model, [generation_stream]):
+        with wired_limit(model, [generation_stream]), \
+                continuation_detokenizer(tokenizer, continuing):
             first_token = True
             for response in lm_stream_generate(
                 model=model,
@@ -435,11 +483,13 @@ def run_generation(
                     chunk.draft_tokens = draft_total
                     chunk.draft_accepted = draft_accepted
 
-                # Leading space cleanup (first token only, skip for pre-filled
-                # cache where continuation starts mid-sequence) + cache stats
-                # snapshot (first chunk only; ChunkTelemetry latches them).
+                # Leading space cleanup (first token only; skipped for a
+                # pre-filled vision cache AND for a continuation, where the
+                # first token completes prefilled text and its space is real
+                # -- see continuation_detokenizer) + cache stats snapshot
+                # (first chunk only; ChunkTelemetry latches them).
                 if first_token:
-                    if pre_filled_cache is None and chunk.text.startswith(' '):
+                    if pre_filled_cache is None and not continuing and chunk.text.startswith(' '):
                         chunk.text = chunk.text.lstrip()
                     chunk.cached_tokens = cached_count
                     chunk.kv_cache_bytes = kv_cache_bytes_snapshot

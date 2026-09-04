@@ -364,6 +364,9 @@ class UnifiedTextStrategy:
             draft_model=self.draft_model,
             cache_manager=self.cache_manager,
             abort_event=abort_event,
+            # Both continuation shapes: a content prefill and a mid-thought
+            # resume. The first token completes prefilled text either way.
+            continuing=request.is_continuation(),
         )
 
     def _prepare_messages(self, messages) -> list[dict]:

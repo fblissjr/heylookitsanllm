@@ -141,3 +141,72 @@ class TestThinkingResume:
         content, thinking = parse_reasoning(" and on</think>answer", parser)
         assert thinking == " and on"
         assert content == "answer"
+
+
+class TestContinuationKeepsTheSeamSpace:
+    """v1.79.64: mlx-lm's streaming detokenizers drop a leading space on the
+    first text they flush while their buffer is empty -- right for a fresh
+    turn, wrong for a continuation, where the first token completes "First I"
+    and the space in " need" is real. The context manager seeds the buffer
+    so the trim never fires, and restores the factory afterwards."""
+
+    class _SpmLike:
+        # The shape of mlx-lm's SPMStreamingDetokenizer trim: a leading space
+        # is dropped only while `text` is empty.
+        def __init__(self, tok):
+            self.reset()
+
+        def reset(self):
+            self.text = ""
+            self.offset = 0
+            self.tokens = []
+
+        def add_token(self, piece):
+            if not self.text and piece.startswith(" "):
+                piece = piece[1:]
+            self.text += piece
+
+        @property
+        def last_segment(self):
+            seg = self.text[self.offset:]
+            self.offset = len(self.text)
+            return seg
+
+    class _Wrapper:
+        def __init__(self, cls):
+            self._detokenizer_class = cls
+
+        @property
+        def detokenizer(self):
+            return self._detokenizer_class(self)
+
+    def _run(self, continuing):
+        from heylook_llm.providers.common.generation_core import continuation_detokenizer
+        tok = self._Wrapper(self._SpmLike)
+        with continuation_detokenizer(tok, continuing):
+            d = tok.detokenizer   # what stream_generate does, once
+            d.reset()
+            d.add_token(" need")
+            first = d.last_segment
+            d.add_token(" the")
+            second = d.last_segment
+        return tok, first, second
+
+    def test_fresh_turn_still_trims(self):
+        tok, first, second = self._run(continuing=False)
+        assert (first, second) == ("need", " the")
+        assert tok._detokenizer_class is self._SpmLike
+
+    def test_continuation_keeps_the_first_space_and_restores_the_factory(self):
+        tok, first, second = self._run(continuing=True)
+        assert (first, second) == (" need", " the")
+        assert "\x00" not in first + second
+        assert tok._detokenizer_class is self._SpmLike  # restored in finally
+
+    def test_restored_even_when_the_generation_raises(self):
+        from heylook_llm.providers.common.generation_core import continuation_detokenizer
+        tok = self._Wrapper(self._SpmLike)
+        with pytest.raises(RuntimeError):
+            with continuation_detokenizer(tok, True):
+                raise RuntimeError("mid-generation")
+        assert tok._detokenizer_class is self._SpmLike

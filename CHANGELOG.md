@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.64]
+
+### Fixed
+
+- **A continued reply lost the space at the seam on MLX** ("First I" +
+  "need" -> "First Ineed"). Not the model: two first-token strips, both right
+  for a fresh turn and wrong for a continuation. mlx-lm's streaming
+  detokenizers drop a leading space while their buffer is empty (SPM's
+  `trim_space`, BPE's `_maybe_trim_space`), and `run_generation` lstripped
+  the first chunk on top. For a continuation (content prefill or a
+  mid-thought resume) the first token completes prefilled text and its space
+  is real. `generation_core.continuation_detokenizer` swaps the wrapper's
+  detokenizer factory for one generation with one whose `reset()` seeds a
+  one-char sentinel past which every segment starts, so no trim test ever
+  sees an empty buffer; the chunk lstrip is skipped when continuing. gguf
+  never had the problem (llama-server echoes the prefill verbatim). Live:
+  the first resumed delta is now " need".
+
+- **A conversation row was mostly buttons.** The sidebar's Ren / Copy / Del
+  text buttons took 128px of a 223px row and left the title 67px -- a click
+  at the row's centre landed on Rename (measured in Chrome; two E2E checks
+  that clicked rows by their centre had been entering rename mode). They
+  are compact icon buttons now (pencil, sheets, bin; aria-label + title;
+  44px on touch), still revealed on hover, so the title keeps most of the
+  row. `armedConfirm` restores a button's markup on disarm rather than its
+  text, so an armed icon button comes back as the icon.
+
+### Added
+
+- **Browser E2E (chat suite) covers the new surfaces through the real UI**:
+  the thinking button reflects the model default and writes an explicit
+  value (the old check assumed unset meant off); the composer eye button
+  renders a preview with the draft and highlighted markers; and a full
+  stop-mid-thought, Preview prompt, Save & Continue round trip asserts the
+  preview ends inside the open thinking block and the resumed row carries
+  the stopped prefix exactly once. Run on gemma-4-26B-A4B (MLX) and on the
+  reported model, Qwen3.8-27B (gguf).
+
 ## [1.79.63]
 
 The loose ends of v1.79.62, tied off -- and, found while tying them, the
@@ -24,9 +62,7 @@ MLX presence penalty was writing out of bounds on the GPU.
   thinking off + `presence_penalty: 1.5` faulted; thinking on + `0` never
   did. The penalty only runs when set -- and the thinking sampler overlay
   sets 1.5 whenever thinking is on -- so "thinking on MLX gemma = garbage
-  and a Metal fault" was this, not the model. (The 2026-08 verdict that the
-  heretic gemma quants were "abliteration-damaged on thinking" rests on the
-  same symptom and should be re-read in that light.) The scatter now runs
+  and a Metal fault" was this, not the model. The scatter now runs
   on the vocab axis with a 1-D presence vector; the unit tests only ever
   used 1-D logits, which is why they were green, and now pin the real shape.
 - **MLX rendered `<think>` text into gemma-4 prompts.** With thinking now

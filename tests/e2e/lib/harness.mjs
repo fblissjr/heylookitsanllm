@@ -92,7 +92,13 @@ export class Suite {
       const ms = Date.now() - start;
       this.results.push({ name, ok: false, ms, error: err });
       console.log(`  ${RED}✗ ${name}${RESET} ${DIM}(${ms}ms)${RESET}`);
-      console.log(`    ${RED}${err.message}${RESET}`);
+      // A message-less error (a puppeteer protocol/target error, an assert
+      // without text) printed a blank line and left nothing to chase; show
+      // the top of the stack instead.
+      const detail = err.message?.trim()
+        ? err.message
+        : `${err.name ?? 'Error'} (no message)\n${(err.stack ?? '').split('\n').slice(0, 4).join('\n')}`;
+      console.log(`    ${RED}${detail}${RESET}`);
     }
   }
 

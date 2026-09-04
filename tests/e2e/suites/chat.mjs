@@ -512,14 +512,20 @@ export async function runChatSuite({ suite, ctx, config }) {
     // The contract: a phone locking mid-stream loses nothing. No Stop is
     // pressed -- the fetch dies with the page (reload), the server notices
     // the disconnect, and its DETACHED task persists whatever was generated.
+    // Since v1.79.26 the run OUTLIVES the response: the reload ends the
+    // subscription, the server task runs to completion and commits the
+    // WHOLE answer, and the reloaded page shows it generating until then.
+    // So the cap is the stop-test one, not 4000 -- large enough to still
+    // be streaming when the reload lands, small enough that the run
+    // finishes inside this check's window instead of 45s later.
     const convId = await newFreshConversation(page);
     await openDrawer(page);
-    await setSettingsInput(page, 'Max tokens', '4000');
+    await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await closeDrawer(page);
-    await waitFor(async () => page.evaluate(async (id) => {
+    await waitFor(async () => page.evaluate(async (id, cap) => {
       const conv = await (await fetch(`/v1/conversations/${id}`)).json();
-      return (conv.params ?? {}).max_tokens === 4000;
-    }, convId), { message: 'max_tokens params PUT never landed server-side' });
+      return (conv.params ?? {}).max_tokens === cap;
+    }, convId, STOP_TEST_MAX_TOKENS), { message: 'max_tokens params PUT never landed server-side' });
     await sendText(page, 'Write a long detailed story about a lighthouse.');
     await waitFor(async () => {
       const t = await textOf(page, '.message--streaming .message-content');
@@ -538,18 +544,50 @@ export async function runChatSuite({ suite, ctx, config }) {
     page.once('dialog', (d) => d.accept().catch(() => {}));
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.chat');
-    // The persist is a detached server task racing our poll -- give it time.
+    // The reloaded page finds the run still going and SAYS so: the status
+    // names it and the Send button reads Stop (setRemoteGenerating). It does
+    // not poll (page.js: two invalidation points, select and resume), so the
+    // finished row lands on the next reselect -- which is what the second
+    // half exercises. A live re-attach to the running stream is the open
+    // improvement here, not a check to fake around.
+    await waitFor(async () => /still generating/i.test((await textOf(page, '.chat__status')) || '')
+      || (await conversationStateById(page, convId)).assistantCount === 1,
+    { timeout: 15000, message: 'the reloaded page neither reported the run nor found it finished' });
+    // The detached task keeps generating after the disconnect and commits
+    // when it finishes -- give it the whole budget's worth of time.
     await waitFor(async () => {
       const state = await conversationStateById(page, convId);
       return state.assistantCount === 1;
-    }, { timeout: 30000, message: 'the disconnect task never persisted the partial' });
+    }, { timeout: 90000, message: 'the detached run never persisted its reply' });
     const msgs = (await serverGet(page, `/v1/conversations/${convId}`))?.messages ?? [];
     const partial = msgs.find((m) => m.role === 'assistant');
-    assert(partial?.content?.length > 0, 'the persisted partial has no content');
-    // And the client, having reloaded, shows what the server saved (the
-    // fresh conversation is the newest, so it is the one selected).
+    assert(partial?.content?.length > 0, 'the persisted reply has no content');
+    // Reselecting the conversation is the refresh the design offers: click
+    // another row, then this one, and the saved reply must be there. Clicks
+    // happen IN-PAGE by title: the list re-renders on every store bump, so
+    // an element handle taken a tick earlier is a detached node by the time
+    // it is clicked ("Node is either not clickable").
+    const clickRow = (matchActive, title) => page.evaluate((wantActive, t) => {
+      const row = [...document.querySelectorAll('.conv-item')].find((r) => {
+        const active = r.classList.contains('conv-item--active');
+        const text = r.querySelector('.conv-item__title')?.textContent.trim() ?? '';
+        return t ? text === t : active === wantActive;
+      });
+      if (!row) return false;
+      row.querySelector('.conv-item__title').click();
+      return true;
+    }, matchActive, title);
+    const storyTitle = await page.evaluate(async (id) =>
+      (await (await fetch(`/v1/conversations/${id}`)).json()).title, convId);
+    assert(await clickRow(false, null), 'no other conversation row to switch to');
+    await waitFor(async () => page.evaluate((t) =>
+      document.querySelector('.conv-item--active .conv-item__title')?.textContent.trim() !== t, storyTitle),
+    { message: 'switching away never took' });
+    assert(await clickRow(null, storyTitle), `no sidebar row titled ${JSON.stringify(storyTitle)}`);
     await waitFor(async () => (await lastAssistantText(page)).length > 0,
-      { message: 'the reloaded page never rendered the persisted partial' });
+      { timeout: 15000, message: 'the reselected conversation never rendered the persisted reply' });
+    assert(!/still generating/i.test((await textOf(page, '.chat__status')) || ''),
+      'the status still claims the run is generating after it finished and was reselected');
     // Contain the 4000 (same hydration-leak reasoning as the stop check).
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', '24');
@@ -661,9 +699,11 @@ export async function runChatSuite({ suite, ctx, config }) {
   const SYS_PROMPT = 'Answer in exactly one word.';
 
   // One owner for the "find a preset <option> by its label" lookup.
+  // By data-name: the option LABEL is decorated for a promptless preset
+  // ("<name> — settings only", v1.79.25), the raw name rides data-name.
   const presetOptionValue = (name) => page.evaluate((n) =>
     [...document.querySelectorAll('.preset-row select option')]
-      .find((o) => o.textContent === n)?.value ?? null, name);
+      .find((o) => o.dataset.name === n || o.textContent === n)?.value ?? null, name);
 
   await suite.check('system prompt edit persists without blur', async () => {
     // drawer is open from the checks above; the sysprompt editor is one of chat's
@@ -707,7 +747,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // drift the panel: the line must flip live, and selection alone must NOT
     // have touched the panel (apply is an explicit button now)
     await setSettingsInput(page, 'Temperature', '1.9');
-    await waitFor(async () => (await driftText(page))?.includes('Differs'),
+    await waitFor(async () => /differ/i.test((await driftText(page)) ?? ''),
       { message: 'drift line did not flip to "Differs" after a sampler edit' });
     await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
     assert((await settingsInputValue(page, 'Temperature')) === '1.9',
@@ -810,7 +850,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 're-applying e2e-preset did not restore temperature' });
     await setSettingsInput(page, 'Temperature', '');   // drift it again
-    await waitFor(async () => (await driftText(page))?.includes('Differs'),
+    await waitFor(async () => /differ/i.test((await driftText(page)) ?? ''),
       { message: 'panel not drifted off e2e-preset again' });
   });
 
@@ -910,9 +950,33 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('switching conversations loads the right messages', async () => {
     const items = await page.$$('.conv-item');
     assert(items.length >= 2, 'need >= 2 conversations');
-    // the second item is the older one with messages
-    await items[1].click();
-    await waitFor(async () => (await userCount(page)) >= 1, { message: 'older conv messages not loaded' });
+    // An older conversation WITH messages: the rows are ordered by updated_at
+    // and the checks above leave empty "New conversation" rows behind, so
+    // choose by title (a titled row has at least a first message) rather
+    // than by position.
+    // Ask the server which older conversation actually has a user message,
+    // then click the row carrying that title.
+    const wanted = await page.evaluate(async () => {
+      const { conversations } = await (await fetch('/v1/conversations')).json();
+      for (const c of conversations) {
+        const body = await (await fetch(`/v1/conversations/${c.id}`)).json();
+        if ((body.messages ?? []).some((m) => m.role === 'user')) return { id: c.id, title: c.title };
+      }
+      return null;
+    });
+    assert(wanted, 'no conversation with a user message exists server-side');
+    let target = null;
+    for (const item of items) {
+      const info = await item.evaluate((el) => ({
+        active: el.classList.contains('conv-item--active'),
+        title: el.querySelector('.conv-item__title')?.textContent.trim() ?? el.textContent.trim(),
+      }));
+      if (!info.active && info.title === wanted.title) { target = item; break; }
+    }
+    assert(target, `no inactive sidebar row titled ${JSON.stringify(wanted.title)}`);
+    await target.click();
+    await waitFor(async () => (await userCount(page)) >= 1,
+      { message: `older conv ${JSON.stringify(wanted.title)} (${wanted.id}) messages not loaded` });
     const active = await count(page, '.conv-item--active');
     assert(active === 1, `exactly one active conv, got ${active}`);
   });
@@ -1067,35 +1131,47 @@ export async function runChatSuite({ suite, ctx, config }) {
     await closeDrawer(page);
   });
 
-  await suite.check('thinking toggle wires enable_thinking (absent when off, true when on)', async () => {
+  await suite.check('thinking button reflects the model default and writes an explicit value', async () => {
+    // v1.79.62: thinking is a tri-state. Unset follows the server's answer
+    // for the model (`thinking_default` on the /v1/models row: ON for a
+    // thinking-capable model since v1.79.62), the drawer's "Model default"
+    // option names that value, and the composer button shows the EFFECTIVE
+    // state -- each tap writes an explicit true/false to the conversation's
+    // params, which is what generate builds from.
     await page.select(MODEL_SELECT, config.model);
     const convId = await newFreshConversation(page);
     await page.waitForSelector(THINK_BTN, { timeout: 5000 });
-    assert((await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'false',
-      'thinking toggle already pressed at the start of this check');
-
-    // Phase 2 contract: sampler state reaches generation through the
-    // CONVERSATION's params bag (the toggle -> settings change ->
-    // bindDocumentParams PUT), and the server builds the request from the
-    // store. The wire carries no sampler keys at all -- assert the
-    // persisted params instead of a request body.
+    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const def = models.find((m) => m.id === config.model)?.thinking_default;
+    assert(typeof def === 'boolean', `/v1/models row for ${config.model} carries no boolean thinking_default`);
+    const pressed = async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true';
     const convParams = () => page.evaluate(async (id) => {
       const conv = await (await fetch(`/v1/conversations/${id}`)).json();
       return conv.params ?? {};
     }, convId);
-    await sendText(page, 'Say hi in one word.');
-    await waitFor(async () => (await conversationStateById(page, convId)).userCount === 1,
-      { message: 'off-toggle user message never persisted' });
-    await waitIdle(page);
-    assert((await convParams()).enable_thinking !== true,
-      'enable_thinking stored true while the toggle is off');
+
+    // Start from "Model default": an earlier check may have left an explicit
+    // value in the panel cache, and a fresh conversation snapshots it.
+    await openDrawer(page);
+    await page.evaluate(() => {
+      const sel = document.querySelector('#set-enable_thinking');
+      if (!(sel instanceof HTMLSelectElement)) throw new Error('the thinking control is not the tri-state select');
+      sel.value = '';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const label = await page.$eval('#set-enable_thinking option[value=""]', (o) => o.textContent);
+    assert(label === `Model default (${def ? 'on' : 'off'})`,
+      `the default option reads ${JSON.stringify(label)} while thinking_default is ${def}`);
+    await closeDrawer(page);
+    await waitFor(async () => !('enable_thinking' in await convParams()),
+      { message: 'clearing the thinking value never landed server-side' });
+    assert((await pressed()) === def, `button pressed=${await pressed()} while the model default is ${def}`);
 
     await page.click(THINK_BTN);
-    await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true',
-      { message: 'thinking toggle did not flip to pressed' });
+    await waitFor(async () => (await pressed()) === !def, { message: 'thinking button did not flip' });
     // the PUT is debounced -- wait for the store to show it before sending
-    await waitFor(async () => (await convParams()).enable_thinking === true,
-      { message: 'on-toggle params PUT never landed server-side' });
+    await waitFor(async () => (await convParams()).enable_thinking === !def,
+      { message: 'the explicit thinking value never landed server-side' });
 
     // The generate wire itself must stay sampler-free: nothing cap-gated
     // can ride it, which is the structural close of the old leak class.
@@ -1104,33 +1180,61 @@ export async function runChatSuite({ suite, ctx, config }) {
       if (req.method() === 'POST' && req.url().includes('/generate')) genBodies.push(req.postData());
     };
     page.on('request', captureGen);
-    await sendText(page, 'Say hi in one word again.');
-    await waitFor(async () => (await conversationStateById(page, convId)).userCount === 2,
-      { message: 'on-toggle user message never persisted' });
+    await sendText(page, 'Say hi in one word.');
+    await waitFor(async () => (await conversationStateById(page, convId)).userCount === 1,
+      { message: 'user message never persisted' });
     await waitIdle(page);
     page.off('request', captureGen);
-    assert(genBodies.length > 0, 'no /generate request captured with thinking on');
+    assert(genBodies.length > 0, 'no /generate request captured');
     const genBody = JSON.parse(genBodies.at(-1));
     // v1.67.0 contract: the TOP-LEVEL body stays sampler-free; the panel's
-    // live intent rides in `overrides` (closes the debounced-PUT race), so
-    // with the toggle ON, overrides MUST carry enable_thinking true.
+    // live intent rides in `overrides`, so the explicit value must be there.
     assert(!('enable_thinking' in genBody),
       `enable_thinking rode the top-level generate body: ${genBodies.at(-1)}`);
-    assert(genBody.overrides?.enable_thinking === true,
-      `overrides did not carry the live toggle state: ${genBodies.at(-1)}`);
+    assert(genBody.overrides?.enable_thinking === !def,
+      `overrides did not carry the explicit value: ${genBodies.at(-1)}`);
 
-    // toggle back off so it doesn't leak into later checks
+    // flip back: a second explicit value, the model default's own
     await page.click(THINK_BTN);
-    await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'false',
-      { message: 'thinking toggle did not flip back off' });
-    // Persisted outcome, not just localStorage: the toggle-off fires a
-    // DEBOUNCED params PUT to this conversation; if the next check reloads
-    // before it lands, hydration resurrects enable_thinking=true (seen
-    // live 2026-07-23). Wait for the server-side params to show it off.
-    await waitFor(async () => page.evaluate(async (id) => {
-      const conv = await (await fetch(`/v1/conversations/${id}`)).json();
-      return (conv.params ?? {}).enable_thinking !== true;
-    }, convId), { message: 'off-toggle params PUT never landed server-side' });
+    await waitFor(async () => (await pressed()) === def, { message: 'thinking button did not flip back' });
+    await waitFor(async () => (await convParams()).enable_thinking === def,
+      { message: 'the second explicit value never landed server-side' });
+    // Leave the suite's baseline (thinking OFF, see browser.mjs open()) for
+    // the content-asserting checks that follow.
+    await openDrawer(page);
+    await page.evaluate(() => {
+      const sel = document.querySelector('#set-enable_thinking');
+      sel.value = 'off';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await closeDrawer(page);
+    await waitFor(async () => (await convParams()).enable_thinking === false,
+      { message: 'restoring thinking off never landed server-side' });
+  });
+
+  await suite.check('the composer eye button previews the next prompt', async () => {
+    // v1.79.62: the exact string the next Send would feed the model, rendered
+    // by the model's own engine, with the draft as the next user turn and
+    // special tokens highlighted. Persists nothing; needs the model resident
+    // (it is -- the harness loaded it).
+    await page.select(MODEL_SELECT, config.model);
+    await newFreshConversation(page);
+    await page.type(COMPOSER, 'draft text for the preview');
+    await page.click('.chat__composer button[aria-label="Preview prompt"]');
+    await page.waitForSelector('.chat__prompt-preview .prompt-preview__text', { timeout: 20000 });
+    const rendered = await textOf(page, '.chat__prompt-preview .prompt-preview__text');
+    assert(rendered.includes('draft text for the preview'), 'the draft was not rendered as the next user turn');
+    assert((await count(page, '.chat__prompt-preview mark.prompt-preview__tok')) > 0,
+      'no special tokens highlighted in the render');
+    const head = await textOf(page, '.chat__prompt-preview .prompt-preview__head');
+    assert(head.includes(config.model), `preview head does not name the model: ${JSON.stringify(head)}`);
+    await clickByText(page, '.chat__prompt-preview button', 'Close');
+    assert(await page.$eval('.chat__prompt-preview', (el) => el.hidden), 'preview did not close');
+    await page.evaluate(() => {
+      const ta = document.querySelector('.chat__composer textarea');
+      ta.value = '';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
   });
 
   await suite.check('cap-gated params are dropped for a model lacking the capability', async () => {
@@ -1281,6 +1385,83 @@ export async function runChatSuite({ suite, ctx, config }) {
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(config.maxTokens));
     await closeDrawer(page);
+  });
+
+  await suite.check('stop mid-thought, preview the resume, then Save & Continue resumes the same trace', async () => {
+    // v1.79.62-64 end to end through the real UI. A reply stopped inside its
+    // thinking persists as a thinking-only row; the editor's Preview prompt
+    // shows the engine's own render ending inside the OPEN thinking block;
+    // Save & Continue resumes THAT trace -- prefix exactly once, then more,
+    // with the seam space intact -- instead of starting a second thought.
+    await page.select(MODEL_SELECT, config.model);
+    const convId = await newFreshConversation(page);
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
+    await page.evaluate(() => {
+      const sel = document.querySelector('#set-enable_thinking');
+      sel.value = 'on';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await closeDrawer(page);
+    await waitFor(async () => page.evaluate(async (id, cap) => {
+      const p = (await (await fetch(`/v1/conversations/${id}`)).json()).params ?? {};
+      return p.max_tokens === cap && p.enable_thinking === true;
+    }, convId, STOP_TEST_MAX_TOKENS), { message: 'params never landed server-side' });
+    const restore = async () => {
+      // back to the suite's baseline: fast cap, thinking explicitly OFF
+      await openDrawer(page);
+      await setSettingsInput(page, 'Max tokens', String(config.maxTokens));
+      await page.evaluate(() => {
+        const sel = document.querySelector('#set-enable_thinking');
+        sel.value = 'off';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await closeDrawer(page);
+    };
+
+    await sendText(page, 'Reason step by step, at length, about why the sky is blue before you answer.');
+    await waitFor(async () => {
+      const t = await textOf(page, '.message--streaming .thinking__body');
+      return Boolean(t && t.trim().length > 60);
+    }, { message: 'no thinking streamed before the stop', timeout: 60000 });
+    await page.click(SEND_BTN); // Stop
+    await waitFor(async () => /stopped/i.test((await textOf(page, '.chat__status')) || ''),
+      { message: 'stop status never appeared' });
+    let before = null;
+    await waitFor(async () => {
+      before = (await conversationStateById(page, convId)).lastAssistant;
+      return Boolean(before?.thinking);
+    }, { message: 'the stopped reply did not persist its thinking' });
+    if ((before.content ?? '').trim()) {
+      console.log('      the stop landed after the thinking block closed (legal) -- resume half skipped');
+      await restore();
+      return;
+    }
+    const prefix = before.thinking;
+    const tail = prefix.trimEnd().slice(-40);
+
+    await clickByText(page, '.message--assistant .message__actions button', 'Edit');
+    await page.waitForSelector('.message-edit__thinking');
+    await clickByText(page, '.message-edit__buttons button', 'Preview prompt');
+    await page.waitForSelector('.message-edit__preview .prompt-preview__text', { timeout: 20000 });
+    const head = await textOf(page, '.message-edit__preview .prompt-preview__head');
+    const rendered = await textOf(page, '.message-edit__preview .prompt-preview__text');
+    assert(/resumes inside/i.test(head), `preview head reads ${JSON.stringify(head)}`);
+    assert(rendered.trimEnd().endsWith(tail),
+      `the rendered prompt does not end inside the stopped thinking: ...${JSON.stringify(rendered.slice(-80))}`);
+
+    await clickByText(page, '.message-edit__buttons button', 'Save & Continue');
+    await waitFor(async () => {
+      const s = await conversationStateById(page, convId);
+      const t = s.lastAssistant?.thinking ?? '';
+      return s.lastAssistant?.id === before.id && t.startsWith(prefix) && t.length > prefix.length;
+    }, { message: 'continuation did not extend the same thinking in place', timeout: 120000 });
+    await waitIdle(page, 180000);
+    const after = (await conversationStateById(page, convId)).lastAssistant;
+    assert(after.thinking.split(prefix.slice(0, 40)).length === 2,
+      'the stopped prefix appears more than once -- a second thought was glued on');
+    assert((await assistantCount(page)) === 1, 'the resume must not add a message row');
+    await restore();
   });
 
   await suite.check('image attach caps at 8 with an aria-live status message', async () => {

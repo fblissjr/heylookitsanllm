@@ -33,7 +33,11 @@ export function createPageContext(page, { base, maxTokens }) {
     // on a full document load. A hash-only goto is same-document (no reload), so
     // we write localStorage and then force an explicit reload -- that reload is
     // what makes the seed real, regardless of the prior URL.
-    async open(hash = '#/chat', settings = { max_tokens: maxTokens }) {
+    // enable_thinking: false is part of the seed since v1.79.62: a thinking-
+    // capable model now THINKS by default, and at the suite's 24-token cap
+    // the whole reply is thinking with no content -- the fast checks assert
+    // content. The thinking checks turn it on themselves, explicitly.
+    async open(hash = '#/chat', settings = { max_tokens: maxTokens, enable_thinking: false }) {
       await page.goto(`${base}/v3/${hash}`, { waitUntil: 'domcontentloaded' });
       await page.evaluate((key, val) => {
         localStorage.setItem(key, JSON.stringify(val));
