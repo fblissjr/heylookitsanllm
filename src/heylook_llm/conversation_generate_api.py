@@ -821,7 +821,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
         message_id, model_id,
         thinking_parser=select_reasoning_parser(provider.template_info(), **parser_args))
 
-    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
+    from heylook_llm.streaming_utils import WIRE_MESSAGES, async_generator_with_abort, control_frame
 
     yield translator.message_start_event()
 
@@ -856,9 +856,9 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                     generator, http_request, abort_event,
                     abort_on_disconnect=False,
                     log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
-                ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
-                if ka:
-                    yield ka
+                frame = control_frame(chunk, WIRE_MESSAGES)  # marker guard FIRST (one table of spellings)
+                if frame:
+                    yield frame
                     continue
                 chunk_finish = getattr(chunk, "finish_reason", None)
                 if chunk_finish:

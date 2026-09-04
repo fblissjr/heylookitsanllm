@@ -11,14 +11,13 @@ protected nothing an inference request could not already do. ``unload`` and
 """
 
 import logging
-from pathlib import Path
 import time
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from heylook_llm.auth import require_admin_token
-from heylook_llm.capabilities import effective_capabilities
+from heylook_llm.capabilities import effective_capabilities, model_context_length
 from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     AdminModelListResponse,
@@ -174,24 +173,22 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     # the route whose comment directly above explains that its per-row cost is
     # why it was moved off the event loop.
     effective_loader = effective_loader_for_config(mc.provider, resolved)
-    # Context, gguf only. `context_length` is the TRAINING context read off the
-    # GGUF header (cached on the file's identity, so a list is one stat per
-    # gguf row after the first read); `context_running` is what the resident
-    # process actually got, which the provider read from /props at ready.
-    # Both are DERIVED and land top-level for the same reason effective_loader
+    # Context. `context_length` is the model's window from the ONE resolver
+    # every surface reads (capabilities.model_context_length: the GGUF
+    # header's training context for gguf, config.json for MLX -- both cached,
+    # so a list is one read per row after the first); `context_running` is
+    # what a resident llama-server process actually got, read from /props at
+    # ready, and stays gguf-only because MLX has no fixed allocation. Both
+    # are DERIVED and land top-level for the same reason effective_loader
     # does: a read-only value inside `config` would render as an editable
     # option on the models page.
-    context_length = None
+    model_path = (mc.config.model_dump().get("model_path")
+                  if hasattr(mc.config, "model_dump") else dict(mc.config).get("model_path"))
+    context_length = model_context_length(mc.provider, model_path)
     context_running = None
-    if mc.provider == "gguf":
-        from heylook_llm import gguf_metadata
-        model_path = (mc.config.model_dump().get("model_path")
-                      if hasattr(mc.config, "model_dump") else dict(mc.config).get("model_path"))
-        if model_path:
-            context_length = gguf_metadata.context_length(Path(model_path).expanduser())
-        if loaded and router is not None:
-            provider = router.get_loaded_models().get(mc.id)
-            context_running = getattr(provider, "running_ctx", None)
+    if mc.provider == "gguf" and loaded and router is not None:
+        provider = router.get_loaded_models().get(mc.id)
+        context_running = getattr(provider, "running_ctx", None)
     capabilities = effective_capabilities(mc, effective_loader)
     # What thinking resolves to with nothing said: the SAME cascade the
     # providers run (an empty request through resolve_effective_sampling),

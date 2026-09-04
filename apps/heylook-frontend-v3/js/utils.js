@@ -119,6 +119,17 @@ export function formatBytes(bytes) {
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
+// A token count the way context sizes are spoken: 4k, 40k, 1M. ONE speller
+// for the chat context select, the models page and the prompt preview, so
+// the same ceiling reads the same everywhere (base 1024, like the sizes
+// models are published with).
+export function formatTokens(n) {
+  if (n == null || !Number.isFinite(n)) return '--';
+  if (n >= 1048576) return `${(n / 1048576).toFixed(n % 1048576 ? 1 : 0)}M`;
+  if (n >= 1024) return `${Math.round(n / 1024)}k`;
+  return String(n);
+}
+
 export function debounce(fn, ms) {
   let timer = null;
   const wrapped = (...args) => {

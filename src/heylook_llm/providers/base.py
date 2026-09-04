@@ -95,6 +95,11 @@ class BaseProvider(ABC):
     # load; other providers keep the defaults unless they have the concept.
     is_vlm: bool = False
     effective_loader: Optional[str] = None
+    # The model's context window in tokens, from the ONE resolver the admin
+    # row and /v1/models also read (capabilities.model_context_length), so
+    # the number a client is shown is the number the provider enforces.
+    # None = unknown (no guard). Set at load by providers that have one.
+    context_length: Optional[int] = None
 
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         self.model_id = model_id

@@ -11,7 +11,7 @@
 //   single page-wide flag -- unrelated rows must stay interactive.
 
 import { createPage } from '../page.js';
-import { createEl, armedConfirm } from '../utils.js';
+import { createEl, armedConfirm, formatTokens } from '../utils.js';
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 import { createModelConfigEditor, configSummary } from '../model-config.js';
@@ -315,6 +315,9 @@ function renderModelList(ctx) {
 function modelMetaLine(model) {
   const parts = [model.provider];
   if (model.capabilities?.length) parts.push(model.capabilities.join(', '));
+  // The context window, derived server-side for every provider that has one
+  // (gguf header / MLX config.json) -- answered for unloaded models too.
+  if (model.context_length) parts.push(`ctx ${formatTokens(model.context_length)}`);
   if (model.config?.chat_template_source) {
     parts.push(`template: ${model.config.chat_template_source}`);
   }

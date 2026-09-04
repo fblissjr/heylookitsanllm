@@ -1458,12 +1458,15 @@ class AdminModelResponse(BaseModel):
     )
     context_length: Optional[int] = Field(
         default=None,
-        description="The model's TRAINING context (`<arch>.context_length` "
-                    "from the GGUF header). The ceiling a context-size "
-                    "control should offer: llama-server sizes its context "
-                    "from this when `ctx_size` is unset. gguf only, null "
-                    "elsewhere and when the header cannot be read. DERIVED "
-                    "from the file, so it is answered for unloaded models.",
+        description="The model's context window in tokens, from the one "
+                    "resolver every surface reads (gguf: `<arch>.context_length` "
+                    "in the GGUF header, the training context llama-server "
+                    "sizes from when `ctx_size` is unset; mlx: config.json's "
+                    "max_position_embeddings, v1.79.65). The ceiling a "
+                    "context-size control offers, and what an over-length "
+                    "prompt is refused against. Null when the files do not "
+                    "say and for providers with no chat context. DERIVED, so "
+                    "it is answered for unloaded models.",
     )
     context_running: Optional[int] = Field(
         default=None,

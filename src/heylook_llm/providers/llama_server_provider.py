@@ -679,6 +679,10 @@ class LlamaServerProvider(BaseProvider):
             "messages": [self._wire_message(m) for m in request.messages],
             "stream": True,
             "stream_options": {"include_usage": True},
+            # Prefill progress frames (`prompt_progress` on the stream), the
+            # gguf half of the cross-engine progress signal -- see
+            # _stream_chunks and AbortEvent.set_prefill_progress.
+            "return_progress": True,
             # llama-server's n_predict default is -1 = UNLIMITED; never omit.
             "max_tokens": int(merged.get("max_tokens") or GLOBAL_SAMPLER_FLOOR["max_tokens"]),
         }
@@ -947,6 +951,7 @@ class LlamaServerProvider(BaseProvider):
                 raise GenerationFailed(
                     f"Malformed SSE frame from llama-server: {e}"
                 )
+            self._report_prefill_progress(frame.get("prompt_progress"), abort_event)
             chunk = self._frame_to_chunk(frame)
             if chunk is None:
                 continue
@@ -962,6 +967,23 @@ class LlamaServerProvider(BaseProvider):
                     and not chunk.prompt_tokens and not chunk.generation_tokens:
                 continue  # the delta was pure echo -- nothing to emit
             yield chunk
+
+    @staticmethod
+    def _report_prefill_progress(progress, abort_event) -> None:
+        """Route a `prompt_progress` frame (``return_progress``) up the
+        request's signal channel, in the cross-engine meaning: work THIS
+        request runs, cached prefix excluded. llama-server's `processed`
+        counts from zero INCLUDING the cache hit, so both numbers have
+        `cache` subtracted -- its README's "actual timed progress". A fully
+        cached prompt has no work to report and reports nothing."""
+        report = getattr(abort_event, "set_prefill_progress", None)
+        if report is None or not isinstance(progress, dict):
+            return
+        cache = int(progress.get("cache") or 0)
+        total = int(progress.get("total") or 0) - cache
+        if total <= 0:
+            return
+        report(max(0, int(progress.get("processed") or 0) - cache), total)
 
     @staticmethod
     def _frame_to_chunk(frame: dict) -> Optional[GenerationChunk]:

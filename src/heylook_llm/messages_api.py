@@ -616,7 +616,7 @@ async def _stream_messages(
     # Resolve abort event from provider (if MLX provider with abort support)
     # abort_event is the per-request signal passed in by the route.
 
-    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
+    from heylook_llm.streaming_utils import WIRE_MESSAGES, async_generator_with_abort, control_frame
 
     # message_start
     yield translator.message_start_event()
@@ -624,9 +624,11 @@ async def _stream_messages(
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
-            ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
-            if ka:
-                yield ka
+            # Marker guard FIRST (one table of spellings): keepalive is the
+            # grammar's own `ping`, progress the namespaced heylook_progress.
+            frame = control_frame(chunk, WIRE_MESSAGES)
+            if frame:
+                yield frame
                 continue
             # Capture provider metadata. The provider speaks OpenAI's
             # finish_reason vocabulary; renaming it at this boundary is what

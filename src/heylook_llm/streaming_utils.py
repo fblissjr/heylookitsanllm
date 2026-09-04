@@ -5,6 +5,7 @@ import asyncio
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import AsyncGenerator
 
 from fastapi import Request
@@ -60,27 +61,67 @@ _executor_pool = _PinnedExecutorPool()
 
 
 class KeepaliveMarker:
-    """Sentinel yielded during long prefill to keep SSE connections alive.
-
-    The API layer checks for this type and emits an SSE comment (`: keepalive`)
-    instead of a data chunk. SSE comments are ignored by conformant parsers
-    but prevent HTTP connection timeouts during long prompt processing.
+    """Sentinel yielded whenever the generation has been silent for
+    ``KEEPALIVE_INTERVAL_S`` -- during prefill, and equally during a decode
+    stall (v1.79.65; it used to stop at the first token, so a mid-generation
+    pause got nothing). The route spells it for its wire via control_frame().
     """
     pass
 
 
 KEEPALIVE_MARKER = KeepaliveMarker()
 
-# The ONE wire spelling of the marker. Every SSE consume loop must guard
-# with keepalive_sse() BEFORE touching chunk fields -- the marker has none
-# of GenerationChunk's, and forgetting the guard is a proven failure mode
+
+@dataclass(frozen=True, slots=True)
+class PrefillProgress:
+    """Sentinel yielded when the engine reports prefill progress: ``processed``
+    of ``total`` prompt tokens done, cached prefix excluded (see
+    AbortEvent.set_prefill_progress). One per CHANGE, read off the request's
+    signal channel while the wrapper waits on the next chunk -- both engines
+    report into that channel, so this is the only place progress is turned
+    into a frame."""
+    processed: int
+    total: int
+
+
+# Seconds of silence before a keepalive frame. A module constant rather than
+# a local so a test can shorten it instead of sleeping through it.
+KEEPALIVE_INTERVAL_S = 5.0
+
+# The two wires the consume loops speak. The OpenAI wire has no place for a
+# control event in its chunk grammar, so its frames are SSE comments; the
+# Messages wire has Anthropic's own `ping` event, which every Messages client
+# already handles, and a namespaced extension event for progress (the same
+# shape as heylook_logprobs / heylook_saved).
+WIRE_OPENAI = "openai"
+WIRE_MESSAGES = "messages"
+
+# ONE table of keepalive spellings. Every SSE consume loop guards with
+# control_frame() BEFORE touching chunk fields -- the markers have none of
+# GenerationChunk's, and forgetting the guard is a proven failure mode
 # (/v1/messages carried the crash from its creation until 2026-08-13).
-KEEPALIVE_SSE = ": keepalive\n\n"
+_KEEPALIVE_FRAMES = {
+    WIRE_OPENAI: ": keepalive\n\n",
+    WIRE_MESSAGES: 'event: ping\ndata: {"type":"ping"}\n\n',
+}
 
 
-def keepalive_sse(chunk) -> str | None:
-    """Marker -> its SSE comment, or None for a real chunk."""
-    return KEEPALIVE_SSE if isinstance(chunk, KeepaliveMarker) else None
+def control_frame(chunk, wire: str = WIRE_OPENAI) -> str | None:
+    """A control marker's frame on ``wire``, or None for a real chunk.
+
+    Keepalive: the wire's own no-op frame. Prefill progress: a
+    ``heylook_progress`` event on the Messages wire; on the OpenAI wire the
+    keepalive comment, because the chunk grammar has nowhere honest to put
+    the numbers and the frame still keeps the connection alive.
+    """
+    if isinstance(chunk, KeepaliveMarker):
+        return _KEEPALIVE_FRAMES[wire]
+    if isinstance(chunk, PrefillProgress):
+        if wire == WIRE_MESSAGES:
+            return ('event: heylook_progress\ndata: {"type":"heylook_progress",'
+                    f'"prefill":{{"processed":{chunk.processed},"total":{chunk.total}}}}}\n\n')
+        return _KEEPALIVE_FRAMES[wire]
+    return None
 
 
 async def async_generator_with_abort(
@@ -125,9 +166,12 @@ async def async_generator_with_abort(
     # REUSED across requests, never destroyed -- see _PinnedExecutorPool.
     gen_executor = _executor_pool.acquire()
 
-    keepalive_interval = 5.0  # seconds between keepalive comments
     last_keepalive = loop.time()
-    first_chunk_received = False
+    # The engine reports prefill progress into the request's signal channel
+    # (AbortEvent.set_prefill_progress); this wrapper is the ONE reader.
+    # getattr, not a type check: tests pass a bare threading.Event here.
+    read_progress = getattr(abort_event, "prefill_progress", None)
+    last_progress = None
 
     try:
         while True:
@@ -147,10 +191,19 @@ async def async_generator_with_abort(
                         except Exception:
                             pass
                         return
-                    # Emit SSE keepalive comments during long prefill to
-                    # prevent connection timeouts. Only before first chunk.
                     now = loop.time()
-                    if not first_chunk_received and (now - last_keepalive) >= keepalive_interval:
+                    progress = read_progress() if read_progress is not None else None
+                    if progress is not None and progress != last_progress:
+                        # One frame per change. It also breaks the silence, so
+                        # the keepalive clock restarts from it.
+                        last_progress = progress
+                        last_keepalive = now
+                        yield PrefillProgress(*progress)
+                    elif (now - last_keepalive) >= KEEPALIVE_INTERVAL_S:
+                        # Silence wherever it falls: a long prefill, or a decode
+                        # stall (gguf swap, spec-decode hiccup) -- the clock is
+                        # reset by every real chunk below, so this never fires
+                        # into a flowing stream.
                         yield KEEPALIVE_MARKER
                         last_keepalive = now
                     # Block on the chunk itself, with a timeout that keeps the
@@ -162,7 +215,7 @@ async def async_generator_with_abort(
             chunk = await chunk_future
             if chunk is None:
                 break
-            first_chunk_received = True
+            last_keepalive = loop.time()
             yield chunk
     finally:
         # Close the provider generator so its finally blocks run immediately

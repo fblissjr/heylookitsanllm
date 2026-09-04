@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.65]
+
+### Added
+
+- **Prefill progress on the wire, both engines.** A `heylook_progress` event
+  (`{prefill:{processed,total}}`, cached prefix excluded so the ratio means
+  the same thing on either engine) on `/v1/messages` and
+  `/v1/conversations/{id}/generate`, one per change, only before the first
+  block. ONE mechanism: mlx-lm's `prompt_progress_callback` and
+  llama-server's `return_progress` frames both report into the request's
+  signal channel (`AbortEvent`, which now carries progress UP as well as
+  abort DOWN), the async wrapper is the only reader, and
+  `streaming_utils.control_frame` is the one table of wire spellings. The
+  chat status line counts it up ("Reading the prompt… 2,048 / 8,192
+  tokens") in place of the fixed wait line; a zero-token completion still
+  clears it because the progress text becomes the wait line.
+
+- **`context_length` for every provider with a chat context.** Was gguf-only
+  on the admin row; now one resolver (`capabilities.model_context_length`:
+  the GGUF header, or config.json's `max_position_embeddings` including the
+  nested text block a VLM wrapper uses) feeds the admin row, every
+  `/v1/models` entry, and the MLX provider's own guard: a prompt longer
+  than the window is refused as the client's 400 at `run_generation`,
+  before any engine work, where llama-server already refused for gguf. The
+  models page shows the ceiling on every row.
+
+### Changed
+
+- **Keepalive on the Messages-grammar routes is Anthropic's own `ping`
+  event**, not an SSE comment (`/v1/chat/completions` keeps the comment),
+  and it now fires on silence wherever it falls -- a decode stall
+  mid-generation used to get nothing, because the timer stopped at the first
+  token. Every conformant Messages client already ignores `ping`; v3's
+  dispatch drops unknown event types by construction, and the render suite
+  now sends one on every drip. A gap worth naming: a client that treats an
+  unknown event type as an error (rather than ignoring it, as the grammar
+  requires) will now see one it did not before.
+
+### Notes
+
+- oMLX (`coderef/omlx`) was read for patterns this release; the comparison
+  is local-only under `internal/research/`. Its engine (continuous batching,
+  paged and SSD KV tiers, the patch tree) stays out by the standing
+  guardrails; the borrows above are the wire-level ones.
+
 ## [1.79.64]
 
 ### Fixed

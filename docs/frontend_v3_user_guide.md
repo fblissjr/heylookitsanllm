@@ -222,8 +222,11 @@ This is why a settings change takes effect on the next message with no explicit
 
 The status line names it. On a model that is not resident this is a multi-GB
 load and the single longest wait in the app; it says so rather than showing an
-empty bubble. The line clears the moment the first token — or the first
-*thinking* token — arrives.
+empty bubble. Once the model starts reading your prompt the line counts it up
+(*Reading the prompt… 2,048 / 8,192 tokens*), on both engines; a prompt that
+is mostly already cached from the last turn has little to count and the line
+may go straight from the wait to the first token. The line clears the moment
+the first token — or the first *thinking* token — arrives.
 
 ### Navigating away mid-generation
 

@@ -31,7 +31,7 @@ import mlx.core as mx
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from ..base import GenerationChunk
+from ..base import GenerationChunk, InvalidGenerationRequest
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
 from .model_wrappers import MROPE_STATE_ATTRS, unwrap_language_model
 from .stop_tokens import resolve_stop_tokens
@@ -287,6 +287,7 @@ def generate_text(
     cache_manager=None,
     abort_event=None,
     continuing: bool = False,
+    context_length: int | None = None,
 ) -> Generator:
     """High-level entry point for text-based generation.
 
@@ -304,7 +305,7 @@ def generate_text(
         sampler, processors,
         model_id=model_id, draft_model=draft_model,
         cache_manager=cache_manager, abort_event=abort_event,
-        continuing=continuing,
+        continuing=continuing, context_length=context_length,
     )
 
 
@@ -321,6 +322,7 @@ def run_generation(
     abort_event=None,
     pre_filled_cache=None,
     continuing: bool = False,
+    context_length: int | None = None,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
@@ -346,10 +348,24 @@ def run_generation(
         abort_event: AbortEvent for cooperative cancellation
         pre_filled_cache: Pre-populated KV cache from VLM vision forward pass.
             When provided, skips prompt-cache setup and leading space cleanup.
+        context_length: The model's context window (capabilities.
+            model_context_length). A prompt longer than it is refused up
+            front as the client's error, not generated into garbage; None =
+            unknown, no guard. Text path only: the vision path arrives with
+            its prompt already in the pre-filled cache.
 
     Yields:
         Generation response objects from lm_stream_generate.
     """
+    if context_length and pre_filled_cache is None and len(prompt_tokens) > context_length:
+        # gguf gets the same answer from llama-server itself (a 400 mapped to
+        # InvalidGenerationRequest); MLX has no fixed allocation to refuse,
+        # so this is where the ceiling is enforced for it.
+        raise InvalidGenerationRequest(
+            f"Prompt is {len(prompt_tokens)} tokens; {model_id or 'this model'} has a "
+            f"context of {context_length} tokens. Shorten the conversation or the "
+            f"system prompt.")
+
     # Reset VLM mRoPE position state for fresh text generations.
     # Qwen3.5-style models cache _position_ids and _rope_deltas on the
     # language_model instance. Stale values from a prior generation cause
@@ -404,8 +420,17 @@ def run_generation(
             allow_reuse=draft_model is None,
         )
 
+    # mlx-lm fires this per prefill step INSIDE the first next() -- nothing
+    # can be yielded from here, so progress goes up the request's signal
+    # channel and the async wrapper turns each change into a frame. `total`
+    # is tokens_to_process: the work this request runs, cached prefix
+    # excluded, the same meaning the gguf provider reports.
+    report_progress = getattr(abort_event, "set_prefill_progress", None)
+
     def prompt_progress_callback(processed: int, total: int):
         logging.debug(f"Prompt processing: {processed}/{total} tokens")
+        if report_progress is not None:
+            report_progress(processed, total)
 
     generation_stream = _get_generation_stream()
 

@@ -130,6 +130,7 @@ export async function streamMessages(body, {
   onThinking,
   onLogprobs,
   onRetryWait,
+  onProgress,
   onComplete,
   onError,
 } = {}) {
@@ -154,6 +155,8 @@ export async function streamMessages(body, {
           }
         } else if (eventType === 'heylook_logprobs') {
           if (data.tokens?.length) onLogprobs?.(data.tokens);
+        } else if (eventType === 'heylook_progress') {
+          if (data.prefill) onProgress?.(data.prefill);
         } else if (eventType === 'message_delta') {
           usage = data.usage ?? usage;
         } else if (eventType === 'message_stop') {
@@ -183,14 +186,24 @@ export async function streamMessages(body, {
 //                               rows), end_reason, dropped_media, timing}.
 //                               May be ABSENT if the connection died first
 //                               (the server still persisted -- reconcile).
+//   onProgress({processed, total})
+//                            -- the heylook_progress event: prefill progress
+//                               in prompt tokens, cached prefix excluded,
+//                               one per change, both engines. Only ever
+//                               BEFORE the first delta.
 //   onComplete({content, thinking, usage, aborted, saved})
 //   onError(err)             -- HTTP errors + in-band typed error events
+//
+// Keepalive on this wire is Anthropic's own `event: ping` (v1.79.65; an SSE
+// comment before that). It reaches onEvent like any event and is ignored by
+// the dispatch below -- unknown event types always are.
 export async function streamGenerate(convId, body, {
   signal,
   onToken,
   onThinking,
   onRetryWait,
   onSaved,
+  onProgress,
   onComplete,
   onError,
 } = {}) {
@@ -219,6 +232,8 @@ export async function streamGenerate(convId, body, {
         } else if (eventType === 'heylook_saved') {
           saved = data;
           onSaved?.(data);
+        } else if (eventType === 'heylook_progress') {
+          if (data.prefill) onProgress?.(data.prefill);
         } else if (eventType === 'error') {
           const err = new Error(data.error?.message || 'Generation failed');
           err.code = data.error?.type ?? null;

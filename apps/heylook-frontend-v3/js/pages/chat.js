@@ -24,7 +24,7 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -536,10 +536,6 @@ function refreshLoadBtn(ctx) {
 const CTX_MIN = 4096;
 const CTX_FALLBACK_MAX = 262144; // ceiling when the header did not say
 
-function fmtCtx(n) {
-  return n >= 1048576 ? `${(n / 1048576).toFixed(n % 1048576 ? 1 : 0)}M` : `${Math.round(n / 1024)}k`;
-}
-
 // Power-of-two steps from 4k up to the model's training context (or the
 // fallback), plus the ceiling itself when it is not a power of two (Qwen3's
 // 40960) and the stored value when it is off-grid -- the select must be able
@@ -574,16 +570,16 @@ function refreshCtxSelect(ctx) {
   const sig = `${id}|${stored}|${row.context_length ?? ''}|${running ?? ''}`;
   if (s.ctxSelect.dataset.sig === sig) return;
   s.ctxSelect.dataset.sig = sig;
-  const autoLabel = running && !stored ? `Auto (${fmtCtx(running)})` : 'Auto';
+  const autoLabel = running && !stored ? `Auto (${formatTokens(running)})` : 'Auto';
   const options = [createEl('option', { value: '' }, [autoLabel])];
   for (const n of ctxStepsFor(row)) {
     const tag = n === row.context_length ? ' (max)' : '';
-    options.push(createEl('option', { value: String(n) }, [`${fmtCtx(n)}${tag}`]));
+    options.push(createEl('option', { value: String(n) }, [`${formatTokens(n)}${tag}`]));
   }
   s.ctxSelect.replaceChildren(...options);
   s.ctxSelect.value = stored ? String(stored) : '';
   s.ctxSelect.title = running
-    ? `Context size for the next load — running with ${fmtCtx(running)} now`
+    ? `Context size for the next load — running with ${formatTokens(running)} now`
     : 'Context size for the next load';
 }
 
@@ -620,7 +616,7 @@ async function loadModelNow(ctx) {
   const ctxSize = ctxChoiceToSend(ctx);
   const restarting = !isCold(ctx, id) && ctxSize != null;
   showStatus(ctx, restarting
-    ? `Restarting ${id} with ${ctxSize ? fmtCtx(ctxSize) : 'auto'} context…`
+    ? `Restarting ${id} with ${ctxSize ? formatTokens(ctxSize) : 'auto'} context…`
     : `Loading ${id}…`);
   let summary = null;
   try {
@@ -650,7 +646,7 @@ async function loadModelNow(ctx) {
   // Say what the process actually got, once the row can tell us: for Auto
   // that is the only place the number exists.
   const running = s.adminRows.get(id)?.context_running;
-  if (summary && running && ctx.alive) showStatus(ctx, `${summary} Context ${fmtCtx(running)}.`);
+  if (summary && running && ctx.alive) showStatus(ctx, `${summary} Context ${formatTokens(running)}.`);
 }
 
 // What committing this switch would actually do to THIS conversation.
@@ -2852,6 +2848,14 @@ function startStream(ctx, opts = {}) {
     onToken: (_, full) => { firstDelta(); stream.sawEvent = true; stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.sawEvent = true; stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },
     onSaved: () => { stream.sawEvent = true; },
+    // Prefill progress (heylook_progress; both engines), only ever before the
+    // first delta. It REPLACES the wait line and becomes the line teardown
+    // compares against, so a zero-token completion still clears it.
+    onProgress: ({ processed, total }) => {
+      if (!stream.waiting || !ctx.alive || !isCurrent()) return;
+      stream.waitStatus = `Reading the prompt… ${processed.toLocaleString()} / ${total.toLocaleString()} tokens`;
+      showStatus(ctx, stream.waitStatus);
+    },
     onRetryWait: (wait) => {
       if (ctx.alive && isCurrent()) showStatus(ctx, `Server busy -- retrying in ${wait}s…`);
     },

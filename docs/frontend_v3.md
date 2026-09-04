@@ -125,7 +125,7 @@ js/
   app.js                    # bootstrap + hash router + crash-guard error panel
   page.js                   # createPage lifecycle (READ FIRST)
   api.js                    # table-generated endpoint wrappers
-  streaming.js              # SSE over /v1/chat/completions (keepalive, reader.cancel, abort-as-completion, 503 retry, mid-stream {"error"})
+  streaming.js              # Messages-grammar SSE over /v1/messages + /v1/conversations/{id}/generate (ping keepalive + heylook_progress ignored/routed, reader.cancel, abort-as-completion, 503 retry, in-band error events)
   settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/setDisplayPref; displayWireFields() = display prefs that ride the WIRE, never the sampler bag -- show_special_tokens); null = backend-cascade; snapshotSettings()/applySettings()
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
   preset-bar.js             # shared drawer section (createPresetBar): select is inert but FOLLOWS the document's applied_preset_id until an explicit pick; TWO writes and the BUTTON picks the target -- Update overwrites the selected preset (armed; the only overwrite path), Save as new creates under the typed name and REFUSES a name in use (never armed). Apply is armed too but overwrites the recoverable side. Read-only preview of the selected preset's own prompt, drift line naming which half moved; used by chat + notebook

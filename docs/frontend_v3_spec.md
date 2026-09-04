@@ -151,8 +151,12 @@ backend):**
 - Treat `AbortError` as normal completion (call `onComplete` with partial content).
 - Call `reader.cancel()` in the abort/catch path — without it, GC timing causes "Failed to fetch" on the
   next request (documented v2 bug).
-- **Ignore SSE comment lines** (`: keepalive\n\n`, emitted every 5s during long prefill) — do not parse as
-  data. (v2 may not handle this; v3 must.)
+- **Ignore what you do not know.** Keepalive on both Messages-grammar wires is Anthropic's own
+  `event: ping` (v1.79.65; an SSE comment `: keepalive` before that, which `/v1/chat/completions` still
+  sends) -- emitted after ~5s of silence wherever it falls, prefill or a mid-generation stall. It
+  reaches `onEvent` like any event and the dispatch drops it, as it drops every unknown type.
+  `event: heylook_progress` `data:{type,prefill:{processed,total}}` is prefill progress (both engines,
+  cached prefix excluded, only before the first block) and routes to `onProgress`.
 - Usage/timing only arrives if `include_usage: true` was sent; stream always ends with `data: [DONE]`.
 
 ### 3e. Settings (`settings.js` + panel, ~200 lines) — keep contract, data-drive the panel
@@ -320,7 +324,17 @@ stays for external consumers, no v3 page calls it):
   `peak_memory_gb? / kv_cache_bytes? / queue_wait_ms? / draft_acceptance?`
   (the heylook_saved.timing vocabulary; absent telemetry is OMITTED, never
   null). An in-band `error` event ENDS a /v1/messages generation (unlike
-  /generate's, where heylook_saved may still follow).
+  /generate's, where heylook_saved may still follow). Two control events
+  (v1.79.65) can appear at any point after `message_start` on BOTH
+  Messages-grammar routes: `event: ping` `data:{type:"ping"}`, the
+  grammar's own keepalive, after ~5s of silence wherever it falls (the
+  comment keepalive used to stop at the first token, so a decode stall got
+  nothing); and `event: heylook_progress` `data:{type,prefill:{processed,
+  total}}`, prefill progress in prompt tokens with the cached prefix
+  excluded, one per change, from both engines (mlx-lm's progress callback
+  and llama-server's `return_progress` frames both report into the
+  request's signal channel; `streaming_utils.control_frame` is the ONE
+  table of spellings per wire), only ever before the first content block.
 - Non-streaming: content blocks incl. a `logprobs` block when requested
   (wired v1.74.0 — the docstring promised it earlier than it existed), plus
   a `performance` object. Since v1.79.58 BOTH modes draw from one builder
@@ -572,10 +586,16 @@ Derived, so answered for unloaded models. v3 labels the tri-state thinking contr
 "Model default (on|off)" with it and the composer's thinking button reflects it; a request
 `enable_thinking: false` is the explicit off.
 
-`context_length` / `context_running` (v1.79.61, gguf only, `null` elsewhere and where
-unknown): the TRAINING context read off the GGUF header (`<arch>.context_length`, the
-ceiling chat's context select offers, answered for unloaded models too) and the context
-the RESIDENT process actually got (its slot `n_ctx`, read from llama-server's `/props`
+`context_length` (v1.79.61 gguf, v1.79.65 every provider with a chat context; also on every
+`/v1/models` entry, same value; `null` where the files do not say): the model's context
+window from the ONE resolver `capabilities.model_context_length` -- the TRAINING context
+read off the GGUF header (`<arch>.context_length`) for gguf, `config.json`'s
+`max_position_embeddings` (top-level, then the nested text block) for MLX -- answered for
+unloaded models too, and the number the provider refuses an over-length prompt against
+(**400**; llama-server refuses itself, MLX enforces it in `run_generation`). Chat's context
+select stays gguf-only (MLX has no fixed allocation to choose); the models page shows the
+ceiling for every row. `context_running` (v1.79.61, gguf only) is the context the RESIDENT
+process actually got (its slot `n_ctx`, read from llama-server's `/props`
 at ready; `null` when not loaded). `config.ctx_size` is what was ASKED; absent means
 llama-server chose, and `context_running` is what it chose -- which is why the Auto
 option can show a number once the model is resident;

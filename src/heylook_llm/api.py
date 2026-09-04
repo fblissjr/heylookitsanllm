@@ -37,7 +37,7 @@ from heylook_llm.utils import log_request_start, log_request_stage, log_request_
 from heylook_llm.diagnostic_logger import diag_event, exception_detail
 from heylook_llm import observability
 from heylook_llm.samplers import SamplerNotFound
-from heylook_llm.capabilities import effective_capabilities
+from heylook_llm.capabilities import effective_capabilities, model_context_length
 from heylook_llm.request_registry import resolve_request_id, track_request, tracked_stream
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
@@ -505,6 +505,12 @@ def list_models(request: Request):
                         else dict(cfg) if isinstance(cfg, dict) else {})
             model_entry["thinking_default"] = _thinking_default(
                 resolved, thinking_capable="thinking" in capabilities)
+            # The context window, from the same resolver the admin row and
+            # the provider's over-length guard read (v1.79.65). Null when the
+            # files do not say; a client with a number here can size a
+            # prompt before sending instead of learning the limit from a 400.
+            model_entry["context_length"] = model_context_length(
+                model_config.provider, resolved.get("model_path"))
 
         models_data.append(model_entry)
 
@@ -1147,16 +1153,16 @@ async def stream_response_generator_async(generator, chat_request: ChatRequest, 
     # Per-request abort event passed in by the route (set on client disconnect
     # to cancel THIS request's generation only).
 
-    from heylook_llm.streaming_utils import async_generator_with_abort, keepalive_sse
+    from heylook_llm.streaming_utils import WIRE_OPENAI, async_generator_with_abort, control_frame
 
     # Generation failure mid-stream: HTTP status is already sent, so the
     # provider's typed exception is translated into an OpenAI-style error
     # payload -- never delivered as an assistant content delta.
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[API {request_id[:8]}] "):
-            ka = keepalive_sse(chunk)  # sentinel guard FIRST (shared spelling)
-            if ka:
-                yield ka
+            frame = control_frame(chunk, WIRE_OPENAI)  # marker guard FIRST (one table of spellings)
+            if frame:
+                yield frame
                 continue
 
             # Track finish_reason from MLX even for empty chunks (values: "length", "stop", or None)

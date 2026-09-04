@@ -63,7 +63,7 @@ const TYPES = {
 // the deltas out with real delays. `drip` is mutated by the check that is
 // about to run (checks are sequential).
 function serveV3() {
-  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0, omitSaved: false };
+  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0, omitSaved: false, progress: [], progressDelayMs: 0 };
   const server = http.createServer(async (req, res) => {
     if (/\/v1\/conversations\/[^/]+\/generate$/.test(req.url) && req.method === 'POST') {
       await streamDrip(req, res, drip);
@@ -92,6 +92,16 @@ async function streamDrip(req, res, drip) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
   const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   ev('message_start', { type: 'message_start', message: { id: drip.rowId, content: [] } });
+  // Keepalive on this wire is Anthropic's `ping` (v1.79.65). Sent on EVERY
+  // drip so each streaming check also proves the client ignores it.
+  ev('ping', { type: 'ping' });
+  // Prefill progress, when a check asks for it: one heylook_progress per
+  // (processed, total) pair, spaced out, all before the first delta -- the
+  // only place the server ever emits it.
+  for (const [processed, total] of drip.progress) {
+    ev('heylook_progress', { type: 'heylook_progress', prefill: { processed, total } });
+    await sleep(drip.progressDelayMs);
+  }
   ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
   for (let i = 0; i < drip.text.length; i += drip.chunkChars) {
     ev('content_block_delta', {
@@ -2133,6 +2143,35 @@ async function main() {
       // the incremental one only ever drops the trailing block or two.
       assert(p.maxRemoved <= 6,
         `a single paint removed ${p.maxRemoved} of ${p.maxChildren} nodes -- the message is being rebuilt, not extended`);
+    });
+
+    await suite.check('prefill progress replaces the wait line and the first delta clears it', async () => {
+      // The dead air before the first token used to be one fixed line. Both
+      // engines now report prefill progress (heylook_progress, v1.79.65) and
+      // the line counts it up; a delta clears it like it clears the wait
+      // line, because the progress text BECOMES the wait line -- a zero-token
+      // completion must not strand "Reading the prompt…" on screen either.
+      drip.text = 'hello there world';
+      drip.chunkChars = 8;
+      drip.delayMs = 5;
+      drip.progress = [[512, 4096], [4096, 4096]];
+      drip.progressDelayMs = 200;
+      const st = await openChat(browser, base, { dripGenerate: true });
+      await startSend(st.page, 'go');
+      let seen = '';
+      await waitFor(async () => {
+        const t = await st.page.$eval('.chat__status', (el) => el.textContent);
+        if (/Reading the prompt/.test(t)) { seen = t; return true; }
+        return false;
+      }, { timeout: 8000, message: 'the progress line never showed' });
+      assert(/512|4[,.  ]?096/.test(seen), `the progress line carried no count: ${JSON.stringify(seen)}`);
+      await waitStreamEnd(st.page);
+      const after = await st.page.$eval('.chat__status', (el) => el.textContent);
+      assert(!/Reading the prompt/.test(after), `the progress line outlived the stream: ${JSON.stringify(after)}`);
+      assert(st.pageErrors.length === 0, `page errors: ${st.pageErrors.join(' | ')}`);
+      await st.page.close();
+      drip.progress = [];
+      drip.progressDelayMs = 0;
     });
 
     await suite.check('switching MODELS mid-run says the answer survives, never "Stopped"', async () => {

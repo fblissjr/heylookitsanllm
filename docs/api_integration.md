@@ -463,6 +463,23 @@ event: message_delta          data: {type, delta:{stop_reason}, usage}
 event: message_stop           data: {type, performance:{generation_duration_ms, ...}}
 ```
 
+Two more can appear at any point after `message_start`, and a conformant
+Messages parser already ignores both:
+
+```
+event: ping                   data: {type:"ping"}
+event: heylook_progress       data: {type, prefill:{processed, total}}
+```
+
+`ping` is the keepalive (v1.79.65; an SSE comment `: keepalive` before
+that, which the OpenAI wire still sends). It is emitted after roughly five
+seconds of silence wherever that silence falls: a long prefill, or a stall
+between tokens. `heylook_progress` is prefill progress in prompt tokens,
+cached prefix excluded, one event per change, from both engines; it only
+ever precedes the first content block. Neither carries content, so a
+client that dispatches on event type and drops what it does not know needs
+no change; a client that treats an unknown event as an error does.
+
 There is **no `data: [DONE]` terminator** — `message_stop` ends the stream.
 (`/v1/chat/completions` does send `[DONE]`; that difference is a common
 port-over bug.)
@@ -471,7 +488,8 @@ Blocks open and close as the content type switches, so a thinking model emits
 a `thinking` block, closes it, then opens a `text` block. Key on
 `delta.type`, not on block index.
 
-Two heylook extensions ride the same stream: `event: heylook_logprobs`
+Besides `heylook_progress`, two heylook extensions ride the same stream:
+`event: heylook_logprobs`
 (one per token when `logprobs: true`; entries share the shape of the OpenAI
 wire's `logprobs.content` so a migrating parser keeps working), and extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
@@ -700,7 +718,8 @@ rather than a guarantee, for reasons the closing note gives:
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`;
   this bullet named four of them until v1.79.41, and thirteen until
   v1.79.49 dropped `include_performance` from this wire. On the stream: a
-  `heylook_logprobs` event and `message_stop.performance`.
+  `heylook_logprobs` event, a `heylook_progress` event and
+  `message_stop.performance`.
 - **`message_start.usage.input_tokens` is 0.** The event is emitted before
   the first chunk is absorbed, so prompt tokens are not known yet. Anthropic
   puts input tokens there; read them off `message_delta.usage` instead.

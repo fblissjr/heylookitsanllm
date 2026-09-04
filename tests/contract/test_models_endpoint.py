@@ -59,3 +59,22 @@ class TestThinkingDefaultOnModelRows:
         admin = {m["id"]: m["thinking_default"] for m in client.get("/v1/admin/models").json()["models"]}
         for mid, value in listed.items():
             assert admin.get(mid) == value, mid
+
+
+class TestContextLengthOnModelRows:
+    """v1.79.65: every /v1/models entry carries `context_length` from the ONE
+    resolver the admin row and the provider's over-length guard read -- an
+    int, or null when the model files do not say (every fake path here)."""
+
+    def test_present_on_every_entry(self, client):
+        data = client.get("/v1/models").json()["data"]
+        assert data
+        for entry in data:
+            assert "context_length" in entry, entry["id"]
+            assert entry["context_length"] is None or isinstance(entry["context_length"], int)
+
+    def test_agrees_with_the_admin_row(self, client):
+        listed = {m["id"]: m["context_length"] for m in client.get("/v1/models").json()["data"]}
+        admin = {m["id"]: m["context_length"] for m in client.get("/v1/admin/models").json()["models"]}
+        for mid, value in listed.items():
+            assert admin.get(mid) == value, mid

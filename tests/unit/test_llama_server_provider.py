@@ -913,3 +913,46 @@ class TestRunningContext:
         p.running_ctx = 4096
         p.unload()
         assert p.running_ctx is None
+
+
+# ---------------------------------------------------------------------------
+# Prefill progress (v1.79.65): return_progress on the payload, prompt_progress
+# frames reported up the request's signal channel in the cross-engine meaning
+# ---------------------------------------------------------------------------
+
+class TestPrefillProgress:
+    def test_payload_asks_for_progress(self):
+        p = make_provider()
+        assert p._build_payload(req())["return_progress"] is True
+
+    def test_progress_frame_reports_work_only_and_yields_nothing(self):
+        from heylook_llm.providers.abort import AbortEvent
+        signals = AbortEvent()
+        frames = [
+            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
+            '"prompt_progress":{"total":100,"cache":20,"processed":60,"time_ms":5}}',
+            'data: {"choices":[{"delta":{"content":"Hi"},"index":0,"finish_reason":null}]}',
+        ]
+        p = make_provider()
+        chunks = list(p._stream_chunks(_stream_bytes(*frames), abort_event=signals))
+        # llama-server's processed INCLUDES the cache hit; the signal carries
+        # the work this request runs, cache subtracted from both.
+        assert signals.prefill_progress() == (40, 80)
+        assert [c.text for c in chunks] == ["Hi"]
+
+    def test_a_fully_cached_prompt_reports_nothing(self):
+        from heylook_llm.providers.abort import AbortEvent
+        signals = AbortEvent()
+        frames = [
+            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
+            '"prompt_progress":{"total":50,"cache":50,"processed":50,"time_ms":0}}',
+        ]
+        list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=signals))
+        assert signals.prefill_progress() is None
+
+    def test_no_signal_channel_is_fine(self):
+        frames = [
+            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
+            '"prompt_progress":{"total":10,"cache":0,"processed":5,"time_ms":1}}',
+        ]
+        assert list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=None)) == []

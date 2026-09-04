@@ -22,6 +22,7 @@ from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenera
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
 from ..cache_defaults import resolve_cache_config
+from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import thinking_for_template
@@ -297,8 +298,9 @@ class UnifiedTextStrategy:
     """
 
     def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False,
-                 template_info=None):
+                 template_info=None, context_length=None):
         self.draft_model = draft_model
+        self.context_length = context_length  # the provider's, for the over-length guard
         self.model_id = model_id
         self.model_config = model_config or {}
         self.is_vlm = is_vlm
@@ -367,6 +369,7 @@ class UnifiedTextStrategy:
             # Both continuation shapes: a content prefill and a mid-thought
             # resume. The first token completes prefilled text either way.
             continuing=request.is_continuation(),
+            context_length=self.context_length,
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -945,6 +948,11 @@ class MLXProvider(BaseProvider):
             from .common.stop_tokens import extend_eos_from_generation_config
             extend_eos_from_generation_config(self.get_tokenizer(), model_path)
 
+            # The context window, from the ONE resolver the admin row and
+            # /v1/models read -- so the ceiling a client is shown is the one
+            # run_generation refuses an over-length prompt against.
+            self.context_length = model_context_length("mlx", model_path)
+
             # Read the model's chat template + tokenizer config (C4.5). The
             # resulting ModelTemplateInfo is the single source of truth for
             # output-parsing decisions: reasoning parser selection, strip-
@@ -1159,6 +1167,7 @@ class MLXProvider(BaseProvider):
             model_config=self.config,
             is_vlm=self.is_vlm,
             template_info=getattr(self, "_template_info", None),
+            context_length=self.context_length,
         )
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy(
@@ -1517,7 +1526,11 @@ class MLXProvider(BaseProvider):
                 self._gen_gate.release()
 
     def _get_context_capacity(self) -> int:
-        """Get max context window size from model config."""
+        """Max context window: the shared resolver's answer (config.json,
+        read once at load) first, the loaded model's config object as the
+        fallback for a checkpoint whose files did not say."""
+        if self.context_length:
+            return self.context_length
         if not hasattr(self.model, 'config'):
             return 32768  # Default fallback
 
