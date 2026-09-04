@@ -519,7 +519,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
-stale_reload_fields,effective_loader}], total}`.
+stale_reload_fields,effective_loader,context_length,context_running}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
@@ -542,6 +542,13 @@ saved value differs from what the loaded process was built with (always `[]` whe
 loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
+`context_length` / `context_running` (v1.79.61, gguf only, `null` elsewhere and where
+unknown): the TRAINING context read off the GGUF header (`<arch>.context_length`, the
+ceiling chat's context select offers, answered for unloaded models too) and the context
+the RESIDENT process actually got (its slot `n_ctx`, read from llama-server's `/props`
+at ready; `null` when not loaded). `config.ctx_size` is what was ASKED; absent means
+llama-server chose, and `context_running` is what it chose -- which is why the Auto
+option can show a number once the model is resident;
 `effective_loader` (v1.79.31) is `"mlx-lm" | "mlx-vlm"` on an mlx row and `null` on every
 other provider — WHICH MLX LIBRARY decodes this model. Provider `mlx` is two separate
 upstream repos with separate release trains, so `provider` does not name an engine, and
@@ -581,11 +588,18 @@ the (overridden) path does not exist. All numbers are measured today;
 `estimated` flips when any component becomes an approximation and estimates
 must render in a different visual register (design doc §5).
 `POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20);
-`POST /{id}/reload[?warm=true]` (added v1.62.0) → unload + load(+warm) as ONE
+`POST /{id}/reload[?warm=true][&ctx_size=N]` (added v1.62.0) → unload + load(+warm) as ONE
 server-owned operation, exact `load` response shape (shared body, so the warm
 contract cannot fork). Reloading an unloaded model is just a load. This is
 what v3's "Reload now" sends -- the old browser-driven unload-then-load pair
-could strand a model unloaded if the tab died between the calls;
+could strand a model unloaded if the tab died between the calls.
+`ctx_size` (v1.79.61, gguf only, 400 otherwise) is the context to load with, PERSISTED
+as the model's `ctx_size` config through the one writer a PATCH uses, so chat's
+context select and the models-page editor read the same number; `0` = Auto = drop
+the stored key (llama-server then sizes from the model and fits to memory). Same
+value + resident + nothing stale = a plain load, no restart. This is what chat's
+Load/Reload button sends for a gguf model; `/load` stays the call for everything
+else;
 `POST /{id}/unload` →
 `{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
 `{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,

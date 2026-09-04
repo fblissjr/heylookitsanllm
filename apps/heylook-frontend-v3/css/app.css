@@ -579,6 +579,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   border-bottom: 1px solid var(--line);
 }
 .chat__bar select { max-width: 16rem; }
+.chat__ctx-select { max-width: 8rem; }
 .chat__bar-spacer { flex: 1; }
 .chat__convs-toggle { display: none; }
 
@@ -885,7 +886,8 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .chat--convs-open .chat__convs { display: flex; }
   .chat__convs-toggle { display: inline-block; }
   .message-bubble { max-width: 92%; }
-  /* §7 touch targets for the bar's Load button + the switch-warning actions. */
+  /* §7 touch targets for the bar's selects, Load button + the switch-warning actions. */
+  .chat__bar select { min-height: 44px; }
   .chat__load-btn,
   .chat__sysprompt-chip,
   .chat__switch-actions .btn {

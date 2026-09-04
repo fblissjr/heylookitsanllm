@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.61]
+
+Choose a gguf model's context size when you load it.
+
+- **`POST /v1/admin/models/{id}/reload?ctx_size=N`** loads (or restarts) a
+  gguf model at that context and persists it as the model's `ctx_size`
+  through the one config writer (`ModelService.update_config`, the same
+  models.toml write a PATCH makes), so the Models page and the chat page can
+  never hold two different numbers. `0` means Auto: the stored key is
+  dropped and llama-server sizes the context itself (`-c 0` = from the
+  model, then `--fit` shrinks unset arguments to device memory -- which is
+  how DeepSeek-V4-Flash was getting a 1,048,576-token slot). The same value
+  on a resident model with nothing stale is a plain load, so pressing Load
+  with the same choice does not throw away a warm process. 400 on a non-gguf
+  model: MLX has no fixed context allocation. Pinned by
+  `tests/contract/test_reload_ctx_size.py`; the contract roster gained a
+  gguf row so provider-branching routes have both arms under test.
+- **The admin row carries `context_length` and `context_running`.**
+  `context_length` is the training context from the GGUF header
+  (`<arch>.context_length`, cached on the file's identity so a list is one
+  stat per gguf row), the ceiling a control should offer. `context_running`
+  is what the resident process actually got: the provider reads the slot's
+  `n_ctx` from `/props` once at ready and logs it on the ready line. Both are
+  derived, top-level, null where unknown and for every non-gguf provider.
+- **Chat page: a context select beside the model picker** (gguf only).
+  Native `<select>`, not a slider -- the range is logarithmic, 4k to 1M, so
+  a linear thumb cannot land on 32k, and a select is already right on a
+  phone. Auto is preselected unless a `ctx_size` is stored; once resident,
+  Auto shows the number llama-server chose. Power-of-two steps up to the
+  training context (marked *max*), plus the stored value if it is off-grid.
+  A different choice on a resident model shows Reload; the load status
+  reports the context the process came up with.
+
 ## [1.79.60]
 
 A busy llama-server backend now answers 503, not 500.

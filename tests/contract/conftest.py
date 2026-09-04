@@ -53,6 +53,18 @@ TEST_MODELS_DATA = {
             "enabled": True,
             "config": {"model_path": "/fake/mlx-model", "vision": False},
         },
+        {
+            # A gguf row, so routes with a provider branch (context fields on
+            # the admin row, ctx_size on /reload) have both arms reachable.
+            # FakeProvider serves it like any other id; its path does not
+            # exist, which is the "header unreadable" case on purpose.
+            "id": "test-gguf-model",
+            "provider": "gguf",
+            "description": "Test gguf model for contract tests",
+            "tags": ["test"],
+            "enabled": True,
+            "config": {"model_path": "/fake/model.gguf"},
+        },
     ],
     "default_model": "test-mlx-model",
     "max_loaded_models": 2,
@@ -193,6 +205,7 @@ class MockModelService:
 
     def __init__(self):
         self.app_config = AppConfig(**TEST_MODELS_DATA)
+        self.update_calls = []
 
     def list_configs(self):
         return list(self.app_config.models)
@@ -207,6 +220,29 @@ class MockModelService:
 
     def scan_paths(self, paths=None, scan_hf=True):
         return []  # No real scanning in tests
+
+    def update_config(self, model_id, updates):
+        """Apply a config update to the in-memory roster (what the real
+        service writes to models.toml) and record it for assertions."""
+        from heylook_llm.config import ModelConfig
+        for i, mc in enumerate(self.app_config.models):
+            if mc.id != model_id:
+                continue
+            data = mc.model_dump(exclude_unset=True)
+            cfg = dict(data.get("config") or {})
+            changed = []
+            for key, value in (updates.get("config") or {}).items():
+                if value is None:
+                    if cfg.pop(key, None) is not None:
+                        changed.append(key)
+                elif cfg.get(key) != value:
+                    cfg[key] = value
+                    changed.append(key)
+            data["config"] = cfg
+            self.app_config.models[i] = ModelConfig(**data)
+            self.update_calls.append((model_id, updates))
+            return self.app_config.models[i], changed
+        raise ValueError(f"Model '{model_id}' not found")
 
 
 # ---------------------------------------------------------------------------

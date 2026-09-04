@@ -24,6 +24,7 @@ import pytest
 from heylook_llm.gguf_metadata import (
     GGUFMetadataError,
     architecture,
+    context_length,
     detect_modalities,
     infer_spec_type,
     read_metadata,
@@ -276,3 +277,53 @@ class TestInferSpecType:
 
     def test_unrecognised_drafter_returns_none(self, tmp_path):
         assert infer_spec_type(tmp_path / "some-drafter.gguf") is None
+
+
+@pytest.mark.unit
+class TestContextLength:
+    """``<arch>.context_length`` -- the ceiling a context-size control offers.
+
+    The key is architecture-prefixed, so the reader has to learn the
+    architecture first; a file whose architecture it cannot read yields
+    None rather than guessing a prefix.
+    """
+
+    def test_reads_the_arch_prefixed_key(self, tmp_path):
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "deepseek4"),
+            ("deepseek4.block_count", U32, 43),
+            ("deepseek4.context_length", U32, 1048576),
+        ])
+        assert context_length(f) == 1048576
+
+    def test_another_architectures_key_is_not_this_models(self, tmp_path):
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "gemma4"),
+            ("qwen3.context_length", U32, 40960),
+        ])
+        assert context_length(f) is None
+
+    def test_missing_arch_or_key_is_none(self, tmp_path):
+        assert context_length(write_gguf(tmp_path / "a.gguf", [
+            ("deepseek4.context_length", U32, 1048576)])) is None
+        assert context_length(write_gguf(tmp_path / "b.gguf", [
+            ("general.architecture", STR, "gemma4")])) is None
+
+    def test_unreadable_is_none(self, tmp_path):
+        assert context_length(tmp_path / "missing.gguf") is None
+        assert context_length(write_gguf(tmp_path / "bad.gguf", [], magic=b"NOPE")) is None
+
+    def test_cache_keys_on_file_identity(self, tmp_path):
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "gemma4"),
+            ("gemma4.context_length", U32, 131072),
+        ])
+        assert context_length(f) == 131072
+        # Same path, new content and size: a re-download at the same path is
+        # a different file and must not answer from the cache.
+        write_gguf(f, [
+            ("general.architecture", STR, "gemma4"),
+            ("gemma4.context_length", U32, 262144),
+            ("gemma4.block_count", U32, 60),
+        ])
+        assert context_length(f) == 262144

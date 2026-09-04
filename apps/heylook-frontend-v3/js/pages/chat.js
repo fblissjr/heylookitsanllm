@@ -211,6 +211,7 @@ function buildSkeleton(ctx) {
 
   s.modelSelect = createEl('select', { title: 'Model' });
   s.loadedIds = new Set();   // model ids with a resident process (admin list)
+  s.adminRows = new Map();   // id -> /v1/admin/models row (provider, config, context_*)
   s.loadedKnown = false;     // false until the first successful residency fetch
   s.committedModelId = null; // last COMMITTED selection (the select may show an unconfirmed target)
   s.modelSelect.addEventListener('change', () => {
@@ -238,6 +239,22 @@ function buildSkeleton(ctx) {
     title: 'Load this model now so the first message does not pay for it',
   }, ['Load']);
   s.loadNowBtn.addEventListener('click', () => loadModelNow(ctx));
+
+  // Context size for the NEXT load of a gguf model. A native <select> of
+  // power-of-two steps, not a slider: the range is logarithmic (4k to 1M) and
+  // a linear thumb cannot land on 32k; a select is also the one control that
+  // is already right on a phone with no widgetry. "Auto" is llama-server's
+  // own answer (sized from the model, fitted to memory) and is the default
+  // -- the stored `ctx_size` preselects when one is set. Hidden for MLX,
+  // which has no fixed context allocation. Choosing a different value shows
+  // Load/Reload; the value is sent WITH the load and persisted server-side,
+  // so the models page shows the same number afterwards.
+  s.ctxSelect = createEl('select', {
+    class: 'chat__ctx-select', hidden: true,
+    title: 'Context size for the next load',
+    'aria-label': 'Context size',
+  });
+  s.ctxSelect.addEventListener('change', () => refreshLoadBtn(ctx));
 
   const convsToggle = createEl('button', { class: 'btn btn--sm chat__convs-toggle' }, ['Chats']);
   convsToggle.addEventListener('click', () => s.rootEl.classList.toggle('chat--convs-open'));
@@ -348,6 +365,7 @@ function buildSkeleton(ctx) {
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
+      s.ctxSelect,
       s.loadNowBtn,
       s.presetChip,
       s.sysPromptChip,
@@ -429,6 +447,10 @@ async function refreshLoadedIds(ctx) {
     // Provider per model, for the one continuation asymmetry: user-role
     // continuation is MLX-only (llama-server prefills assistant turns only).
     s.providerById = new Map((data.models ?? []).map((m) => [m.id, m.provider]));
+    // The whole row, for the context control: provider gates it, config
+    // carries the stored ctx_size, context_length is the ceiling,
+    // context_running is what the resident process actually got.
+    s.adminRows = new Map((data.models ?? []).map((m) => [m.id, m]));
     s.loadedKnown = true;
   } catch {
     return; // keep the last known state; the UI never guesses residency
@@ -447,7 +469,92 @@ async function refreshLoadedIds(ctx) {
 function refreshLoadBtn(ctx) {
   const s = ctx.state;
   const id = s.modelSelect.value;
-  s.loadNowBtn.hidden = !(isCold(ctx, id) && !s.loadNowBtn.dataset.busy);
+  refreshCtxSelect(ctx);
+  // Cold: Load pays the load now. Resident with a different context chosen:
+  // Reload restarts the process at the new size -- the one case a loaded
+  // model has a reason to show the button at all.
+  const cold = isCold(ctx, id);
+  const changed = ctxChoiceChanged(ctx);
+  s.loadNowBtn.textContent = cold ? 'Load' : 'Reload';
+  s.loadNowBtn.title = cold
+    ? 'Load this model now so the first message does not pay for it'
+    : 'Restart this model with the chosen context size';
+  s.loadNowBtn.hidden = !((cold || changed) && !s.loadNowBtn.dataset.busy);
+}
+
+// --- context size control -------------------------------------------------
+
+const CTX_MIN = 4096;
+const CTX_FALLBACK_MAX = 262144; // ceiling when the header did not say
+
+function fmtCtx(n) {
+  return n >= 1048576 ? `${(n / 1048576).toFixed(n % 1048576 ? 1 : 0)}M` : `${Math.round(n / 1024)}k`;
+}
+
+// Power-of-two steps from 4k up to the model's training context (or the
+// fallback), plus the ceiling itself when it is not a power of two (Qwen3's
+// 40960) and the stored value when it is off-grid -- the select must be able
+// to SHOW what is stored, or Auto would be preselected over a real value.
+function ctxStepsFor(row) {
+  const max = row?.context_length || CTX_FALLBACK_MAX;
+  const steps = [];
+  for (let n = CTX_MIN; n <= max; n *= 2) steps.push(n);
+  if (!steps.includes(max)) steps.push(max);
+  const stored = row?.config?.ctx_size;
+  if (stored && !steps.includes(stored)) steps.push(stored);
+  return steps.sort((a, b) => a - b);
+}
+
+function refreshCtxSelect(ctx) {
+  const s = ctx.state;
+  const id = s.modelSelect.value;
+  const row = s.adminRows.get(id);
+  const gguf = row?.provider === 'gguf';
+  s.ctxSelect.hidden = !gguf;
+  if (!gguf) {
+    // Forget the last gguf model's facts: a hidden control must not come
+    // back describing a different model's running context.
+    delete s.ctxSelect.dataset.sig;
+    s.ctxSelect.title = 'Context size for the next load';
+    return;
+  }
+  const stored = row.config?.ctx_size ?? '';
+  const running = row.loaded ? row.context_running : null;
+  // Rebuild only when the model (or its facts) moved; an untouched rebuild
+  // would throw away a choice the user just made.
+  const sig = `${id}|${stored}|${row.context_length ?? ''}|${running ?? ''}`;
+  if (s.ctxSelect.dataset.sig === sig) return;
+  s.ctxSelect.dataset.sig = sig;
+  const autoLabel = running && !stored ? `Auto (${fmtCtx(running)})` : 'Auto';
+  const options = [createEl('option', { value: '' }, [autoLabel])];
+  for (const n of ctxStepsFor(row)) {
+    const tag = n === row.context_length ? ' (max)' : '';
+    options.push(createEl('option', { value: String(n) }, [`${fmtCtx(n)}${tag}`]));
+  }
+  s.ctxSelect.replaceChildren(...options);
+  s.ctxSelect.value = stored ? String(stored) : '';
+  s.ctxSelect.title = running
+    ? `Context size for the next load — running with ${fmtCtx(running)} now`
+    : 'Context size for the next load';
+}
+
+// The chosen value differs from what is STORED for the model -- the only
+// change that means anything, since the stored value is what a load uses.
+function ctxChoiceChanged(ctx) {
+  const s = ctx.state;
+  const row = s.adminRows.get(s.modelSelect.value);
+  if (row?.provider !== 'gguf' || s.ctxSelect.hidden) return false;
+  const stored = row.config?.ctx_size ?? '';
+  return String(stored) !== s.ctxSelect.value;
+}
+
+// What to send with the load: the chosen size, 0 for Auto. Null for a model
+// the control does not apply to, so the plain load route is used.
+function ctxChoiceToSend(ctx) {
+  const s = ctx.state;
+  const row = s.adminRows.get(s.modelSelect.value);
+  if (row?.provider !== 'gguf') return null;
+  return s.ctxSelect.value ? Number(s.ctxSelect.value) : 0;
 }
 
 async function loadModelNow(ctx) {
@@ -457,16 +564,28 @@ async function loadModelNow(ctx) {
   s.loadNowBtn.dataset.busy = '1';
   s.loadNowBtn.disabled = true;
   s.modelSelect.disabled = true;
-  showStatus(ctx, `Loading ${id}…`);
+  s.ctxSelect.disabled = true;
+  // gguf goes through the server-owned reload WITH the context choice (the
+  // server persists it and skips the restart when nothing changed); every
+  // other provider keeps the plain load.
+  const ctxSize = ctxChoiceToSend(ctx);
+  const restarting = !isCold(ctx, id) && ctxSize != null;
+  showStatus(ctx, restarting
+    ? `Restarting ${id} with ${ctxSize ? fmtCtx(ctxSize) : 'auto'} context…`
+    : `Loading ${id}…`);
+  let summary = null;
   try {
-    const result = await api.adminLoadModel(id, true);
+    const result = ctxSize != null
+      ? await api.adminReloadModel(id, true, ctxSize)
+      : await api.adminLoadModel(id, true);
     if (!ctx.alive) return;
     if (result?.warm_error) {
       showStatus(ctx, `Loaded, but the warm-up generation failed: ${result.warm_error}`, true);
     } else {
-      showStatus(ctx, result?.warm_ms != null
+      summary = result?.warm_ms != null
         ? `${id} loaded and warmed in ${(result.warm_ms / 1000).toFixed(1)}s.`
-        : `${id} loaded.`);
+        : `${id} loaded.`;
+      showStatus(ctx, summary);
     }
   } catch (err) {
     if (!ctx.alive) return;
@@ -475,8 +594,14 @@ async function loadModelNow(ctx) {
     delete s.loadNowBtn.dataset.busy;
     s.loadNowBtn.disabled = false;
     s.modelSelect.disabled = false;
+    s.ctxSelect.disabled = false;
   }
-  if (ctx.alive) await refreshLoadedIds(ctx);
+  if (!ctx.alive) return;
+  await refreshLoadedIds(ctx);
+  // Say what the process actually got, once the row can tell us: for Auto
+  // that is the only place the number exists.
+  const running = s.adminRows.get(id)?.context_running;
+  if (summary && running && ctx.alive) showStatus(ctx, `${summary} Context ${fmtCtx(running)}.`);
 }
 
 // What committing this switch would actually do to THIS conversation.

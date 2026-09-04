@@ -98,7 +98,17 @@ const ROUTES = {
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
   // ONE server-owned unload+load(+warm): a browser-driven pair could strand
   // the model unloaded if the tab died between the calls. Load's shape.
-  adminReloadModel:  ['POST', (id, warm) => `/v1/admin/models/${encodeURIComponent(id)}/reload${warm ? '?warm=true' : ''}`],
+  // `ctxSize` (gguf only, v1.79.61): the context to load with, persisted as
+  // the model's `ctx_size` config by the server -- ONE writer, the same
+  // models.toml write the models page's editor makes. 0 = Auto (unset). The
+  // server makes the unchanged-and-resident case a plain load, so sending
+  // the same choice again does not restart a warm process.
+  adminReloadModel:  ['POST', (id, warm, ctxSize) => {
+    const q = [];
+    if (warm) q.push('warm=true');
+    if (ctxSize != null) q.push(`ctx_size=${encodeURIComponent(ctxSize)}`);
+    return `/v1/admin/models/${encodeURIComponent(id)}/reload${q.length ? '?' + q.join('&') : ''}`;
+  }],
   adminScan:         ['POST', () => '/v1/admin/models/scan', true],
   adminImport:       ['POST', () => '/v1/admin/models/import', true],
   // The [scan] watch folders -- what the server DISCOVERS models from. Since

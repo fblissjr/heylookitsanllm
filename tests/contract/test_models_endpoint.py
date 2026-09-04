@@ -16,7 +16,7 @@ class TestListModels:
         data = resp.json()
         assert data["object"] == "list"
         assert isinstance(data["data"], list)
-        assert len(data["data"]) == 1  # test-mlx-model
+        assert len(data["data"]) == 2  # test-mlx-model + test-gguf-model (conftest roster)
 
     def test_model_entry_has_required_fields(self, client):
         """Each model entry has id, object, and owned_by fields."""
@@ -32,7 +32,7 @@ class TestListModels:
         """Model IDs in response match the test config."""
         resp = client.get("/v1/models")
         ids = {m["id"] for m in resp.json()["data"]}
-        assert ids == {"test-mlx-model"}
+        assert ids == {"test-mlx-model", "test-gguf-model"}
 
     def test_model_has_provider_field(self, client):
         """Models include provider information."""

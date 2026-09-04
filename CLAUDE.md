@@ -52,7 +52,7 @@ and MERGING up to two leading system messages -- two leading system messages ren
 under unsloth and are a 500 under official, because a raised jinja exception is a 500
 from llama-server. Both still reject a system message appearing MID-conversation, so
 "unsloth's is permissive" is false in general -- try the shape, do not assume it.
-always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
+CONTEXT (v1.79.61): `ctx_size` absent = llama-server's `-c 0`, i.e. the model's training context then `--fit` shrinking unset args to device memory -- DeepSeek-V4-Flash got a 1,048,576-token slot that way; the admin row carries `context_length` (GGUF header, the ceiling) and `context_running` (`/props` at ready, what the process GOT), and `POST /v1/admin/models/{id}/reload?ctx_size=N` persists through the ONE config writer then loads (0 = Auto = drop the key; unchanged + resident = plain load, no restart). gguf-only: MLX has no fixed context allocation. always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in and should stay OFF unless you have
 checked it a win on YOUR model at YOUR context. NO PERFORMANCE NUMBERS IN TRACKED DOCS
 -- 2026-08-10 produced a string of figures that were each confidently wrong in turn,

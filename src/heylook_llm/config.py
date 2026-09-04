@@ -1452,6 +1452,24 @@ class AdminModelResponse(BaseModel):
                     "two separate upstream repos, and this is the only field "
                     "that says which one a row means.",
     )
+    context_length: Optional[int] = Field(
+        default=None,
+        description="The model's TRAINING context (`<arch>.context_length` "
+                    "from the GGUF header). The ceiling a context-size "
+                    "control should offer: llama-server sizes its context "
+                    "from this when `ctx_size` is unset. gguf only, null "
+                    "elsewhere and when the header cannot be read. DERIVED "
+                    "from the file, so it is answered for unloaded models.",
+    )
+    context_running: Optional[int] = Field(
+        default=None,
+        description="The context the RESIDENT llama-server process was "
+                    "actually sized to (its slot `n_ctx`, read from /props at "
+                    "ready). `config.ctx_size` is what was asked; absent "
+                    "means llama-server chose from the model and memory, and "
+                    "this is what it chose. Null for unloaded models and for "
+                    "every non-gguf provider.",
+    )
 
 
 class AdminModelListResponse(BaseModel):

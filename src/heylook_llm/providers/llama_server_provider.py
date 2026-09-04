@@ -112,6 +112,13 @@ class LlamaServerProvider(BaseProvider):
         self._proc: Optional[subprocess.Popen] = None
         self._log_handle = None
         self._base_url: Optional[str] = None
+        # The context the RUNNING process was sized to, read from /props once
+        # it is ready. Config carries what was ASKED (`ctx_size`, absent =
+        # llama-server's own model-derived, memory-fitted default); this is
+        # what it GOT, which is the number a "context size" control has to
+        # show for the Auto case, or it is offering a choice with a blank
+        # default. None until ready, and None if /props does not say.
+        self.running_ctx: Optional[int] = None
         # The process-wide gate (one GPU), same config key as MLX.
         self._gen_gate = get_process_gate(int(self.config.get("max_queue_depth", 8)))
 
@@ -555,7 +562,42 @@ class LlamaServerProvider(BaseProvider):
                 )
             time.sleep(0.5)
 
-        logging.info(f"[GGUF] llama-server ready for '{self.model_id}' at {self._base_url}")
+        self.running_ctx = self._read_running_ctx()
+        logging.info(
+            f"[GGUF] llama-server ready for '{self.model_id}' at {self._base_url}"
+            + (f" (context {self.running_ctx})" if self.running_ctx else "")
+        )
+
+    def _read_running_ctx(self) -> Optional[int]:
+        """``n_ctx`` of the live slot, from /props. Best-effort, None if unsure.
+
+        One read at ready time, not per request: the value is fixed for the
+        life of the process (context is a spawn-time argument), and /props is
+        exempt from counting as a task so the read cannot wake or busy anything.
+        """
+        if self._base_url is None:
+            return None
+        try:
+            with urllib.request.urlopen(self._base_url + "/props", timeout=10) as resp:
+                return self._ctx_from_props(json.loads(resp.read()))
+        except Exception as e:
+            logging.debug(f"[GGUF] could not read /props for '{self.model_id}': {e}")
+            return None
+
+    @staticmethod
+    def _ctx_from_props(props: dict) -> Optional[int]:
+        """The per-slot context out of a /props payload, or None.
+
+        llama-server reports it as ``default_generation_settings.n_ctx``
+        (the slot's ``n_ctx_slot`` in its own load log). Guarded rather than
+        indexed: an older or newer build that moves the key must degrade to
+        "unknown", never to a load failure.
+        """
+        settings = props.get("default_generation_settings") if isinstance(props, dict) else None
+        n_ctx = settings.get("n_ctx") if isinstance(settings, dict) else None
+        if isinstance(n_ctx, int) and not isinstance(n_ctx, bool) and n_ctx > 0:
+            return n_ctx
+        return None
 
     def _cleanup_handles(self):
         if self._log_handle is not None:
@@ -574,6 +616,7 @@ class LlamaServerProvider(BaseProvider):
         proc = getattr(self, "_proc", None)
         self._proc = None
         self._base_url = None
+        self.running_ctx = None
         # Deregister FIRST: once we've decided to stop it, the exit hook must
         # never signal this pid again -- by then it may belong to something else.
         _ACTIVE_PROCS.discard(proc)

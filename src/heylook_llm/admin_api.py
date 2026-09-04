@@ -11,10 +11,11 @@ protected nothing an inference request could not already do. ``unload`` and
 """
 
 import logging
+from pathlib import Path
 import time
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from heylook_llm.auth import require_admin_token
 from heylook_llm.capabilities import effective_capabilities
@@ -173,6 +174,24 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     # the route whose comment directly above explains that its per-row cost is
     # why it was moved off the event loop.
     effective_loader = effective_loader_for_config(mc.provider, resolved)
+    # Context, gguf only. `context_length` is the TRAINING context read off the
+    # GGUF header (cached on the file's identity, so a list is one stat per
+    # gguf row after the first read); `context_running` is what the resident
+    # process actually got, which the provider read from /props at ready.
+    # Both are DERIVED and land top-level for the same reason effective_loader
+    # does: a read-only value inside `config` would render as an editable
+    # option on the models page.
+    context_length = None
+    context_running = None
+    if mc.provider == "gguf":
+        from heylook_llm import gguf_metadata
+        model_path = (mc.config.model_dump().get("model_path")
+                      if hasattr(mc.config, "model_dump") else dict(mc.config).get("model_path"))
+        if model_path:
+            context_length = gguf_metadata.context_length(Path(model_path).expanduser())
+        if loaded and router is not None:
+            provider = router.get_loaded_models().get(mc.id)
+            context_running = getattr(provider, "running_ctx", None)
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
@@ -189,6 +208,8 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
         effective_loader=effective_loader,
+        context_length=context_length,
+        context_running=context_running,
     )
 
 
@@ -366,13 +387,64 @@ def toggle_model(model_id: str, request: Request):
     description=(
         "Unload then load(+warm) as ONE server-owned operation -- the "
         "browser-driven unload-then-load pair could strand a model unloaded "
-        "if the client died between the calls. Same response shape as /load."
+        "if the client died between the calls. Same response shape as /load. "
+        "`ctx_size` (gguf only, 400 otherwise) sets the model's context size "
+        "for THIS load and persists it as the model's `ctx_size` config -- "
+        "the same models.toml write a PATCH makes, so there is one place the "
+        "value lives. `0` means Auto: drop the stored value and let "
+        "llama-server size the context from the model and device memory. "
+        "When the value is unchanged and the model is already resident with "
+        "nothing stale, this is a plain load (no restart) -- pressing Load "
+        "with the same choice must not throw away a warm process."
     ),
 )
-async def reload_model(model_id: str, request: Request, warm: bool = False):
+async def reload_model(
+    model_id: str,
+    request: Request,
+    warm: bool = False,
+    ctx_size: int | None = Query(
+        default=None, ge=0,
+        description="gguf only. Context size to load with; persisted as the "
+                    "model's `ctx_size`. 0 = Auto (unset, llama-server "
+                    "decides).",
+    ),
+):
     import asyncio
 
     router = request.app.state.router_instance
+    if ctx_size is not None:
+        # Persist FIRST, through the one config writer, so the reload below
+        # builds the provider from the saved value -- and so a later PATCH,
+        # the models page, and this route can never disagree about what the
+        # model's context is. The provider check reads the merged view (a
+        # discovered model has no models.toml entry until this write
+        # materializes one); the stored value reads the service, which is the
+        # file's truth rather than the router's last-loaded snapshot.
+        mc = router.app_config.get_model_config(model_id)
+        if mc is None:
+            raise HTTPException(status_code=400,
+                                detail=f"Model '{model_id}' not found or not enabled")
+        if mc.provider != "gguf":
+            raise HTTPException(
+                status_code=400,
+                detail=f"ctx_size applies to gguf models only; '{model_id}' is "
+                       f"provider '{mc.provider}' (MLX has no fixed context allocation)",
+            )
+        service = _get_service(request)
+        written = service.get_config(model_id) or mc
+        stored = written.config.model_dump(exclude_unset=True).get("ctx_size")
+        wanted = ctx_size or None  # 0 -> unset, the models.toml spelling of Auto
+        if wanted != stored:
+            try:
+                await asyncio.to_thread(
+                    service.update_config, model_id, {"config": {"ctx_size": wanted}})
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        elif (model_id in router.get_loaded_models()
+              and not router.stale_reload_fields(model_id)):
+            # Same value, resident, nothing else pending: a restart would only
+            # pay the load again for an identical process.
+            return await load_and_warm(router, model_id, warm)
     # Re-read models.toml first: the v3 editor flow has already
     # reload_config'd after its PATCH, but a hand-edit of the file has not --
     # without this, "reload" would rebuild the provider from stale config.

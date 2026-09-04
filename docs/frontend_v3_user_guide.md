@@ -185,6 +185,15 @@ than blocked:
 - Load cost is disclosed, never confirmed. If the model is not resident you are
   told your first message will load it, and a **Load** button lets you pay that
   cost now. Choosing a model *is* choosing to pay for it.
+- **Context size** (gguf models only): a select beside the model picker chooses
+  the context the next load runs with. **Auto** is the default and is
+  llama-server's own answer, sized from the model and fitted to memory; once
+  the model is resident the Auto entry shows the number it chose. The other
+  entries are power-of-two steps up to the model's training context, marked
+  *(max)*. Picking a different value on a resident model turns Load into
+  **Reload**, which restarts that model at the new size; the choice is saved as
+  the model's `ctx_size` so the Models page shows the same number. MLX models
+  have no fixed context allocation, so the control does not appear for them.
 
 **Rename** is inline on the sidebar row. **Clone** copies a conversation and its
 messages. **Delete** removes it; deleting one that is generating stops the run

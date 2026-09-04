@@ -243,3 +243,51 @@ def infer_spec_type(drafter: Path) -> Optional[str]:
         if name.startswith(prefix):
             return spec_type
     return None
+
+
+# ---------------------------------------------------------------------------
+# Training context
+# ---------------------------------------------------------------------------
+
+# (resolved path, mtime_ns, size) -> context_length. The admin list route
+# builds one row per served model on every request, and a GGUF header read
+# is a file open plus a short KV walk -- small, but it is disk, per row, per
+# request, on the route that was moved off the event loop because its per-row
+# cost is real. The file's identity is the cache key, so a re-download or a
+# re-quant at the same path is seen; the process never re-reads an unchanged
+# file.
+_context_length_cache: dict[tuple, Optional[int]] = {}
+
+
+def context_length(primary: Path) -> Optional[int]:
+    """The model's TRAINING context, ``<arch>.context_length``, or None.
+
+    llama-server sizes its context from this value when no ``--ctx-size`` is
+    passed (``-c 0`` = loaded from model, then ``--fit`` shrinks it to what
+    device memory holds), so it is the ceiling a context-size control should
+    offer -- asking for more than the model was trained on buys nothing.
+
+    Two header reads, not one: the key is architecture-prefixed
+    (``deepseek4.context_length``, ``gemma4.context_length``), so the
+    architecture has to be known before the key can be named. Both stop at
+    the first matching key, and ``general.architecture`` is among the first
+    entries every converter writes. None for anything unreadable, missing,
+    or not a positive integer -- a control that cannot learn the ceiling
+    offers its generic steps rather than refusing to render.
+    """
+    try:
+        st = primary.stat()
+        key = (str(primary.resolve()), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if key in _context_length_cache:
+        return _context_length_cache[key]
+    arch = architecture(primary)
+    value: Optional[int] = None
+    if arch:
+        ctx_key = f"{arch}.context_length"
+        raw = safe_read_metadata(primary, {ctx_key}).get(ctx_key)
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+            value = raw
+    _context_length_cache[key] = value
+    return value

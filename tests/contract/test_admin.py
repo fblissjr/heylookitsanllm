@@ -14,7 +14,9 @@ class TestAdminListModels:
         data = resp.json()
         assert "models" in data
         assert "total" in data
-        assert data["total"] == 1
+        # One mlx + one gguf row (conftest TEST_MODELS_DATA): the gguf row
+        # exists so provider-branching routes have both arms under test.
+        assert data["total"] == 2
 
     def test_model_entries_have_full_config(self, client):
         """Admin model entries include config dict and enabled status."""

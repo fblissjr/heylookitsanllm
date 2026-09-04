@@ -840,3 +840,33 @@ class TestGenerationGate:
         # overlap, which is the concurrency the gate exists to prevent.
         assert make_provider()._gen_gate is make_provider()._gen_gate
 
+
+
+@pytest.mark.unit
+class TestRunningContext:
+    """``running_ctx`` is what the process GOT, read from /props at ready.
+
+    The parse is guarded, not indexed: a build that moves the key must
+    degrade to "unknown", never to a load failure, and a bool or a zero is
+    not a context.
+    """
+
+    def test_reads_the_slot_ctx(self):
+        props = {"default_generation_settings": {"n_ctx": 32768, "id": 0}, "total_slots": 1}
+        assert LlamaServerProvider._ctx_from_props(props) == 32768
+
+    @pytest.mark.parametrize("props", [
+        {}, {"default_generation_settings": {}}, {"default_generation_settings": None},
+        {"default_generation_settings": {"n_ctx": 0}},
+        {"default_generation_settings": {"n_ctx": True}},
+        {"default_generation_settings": {"n_ctx": "32768"}},
+        [], None,
+    ])
+    def test_anything_else_is_none(self, props):
+        assert LlamaServerProvider._ctx_from_props(props) is None
+
+    def test_unload_forgets_it(self):
+        p = make_provider()
+        p.running_ctx = 4096
+        p.unload()
+        assert p.running_ctx is None
