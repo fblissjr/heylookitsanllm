@@ -191,9 +191,11 @@ class TestThreadPinning:
 # ---------------------------------------------------------------------------
 #
 # Claims (what breaks if a test is deleted):
-# - control_frame is the ONE table of wire spellings: the Messages wire gets
-#   Anthropic's own `ping` and the namespaced heylook_progress event, the
-#   OpenAI wire gets comments, a real chunk gets None.
+# - control_frame is the ONE spelling of the control events, and it speaks the
+#   Messages grammar: a keepalive is Anthropic's own `ping`, prefill progress
+#   is the namespaced heylook_progress event, a real chunk gets None. (Until
+#   v1.79.66 it also took a wire argument and spelled both as SSE comments on
+#   the OpenAI wire; that wire is gone.)
 # - Keepalive fires on SILENCE wherever it falls, not only before the first
 #   chunk -- a decode stall mid-stream used to get nothing.
 # - Prefill progress reported into the request's signal channel reaches the
@@ -204,9 +206,8 @@ import json
 from heylook_llm import streaming_utils
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.streaming_utils import (
+    KEEPALIVE_FRAME,
     KEEPALIVE_MARKER,
-    WIRE_MESSAGES,
-    WIRE_OPENAI,
     KeepaliveMarker,
     PrefillProgress,
     control_frame,
@@ -214,29 +215,29 @@ from heylook_llm.streaming_utils import (
 
 
 class TestControlFrames:
-    def test_keepalive_is_a_comment_on_the_openai_wire(self):
-        assert control_frame(KEEPALIVE_MARKER, WIRE_OPENAI) == ": keepalive\n\n"
-
-    def test_keepalive_is_the_ping_event_on_the_messages_wire(self):
-        frame = control_frame(KEEPALIVE_MARKER, WIRE_MESSAGES)
+    def test_keepalive_is_the_ping_event(self):
+        frame = control_frame(KEEPALIVE_MARKER)
+        assert frame == KEEPALIVE_FRAME
         event, data = frame.split("\n")[:2]
         assert event == "event: ping"
         assert json.loads(data[len("data: "):]) == {"type": "ping"}
         assert frame.endswith("\n\n")
 
-    def test_progress_is_a_namespaced_event_on_the_messages_wire(self):
-        frame = control_frame(PrefillProgress(512, 4096), WIRE_MESSAGES)
+    def test_keepalive_is_never_an_sse_comment(self):
+        # The pre-v1.79.66 OpenAI spelling. A comment is invisible to an
+        # EventSource-style reader, which is why the grammar has `ping`.
+        assert not control_frame(KEEPALIVE_MARKER).startswith(":")
+
+    def test_progress_is_a_namespaced_event(self):
+        frame = control_frame(PrefillProgress(512, 4096))
         event, data = frame.split("\n")[:2]
         assert event == "event: heylook_progress"
         assert json.loads(data[len("data: "):]) == {
             "type": "heylook_progress", "prefill": {"processed": 512, "total": 4096}}
 
-    def test_progress_degrades_to_the_keepalive_comment_on_the_openai_wire(self):
-        assert control_frame(PrefillProgress(1, 2), WIRE_OPENAI) == ": keepalive\n\n"
-
     def test_a_real_chunk_is_not_a_control_frame(self):
-        assert control_frame("data", WIRE_MESSAGES) is None
-        assert control_frame(object(), WIRE_OPENAI) is None
+        assert control_frame("data") is None
+        assert control_frame(object()) is None
 
 
 class TestAbortEventProgressSlot:

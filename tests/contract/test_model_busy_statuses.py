@@ -20,9 +20,11 @@ What was wrong before v1.79.57, all measured by AST enumeration of
     /v1/chat/completions (sequential) 200 with the busy sentence stringified
                                           into a per-group error field
 
-The four routes that were already correct (`/v1/chat/completions` proper,
-`/v1/messages`, `/v1/conversations/{id}/generate`, `/v1/models/{id}/load`) are
-pinned in their own files; this one exists for the six that were not.
+The routes that were already correct (`/v1/messages`,
+`/v1/conversations/{id}/generate`, `/v1/models/{id}/load`) are pinned in their
+own files; this one exists for the ones that were not. The two batch shapes
+above were removed outright in v1.79.66 with the OpenAI route, so their pins
+are gone too: nothing serves them to answer wrongly.
 """
 
 import pytest
@@ -70,22 +72,3 @@ class TestBusyIsNeverAServerError:
             json={"model": "test-mlx-model", "input": "hello"},
         ))
 
-
-class TestBusyIsNeverASuccess:
-    def test_batch_mode_does_not_bury_it_in_a_200(self, busy_router):
-        """Sequential mode stringified it into `group.error` and returned 200.
-
-        A success status carrying a transient failure inside it is the hardest
-        shape for a client to classify -- nothing about the envelope says
-        "retry", and the message is in a field only a batch client reads.
-        """
-        res = busy_router.post("/v1/chat/completions", json={
-            "model": "test-mlx-model",
-            "processing_mode": "sequential",
-            "messages": [{"role": "user", "content": "hello"}],
-        })
-        assert res.status_code != 200, (
-            "batch mode returned 200 for backpressure -- the busy sentence is "
-            f"buried in the body: {res.text[:300]}"
-        )
-        _assert_busy(res)

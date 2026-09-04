@@ -5,9 +5,10 @@
 # thinking reach the client's thinking channel WITHOUT the text parser
 # involved -- and its text must flow as plain content.
 #
-# Claim: deleting these tests orphans GenerationChunk.thinking -- the four
-# consume loops could drop pre-split reasoning on the floor (the pre-7a
-# state) and only a live llama-server run would notice.
+# Claim: deleting these tests orphans GenerationChunk.thinking -- the consume
+# loops could drop pre-split reasoning on the floor (the pre-7a state) and
+# only a live llama-server run would notice. Pinned on /v1/messages, both
+# modes; the OpenAI route they were first written against went in v1.79.66.
 
 import json
 
@@ -53,23 +54,10 @@ def presplit_model(mock_router):
     mock_router.providers.pop("test-mlx-model", None)
 
 
-def test_non_streaming_carries_thinking(client, presplit_model):
-    r = client.post("/v1/chat/completions", json={
-        "model": presplit_model,
-        "messages": [{"role": "user", "content": "hi"}],
-        "stream": False,
-    })
-    assert r.status_code == 200, r.text
-    msg = r.json()["choices"][0]["message"]
-    assert msg["content"] == "Hello world"
-    assert msg["thinking"] == "let me think about this"
-
-
-def test_messages_api_carries_presplit_thinking(client, presplit_model):
-    # Deleting this leaves the /v1/messages consume path unpinned -- the
-    # 2026-07-26 review found exactly this surface silently diverging from
-    # /v1/chat/completions (draft telemetry omitted); the thinking channel
-    # must not repeat that.
+def test_non_streaming_carries_presplit_thinking(client, presplit_model):
+    # The 2026-07-26 review found this surface silently diverging from its
+    # then-sibling route (draft telemetry omitted); the thinking channel must
+    # not repeat that.
     r = client.post("/v1/messages", json={
         "model": presplit_model,
         "messages": [{"role": "user", "content": "hi"}],
@@ -84,20 +72,24 @@ def test_messages_api_carries_presplit_thinking(client, presplit_model):
 
 
 def test_streaming_emits_thinking_deltas(client, presplit_model):
-    with client.stream("POST", "/v1/chat/completions", json={
+    with client.stream("POST", "/v1/messages", json={
         "model": presplit_model,
         "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 64,
         "stream": True,
     }) as r:
         assert r.status_code == 200
         thinking_parts, content_parts = [], []
         for line in r.iter_lines():
-            if not line.startswith("data: ") or line == "data: [DONE]":
+            if not line.startswith("data: "):
                 continue
-            delta = json.loads(line[len("data: "):])["choices"][0].get("delta", {})
-            if "thinking" in delta:
+            payload = json.loads(line[len("data: "):])
+            if payload.get("type") != "content_block_delta":
+                continue
+            delta = payload["delta"]
+            if delta.get("type") == "thinking_delta":
                 thinking_parts.append(delta["thinking"])
-            if "content" in delta:
-                content_parts.append(delta["content"])
+            elif delta.get("type") == "text_delta":
+                content_parts.append(delta["text"])
     assert "".join(thinking_parts) == "let me think about this"
     assert "".join(content_parts) == "Hello world"

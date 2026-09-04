@@ -2,6 +2,14 @@
 
 Last updated: 2026-07-20
 
+> **PENDING PORT.** This app still targets `POST /v1/chat/completions`, which
+> the heylook server no longer serves as of v1.79.66 (the inference API is
+> `POST /v1/messages`). It needs porting to `/v1/messages` before it runs
+> against a current server; the server-side resize params it sends
+> (`resize_max`, `image_quality`) went with the route, so the port resizes
+> client-side. Owner call: small, port later. Nothing below has been updated
+> for this yet.
+
 Standalone CLI for batch VLM image labeling against heylookitsanllm (or any
 OpenAI-compatible `/v1/chat/completions` server). Ships rich built-in task
 templates (structured labels, captions, tags, OCR), supports the server's

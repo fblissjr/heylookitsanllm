@@ -248,22 +248,6 @@ class PromptPreviewResponse(BaseModel):
     char_count: int = 0
 
 
-def _row_text(row: dict | None) -> str:
-    return "".join(
-        (b.get("text") or "") for b in (row or {}).get("content_blocks") or []
-        if b.get("type") == "text")
-
-
-def _is_thinking_resume(continue_row: dict | None) -> bool:
-    """A continue whose anchor has thinking and no content resumes INSIDE the
-    thinking block -- the one continuation that starts in thinking state.
-    Same shape both engines resolve (llama.cpp: reasoning_content with empty
-    content; MLX: mlx_provider._thinking_resume)."""
-    if continue_row is None or not continue_row.get("thinking"):
-        return False
-    return not _row_text(continue_row).strip()
-
-
 # The ONE media-type -> capability mapping. Both the prefetch filter
 # (_media_ids_for_wire) and the wire build (_wire_content) read it -- a
 # hand-copied second spelling drifted once already in review: a type added to
@@ -627,6 +611,9 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
             saved_user_row=saved_user_row, continue_row=continue_row,
             commit_after=commit_after, dropped=dropped,
             thinking_enabled=thinking_enabled,
+            # Asked of the REQUEST the provider was handed (post-strip), so
+            # the parser starts in the state the engine's prompt is in.
+            resumes_thinking=chat_request.resumes_thinking(),
             strip_specials=not body.show_special_tokens,
             perf_ctx=perf_ctx, started=started, release=_release_claim,
         )))
@@ -751,11 +738,15 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
         logger.error(f"[CONV-GEN] prompt preview failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # The request decides the continuation shape (ChatRequest.resumes_thinking,
+    # the same predicate the provider and the parser selection read), asked
+    # AFTER the specials strip so a thinking column that was all markers
+    # reads the same here as it does on the engine.
     return PromptPreviewResponse(
         prompt=prompt, model_id=model_id, provider=model_config.provider,
         mode=body.mode,
         continuation=(None if continue_row is None
-                      else "thinking" if _is_thinking_resume(continue_row) else "content"),
+                      else "thinking" if chat_request.resumes_thinking() else "content"),
         dropped_media=dropped, char_count=len(prompt),
     )
 
@@ -806,22 +797,24 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                            provider, abort_event, model_id, mode,
                            saved_user_row, continue_row, commit_after,
                            dropped, thinking_enabled, perf_ctx,
-                           strip_specials=True,
+                           strip_specials=True, resumes_thinking=False,
                            started=None, release=None) -> AsyncGenerator[str, None]:
     if started is not None:
         started["flag"] = True  # the finally below owns _ACTIVE from here on
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     # ONE dict, both parsers: the streamed split and the persisted split must
     # be built the same way or the row would disagree with what was rendered.
+    # `resumes_thinking` is the request's own answer (ChatRequest.resumes_
+    # thinking), never re-derived from the row here.
     parser_args = dict(thinking_enabled=thinking_enabled,
                        continuing=continue_row is not None,
-                       resumes_thinking=_is_thinking_resume(continue_row),
+                       resumes_thinking=resumes_thinking,
                        strip_specials=strip_specials)
     translator = StreamingEventTranslator(
         message_id, model_id,
         thinking_parser=select_reasoning_parser(provider.template_info(), **parser_args))
 
-    from heylook_llm.streaming_utils import WIRE_MESSAGES, async_generator_with_abort, control_frame
+    from heylook_llm.streaming_utils import async_generator_with_abort, control_frame
 
     yield translator.message_start_event()
 
@@ -856,7 +849,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                     generator, http_request, abort_event,
                     abort_on_disconnect=False,
                     log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
-                frame = control_frame(chunk, WIRE_MESSAGES)  # marker guard FIRST (one table of spellings)
+                frame = control_frame(chunk)  # marker guard FIRST
                 if frame:
                     yield frame
                     continue

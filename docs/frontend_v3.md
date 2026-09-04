@@ -128,8 +128,10 @@ js/
   streaming.js              # Messages-grammar SSE over /v1/messages + /v1/conversations/{id}/generate (ping keepalive + heylook_progress ignored/routed, reader.cancel, abort-as-completion, 503 retry, in-band error events)
   settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/setDisplayPref; displayWireFields() = display prefs that ride the WIRE, never the sampler bag -- show_special_tokens); null = backend-cascade; snapshotSettings()/applySettings()
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
-  preset-bar.js             # shared drawer section (createPresetBar): select is inert but FOLLOWS the document's applied_preset_id until an explicit pick; TWO writes and the BUTTON picks the target -- Update overwrites the selected preset (armed; the only overwrite path), Save as new creates under the typed name and REFUSES a name in use (never armed). Apply is armed too but overwrites the recoverable side. Read-only preview of the selected preset's own prompt, drift line naming which half moved; used by chat + notebook
+  preset-bar.js             # shared drawer section (createPresetBar): select is inert but FOLLOWS the document's applied_preset_id until an explicit pick; TWO writes and the BUTTON picks the target -- Save overwrites the selected preset (armed; the only overwrite path; labelled Update until v1.79.62), Save as new creates under the typed name and REFUSES a name in use (never armed). Apply is armed too but overwrites the recoverable side. Read-only preview of the selected preset's own prompt, drift line naming which half moved; used by chat + notebook
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook
+  context-select.js         # chat's context-size select for the NEXT gguf load (createContextSelect): power-of-two steps up to the header's ceiling, Auto = llama-server's own sizing, rebuilt only when the model's facts move so a fresh pick survives a residency refresh
+  prompt-preview.js         # "what the model will see" panel (paintPromptPreview / paintPromptPreviewError): the engine's own render verbatim with special tokens highlighted; chat's composer eye button and the editor's Preview prompt both paint through it
   markdown.js                 # the ONLY text->HTML path (marked + DOMPurify; raw HTML is SHOWN, never rendered)
   markdown-stream.js          # incremental render for a message still streaming: safe-boundary split, committed prefix, tail-only re-render (+ appendPlainText for thinking boxes)
   image-prep.js               # staging-time resolution cap (EXIF-aware, passes small images through untouched) + blobToBase64, minted at send
@@ -212,16 +214,18 @@ SSE grammar + the `heylook_saved` extension -- v1.66.0, plan Phase 2; the
 server builds the request from the store and owns persistence). Notebook and
 explore stream `/v1/messages` since v1.74.0 (Phase 3b): logprobs ride the
 namespaced `heylook_logprobs` events, timing rides `message_stop.performance`,
-and no v3 page speaks `/v1/chat/completions` anymore (the endpoint stays for
-external consumers).
+and no v3 page has spoken `/v1/chat/completions` since; the endpoint itself
+was removed in v1.79.66 (the owner's other project speaks `/v1/messages`).
 
 ### Load-bearing contracts that MUST survive any backend change (plan guardrails)
 
 1. **Logprobs** (Token Explorer / explore.js) -- response via logprob fields on
    the stream. Messages spec has no logprobs -> they ship as namespaced
    extensions.
-2. **Streaming telemetry** (status line + perf) -- timing/KV fields ride the
-   usage chunk (needs `stream_options.include_usage=true`).
+2. **Streaming telemetry** (status line + perf) -- timing/KV fields ride
+   `message_stop.performance` on both Messages-grammar wires, no opt-in flag
+   (the `stream_options.include_usage` usage chunk went with the OpenAI route
+   in v1.79.66).
 3. **Sampler cascade** -- v3 sends only non-null keys; **null = backend cascade**.
    Don't make the backend require fields v3 omits.
 4. **Server-side persistence** is a product pillar (what makes iPhone+desktop
@@ -251,12 +255,16 @@ on here.
   `/v1/chat/completions` to `/v1/messages`. **Order-critical**: port the logprobs
   collector + thinking-parser wiring + telemetry plumbing onto the Messages
   translator **BEFORE** the completions bridge dies, or Explore breaks (guardrail
-  #1). Update spec §4 in the same commits.
-- **Native image content blocks (plan Phase 4 item 5)** -- v3 currently converts
-  stored content blocks -> `image_url` on the OpenAI wire (marked in `chat.js`).
-  Swap for native Messages image blocks when 3b lands (one function). The store
-  already persists the Anthropic-spec nested image shape. An E2E image check and
-  the Q8 server-side upload-resize spike are pending.
+  #1). Update spec §4 in the same commits. DONE: chat moved to the generate
+  route in v1.66.0, notebook/explore to `/v1/messages` in v1.74.0, and the
+  completions bridge was deleted in v1.79.66.
+- **Native image content blocks (plan Phase 4 item 5)** -- v3 used to convert
+  stored content blocks -> `image_url` on the OpenAI wire in `chat.js`. DONE:
+  chat generates through `/v1/conversations/{id}/generate`, which builds the
+  request from the stored blocks, so no client-side conversion remains, and
+  the OpenAI wire is gone (v1.79.66). Server-side upload resize went with it;
+  resizing is the client's (`image-prep.js`). An E2E image check is still
+  pending.
 - **`enable_thinking` tri-state (auto/on/off)** -- a contract change deliberately
   deferred to 3b's extension design so it's designed once with the Messages
   `thinking` mapping (guardrail #3).

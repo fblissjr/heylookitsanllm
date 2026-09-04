@@ -51,9 +51,9 @@ from .providers.abort import AbortEvent
 # Client ids reach logs and the JSONL telemetry streams, so they are bounded
 # and charset-restricted before use: a header carrying a newline could forge a
 # log line, and an unbounded one could bloat every event it appears in. This
-# is the ONE place the rule lives -- /v1/messages and /v1/chat/completions
-# both call it, and a second copy is how the two would come to disagree about
-# what a request id may contain.
+# is the ONE place the rule lives -- every route that takes a client id calls
+# it (/v1/messages, the conversation generate route), and a second copy is how
+# two routes would come to disagree about what a request id may contain.
 # `fullmatch`, and no `$`. Python's `$` ALSO matches just before a trailing
 # newline, so `re.match(r"^...$", "abc\n")` is truthy -- an id ending in a
 # newline sailed through the guard whose whole job is stopping a forged log

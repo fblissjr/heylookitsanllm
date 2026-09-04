@@ -13,7 +13,7 @@ Based on the paper by Zhang, Kraska, and Khattab (arxiv 2512.24601v2), which sho
 - **Data processing**: Parse, filter, aggregate -- anything you'd write a script for
 - **Tasks where "show your work" matters**: The trace gives you full visibility into what the model did
 
-When NOT to use it: simple Q&A, creative writing, short conversations. If the answer fits in one generation, use `/v1/chat/completions` instead.
+When NOT to use it: simple Q&A, creative writing, short conversations. If the answer fits in one generation, use `/v1/messages` instead.
 
 ## Quick start
 
@@ -402,7 +402,7 @@ with httpx.stream("POST", "http://localhost:8000/v1/rlm/completions", json={
 
 - **Start with low `max_iterations`** (3-5) while testing. Bump to 10-20 for real tasks. The model often converges in 3-5 iterations but complex tasks need room to explore.
 - **Use `system` for output format**: "Return your final answer as JSON", "Use markdown tables", "Be concise". This shapes what `FINAL()` produces.
-- **Bigger context = bigger win**: RLM's advantage over vanilla chat scales with context size. For short texts (<1K chars), just use `/v1/chat/completions`. For 10K+ chars, RLM starts to dominate.
+- **Bigger context = bigger win**: RLM's advantage over vanilla chat scales with context size. For short texts (<1K chars), just use `/v1/messages`. For 10K+ chars, RLM starts to dominate.
 - **Small models work**: The REPL loop compensates for smaller context windows and weaker reasoning. A 4B model with 10 iterations often beats a single-shot 30B because it can verify its work.
 - **Check the trace**: If `iterations` equals `max_iterations`, the model ran out of budget. Look at the trace to see if it was making progress or stuck in a loop. Bump `max_iterations` or rephrase the query.
 - **Sub-calls are expensive**: Each `llm_query()` is a full generation call. Set `sub_max_tokens` low (256-512) to keep them fast. Use `sub_temperature: 0.0` for deterministic sub-answers.

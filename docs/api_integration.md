@@ -85,39 +85,26 @@ at runtime and pick by capability.
 
 ---
 
-## 2. Pick your wire
+## 2. The wire
 
-Two inference endpoints. Both are supported; they are not interchangeable.
+`POST /v1/messages` is the inference API. It is Anthropic Messages-conformant
+(nested `source` on media blocks, typed content blocks, top-level `system`,
+a `thinking` flag, the Messages SSE grammar) with the heylook extensions
+described below, and its block structure maps cleanly onto Gemini's `parts`.
 
-| | `POST /v1/messages` | `POST /v1/chat/completions` |
-|---|---|---|
-| Shape | Anthropic-style, typed content blocks | OpenAI-style, `content_parts` |
-| System prompt | top-level `system` | a `system` role in `messages` |
-| Thinking flag | `thinking` | `enable_thinking` |
-| Server-side image resize | **no** | yes (`resize_max` and friends) |
-| Streaming | Messages SSE grammar | OpenAI chunk grammar, `data: [DONE]` |
-| Timing fields | `request_duration_ms` + `generation_duration_ms` | `total_duration_ms` |
-| Used by this repo's own UI | yes (notebook, explore) | no page calls it |
+The OpenAI-compatible `POST /v1/chat/completions` and its batch sibling were
+removed in v1.79.66. No page of this repo's frontend had called them since
+v1.74.0 and the owner's other project speaks `/v1/messages`, so the route was a
+second wire to keep conformant for nobody. A client that pointed the OpenAI SDK
+at `base_url=.../v1` needs porting: the Anthropic SDK works against
+`/v1/messages` with its own `base_url`, and the differences that remain are
+listed at the end of this document. `GET /v1/models` keeps its OpenAI-shaped
+list because that is what discovery clients read.
 
-**If you speak BOTH wires, the timing vocabularies now differ**, and this is
-the one row above that will bite silently. v1.79.58 retired
-`total_duration_ms` on `/v1/messages` because it named two different spans in
-the two modes; the OpenAI wire's own `GenerationTiming` still declares it and
-is deliberately untouched, since that wire has one mode and no ambiguity to
-resolve. So a dual-wire client reads `total_duration_ms` from
-`/v1/chat/completions` and the two named spans from `/v1/messages`. Do not
-write one accessor for both — on the OpenAI wire the field is a whole-request
-elapsed, which is `request_duration_ms`, not the throughput denominator.
-
-**Default to `/v1/messages`.** It is where this project is going, it is the
-wire its own frontend speaks, and its block structure maps cleanly onto
-Gemini's `parts`.
-
-**Choose `/v1/chat/completions` when** you want the server to downscale
-images for you, or you already have a working OpenAI-compatible client you
-would rather point at a new `base_url` than rewrite. It is a first-class,
-supported endpoint kept for exactly this — the OpenAI Python SDK works
-against it unmodified with `base_url="http://localhost:8000/v1"`.
+Timing on the response is two named spans, `request_duration_ms` and
+`generation_duration_ms` (v1.79.58 retired the ambiguous `total_duration_ms`
+here). There is no whole-request elapsed under another name to confuse it
+with.
 
 ---
 
@@ -346,8 +333,8 @@ back described rather than trusting the status code.
 
 ### Paying the model load up front
 
-**The load runs before the response begins.** Both wires resolve the
-provider first and only then start writing, so while a cold model is being
+**The load runs before the response begins.** The server resolves the
+provider first and only then starts writing, so while a cold model is being
 read off disk there is nothing on the connection at all — no headers, no
 `message_start`, no keepalive. Streaming does not help: the stream has not
 started yet. A non-streaming client sees one long opaque POST and cannot
@@ -395,8 +382,9 @@ error.
 ### Images: you resize, not the server
 
 `/v1/messages` has no `resize_max` / `resize_width` / `image_quality` /
-`preserve_alpha`. That is deliberate: Messages clients resize before sending;
-the OpenAI wire keeps those params for clients that want the server to do it.
+`preserve_alpha`. Server-side downscaling lived only on the removed
+`/v1/chat/completions` route, so as of v1.79.66 downscaling is the client's
+job on every surface: resize before sending.
 
 Do what this repo's own frontend does (`apps/heylook-frontend-v3/js/image-prep.js`):
 cap the longest edge around 2048px, re-encode photos as JPEG at ~0.85
@@ -433,8 +421,7 @@ because "omit it and the server decides" is the wrong mental model for it.
 (`include_performance` used to be named here too. It was removed from this
 wire in v1.79.49 because it controlled nothing: Messages returns telemetry
 unconditionally in both modes. Sending it is harmless — unknown fields are
-ignored, not rejected — but it does nothing, and it never did. It is still
-honoured on `/v1/chat/completions`.)
+ignored, not rejected — but it does nothing, and it never did.)
 
 `sampler` takes a named bundle from `/v1/capabilities` → `samplers.available`
 (this is the `SamplerRegistry`, not a `/v1/presets` id — different system,
@@ -472,7 +459,8 @@ event: heylook_progress       data: {type, prefill:{processed, total}}
 ```
 
 `ping` is the keepalive (v1.79.65; an SSE comment `: keepalive` before
-that, which the OpenAI wire still sends). It is emitted after roughly five
+that, gone from the server with the OpenAI wire in v1.79.66). It is emitted
+after roughly five
 seconds of silence wherever that silence falls: a long prefill, or a stall
 between tokens. `heylook_progress` is prefill progress in prompt tokens,
 cached prefix excluded, one event per change, from both engines; it only
@@ -481,7 +469,7 @@ client that dispatches on event type and drops what it does not know needs
 no change; a client that treats an unknown event as an error does.
 
 There is **no `data: [DONE]` terminator** — `message_stop` ends the stream.
-(`/v1/chat/completions` does send `[DONE]`; that difference is a common
+(The removed OpenAI wire did send `[DONE]`; waiting for it is a common
 port-over bug.)
 
 Blocks open and close as the content type switches, so a thinking model emits
@@ -490,8 +478,9 @@ a `thinking` block, closes it, then opens a `text` block. Key on
 
 Besides `heylook_progress`, two heylook extensions ride the same stream:
 `event: heylook_logprobs`
-(one per token when `logprobs: true`; entries share the shape of the OpenAI
-wire's `logprobs.content` so a migrating parser keeps working), and extra
+(one per token when `logprobs: true`; entries keep the shape of OpenAI's
+`logprobs.content`, which the removed wire carried, so a ported parser keeps
+working), and extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
 `generation_tps` (both since v1.79.54), `peak_memory_gb`, `kv_cache_bytes`,
 `queue_wait_ms`, `draft_acceptance`. Absent telemetry is **omitted, never
@@ -558,10 +547,10 @@ is set, send the same `Authorization: Bearer <key>` you send on
 this only bites off-machine — which is exactly where a client has to guess.
 No admin token is involved.
 
-**The endpoint is v1.79.44, on both wires.** Nothing was cancellable by id
-before that. `/v1/chat/completions` read `X-Request-ID` earlier, but only for
-log correlation — a client that was already sending the header had no way to
-act on it, so "we already send the id" is not evidence you already had
+**The endpoint is v1.79.44.** Nothing was cancellable by id before that.
+The removed OpenAI wire read `X-Request-ID` earlier, but only for log
+correlation — a client that was already sending the header had no way to act
+on it, so "we already send the id" is not evidence you already had
 cancellation.
 
 The id is the one **you** sent. A request that arrived without the header got
@@ -572,8 +561,7 @@ else is replaced with a generated id, and the response echoes back the id
 actually tracked, so compare it if a cancel unexpectedly 404s.
 
 That echo has its own history, narrower than the endpoint's.
-`/v1/chat/completions` has echoed it on both modes since long before
-cancellation existed (for log correlation). `/v1/messages` generated its own
+`/v1/messages` generated its own
 id until v1.79.44, echoed it on the **streaming** path from .44, and on the
 **non-streaming** path only from **v1.79.46** — which is the one path the
 cancel endpoint exists for. So on a .44 or .45 server a non-streaming
@@ -607,8 +595,7 @@ Responses:
 Cancellation is cooperative: the decode loop stops at the next token
 boundary, so a run blocked in a long prompt prefill stops when that finishes,
 not instantly. The cancelled request still returns a normal response carrying
-whatever was generated, and it reports `stop_reason: "max_tokens"` on
-`/v1/messages` (`finish_reason: "length"` on `/v1/chat/completions`). **There
+whatever was generated, and it reports `stop_reason: "max_tokens"`. **There
 is no distinct cancellation value** -- Anthropic's vocabulary has none, since
 cancellation there is a dropped connection rather than an end state. So a
 cancelled run is indistinguishable on the wire from a budget exhaustion:

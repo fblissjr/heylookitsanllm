@@ -1,7 +1,8 @@
 # Frontend v3 — build spec
 
-Last updated: 2026-07-26 (§4: model-routing failure is now 400 not 500 on
-chat/completions + messages; startup no longer pre-warms default_model)
+Last updated: 2026-09-04 (§4: the OpenAI-compatible chat/completions and
+batch routes are removed in v1.79.66; `/v1/messages` and the generate route
+are the inference wires)
 
 > **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
@@ -146,18 +147,21 @@ though streaming stays in `streaming.js`, not `api.js`.
 ### 3d. Streaming (`streaming.js`, ~110 lines) — keep as-is conceptually
 SSE via `fetch` + `ReadableStream` (not `EventSource`). Callbacks: `onToken` (delta.content), `onThinking`
 (delta.thinking), `onLogprobs` (delta logprobs — explore only), `onComplete`, `onError`. Adds
-`stream: true` + `stream_options: { include_usage: true }`. **Critical gotchas to preserve (verified against
+`stream: true` (the `stream_options.include_usage` opt-in belonged to the OpenAI wire, removed in
+v1.79.66; Messages telemetry needs no flag). **Critical gotchas to preserve (verified against
 backend):**
 - Treat `AbortError` as normal completion (call `onComplete` with partial content).
 - Call `reader.cancel()` in the abort/catch path — without it, GC timing causes "Failed to fetch" on the
   next request (documented v2 bug).
 - **Ignore what you do not know.** Keepalive on both Messages-grammar wires is Anthropic's own
-  `event: ping` (v1.79.65; an SSE comment `: keepalive` before that, which `/v1/chat/completions` still
-  sends) -- emitted after ~5s of silence wherever it falls, prefill or a mid-generation stall. It
+  `event: ping` (v1.79.65; an SSE comment `: keepalive` before that, gone from the server with the
+  OpenAI route in v1.79.66) -- emitted after ~5s of silence wherever it falls, prefill or a mid-generation stall. It
   reaches `onEvent` like any event and the dispatch drops it, as it drops every unknown type.
   `event: heylook_progress` `data:{type,prefill:{processed,total}}` is prefill progress (both engines,
   cached prefix excluded, only before the first block) and routes to `onProgress`.
-- Usage/timing only arrives if `include_usage: true` was sent; stream always ends with `data: [DONE]`.
+- Neither Messages-grammar wire sends `data: [DONE]`: `message_stop` ends a `/v1/messages` stream and
+  `heylook_saved` follows it on the generate route. Telemetry rides `message_stop.performance` with no
+  opt-in flag.
 
 ### 3e. Settings (`settings.js` + panel, ~200 lines) — keep contract, data-drive the panel
 - 10 sampler keys, all default `null` = "use backend cascade" (global → thinking → models.toml → request).
@@ -194,11 +198,18 @@ default): `HEYLOOK_API_KEY` (`Authorization: Bearer`) on inference; `HEYLOOK_ADM
 (`X-Heylook-Admin-Token`) on admin + `/v1/data/clear`. Conversations/notebooks/models-list/metrics/profile
 are unauthenticated.
 
-**Chat completions** `POST /v1/chat/completions` (streaming SSE):
-- Body: `{ model, messages:[{role,content,thinking?}], ...samplerParams(), stream:true,
-  stream_options:{include_usage:true}, logprobs?, top_logprobs?,
-  continue_final_message? }`, header `X-Request-ID`.
-- **Continuation / prefill (`continue_final_message`, added v1.61.0):**
+**Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
+REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,
+the `: keepalive` comment), `stream_options.include_usage` and the usage chunk's `timing`, the
+server-side resize params (`resize_max`, `resize_width`, `resize_height`, `image_quality`,
+`preserve_alpha`) and the `processing_mode` batch modes. No v3 page had called either since v1.74.0
+(chat generates through `/v1/conversations/{id}/generate` since v1.66.0; notebook and explore speak
+`/v1/messages`) and the owner's other project speaks `/v1/messages`, so one generation now has one
+grammar. Image downscaling is the client's job everywhere (`image-prep.js`). The facts first
+documented on that route that are about the ENGINES rather than the wire still hold and are kept here:
+- **Continuation / prefill (`continue_final_message`, added v1.61.0; the flag was a ChatRequest field,
+  reached today through the generate route's `continue` mode below, while `/v1/messages` continues a
+  trailing assistant message by convention with no explicit field):**
   finish the FINAL message instead of opening a new assistant turn. Absent =
   auto: a trailing assistant message is continued (both providers; before
   v1.61.0 this convention only suppressed the generation prompt on MLX and
@@ -213,33 +224,25 @@ are unauthenticated.
   ' '-join rule as MLX and works -- v1.61.1). Not supported with image
   history or diffusion models (400). STREAMING caveat (v1.61.1): these
   refusals fire after HTTP 200 + headers have flushed, so they surface as an
-  in-band SSE error frame typed `invalid_request_error` (code
-  `invalid_request`; on `/v1/messages` an Anthropic error event of the same
-  type) -- never `server_error`. Clients should treat that frame as a 400.
-  v3's Save & Continue on the message editor uses this: PUT the edit,
-  truncate after, stream with `continue_final_message: true`, append into
+  in-band SSE error frame: an Anthropic `error` event typed `invalid_request_error` (code
+  `invalid_request`) -- never `server_error`. Clients should treat that frame as a 400.
+  v3's Save & Continue on the message editor is the generate route's `continue` mode: PUT the
+  edit, truncate after, generate with the anchor as the final message, merge back into
   the SAME message row (both roles; the button hides for user messages on
   gguf models).
-- SSE chunks: `choices[0].delta.content` | `.delta.thinking` | `.logprobs.content`
-  (`[{token,logprob,top_logprobs:[{token,logprob}]}]`). Final usage chunk (only if `include_usage`):
-  `{ usage:{prompt_tokens,completion_tokens,total_tokens,prompt_tokens_details?},
-  timing:{total_duration_ms, peak_memory_gb?, kv_cache_bytes?, queue_wait_ms?,
-  draft_tokens?, draft_accepted?, draft_acceptance?, ...},
-  generation_config?, stop_reason }` (the `draft_*` trio appears only when
-  speculative decoding was active; v3 renders `draft_acceptance` in the
-  post-stream stats line). Terminator `data: [DONE]`.
 - **503 backpressure**: `{error:{code:"model_overloaded"}}` + `Retry-After`, `X-RateLimit-*` headers — v3
   should surface this as a friendly "server busy, retrying" state, not a raw error. (As built: the bounded
   retry lives in `streaming.js` itself with an `onRetryWait(seconds, attempt)` callback; pages only render
   the status line.)
-- **Mid-stream generation failure (v1.31.1+)**: the backend emits `data: {"error":{"message":..., "type":
-  "server_error", "code":"generation_failed"}}` followed by `data: [DONE]` — never as a content delta.
-  Non-streaming requests get HTTP 500 with the message in `detail`; the Messages API emits `event: error`.
+- **Mid-stream generation failure (v1.31.1+)**: the backend emits an in-band `event: error` with
+  `{"error":{"message":..., "type": "server_error", "code":"generation_failed"}}` — never as a content
+  delta (the removed OpenAI wire spelled it as a `data:` frame followed by `[DONE]`).
+  Non-streaming requests get HTTP 500 with the message in `detail`.
   `streaming.js` converts the payload to a thrown error routed to `onError`. Clients must never render
   `error.message` as assistant content.
 - **Model routing failure = 400 (v1.44.5)**: an unknown/disabled `model`, or omitting `model` when the
   server has no `default_model` configured, returns HTTP 400 with the reason + the available ids in
-  `detail` — on both `/v1/chat/completions` and `/v1/messages`. It was a 500 through v1.44.4. A failed
+  `detail` — on `/v1/messages` (and on the removed OpenAI route). It was a 500 through v1.44.4. A failed
   model *load* (corrupt weights, unsupported architecture) is still a 500: 400 means "pick a different
   model", 500 means "this model is broken". Note `/v1/hidden_states` and `/v1/embeddings` have not been
   converted and still answer 500 for an unknown id.
@@ -249,7 +252,10 @@ are unauthenticated.
 - **Server-side defaults (v1.32.0)**: when the request, its preset, and the model config are all silent,
   the effective sampler floor is `temperature 0.7, max_tokens 4096` (was 0.1/512), and imported models
   carry `default_sampler = "balanced"`. The UI's null-means-cascade settings contract is unchanged.
-- **Omitting `enable_thinking` means OFF, on every engine (2026-08-07)**. v3's toggle is
+- **Thinking default.** Since v1.79.62 an omitted `thinking` resolves through the cascade
+  request > models.toml `enable_thinking` > the model's thinking capability, and the admin row's
+  `thinking_default` is that cascade's own answer. History of the previous rule: **omitting
+  `enable_thinking` meant OFF, on every engine (2026-08-07 through v1.79.61)**. v3's toggle was
   binary — it sends `true` or omits the key, never `false` — so what "omitted" resolves to
   IS the off state. MLX always resolved it to an explicit `False`; gguf only sent
   `chat_template_kwargs` for a non-None value, so an omitted key handed llama-server's
@@ -259,17 +265,11 @@ are unauthenticated.
   (`samplers.resolve_effective_sampling`) now materializes the effective switch
   unconditionally instead of only when the thinking overlay fires, so both providers
   send an explicit bool. A tri-state (auto/on/off) that makes the template default
-  reachable again is still the deferred Phase-3b design item.
-- **Trap**: setting `processing_mode` (≠ "conversation") switches the response to a *different* schema
-  (`chat.completion.batch`). v3 chat should NOT send `processing_mode` — ignore this path.
-
-**Batch** `POST /v1/batch/chat/completions`: body `{ requests: ChatRequest[] (min 2) }`; all `requests[].model`
-must be identical (else 400), none may set `stream` (else 400). Response `{ data: ChatCompletionResponse[],
-batch_stats:{total_requests, elapsed_seconds, throughput_tok_per_sec, memory_peak_mb, ...} }`.
+  reachable again was the deferred Phase-3b design item; the v1.79.62 cascade is what landed.
 
 **Messages** `POST /v1/messages` (v1.74.0: THE wire notebook and explore speak —
-Phase 3b; chat uses its conversation-scoped sibling below; /v1/chat/completions
-stays for external consumers, no v3 page calls it):
+Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
+/v1/chat/completions was removed in v1.79.66):
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
@@ -318,9 +318,9 @@ stays for external consumers, no v3 page calls it):
 - Streaming: the Messages SSE grammar (message_start / content_block_* /
   message_delta / message_stop) plus the namespaced extensions: `event:
   heylook_logprobs` `data:{type,tokens:[{token,logprob,top_logprobs:[{token,
-  logprob}]}]}` — one per token when `logprobs:true`, SAME entry shape as
-  the OpenAI wire's logprobs.content so a migrating consumer keeps its
-  parser; and `message_stop.performance` additionally carries
+  logprob}]}]}` — one per token when `logprobs:true`, the entry shape of
+  OpenAI's logprobs.content (which the removed wire carried) so a ported
+  consumer keeps its parser; and `message_stop.performance` additionally carries
   `peak_memory_gb? / kv_cache_bytes? / queue_wait_ms? / draft_acceptance?`
   (the heylook_saved.timing vocabulary; absent telemetry is OMITTED, never
   null). An in-band `error` event ENDS a /v1/messages generation (unlike
@@ -360,9 +360,8 @@ stays for external consumers, no v3 page calls it):
 - Request field removed v1.79.49: `include_performance` is gone from
   `MessageCreateRequest`. It controlled nothing — this wire returns telemetry
   unconditionally in both modes — and unknown fields are ignored, so a client
-  still sending it is unaffected. It remains honoured on
-  `/v1/chat/completions`, which returns a DIFFERENT model
-  (`config.PerformanceMetrics`, not `PerformanceInfo`).
+  still sending it is unaffected. Nothing honours it anywhere since the
+  OpenAI route, which did, was removed in v1.79.66.
 
 **Conversations** (prefix `/v1/conversations`, no auth):
 - `GET /` → `{conversations:[{id,title,model_id,applied_preset_id,created_at,updated_at,generating}], total}` — **no messages, and NO `system_prompt` or `params`** (v1.79.26, `3b44c61`). Both are unbounded and the sidebar reads neither, and the list ships on page load AND on every foreground because resume re-lists. `GET /{id}` is how you get either — a client that reads them off a list row gets `undefined`, silently. The list carries `generating`, which the single-conversation body does not; v3 reads exactly that one field off the row and everything else through the single fetch (`adoptConversationMeta`). **This spec said otherwise until 2026-08-30**: the change updated `test_conversation_api.py` and neither this line nor `tests/e2e/suites/chat.mjs`, whose two `conversations.some(c => c.system_prompt === ...)` assertions have been unsatisfiable since — a shape assumption, which is why v1.79.41's audit of every selector and clicked label in that suite reported them all resolving and was right.
@@ -407,18 +406,17 @@ stays for external consumers, no v3 page calls it):
   generate saga's fresh-row commits; null on user turns; a continuation
   keeps the anchor's original stamp rather than misattributing a co-written
   row). Metadata only, no content.
-- **Audio input (added v1.42.0, gguf models only):** `/v1/chat/completions`
-  accepts `{type:"input_audio", input_audio:{data:<RAW base64, NOT a data
-  URL>, format?:"wav"|"mp3"|...}}` content parts (or `url` instead of
-  `data`); the Messages API accepts the block form `{type:"audio",
+- **Audio input (added v1.42.0, gguf models only):** the Messages API
+  accepts the block form `{type:"audio",
   source:{type:"base64"|"url", media_type?, data?|url?}}` -- or the original
   flat `{type:"audio", source_type:"base64"|"url", media_type?, data?|url?}`,
   both accepted since v1.79.39. Only models with
   the `audio` capability (gguf/llama-server) serve it — MLX models return
   400. The v3 attach affordance is capability-gated on `vision`/`audio`
   (shipped v1.43.0: gated attach button + dynamic accept list, audio chips
-  in the strip, `<audio controls>` rendering, stored `audio` blocks
-  converted to `input_audio` parts at send).
+  in the strip, `<audio controls>` rendering; stored `audio` blocks reach
+  the model through the generate route, which builds the request from the
+  store).
 - `DELETE /{id}/messages/{msgId}` → `{deleted:1,id}` (v1.73.0). Deletes
   exactly one message; later rows keep their positions (gaps are fine —
   ordering and appends are position-based, nothing assumes density). This is
@@ -592,7 +590,10 @@ window from the ONE resolver `capabilities.model_context_length` -- the TRAINING
 read off the GGUF header (`<arch>.context_length`) for gguf, `config.json`'s
 `max_position_embeddings` (top-level, then the nested text block) for MLX -- answered for
 unloaded models too, and the number the provider refuses an over-length prompt against
-(**400**; llama-server refuses itself, MLX enforces it in `run_generation`). Chat's context
+(**400**; llama-server refuses itself, MLX enforces it in `run_generation`). An MLX entry's
+own `config.context_length` (requires reload) overrides the file for a checkpoint whose true
+window differs, e.g. YaRN with the original value in `config.json`; the row then reports the
+override. Chat's context
 select stays gguf-only (MLX has no fixed allocation to choose); the models page shows the
 ceiling for every row. `context_running` (v1.79.61, gguf only) is the context the RESIDENT
 process actually got (its slot `n_ctx`, read from llama-server's `/props`
@@ -926,8 +927,8 @@ live in a per-model draft map keyed off page state so re-renders don't lose them
 Errors go to the page's single status area.
 
 ### batch — DROPPED from v3 scope
-Not included (user decision). The backend endpoint (`/v1/batch/chat/completions`) stays; if batch is wanted
-later it's a self-contained ~150-line page against the §4 batch contract.
+Not included (user decision). The backend endpoint (`/v1/batch/chat/completions`) was removed in
+v1.79.66 with the OpenAI route; if batch is wanted later it needs a server-side design first.
 
 ### perf (v2: 212 lines) — dashboard, SIMPLIFIED, no constant polling
 Single-user tool — keep it very simple. Fetch `GET /v1/system/metrics` **on mount + a manual "Refresh"

@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-08-30. v1.79.46 on the `frontend` branch.
+Last updated: 2026-09-04. v1.79.66 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
@@ -82,6 +82,25 @@ HANDOFF (next session start here): two things are open; neither blocks work.
   uses -- so the advertised capability and the provider's image guard agree
   by construction. See the changelog for why the two-rules shape was the
   actual defect.
+
+## v1.79.66 -- one inference wire
+
+The OpenAI-compatible `POST /v1/chat/completions` and `POST
+/v1/batch/chat/completions` are removed, together with their SSE grammar
+(`choices[].delta` chunks, the `data: [DONE]` sentinel, the `: keepalive`
+comment) and the batch processing modes. `POST /v1/messages` is the inference
+API (Anthropic Messages-conformant plus the documented heylook extensions);
+`GET /v1/models` keeps its OpenAI-shaped list because v3 and the owner's other
+project read it, and every other route stays. Reason: no v3 page had used the
+OpenAI route since v1.74.0 and the owner's other project speaks
+`/v1/messages`, so it was a second wire to keep conformant for nobody. The
+same generation now has one grammar.
+
+Consumers still written against the removed route, marked PENDING PORT at the
+top of their READMEs and deliberately not ported yet (owner call: small,
+later): `apps/batch-labeler/` and the `tests/eval/` bank. `scripts/benchmark.py`
+also has a chat/completions arm. Server-side image downscaling went with the
+route; resizing is the client's job on every surface.
 
 ## v1.79.41 -- the conformance work reviewed
 
@@ -252,8 +271,8 @@ common cause of every lifecycle bug in .26-.29 and is now deleted (.30).
   `docs/project/plan_engine_coverage.md`. The extensive post-v1.62.3 arc shipped 60+ commits
 covering the complete Chat Orchestration & Reliability phases (0 through 2),
 Schema v7 media-by-reference and true single-message deletion, the Messages
-API Phase 3b consumer migration (no v3 page speaks /v1/chat/completions
-anymore), Q7 single-slot prompt-cache snapshot replacement (deleting radix),
+API Phase 3b consumer migration (no v3 page spoke /v1/chat/completions
+after it), Q7 single-slot prompt-cache snapshot replacement (deleting radix),
 v2 frontend deletion (v3 is the sole frontend, /v2 returns 404), port 8000
 default, "show special tokens" wiring, iOS Safari scrolling/resume fixes,
 and v1.79.7's frontend-v3 rendering & memory performance optimizations.
@@ -314,7 +333,7 @@ UPDATE 2026-08-25 (v1.62.4-v1.79.7, 60+ commits across multiple milestones, on b
 - **SOLID -- "Show special tokens" display pref wired (v1.79.6)**:
   - Opt-in `show_special_tokens` request field on `POST /v1/messages` and `POST /v1/conversations/{id}/generate`.
   - Drawer display panel wired on chat & notebook; generation-time toggle preserves declared specials (`special: true`) from the model.
-  - Wire hygiene: assistant-stored declared specials stripped before replaying as prompt turns to prevent control-token injection; request-schema parity guard (`test_request_schema_parity.py`) pins wire consistency between OpenAI and Messages APIs.
+  - Wire hygiene: assistant-stored declared specials stripped before replaying as prompt turns to prevent control-token injection; request-schema parity guard (`test_request_schema_parity.py`) pinned wire consistency between the OpenAI and Messages APIs while both existed (the OpenAI route went in v1.79.66).
 - **SOLID -- Raw HTML preservation in replies (v1.79.5)**:
   - Escaped raw HTML in model responses at the renderer so tags (e.g. `<d>tag</d>` or `<b and c>`) render accurately rather than being stripped by DOMPurify. Guarded by 4 model-free render checks.
 - **SOLID -- Tab resume store sync & page lifecycle hooks (v1.79.2-v1.79.4)**:
@@ -335,7 +354,7 @@ UPDATE 2026-08-25 (v1.62.4-v1.79.7, 60+ commits across multiple milestones, on b
   - Radix tree completely deleted. Replaced with per-model single-slot snapshot cache holding immutable `(state, meta_state)` arrays with native `trim_prompt_cache`.
   - Hybrid models (ArraysCache) refuse partial trims cleanly and re-prefill; zombie generation mutations quarantined.
 - **SOLID -- Phase 3b Messages API consumer migration & model attribution (v1.74.0-v1.74.1)**:
-  - Notebook and Explore migrated to `POST /v1/messages` (no v3 page speaks `/v1/chat/completions`).
+  - Notebook and Explore migrated to `POST /v1/messages` (from here on no v3 page spoke `/v1/chat/completions`).
   - `/v1/messages` extended with streaming `heylook_logprobs`, `message_stop.performance` timing/KV metrics, optional `max_tokens`.
   - Per-message model attribution chips (`.message-model-note`) rendered in mixed-model threads.
   - Disconnect-persistence live E2E check; `/v1/models` template probe cached (v1.74.1, 1650ms -> 1ms).
@@ -453,7 +472,7 @@ UPDATE 2026-08-11 evening (v1.58.0-1.62.0, follow-on session, all on main):
   engine level (TODO). CLOSED since (v1.74.0): disconnect-persist now has a
   live-suite check (reload mid-stream, detached task persists); notebook/
   explore migrated to /v1/messages (heylook_logprobs + message_stop timing
-  extensions) -- no v3 page speaks /v1/chat/completions anymore.
+  extensions) -- from here on no v3 page spoke /v1/chat/completions.
 - Also: worktree-per-session convention retired (owner call); editable
   install re-pointed at the primary; DuckDB store cleared by the owner
   (fresh state is intentional, not a bug).
@@ -712,7 +731,7 @@ entries below are unchanged from 2026-07-13):
   without a manual `models.toml` flag -- the v3 checkbox/composer icon appear
   for these models automatically. Messages API's hardcoded `<think>`-only
   parser also replaced with `select_reasoning_parser` (streaming and
-  non-streaming), matching chat/completions.
+  non-streaming), matching the then-OpenAI chat/completions route.
 - **Model-agnostic vision token budget (v1.34.64) -- SOLID, live-verified,
   ahead of the Q8 spike.** `vision_tokens` request field + per-model
   models.toml default + v3 drawer control (cap-gated on `vision`), mapped by
@@ -1136,7 +1155,7 @@ All in the plan with full rationale; one-liners here so nothing is missed:
     MLX's thread-local CompilerCache destructor (SIGTRAP, two matching
     .ips crash reports). See tests/unit/test_streaming_executor_pool.py.
 - **SOLID -- SSE error contract** (v1.31.1): generation failures are
-  `data: {"error":{...,"code":"generation_failed"}}` + `[DONE]` (OpenAI),
+  `data: {"error":{...,"code":"generation_failed"}}` + `[DONE]` (OpenAI, route removed v1.79.66),
   `event: error` (Messages), HTTP 500 (non-streaming) -- never assistant
   content. Contract-tested. v3 handles it; **v2/legacy do NOT** (empty
   response on failure -- accepted for retiring UIs).

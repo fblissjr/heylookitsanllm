@@ -353,7 +353,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
 // A page with the stub API wired in.
 // - residencyDelayMs holds back /v1/admin/models so the FIRST render happens
 //   with the provider unknown (the whole-list-invalidation window).
-// - sseDelayMs holds back the chat/completions response, opening a
+// - sseDelayMs holds back the stubbed generate response, opening a
 //   pre-first-token window to probe the loud guards in.
 // - mobile emulates an iPhone (viewport + touch + hover:none/pointer:coarse
 //   via CDP -- puppeteer's emulateMediaFeatures whitelist rejects hover).

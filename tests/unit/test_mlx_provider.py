@@ -392,9 +392,12 @@ class TestContinuationTemplate:
         strategy = UnifiedTextStrategy(model_id="m")
         messages = [{"role": "user", "content": "hi"},
                     {"role": "assistant", "content": "he"}]
-        return strategy._apply_template(
+        # What generation does with the render: encode a string, pass a
+        # token list through (build_prompt + generate in the provider).
+        prompt = strategy._render_template(
             messages, tok, None, None, {"enable_thinking": False},
             continuing=continuing)
+        return tok.encode(prompt) if isinstance(prompt, str) else prompt
 
     def test_continuing_leaves_the_turn_open(self, mock_mlx):
         tok = self._Tok()

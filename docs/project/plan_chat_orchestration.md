@@ -18,7 +18,8 @@ Diagnosis (code-read 2026-08-13, chat.js + conversation_api.py + db.py +
 streaming.js): **the store is fine; the protocol is the defect class.** The
 backend has no concept of "generate into this conversation" -- it offers a
 CRUD store (`/v1/conversations`) and a stateless generation endpoint
-(`/v1/chat/completions`), and the browser is the only thing connecting them.
+(then `/v1/chat/completions`, removed in v1.79.66), and the browser was the
+only thing connecting them.
 Every user action is a client-orchestrated saga of 2-4 independent HTTP
 calls (e.g. Save & Regenerate = PUT message -> DELETE ?after=P -> stream ->
 POST assistant message). Each call is atomic; the saga is not. The client
@@ -167,7 +168,9 @@ Contract points:
 - **Wire shape: Messages-style SSE** with the namespaced extensions
   (logprobs, timing/usage telemetry) ported per the Phase 3b order-critical
   rule -- this endpoint becomes 3b's first consumer instead of a second
-  migration. `/v1/chat/completions` stays, stateless, for API clients.
+  migration. `/v1/chat/completions` was to stay, stateless, for API
+  clients; it was removed in v1.79.66 once nothing called it, and
+  `/v1/messages` is the stateless API wire.
   Spec §4 updates land in the same commits (standing rule).
 
 ## Phase 2 -- the client thins down

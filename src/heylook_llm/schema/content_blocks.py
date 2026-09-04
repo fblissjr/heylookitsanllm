@@ -202,25 +202,14 @@ class AudioBlock(BaseModel):
     _require = model_validator(mode="after")(_require_source_type)
 
 
-# Union of all block types that can appear in a user message
-# ThinkingBlock joins the INPUT union in v1.79.63 (it is defined below, so
-# the union is assembled after it): an Anthropic-shaped client replays the
-# assistant's thinking blocks in history -- required by Anthropic's own tool
-# loop -- and this server 422'd the whole request on the first one. They
-# convert to ChatMessage.thinking, which the providers now render the way
-# each template takes it (reasoning_content / <think> reconstruction).
-InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock]
-
-
-# ---------------------------------------------------------------------------
-# Output content blocks (appear in assistant responses)
-# ---------------------------------------------------------------------------
-
 class ThinkingBlock(BaseModel):
     """Model reasoning/thinking content (Qwen3 <think> blocks).
 
     Separated from the main text so frontends can display thinking in a
     collapsible section or hide it entirely.
+
+    Defined AHEAD of the input union because it is both an input and an
+    output block (see InputContentBlock below).
 
     CARRIES BOTH SPELLINGS. Anthropic's thinking block names the field
     ``thinking``; this one shipped as ``text``, so an Anthropic-shaped reader
@@ -248,6 +237,19 @@ class ThinkingBlock(BaseModel):
             raise ValueError("ThinkingBlock requires 'thinking' or 'text'")
         return self
 
+
+# Union of all block types that can appear in a user message. ThinkingBlock
+# is in it (v1.79.63): an Anthropic-shaped client replays the assistant's
+# thinking blocks in history -- Anthropic's own tool loop requires it -- and
+# this server 422'd the whole request on the first one. They convert to
+# ChatMessage.thinking, which the providers render the way each template
+# takes it (reasoning_content / <think> reconstruction).
+InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]
+
+
+# ---------------------------------------------------------------------------
+# Output content blocks (appear in assistant responses)
+# ---------------------------------------------------------------------------
 
 class TokenLogprob(BaseModel):
     """Log probability information for a single token."""
@@ -308,6 +310,3 @@ class HiddenStatesBlock(BaseModel):
 
 # Union of all block types that can appear in an assistant response
 OutputContentBlock = Union[TextBlock, ThinkingBlock, LogprobsBlock, HiddenStatesBlock]
-# Re-assembled here because ThinkingBlock is defined after the input blocks;
-# messages.py imports this name, so the forward reference is a plain rebind.
-InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]  # type: ignore[misc]

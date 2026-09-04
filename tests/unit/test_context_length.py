@@ -64,6 +64,46 @@ class TestModelContextLength:
         assert model_context_length("mlx", "") is None
 
 
+class TestContextLengthOverride:
+    """The entry's own `context_length` (MLXModelConfig) wins over the files:
+    a YaRN-scaled checkpoint ships the ORIGINAL max_position_embeddings with
+    the factor in rope_scaling, so the file alone would refuse a prompt the
+    model takes. Absent = the file value; non-positive is not a window."""
+
+    def test_override_wins_over_config_json(self, tmp_path):
+        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
+        assert model_context_length("mlx", path, override=131072) == 131072
+
+    def test_override_answers_even_when_the_files_do_not(self, tmp_path):
+        assert model_context_length("mlx", str(tmp_path / "missing"), override=8192) == 8192
+
+    def test_absent_override_is_the_file_value(self, tmp_path):
+        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
+        assert model_context_length("mlx", path, override=None) == 32768
+
+    def test_non_positive_or_bool_override_is_ignored(self, tmp_path):
+        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
+        assert model_context_length("mlx", path, override=0) == 32768
+        assert model_context_length("mlx", path, override=True) == 32768
+
+    def test_config_field_rejects_a_non_positive_window(self):
+        from pydantic import ValidationError
+        from heylook_llm.config import MLXModelConfig
+        assert MLXModelConfig(model_path="/fake", context_length=4096).context_length == 4096
+        with pytest.raises(ValidationError):
+            MLXModelConfig(model_path="/fake", context_length=0)
+
+    def test_derived_facts_carry_the_override(self, tmp_path):
+        from heylook_llm.capabilities import derived_model_facts
+        from heylook_llm.config import ModelConfig
+        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
+        with_override = ModelConfig(id="m", provider="mlx",
+                                    config={"model_path": path, "context_length": 131072})
+        without = ModelConfig(id="m", provider="mlx", config={"model_path": path})
+        assert derived_model_facts(with_override).context_length == 131072
+        assert derived_model_facts(without).context_length == 32768
+
+
 class TestOverLengthGuard:
     def _gen(self, prompt_len: int, context_length):
         from heylook_llm.providers.common.generation_core import run_generation

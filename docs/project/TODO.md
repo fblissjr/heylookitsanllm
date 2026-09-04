@@ -123,7 +123,11 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
 
 ## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
 
-- [ ] **`processing_mode: "parallel"` still returns 200 with the busy sentence
+The two batch items below CLOSED in v1.79.66 by deletion: the OpenAI route,
+its batch sibling and `batch_processor.py`'s processing modes are gone. Only
+the rlm item remains open; the batch text is kept as record.
+
+- [x] **`processing_mode: "parallel"` still returns 200 with the busy sentence
   in a per-group `error` field** (P2): `batch_processor.py:413`'s broad handler
   catches `ModelBusyError` from `_process_single_request_sync`. This is
   verbatim the shape v1.79.57's changelog calls "the hardest shape of all to
@@ -134,7 +138,7 @@ docs-twins entry added 2026-08-31 without a full backlog pass*
   that file's docstring already names as its blind spot; the behavioural one
   exercises `sequential` only and the word `parallel` appears nowhere in
   `tests/contract/`.
-- [ ] **Sequential mode's fix discards completed work** (P3): the `raise` added
+- [x] **Sequential mode's fix discards completed work** (P3): the `raise` added
   in .57 exits before `BatchResponse` is built, so every group that already
   succeeded is thrown away and the retry re-runs the whole batch. `completions`
   is function-local and there is no streaming path. Correct reporting bought
@@ -598,8 +602,8 @@ ordering and the sole-user/minimal-custom-code posture.
   v1.39.14** (P3, found during the 07-20 QAT A/B). Both non-streaming
   builders hardcoded "stop"; mlx-lm's own reason is now scraped in
   `ChunkTelemetry.absorb` (the one-scrape rule) and latched, so a trailing
-  empty chunk cannot erase it, and both `/v1/chat/completions` and
-  `/v1/messages` report it. The Messages converter already mapped length ->
+  empty chunk cannot erase it, and both the then-OpenAI route and
+  `/v1/messages` reported it. The Messages converter already mapped length ->
   stop_reason -- it was never fed one. The eval bank's token-count
   workaround is retired (kept only as a fallback for servers that report no
   reason). Live-verified: max_tokens=12 -> "length", natural -> "stop".
@@ -1178,7 +1182,9 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   complete and review-hardened, these are parity/depth): MessageCreateRequest
   has no explicit `continue_final_message` field (the auto trailing-assistant
   convention works on /v1/messages and block-form prefill is flattened, but
-  there is no explicit control for OpenAI-endpoint parity); image-history
+  there is no explicit control; the removed OpenAI route had one, and the
+  generate route's `continue` mode is where the explicit spelling lives now);
+  image-history
   continuation is a deliberate 400 (the vision strategy has no open-turn
   spelling yet); the eval bank's thinking/stop tasks have not been run over
   the template change (explicit-ask tier per testing-cost discipline --
@@ -1316,7 +1322,7 @@ detection all DONE). Dossiers:
 - [ ] Coverage reporting
 
 ### Benchmark Script
-- [x] Create `scripts/benchmark.py` (DONE -- HTTP benchmark measuring TTFT, TPS, memory across OpenAI and Messages APIs)
+- [x] Create `scripts/benchmark.py` (DONE -- HTTP benchmark measuring TTFT, TPS, memory across OpenAI and Messages APIs; its chat/completions arm is dead since v1.79.66 and needs dropping or porting)
 - [x] Token throughput, TTFT, memory usage metrics (DONE in `scripts/benchmark.py`)
 
 ### ~~Build v1.21.0: llama-server Provider + GGUF + Benchmark~~ RETIRED 2026-07-26

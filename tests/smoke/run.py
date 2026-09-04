@@ -445,7 +445,11 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
                 # This loop already waits for whole lines.
                 if evt.get("type") == "heylook_saved":
                     saved_end_reason = evt.get("end_reason")
-                piece = (evt.get("delta") or {}).get("text")
+                # CONTENT deltas only: a thinking_delta carries `text` too (v3
+                # reads it there), and counting it here made a thinking-only
+                # reply look truncated against a content-only persisted row.
+                delta = evt.get("delta") or {}
+                piece = delta.get("text") if delta.get("type") == "text_delta" else None
                 if piece:
                     res.saw_delta = True
                     res.text += piece
@@ -703,9 +707,15 @@ def arm_checks(server, r, arm, model_id, load_timeout):
 
     conv_id = None
     try:
+        # Thinking OFF for the lifecycle checks (v1.79.66): they assert on
+        # persisted CONTENT, and since v1.79.62 a thinking-capable model thinks
+        # by default, so a small model's whole budget went into the thinking
+        # block and "the reply persisted" read an empty content field as a
+        # lost reply. Thinking has its own checks above.
         st, conv = call(server, "POST", "/v1/conversations",
                         {"title": f"smoke-{arm}", "model_id": model_id,
-                         "params": {"max_tokens": 400, "temperature": 0.7}})
+                         "params": {"max_tokens": 400, "temperature": 0.7,
+                                    "enable_thinking": False}})
         if not r.check(f"{arm}: conversation create", st == 201, f"got {st}: {conv}"):
             return
         conv_id = conv["id"]

@@ -12,10 +12,10 @@ should have called this and did not". ``tests/unit/
 test_model_busy_reaches_the_handler.py`` asks it for the sites it can see.
 
 KNOWN NON-COMPLIANT, so this docstring cannot be read as a guarantee either:
-``batch_processor``'s PARALLEL modes still catch this in a broad handler and
-return 200 with the busy sentence in a per-group ``error`` field, and ``rlm``
-answers a bare 503 non-streaming and an in-band ``rlm_error`` streaming. Both
-are out of scope by owner decision, recorded in ``docs/project/TODO.md``. The
+``rlm`` answers a bare 503 non-streaming and an in-band ``rlm_error``
+streaming, out of scope by owner decision, recorded in ``docs/project/TODO.md``
+(the batch processor's broad handler, the other known case, left with the
+OpenAI chat route in v1.79.66). The
 first draft of this paragraph asserted the rule as fact -- which would have
 made it the very thing it replaced, a census read as a construction guarantee,
 one release after that failure mode was named here.

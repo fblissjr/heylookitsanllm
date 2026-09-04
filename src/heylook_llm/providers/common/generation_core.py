@@ -25,9 +25,11 @@ import logging
 from contextlib import contextmanager
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Any, Generator
 
 import mlx.core as mx
+from mlx_lm import tokenizer_utils as lm_tokenizer_utils
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
@@ -37,8 +39,9 @@ from .model_wrappers import MROPE_STATE_ATTRS, unwrap_language_model
 from .stop_tokens import resolve_stop_tokens
 
 
-def ensure_gen_tokenizer(tokenizer):
-    """Wrap a raw HF tokenizer for generation with the FULL stop set.
+def ensure_gen_tokenizer(tokenizer, model_path=None):
+    """Wrap a raw HF tokenizer for generation with the FULL stop set and a
+    real streaming detokenizer.
 
     mlx-lm's ``stream_generate`` auto-wraps raw tokenizers as
     ``TokenizerWrapper(tokenizer)``, whose eos set defaults to the single
@@ -47,6 +50,19 @@ def ensure_gen_tokenizer(tokenizer):
     would be lost, and generation runs past end-of-turn). Wrapping here with
     ``resolve_stop_tokens`` preserves them. Already-wrapped tokenizers
     (mlx-lm loads) pass through untouched.
+
+    ``model_path`` (v1.79.66) picks the streaming detokenizer the way mlx-lm's
+    own loader does, from tokenizer.json's decoder. Without it the wrapper
+    takes mlx-lm's DEFAULT, ``NaiveStreamingDetokenizer``: it re-decodes the
+    whole current line on every token (quadratic per line) and computes
+    ``text`` as a read-only property -- every mlx-vlm-loaded model streamed
+    through it, and the v1.79.64 continuation seed raised on it inside the
+    first next() of every continuation. The provider primes the cache at
+    load, where the path is known; run_generation's per-request call then
+    hits the cache. The loader wraps a SECOND tokenizer instance read from
+    the same files (public API rather than mlx-lm's private class-selection
+    predicates); the eos set is passed explicitly so the raw tokenizer's
+    extended set (extend_eos_from_generation_config) still wins.
     """
     if isinstance(tokenizer, TokenizerWrapper):
         return tokenizer
@@ -57,7 +73,20 @@ def ensure_gen_tokenizer(tokenizer):
     cached = getattr(tokenizer, "_heylook_gen_wrapper", None)
     if cached is not None:
         return cached
-    wrapped = TokenizerWrapper(tokenizer, eos_token_ids=resolve_stop_tokens(tokenizer))
+    eos = resolve_stop_tokens(tokenizer)
+    wrapped = None
+    if model_path is not None:
+        try:
+            wrapped = lm_tokenizer_utils.load(Path(model_path), eos_token_ids=eos)
+        except Exception as e:
+            # A model that loaded still has to generate: fall back to the
+            # default wrapper (naive streaming) and say why, rather than
+            # turn a detokenizer choice into a load failure.
+            logging.warning(
+                f"Could not build a streaming detokenizer from {model_path} ({e}); "
+                f"generation falls back to mlx-lm's naive detokenizer")
+    if wrapped is None:
+        wrapped = TokenizerWrapper(tokenizer, eos_token_ids=eos)
     tokenizer._heylook_gen_wrapper = wrapped
     return wrapped
 
@@ -234,6 +263,21 @@ def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_mana
     return prompt_cache, tokens_to_process, generation_cache
 
 
+def _seedable(factory) -> bool:
+    """Whether the detokenizer ``factory`` builds lets ``reset`` seed ``text``.
+
+    The SPM and BPE classes keep ``text`` in a slot, so a seed is one
+    assignment. ``NaiveStreamingDetokenizer`` computes ``text`` as a property
+    with no setter -- and never trims a leading space, so it needs no seed
+    either: seeding it raised AttributeError inside the first next() of
+    every continuation on an mlx-vlm-loaded model (v1.79.64). Unwraps a
+    functools.partial: mlx-lm hands gemma an SPM partial with trim_space off.
+    """
+    cls = getattr(factory, "func", factory)
+    attr = getattr(cls, "text", None)
+    return not (isinstance(attr, property) and attr.fset is None)
+
+
 @contextmanager
 def continuation_detokenizer(tokenizer, continuing: bool):
     """Keep the FIRST token's leading space when ``continuing`` (v1.79.64).
@@ -254,7 +298,7 @@ def continuation_detokenizer(tokenizer, continuing: bool):
     """
     factory_attr = "_detokenizer_class"
     original = getattr(tokenizer, factory_attr, None)
-    if not continuing or original is None:
+    if not continuing or original is None or not _seedable(original):
         yield
         return
 

@@ -9,8 +9,8 @@ Last updated: 2026-08-19
   <br>
 </p>
 
-Local multimodal LLM API server with dual OpenAI-compatible and Anthropic
-Messages-style endpoints, a vanilla-JS web UI, and on-the-fly model swapping.
+Local multimodal LLM API server with an Anthropic Messages-conformant
+inference endpoint, a vanilla-JS web UI, and on-the-fly model swapping.
 
 Built on Apple MLX for text and vision, with GGUF models served through a
 managed [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server`
@@ -18,9 +18,13 @@ subprocess -- one API, one UI, per-model engine choice.
 
 ## Features
 
-- **Dual API**: OpenAI-compatible `/v1/chat/completions` and Anthropic
-  Messages-style `/v1/messages` with typed content blocks (text, image,
-  thinking, logprobs, hidden states)
+- **One inference API**: Anthropic Messages-conformant `/v1/messages` with
+  typed content blocks (text, image, thinking, logprobs, hidden states) plus
+  documented heylook extensions; `/v1/models` keeps the OpenAI-shaped list for
+  discovery clients. The OpenAI-compatible `/v1/chat/completions` route was
+  removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the
+  owner's other project speaks `/v1/messages`, so one generation now has one
+  grammar.
 - **Three providers**: MLX text + vision ([mlx-lm](https://github.com/ml-explore/mlx-lm),
   [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)), GGUF via a managed
   llama-server subprocess (vision mmproj sidecars, audio input, speculative
@@ -130,9 +134,26 @@ After hand-editing `models.toml` on a running server:
 ## API
 
 Interactive docs at `http://localhost:8000/docs`; live schema at
-`/openapi.json`. Key endpoints: `/v1/chat/completions`, `/v1/messages`,
+`/openapi.json`. Key endpoints: `/v1/messages` (inference),
+`/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`,
 `/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`,
-`/v1/batch/chat/completions`, `/v1/jspace/analyze`.
+`/v1/jspace/analyze`.
+
+A first call, streaming off:
+
+```bash
+curl -s http://localhost:8000/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "<an id from GET /v1/models>",
+    "max_tokens": 256,
+    "messages": [{"role": "user", "content": "Say hello."}]
+  }'
+```
+
+Images ride the same route as content blocks with a nested `source`
+(`{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+"data": "..."}}`); downscale before sending, the server does not resize.
 
 Wiring an **external app** to this server: [docs/api_integration.md](docs/api_integration.md)
 covers which endpoint to pick, capability discovery, the image block shape,

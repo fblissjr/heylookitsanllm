@@ -8,11 +8,16 @@
 # into its REPL loop). The provider now RAISES typed exceptions, so every
 # consumer -- present and future -- fails loudly by default:
 #
-# - GenerationFailed          -> HTTP 500 (non-streaming) / SSE error payload
+# - GenerationFailed          -> HTTP 500 (non-streaming) / `event: error`
+#                                typed api_error when streaming
 # - InvalidGenerationRequest  -> HTTP 400 (client error, e.g. images sent to
-#                                a text-only model) / SSE error payload when
-#                                streaming (headers already sent)
-# - streaming: `data: {"error": {...}}` then [DONE]; never a content delta
+#                                a text-only model) / `event: error` typed
+#                                invalid_request_error when streaming (headers
+#                                already sent)
+# - streaming: the error event ENDS the stream; never a content delta
+#
+# Pinned on /v1/messages, the inference wire. The OpenAI route these were first
+# written against was removed in v1.79.66.
 
 import json
 
@@ -71,71 +76,77 @@ def swap_provider(mock_router):
         mock_router.providers.pop("test-mlx-model", None)
 
 
+_BODY = {
+    "model": "test-mlx-model",
+    "max_tokens": 16,
+    "messages": [{"role": "user", "content": "Hello"}],
+}
+
+
 def _stream(client):
-    return client.post("/v1/chat/completions", json={
-        "model": "test-mlx-model",
-        "messages": [{"role": "user", "content": "Hello"}],
-        "stream": True,
-    })
+    return client.post("/v1/messages", json={**_BODY, "stream": True})
 
 
-def test_streaming_failure_is_error_payload_not_content(client, swap_provider):
+def _events(resp):
+    """(event, payload) pairs off a Messages SSE body."""
+    out, event = [], None
+    for line in resp.text.split("\n"):
+        if line.startswith("event: "):
+            event = line[len("event: "):]
+        elif line.startswith("data: "):
+            out.append((event, json.loads(line[len("data: "):])))
+    return out
+
+
+def _text_deltas(events):
+    return [p["delta"]["text"] for e, p in events
+            if e == "content_block_delta" and p["delta"].get("type") == "text_delta"]
+
+
+def test_streaming_failure_is_error_event_not_content(client, swap_provider):
     swap_provider(_FailingProvider(GenerationFailed(
         "MLX generation failed: There is no Stream(gpu, 19) in current thread.")))
     resp = _stream(client)
     assert resp.status_code == 200  # headers already sent mid-stream
 
-    data_lines = [l[len("data: "):] for l in resp.text.split("\n") if l.startswith("data: ")]
-    payloads = [json.loads(l) for l in data_lines if l and l != "[DONE]"]
+    events = _events(resp)
+    errors = [p["error"] for e, p in events if e == "error"]
+    assert errors, f"expected an error event, got: {events}"
+    assert "MLX generation failed" in errors[0]["message"]
+    assert errors[0]["type"] == "api_error"
 
-    error_payloads = [p for p in payloads if "error" in p]
-    assert error_payloads, f"expected an error payload, got: {payloads}"
-    err = error_payloads[0]["error"]
-    assert "MLX generation failed" in err["message"]
-    assert err["code"] == "generation_failed"
-
-    content_deltas = [
-        p["choices"][0]["delta"].get("content", "")
-        for p in payloads
-        if p.get("choices") and p["choices"][0].get("delta")
-    ]
-    assert not any("MLX generation failed" in c for c in content_deltas)
-    assert data_lines[-1] == "[DONE]"
+    assert not any("MLX generation failed" in t for t in _text_deltas(events))
+    # The error ENDS the stream: nothing claims the message finished after it.
+    assert events[-1][0] == "error"
+    assert not any(e == "message_stop" for e, _ in events)
 
 
-def test_streaming_preflight_failure_also_error_payload(client, swap_provider):
+def test_streaming_preflight_failure_also_error_event(client, swap_provider):
     swap_provider(_PreflightFailingProvider(InvalidGenerationRequest(
         "Model 'test-mlx-model' is text-only and cannot process images.")))
-    resp = _stream(client)
-    payloads = [json.loads(l[6:]) for l in resp.text.split("\n")
-                if l.startswith("data: ") and l != "data: [DONE]"]
-    assert any("error" in p for p in payloads)
+    events = _events(_stream(client))
+    assert any(e == "error" for e, _ in events), events
 
 
 def test_streaming_client_error_is_typed_invalid_request(client, swap_provider):
     # /code-review 53b266c finding 2: provider request-validation guards
     # (audio-on-MLX, the continuation guards) fire at first next(), after
-    # headers flushed -- a real 400 is impossible, but the in-band frame must
-    # be TYPED as the client error it is, not fall through to server_error.
+    # headers flushed -- a real 400 is impossible, but the in-band event must
+    # be TYPED as the client error it is (Anthropic's invalid_request_error),
+    # not fall through to api_error.
     swap_provider(_PreflightFailingProvider(InvalidGenerationRequest(
         "user-role continuation is not supported on gguf models")))
     resp = _stream(client)
     assert resp.status_code == 200  # headers already sent
-    payloads = [json.loads(l[6:]) for l in resp.text.split("\n")
-                if l.startswith("data: ") and l != "data: [DONE]"]
-    errors = [p["error"] for p in payloads if "error" in p]
-    assert errors, f"expected an error payload, got: {payloads}"
+    errors = [p["error"] for e, p in _events(resp) if e == "error"]
+    assert errors, f"expected an error event, got: {resp.text}"
     assert errors[0]["type"] == "invalid_request_error"
-    assert errors[0]["code"] == "invalid_request"
     assert "continuation" in errors[0]["message"]
 
 
 def test_non_streaming_server_failure_returns_500(client, swap_provider):
     swap_provider(_FailingProvider(GenerationFailed("MLX generation failed: boom")))
-    resp = client.post("/v1/chat/completions", json={
-        "model": "test-mlx-model",
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    resp = client.post("/v1/messages", json=_BODY)
     assert resp.status_code == 500
     assert "MLX generation failed" in resp.json()["detail"]
 
@@ -144,10 +155,7 @@ def test_non_streaming_client_error_returns_400(client, swap_provider):
     # e.g. images sent to a text-only model: the CLIENT's mistake, not a 500.
     swap_provider(_PreflightFailingProvider(InvalidGenerationRequest(
         "Model 'test-mlx-model' is text-only and cannot process images.")))
-    resp = client.post("/v1/chat/completions", json={
-        "model": "test-mlx-model",
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    resp = client.post("/v1/messages", json=_BODY)
     assert resp.status_code == 400
     assert "text-only" in resp.json()["detail"]
 
@@ -167,35 +175,17 @@ def test_model_load_failure_is_500_not_400(client, mock_router, monkeypatch):
         raise ValueError("Model type qwen9 not supported.")
 
     monkeypatch.setattr(mock_router, "get_provider", _boom)
-    resp = client.post("/v1/chat/completions", json={
-        "model": "test-mlx-model",
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
+    resp = client.post("/v1/messages", json=_BODY)
     assert resp.status_code == 500
 
 
-def test_model_load_failure_is_500_on_messages(client, mock_router, monkeypatch):
-    """Same claim on the Messages path."""
-    def _boom(model_id):
-        raise ValueError("Model type qwen9 not supported.")
+def test_unresolvable_model_returns_400(client):
+    """Model routing failure is a 400, not a server fault.
 
-    monkeypatch.setattr(mock_router, "get_provider", _boom)
-    resp = client.post("/v1/messages", json={
-        "model": "test-mlx-model",
-        "max_tokens": 16,
-        "messages": [{"role": "user", "content": "Hello"}],
-    })
-    assert resp.status_code == 500
-
-
-def test_unresolvable_model_returns_400_on_messages(client):
-    """Model routing failure is a 400 on /v1/messages too.
-
-    Claim: both request paths route through `router.get_provider`, which raises
-    ValueError for an unknown id and for "no model named, no default
-    configured". The chat-completions half of this claim lives in
-    test_chat_completions.py; delete this and the Messages path silently keeps
-    reporting the client's typo as a server fault.
+    Claim: the route resolves the model through `router.get_provider`, which
+    raises ValueError for an unknown id and for "no model named, no default
+    configured". Delete this and the client's typo silently reports as a
+    server fault again (it was a 500 through v1.44.4).
     """
     resp = client.post("/v1/messages", json={
         "model": "no-such-model",

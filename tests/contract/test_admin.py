@@ -75,6 +75,26 @@ class TestAdminEffectiveLoader:
             if "thinking" not in row["capabilities"]:
                 assert row["thinking_default"] is False
 
+    def test_context_length_override_is_what_the_row_reports(self, client, mock_service):
+        """An MLX entry's own `config.context_length` wins over the checkpoint's
+        config.json on the row, so the ceiling a client is shown is the one
+        the provider enforces after the next load (the field is read at load).
+        Driven through the models-page edit path (PATCH), whose response is
+        the row rebuilt from the written config."""
+        resp = client.patch("/v1/admin/models/test-mlx-model",
+                            json={"config": {"context_length": 65536}})
+        try:
+            assert resp.status_code == 200, resp.text
+            row = resp.json()["model"]
+            assert row["context_length"] == 65536
+            assert row["config"]["context_length"] == 65536  # stored, so the editor shows it
+            assert "context_length" in resp.json()["reload_required_fields"]
+        finally:
+            # Leave the roster and the call log as this test found them:
+            # later files assert on both.
+            mock_service.update_config("test-mlx-model", {"config": {"context_length": None}})
+            mock_service.update_calls.clear()
+
 
 class TestAdminSamplers:
     """Tests for GET /v1/admin/models/samplers (list named samplers).

@@ -1,12 +1,13 @@
 # tests/unit/test_messages_stream_extensions.py
 """The /v1/messages heylook extension namespace (Phase 3b).
 
-Messages has no logprobs and no timing of its own; consumers migrating off
-/v1/chat/completions must not lose them (spec §4's extension rule):
+Messages has no logprobs and no timing of its own; consumers that ported off
+the OpenAI route (removed in v1.79.66) must not lose them (spec §4's
+extension rule):
 
-- streaming: `heylook_logprobs` events, one per token, entries in the SAME
-  shape as the OpenAI wire's logprobs.content ({token, logprob,
-  top_logprobs}) so a migrating consumer keeps its parser;
+- streaming: `heylook_logprobs` events, one per token, entries in the shape
+  of OpenAI's logprobs.content ({token, logprob, top_logprobs}) so a ported
+  consumer keeps its parser;
 - streaming: message_stop.performance carries the shared timing names
   (peak_memory_gb, kv_cache_bytes, queue_wait_ms, draft_acceptance -- the
   heylook_saved.timing vocabulary), None fields skipped;
@@ -147,7 +148,7 @@ class TestStreamingLogprobs:
         lp = [d for ev, d in events if ev == "heylook_logprobs"]
         assert len(lp) == 2  # one per generated token
         entry = lp[0]["tokens"][0]
-        # OpenAI logprobs.content entry shape -- the migrating consumer's parser
+        # OpenAI logprobs.content entry shape -- the ported consumer's parser
         assert entry["token"] == "tok0"
         assert entry["logprob"] == pytest.approx(-0.1)
         tops = entry["top_logprobs"]

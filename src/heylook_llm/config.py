@@ -73,20 +73,11 @@ class ChatRequest(BaseModel):
     repetition_context_size: Optional[int] = Field(default=None, ge=1)
     max_tokens: Optional[int] = Field(default=None, gt=0)
     stream: bool = False
-    include_performance: bool = False
     seed: Optional[int] = None
-    
-    # Batch processing extensions
-    processing_mode: Optional[str] = Field(default=None, description="conversation|sequential|sequential_with_context")
-    return_individual: Optional[bool] = Field(default=None, description="Return individual responses vs combined")
-    include_timing: Optional[bool] = Field(default=None, description="Include timing information")
-    
-    # Image resizing parameters (from multipart endpoint)
-    resize_max: Optional[int] = Field(default=None, description="Resize images to max dimension (e.g., 512, 768, 1024)")
-    resize_width: Optional[int] = Field(default=None, description="Resize images to specific width")
-    resize_height: Optional[int] = Field(default=None, description="Resize images to specific height")
-    image_quality: Optional[int] = Field(default=None, ge=1, le=100, description="JPEG quality for resized images")
-    preserve_alpha: Optional[bool] = Field(default=None, description="Preserve alpha channel (outputs PNG)")
+    # The batch-processing knobs (processing_mode & co.) and the server-side
+    # image-resize knobs (resize_max & co.) left with the OpenAI chat route
+    # (v1.79.66): nothing that remains read them, and /v1/messages has no
+    # resize by design -- clients downscale before sending.
 
     # Thinking mode control (Qwen3 models)
     enable_thinking: Optional[bool] = Field(default=None, description="Enable thinking mode for Qwen3 models")
@@ -180,57 +171,28 @@ class ChatRequest(BaseModel):
             return self.continue_final_message
         return bool(self.messages) and self.messages[-1].role == 'assistant'
 
-class PerformanceMetrics(BaseModel):
-    prompt_tps: float
-    generation_tps: float
-    peak_memory_gb: float
+    def resumes_thinking(self) -> bool:
+        """Whether this continuation resumes INSIDE the thinking block: the
+        final message is an assistant turn carrying thinking and no content
+        (whitespace-only counts as none; str or parts-list). The one shape
+        both engines read the same way -- llama.cpp's reasoning_content-with-
+        empty-content continuation, MLX's re-opened block -- so the provider,
+        the parser selection and the prompt preview all ask HERE; three
+        hand-copied spellings of this test drifted apart before it existed."""
+        if not self.is_continuation() or not self.messages:
+            return False
+        last = self.messages[-1]
+        if last.role != 'assistant' or not last.thinking:
+            return False
+        content = last.content
+        if isinstance(content, list):
+            content = "".join(getattr(p, "text", None) or "" for p in content)
+        return not (content and content.strip())
 
-class ChatCompletionResponse(BaseModel):
-    id: str
-    object: str
-    created: int
-    model: str
-    choices: List[Dict]
-    usage: Dict
-    performance: Optional[PerformanceMetrics] = None
-
-
-class BatchChatRequest(BaseModel):
-    """Request for batch chat completions."""
-    requests: List[ChatRequest]
-    processing_mode: str = "batch"
-
-    # Batch-specific parameters
-    completion_batch_size: Optional[int] = Field(default=32, description="Max concurrent generations")
-    prefill_batch_size: Optional[int] = Field(default=8, description="Max prefill parallelism")
-    prefill_step_size: Optional[int] = Field(default=2048, description="Chunk size for prefill")
-
-    @field_validator('requests', mode='before')
-    @classmethod
-    def validate_requests(cls, v):
-        if not v:
-            raise ValueError("Requests list cannot be empty")
-        if len(v) < 2:
-            raise ValueError("Batch requests must contain at least 2 requests")
-        return v
-
-
-class BatchStats(BaseModel):
-    """Statistics for batch processing."""
-    total_requests: int
-    elapsed_seconds: float
-    throughput_req_per_sec: float
-    throughput_tok_per_sec: float
-    prefill_time: float
-    generation_time: float
-    memory_peak_mb: float
-
-
-class BatchChatResponse(BaseModel):
-    """Response for batch chat completions."""
-    object: str = "list"
-    data: List[ChatCompletionResponse]
-    batch_stats: BatchStats
+# ChatRequest is the INTERNAL request every provider takes; the wire that
+# produces it is /v1/messages (schema/converters.to_chat_request). The
+# OpenAI-shaped response models that used to sit here (ChatCompletionResponse,
+# PerformanceMetrics, the Batch* trio) left with that route in v1.79.66.
 
 # ── Effect classification ───────────────────────────────────────────────────
 # Every field on a provider config declares WHEN a change to it takes effect,
@@ -404,6 +366,17 @@ class MLXModelConfig(BaseModel):
     # effective loader live in the provider (is_vlm derives from it).
     loader: Literal["auto", "mlx-vlm", "mlx-lm"] = Field(
         default="auto", json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    # The model's context window, when config.json does not tell the truth.
+    # None = read the file (capabilities.model_context_length: top-level
+    # max_position_embeddings, then the nested text block). A YaRN-scaled
+    # checkpoint often ships the ORIGINAL value with the factor in
+    # rope_scaling, and the file value alone makes run_generation refuse a
+    # prompt the model takes; this is the per-model answer. requires_reload:
+    # the provider reads it ONCE at load into MLXProvider.context_length, the
+    # number the over-length guard and the admin row both report. MLX only --
+    # gguf's context is what the process was SPAWNED with (`ctx_size`).
+    context_length: Optional[int] = Field(
+        default=None, gt=0, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Sampler defaults: the loaded model serves any of these per request.
     temperature: Optional[float] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
@@ -1147,115 +1120,6 @@ class CacheClearRequest(BaseModel):
 class CacheClearResponse(BaseModel):
     """Response from cache clear operation."""
     deleted_count: int
-
-
-# =============================================================================
-# Enhanced Streaming Metadata
-# Schema documentation for stream_options.include_usage response fields.
-# These models document the API contract; actual streaming uses dicts directly.
-# =============================================================================
-
-class EnhancedUsage(BaseModel):
-    """Extended usage statistics including thinking tokens."""
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    thinking_tokens: Optional[int] = Field(default=None, description="Tokens used in thinking blocks")
-    content_tokens: Optional[int] = Field(default=None, description="Tokens in actual content")
-    total_tokens: int = 0
-
-
-class GenerationTiming(BaseModel):
-    """Timing breakdown for generation phases."""
-    thinking_duration_ms: Optional[int] = Field(default=None, description="Time spent in thinking phase")
-    content_duration_ms: Optional[int] = Field(default=None, description="Time spent generating content")
-    total_duration_ms: int = Field(..., description="Total generation time")
-    peak_memory_gb: Optional[float] = Field(
-        None,
-        description="Peak MLX memory used during this request in GB. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.",
-    )
-    kv_cache_bytes: Optional[int] = Field(
-        None,
-        description="Bytes held in the prompt KV cache at the start of this request. Streaming only: appears in the final usage chunk when stream_options.include_usage=true.",
-    )
-
-
-class GenerationConfig(BaseModel):
-    """Sampler configuration used for generation."""
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    min_p: Optional[float] = None
-    enable_thinking: Optional[bool] = None
-    max_tokens: Optional[int] = None
-
-
-# =============================================================================
-# SSE Stream Chunk Models
-# These document the Server-Sent Events payload for streaming responses.
-# =============================================================================
-
-class TopLogprobEntry(BaseModel):
-    """A candidate token with its log probability (used in top_logprobs arrays)."""
-    token: str = Field(..., description="Token text")
-    token_id: int = Field(..., description="Token vocabulary ID")
-    logprob: float = Field(..., description="Log probability of this token")
-    bytes: List[int] = Field(default_factory=list, description="UTF-8 byte values")
-
-class TokenLogprobInfo(BaseModel):
-    """Token with its log probability and alternative candidates."""
-    token: str = Field(..., description="Token text")
-    token_id: int = Field(..., description="Token vocabulary ID")
-    logprob: float = Field(..., description="Log probability of this token")
-    bytes: List[int] = Field(default_factory=list, description="UTF-8 byte values")
-    top_logprobs: Optional[List[TopLogprobEntry]] = Field(
-        None, description="Alternative tokens with their logprobs"
-    )
-
-class StreamLogprobs(BaseModel):
-    """Logprobs attached to a streaming chunk."""
-    content: List[TokenLogprobInfo] = Field(
-        default_factory=list, description="Token-level logprob data for this chunk"
-    )
-
-class StreamDelta(BaseModel):
-    """Delta content in a streaming chunk."""
-    role: Optional[str] = Field(default=None, description="Role (only in first chunk)")
-    content: Optional[str] = Field(default=None, description="Text content delta")
-    thinking: Optional[str] = Field(default=None, description="Thinking content delta")
-
-class StreamChoice(BaseModel):
-    """Single choice in a streaming chunk."""
-    index: int = 0
-    delta: StreamDelta = Field(default_factory=StreamDelta)
-    logprobs: Optional[StreamLogprobs] = None
-    finish_reason: Optional[str] = Field(
-        None, description="'stop', 'length', or null while streaming"
-    )
-
-class StreamChunk(BaseModel):
-    """SSE payload for a single streaming chunk (data: {...}).
-
-    Sent as Server-Sent Events on the /v1/chat/completions endpoint
-    when stream=true. The final chunk includes usage, timing, and
-    generation_config when stream_options.include_usage=true.
-    """
-    id: str = Field(..., description="Response identifier (chatcmpl-...)")
-    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
-    created: int = Field(..., description="Unix timestamp")
-    model: str = Field(..., description="Model ID used for generation")
-    choices: List[StreamChoice]
-    usage: Optional[EnhancedUsage] = Field(
-        None, description="Token usage (final chunk only, requires stream_options.include_usage)"
-    )
-    timing: Optional[GenerationTiming] = Field(
-        None, description="Generation timing breakdown (final chunk only)"
-    )
-    generation_config: Optional[GenerationConfig] = Field(
-        None, description="Sampler settings used (final chunk only)"
-    )
-    stop_reason: Optional[str] = Field(
-        None, description="Why generation stopped (final chunk only)"
-    )
 
 
 # =============================================================================

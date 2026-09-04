@@ -1,22 +1,17 @@
 # src/heylook_llm/schema/converters.py
 #
-# Bidirectional conversion between the existing OpenAI-compatible format
-# (config.ChatRequest / config.ChatCompletionResponse) and the new Messages
-# API format (schema.MessageCreateRequest / schema.MessageResponse).
+# Conversion between the Messages wire (schema.MessageCreateRequest /
+# schema.MessageResponse) and the INTERNAL request every provider takes
+# (config.ChatRequest, which still speaks OpenAI's vocabulary: content_parts,
+# finish_reason). The conversion lives in the route layer so the provider
+# interface never changes with the wire. The OpenAI chat route that once
+# passed ChatRequest through untouched was removed in v1.79.66; ChatRequest
+# stays because the providers are written against it.
 #
-# The conversion layer lives here so that:
-# 1. The new /v1/messages endpoint can convert to ChatRequest before calling providers
-# 2. The old /v1/chat/completions endpoint continues to work unchanged
-# 3. Provider interface stays the same -- conversion is in the route layer
-#
-# Flow for new endpoint:
-#   Frontend -> /v1/messages -> MessageCreateRequest
+# Flow:
+#   client -> /v1/messages -> MessageCreateRequest
 #     -> to_chat_request() -> ChatRequest -> provider -> chunks
-#     -> from_chat_completion_response() -> MessageResponse -> Frontend
-#
-# Flow for old endpoint (unchanged):
-#   Frontend -> /v1/chat/completions -> ChatRequest -> provider -> chunks
-#     -> ChatCompletionResponse -> Frontend
+#     -> from_openai_response_dict() -> MessageResponse -> client
 
 import uuid
 from typing import Dict, List, Optional
@@ -161,10 +156,9 @@ def from_openai_response_dict(
     response_dict: Dict,
     metadata: Optional[Dict[str, str]] = None,
 ) -> MessageResponse:
-    """Convert an OpenAI-format response dict to a MessageResponse.
-
-    Works with the dict format currently returned by non-streaming handlers
-    in api.py (the raw dict, not ChatCompletionResponse).
+    """Convert a provider-shaped (OpenAI-vocabulary) response dict to a
+    MessageResponse. The dict is what the non-streaming Messages handler
+    assembles from provider chunks; it never touches the wire itself.
     """
     content_blocks = []
 

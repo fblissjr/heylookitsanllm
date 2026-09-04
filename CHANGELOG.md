@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.66]
+
+One inference wire, and a continuation crash on the MLX vision pathway that a
+green browser run had been hiding.
+
+### Removed
+
+- **The OpenAI-compatible chat API.** `POST /v1/chat/completions` and
+  `POST /v1/batch/chat/completions` are gone, with their SSE grammar
+  (`choices`/`delta` chunks, the `[DONE]` sentinel, the `: keepalive`
+  comment), the route-level batch processor and its processing modes, the
+  server-side image resize (`resize_max` and friends), and the
+  `include_performance` flag. Owner call: no v3 page has spoken it since
+  v1.74.0 and the owner's other project speaks `/v1/messages`, so it was a
+  second wire kept conformant for nobody. `/v1/messages` (Anthropic
+  Messages-conformant plus the documented heylook extensions) and the
+  conversation generate route that shares its grammar are the inference
+  API. Kept: `/v1/models` in the OpenAI list shape (v3 and external clients
+  read `data`), `/v1/embeddings`, `/v1/hidden_states`, and the internal
+  `ChatRequest`, which every provider is written against; the rename to
+  Anthropic's vocabulary still happens once at the Messages boundary.
+  `api.py` lost about half its lines with the route. PENDING PORT, left in
+  place and marked in their READMEs (owner: small potatoes, port later):
+  `apps/batch-labeler`, the behavioural eval bank under `tests/eval`, the
+  OpenAI arms of `scripts/benchmark.py`, and one measurement script in the
+  owner's other project. `docs/api_integration.md`, the README, the v3 spec
+  and the project docs describe the single wire now.
+
+### Fixed
+
+- **Every continuation on an mlx-vlm-loaded model crashed since v1.79.64.**
+  The seam-space fix seeded the streaming detokenizer's `text`, and on the
+  vision pathway heylook wraps mlx-vlm's raw HF tokenizer itself, which
+  took mlx-lm's default `NaiveStreamingDetokenizer`, whose `text` is a
+  read-only property: `AttributeError` inside the first `next()` of every
+  Save & Continue, mid-thought resume, or trailing-assistant prefill on
+  every gemma-4 VLM entry, reproduced on the real runtime tokenizer of the
+  E2E default model. The naive class never trimmed the space in the first
+  place, and on the mlx-lm path gemma-4's SPM detokenizer already had
+  trimming off, so on both MLX pathways the loss had been heylook's own
+  lstrip alone; the seed is real for Llama-style SPM and BPE families. Two
+  changes: `ensure_gen_tokenizer` takes a `model_path` and builds the
+  wrapper through mlx-lm's own loader, which picks the SPM/BPE streaming
+  class from tokenizer.json (the provider primes it at load, so the
+  per-request call hits the cache), and `continuation_detokenizer` seeds
+  only a class with a settable `text`. The same change ends every
+  mlx-vlm-loaded model streaming through the naive detokenizer, which
+  re-decodes the current line on every token.
+- **The browser suite's resume check could report green without running
+  its resume half.** Its legal early exit (the stop landed after the
+  thinking block closed) returned as a pass, which is how the crash above
+  sat behind 48/48. The harness has `skip()` now: such a check is tallied
+  as SKIPPED, printed with its reason, and the summary says how many
+  checks never reached their assertion.
+- **A gguf entry's `thinking_default` ignored its models.toml
+  `enable_thinking` / `default_sampler`** on the admin row, because that
+  row built the resolved config for mlx entries only while `/v1/models`
+  honoured them. One derivation now feeds both rows.
+
+### Changed
+
+- **MLX `context_length` override.** `config.context_length` on an MLX
+  entry (requires reload) overrides config.json's
+  `max_position_embeddings` for a checkpoint whose real window differs
+  (YaRN with the original value in config.json is the case), and is what
+  the admin row, `/v1/models`, and the over-length guard then report and
+  enforce. It appears in the models-page editor through
+  `/v1/admin/model-options` like every config field.
+- **Model-row facts are derived once.** `capabilities.derived_model_facts`
+  (capabilities, effective loader, thinking default, context length,
+  running context) feeds `/v1/models` and the admin row; the five
+  hand-copied config-to-dict spellings are one helper. Thinking-resume is
+  one predicate, `ChatRequest.resumes_thinking()`, beside
+  `is_continuation()`; the route and the MLX provider both ask it instead
+  of re-deriving from the row or the request. `InputContentBlock` is
+  defined once; `UnifiedTextStrategy._apply_template` (kept only for
+  tests) is gone.
+- **v3: two modules out of chat.js.** `context-select.js` (the gguf
+  context-size select) and `prompt-preview.js` (the rendered-prompt panel
+  with special-token highlighting) follow the `preset-bar.js` precedent;
+  the chat page reads the provider off the admin row map instead of a
+  second map built from the same response, and the thinking default off
+  the `/v1/models` row alone.
+- **Keepalive on the Messages wire is spelled once.**
+  `streaming_utils.control_frame(chunk)` has no wire argument now; the
+  `ping` event and the `heylook_progress` event are the only spellings.
+
+### Notes
+
+- Unit and contract suites green at this version; the model-free render
+  E2E passes with the extracted modules. The mlx-vlm continuation was
+  checked on the real tokenizer object of the E2E default model off-line,
+  then live through an isolated dev server: a content prefill and a
+  thinking-only resume both completed, the resumed thought's first deltas
+  were " need", " to", " identify", and the admin row confirmed the
+  resident model was on the mlx-vlm loader. The smoke suite ran green on
+  all three engine arms against that server. Its mlx-lm arm first failed
+  two lifecycle checks, and that was the suite, not the server: its reader
+  counted thinking deltas (which carry `text` too) as content while the
+  persisted check read content alone, and with thinking on by default
+  since v1.79.62 a small model's reply was all thinking. The lifecycle
+  checks now send thinking off and count text deltas only. Still
+  UNCOVERED, as before: thinking depth on both MLX arms (no served MLX
+  model advertises `reasoning_effort` on those arms), the stop path on the
+  fast mlx-lm model, and the gguf thinking block on the gemma-E4B entry.
+
 ## [1.79.65]
 
 ### Added

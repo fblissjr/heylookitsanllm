@@ -12,14 +12,14 @@ untrustworthy:
 
 These tests pin the fixed behavior: native engine numbers are the recorded
 generation numbers, queue-wait lives ONLY in its own field, and trend
-averages are success-only.
+averages are success-only. Both /v1/messages modes are driven; the OpenAI
+streaming path that was pinned beside them went in v1.79.66.
 """
 
 import asyncio
-import logging
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from heylook_llm.perf_collector import (
     PerfCollector,
@@ -128,59 +128,6 @@ class TestTrendsSuccessOnly:
 
 
 # ---------------------------------------------------------------------------
-# OpenAI streaming path records native numbers
-# ---------------------------------------------------------------------------
-
-class TestOpenAIStreamingRecordsNativeTps:
-    def _run(self, chunks):
-        from heylook_llm.api import stream_response_generator_async
-        from heylook_llm.config import ChatRequest
-
-        chat_request = ChatRequest(
-            model="test-model",
-            messages=[{"role": "user", "content": "x"}],
-        )
-        router = MagicMock()
-        router.log_level = logging.INFO
-        perf_ctx = {
-            "request_start_time": time.time(),
-            "provider_get_ms": 5.0,
-            "image_resize_ms": 0.0,
-            "had_images": False,
-        }
-        collector = PerfCollector()
-
-        def gen():
-            yield from chunks
-
-        async def drain():
-            out = []
-            async for part in stream_response_generator_async(
-                gen(), chat_request, router, "req-test-123",
-                http_request=None, provider=None, perf_ctx=perf_ctx,
-            ):
-                out.append(part)
-            return out
-
-        with patch("heylook_llm.api.get_perf_collector", return_value=collector):
-            asyncio.run(drain())
-        assert len(collector._events) == 1
-        return collector._events[0]
-
-    def test_recorded_tps_is_native_generation_tps(self):
-        event = self._run([_chunk(generation_tps=87.6, prompt_tps=123.4)])
-        assert event.tokens_per_second == 87.6
-        assert event.prompt_tps == 123.4
-
-    def test_ttft_excludes_queue_wait(self):
-        # Queue wait far exceeds actual wall time -> honest TTFT clamps to 0
-        # instead of reporting queue pressure as model latency.
-        event = self._run([_chunk(queue_wait_ms=1_000_000.0)])
-        assert event.first_token_ms == 0.0
-        assert event.queue_wait_ms == 1_000_000.0
-
-
-# ---------------------------------------------------------------------------
 # Messages non-streaming path: formula fix + native numbers
 # ---------------------------------------------------------------------------
 
@@ -267,6 +214,8 @@ class TestMessagesStreamingRecordsNativeTps:
         assert event.prompt_tps == 123.4
 
     def test_ttft_excludes_queue_wait(self):
+        # Queue wait far exceeds actual wall time -> honest TTFT clamps to 0
+        # instead of reporting queue pressure as model latency.
         event = self._run([_chunk(queue_wait_ms=1_000_000.0)])
         assert event.first_token_ms == 0.0
         assert event.queue_wait_ms == 1_000_000.0

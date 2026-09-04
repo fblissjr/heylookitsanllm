@@ -1,13 +1,14 @@
 # tests/unit/test_abort_stop_reason.py
 """A cancelled run must not claim the model finished (v1.79.46).
 
-This rule has now been broken on THREE routes in three consecutive releases,
-each time the same way: a path becomes cancellable, the generator simply ends
-early, and the end-state falls through to its default -- `end_turn` on the
-Messages wire, `"stop"` on the OpenAI one -- both of which positively assert
-the model reached its own end. v1.79.40 fixed `conversation_generate_api`,
-v1.79.44 fixed `/v1/messages`, and .44 introduced it on
-`/v1/chat/completions` in the very commit that made that path cancellable.
+This rule was broken on THREE routes in three consecutive releases, each time
+the same way: a path becomes cancellable, the generator simply ends early, and
+the end-state falls through to its default -- `end_turn` on the Messages wire,
+`"stop"` on the since-removed OpenAI one -- both of which positively assert the
+model reached its own end. v1.79.40 fixed `conversation_generate_api`,
+v1.79.44 fixed `/v1/messages`, and .44 introduced it on the OpenAI route in
+the very commit that made that path cancellable (that route, and its pin
+here, went in v1.79.66).
 
 Why THIS file exists rather than another meta-test. v1.79.40's response was
 `TestStopReasonHasOneMapper`, which checks HOW `stop_reason` is written -- and
@@ -17,31 +18,14 @@ right way satisfies it, and because the non-streaming overrides set
 today leaves that whole suite green. These are behavioural: they drive an
 aborted generation and read what a client would receive.
 
-The oracle is deliberately "not the value that means completed", not an exact
-string -- the honest value differs per wire (`max_tokens` vs `length`) and the
-claim is about what the client can conclude, not about a spelling.
+The oracle is deliberately "not the value that means completed" first, then
+the honest value -- the claim is about what the client can conclude, not
+about a spelling.
 """
-
-import logging
-from types import SimpleNamespace
 
 import pytest
 
 from heylook_llm.providers.abort import AbortEvent
-
-# non_stream_response reads router.log_level for its debug dump; nothing else
-# on the router is touched on this path.
-_ROUTER = SimpleNamespace(log_level=logging.INFO)
-
-
-def _finish_reason(result):
-    """non_stream_response returns a ChatCompletionResponse OR a dict depending
-    on the request (the route branches on `isinstance(result, dict)`), so read
-    through both rather than pinning today's shape."""
-    choices = result["choices"] if isinstance(result, dict) else result.choices
-    choice = choices[0]
-    return (choice["finish_reason"] if isinstance(choice, dict)
-            else choice.finish_reason)
 
 
 class _Chunk:
@@ -125,40 +109,3 @@ class TestMessagesWireReportsCancellationHonestly:
         resp = await _non_stream_messages(
             gen(), req, "rid", 0.0, abort_event=abort)
         assert resp.stop_reason == "stop_sequence"
-
-
-@pytest.mark.unit
-class TestOpenAIWireReportsCancellationHonestly:
-    """`/v1/chat/completions` became cancellable in v1.79.44 and kept
-    `finish_reason: "stop"` for a cancelled run -- verified live against a
-    running server before this test was written."""
-
-    @pytest.mark.asyncio
-    async def test_non_streaming_abort_does_not_say_stop(self):
-        from heylook_llm.api import non_stream_response
-        from heylook_llm.config import ChatRequest
-
-        abort = AbortEvent()
-        req = ChatRequest.model_validate(
-            {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
-        result = await non_stream_response(
-            _aborted_generator(abort), req, _ROUTER, "rid", 0.0, abort_event=abort)
-        finish = _finish_reason(result)
-        assert finish != "stop", "a cancelled run claimed the model finished"
-        assert finish == "length"
-
-    @pytest.mark.asyncio
-    async def test_a_completed_run_still_says_stop(self):
-        from heylook_llm.api import non_stream_response
-        from heylook_llm.config import ChatRequest
-
-        abort = AbortEvent()  # never set
-        req = ChatRequest.model_validate(
-            {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
-
-        def gen():
-            yield _Chunk("done")
-
-        result = await non_stream_response(
-            gen(), req, _ROUTER, "rid", 0.0, abort_event=abort)
-        assert _finish_reason(result) == "stop"

@@ -7,21 +7,23 @@ interleaved streams on the same model therefore corrupted each other's
 buffer state, and request B's reset() clobbered request A mid-flight (an
 aborted stream's leftover buffer was only cleared when the NEXT request
 happened to reset it). Fix: each request instantiates its own parser via
-select_reasoning_parser(provider._template_info); the once-per-load rationale
+select_reasoning_parser(provider.template_info()); the once-per-load rationale
 (Mistral's ~1000-token strip-regex compile) is preserved by caching the
 compiled pattern, which is stateless and safely shared -- only the buffers
 must be per-request.
+
+Driven through the /v1/messages handlers, the inference wire (the OpenAI route
+this was first pinned on went in v1.79.66).
 """
 
 import asyncio
-import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from heylook_llm.config import ChatRequest
 from heylook_llm.perf_collector import PerfCollector
 from heylook_llm.reasoning_parser import _compile_strip_pattern, select_reasoning_parser
+from heylook_llm.schema.messages import MessageCreateRequest
 
 from _fake_chunk import fake_chunk as _chunk
 
@@ -36,21 +38,18 @@ def _poisoned_shared_parser():
 
 def _provider(template_info=None):
     provider = MagicMock()
-    provider._template_info = template_info
+    provider.template_info.return_value = template_info
     provider._reasoning_parser = _poisoned_shared_parser()
     return provider
 
 
-def _chat_request():
-    return ChatRequest(model="m", messages=[{"role": "user", "content": "x"}])
+def _msg_request():
+    return MessageCreateRequest(model="m", messages=[{"role": "user", "content": "x"}])
 
 
 class TestStreamingUsesPerRequestParser:
     def _run(self, provider):
-        from heylook_llm.api import stream_response_generator_async
-
-        router = MagicMock()
-        router.log_level = logging.INFO
+        from heylook_llm.messages_api import _stream_messages
 
         def gen():
             yield _chunk("hello")
@@ -58,13 +57,13 @@ class TestStreamingUsesPerRequestParser:
         async def drain():
             return [
                 part
-                async for part in stream_response_generator_async(
-                    gen(), _chat_request(), router, "req-parser-1",
+                async for part in _stream_messages(
+                    gen(), _msg_request(), "req-parser-1",
                     http_request=None, provider=provider,
                 )
             ]
 
-        with patch("heylook_llm.api.get_perf_collector", return_value=PerfCollector()):
+        with patch("heylook_llm.messages_api.get_perf_collector", return_value=PerfCollector()):
             return asyncio.run(drain())
 
     def test_shared_provider_parser_never_touched(self):
@@ -80,24 +79,23 @@ class TestStreamingUsesPerRequestParser:
 
 class TestNonStreamingUsesPerRequestParser:
     def test_shared_provider_parser_never_touched(self):
-        from heylook_llm.api import non_stream_response
+        from heylook_llm.messages_api import _non_stream_messages
 
         provider = _provider()
-        router = MagicMock()
-        router.log_level = logging.INFO
 
         def gen():
             yield _chunk("hello")
 
-        with patch("heylook_llm.api.get_perf_collector", return_value=PerfCollector()):
-            response = asyncio.run(non_stream_response(
-                gen(), _chat_request(), router, "req-parser-2",
+        with patch("heylook_llm.messages_api.get_perf_collector", return_value=PerfCollector()):
+            response = asyncio.run(_non_stream_messages(
+                gen(), _msg_request(), "req-parser-2",
                 request_start_time=time.time(), provider=provider,
             ))
 
         assert provider._reasoning_parser.process_chunk.call_count == 0
         assert provider._reasoning_parser.reset.call_count == 0
-        assert response.choices[0]["message"]["content"] == "hello"
+        text = "".join(b.text for b in response.content if b.type == "text")
+        assert text == "hello"
 
 
 class TestStripPatternCache:

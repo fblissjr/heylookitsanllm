@@ -45,9 +45,9 @@ class MessageCreateRequest(BaseModel):
     - system is a top-level parameter, not in the messages array
     - content uses typed blocks instead of OpenAI's content_parts
     - thinking is a top-level bool instead of enable_thinking
-    - no processing_mode/return_individual (those move to BatchRequest)
-    - no image resize params (Messages clients resize before sending; the
-      OpenAI wire keeps them for clients that want the server to do it)
+    - no batch-processing or image-resize params: Messages clients resize
+      before sending (the server-side resize left with the OpenAI chat
+      route in v1.79.66)
     """
     model: Optional[str] = Field(
         default=None,
@@ -99,8 +99,8 @@ class MessageCreateRequest(BaseModel):
     )
 
     # heylook extensions (Phase 3b namespace) -- same semantics and bounds as
-    # ChatRequest, so a consumer migrating from /v1/chat/completions loses no
-    # knob. `sampler` is the SamplerRegistry bundle name (never a /v1/presets
+    # the internal ChatRequest, so no sampler knob exists that this wire cannot
+    # reach. `sampler` is the SamplerRegistry bundle name (never a /v1/presets
     # id); `vision_tokens` is the per-image visual token budget.
     sampler: Optional[str] = Field(
         default=None,
@@ -143,8 +143,8 @@ class MessageCreateRequest(BaseModel):
     # -- so the flag controlled nothing on the surface that declared it. Gating
     # only the non-streaming half would have split the two modes against each
     # other, and gating both would break v3's status lines, which read
-    # message_stop.performance on every generation. It stays on the OpenAI wire
-    # (`ChatRequest.include_performance`), where it is honoured.
+    # message_stop.performance on every generation. (The OpenAI chat route,
+    # which honoured such a flag, was removed in v1.79.66.)
 
     # Metadata passthrough
     metadata: Optional[Dict[str, str]] = Field(

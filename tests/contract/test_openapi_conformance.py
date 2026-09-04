@@ -30,8 +30,8 @@ class TestOpenAPISchema:
         paths = schema["paths"]
         expected_paths = [
             "/v1/models",
-            "/v1/chat/completions",
             "/v1/messages",
+            "/v1/conversations",
             "/v1/system/metrics",
             "/v1/admin/models",
             "/v1/admin/models/scan",
@@ -63,18 +63,20 @@ class TestOpenAPISchema:
                         f"Route {normalized} not found in OpenAPI schema"
                     )
 
-    def test_chat_completions_has_post(self, schema):
-        """POST /v1/chat/completions is documented."""
-        endpoint = schema["paths"].get("/v1/chat/completions", {})
+    def test_openai_chat_routes_are_gone(self, schema):
+        """The OpenAI-compatible chat routes were removed in v1.79.66 and must
+        not come back by accident: a page that reappears is a second wire to
+        keep conformant, which is what the removal was for."""
+        for path in ("/v1/chat/completions", "/v1/batch/chat/completions"):
+            assert path not in schema["paths"], f"{path} is served again"
+
+    def test_messages_has_post(self, schema):
+        """POST /v1/messages is documented as the inference route."""
+        endpoint = schema["paths"].get("/v1/messages", {})
         assert "post" in endpoint
         post = endpoint["post"]
         assert "summary" in post
         assert "requestBody" in post
-
-    def test_messages_has_post(self, schema):
-        """POST /v1/messages is documented."""
-        endpoint = schema["paths"].get("/v1/messages", {})
-        assert "post" in endpoint
 
     def test_models_has_get(self, schema):
         """GET /v1/models is documented."""
@@ -89,18 +91,19 @@ class TestOpenAPISchema:
 
         # Key schemas that should exist
         expected_schemas = [
-            "ChatRequest",
-            "ChatCompletionResponse",
             "MessageCreateRequest",
         ]
         for name in expected_schemas:
             assert name in schemas, f"Missing schema definition: {name}"
+        # ChatRequest is the INTERNAL request model providers are driven with;
+        # since v1.79.66 no route takes it, so it must not be published.
+        assert "ChatRequest" not in schemas
 
-    def test_chat_request_schema_has_required_fields(self, schema):
-        """ChatRequest schema requires messages field."""
+    def test_message_request_schema_has_required_fields(self, schema):
+        """MessageCreateRequest schema requires the messages field."""
         schemas = schema["components"]["schemas"]
-        chat_req = schemas.get("ChatRequest", {})
-        required = chat_req.get("required", [])
+        req = schemas.get("MessageCreateRequest", {})
+        required = req.get("required", [])
         assert "messages" in required
 
     def test_endpoint_count(self, schema):
@@ -111,5 +114,5 @@ class TestOpenAPISchema:
             for method in methods:
                 if method in ("get", "post", "put", "delete", "patch"):
                     endpoint_count += 1
-        # We expect at least 10 endpoints (models, chat, messages, admin CRUD, etc.)
+        # We expect at least 10 endpoints (models, messages, admin CRUD, etc.)
         assert endpoint_count >= 10, f"Only {endpoint_count} endpoints found"

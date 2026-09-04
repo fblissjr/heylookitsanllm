@@ -187,7 +187,7 @@ class TestApplyTemplateMissingTemplate:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            strategy._apply_template(
+            strategy._render_template(
                 [{"role": "user", "content": "hi"}],
                 tokenizer, MagicMock(), MagicMock(), {},
             )
@@ -209,7 +209,7 @@ class TestApplyTemplateMissingTemplate:
         )
 
         with pytest.raises(ValueError, match="roles must alternate"):
-            strategy._apply_template(
+            strategy._render_template(
                 [{"role": "user", "content": "hi"}],
                 tokenizer, MagicMock(), MagicMock(), {},
             )
@@ -229,7 +229,7 @@ class TestApplyTemplateMissingTemplate:
         )
 
         with pytest.raises(ValueError, match="python template render error"):
-            strategy._apply_template(
+            strategy._render_template(
                 [{"role": "user", "content": "hi"}],
                 tokenizer, MagicMock(), MagicMock(), {},
             )

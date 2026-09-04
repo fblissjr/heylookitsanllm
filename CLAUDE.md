@@ -191,6 +191,19 @@ restore `__pydantic_fields_set__` or they leak back as "stored");
 API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
 preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
 settings), telemetry (frontend ingestion), requests (cancellation).
+ONE INFERENCE WIRE (v1.79.66): `/v1/messages` (Anthropic Messages-conformant plus the
+documented heylook extensions) and the conversation generate route that shares its
+grammar. The OpenAI-compatible `/v1/chat/completions` + `/v1/batch/chat/completions`
+routes, the route-level batch processor, the server-side image resize and the
+`: keepalive` SSE comment were REMOVED (owner call: v3 and the owner's other project
+speak Messages; nothing else that matters spoke OpenAI). Do not re-add an OpenAI
+wire. `ChatRequest` STAYS: it is the INTERNAL request every provider takes and still
+speaks OpenAI's vocabulary (content parts, finish_reason); the rename to Anthropic's
+happens once, at the Messages boundary (`converters`). `/v1/models` keeps the OpenAI
+LIST SHAPE because v3 and external clients read `data`; that is a shape, not a wire.
+Still targeting the removed route and PENDING PORT (owner: small potatoes, port
+later): `apps/batch-labeler`, `tests/eval`, `scripts/benchmark.py`'s OpenAI arms,
+and one measurement script in the owner's other project.
 CANCELLATION (v1.79.44, `request_registry.py`): a STREAMING request is cancellable by
 hanging up -- the server is writing, so it notices the peer is gone -- while a
 NON-STREAMING one writes nothing until it finishes and never notices, so an abandoned
@@ -224,8 +237,8 @@ chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
 server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
-position arithmetic -- notebook/explore speak `/v1/messages` since v1.74.0,
-so NO v3 page uses `/v1/chat/completions`), takes image (and gguf audio) input + renders
+position arithmetic -- notebook/explore speak `/v1/messages` since v1.74.0;
+the OpenAI-compatible route itself is gone since v1.79.66), takes image (and gguf audio) input + renders
 image content blocks out of the DuckDB store. The page is a MIRROR of the store
 with exactly two invalidation points: document select, and RESUME (`ctx.onResume` ->
 `refreshAfterResume`, v1.79.2) -- nothing polls, and re-clicking the active
@@ -405,13 +418,26 @@ in git history; a contract test pins that `/v2` stays 404.)
 - `mlx_lm.generate.GenerationResponse` is a non-slotted dataclass -- attach per-request metadata via `response.X = value` (`# type: ignore[attr-defined]`), read via `getattr`.
 - `mx.set_wired_limit(...)` is set at startup, but the per-generation `wired_limit()` CM is still needed for stream sync. Call `mx.reset_peak_memory()` at `run_generation` start to scope `mx.get_peak_memory()` per request.
 - Verify a library is actually broken before working around it.
-- Perf numbers are honest as of v1.34.1: recorded tok/s = native mlx-lm `generation_tps`, TTFT/tok-s exclude queue-wait (own `queue_wait_ms` field), trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()` -- add new chunk fields THERE, not at call sites (batch_processor.py still has 3 unconverted scrape sites, moot when Phase 2 collapses it).
+- Perf numbers are honest as of v1.34.1: recorded tok/s = native mlx-lm `generation_tps`, TTFT/tok-s exclude queue-wait (own `queue_wait_ms` field), trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()` -- add new chunk fields THERE, not at call sites.
 - The FIFO generation gate is a PROCESS-GLOBAL singleton shared by all providers (`_get_generation_gate`); `generation_queue_stats()` reports gate-wide traffic, not per-model. Any "is this model busy" logic built on it is conservative across models. `unload()` waits for actives AND gate waiters (30s cap) -- the active counter decrements before `gate.release()`, so never gate teardown on actives alone.
 - Any NEW code path running MLX forwards off the event loop (analysis endpoints etc.) must run on `streaming_utils._executor_pool` (a pinned, REUSED thread) inside `with mx.stream(generation_core._get_generation_stream())`, AND acquire the process-global gen gate + `router.pin_model()`. Starlette's `run_in_threadpool` has no thread-local MLX stream ("There is no Stream(cpu/gpu, 0)") and a dying MLX thread aborts the PROCESS. Verify on a real worker thread, not the main thread (see `jspace_api.py`).
 - `mx.load` is lazy/mmap-backed -- `mx.eval()` the arrays at load time if they'll first be used on a different (worker) thread, else the first eval crashes on that thread's missing CPU stream.
 - A model's `.layers` can be a fresh-slice `@property` (pipeline-parallel Qwen3.5/deepseek/glm4_moe: `pipeline_layers = self.layers[start:end]`), NOT the list the forward iterates -- to hook/mutate blocks use the underlying list on the inner decoder (`inner.layers`/`.h`), not `model.layers`.
 - Live-verifying streaming/latency changes: the 31B dense gemma natively decodes ~10 tok/s (looks identical to the old delivery cap); use the MoE `gemma-4-26B-A4B` (~90 tok/s) as the discriminating model.
 - Stop-token/eos resolution has the same dual-source trap as chat templates: a model's full eos set can be split across tokenizer_config.json's `added_tokens_decoder` and tokenizer.json's `added_tokens` (gemma-4's `<turn|>` terminator lives only in the latter) -- read both. Raw HF tokenizers also don't absorb `generation_config.json`'s eos list, and mlx-lm's `stream_generate` auto-wraps a raw tokenizer with only the single `eos_token_id` -- `run_generation` wraps it itself (`ensure_gen_tokenizer`) with the full resolved stop set, or a model generates past its own end-of-turn.
+- MLX HAS TWO TOKENIZER SHAPES AT GENERATION TIME (v1.79.66): mlx-lm's `load` hands
+  the text path a `TokenizerWrapper` whose streaming detokenizer (SPM/BPE) was chosen
+  from tokenizer.json; mlx-vlm's processor hands the vision path a RAW HF tokenizer
+  (its own detokenizer sits unused on `processor.detokenizer`). `run_generation` wraps
+  the raw one via `ensure_gen_tokenizer`, and a wrapper built WITHOUT `model_path`
+  takes mlx-lm's DEFAULT, `NaiveStreamingDetokenizer`: quadratic per line (it
+  re-decodes the current line on every token) and `text` is a read-only property.
+  `MLXProvider.load_model` therefore PRIMES the wrapper with `model_path` (mlx-lm's
+  own loader picks the class), and `continuation_detokenizer` seeds only a class with
+  a settable `text` (`_seedable`). v1.79.64 seeded unconditionally and raised inside
+  the first `next()` of EVERY continuation on every mlx-vlm-routed model, behind a
+  48/48 browser run whose resume check had a legal early exit that reported green.
+  A check on the mlx-lm path says nothing about the mlx-vlm path, and the reverse.
 - MESSAGES-WIRE CONFORMANCE (v1.79.39-40): `/v1/messages` is Anthropic
   Messages-SHAPED and was not Messages-CONFORMANT for three payloads, each of
   which failed silently for a client written against Anthropic's spec. Media
@@ -533,7 +559,7 @@ in git history; a contract test pins that `/v2` stays 404.)
   rather than inferred from the vision capability. eval also reports how many
   tasks ran on NO model: its `required_capabilities <= model_caps` filter is
   how a text-only `--models` list ran zero vision tasks under a full green.
-- **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB; load+warm readiness is the server-owned `POST /v1/models/{id}/load?warm=true` (same contract as `scripts/dev_server.sh` -- never hand-roll poll/warm logic in a harness). NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`, MUST run UNSANDBOXED (bun's non-interactive script shell resolves the real node binary; bare `node run.mjs` from an interactive-derived shell hits the nvm lazy-load function, which `export PATH` cannot beat -- the harness itself still executes under node by design, via the package.json scripts). Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B). A THIRD entry, `bun run e2e:render`, is model-free and server-free (real `/v3` page, stubbed `/v1`, seconds): it guards that the chat message list is RECONCILED, not rebuilt -- `.message` is `content-visibility: auto`, so a row's laid-out height lives on the NODE, and a rebuild collapses `scrollHeight` mid-tick so any pixel-based scroll aims at a list about to grow underneath. Deliberately NOT part of `bun run e2e` (whose Metal/model prerequisites it does not share). `E2E_V3_ROOT` points it at a copy of the frontend, which is how each check was shown to FAIL against a deliberately broken one.
+- **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB; load+warm readiness is the server-owned `POST /v1/models/{id}/load?warm=true` (same contract as `scripts/dev_server.sh` -- never hand-roll poll/warm logic in a harness). NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`, MUST run UNSANDBOXED (bun's non-interactive script shell resolves the real node binary; bare `node run.mjs` from an interactive-derived shell hits the nvm lazy-load function, which `export PATH` cannot beat -- the harness itself still executes under node by design, via the package.json scripts). Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B). A THIRD entry, `bun run e2e:render`, is model-free and server-free (real `/v3` page, stubbed `/v1`, seconds): it guards that the chat message list is RECONCILED, not rebuilt -- `.message` is `content-visibility: auto`, so a row's laid-out height lives on the NODE, and a rebuild collapses `scrollHeight` mid-tick so any pixel-based scroll aims at a list about to grow underneath. Deliberately NOT part of `bun run e2e` (whose Metal/model prerequisites it does not share). `E2E_V3_ROOT` points it at a copy of the frontend, which is how each check was shown to FAIL against a deliberately broken one. A check that reaches a LEGAL early exit before its assertion calls `skip()` (harness.mjs, v1.79.66) and is tallied as SKIPPED, never as a pass -- the chat suite's resume check hid the mlx-vlm continuation crash behind exactly such an exit.
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - `test_mlx_provider.py` SEGFAULTS at GC teardown when run in near-ISOLATION (MLX `unload`/`__del__` flakiness) but passes clean in any multi-file batch / the full suite -- not a regression; run it batched, not alone.
 - A SEPARATE interpreter-teardown crash, `Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` (exit 134, printed AFTER the pass count), is NOT that MLX-GC class: it needs the MagicMock MLX tree, and reproduces model-free and pytest-free in a bare interpreter -- `import heylook_llm.api` under `patch.dict(sys.modules, create_mlx_module_mocks())` aborts at finalization, while the same import with real MLX exits 0 and the mock tree without that import exits 0. No stray Python thread survives the import, so the foreign thread doing it was not identified (timeboxed). Contract runs on Apple hardware no longer hit it at all since `mlx_mocks` stopped patching there (v1.77.1); it remains a residual on the mocked path.

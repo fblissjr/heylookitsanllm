@@ -3,9 +3,9 @@
 
 ``POST /v1/models/{id}/load`` is here, not under ``/v1/admin``, because
 gating it on the admin token protected nothing. Loading is exactly what an
-inference request already does: ``/v1/messages`` and
-``/v1/chat/completions`` call ``router.get_provider(model_id)`` on the way
-in, so any client that can generate can already trigger a multi-GB load and
+inference request already does: ``/v1/messages`` calls
+``router.get_provider(model_id)`` on the way in, so any client that can
+generate can already trigger a multi-GB load and
 (at ``max_loaded_models=1``) an eviction, just by naming a model in the
 body. The admin gate only stopped a client from doing EXPLICITLY and
 OBSERVABLY what it could already do implicitly. It is gated on

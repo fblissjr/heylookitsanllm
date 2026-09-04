@@ -64,7 +64,7 @@ class KeepaliveMarker:
     """Sentinel yielded whenever the generation has been silent for
     ``KEEPALIVE_INTERVAL_S`` -- during prefill, and equally during a decode
     stall (v1.79.65; it used to stop at the first token, so a mid-generation
-    pause got nothing). The route spells it for its wire via control_frame().
+    pause got nothing). control_frame() spells it on the wire.
     """
     pass
 
@@ -88,39 +88,24 @@ class PrefillProgress:
 # a local so a test can shorten it instead of sleeping through it.
 KEEPALIVE_INTERVAL_S = 5.0
 
-# The two wires the consume loops speak. The OpenAI wire has no place for a
-# control event in its chunk grammar, so its frames are SSE comments; the
-# Messages wire has Anthropic's own `ping` event, which every Messages client
-# already handles, and a namespaced extension event for progress (the same
-# shape as heylook_logprobs / heylook_saved).
-WIRE_OPENAI = "openai"
-WIRE_MESSAGES = "messages"
-
-# ONE table of keepalive spellings. Every SSE consume loop guards with
+# ONE wire (v1.79.66: the OpenAI chat route, whose chunk grammar had no place
+# for a control event and so spoke SSE comments, is gone). Keepalive is
+# Anthropic's own `ping` event, which every Messages client already handles;
+# prefill progress is a namespaced extension event, the same shape as
+# heylook_logprobs / heylook_saved. Every SSE consume loop guards with
 # control_frame() BEFORE touching chunk fields -- the markers have none of
 # GenerationChunk's, and forgetting the guard is a proven failure mode
 # (/v1/messages carried the crash from its creation until 2026-08-13).
-_KEEPALIVE_FRAMES = {
-    WIRE_OPENAI: ": keepalive\n\n",
-    WIRE_MESSAGES: 'event: ping\ndata: {"type":"ping"}\n\n',
-}
+KEEPALIVE_FRAME = 'event: ping\ndata: {"type":"ping"}\n\n'
 
 
-def control_frame(chunk, wire: str = WIRE_OPENAI) -> str | None:
-    """A control marker's frame on ``wire``, or None for a real chunk.
-
-    Keepalive: the wire's own no-op frame. Prefill progress: a
-    ``heylook_progress`` event on the Messages wire; on the OpenAI wire the
-    keepalive comment, because the chunk grammar has nowhere honest to put
-    the numbers and the frame still keeps the connection alive.
-    """
+def control_frame(chunk) -> str | None:
+    """A control marker's SSE frame, or None for a real chunk."""
     if isinstance(chunk, KeepaliveMarker):
-        return _KEEPALIVE_FRAMES[wire]
+        return KEEPALIVE_FRAME
     if isinstance(chunk, PrefillProgress):
-        if wire == WIRE_MESSAGES:
-            return ('event: heylook_progress\ndata: {"type":"heylook_progress",'
-                    f'"prefill":{{"processed":{chunk.processed},"total":{chunk.total}}}}}\n\n')
-        return _KEEPALIVE_FRAMES[wire]
+        return ('event: heylook_progress\ndata: {"type":"heylook_progress",'
+                f'"prefill":{{"processed":{chunk.processed},"total":{chunk.total}}}}}\n\n')
     return None
 
 
@@ -143,7 +128,7 @@ async def async_generator_with_abort(
         abort_event: A ``threading.Event`` from the provider (may be None).
         log_prefix: Label used in log messages (e.g. "[API]" or "[MESSAGES]").
         abort_on_disconnect: Stop generating when the client goes away.
-            TRUE for the stateless wires (/v1/messages, /v1/chat/completions):
+            TRUE for the stateless wire (/v1/messages):
             nothing is persisted there, so a disconnected client means the
             work has nowhere to go. FALSE for the conversation-generate saga,
             which persists server-side -- there a disconnect is a tab switch,

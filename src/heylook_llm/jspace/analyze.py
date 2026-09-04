@@ -50,7 +50,7 @@ def format_prompt(model, processor, is_vlm: bool, messages: list[dict],
                   *, chat: bool = False) -> list[int]:
     """Tokenized input ids.
 
-    chat=True: full chat template (matches MLXProvider._apply_template) -- the
+    chat=True: full chat template (matches UnifiedTextStrategy.build_prompt) -- the
     right way to prompt an instruct model, but the final position is the
     generation-prompt boundary (formatting tokens), so the workspace read-out
     there is dominated by format, not content. Good for the risk features

@@ -16,9 +16,9 @@ from heylook_llm.schema.content_blocks import OutputContentBlock
 # that "api.py sets it on the non-streaming failure path", which was not
 # true and was repeated into three documents before anyone traced it:
 # MessageResponse has exactly one construction site (converters.to_stop_reason
-# feeds it) and that function cannot return "error"; api.py's `stop_reason=
-# "error"` is a kwarg to _maybe_log_request_event -- a JSONL telemetry field,
-# not a response. A non-streaming failure RAISES HTTPException, so no
+# feeds it) and that function cannot return "error"; the `stop_reason="error"`
+# that was found was a JSONL telemetry field on the since-removed OpenAI
+# route, not a response. A non-streaming failure RAISES HTTPException, so no
 # MessageResponse is built at all. An unreachable enum member is worse than
 # no member: an integrator writes and tests a branch the server cannot enter.
 StopReason = Literal["end_turn", "max_tokens", "stop_sequence"]
@@ -46,12 +46,12 @@ class Usage(BaseModel):
 class PerformanceInfo(BaseModel):
     """Generation performance metrics.
 
-    MESSAGES WIRE ONLY. The OpenAI wire returns a different model --
-    ``config.PerformanceMetrics``, gated on ``include_performance`` -- and the
-    previous version of this docstring described THAT model's behaviour here,
-    which is the mechanism-that-does-not-exist defect the schema-parity test
-    was repaired for in the same release. Referenced only by MessageResponse,
-    MessageStopEvent and converters.from_openai_response_dict.
+    Returned UNCONDITIONALLY in both modes (no request flag gates it). The
+    OpenAI chat route, removed in v1.79.66, had a different model gated on a
+    flag, and an earlier version of this docstring described that one here --
+    the mechanism-that-does-not-exist defect the schema-parity test was
+    repaired for. Referenced only by MessageResponse, MessageStopEvent and
+    converters.from_openai_response_dict.
 
     ONE CONTRACT, as of v1.79.58:
 
@@ -104,8 +104,8 @@ class PerformanceInfo(BaseModel):
     # by two names that each denote one span rather than aliased to one of
     # them: two spellings for one value is the defect class v1.79.48 cited
     # when it MOVED the load route instead of aliasing it.
-    # (The OpenAI wire's own `config.GenerationTiming.total_duration_ms` is a
-    # different model on a different wire and is untouched.)
+    # (The removed OpenAI wire had its own timing model with a total_duration_ms;
+    # nothing here aliases that either.)
     request_duration_ms: Optional[int] = Field(
         default=None,
         description=(

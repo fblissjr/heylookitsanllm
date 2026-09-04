@@ -321,7 +321,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # Convert to internal ChatRequest
     chat_request = to_chat_request(msg_request)
 
-    # Same route-boundary guard as /v1/chat/completions: the deep
+    # Route-boundary guard: the deep
     # SamplerNotFound fires on first generator advance and escapes as a 500.
     from heylook_llm.api import validate_request_sampler
     validate_request_sampler(getattr(chat_request, "sampler", None))
@@ -471,7 +471,7 @@ async def _non_stream_messages(
         raise HTTPException(status_code=500, detail=str(e))
 
     # Parse thinking with the model's format-aware parser (harmony channels,
-    # gemma channels, or <think> markers -- same selection as chat/completions)
+    # gemma channels, or <think> markers -- one selection for every route)
     content_text, thinking = parse_reasoning(
         full_text,
         select_reasoning_parser(
@@ -616,7 +616,7 @@ async def _stream_messages(
     # Resolve abort event from provider (if MLX provider with abort support)
     # abort_event is the per-request signal passed in by the route.
 
-    from heylook_llm.streaming_utils import WIRE_MESSAGES, async_generator_with_abort, control_frame
+    from heylook_llm.streaming_utils import async_generator_with_abort, control_frame
 
     # message_start
     yield translator.message_start_event()
@@ -624,9 +624,9 @@ async def _stream_messages(
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
     try:
         async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
-            # Marker guard FIRST (one table of spellings): keepalive is the
-            # grammar's own `ping`, progress the namespaced heylook_progress.
-            frame = control_frame(chunk, WIRE_MESSAGES)
+            # Marker guard FIRST: keepalive is the grammar's own `ping`,
+            # progress the namespaced heylook_progress.
+            frame = control_frame(chunk)
             if frame:
                 yield frame
                 continue

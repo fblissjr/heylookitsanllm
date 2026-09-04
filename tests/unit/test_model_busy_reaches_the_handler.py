@@ -35,7 +35,8 @@ covering more than it does -- which is the failure this whole file is about.
   no allowlist to rot. It goes red when someone adds a new swallowing handler
   around a ``get_provider`` call. Verified it can: against the tree at
   856bb27 (immediately before v1.79.57) it reports ``jspace_api.py`` and
-  ``batch_processor.py``, the two direct-site defects that release fixed.
+  ``batch_processor.py``, the two direct-site defects that release fixed
+  (the latter module was deleted outright in v1.79.66 with the OpenAI route).
 
   A whole-package call-graph version of this was written and DISCARDED.
   Simple-name fixpoint matching over-approximated badly -- it marked most of

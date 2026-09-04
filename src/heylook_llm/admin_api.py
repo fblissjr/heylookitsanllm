@@ -17,7 +17,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from heylook_llm.auth import require_admin_token
-from heylook_llm.capabilities import effective_capabilities, model_context_length
+from heylook_llm.capabilities import config_dict, derived_model_facts
 from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     AdminModelListResponse,
@@ -40,7 +40,6 @@ from heylook_llm.config import (
 )
 from heylook_llm.model_ops_api import load_and_warm
 from heylook_llm.model_service import ModelService
-from heylook_llm.providers.common.loader_routing import effective_loader_for_config
 
 logger = logging.getLogger(__name__)
 
@@ -151,72 +150,33 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     only field on the wire that says which one a row means.
     """
     loaded = mc.id in loaded_ids
-    # The RESOLVED dump, not the exclude_unset one below: the routing rule reads
-    # `loader` and `modalities`, and both are normally defaults -- absent from the
-    # stored keys on almost every entry. Derived, so it lands top-level beside
-    # `provider`, never inside `config`: this repo derives the config editor's
-    # field list from the provider classes, and a read-only value living in a
-    # config class would show up on the models page as an editable option.
-    #
-    # Built ONLY for mlx. `effective_loader_for_config` returns None on its first
-    # line for every other provider, so the dump was per-row work whose result was
-    # discarded for every gguf and embedding entry -- roughly half the rows here.
-    # Not worth arguing about in the abstract, but this route was moved off the
-    # event loop BECAUSE its per-row cost is real, and paying it for a value that
-    # is thrown away contradicts the reason for the move.
-    resolved = ((mc.config.model_dump() if hasattr(mc.config, 'model_dump')
-                 else dict(mc.config))
-                if mc.provider == "mlx" else {})
-    # ONE resolution, three consumers. `effective_capabilities` derives the
-    # vision capability from this same value (v1.79.43), so letting it resolve
-    # its own would rebuild the dump and re-run the router per mlx row -- on
-    # the route whose comment directly above explains that its per-row cost is
-    # why it was moved off the event loop.
-    effective_loader = effective_loader_for_config(mc.provider, resolved)
-    # Context. `context_length` is the model's window from the ONE resolver
-    # every surface reads (capabilities.model_context_length: the GGUF
-    # header's training context for gguf, config.json for MLX -- both cached,
-    # so a list is one read per row after the first); `context_running` is
-    # what a resident llama-server process actually got, read from /props at
-    # ready, and stays gguf-only because MLX has no fixed allocation. Both
-    # are DERIVED and land top-level for the same reason effective_loader
-    # does: a read-only value inside `config` would render as an editable
-    # option on the models page.
-    model_path = (mc.config.model_dump().get("model_path")
-                  if hasattr(mc.config, "model_dump") else dict(mc.config).get("model_path"))
-    context_length = model_context_length(mc.provider, model_path)
-    context_running = None
-    if mc.provider == "gguf" and loaded and router is not None:
-        provider = router.get_loaded_models().get(mc.id)
-        context_running = getattr(provider, "running_ctx", None)
-    capabilities = effective_capabilities(mc, effective_loader)
-    # What thinking resolves to with nothing said: the SAME cascade the
-    # providers run (an empty request through resolve_effective_sampling),
-    # so the row reports the value generation will use and not a re-derived
-    # guess. `thinking_capable` is the served capability, which is also the
-    # cascade's own last fallback -- one resolution, three consumers.
-    from heylook_llm.samplers import thinking_default as _thinking_default
-    thinking_default = _thinking_default(
-        resolved, thinking_capable="thinking" in capabilities)
+    # Every DERIVED value on the row comes from the ONE derivation /v1/models
+    # also reads (capabilities.derived_model_facts), so the two lists cannot
+    # disagree. They land top-level beside `provider`, never inside `config`:
+    # this repo derives the config editor's field list from the provider
+    # classes, and a read-only value living in a config class would show up
+    # on the models page as an editable option. The per-row filesystem cost
+    # (config.json, GGUF header, template probes -- all cached after the first
+    # read) is why this route runs on the threadpool.
+    facts = derived_model_facts(mc, router if loaded else None)
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
         description=mc.description,
         tags=mc.tags,
         enabled=mc.enabled,
-        capabilities=capabilities,
-        config=(mc.config.model_dump(exclude_unset=True)
-                if hasattr(mc.config, 'model_dump') else dict(mc.config)),
+        capabilities=facts.capabilities,
+        config=config_dict(mc.config, exclude_unset=True),
         loaded=loaded,
         source=("config" if written_ids is None or mc.id in written_ids
                 else "discovered"),
         stale_reload_fields=(
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
-        effective_loader=effective_loader,
-        context_length=context_length,
-        context_running=context_running,
-        thinking_default=thinking_default,
+        effective_loader=facts.effective_loader,
+        context_length=facts.context_length,
+        context_running=facts.context_running,
+        thinking_default=facts.thinking_default,
     )
 
 

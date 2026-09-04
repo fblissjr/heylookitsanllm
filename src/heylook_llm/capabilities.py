@@ -18,10 +18,31 @@ The same gap is why the MLX vision capability is resolved through the loader
 router rather than read off the declaration -- see :func:`_mlx_serves_vision`.
 """
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+from heylook_llm.samplers import thinking_default
+
+
+def config_dict(config, *, exclude_unset: bool = False) -> dict:
+    """A provider config as a plain dict.
+
+    ONE spelling for a shape that varies by caller: production hands a
+    pydantic config model (``ModelConfig.config``), the contract fixtures and
+    the provider unit tests hand a raw dict. Five hand-written copies of the
+    ``hasattr(x, "model_dump")`` branch drifted in wording before this
+    existed, which is the hand-copied second copy this repo derives away
+    everywhere else. ``exclude_unset`` is the admin row's STORED-keys view
+    (absent IS how a default is spelled in models.toml); the default is the
+    RESOLVED view every derivation reads.
+    """
+    if hasattr(config, "model_dump"):
+        return config.model_dump(exclude_unset=exclude_unset)
+    if isinstance(config, dict):
+        return dict(config)
+    return {}
 
 
 @lru_cache(maxsize=64)
@@ -103,9 +124,7 @@ def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> boo
     """
     if effective_loader is not None:
         return effective_loader == "mlx-vlm"
-    config = model_config.config
-    resolved = (config.model_dump() if hasattr(config, "model_dump")
-                else dict(config) if isinstance(config, dict) else {})
+    resolved = config_dict(model_config.config)
     return effective_loader_for_config(model_config.provider, resolved) == "mlx-vlm"
 
 
@@ -227,7 +246,8 @@ def _mlx_context_length(model_path: str) -> int | None:
     return None
 
 
-def model_context_length(provider: str, model_path: str | None) -> int | None:
+def model_context_length(provider: str, model_path: str | None,
+                         override: int | None = None) -> int | None:
     """The model's context window in tokens, or None when unknown.
 
     ONE resolver for every surface that names the number -- the admin row,
@@ -238,7 +258,15 @@ def model_context_length(provider: str, model_path: str | None) -> int | None:
     when ``ctx_size`` is unset) for gguf, config.json for MLX. Derived from
     the files, so it is answered for unloaded models too. Embedding models
     have no chat context and answer None.
+
+    ``override`` is the entry's own ``context_length`` (the MLX config field)
+    and wins over the files whatever they say: a YaRN-scaled checkpoint
+    often ships the ORIGINAL ``max_position_embeddings`` with the factor in
+    ``rope_scaling``, and the file value alone would refuse a prompt the
+    model takes. Non-positive values are not a window and are ignored.
     """
+    if isinstance(override, int) and not isinstance(override, bool) and override > 0:
+        return override
     if not model_path:
         return None
     path = Path(str(model_path)).expanduser()
@@ -248,3 +276,66 @@ def model_context_length(provider: str, model_path: str | None) -> int | None:
     if provider == "mlx":
         return _mlx_context_length(str(path))
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelFacts:
+    """Every DERIVED fact a model row reports, resolved once (see
+    :func:`derived_model_facts`)."""
+    resolved: dict
+    capabilities: list[str]
+    effective_loader: str | None
+    thinking_default: bool
+    context_length: int | None
+    context_running: int | None
+
+
+def derived_model_facts(model_config, router=None) -> ModelFacts:
+    """The derived facts ``/v1/models`` and ``/v1/admin/models`` both report,
+    from ONE derivation.
+
+    Two row builders used to derive these separately, each with its own
+    config-dict spelling, and they had already drifted once: the admin row
+    built the resolved dump for mlx entries only, so a gguf entry's
+    models.toml ``enable_thinking`` or ``default_sampler`` never reached its
+    ``thinking_default`` while the same value on ``/v1/models`` did. The dump
+    is built for EVERY row here because three consumers read it (loader
+    routing, the thinking cascade, the context resolver); the per-row cost
+    that moved the admin read routes off the event loop is unchanged -- the
+    router work behind ``effective_loader_for_config`` still returns on its
+    first line for anything but mlx.
+
+    ``router`` is optional: only ``context_running`` (what a RESIDENT
+    llama-server process was sized to) needs it, and ``/v1/models`` does not
+    carry that field.
+    """
+    resolved = config_dict(model_config.config)
+    # ONE resolution, three consumers. `effective_capabilities` derives the
+    # vision capability from this same value (v1.79.43), so letting it
+    # resolve its own would rebuild the dump and re-run the router per row.
+    effective_loader = effective_loader_for_config(model_config.provider, resolved)
+    capabilities = effective_capabilities(model_config, effective_loader)
+    # What thinking resolves to with nothing said: the SAME cascade the
+    # providers run (an empty request through resolve_effective_sampling),
+    # so the row reports the value generation will use and not a re-derived
+    # guess. `thinking_capable` is the served capability, which is also the
+    # cascade's own last fallback.
+    default_thinking = thinking_default(
+        resolved, thinking_capable="thinking" in capabilities)
+    context_length = model_context_length(
+        model_config.provider, resolved.get("model_path"),
+        override=resolved.get("context_length"))
+    # gguf only: MLX has no fixed allocation to report. None until ready and
+    # None when /props does not say (LlamaServerProvider.running_ctx).
+    context_running = None
+    if model_config.provider == "gguf" and router is not None:
+        provider = router.get_loaded_models().get(model_config.id)
+        context_running = getattr(provider, "running_ctx", None)
+    return ModelFacts(
+        resolved=resolved,
+        capabilities=capabilities,
+        effective_loader=effective_loader,
+        thinking_default=default_thinking,
+        context_length=context_length,
+        context_running=context_running,
+    )

@@ -72,8 +72,16 @@ export async function proveQuiet(watch, { atLeast = 0, quiet = 800, expect, mess
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
+const YELLOW = '\x1b[33m';
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
+
+// A check that reaches a LEGAL early exit before its assertion (the stop
+// landed after the thinking block closed, so the resume half never ran)
+// reports SKIP, not PASS. A green tally used to hide exactly that half:
+// the v1.79.64 mlx-vlm continuation crash sat behind a 48/48.
+export class SkipCheck extends Error {}
+export function skip(reason) { throw new SkipCheck(reason); }
 
 export class Suite {
   constructor(name) {
@@ -90,6 +98,11 @@ export class Suite {
       console.log(`  ${GREEN}✓${RESET} ${name} ${DIM}(${ms}ms)${RESET}`);
     } catch (err) {
       const ms = Date.now() - start;
+      if (err instanceof SkipCheck) {
+        this.results.push({ name, ok: true, skipped: true, ms });
+        console.log(`  ${YELLOW}- ${name} SKIPPED${RESET} ${DIM}(${ms}ms)${RESET}\n    ${YELLOW}${err.message}${RESET}`);
+        return;
+      }
       this.results.push({ name, ok: false, ms, error: err });
       console.log(`  ${RED}✗ ${name}${RESET} ${DIM}(${ms}ms)${RESET}`);
       // A message-less error (a puppeteer protocol/target error, an assert
@@ -102,24 +115,29 @@ export class Suite {
     }
   }
 
-  get passed() { return this.results.filter((r) => r.ok).length; }
+  get passed() { return this.results.filter((r) => r.ok && !r.skipped).length; }
   get failed() { return this.results.filter((r) => !r.ok).length; }
+  get skipped() { return this.results.filter((r) => r.skipped).length; }
 }
 
 export function printSummary(suites) {
   let passed = 0;
   let failed = 0;
+  let skipped = 0;
   console.log('\n────────────────────────────────────────');
   for (const s of suites) {
     passed += s.passed;
     failed += s.failed;
+    skipped += s.skipped;
     const mark = s.failed === 0 ? `${GREEN}PASS${RESET}` : `${RED}FAIL${RESET}`;
-    console.log(`${mark}  ${s.name}: ${s.passed}/${s.passed + s.failed}`);
+    const skipNote = s.skipped ? ` ${YELLOW}(${s.skipped} skipped)${RESET}` : '';
+    console.log(`${mark}  ${s.name}: ${s.passed}/${s.passed + s.failed}${skipNote}`);
   }
   console.log('────────────────────────────────────────');
   const total = passed + failed;
   const color = failed === 0 ? GREEN : RED;
-  console.log(`${color}${passed}/${total} checks passed${RESET}\n`);
+  const skipTotal = skipped ? ` ${YELLOW}(${skipped} skipped: did not reach their assertion)${RESET}` : '';
+  console.log(`${color}${passed}/${total} checks passed${RESET}${skipTotal}\n`);
   if (failed > 0) {
     console.log(`${RED}Failures:${RESET}`);
     for (const s of suites) {

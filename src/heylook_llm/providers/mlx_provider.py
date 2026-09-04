@@ -27,7 +27,7 @@ from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effec
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import thinking_for_template
 from .common.model_wrappers import wrap_language_model
-from .common.generation_core import generate_text, run_generation
+from .common.generation_core import ensure_gen_tokenizer, generate_text, run_generation
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
@@ -132,22 +132,11 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
 def _thinking_resume(request: ChatRequest) -> str | None:
     """The partial thinking to RESUME, or None for every other request.
 
-    Only a continuation whose final message is an assistant turn carrying
-    thinking and no content qualifies -- the same shape llama.cpp resolves to
-    its `reasoning_content` continuation (`COMMON_CHAT_CONTINUATION_REASONING`),
-    so the two engines agree on what a mid-thought continue means.
+    The decision is the request's own (``ChatRequest.resumes_thinking``, the
+    one predicate the route's parser selection and the preview also read);
+    this only hands back the trace when it says yes.
     """
-    if not request.is_continuation() or not request.messages:
-        return None
-    last = request.messages[-1]
-    if last.role != "assistant" or not last.thinking:
-        return None
-    content = last.content
-    if isinstance(content, list):
-        content = "".join(getattr(p, "text", None) or "" for p in content)
-    if content and content.strip():
-        return None
-    return last.thinking
+    return request.messages[-1].thinking if request.resumes_thinking() else None
 
 
 def _thinking_resume_opener(template_info) -> str | None:
@@ -388,15 +377,6 @@ class UnifiedTextStrategy:
             msg_dict = thinking_for_template(msg_dict, self.template_info)
             messages_for_template.append(msg_dict)
         return messages_for_template
-
-    def _apply_template(self, messages, tokenizer, processor, model, effective_request,
-                        continuing: bool = False) -> list[int]:
-        """Rendered-and-tokenized prompt for pre-prepared ``messages`` (the
-        pre-v1.79.62 entry point, kept for the equivalence tests that drive
-        the template directly; generation goes through build_prompt)."""
-        prompt = self._render_template(
-            messages, tokenizer, processor, model, effective_request, continuing=continuing)
-        return tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
 
     def _render_template(self, messages, tokenizer, processor, model, effective_request,
                          continuing: bool = False, resume_thinking: str | None = None):
@@ -948,10 +928,21 @@ class MLXProvider(BaseProvider):
             from .common.stop_tokens import extend_eos_from_generation_config
             extend_eos_from_generation_config(self.get_tokenizer(), model_path)
 
+            # Prime the generation wrapper HERE, where model_path is known:
+            # the mlx-vlm path hands run_generation a raw HF tokenizer, and a
+            # wrapper built without the path takes mlx-lm's naive detokenizer
+            # (quadratic per line, read-only `text` -- see ensure_gen_tokenizer).
+            # mlx-lm loads are already wrapped and pass straight through.
+            # After the eos extension above, so the primed set is the full one.
+            gen_tokenizer = self.get_tokenizer()
+            if gen_tokenizer is not None:
+                ensure_gen_tokenizer(gen_tokenizer, model_path)
+
             # The context window, from the ONE resolver the admin row and
             # /v1/models read -- so the ceiling a client is shown is the one
             # run_generation refuses an over-length prompt against.
-            self.context_length = model_context_length("mlx", model_path)
+            self.context_length = model_context_length(
+                "mlx", model_path, override=self.config.get("context_length"))
 
             # Read the model's chat template + tokenizer config (C4.5). The
             # resulting ModelTemplateInfo is the single source of truth for

@@ -97,6 +97,29 @@ class TestThinkingResume:
         req = self._req([{"role": "user", "content": "q"}])
         assert _thinking_resume(req) is None
 
+    def test_the_request_owns_the_predicate(self):
+        """ChatRequest.resumes_thinking is the ONE spelling: the MLX provider,
+        the route's parser selection and the prompt preview all read it, so
+        the three hand-copied versions cannot drift apart again."""
+        assistant = {"role": "assistant", "content": "", "thinking": "so far"}
+        assert self._req([{"role": "user", "content": "q"}, assistant]).resumes_thinking()
+        # whitespace-only content is no content, as a str or as parts
+        spaced = dict(assistant, content="  \n")
+        assert self._req([{"role": "user", "content": "q"}, spaced]).resumes_thinking()
+        parts = dict(assistant, content=[{"type": "text", "text": " "}])
+        assert self._req([{"role": "user", "content": "q"}, parts]).resumes_thinking()
+        # real content: the CONTENT continues, the thought is closed
+        answered = dict(assistant, content=[{"type": "text", "text": "ans"}])
+        assert not self._req([{"role": "user", "content": "q"}, answered]).resumes_thinking()
+        # no thinking to resume
+        assert not self._req([{"role": "user", "content": "q"},
+                              {"role": "assistant", "content": ""}]).resumes_thinking()
+        # an explicit "do not continue" wins over the trailing-assistant shape
+        assert not self._req([{"role": "user", "content": "q"}, assistant],
+                             flag=False).resumes_thinking()
+        # a user-role continuation is never a thinking resume
+        assert not self._req([{"role": "user", "content": "q"}], flag=True).resumes_thinking()
+
     def test_append_after_an_already_open_block(self):
         from types import SimpleNamespace
         from heylook_llm.providers.mlx_provider import _append_thinking_resume
@@ -210,3 +233,101 @@ class TestContinuationKeepsTheSeamSpace:
             with continuation_detokenizer(tok, True):
                 raise RuntimeError("mid-generation")
         assert tok._detokenizer_class is self._SpmLike
+
+    def test_a_read_only_text_detokenizer_is_left_alone(self):
+        """The runtime shape on the mlx-vlm path: a raw HF tokenizer wrapped
+        by ensure_gen_tokenizer without a model_path takes mlx-lm's DEFAULT,
+        NaiveStreamingDetokenizer, whose `text` is a property with no setter.
+        v1.79.64 seeded it and raised AttributeError inside the first next()
+        of every continuation on every mlx-vlm-loaded model. It never trims
+        a leading space either, so leaving it alone is also the right
+        output."""
+        from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer, TokenizerWrapper
+        from heylook_llm.providers.common.generation_core import continuation_detokenizer
+
+        wrapper = TokenizerWrapper(_FakeHfForDetok(), eos_token_ids={0})
+        assert wrapper._detokenizer_class is NaiveStreamingDetokenizer
+        with continuation_detokenizer(wrapper, True):
+            d = wrapper.detokenizer
+            d.reset()
+            d.add_token(1)
+            first = d.last_segment
+            d.add_token(2)
+            second = d.last_segment
+        assert (first, second) == (" need", " the")
+        assert wrapper._detokenizer_class is NaiveStreamingDetokenizer
+
+    def test_a_partial_factory_is_unwrapped_before_the_seed_check(self):
+        """mlx-lm hands gemma-family SPM tokenizers a functools.partial
+        (trim_space=False); the seedability check must look through it."""
+        from functools import partial
+        from heylook_llm.providers.common.generation_core import _seedable
+        from mlx_lm.tokenizer_utils import (
+            BPEStreamingDetokenizer, NaiveStreamingDetokenizer, SPMStreamingDetokenizer)
+        assert _seedable(SPMStreamingDetokenizer)
+        assert _seedable(partial(SPMStreamingDetokenizer, trim_space=False))
+        assert _seedable(BPEStreamingDetokenizer)
+        assert not _seedable(NaiveStreamingDetokenizer)
+
+
+class _FakeHfForDetok:
+    """A raw-HF-tokenizer stand-in that mlx-lm's TokenizerWrapper AND its
+    naive detokenizer can drive: vocab scan at construction, decode by id."""
+    eos_token_id = 0
+    eos_token_ids = {0}
+    chat_template = None
+    clean_up_tokenization_spaces = False
+    _pieces = {1: " need", 2: " the"}
+
+    def get_vocab(self):
+        return {"<eos>": 0}
+
+    def decode(self, ids, **_kw):
+        return "".join(self._pieces.get(i, "") for i in ids)
+
+
+class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
+    """v1.79.66: with a model_path, the raw-tokenizer wrapper is built by
+    mlx-lm's own loader, which selects SPM/BPE streaming from tokenizer.json
+    -- the same choice the mlx-lm text path gets -- instead of the naive
+    default. The provider primes it at load; the per-request call from
+    run_generation must then find it in the cache."""
+
+    def test_model_path_routes_through_the_mlx_lm_loader_and_primes_the_cache(self, monkeypatch, tmp_path):
+        from pathlib import Path
+        from heylook_llm.providers.common import generation_core as gc
+
+        built = object()
+        seen = {}
+
+        def fake_load(path, tokenizer_config_extra=None, eos_token_ids=None):
+            seen["path"] = path
+            seen["eos"] = set(eos_token_ids)
+            return built
+
+        monkeypatch.setattr(gc.lm_tokenizer_utils, "load", fake_load)
+        raw = _FakeHfForDetok()
+        assert gc.ensure_gen_tokenizer(raw, tmp_path) is built
+        assert seen["path"] == Path(tmp_path)
+        assert seen["eos"] == gc.resolve_stop_tokens(raw)   # the extended set, not the loader's own
+        assert gc.ensure_gen_tokenizer(raw) is built          # run_generation's call: cache hit, no path needed
+
+    def test_a_loader_failure_falls_back_to_the_default_wrapper(self, monkeypatch, tmp_path):
+        from mlx_lm.tokenizer_utils import TokenizerWrapper
+        from heylook_llm.providers.common import generation_core as gc
+
+        def broken_load(path, tokenizer_config_extra=None, eos_token_ids=None):
+            raise OSError("no tokenizer.json here")
+
+        monkeypatch.setattr(gc.lm_tokenizer_utils, "load", broken_load)
+        raw = _FakeHfForDetok()
+        wrapped = gc.ensure_gen_tokenizer(raw, tmp_path)
+        assert isinstance(wrapped, TokenizerWrapper)        # a model that loaded still generates
+        assert gc.ensure_gen_tokenizer(raw) is wrapped
+
+    def test_no_model_path_keeps_the_old_default(self):
+        from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer, TokenizerWrapper
+        from heylook_llm.providers.common import generation_core as gc
+        wrapped = gc.ensure_gen_tokenizer(_FakeHfForDetok())
+        assert isinstance(wrapped, TokenizerWrapper)
+        assert wrapped._detokenizer_class is NaiveStreamingDetokenizer

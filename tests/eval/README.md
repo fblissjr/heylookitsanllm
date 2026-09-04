@@ -2,6 +2,12 @@
 
 last updated: 2026-07-20
 
+> **PENDING PORT.** This bank still builds `POST /v1/chat/completions` bodies,
+> which the heylook server no longer serves as of v1.79.66 (the inference API
+> is `POST /v1/messages`). It needs porting before it runs against a current
+> server. Owner call: small, port later. Nothing below has been updated for
+> this yet.
+
 An OPTIONAL eval pass for code changes that can alter LLM *behavior* --
 chat template changes, parser/stop-token changes, vision pipeline changes,
 `vision_tokens` budget plumbing. Generalizes two ad-hoc debugging scripts
@@ -60,6 +66,7 @@ with no required capabilities always runs). A model missing from the
 A task is an `EvalTask` in `tasks.py`: a name, a category (`vision` /
 `thinking` / `stop` / `text` -- matches `--tasks`), the capabilities it
 needs, a `build_request()` closure returning a `/v1/chat/completions` body
+(the pending port above moves this to a `/v1/messages` body)
 (minus `model`/`stream`, which `run.py` fills in), and a `judge()` closure
 that takes `{content, thinking, completion_tokens, max_tokens}` and returns
 a `judges.Verdict`. Prefer composing the existing property-checks in

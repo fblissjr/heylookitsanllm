@@ -1,8 +1,8 @@
 // SSE streaming for the Messages wire: /v1/messages (streamMessages) and the
 // conversation-scoped generate endpoint (streamGenerate), via fetch +
 // ReadableStream. (streamChat -- the OpenAI /v1/chat/completions wire -- was
-// removed with Phase 3b: no v3 page speaks it anymore; the backend endpoint
-// stays for external consumers.)
+// removed with Phase 3b; the backend route itself went in v1.79.66, so the
+// Messages grammar below is the only one this server speaks.)
 //
 // Contract gotchas (verified against backend; do not "simplify" away):
 // - AbortError is NORMAL completion: onComplete fires with partial content.

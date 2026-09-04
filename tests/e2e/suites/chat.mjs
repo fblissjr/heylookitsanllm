@@ -3,7 +3,7 @@
 // settings + the localStorage sampler seed, conversation CRUD, and a 390px
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
-import { assert, waitFor, sleep } from '../lib/harness.mjs';
+import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
 import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
 
@@ -140,9 +140,9 @@ async function currentConversation(page) {
 //
 // Measured against /v1/messages: the delivery machinery under test is shared by
 // every streaming route, and this is a wire v3 actually speaks (notebook and
-// explore) -- it used to probe /v1/chat/completions, which no page has used
-// since v1.74.0, so the comment claiming it was "the path the app uses" had
-// quietly stopped being true. Deliberately NOT chat's own
+// explore) -- it used to probe /v1/chat/completions, which no page had used
+// since v1.74.0 (the route itself was removed in v1.79.66), so the comment
+// claiming it was "the path the app uses" had quietly stopped being true. Deliberately NOT chat's own
 // /v1/conversations/{id}/generate: that path PERSISTS, and an extra assistant
 // row mid-suite would break the sidebar-title, survives-a-reload and
 // second-turn checks that run after this one.
@@ -1449,9 +1449,11 @@ export async function runChatSuite({ suite, ctx, config }) {
       return Boolean(before?.thinking);
     }, { message: 'the stopped reply did not persist its thinking' });
     if ((before.content ?? '').trim()) {
-      console.log('      the stop landed after the thinking block closed (legal) -- resume half skipped');
+      // Legal, but the resume half did not run: report it as such rather
+      // than as a pass. On a fast model the stop can land after the block
+      // closes; rerun (or lower STOP_TEST_MAX_TOKENS) to reach the resume.
       await restore();
-      return;
+      skip('the stop landed after the thinking block closed; the resume half did not run');
     }
     const prefix = before.thinking;
     const tail = prefix.trimEnd().slice(-40);
