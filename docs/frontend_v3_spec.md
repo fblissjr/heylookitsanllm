@@ -433,7 +433,14 @@ truncate→stream→persist sequences):**
   - `continue`: prefill semantics — the anchor rides as the final message
     (`continue_final_message:true`; user-role is MLX-only, provider 400s
     in-band otherwise) and the continuation merges back onto the anchor row,
-    again committing truncation + update together.
+    again committing truncation + update together. Assistant rows carry
+    their `thinking` on the wire (v1.79.62; gguf spells it
+    `reasoning_content`), and an anchor with thinking and NO content RESUMES
+    inside the open thinking block on both engines -- the new thinking is
+    appended to the row's trace, and content follows once the model closes
+    it. An anchor with content continues the content (thinking rendered
+    closed before it). MLX resumes `<think>`-marker families only; gemma
+    channels / harmony 400 in-band with the workaround named.
   - `overrides` layers one-shot sampler values over `params` (same allowlist
     + cap gates) and may carry `model` to generate with a non-stamped model.
   - Wire: Messages SSE grammar (`message_start` / `content_block_start|delta|
@@ -480,6 +487,18 @@ truncate→stream→persist sequences):**
     (v1.67.0): the store is the request's BASE, but panel writes to it are
     debounced/async — overrides carry the user's live intent past that
     window. A client with no such window can omit them.
+- `POST /{id}/prompt` `{mode, message_id?, user_content?, overrides?,
+  edits?:{content?,thinking?}}` → `{prompt, model_id, provider, mode,
+  continuation:"thinking"|"content"|null, dropped_media, char_count}`
+  (v1.79.62). The exact string generate would feed the model, rendered by
+  the model's own engine (llama-server `/apply-template`; the MLX tokenizer's
+  template through the same builder generation uses). Same rows, same
+  builder, same overrides; `user_content` renders as the next user turn and
+  `edits` as if saved onto a continue anchor -- nothing is persisted. 409
+  when the model is not resident: a preview never loads a model. MLX renders
+  the text template only (images in history are not represented). v3 calls
+  it from the assistant editor ("Preview prompt", continue mode from the
+  live boxes) and the composer's eye button (append mode with the draft).
 - `DELETE /{id}/generate` → aborts the active generation (partial persists;
   the Stop button's server-side spelling). 404 when none is active — on
   404 the v3 client aborts its fetch locally instead (covers the
@@ -519,7 +538,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
-stale_reload_fields,effective_loader,context_length,context_running}], total}`.
+stale_reload_fields,effective_loader,context_length,context_running,thinking_default}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
@@ -542,6 +561,14 @@ saved value differs from what the loaded process was built with (always `[]` whe
 loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
+`thinking_default` (v1.79.62, every provider, always a bool): what thinking resolves to
+for this model when a request says nothing -- the sampling cascade's own answer for an
+empty request (`config.enable_thinking`, else a `default_sampler` that turns it on, else
+the thinking CAPABILITY, which is the v1.79.62 fallback: a model that can think, thinks).
+Derived, so answered for unloaded models. v3 labels the tri-state thinking control's
+"Model default (on|off)" with it and the composer's thinking button reflects it; a request
+`enable_thinking: false` is the explicit off.
+
 `context_length` / `context_running` (v1.79.61, gguf only, `null` elsewhere and where
 unknown): the TRAINING context read off the GGUF header (`<arch>.context_length`, the
 ceiling chat's context select offers, answered for unloaded models too) and the context

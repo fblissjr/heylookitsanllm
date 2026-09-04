@@ -211,6 +211,57 @@ class GenerateRequest(BaseModel):
     show_special_tokens: bool = False
 
 
+class PromptPreviewRequest(BaseModel):
+    """What the generate saga WOULD send, rendered instead of run.
+
+    The same mode/anchor/overrides vocabulary as GenerateRequest, so the
+    preview is built by the same request builder over the same rows. Nothing
+    is persisted: `user_content` is rendered as if it were the next user turn
+    and `edits` as if they were saved onto the anchor row -- the editor's
+    unsaved boxes, so "what will Save & Continue send?" is answerable before
+    the destructive save."""
+    mode: Literal["append", "regenerate", "continue"] = "append"
+    message_id: str | None = None
+    user_content: str | list[dict] | None = None
+    overrides: dict = Field(default_factory=dict)
+    # Unsaved editor text for the ANCHOR row (continue mode). Keys present
+    # replace the stored value (null thinking = no thinking); absent = stored.
+    edits: dict | None = None
+
+
+class PromptPreviewResponse(BaseModel):
+    prompt: str = Field(description="The exact prompt string the model would be fed: "
+                                    "special tokens, role markers and thinking blocks "
+                                    "as the template renders them. Images in history "
+                                    "are not represented on MLX (text template only).")
+    model_id: str
+    provider: str
+    mode: str
+    continuation: Literal["thinking", "content"] | None = Field(
+        default=None,
+        description="continue mode only: 'thinking' when the anchor carries thinking "
+                    "and no content, so generation resumes inside the open thinking "
+                    "block; 'content' when the turn's content is being continued.")
+    dropped_media: dict = Field(default_factory=dict)
+    char_count: int = 0
+
+
+def _row_text(row: dict | None) -> str:
+    return "".join(
+        (b.get("text") or "") for b in (row or {}).get("content_blocks") or []
+        if b.get("type") == "text")
+
+
+def _is_thinking_resume(continue_row: dict | None) -> bool:
+    """A continue whose anchor has thinking and no content resumes INSIDE the
+    thinking block -- the one continuation that starts in thinking state.
+    Same shape both engines resolve (llama.cpp: reasoning_content with empty
+    content; MLX: mlx_provider._thinking_resume)."""
+    if continue_row is None or not continue_row.get("thinking"):
+        return False
+    return not _row_text(continue_row).strip()
+
+
 # The ONE media-type -> capability mapping. Both the prefetch filter
 # (_media_ids_for_wire) and the wire build (_wire_content) read it -- a
 # hand-copied second spelling drifted once already in review: a type added to
@@ -307,9 +358,15 @@ def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
     for row in rows:
         # cast: pydantic validates the dict parts into ContentPart at
         # construction (same shape converters.to_chat_request builds).
+        # `thinking` rides along on assistant rows (v1.79.62): the template
+        # decides what to render of it (Qwen3.8 keeps every turn's reasoning
+        # by default, gemma-4 only the last), and a `continue` from a reply
+        # stopped mid-thought resumes INSIDE the block instead of restarting
+        # it -- before this the column never reached the wire at all.
         messages.append(ChatMessage(
             role=row["role"],
             content=cast("str | list", _wire_content(row.get("content_blocks") or [], caps, dropped, media)),
+            thinking=(row.get("thinking") or None) if row["role"] == "assistant" else None,
         ))
 
     params = {**(conv.get("params") or {}), **overrides}
@@ -355,6 +412,10 @@ def _strip_history_specials(request: ChatRequest, provider) -> None:
     for msg in request.messages:
         if msg.role != "assistant":
             continue
+        # The thinking column is model output too, recorded under the same
+        # pref, and it replays into the prompt the same way (v1.79.62).
+        if msg.thinking:
+            msg.thinking = strip(msg.thinking)
         if isinstance(msg.content, str):
             msg.content = strip(msg.content)
             continue
@@ -579,6 +640,107 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         raise
 
 
+@generate_router.post(
+    "/{conv_id}/prompt",
+    summary="Render Prompt Preview",
+    response_model=PromptPreviewResponse,
+    description="What the generate saga would feed the model, as the exact "
+                "prompt string (special tokens included), rendered by the "
+                "model's own engine: llama-server's /apply-template for gguf, "
+                "the tokenizer's chat template for MLX. Same builder, same "
+                "rows, same overrides as POST .../generate; nothing is "
+                "persisted. 409 when the model is not resident -- rendering "
+                "needs its tokenizer or its process, and a preview must "
+                "never be the thing that silently loads a model.",
+)
+async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequest):
+    conn = _get_db(request)
+    router = request.app.state.router_instance
+
+    conv = await db.get_conversation(conn, conv_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    model_id = body.overrides.get("model") or conv.get("model_id") \
+        or getattr(router.app_config, "default_model", None)
+    if not model_id:
+        raise HTTPException(status_code=400, detail=(
+            "Conversation has no model and the server has no default_model"))
+    model_config = router.app_config.get_model_config(model_id)
+    if model_config is None:
+        raise HTTPException(status_code=400, detail=f"Unknown or disabled model: {model_id}")
+    caps = effective_capabilities(model_config)
+
+    msgs: list[dict] = list(conv.get("messages") or [])
+    continue_row: dict | None = None
+    if body.mode == "append":
+        if body.user_content is not None and body.user_content != "":
+            try:
+                blocks = db.normalize_blocks(body.user_content)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            msgs.append({"role": "user", "content_blocks": blocks,
+                         "position": (msgs[-1]["position"] + 1) if msgs else 0})
+        if not msgs:
+            raise HTTPException(status_code=400, detail=(
+                "Nothing to render: the conversation is empty and no user_content was provided"))
+        prompt_rows = msgs
+    else:
+        if not body.message_id:
+            raise HTTPException(status_code=400, detail=f"mode={body.mode} requires message_id")
+        anchor = next((m for m in msgs if m["id"] == body.message_id), None)
+        if anchor is None:
+            raise HTTPException(status_code=404, detail="Anchor message not found")
+        if body.mode == "regenerate":
+            prompt_rows = [m for m in msgs if m["position"] < anchor["position"]]
+            if not prompt_rows:
+                raise HTTPException(status_code=400, detail=(
+                    "Cannot regenerate the first message: nothing precedes it"))
+        else:
+            anchor = dict(anchor)
+            edits = body.edits or {}
+            if "content" in edits:
+                anchor["content_blocks"] = [{"type": "text", "text": edits.get("content") or ""}]
+            if "thinking" in edits:
+                anchor["thinking"] = edits.get("thinking") or None
+            prompt_rows = [m for m in msgs if m["position"] < anchor["position"]] + [anchor]
+            continue_row = anchor
+
+    dropped = {"images": 0, "audio": 0}
+    media = await db.get_media_blobs(conn, conv_id, _media_ids_for_wire(prompt_rows, caps))
+    try:
+        chat_request = _build_chat_request(
+            conv, prompt_rows, caps, model_id, body.overrides,
+            continuing=continue_row is not None, dropped=dropped, media=media)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Resident only. router.get_provider would LOAD the model, and a preview
+    # that costs a multi-GB load (and possibly evicts the resident one) is a
+    # generation-settings action wearing a display label.
+    provider = router.get_loaded_models().get(model_id)
+    if provider is None:
+        raise HTTPException(status_code=409, detail=(
+            f"{model_id} is not loaded -- load it to preview its exact prompt"))
+    _strip_history_specials(chat_request, provider)
+    try:
+        prompt = await asyncio.to_thread(provider.render_prompt, chat_request)
+    except InvalidGenerationRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except NotImplementedError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"[CONV-GEN] prompt preview failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return PromptPreviewResponse(
+        prompt=prompt, model_id=model_id, provider=model_config.provider,
+        mode=body.mode,
+        continuation=(None if continue_row is None
+                      else "thinking" if _is_thinking_resume(continue_row) else "content"),
+        dropped_media=dropped, char_count=len(prompt),
+    )
+
+
 @generate_router.delete(
     "/{conv_id}/generate",
     summary="Stop Active Generation",
@@ -634,6 +796,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
     # be built the same way or the row would disagree with what was rendered.
     parser_args = dict(thinking_enabled=thinking_enabled,
                        continuing=continue_row is not None,
+                       resumes_thinking=_is_thinking_resume(continue_row),
                        strip_specials=strip_specials)
     translator = StreamingEventTranslator(
         message_id, model_id,

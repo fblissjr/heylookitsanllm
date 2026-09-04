@@ -118,6 +118,26 @@ home; `dir`/`$HEYLOOK_LLAMA_CPP_DIR` relocate), so upstream source can never be
 committed or packaged and there is nothing to `submodule init`. Audio input
 (`input_audio` parts, gguf-only) must fail LOUDLY on MLX (audio towers are stripped at
 load) -- the 400 guard lives in MLXProvider.create_chat_completion.
+THINKING ON THE WIRE (v1.79.62): `ChatMessage.thinking` reaches llama-server as
+`reasoning_content` (`_wire_message`; the unrenamed key was silently IGNORED, so every
+replayed assistant turn rendered an empty think block). llama.cpp's continuation is
+its own: a trailing assistant message with reasoning_content and EMPTY content resumes
+INSIDE the open block (`COMMON_CHAT_CONTINUATION_REASONING`); with content it closes the
+block and continues the content. The prefill ECHO is on BOTH channels -- reasoning comes
+back minus its leading whitespace (measured on b10814) -- so `_continuation_echo_chars`
+returns a pair and the reasoning strip is sized lstripped (can only under-strip). MLX
+resumes a thought by rendering a fresh generation prompt with thinking ON and appending
+the trace after the opener (`_append_thinking_resume`, `<think>` families only; gemma
+channel / harmony refuse -- their parsers have no "already inside" state); the parser
+takes `resumes_thinking`. Preview = `provider.render_prompt()` (gguf `/apply-template`,
+MLX the same `build_prompt` generation uses) behind `POST /v1/conversations/{id}/prompt`,
+which renders RESIDENT models only -- a preview must never load one.
+THINKING DEFAULT (v1.79.62): the cascade resolves request > models.toml `enable_thinking`
+> the thinking CAPABILITY, passed in as `thinking_capable=` by every caller (providers
+pass `self.thinking_capable`, admin passes `"thinking" in caps`); from v1.50.0 unset meant
+OFF everywhere, chosen when the UI could only send true-or-absent. `samplers.thinking_default()`
+is the admin row's `thinking_default` and must stay the cascade's own answer, never a
+re-derivation. `MLXModelConfig.enable_thinking` is Optional (None = follow capability).
 THINKING DEPTH: `reasoning_effort` (v1.71.0) is a CHAT-TEMPLATE VARIABLE, not a sampler
 knob -- it rides `chat_template_kwargs` beside `enable_thinking` (gguf) / apply_chat_template
 kwargs (MLX). Sent WHENEVER SET, never gated on enable_thinking: gpt-oss/harmony reads it

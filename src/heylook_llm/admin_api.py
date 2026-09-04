@@ -192,13 +192,22 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         if loaded and router is not None:
             provider = router.get_loaded_models().get(mc.id)
             context_running = getattr(provider, "running_ctx", None)
+    capabilities = effective_capabilities(mc, effective_loader)
+    # What thinking resolves to with nothing said: the SAME cascade the
+    # providers run (an empty request through resolve_effective_sampling),
+    # so the row reports the value generation will use and not a re-derived
+    # guess. `thinking_capable` is the served capability, which is also the
+    # cascade's own last fallback -- one resolution, three consumers.
+    from heylook_llm.samplers import thinking_default as _thinking_default
+    thinking_default = _thinking_default(
+        resolved, thinking_capable="thinking" in capabilities)
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
         description=mc.description,
         tags=mc.tags,
         enabled=mc.enabled,
-        capabilities=effective_capabilities(mc, effective_loader),
+        capabilities=capabilities,
         config=(mc.config.model_dump(exclude_unset=True)
                 if hasattr(mc.config, 'model_dump') else dict(mc.config)),
         loaded=loaded,
@@ -210,6 +219,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         effective_loader=effective_loader,
         context_length=context_length,
         context_running=context_running,
+        thinking_default=thinking_default,
     )
 
 

@@ -1,6 +1,6 @@
 # v3 user guide
 
-last updated: 2026-08-28
+last updated: 2026-09-04
 
 How the `/v3` UI actually behaves, written for the person using it rather than
 the person maintaining it. Where behaviour is surprising, this says so rather
@@ -26,7 +26,7 @@ a different thing.
 |---|---|---|---|
 | **Global defaults** | your browser (localStorage) | what a brand-new conversation starts from, when no preset is involved | you move a slider with no conversation open |
 | **The conversation** | the server, on the conversation row | what actually gets sent to the model | you move a slider with a conversation open |
-| **The preset** | the server, in a named store | a snapshot you can copy into a conversation, or copy a conversation into | only when you press **Update** or **Save as new** |
+| **The preset** | the server, in a named store | a snapshot you can copy into a conversation, or copy a conversation into | only when you press **Save** or **Save as new** |
 
 The system prompt has the same three layers: a draft parked in your browser
 before any conversation exists, the conversation's own prompt, and the prompt a
@@ -97,20 +97,21 @@ a system prompt is typed work.
 Apply also **stamps** the conversation: from then on the conversation records
 that it is running that preset, and the dropdown will open on it next time.
 
-### Update and Save as new
+### Save and Save as new
 
 Both buttons write the current conversation's prompt and the entire sampler
-panel to a preset. They differ only in *which* preset.
+panel to a preset. They differ only in *which* preset. (Save was labelled
+**Update** before v1.79.62; nothing about what it does changed.)
 
 There are **two** write buttons, and which preset you hit is decided by which
 one you press — not by what you type:
 
-- **Update** overwrites the preset showing in the dropdown, the one the preview
+- **Save** overwrites the preset showing in the dropdown, the one the preview
   directly above it is displaying. This is the only way to overwrite a preset.
 - **Save as new** creates one under the typed name. If that name is already in
-  use it refuses and tells you to use Update instead. It can never overwrite.
+  use it refuses and tells you to use Save instead. It can never overwrite.
 
-Update asks for confirmation before it changes a preset's stored prompt, except
+Save asks for confirmation before it changes a preset's stored prompt, except
 in one case:
 
 - **No confirmation** when you are updating the preset the conversation is
@@ -135,16 +136,22 @@ immediately (a short debounce, then a write to the server) and it is what the
 model receives on your next message.
 
 The preset is untouched. The drift line under the dropdown says which
-situation you are in, and which half moved:
+situation you are in, which half moved, and which knobs:
 
 > *Matches current settings.*
-> *Prompt differs — Apply copies it here, Update overwrites it.*
-> *Settings differ — …*
-> *Prompt and settings differ — …*
+> *Prompt differs from "p2" — Apply loads the preset's prompt here; Save writes this one into the preset.*
+> *Settings differ from "p2" (temperature, max tokens) — Apply loads the preset's values here; Save writes yours into the preset.*
+> *Prompt and settings differ from "p2" (…) — …*
 
 Read that as: your conversation and this preset have diverged. **Apply** discards
-your changes in favour of the preset's. **Update** discards the preset's in
+your changes in favour of the preset's. **Save** discards the preset's in
 favour of yours. There is no merge and no third option.
+
+With **no conversation open** the line changes shape, because the panel is
+then the seed for the next conversation and a selected preset is what that
+conversation actually starts from: *"New conversations start from "p2"."* If
+you have moved a knob it adds that the change does not carry — Save it into
+the preset if you want it to.
 
 Beside the model selector, a chip names the preset the conversation is running
 and appends **(edited)** once anything the preset speaks for has changed.
@@ -263,6 +270,28 @@ discards everything after the message, and that would land before the failure.
 the editor shows two boxes, captioned *Thinking* and *Response*. Clearing the
 thinking box removes the block entirely rather than leaving an empty one.
 
+**What Save & Continue does with the two boxes** (since v1.79.62):
+
+- Thinking present, response **empty** — the model resumes *inside* its
+  thinking, from the end of the box. This is what a reply you pressed Stop on
+  mid-thought looks like, and the continuation is one trace, not two.
+- Response present — the thinking is rendered as finished and the model
+  continues the response from the end of that box.
+
+**There are no special tokens in the boxes, and that is not a display
+setting.** The store holds the thinking and the response as plain text; the
+model's chat template puts the markers (`<|im_start|>`, `<think>`, gemma's
+thought channel) around each turn when the prompt is built. **Preview
+prompt**, in the editor, shows that exact text for the boxes as they are —
+markers highlighted — before you commit to Save & Continue. The eye button
+beside the composer does the same for the next message you would send. Both
+need the model to be loaded; neither loads it for you.
+
+Resuming inside a thought is engine-level on gguf (llama-server does it
+natively) and works for `<think>`-style templates on MLX; a gemma-channel or
+harmony model on MLX refuses a thinking-only continue and says to put
+something in the response box or regenerate.
+
 The editor offers up to three buttons:
 
 - **Save** — writes the change and nothing else.
@@ -303,6 +332,13 @@ Oversized images are downscaled before they go on the wire. **Vision tokens /
 image** in the advanced settings controls how much detail the model spends on
 each image.
 
+**Thinking** is a three-way choice, not a checkbox: *Model default (on)* or
+*(off)*, *On*, *Off*. Since v1.79.62 a model that can think thinks by default
+unless its models.toml entry says otherwise, and the label tells you which
+way the default falls for the selected model. The thinking button beside the
+composer shows the *effective* state and flips it explicitly. The Advanced
+group these live in is open by default.
+
 **Thinking depth** lists the union of what different model families accept, so
 a value one model takes another will reject. The control says so, and `auto`
 always works — it leaves the model's own default alone.
@@ -326,6 +362,11 @@ Sampler settings are shared across pages. Display preferences (such as showing
 special tokens) are kept separately from sampler settings on purpose, so a
 display toggle can never be mistaken for something the model receives.
 
+**Show special tokens does nothing on a gguf model**, and the row says so:
+llama-server splits the thinking and stops at the end-of-turn token inside its
+own process, so no marker ever reaches this app to show. To see the markers,
+use the prompt preview — it is the template's own render.
+
 ---
 
 ## 8. Known rough edges
@@ -344,9 +385,28 @@ the accepted values live in the model's chat template, and for gguf inside the
 GGUF's own metadata, so the backend would have to learn and expose them before
 the UI could.
 
+**Resuming inside a thought on MLX covers `<think>` templates only.** A
+gemma-channel or harmony model refuses a thinking-only Save & Continue with a
+message; the parsers for those families have no "already inside the block"
+state yet.
+
+**The prompt preview omits images on MLX.** The vision path renders through
+mlx-vlm and has no text-only render; the preview shows the text template.
+
 ### Closed
 
 Kept as a record rather than deleted, so this section reads as a ledger.
+
+- *Apply vs Update — which way does each one point?* — closed in v1.79.62:
+  Update is Save, and the drift line names the preset, the knobs and the
+  direction of each button.
+- *The thinking checkbox read "off" while a model thought, and there was no
+  way to say off* — closed in v1.79.62 by the tri-state control and the
+  server reporting the model's default.
+- *Nothing showed what wraps the thinking when you edit or continue* —
+  closed in v1.79.62 by Preview prompt.
+- *Save & Continue on a reply stopped mid-thought started a second thought* —
+  closed in v1.79.62; it resumes the first.
 
 - *The sampler panel does not say whose settings it is showing* — closed in
   v1.79.25 by the scope line under the *Sampling* heading, and by renaming

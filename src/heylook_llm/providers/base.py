@@ -144,6 +144,26 @@ class BaseProvider(ABC):
         """
         return getattr(self, "_template_info", None)
 
+    @property
+    def thinking_capable(self) -> bool:
+        """Whether this model can think at all -- the served ``thinking``
+        capability, answered from what the provider holds. The cascade's
+        last fallback for the thinking switch (v1.79.62), so every caller
+        of ``resolve_effective_sampling`` on this provider must pass THIS,
+        never re-derive it. gguf reads its config's ``supports_thinking``;
+        MLX overrides with its template probe."""
+        return bool(self.config.get("supports_thinking"))
+
+    def render_prompt(self, request: ChatRequest) -> str:
+        """The EXACT prompt string this provider would build for ``request``
+        -- special tokens, role markers, thinking blocks and any open turn
+        included -- without generating. What a "show me what the model sees"
+        surface renders. Templating only: no forward pass, no gate. Raises
+        ``GenerationFailed`` when the model is not loaded (templating needs
+        the tokenizer or the live llama-server) and ``NotImplementedError``
+        for a provider with no prompt (embeddings)."""
+        raise NotImplementedError(f"{self.provider_name} has no chat prompt to render")
+
     def effective_thinking(self, request: ChatRequest) -> bool:
         """Whether THIS request's prompt is built with thinking on.
 
@@ -169,7 +189,9 @@ class BaseProvider(ABC):
         """
         from ..samplers import resolve_effective_sampling
 
-        return bool(resolve_effective_sampling(request, self.config).get("enable_thinking"))
+        return bool(resolve_effective_sampling(
+            request, self.config, thinking_capable=self.thinking_capable,
+        ).get("enable_thinking"))
 
     @abstractmethod
     def load_model(self):

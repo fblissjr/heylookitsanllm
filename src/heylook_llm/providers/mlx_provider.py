@@ -128,6 +128,65 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
     return bool(effective_request.get("enable_thinking"))
 
 
+def _thinking_resume(request: ChatRequest) -> str | None:
+    """The partial thinking to RESUME, or None for every other request.
+
+    Only a continuation whose final message is an assistant turn carrying
+    thinking and no content qualifies -- the same shape llama.cpp resolves to
+    its `reasoning_content` continuation (`COMMON_CHAT_CONTINUATION_REASONING`),
+    so the two engines agree on what a mid-thought continue means.
+    """
+    if not request.is_continuation() or not request.messages:
+        return None
+    last = request.messages[-1]
+    if last.role != "assistant" or not last.thinking:
+        return None
+    content = last.content
+    if isinstance(content, list):
+        content = "".join(getattr(p, "text", None) or "" for p in content)
+    if content and content.strip():
+        return None
+    return last.thinking
+
+
+def _thinking_resume_opener(template_info) -> str | None:
+    """The marker a mid-thought resume must re-open, by template family, or
+    None when the family has no resumable block. Read off ModelTemplateInfo
+    -- the same probe the reasoning parser is selected from, so the opener
+    appended here is the one the parser will treat as already open.
+    Harmony's analysis channel is deliberately absent: its parser has no
+    'start inside the channel' state, and appending an opener the parser
+    does not know is open would misfile the whole trace as content.
+    """
+    if template_info is None:
+        return None
+    if getattr(template_info, "has_harmony_structure", False):
+        return None
+    if getattr(template_info, "has_gemma_channel_structure", False):
+        return None  # GemmaChannelParser has no initial-thinking state either
+    if getattr(template_info, "has_thinking_markers", False):
+        return "<think>\n"
+    return None
+
+
+def _append_thinking_resume(prompt: str, thinking: str, template_info) -> str:
+    """``prompt`` (a fresh generation prompt, thinking ON) with the partial
+    ``thinking`` appended INSIDE the block. If the template's generation
+    prompt already opened the block (Qwen3.5+ pre-fills ``<think>``), the
+    trace follows it directly; otherwise the opener is added first (Qwen3,
+    whose model emits ``<think>`` itself)."""
+    opener = _thinking_resume_opener(template_info)
+    if opener is None:
+        raise InvalidGenerationRequest(
+            "Resuming inside the thinking block is not supported for this "
+            "model's template family yet -- edit the response box (even one "
+            "word) to continue the answer instead, or regenerate.")
+    head = prompt.rstrip()
+    if head.endswith(opener.rstrip()):
+        return head + "\n" + thinking.lstrip()
+    return prompt + opener + thinking.lstrip()
+
+
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
                             reasoning_effort=None,
                             continue_final_message=False):
@@ -237,22 +296,61 @@ class UnifiedTextStrategy:
     acceptance tracking, KV snapshot storage -- is handled by generation_core.
     """
 
-    def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False):
+    def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False,
+                 template_info=None):
         self.draft_model = draft_model
         self.model_id = model_id
         self.model_config = model_config or {}
         self.is_vlm = is_vlm
+        # ModelTemplateInfo (or None): names the thinking opener a mid-thought
+        # resume has to re-open -- see _thinking_resume_opener.
+        self.template_info = template_info
         self._cached_wrapper = None
         self.cache_manager = get_global_cache_manager()
+
+    def build_prompt(self, request: ChatRequest, effective_request: dict, model, processor):
+        """The templated prompt for ``request``: a string, or (defensively)
+        an already-tokenized list from a template stack that returns one.
+
+        ONE builder for generation and for the prompt PREVIEW (v1.79.62), so
+        what a user is shown is what the model is fed by construction.
+
+        A continuation whose final assistant message carries thinking and NO
+        content is a RESUME INSIDE THE THINKING BLOCK (a reply stopped
+        mid-thought, then Save & Continue): the turn is rendered as a fresh
+        generation prompt with thinking ON and the partial trace appended
+        after the template's own opener, so the model's next token continues
+        the reasoning. The closed-block reconstruction (`_reconstruct_thinking`)
+        would instead present the fragment as FINISHED reasoning and start
+        the answer -- which is what happened before, with the route then
+        gluing the new trace onto the old one.
+        """
+        tokenizer = getattr(processor, "tokenizer", processor)
+        resume = _thinking_resume(request)
+        source = request.messages[:-1] if resume is not None else request.messages
+        messages_for_template = self._prepare_messages(source)
+        prompt = self._render_template(
+            messages_for_template, tokenizer, processor, model, effective_request,
+            continuing=request.is_continuation() and resume is None,
+            resume_thinking=resume,
+        )
+        return prompt
+
+    def render_prompt(self, request: ChatRequest, effective_request: dict, model, processor) -> str:
+        """``build_prompt`` as the exact STRING the model sees (special
+        tokens included). A tokenized result is decoded without skipping
+        specials so the string still shows every marker."""
+        prompt = self.build_prompt(request, effective_request, model, processor)
+        if isinstance(prompt, str):
+            return prompt
+        tokenizer = getattr(processor, "tokenizer", processor)
+        return tokenizer.decode(prompt, skip_special_tokens=False)
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = getattr(processor, "tokenizer", processor)
 
-        messages_for_template = self._prepare_messages(request.messages)
-        prompt_tokens = self._apply_template(
-            messages_for_template, tokenizer, processor, model, effective_request,
-            continuing=request.is_continuation(),
-        )
+        prompt = self.build_prompt(request, effective_request, model, processor)
+        prompt_tokens = tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
         gen_model = self._get_generation_model(model)
 
         # VLM mRoPE position state is reset in run_generation via _reset_vlm_positions().
@@ -282,6 +380,15 @@ class UnifiedTextStrategy:
 
     def _apply_template(self, messages, tokenizer, processor, model, effective_request,
                         continuing: bool = False) -> list[int]:
+        """Rendered-and-tokenized prompt for pre-prepared ``messages`` (the
+        pre-v1.79.62 entry point, kept for the equivalence tests that drive
+        the template directly; generation goes through build_prompt)."""
+        prompt = self._render_template(
+            messages, tokenizer, processor, model, effective_request, continuing=continuing)
+        return tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
+
+    def _render_template(self, messages, tokenizer, processor, model, effective_request,
+                         continuing: bool = False, resume_thinking: str | None = None):
         """Dispatch template application based on is_vlm.
 
         Text-only: tokenizer.apply_chat_template with enable_thinking support.
@@ -292,8 +399,16 @@ class UnifiedTextStrategy:
         assistant convention only suppressed the generation prompt, which
         still rendered the turn CLOSED -- the model saw a finished turn and
         nothing to continue.
+
+        ``resume_thinking``: the partial trace to resume (see build_prompt).
+        ``messages`` then EXCLUDES the message being resumed; the turn is
+        rendered as a generation prompt with thinking forced ON and the
+        trace appended after the opener. Mutually exclusive with
+        ``continuing``.
         """
         enable_thinking = _resolve_enable_thinking(effective_request)
+        if resume_thinking is not None:
+            enable_thinking = True
         reasoning_effort = effective_request.get("reasoning_effort")
 
         if self.is_vlm:
@@ -370,8 +485,12 @@ class UnifiedTextStrategy:
                     ) from e
                 raise
 
-        if isinstance(prompt, str):
-            return tokenizer.encode(prompt)
+        if resume_thinking is not None:
+            if not isinstance(prompt, str):
+                raise InvalidGenerationRequest(
+                    "Cannot resume inside the thinking block: this model's "
+                    "template stack returns tokens, not text.")
+            prompt = _append_thinking_resume(prompt, resume_thinking, self.template_info)
         return prompt
 
     def _get_generation_model(self, model):
@@ -1028,6 +1147,7 @@ class MLXProvider(BaseProvider):
             model_id=self.model_id,
             model_config=self.config,
             is_vlm=self.is_vlm,
+            template_info=getattr(self, "_template_info", None),
         )
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy(model_config=self.config)
@@ -1050,6 +1170,40 @@ class MLXProvider(BaseProvider):
                         return True
         return False
 
+    @property
+    def thinking_capable(self) -> bool:
+        """The served thinking capability, as capabilities.py derives it for
+        MLX: the config's explicit enable_thinking, else the template probe
+        (``supports_enable_thinking``). Same answer before and after load --
+        the probe reads the template FILE, which is what the capability
+        inference reads too."""
+        if self.config.get("enable_thinking"):
+            return True
+        info = getattr(self, "_template_info", None)
+        if info is None:
+            from .common.template_info import read_template_info
+            try:
+                info = read_template_info(Path(self.config.get("model_path", "")),
+                                          self.config.get("chat_template_source"))
+            except Exception:
+                return False
+        return bool(getattr(info, "supports_enable_thinking", False))
+
+    def render_prompt(self, request: ChatRequest) -> str:
+        """The exact prompt string for ``request`` -- the text strategy's own
+        builder, so a preview cannot drift from what generation feeds the
+        model. Images in history are NOT represented (the vision strategy
+        renders through mlx-vlm's prepare_inputs, which has no text-only
+        rendering); the text template with the text parts is what shows.
+        Templating only: no forward pass, no gate, no thread pinning."""
+        if self.processor is None:
+            raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
+        effective_request = self._apply_model_defaults(request)
+        strategy = self._strategies.get('text')
+        if strategy is None:
+            raise GenerationFailed(f"Model '{self.model_id}' has no text strategy")
+        return strategy.render_prompt(request, effective_request, self.model, self.processor)
+
     def _apply_model_defaults(self, request: ChatRequest) -> dict:
         """Effective request config: the shared cascade + MLX runtime fields.
 
@@ -1064,7 +1218,8 @@ class MLXProvider(BaseProvider):
             self._vendor_sampling = load_vendor_sampling(self.config.get('model_path', ''))
 
         merged_config = resolve_effective_sampling(
-            request, self.config, vendor=self._vendor_sampling)
+            request, self.config, vendor=self._vendor_sampling,
+            thinking_capable=self.thinking_capable)
 
         # Cache + speculative-decoding fields tagged with
         # json_schema_extra={"is_runtime_default": True} on MLXModelConfig.

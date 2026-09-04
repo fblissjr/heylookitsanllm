@@ -268,3 +268,35 @@ class TestResolveEffectiveSampling:
         )
         assert merged["temperature"] == 0.9
         assert merged["presence_penalty"] == 0.2
+
+
+class TestThinkingDefault:
+    """The thinking switch resolves request > models.toml > CAPABILITY
+    (v1.79.62). From v1.50.0 unset meant off on every model; a thinking
+    model that silently did not think unless someone found the config flag
+    was the standing complaint, and the reason for off-by-default (no way
+    to send an explicit off) is gone now that the UI can."""
+
+    def _resolve(self, request_value, config, capable):
+        from types import SimpleNamespace
+        from heylook_llm.samplers import resolve_effective_sampling
+        req = SimpleNamespace(enable_thinking=request_value, sampler=None)
+        return resolve_effective_sampling(req, config, thinking_capable=capable)["enable_thinking"]
+
+    def test_unset_everywhere_follows_capability(self):
+        assert self._resolve(None, {}, capable=True) is True
+        assert self._resolve(None, {}, capable=False) is False
+
+    def test_config_pins_either_way_over_capability(self):
+        assert self._resolve(None, {"enable_thinking": False}, capable=True) is False
+        assert self._resolve(None, {"enable_thinking": True}, capable=False) is True
+
+    def test_request_explicit_false_wins(self):
+        assert self._resolve(False, {"enable_thinking": True}, capable=True) is False
+        assert self._resolve(True, {"enable_thinking": False}, capable=False) is True
+
+    def test_thinking_default_reports_the_same_answer(self):
+        from heylook_llm.samplers import thinking_default
+        assert thinking_default({}, thinking_capable=True) is True
+        assert thinking_default({"enable_thinking": False}, thinking_capable=True) is False
+        assert thinking_default({"default_sampler": "thinking"}, thinking_capable=False) is True

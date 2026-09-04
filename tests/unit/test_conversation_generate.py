@@ -81,6 +81,20 @@ class FakeProvider(BaseProvider):
     def template_info(self):
         return None  # pass-through parser
 
+    def render_prompt(self, request):
+        # A legible stand-in for a chat template: one line per message,
+        # thinking rendered as an explicit block so a test can see it.
+        self.last_render = request
+        lines = []
+        for m in request.messages:
+            body = m.content if isinstance(m.content, str) else "<parts>"
+            if m.role == "assistant" and m.thinking:
+                body = f"<think>{m.thinking}</think>{body}"
+            lines.append(f"<|{m.role}|>{body}")
+        if not request.is_continuation():
+            lines.append("<|assistant|>")
+        return "\n".join(lines)
+
     def create_chat_completion(self, request, abort_event=None):
         self.last_request = request
 
@@ -96,6 +110,12 @@ class FakeRouter:
     def __init__(self, provider: FakeProvider):
         self.app_config = AppConfig(**TEST_MODELS)
         self.provider = provider
+        # Residency, for the prompt preview: it renders ONLY a loaded model
+        # (never loads one), so the fixture says which ids are resident.
+        self.loaded_ids = {"fake-model", "fake-capable"}
+
+    def get_loaded_models(self):
+        return {mid: self.provider for mid in self.loaded_ids}
 
     def get_provider(self, model_id):
         from heylook_llm.router import ModelNotFound
@@ -257,6 +277,52 @@ class TestContinue:
         assert [(m["role"], m["content"], m["id"]) for m in stored["messages"]] == [
             ("user", "q1", rows[0]["id"]),
             ("assistant", "partialHello world", rows[1]["id"])]
+
+    @pytest.mark.asyncio
+    async def test_continue_from_a_stopped_thought_resumes_inside_the_block(self, ctx):
+        """The anchor carries thinking and NO content (a reply stopped
+        mid-thought, the row the Stop button persists). The provider must
+        see that thinking on the trailing assistant message -- that is what
+        both engines resolve to 'resume inside the thinking block' -- and
+        the merged row must read as ONE trace, not the old one with a fresh
+        one glued on."""
+        client, store, provider = ctx
+        provider.chunks = (" and then some",)
+        conv, rows = await make_conv(store, ("user", "think hard"))
+        anchor = await db.append_message(
+            store, conv["id"], role="assistant", content="", thinking="The user says")
+        assert anchor is not None
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "continue", "message_id": anchor["id"]})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert req is not None and req.is_continuation()
+        assert req.messages[-1].role == "assistant"
+        assert req.messages[-1].thinking == "The user says"
+        assert req.messages[-1].content == ""
+        stored = await db.get_conversation(store, conv["id"])
+        assert stored is not None
+        # FakeProvider yields plain text; the pass-through parser files it as
+        # content -- what matters here is that the thinking column survived
+        # the merge untouched and the row is still the anchor.
+        last = stored["messages"][-1]
+        assert last["id"] == anchor["id"]
+        assert last["thinking"] == "The user says"
+        assert last["content"] == " and then some"
+
+    @pytest.mark.asyncio
+    async def test_history_assistant_rows_carry_their_thinking(self, ctx):
+        client, store, provider = ctx
+        conv, rows = await make_conv(store, ("user", "q1"))
+        await db.append_message(store, conv["id"], role="assistant",
+                                content="a1", thinking="t1")
+        await db.append_message(store, conv["id"], role="user", content="q2")
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append"})
+        assert res.status_code == 200
+        req = provider.last_request
+        assert [(m.role, m.thinking) for m in req.messages] == [
+            ("user", None), ("assistant", "t1"), ("user", None)]
 
     @pytest.mark.asyncio
     async def test_continue_requires_message_id(self, ctx):
@@ -874,3 +940,74 @@ class TestDisconnectPolicy:
         assert produced == list(range(20)), \
             f"the run was truncated by the disconnect (got {len(produced)} chunks)"
         assert len(out) == 20
+
+
+@pytest.mark.unit
+class TestPromptPreview:
+    """POST /{id}/prompt renders what generate would send, and persists
+    nothing. Same builder as generate, so the preview can only be wrong
+    where generate is wrong too."""
+
+    @pytest.mark.asyncio
+    async def test_append_preview_renders_the_unsaved_user_turn(self, ctx):
+        client, store, provider = ctx
+        conv, _ = await make_conv(store, ("user", "q1"), ("assistant", "a1"),
+                                  system_prompt="be terse")
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append", "user_content": "q2 draft"})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["prompt"] == ("<|system|>be terse\n<|user|>q1\n<|assistant|>a1\n"
+                                  "<|user|>q2 draft\n<|assistant|>")
+        assert body["continuation"] is None
+        assert body["char_count"] == len(body["prompt"])
+        # nothing persisted
+        stored = await db.get_conversation(store, conv["id"])
+        assert stored is not None and len(stored["messages"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_continue_preview_applies_unsaved_edits_and_names_the_resume(self, ctx):
+        client, store, provider = ctx
+        conv, rows = await make_conv(store, ("user", "q1"))
+        anchor = await db.append_message(
+            store, conv["id"], role="assistant", content="stale", thinking="old thought")
+        assert anchor is not None
+        # The editor's boxes: response cleared, thinking edited -- a resume.
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "continue", "message_id": anchor["id"],
+            "edits": {"content": "", "thinking": "edited thought"}})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["continuation"] == "thinking"
+        assert body["prompt"].endswith("<|assistant|><think>edited thought</think>")
+        # Content kept -> continuing the content, thinking closed before it.
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "continue", "message_id": anchor["id"],
+            "edits": {"content": "kept"}})
+        assert res.json()["continuation"] == "content"
+        assert res.json()["prompt"].endswith("<think>old thought</think>kept")
+        stored = await db.get_conversation(store, conv["id"])
+        assert stored is not None
+        assert stored["messages"][-1]["content"] == "stale"  # edits never persisted
+
+    @pytest.mark.asyncio
+    async def test_preview_never_loads_a_model(self, ctx):
+        client, store, provider = ctx
+        conv, _ = await make_conv(store, ("user", "q1"))
+        client_app = client._transport.app  # type: ignore[attr-defined]
+        client_app.state.router_instance.loaded_ids = set()
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append"})
+        assert res.status_code == 409
+        assert "not loaded" in res.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_preview_validates_like_generate(self, ctx):
+        client, store, _ = ctx
+        conv, _ = await make_conv(store)
+        assert (await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                  json={"mode": "append"})).status_code == 400
+        assert (await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                  json={"mode": "continue"})).status_code == 400
+        assert (await client.post("/v1/conversations/nope/prompt",
+                                  json={"mode": "append"})).status_code == 404

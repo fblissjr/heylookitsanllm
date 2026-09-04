@@ -138,7 +138,7 @@ class TestModelConfig:
     def test_mlx_config_defaults(self):
         mc = MLXModelConfig(model_path="/fake")
         assert mc.vision is False
-        assert mc.enable_thinking is False
+        assert mc.enable_thinking is None  # v1.79.62: unset = follow the thinking capability
         # None = auto: resolved at model load from actual weight size vs RAM
         # (derive-at-load, 6a). A stored value is an explicit override.
         assert mc.cache_type is None

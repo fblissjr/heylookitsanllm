@@ -73,3 +73,61 @@ class TestParserContinuationEdge:
         content, thinking = self._channels(parser, "continued content")
         assert content == "continued content"
         assert not thinking
+
+
+class TestThinkingResume:
+    """A continue whose final assistant message has thinking and no content
+    resumes INSIDE the thinking block (v1.79.62): the turn is re-rendered as
+    a generation prompt and the partial trace appended after the opener."""
+
+    def _req(self, messages, flag=None):
+        from heylook_llm.config import ChatRequest
+        return ChatRequest(model="m", messages=messages, continue_final_message=flag)
+
+    def test_resume_shape_is_thinking_and_no_content(self):
+        from heylook_llm.providers.mlx_provider import _thinking_resume
+        req = self._req([{"role": "user", "content": "q"},
+                         {"role": "assistant", "content": "", "thinking": "so far"}])
+        assert _thinking_resume(req) == "so far"
+        # content present -> the content is what continues, not the thought
+        req = self._req([{"role": "user", "content": "q"},
+                         {"role": "assistant", "content": "ans", "thinking": "so far"}])
+        assert _thinking_resume(req) is None
+        # not a continuation at all
+        req = self._req([{"role": "user", "content": "q"}])
+        assert _thinking_resume(req) is None
+
+    def test_append_after_an_already_open_block(self):
+        from types import SimpleNamespace
+        from heylook_llm.providers.mlx_provider import _append_thinking_resume
+        info = SimpleNamespace(has_thinking_markers=True, has_harmony_structure=False,
+                               has_gemma_channel_structure=False)
+        # Qwen3.5+: the generation prompt already ends in an open <think>
+        out = _append_thinking_resume("<|im_start|>assistant\n<think>\n", "  so far", info)
+        assert out == "<|im_start|>assistant\n<think>\nso far"
+        # Qwen3: the model emits <think> itself, so the opener is added
+        out = _append_thinking_resume("<|im_start|>assistant\n", "so far", info)
+        assert out == "<|im_start|>assistant\n<think>\nso far"
+
+    def test_families_without_a_resumable_parser_refuse_loudly(self):
+        from types import SimpleNamespace
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        from heylook_llm.providers.mlx_provider import _append_thinking_resume
+        for info in (
+            SimpleNamespace(has_thinking_markers=False, has_harmony_structure=True,
+                            has_gemma_channel_structure=False),
+            SimpleNamespace(has_thinking_markers=False, has_harmony_structure=False,
+                            has_gemma_channel_structure=True),
+            None,
+        ):
+            with pytest.raises(InvalidGenerationRequest, match="not supported"):
+                _append_thinking_resume("<|start|>assistant", "so far", info)
+
+    def test_parser_starts_in_thinking_state_on_a_resume(self):
+        from heylook_llm.reasoning_parser import select_reasoning_parser, parse_reasoning
+        info = _PrefillingTemplate()
+        parser = select_reasoning_parser(info, thinking_enabled=True, continuing=True,
+                                         resumes_thinking=True)
+        content, thinking = parse_reasoning(" and on</think>answer", parser)
+        assert thinking == " and on"
+        assert content == "answer"

@@ -258,8 +258,15 @@ REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed',)
 
 
 def resolve_effective_sampling(request: Any, model_config: dict,
-                               vendor: dict | None = None) -> dict[str, Any]:
+                               vendor: dict | None = None, *,
+                               thinking_capable: bool = False) -> dict[str, Any]:
     """THE effective-request cascade, shared by every provider.
+
+    ``thinking_capable`` is whether the MODEL can think at all (the same
+    answer as the served ``thinking`` capability: gguf's ``supports_thinking``,
+    MLX's template probe). It is the LAST fallback for the thinking switch --
+    see the resolution order at ``thinking_active`` below -- and the caller
+    passes it because the cascade has no file or template access of its own.
 
     Layers, later overriding earlier (each only for fields it sets):
       1.  Global floor (``GLOBAL_SAMPLER_FLOOR``).
@@ -283,17 +290,30 @@ def resolve_effective_sampling(request: Any, model_config: dict,
 
     registry = get_sampler_registry()
 
+    # The thinking switch, resolved in ONE order: the request's explicit
+    # value, else the model's models.toml `enable_thinking`, else whether the
+    # model CAN think. That last fallback is v1.79.62: from v1.50.0 unset
+    # meant OFF on both engines, chosen because the two engines disagreed on
+    # unset (gguf omitted the kwarg and got the template's own default,
+    # thinking-ON for gemma-4/Qwen3.6; MLX resolved it to False) and because
+    # the UI could send only true-or-absent, so "unset = off" was the only
+    # way to have an off switch at all. The UI now sends an explicit false,
+    # so that reason is gone -- and a thinking model that silently does not
+    # think unless someone finds the models.toml flag was the standing
+    # complaint (2026-09-04). A model that cannot think still resolves to
+    # OFF, so the thinking sampler overlay below never fires on one.
+    #
+    # Materialized ALWAYS, not only when the overlay fires: gguf's payload
+    # builder only sends chat_template_kwargs for a non-None value, so an
+    # absent key is not "no opinion" downstream -- both engines must read the
+    # same resolved bool, and `thinking_default()` reports this same answer.
     request_thinking = getattr(request, 'enable_thinking', None)
-    thinking_active = bool(request_thinking if request_thinking is not None
-                           else model_config.get('enable_thinking', False))
-    # Materialize the effective switch ALWAYS, not only when the overlay
-    # below fires. Downstream, an absent key is not "no opinion": gguf's
-    # payload builder only sends chat_template_kwargs for a non-None value,
-    # so an omitted key handed llama-server's --jinja run to the GGUF's own
-    # template default -- thinking ON for gemma-4/Qwen3.6/DeepSeek-V4 --
-    # while MLX resolved the very same unset request to False. One v3
-    # checkbox, opposite meanings per engine, and no way to turn thinking
-    # off on a gguf model at all. Unset means OFF; both engines now say so.
+    config_thinking = model_config.get('enable_thinking')
+    thinking_active = bool(
+        request_thinking if request_thinking is not None
+        else config_thinking if config_thinking is not None
+        else thinking_capable
+    )
     merged['enable_thinking'] = thinking_active
     if thinking_active:
         if 'thinking' in registry:
@@ -322,6 +342,29 @@ def resolve_effective_sampling(request: Any, model_config: dict,
         if value is not None:
             merged[field] = value
     return merged
+
+
+
+class _NoRequest:
+    """The empty request: every cascade field absent (getattr -> None)."""
+
+    def __getattr__(self, name):  # pragma: no cover - trivial
+        return None
+
+
+def thinking_default(model_config: dict, *, thinking_capable: bool) -> bool:
+    """What thinking resolves to when a request says NOTHING about it.
+
+    The cascade's own answer for an empty request -- a `default_sampler`
+    naming the thinking sampler, the models.toml `enable_thinking` flag and
+    the capability fallback all count, exactly as they do at generation
+    time. Reported on the admin row (`thinking_default`) so a UI can label
+    its "model default" choice with the value it actually means instead of
+    leaving the user to find out by generating.
+    """
+    return bool(resolve_effective_sampling(
+        _NoRequest(), model_config, thinking_capable=thinking_capable,
+    ).get('enable_thinking'))
 
 
 def load_vendor_sampling(model_path: str) -> dict[str, Any]:

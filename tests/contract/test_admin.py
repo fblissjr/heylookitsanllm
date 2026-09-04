@@ -63,6 +63,18 @@ class TestAdminEffectiveLoader:
         single = client.get(f"/v1/admin/models/{listed['id']}").json()
         assert single["effective_loader"] == listed["effective_loader"]
 
+    def test_thinking_default_is_on_every_row_and_a_bool(self, client):
+        """`thinking_default` (v1.79.62) is the cascade's answer for an empty
+        request -- derived, so answered for unloaded models -- and the value
+        a UI's 'model default' choice actually means."""
+        rows = client.get("/v1/admin/models").json()["models"]
+        assert rows
+        for row in rows:
+            assert isinstance(row["thinking_default"], bool)
+            # A model without the thinking capability cannot default to on.
+            if "thinking" not in row["capabilities"]:
+                assert row["thinking_default"] is False
+
 
 class TestAdminSamplers:
     """Tests for GET /v1/admin/models/samplers (list named samplers).

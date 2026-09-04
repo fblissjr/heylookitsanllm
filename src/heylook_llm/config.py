@@ -463,9 +463,13 @@ class MLXModelConfig(BaseModel):
         json_schema_extra={"is_runtime_default": True,
                            "effect": EFFECT_PER_REQUEST},
     )
-    # Thinking mode (Qwen3 models with <think> blocks)
-    enable_thinking: bool = Field(
-        default=False, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    # Model-level thinking DEFAULT (Qwen3 <think> blocks, gemma-4 thought
+    # channels). None = unset (v1.79.62): the cascade then falls back to the
+    # model's thinking CAPABILITY (on for a model whose template reads
+    # enable_thinking, off otherwise) -- see samplers.resolve_effective_sampling.
+    # A bool here pins it either way; the gguf config carries the same field.
+    enable_thinking: Optional[bool] = Field(
+        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default for the request field of the same name. Per-request
     # because it is a template variable resolved at prompt-build time.
     reasoning_effort: Optional[ReasoningEffort] = Field(
@@ -1469,6 +1473,17 @@ class AdminModelResponse(BaseModel):
                     "means llama-server chose from the model and memory, and "
                     "this is what it chose. Null for unloaded models and for "
                     "every non-gguf provider.",
+    )
+    thinking_default: bool = Field(
+        default=False,
+        description="What thinking resolves to for this model when a request "
+                    "says nothing about it: the sampling cascade's own answer "
+                    "for an empty request (`config.enable_thinking`, else a "
+                    "`default_sampler` that turns it on, else whether the "
+                    "model can think at all). DERIVED -- answered for unloaded "
+                    "models -- and the value a UI's 'model default' choice "
+                    "actually means. False for a model without the thinking "
+                    "capability.",
     )
 
 

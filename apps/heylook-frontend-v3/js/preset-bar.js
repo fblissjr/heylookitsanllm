@@ -15,8 +15,8 @@
 //     preset until Save), armed-confirmed ("Replace prompt?") only when it
 //     would replace a differing non-empty prompt -- sampler knobs are
 //     trivially recoverable, the prompt is typed work
-//   - Apply and Update are both armed, and Update is the one that matters:
-//     Apply overwrites the DOCUMENT (re-apply to get it back), Update
+//   - Apply and Save are both armed, and Save is the one that matters:
+//     Apply overwrites the DOCUMENT (re-apply to get it back), Save
 //     overwrites the STORED PRESET with a write that keeps no history. See
 //     wouldOverwritePresetPrompt() for the three questions it asks, and why
 //     the iterate loop is deliberately exempt. Save as new is never armed --
@@ -33,9 +33,11 @@
 //     model's default). Empty means "does not speak for the prompt", never
 //     "set it to empty" (owner rule 2026-08-11) -- see presetPrompt() below
 //   - TWO writes, and which one you get is which BUTTON you press, not what
-//     you typed. Update overwrites the SELECTED preset (the one the preview
+//     you typed. Save overwrites the SELECTED preset (the one the preview
 //     is showing) and is the only path to an overwrite; Save as new creates
-//     under the typed name and REFUSES a name in use, pointing at Update.
+//     under the typed name and REFUSES a name in use, pointing at Save.
+//     (The overwrite was labelled "Update" from v1.79.26 to v1.79.61; the
+//     drift line's direction words are what carry the difference now.)
 //     One control used to do both -- the select pre-filled the save-as name,
 //     so browsing a preset aimed a write at it -- and that is what cost a
 //     35k-char prompt on 2026-08-28. Save as new decides "is this name free"
@@ -44,8 +46,9 @@
 //     prompt. The per-document prompt box below is a DIFFERENT thing and
 //     says so in its own label; without the preview there was no way to see
 //     what a preset held short of applying it
-//   - the drift line says what Apply/Update would DO to the selected preset
-//     AND which half drifted (prompt, settings, or both), updated in place -- the
+//   - the drift line says what Apply/Save would DO to the selected preset,
+//     which half drifted (prompt, settings, or both) and WHICH knobs, and with
+//     no document open what the next new document will start from -- updated in place; the
 //     drawer's focus guard means a rebuild can't be relied on while the user
 //     is typing in a field
 //   - the dropdown marks a preset carrying no prompt as "settings only": it
@@ -211,10 +214,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // Does the selected preset match the live state (document prompt + the
   // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
   // key order round-trips through the server and can't be trusted.
-  function samplersMatch(preset) {
+  function samplerDrift(preset) {
     const now = snapshotSettings();
     const saved = preset.params ?? {};
-    return Object.keys(PARAM_META).every((k) => (now[k] ?? null) === (saved[k] ?? null));
+    return Object.keys(PARAM_META).filter((k) => (now[k] ?? null) !== (saved[k] ?? null));
+  }
+  function samplersMatch(preset) {
+    return samplerDrift(preset).length === 0;
   }
 
   // DRIFT sense, for a preset the document explicitly carries: has anything
@@ -228,9 +234,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // rather than being restated here.
   function driftParts(preset) {
     const incoming = presetPrompt(preset);
+    const fields = samplerDrift(preset);
     return {
       prompt: Boolean(incoming && incoming !== (getPrompt() ?? null)),
-      samplers: !samplersMatch(preset),
+      samplers: fields.length > 0,
+      // Which knobs, by their panel labels -- the drift line names them so
+      // "Settings differ" after a max-tokens nudge reads as exactly that.
+      fields: fields.map((k) => PARAM_META[k].label.toLowerCase()),
     };
   }
 
@@ -375,23 +385,47 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     previewBodyEl.classList.toggle('preset-preview__body--none', !stored);
   }
 
+  // The drift line, in words that carry their DIRECTION. "Apply copies it
+  // here, Update overwrites it" left both verbs pointing at an unnamed "it"
+  // (owner report 2026-09-04: "Apply vs update?? this is not good UX"), so
+  // each sentence now says what moves where, and which knobs moved.
+  //
+  // With NO document open the panel is the seed for the next conversation,
+  // and a selected preset is what that conversation actually starts from
+  // (presetForNewDoc) -- so a drift line there described a copy that would
+  // never happen. That state says what WILL happen instead.
+  function driftLine(preset) {
+    const name = `"${preset.name}"`;
+    const drift = driftParts(preset);
+    const which = drift.fields.length ? ` (${drift.fields.join(', ')})` : '';
+    if (!docId?.()) {
+      let line = `New conversations start from ${name}.`;
+      if (drift.samplers) {
+        line += ` Values changed here do not carry${which} — Save writes them into the preset.`;
+      }
+      if (getPrompt() && drift.prompt) line += ' The prompt typed here wins over the preset\'s.';
+      return line;
+    }
+    if (drift.prompt && drift.samplers) {
+      return `Prompt and settings differ from ${name}${which} — Apply loads the preset's here; `
+        + 'Save writes this conversation\'s into the preset.';
+    }
+    if (drift.prompt) {
+      return `Prompt differs from ${name} — Apply loads the preset's prompt here; `
+        + 'Save writes this one into the preset.';
+    }
+    if (drift.samplers) {
+      return `Settings differ from ${name}${which} — Apply loads the preset's values here; `
+        + 'Save writes yours into the preset.';
+    }
+    return 'Matches current settings.';
+  }
+
   function updateDrift() {
     syncIndicator(); // chip tracks the same edits the drift line does
     if (!driftEl) return;
     const preset = selected();
-    // One shared suffix, three leads: "it" is the PRESET in every case (Apply
-    // copies the preset here, Update overwrites the preset), so only the
-    // statement of what drifted changes.
-    const drift = preset && driftParts(preset);
-    const lead = !drift ? null
-      : drift.prompt && drift.samplers ? 'Prompt and settings differ'
-        : drift.prompt ? 'Prompt differs'
-          : drift.samplers ? 'Settings differ'
-            : null;
-    const next = !preset ? ''
-      : !lead
-        ? 'Matches current settings.'
-        : `${lead} — Apply copies it here, Update overwrites it.`;
+    const next = preset ? driftLine(preset) : '';
     // write-on-change: this runs per keystroke in the prompt editors
     if (driftEl.textContent !== next) driftEl.textContent = next;
     if (driftEl.hidden !== !preset) driftEl.hidden = !preset;
@@ -461,7 +495,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // concatenation in the local check, a literal in the 409 catch -- identical
   // today, silently divergent after any reword or a rename of the button.
   const nameTakenNote = (name) =>
-    `A preset named "${name}" already exists — select it above and press Update to overwrite it.`;
+    `A preset named "${name}" already exists — select it above and press Save to overwrite it.`;
 
   // Overwrite the SELECTED preset with the document's current prompt + panel.
   async function updateSelected() {
@@ -582,6 +616,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     ]);
     select.value = effectiveId() ?? '';
 
+    // Apply / Save / Save as new: the file-menu pair everyone already knows.
+    // "Update" was the overwrite's name from v1.79.26 to v1.79.61 and read as
+    // a sibling of Apply with no direction; Save beside "Save as new" says
+    // which one creates and which one overwrites, and the drift line says
+    // what each moves where.
     const applyBtn = armedConfirm(
       createEl('button', {
         class: 'btn btn--sm', disabled: !current,
@@ -600,7 +639,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       createEl('button', {
         class: 'btn btn--sm', disabled: !current,
         title: 'Overwrite this preset with the document\'s prompt and settings',
-      }, ['Update']),
+      }, ['Save']),
       updateSelected,
       'Overwrite prompt?',
       wouldOverwritePresetPrompt,
@@ -657,7 +696,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     driftEl = createEl('div', {
       class: 'preset-drift settings-note muted small', hidden: true, role: 'status',
       title: 'Presets are copies: Apply stamps the preset onto this document; '
-        + 'later edits here never change the preset until you press Update.',
+        + 'later edits here never change the preset until you press Save.',
     });
     // Collapsed by default: it answers "what does this preset hold?" on
     // demand without pushing the rest of the drawer off-screen on a phone.

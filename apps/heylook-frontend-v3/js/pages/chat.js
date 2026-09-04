@@ -129,6 +129,19 @@ export default createPage({
       sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
       displayPrefs: DISPLAY_PREFS,
+      // What the server resolves an UNSET thinking to for this model (the
+      // admin row's thinking_default) -- labels the tri-state's "Model
+      // default (on|off)". Null until the admin rows land.
+      modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
+      // A ticked "Show special tokens" on a gguf model changes nothing:
+      // llama-server never emits them (the reasoning split and the stop
+      // token happen inside it). Say so under the box rather than let the
+      // tick look broken -- the pref is global and stays editable.
+      displayNotes: () => (currentProvider(ctx) === 'gguf'
+        ? { show_special_tokens: `No effect on ${s.modelSelect.value}: llama-server never `
+            + 'emits special tokens, so there is nothing to show or strip. Use Preview '
+            + 'prompt to see the markers the template puts around each turn.' }
+        : {}),
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -306,10 +319,24 @@ function buildSkeleton(ctx) {
     'aria-pressed': 'false', hidden: true,
   });
   s.thinkBtn.innerHTML = ICON_THINK;
+  // Toggles the EFFECTIVE state (explicit value, else the model's default):
+  // pressed means the next reply thinks. Writing an explicit true/false
+  // rather than cycling through "unset" keeps one tap = one visible change;
+  // the drawer's tri-state is where "back to the model default" lives.
   s.thinkBtn.addEventListener('click', () => {
-    setSetting('enable_thinking', getSetting('enable_thinking') === true ? null : true);
+    setSetting('enable_thinking', !effectiveThinking(ctx));
   });
   ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
+  // "What will the model see?" -- the exact prompt the next Send would
+  // build, rendered by the model's own engine (v1.79.62). The typed draft is
+  // rendered as the next user turn without being sent or saved.
+  s.promptBtn = createEl('button', {
+    class: 'btn btn--icon', title: 'Preview prompt — the exact text the model will be sent',
+    'aria-label': 'Preview prompt',
+  });
+  s.promptBtn.innerHTML = ICON_PROMPT;
+  s.promptBtn.addEventListener('click', () => previewNextPrompt(ctx));
+  s.promptPreviewEl = createEl('div', { class: 'prompt-preview chat__prompt-preview', hidden: true });
   s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
   s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
   // Three states, not two. A generation now OUTLIVES the response that
@@ -375,7 +402,8 @@ function buildSkeleton(ctx) {
     s.messagesEl,
     s.statusEl,
     s.attachStrip,
-    createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.thinkBtn, s.fileInput, s.textarea, s.sendBtn]),
+    s.promptPreviewEl,
+    createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.thinkBtn, s.promptBtn, s.fileInput, s.textarea, s.sendBtn]),
   ]);
 
   s.threadEl = thread;
@@ -394,6 +422,11 @@ const ICON_IMAGE =
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>'
   + '<path d="m21 15-5-5L5 21"/></svg>';
+// An eye: "show me what the model sees".
+const ICON_PROMPT =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+  + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 const ICON_GEAR =
   '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -457,6 +490,10 @@ async function refreshLoadedIds(ctx) {
   }
   fillModelSelect(ctx);
   refreshLoadBtn(ctx);
+  // The admin rows carry thinking_default: the composer's thinking button
+  // and the drawer's "Model default (on|off)" label both read it.
+  refreshThinkBtn(ctx);
+  drawer.requestRebuild();
   // Provider just became known, and an editor opened before it landed is
   // missing its Save & Continue button. Re-render so the row catches up here
   // rather than at whatever unrelated render happens next. Only rows whose
@@ -744,11 +781,117 @@ function commitModelSwitch(ctx, to) {
 // hydrate, and any settings change.
 function refreshThinkBtn(ctx) {
   const s = ctx.state;
-  // same gate as the drawer checkbox -- read the cap from PARAM_META so
+  // same gate as the drawer control -- read the cap from PARAM_META so
   // the two can never disagree on the capability name
   s.thinkBtn.hidden = !currentCaps(ctx).includes(PARAM_META.enable_thinking.requiresCap);
-  const on = getSetting('enable_thinking') === true;
+  const explicit = getSetting('enable_thinking');
+  const on = effectiveThinking(ctx);
   s.thinkBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  s.thinkBtn.title = explicit == null
+    ? `Thinking: ${on ? 'on' : 'off'} (model default)`
+    : `Thinking: ${on ? 'on' : 'off'}`;
+}
+
+// The model's own thinking default, off the admin row (null until known).
+function currentThinkingDefault(ctx) {
+  const s = ctx.state;
+  return s.adminRows?.get(s.modelSelect.value)?.thinking_default ?? null;
+}
+
+function currentProvider(ctx) {
+  const s = ctx.state;
+  return s.providerById?.get(s.modelSelect.value) ?? null;
+}
+
+// Whether the next reply thinks: the panel's explicit value, else the
+// model's default as the server reports it. The same resolution the server
+// runs (request > models.toml > capability), read off its answer rather
+// than re-derived.
+function effectiveThinking(ctx) {
+  const explicit = getSetting('enable_thinking');
+  if (explicit === true || explicit === false) return explicit;
+  return currentThinkingDefault(ctx) === true;
+}
+
+// ---------------------------------------------------------------------------
+// prompt preview: the exact string the model will be fed (v1.79.62)
+// ---------------------------------------------------------------------------
+
+// Special-token spellings across the families this server serves, for
+// HIGHLIGHTING only -- the text is the engine's own render, shown verbatim;
+// the marks just make <|im_start|> stand out from prose. Unmatched markers
+// still show as text, so a family this misses loses nothing but colour.
+const SPECIAL_TOKEN_RE = new RegExp(
+  '(<\\|[^<>\\n]{1,48}\\|>|<\\|[^<>\\n]{1,48}>|<[^<>\\n]{1,48}\\|>|</?think>'
+  + '|<start_of_turn>|<end_of_turn>|<bos>|<eos>|<s>|</s>|\\[INST\\]|\\[/INST\\]|\\[/?THINK\\])', 'g');
+
+function highlightSpecials(text) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(SPECIAL_TOKEN_RE)) {
+    if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
+    frag.append(createEl('mark', { class: 'prompt-preview__tok' }, [m[0]]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
+  return frag;
+}
+
+// Render a preview response into `host` (a .prompt-preview container).
+function paintPromptPreview(host, body, onClose) {
+  const closeBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Close']);
+  closeBtn.addEventListener('click', onClose);
+  const what = body.continuation === 'thinking'
+    ? 'Resumes inside the open thinking block'
+    : body.continuation === 'content'
+      ? 'Continues the response after the closed thinking block'
+      : 'The next reply generates after this';
+  const pre = createEl('pre', { class: 'prompt-preview__text' });
+  pre.append(highlightSpecials(body.prompt));
+  host.replaceChildren(
+    createEl('div', { class: 'prompt-preview__head' }, [
+      createEl('span', { class: 'prompt-preview__title' }, ['What the model will see']),
+      createEl('span', { class: 'muted small' }, [
+        `${body.model_id} · ${body.provider} · ${body.char_count.toLocaleString()} chars · ${what}`,
+      ]),
+      closeBtn,
+    ]),
+    pre,
+  );
+  host.hidden = false;
+}
+
+function paintPromptPreviewError(host, message, onClose) {
+  const closeBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Close']);
+  closeBtn.addEventListener('click', onClose);
+  host.replaceChildren(
+    createEl('div', { class: 'prompt-preview__head' }, [
+      createEl('span', { class: 'prompt-preview__title' }, ['Prompt preview']),
+      createEl('span', { class: 'error-note' }, [message]),
+      closeBtn,
+    ]),
+  );
+  host.hidden = false;
+}
+
+// Composer entry: the draft as the next user turn (append mode).
+async function previewNextPrompt(ctx) {
+  const s = ctx.state;
+  if (!s.activeId) { showStatus(ctx, 'Start a conversation to preview its prompt.', true); return; }
+  const host = s.promptPreviewEl;
+  const close = () => { host.hidden = true; host.replaceChildren(); };
+  const draft = s.textarea.value.trim();
+  try {
+    const body = await api.previewPrompt(s.activeId, {
+      mode: 'append',
+      user_content: draft || undefined,
+      overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) },
+    });
+    if (!ctx.alive) return;
+    paintPromptPreview(host, body, close);
+  } catch (err) {
+    if (ctx.alive) paintPromptPreviewError(host, err.message, close);
+  }
 }
 
 // Attach button follows the model's input modalities (capabilities, not the
@@ -1613,6 +1756,34 @@ function buildEditEl(ctx, msg) {
   ];
   buttons[0].addEventListener('click', cancel);
   buttons[1].addEventListener('click', () => save(false));
+  // "Preview prompt": what Save & Continue WOULD send, rendered from the
+  // boxes as they are now (nothing saved). Assistant rows only -- that is
+  // the continuation shape both engines can render; the marker question
+  // ("what wraps the thinking?") is answered by the render itself.
+  let previewHost = null;
+  if (msg.id && msg.role === 'assistant') {
+    previewHost = createEl('div', { class: 'prompt-preview message-edit__preview', hidden: true });
+    const previewBtn = createEl('button', {
+      class: 'btn btn--sm btn--ghost',
+      title: 'Show the exact text the model would be sent by Save & Continue, from these boxes as they are now',
+    }, ['Preview prompt']);
+    previewBtn.addEventListener('click', async () => {
+      const close = () => { previewHost.hidden = true; previewHost.replaceChildren(); };
+      const edits = { content: textarea.value };
+      if (thinkArea) edits.thinking = thinkArea.value || null;
+      try {
+        const body = await api.previewPrompt(s.activeId, {
+          mode: 'continue', message_id: msg.id, edits,
+          overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) },
+        });
+        if (!ctx.alive) return;
+        paintPromptPreview(previewHost, body, close);
+      } catch (err) {
+        if (ctx.alive) paintPromptPreviewError(previewHost, err.message, close);
+      }
+    });
+    buttons.unshift(previewBtn);
+  }
   if (msg.role === 'user') {
     const saveRegen = createEl('button', { class: 'btn btn--sm btn--primary' }, ['Save & Regenerate']);
     saveRegen.addEventListener('click', () => save(true));
@@ -1652,6 +1823,7 @@ function buildEditEl(ctx, msg) {
     editChildren.push(createEl('div', { class: 'message-edit__label muted small' }, ['Response']));
   }
   editChildren.push(textarea, createEl('div', { class: 'message-edit__buttons' }, buttons));
+  if (previewHost) editChildren.push(previewHost);
   const el = createEl('div', { class: `message message--${msg.role}` }, [
     createEl('div', { class: 'message-edit' }, editChildren),
   ]);

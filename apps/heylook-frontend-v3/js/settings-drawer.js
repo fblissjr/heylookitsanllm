@@ -120,6 +120,13 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //   extras?():  Node[]                   -- trailing controls (rendered last)
 //   displayPrefs?: string[]              -- DISPLAY_META keys this page honors;
 //                                           omitted = no Display panel here
+//   displayNotes?(): {key: text}         -- per-model disclosure under a
+//                                           display pref that does nothing
+//                                           on the current model
+//   modelDefaults?(): {key: value}       -- what the current model resolves
+//                                           an UNSET sampler key to (today:
+//                                           enable_thinking); labels the
+//                                           tri-state's "Model default"
 //   onOpen?():  void                     -- fired each time the drawer opens
 //                                           (e.g. lazily refresh presets)
 // }
@@ -214,6 +221,7 @@ function render() {
     const panel = buildSettingsPanel({
       caps: current?.caps?.() ?? [],
       scope: current?.scope?.() ?? null,
+      modelDefaults: current?.modelDefaults?.() ?? {},
     });
     if (samplers === 'disabled') {
       for (const el of panel.querySelectorAll('input, button')) el.disabled = true;
@@ -224,7 +232,7 @@ function render() {
   }
 
   // null unless THIS page declared a display pref it honors (see buildDisplayPanel)
-  const displayPanel = buildDisplayPanel(current?.displayPrefs);
+  const displayPanel = buildDisplayPanel(current?.displayPrefs, current?.displayNotes?.() ?? {});
   if (displayPanel) children.push(displayPanel);
 
   if (current?.extras) children.push(...current.extras());

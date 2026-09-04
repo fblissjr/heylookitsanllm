@@ -67,6 +67,10 @@ const ROUTES = {
   deleteConversation:['DELETE', (id) => `/v1/conversations/${id}`],
   addMessage:        ['POST', (id) => `/v1/conversations/${id}/messages`, true],
   updateMessage:     ['PUT', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`, true],
+  // What generate WOULD send, rendered by the model's own engine (v1.79.62).
+  // Same mode/message_id/overrides vocabulary as generate; persists nothing;
+  // 409 when the model is not resident (a preview never loads a model).
+  previewPrompt:     ['POST', (id) => `/v1/conversations/${id}/prompt`, true],
   deleteMessage:     ['DELETE', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`],
 
   // presets (saved system prompt + sampler bundles)

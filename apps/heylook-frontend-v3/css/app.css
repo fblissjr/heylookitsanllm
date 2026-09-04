@@ -703,6 +703,44 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .message-edit__label { text-transform: uppercase; letter-spacing: 0.04em; }
 .message-edit__thinking { font-family: var(--mono); font-size: var(--text-sm); min-height: 3rem; }
 
+/* Prompt preview (v1.79.62): the exact string the model is fed, special
+   tokens marked. Lives in the editor (Save & Continue's view) and above the
+   composer (the next Send's view). Wraps, never widens the page. */
+.prompt-preview {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  margin: 0.4rem 0;
+}
+.chat__prompt-preview { margin: 0 1rem 0.4rem; }
+.prompt-preview__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+.prompt-preview__head .btn { margin-left: auto; }
+.prompt-preview__title { font-weight: 600; }
+.prompt-preview__text {
+  margin: 0;
+  padding: 0.6rem;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.prompt-preview__tok {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 0.15em;
+}
+
 /* Unsaved fallback row (its save failed): always visible -- never
    hover-gated, the state must be legible on touch (DESIGN.md §7). */
 .message-unsaved-note {

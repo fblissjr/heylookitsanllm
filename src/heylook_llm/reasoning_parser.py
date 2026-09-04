@@ -535,6 +535,7 @@ def specials_stripper(template_info: Any) -> Callable[[str], str] | None:
 def select_reasoning_parser(
     template_info: Any = None, *, thinking_enabled: bool | None = None,
     continuing: bool = False, strip_specials: bool = True,
+    resumes_thinking: bool = False,
 ) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
     pass-through so shutdown paths + unit tests don't need a full load.
@@ -550,6 +551,15 @@ def select_reasoning_parser(
     prompt, so a ``prefills_thinking`` template never opened a block -- the
     stream starts inside the final message's CONTENT, and a parser armed in
     thinking state would misfile the whole continuation as thinking.
+
+    ``resumes_thinking`` is the one continuation that starts INSIDE the
+    thinking block instead (v1.79.62): the final assistant message carries
+    thinking and no content, so the provider re-opened the block and
+    appended that thinking -- the model's first token continues the
+    reasoning, and the parser must start in thinking state whatever the
+    template's prefill habit is. Only the ``<think>``-marker parser can be
+    armed this way; the channel parsers have no start state and a provider
+    refuses the resume for them rather than misfile the whole trace.
 
     Declared specials are stripped by ONE wrapper (``StripSpecials``) that
     every routing parser composes -- a model that declares none gets the
@@ -578,9 +588,11 @@ def select_reasoning_parser(
     elif getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
         parser = HybridThinkingParser(
-            initial_thinking=bool(thinking_enabled)
-            and getattr(template_info, "prefills_thinking", False)
-            and not continuing,
+            initial_thinking=resumes_thinking or (
+                bool(thinking_enabled)
+                and getattr(template_info, "prefills_thinking", False)
+                and not continuing
+            ),
         )
     else:
         parser = PassThroughParser()

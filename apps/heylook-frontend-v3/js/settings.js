@@ -17,7 +17,13 @@ export const PARAM_META = {
   repetition_context_size: { label: 'Repetition context', type: 'number', min: 1, max: 8192, step: 1, section: 'advanced' },
   presence_penalty:        { label: 'Presence penalty', type: 'number', min: 0, max: 2, step: 0.01, section: 'advanced' },
   seed:                    { label: 'Seed', type: 'number', min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, section: 'advanced' },
-  enable_thinking:         { label: 'Enable thinking', type: 'checkbox', section: 'advanced', requiresCap: 'thinking' },
+  // THREE states, not a checkbox (v1.79.62): null = the model's own default
+  // (the server's cascade answer, labelled with its value when the page
+  // knows it), true = on, false = off. The checkbox before it could only say
+  // "on" or "unset", so an unset thinking model showed an unticked box while
+  // the server had already decided -- and there was no way to ask for OFF.
+  enable_thinking:         { label: 'Thinking', type: 'tristate', section: 'advanced', requiresCap: 'thinking',
+                             defaultLabel: 'Model default', onLabel: 'On', offLabel: 'Off' },
   // Thinking DEPTH, only meaningful with thinking on. The accepted set is
   // per-model (Qwen3.8 takes xhigh/medium/low and RAISES otherwise; harmony
   // models take low/medium/high), so this offers the union and the backend
@@ -303,7 +309,27 @@ export function setDisplayPref(key, value) {
 // (e.g. enable_thinking only shows for thinking-capable models).
 // ---------------------------------------------------------------------------
 
-function bindControl(key, meta) {
+// Tri-state <select> value spellings: '' = null (model default), 'on', 'off'.
+const TRISTATE_FROM_VALUE = { '': null, on: true, off: false };
+const TRISTATE_TO_VALUE = (v) => (v === true ? 'on' : v === false ? 'off' : '');
+
+function bindControl(key, meta, modelDefaults = {}) {
+  if (meta.type === 'tristate') {
+    // The default option NAMES the value it stands for when the page knows
+    // it (`modelDefaults[key]`, the admin row's thinking_default) -- a
+    // "model default" that hides whether it means on or off is the exact
+    // mystery the control exists to end. Unknown = plain "Model default".
+    const known = modelDefaults[key];
+    const suffix = known === true ? ' (on)' : known === false ? ' (off)' : '';
+    const sel = createEl('select', { id: `set-${key}`, class: 'input' }, [
+      createEl('option', { value: '' }, [`${meta.defaultLabel}${suffix}`]),
+      createEl('option', { value: 'on' }, [meta.onLabel]),
+      createEl('option', { value: 'off' }, [meta.offLabel]),
+    ]);
+    sel.value = TRISTATE_TO_VALUE(cache[key]);
+    sel.addEventListener('change', () => setSetting(key, TRISTATE_FROM_VALUE[sel.value] ?? null));
+    return sel;
+  }
   if (meta.type === 'select') {
     // '' is the empty option and means "don't send the key at all" -- for
     // reasoning_effort that leaves the model's chat template on its own
@@ -352,14 +378,16 @@ export function documentScopeNote(noun, hasActive) {
 }
 
 // `scope` is a resolved string (see documentScopeNote) or null for a surface
-// with nothing useful to say.
-export function buildSettingsPanel({ caps = [], scope = null } = {}) {
+// with nothing useful to say. `modelDefaults` is what the current model
+// resolves an UNSET key to, keyed like PARAM_META (today: enable_thinking
+// from the admin row's thinking_default) -- read by the tri-state control.
+export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {} } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
-    const control = bindControl(key, meta);
+    const control = bindControl(key, meta, modelDefaults);
     controls.push({ key, meta, control });
     // The note lives INSIDE the label, not as a third child: .settings-row is
     // a two-child space-between flex row, and a third child would re-space it.
@@ -383,7 +411,7 @@ export function buildSettingsPanel({ caps = [], scope = null } = {}) {
     resetSettings();
     for (const { meta, control } of controls) {
       if (meta.type === 'checkbox') control.checked = false;
-      else control.value = '';
+      else control.value = ''; // selects + tristates: '' is the unset option
     }
   });
 
@@ -391,8 +419,11 @@ export function buildSettingsPanel({ caps = [], scope = null } = {}) {
     createEl('h3', {}, ['Sampling']),
     scope ? createEl('div', { class: 'settings-note muted small' }, [scope]) : null,
     ...rows.core,
+    // OPEN by default (owner ask 2026-09-04): thinking and its depth live in
+    // here, and a collapsed group hid the one control people were looking
+    // for. Still a <details> so it can be folded on a short phone screen.
     rows.advanced.length
-      ? createEl('details', {}, [
+      ? createEl('details', { open: true }, [
           createEl('summary', {}, ['Advanced']),
           createEl('div', {}, rows.advanced),
         ])
@@ -410,14 +441,21 @@ export function buildSettingsPanel({ caps = [], scope = null } = {}) {
 // silently does nothing on the page you are looking at is worse than no control).
 // Explore and jspace read token ids rather than this, so they declare nothing.
 // Returns null when the page honors none, so the drawer omits the section.
-export function buildDisplayPanel(honored = []) {
+// `notes` (key -> text) is the page's per-model disclosure for a pref that
+// cannot do anything right now -- "Show special tokens" on a gguf model,
+// where llama-server never emits them, so a ticked box that changes nothing
+// otherwise reads as a broken one. The pref stays editable: it is global.
+export function buildDisplayPanel(honored = [], notes = {}) {
   const rows = Object.entries(DISPLAY_META).filter(
     ([key]) => honored.includes(key)
   ).map(([key, meta]) => {
     const box = createEl('input', { id: `disp-${key}`, type: 'checkbox', checked: getDisplayPref(key) === true });
     box.addEventListener('change', () => setDisplayPref(key, box.checked));
     return createEl('div', { class: 'settings-row' }, [
-      createEl('label', { for: `disp-${key}`, title: meta.help || '' }, [meta.label]),
+      createEl('label', { for: `disp-${key}`, title: meta.help || '' }, [
+        meta.label,
+        notes[key] ? createEl('span', { class: 'settings-row__note muted small' }, [notes[key]]) : null,
+      ]),
       box,
     ]);
   });

@@ -572,7 +572,7 @@ class TestContinuationEchoStrip:
         assert all(c.text or c.thinking or c.finish_reason or c.prompt_tokens for c in chunks)
         assert "".join(c.text for c in chunks) == " tail"
 
-    def test_thinking_deltas_are_never_stripped(self):
+    def test_thinking_deltas_untouched_without_a_thinking_prefill(self):
         frames = [
             'data: {"choices":[{"delta":{"reasoning_content":"hmm"},"index":0,"finish_reason":null}]}',
             'data: {"choices":[{"delta":{"content":"prefixreal"},"index":0,"finish_reason":null}]}',
@@ -581,6 +581,24 @@ class TestContinuationEchoStrip:
         chunks = self.collect(frames, echo_chars=len("prefix"))
         assert "".join(c.thinking or "" for c in chunks) == "hmm"
         assert "".join(c.text for c in chunks) == "real"
+
+    def test_thinking_prefill_echo_is_stripped_from_the_reasoning_channel(self):
+        # A resumed thought: llama-server re-emits the prefilled reasoning as
+        # the leading reasoning_content delta(s), then the new trace. The
+        # two channels are stripped independently -- content was not
+        # prefilled here and must come through whole.
+        frames = [
+            'data: {"choices":[{"delta":{"reasoning_content":"so f"},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"reasoning_content":"ar and on"},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"answer"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        p = make_provider()
+        chunks = list(p._stream_chunks(_stream_bytes(*frames), abort_event=None,
+                                       echo_chars=0, echo_thinking_chars=len("so far")))
+        assert "".join(c.thinking or "" for c in chunks) == " and on"
+        assert "".join(c.text for c in chunks) == "answer"
+        assert all(c.text or c.thinking or c.finish_reason for c in chunks)
 
 
 class TestContinuationGuards:
@@ -614,12 +632,37 @@ class TestContinuationGuards:
         p = make_provider()
         req = self._req([{"role": "user", "content": "count"},
                          {"role": "assistant", "content": "1, 2,"}], None)
-        assert p._continuation_echo_chars(req, self._payload(req)) == 5
+        assert p._continuation_echo_chars(req, self._payload(req)) == (5, 0)
 
     def test_no_continuation_returns_zero(self):
         p = make_provider()
         req = self._req([{"role": "user", "content": "hi"}], None)
-        assert p._continuation_echo_chars(req, self._payload(req)) == 0
+        assert p._continuation_echo_chars(req, self._payload(req)) == (0, 0)
+
+    def test_thinking_prefill_echo_is_measured_lstripped(self):
+        # llama-server echoes a prefilled reasoning_content back on the
+        # reasoning channel minus its LEADING whitespace (measured live on
+        # b10814, 2026-09-04): the strip is sized to the lstripped string so
+        # it can only ever under-strip, never eat a real token.
+        p = make_provider()
+        req = self._req([{"role": "user", "content": "q"},
+                         {"role": "assistant", "content": "",
+                          "thinking": "  partial thought \n"}], None)
+        payload = self._payload(req)
+        assert p._continuation_echo_chars(req, payload) == (0, len("partial thought \n"))
+
+    def test_wire_message_renames_thinking_to_reasoning_content(self):
+        # heylook's `thinking` is llama-server's `reasoning_content`; the
+        # unrenamed key was silently ignored, so every replayed assistant
+        # turn rendered an EMPTY thinking block and a mid-thought continue
+        # re-thought from scratch.
+        from heylook_llm.config import ChatMessage
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+        msg = ChatMessage(role="assistant", content="", thinking="so far")
+        wire = LlamaServerProvider._wire_message(msg)
+        assert wire == {"role": "assistant", "content": "", "reasoning_content": "so far"}
+        user = ChatMessage(role="user", content="hi", thinking="never")
+        assert "reasoning_content" not in LlamaServerProvider._wire_message(user)
 
     def test_text_parts_prefill_is_flattened_not_refused(self):
         # /code-review 53b266c finding 1: block-form prefill (what the
@@ -636,7 +679,7 @@ class TestContinuationGuards:
         payload = self._payload(req)
         chars = p._continuation_echo_chars(req, payload)
         assert payload["messages"][-1]["content"] == "1, 2, 3,"
-        assert chars == len("1, 2, 3,")
+        assert chars == (len("1, 2, 3,"), 0)
 
     def test_non_text_parts_continue_unstripped_not_400(self):
         # No knowable rendered length -> continuation proceeds (llama-server
@@ -650,7 +693,7 @@ class TestContinuationGuards:
                          {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}]},
         ], None)
         payload = self._payload(req)
-        assert p._continuation_echo_chars(req, payload) == 0
+        assert p._continuation_echo_chars(req, payload) == (0, 0)
         assert isinstance(payload["messages"][-1]["content"], list)  # untouched
 
 

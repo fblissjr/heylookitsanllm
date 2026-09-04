@@ -271,7 +271,13 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     if (url.endsWith('/v1/presets')) return { presets: remote.presets };
     if (url.endsWith('/v1/admin/models')) {
       const models = [{ id: 'test-model', loaded: true, provider: 'mlx' }];
-      if (secondModel) models.push({ id: secondModel.id, loaded: true, provider: 'mlx' });
+      if (secondModel) {
+        models.push({
+          id: secondModel.id, loaded: secondModel.loaded ?? true,
+          provider: secondModel.provider ?? 'mlx',
+          context_length: secondModel.context_length ?? null, config: {},
+        });
+      }
       return { models };
     }
     if (url.endsWith('/v1/capabilities')) return { samplers: [], server_version: 'stub' };
@@ -1406,7 +1412,7 @@ async function main() {
         `"Save as new" wrote to a name already in use (${writes.length} writes: `
         + `${JSON.stringify(writes.map((w) => [w.method, w.postData]))})`);
       const status = await guard.page.$eval('.chat__status', (el) => el.textContent);
-      assert(/already exists/i.test(status) && /update/i.test(status),
+      assert(/already exists/i.test(status) && /press Save to overwrite/i.test(status),
         `the refusal did not name the other action: ${JSON.stringify(status)}`);
     });
 
@@ -1441,14 +1447,14 @@ async function main() {
       // test be what clears it makes the first assertion fail with a message
       // about arming when the real regression is in cancelling.
       await sleep(8200); // armedConfirm's own timeout
-      assert((await saveLabel()) === 'Update', `Update was still armed at the start of the check: ${await saveLabel()}`);
+      assert((await saveLabel()) === 'Save', `Save was still armed at the start of the check: ${await saveLabel()}`);
       await typeDocPrompt('a prompt that differs from both');
       await selectPreset('owned');
       let writes = await clickSave();
       assert(writes.length === 0, 'the first Save on "owned" should have armed');
-      assert((await saveLabel()) !== 'Update', 'the first Update did not visibly arm');
+      assert((await saveLabel()) !== 'Save', 'the first Save did not visibly arm');
       await selectPreset('other');
-      assert((await saveLabel()) === 'Update', 'picking another preset left the button visibly armed');
+      assert((await saveLabel()) === 'Save', 'picking another preset left the button visibly armed');
       writes = await clickSave();
       assert(writes.length === 0,
         `the arm carried across the selection change and overwrote "other" unconfirmed (${writes.length} writes)`);
@@ -1899,9 +1905,10 @@ async function main() {
       const { page } = think;
       await openDrawer(page);
       await page.evaluate(() => {
+        // A tri-state <select> since v1.79.62: '' model default, 'on', 'off'.
         const box = document.querySelector('.drawer--open #set-enable_thinking');
         if (!box) throw new Error('no thinking control on a thinking-capable model');
-        box.checked = true;
+        box.value = 'on';
         box.dispatchEvent(new Event('change', { bubbles: true }));
       });
       await closeDrawer(page);
@@ -1922,6 +1929,41 @@ async function main() {
       assert(think.pageErrors.length === 0, `page errors: ${think.pageErrors.join(' | ')}`);
     });
     await think.page.close();
+
+    // ---- the gguf context select is reachable at PHONE width -------------
+    // Reported missing on an iPhone (2026-09-04) where the desktop showed it.
+    // The bar wraps at phone widths; this pins that the select still lands
+    // inside the viewport, with the model's ceiling offered, for a gguf model
+    // picked from the model select on a phone.
+    const ctxm = await openChat(browser, base, {
+      mobile: true,
+      secondModel: { id: 'gguf-model', caps: [], provider: 'gguf', loaded: false, context_length: 262144 },
+    });
+    await suite.check('the context select shows for a gguf model at phone width', async () => {
+      const { page } = ctxm;
+      await page.evaluate(() => {
+        const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
+        sel.value = 'gguf-model';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await settle(page);
+      const info = await page.$eval('.chat__ctx-select', (el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          hidden: el.hidden, w: r.width, h: r.height, left: r.left, right: r.right,
+          top: r.top, options: [...el.options].map((o) => o.textContent),
+        };
+      });
+      assert(!info.hidden && info.w > 0 && info.h > 0, `context select not rendered: ${JSON.stringify(info)}`);
+      assert(info.left >= 0 && info.right <= 390 && info.top >= 0,
+        `context select lies outside the 390px viewport: ${JSON.stringify(info)}`);
+      assert(info.options.some((o) => /\(max\)$/.test(o)), `no ceiling offered: ${JSON.stringify(info.options)}`);
+      assert(info.h >= 44, `phone touch target under 44px: ${info.h}px`);
+    });
+    await suite.check('no uncaught page errors (context select)', () => {
+      assert(ctxm.pageErrors.length === 0, `page errors: ${ctxm.pageErrors.join(' | ')}`);
+    });
+    await ctxm.page.close();
 
     await suite.check('no uncaught page errors (conversation switch)', () => {
       assert(two.pageErrors.length === 0, `page errors: ${two.pageErrors.join(' | ')}`);

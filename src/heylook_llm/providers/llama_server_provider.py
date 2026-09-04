@@ -644,16 +644,39 @@ class LlamaServerProvider(BaseProvider):
     # Generation
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _wire_message(msg) -> dict:
+        """One ChatMessage as llama-server's chat-completions JSON.
+
+        ``thinking`` (heylook's field) goes out as ``reasoning_content``
+        (llama-server's, v1.79.62) -- the template decides what to do with
+        it: Qwen3.8 renders every assistant turn's reasoning by default
+        (`preserve_thinking`), gemma-4 only the last. Before the rename the
+        key rode the wire unrenamed, llama-server ignored it, and every
+        replayed assistant turn rendered an EMPTY thinking block -- and a
+        Save & Continue from a reply stopped mid-thought re-thought from
+        scratch while the route glued the new trace onto the old one.
+        Continuation is llama.cpp's own: reasoning_content with EMPTY content
+        resumes INSIDE the open thinking block; reasoning plus content
+        closes the block and continues the content.
+        """
+        out = msg.model_dump(exclude_none=True)
+        thinking = out.pop("thinking", None)
+        if thinking and out.get("role") == "assistant":
+            out["reasoning_content"] = thinking
+        return out
+
     def _build_payload(self, request: ChatRequest) -> dict:
         # The shared cascade (samplers.resolve_effective_sampling) -- ONE
         # implementation with MLX, not a mirror. No vendor layer: GGUF dirs
         # ship no generation_config.json. Keys llama-server doesn't take
         # (vision_tokens etc.) are dropped below by _PAYLOAD_KEY_MAP.
-        merged = resolve_effective_sampling(request, self.config)
+        merged = resolve_effective_sampling(
+            request, self.config, thinking_capable=self.thinking_capable)
 
         payload = {
             "model": self.model_id,
-            "messages": [m.model_dump(exclude_none=True) for m in request.messages],
+            "messages": [self._wire_message(m) for m in request.messages],
             "stream": True,
             "stream_options": {"include_usage": True},
             # llama-server's n_predict default is -1 = UNLIMITED; never omit.
@@ -719,8 +742,9 @@ class LlamaServerProvider(BaseProvider):
             return max(_SSE_READ_TIMEOUT_S, wake_timeout)
         return _SSE_READ_TIMEOUT_S
 
-    def _continuation_echo_chars(self, request: ChatRequest, payload: dict) -> int:
-        """Chars of prefill llama-server will ECHO back, to strip from the stream.
+    def _continuation_echo_chars(self, request: ChatRequest, payload: dict) -> tuple[int, int]:
+        """``(content_chars, thinking_chars)`` of prefill llama-server will
+        ECHO back, to strip from the stream's two channels.
 
         May NORMALIZE ``payload`` in place: an all-text parts-list prefill is
         flattened to the exact string being measured, so the strip stays
@@ -733,6 +757,13 @@ class LlamaServerProvider(BaseProvider):
         "response = continuation only", so the echo is stripped positionally
         (not by string match: retokenization can attach whitespace to the
         echoed span, so byte-equality would false-negative).
+
+        The REASONING channel echoes too (measured live on b10814, 2026-09-04):
+        a prefilled ``reasoning_content`` comes back as the leading
+        reasoning_content delta(s), byte-exact except that llama-server drops
+        its LEADING whitespace. So that strip is sized to the lstripped
+        string: the minimal count, which can only ever under-strip (a stray
+        leading space survives into the new trace) and never eat real tokens.
 
         Also enforces what llama-server cannot express:
         - user-role continuation (explicit ``continue_final_message: true``
@@ -756,10 +787,12 @@ class LlamaServerProvider(BaseProvider):
                 "Omit the flag or drop the trailing assistant turn."
             )
         if not request.is_continuation():
-            return 0
-        content = request.messages[-1].content
+            return 0, 0
+        last = request.messages[-1]
+        thinking_chars = len((last.thinking or "").lstrip())
+        content = last.content
         if isinstance(content, str):
-            return len(content)
+            return len(content), thinking_chars
         # Parts-list content (standard for many SDKs, and what the Messages
         # API converter produces for block-form prefill -- refusing it broke
         # requests that streamed fine pre-v1.61). The positional strip needs
@@ -774,13 +807,48 @@ class LlamaServerProvider(BaseProvider):
         if all(getattr(p, "type", None) == "text" for p in parts):
             flattened = " ".join(getattr(p, "text", None) or "" for p in parts)
             payload["messages"][-1]["content"] = flattened
-            return len(flattened)
+            return len(flattened), thinking_chars
         logging.warning(
             f"[GGUF] '{self.model_id}': continuing a trailing assistant message "
             f"with non-text parts -- prefill echo cannot be measured and is NOT "
             f"stripped from the response"
         )
-        return 0
+        return 0, thinking_chars
+
+    def render_prompt(self, request: ChatRequest) -> str:
+        """The exact prompt llama-server renders for ``request`` (its own
+        ``/apply-template``, same body as a generation, so the same template
+        rung, the same chat_template_kwargs and the same continuation
+        resolution). No slot is taken: /apply-template is a template call,
+        not a task, so it neither queues behind nor blocks a generation."""
+        if self._base_url is None:
+            raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
+        try:
+            payload = self._build_payload(request)
+        except SamplerNotFound as e:
+            raise InvalidGenerationRequest(str(e))
+        self._continuation_echo_chars(request, payload)  # validates + normalizes
+        body = {k: payload[k] for k in ("messages", "chat_template_kwargs") if k in payload}
+        http_request = urllib.request.Request(
+            self._base_url + "/apply-template",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(http_request, timeout=30) as resp:
+                rendered = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = self._error_detail(e)
+            if e.code == 400:
+                raise InvalidGenerationRequest(detail)
+            raise GenerationFailed(detail)
+        except (urllib.error.URLError, OSError) as e:
+            raise GenerationFailed(f"llama-server for '{self.model_id}' unreachable: {e}")
+        prompt = rendered.get("prompt") if isinstance(rendered, dict) else None
+        if not isinstance(prompt, str):
+            raise GenerationFailed("llama-server /apply-template returned no prompt")
+        return prompt
 
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         if self._base_url is None:
@@ -789,7 +857,7 @@ class LlamaServerProvider(BaseProvider):
             payload = self._build_payload(request)
         except SamplerNotFound as e:
             raise InvalidGenerationRequest(str(e))
-        echo_chars = self._continuation_echo_chars(request, payload)
+        echo_chars, echo_thinking_chars = self._continuation_echo_chars(request, payload)
 
         http_request = urllib.request.Request(
             self._base_url + "/v1/chat/completions",
@@ -829,7 +897,9 @@ class LlamaServerProvider(BaseProvider):
             # requests, so there is no MLX-style gate to report), which made
             # every gguf model look permanently idle to a teardown guard.
             with self.generation_active():
-                yield from self._stream_chunks(response, abort_event, echo_chars=echo_chars)
+                yield from self._stream_chunks(
+                    response, abort_event,
+                    echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars)
         finally:
             # Closing the connection frees the llama-server slot on abort.
             try:
@@ -846,16 +916,18 @@ class LlamaServerProvider(BaseProvider):
         except Exception:
             return f"llama-server returned HTTP {e.code}"
 
-    def _stream_chunks(self, fp, abort_event, echo_chars: int = 0) -> Generator:
+    def _stream_chunks(self, fp, abort_event, echo_chars: int = 0,
+                       echo_thinking_chars: int = 0) -> Generator:
         """Adapt llama-server SSE lines to GenerationChunk.
 
         Split out from create_chat_completion so it is unit-testable with a
         canned byte stream -- no HTTP, no subprocess.
 
-        ``echo_chars``: leading CONTENT chars to drop -- llama-server echoes
-        the prefill of a continued assistant message back as the first
-        delta(s) (see _continuation_echo_chars). Thinking deltas are never
-        stripped: the echo is content-channel only.
+        ``echo_chars`` / ``echo_thinking_chars``: leading chars to drop from
+        the content / reasoning channel -- llama-server echoes the prefill
+        of a continued assistant message back as the first delta(s) of each
+        channel it was given (see _continuation_echo_chars). The two counts
+        are independent: a channel that was not prefilled is never touched.
         """
         for raw_line in fp:
             if abort_event is not None and abort_event.is_set():
@@ -882,9 +954,13 @@ class LlamaServerProvider(BaseProvider):
                 cut = min(echo_chars, len(chunk.text))
                 echo_chars -= cut
                 chunk.text = chunk.text[cut:]
-                if not chunk.text and not chunk.thinking and not chunk.finish_reason \
-                        and not chunk.prompt_tokens and not chunk.generation_tokens:
-                    continue  # the delta was pure echo -- nothing to emit
+            if echo_thinking_chars > 0 and chunk.thinking:
+                cut = min(echo_thinking_chars, len(chunk.thinking))
+                echo_thinking_chars -= cut
+                chunk.thinking = chunk.thinking[cut:] or None
+            if not chunk.text and not chunk.thinking and not chunk.finish_reason \
+                    and not chunk.prompt_tokens and not chunk.generation_tokens:
+                continue  # the delta was pure echo -- nothing to emit
             yield chunk
 
     @staticmethod

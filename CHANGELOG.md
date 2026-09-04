@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.62]
+
+Thinking on the wire, an honest thinking default, a prompt you can read, and
+a preset bar whose two verbs say which way they point. Seven annoyances
+reported with screenshots on 2026-09-04; one fix set.
+
+### Fixed
+
+- **A reply's thinking never reached the model again.** The store kept the
+  `thinking` column but the generate saga replayed only `content_blocks`, so
+  every prior assistant turn rendered with an EMPTY thinking block (Qwen3.8's
+  template keeps every turn's reasoning by default; it was getting none), and
+  Save & Continue on a reply stopped mid-thought sent the fragment nowhere:
+  the model re-thought from scratch and the route glued the new trace onto
+  the old one. Assistant rows now carry `thinking` on the wire. gguf maps it
+  to llama-server's `reasoning_content` (`LlamaServerProvider._wire_message`
+  -- the unrenamed key was silently ignored); MLX already reconstructed a
+  closed block from it.
+- **Continue from a stopped thought RESUMES the thought.** A `continue`
+  whose anchor has thinking and no content now starts inside the open
+  thinking block on both engines: llama.cpp's own
+  `COMMON_CHAT_CONTINUATION_REASONING` (reasoning_content with empty
+  content, measured live on b10814) and, on MLX, a fresh generation prompt
+  with thinking forced on and the trace appended after the template's
+  opener (`mlx_provider._append_thinking_resume`; `<think>` families only --
+  gemma channels and harmony refuse with a reason, since their parsers have
+  no "already inside" state). The reasoning parser takes a
+  `resumes_thinking` flag so the first token files as thinking.
+- **The gguf prefill echo is stripped on BOTH channels.** llama-server
+  re-emits a prefilled `reasoning_content` as the leading reasoning delta(s),
+  byte-exact minus its leading whitespace (measured); the strip is sized to
+  the lstripped string so it can only under-strip. Content strip unchanged.
+- **The drift line named an unnamed "it".** *"Settings differ — Apply copies
+  it here, Update overwrites it"* now reads *"Settings differ from "p2"
+  (temperature, max tokens) — Apply loads the preset's values here; Save
+  writes yours into the preset."* With no conversation open it says what will
+  actually happen (*"New conversations start from "p2"..."*) instead of
+  describing a copy that never occurs.
+
+### Changed
+
+- **Thinking defaults to ON for a model that can think.** The cascade
+  resolves request > models.toml `enable_thinking` > the thinking CAPABILITY
+  (`resolve_effective_sampling(..., thinking_capable=)`; every provider
+  passes its own served capability). From v1.50.0 unset meant off on both
+  engines -- chosen when the UI could send only true-or-absent, so off had to
+  be the default to exist at all. The UI now sends an explicit false, so the
+  reason is gone; a thinking model that did not think until someone found
+  the config flag was the standing complaint. `MLXModelConfig.enable_thinking`
+  is `Optional[bool]` (None = follow capability) to match the gguf field. The
+  thinking sampler overlay fires whenever thinking is on, as before.
+- **The thinking control is a tri-state**, not a checkbox: *Model default
+  (on|off)* / *On* / *Off*. The admin row carries `thinking_default` (the
+  cascade's own answer for an empty request, derived so it answers for
+  unloaded models) and the label names it. The composer's thinking button
+  reflects the EFFECTIVE state and toggles it explicitly.
+- **Preset bar: Update is Save.** Apply / Save / Save as new -- the file-menu
+  pair. Every arm, guard and refusal is unchanged; only the label and the
+  drift line's wording moved. (Save as new still refuses a name in use.)
+- **Advanced sampling is open by default** (owner ask): thinking and its
+  depth live there.
+- **"Show special tokens" says when it cannot show any.** On a gguf model the
+  Display row explains llama-server never emits them, and points at the
+  prompt preview.
+
+### Added
+
+- **`POST /v1/conversations/{id}/prompt` -- prompt preview.** The exact
+  string the model would be fed, rendered by the model's own engine
+  (llama-server `/apply-template`; the MLX tokenizer's chat template through
+  the same `build_prompt` generation uses), for the same
+  mode/message_id/overrides vocabulary as generate, plus `edits` (unsaved
+  editor text for a continue anchor). Persists nothing; 409 when the model is
+  not resident -- a preview never loads a model. Response names the
+  continuation shape (`thinking` = resumes inside the block, `content`).
+  Providers gained `render_prompt()`.
+- **v3: "Preview prompt"** in the assistant editor (what Save & Continue
+  would send, from the boxes as they are) and an eye button in the composer
+  (what the next Send would send, draft included). Special tokens are
+  highlighted in the render. This is the answer to "what happens to the
+  special tokens when I edit?": the store holds none -- the template puts
+  them around each turn at prompt-build time, and now you can read it.
+- **E2E (render.mjs): the gguf context select at phone width.** Reported
+  missing on an iPhone; renders inside a 390px viewport here, so the phone
+  was most likely holding pre-v1.79.61 modules (a backgrounded Safari tab
+  keeps its heap -- reload it).
+
+### Notes
+
+- Live-verified through heylook on gemma-4-E4B gguf: `thinking_default`
+  true, a thinking-only anchor resumes as ONE trace (prefix once), an
+  explicit off yields no thinking, and the preview's tail ends inside the
+  open thought channel. The reported model (Qwen3.8-27B) was not re-run; its
+  sidecar template was read and renders `reasoning_content` on every turn.
+- MLX resume covers `<think>`-marker templates only; gemma-channel and
+  harmony models refuse a thinking-only continue with a message that names
+  the workaround (edit the response box, or regenerate).
+
 ## [1.79.61]
 
 Choose a gguf model's context size when you load it.
