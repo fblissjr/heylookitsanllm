@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.71]
+
+The mobile chat header stops multi-line wrapping and recovers screen real estate on iOS Safari.
+
+### Changed
+
+- **Mobile chat top bar is compact and non-wrapping.** Under 768px the top bar
+  retains its two tiers but Tier 2 (`.chat__bar-detail`: context size, Load,
+  preset + system-prompt chips) is now a single-line horizontal strip with
+  momentum scrolling (`overflow-x: auto`) rather than an unconstrained
+  `flex-wrap: wrap` row. This prevents the detail controls and empty system
+  prompt banner from expanding into 3–4 vertical lines (~165px) on narrow
+  screens, reducing total header height to ~75px.
+- **Mobile top bars respect `env(safe-area-inset-top)`.** Added safe area top
+  insets across `.chat__bar`, `.explore__bar`, `.jspace__bar`,
+  `.notebook__toolbar`, `.chat__convs-head`, `.drawer__head`, `.models` and
+  `.perf` so content cleanly clears the iPhone Dynamic Island / notch without
+  unnecessary vertical whitespace. Model select on mobile adds text truncation
+  (`text-overflow: ellipsis`) and preset/prompt chips are restyled as compact
+  pills. Rule documented in `DESIGN.md` §7. `bun run e2e:render` green (105/105).
+
 ## [1.79.70]
 
 An iOS keyboard check exists; it has not been run.

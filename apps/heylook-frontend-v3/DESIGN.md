@@ -293,16 +293,16 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   tiers under 768px: tier one is what must stay one tap away (Chats, the model
   select stretched to the rest of the line, the gear); tier two is the detail
   group (`.chat__bar-detail`: context size, Load, preset + system-prompt
-  chips) on its own line. The composer is two rows: the field spans the width
-  and the tool buttons plus Send sit beneath it. Both replace a single
-  wrapping flex row, which broke wherever the widths fell — at 402pt the
-  chips took line two, the gear stranded alone on a third, and three 44px
-  icon buttons beside the field left it 147px wide. A phone shell change that
-  reintroduces a wrapping single row, or shrinks a target below 44px to fit
-  one, is a regression of this rule, not a tidy-up. Nothing is hidden behind
-  a disclosure: the thinking toggle's pressed state is information, and a "+"
-  menu would bury it. Desktop is untouched — the wrapper is `display:contents`
-  there and the bar and composer are the flat rows they were.
+  chips) on its own line as a non-wrapping horizontal strip with momentum
+  scrolling (`overflow-x: auto`), so it never wraps into 3+ vertical rows or
+  crushes the message viewport. The composer is two rows: the field spans the
+  width and the tool buttons plus Send sit beneath it. Both replace an
+  unconstrained wrapping flex row, which broke wherever the widths fell — at
+  402pt the chips took line two, the gear stranded alone on a third, and
+  three 44px icon buttons beside the field left it 147px wide. Safe-area top
+  insets ensure dynamic island / notch clearance without wasting vertical
+  space. Desktop is untouched — the wrapper is `display:contents` there and the
+  bar and composer are the flat rows they were.
 - **The drawer is a real modal dialog.** `role="dialog"` + `aria-modal`,
   `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
   moves focus to Close, and on close restores focus to the opener. Escape and a
