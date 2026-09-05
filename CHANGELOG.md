@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.70]
+
+An iOS keyboard check exists; it has not been run.
+
+### Added
+
+- **`bun run e2e:ios` (`tests/e2e/ios-sim.mjs`)** drives real Mobile Safari
+  in the iOS Simulator through Apple's `safaridriver` against a running
+  server: loads chat, measures the layout and visual viewports and the
+  composer, Send, nav and bar rects, taps the field, types, measures again,
+  screenshots before and after. It asserts the keyboard opened, the field and
+  Send sit inside the VISUAL viewport, and nothing scrolls sideways, and it
+  prints where the nav and bar ended up. Chrome cannot answer this: iOS
+  shrinks only the visual viewport on keyboard open while Chrome shrinks the
+  layout viewport, and every element in question follows the layout viewport.
+  **WRITTEN WITHOUT A RUN** (owner call: wire it now, finish later). The
+  file's header, the E2E README and TODO.md all say so; the first run is
+  expected to need harness fixes. No npm dependency was added.
+
 ## [1.79.69]
 
 The MLX engines are committed git pins.

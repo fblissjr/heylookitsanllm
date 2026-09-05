@@ -32,6 +32,7 @@ bun run e2e          # both server-driven suites (chat + pages)
 bun run e2e:chat     # chat suite only
 bun run e2e:pages    # pages suite only
 bun run e2e:render   # render suite -- no server, no model, a few seconds
+bun run e2e:ios      # iOS Simulator keyboard check -- real WebKit; UNRUN, see below
 ```
 
 Exit code is non-zero if any check fails.
@@ -68,6 +69,41 @@ shader JIT compilation and the streaming-cadence guard can read low (seen:
 full speed). If ONLY the cadence guard fails right after an mlx/model
 change, re-run before diagnosing a delivery regression.
 
+## iOS Simulator keyboard check (`e2e:ios`) -- WRITTEN, NEVER RUN
+
+`ios-sim.mjs` is the only entry that can see what iOS does with the software
+keyboard, and it was written on 2026-09-05 without being run (no simulator
+session was opened that day). Its header says so; the first person to run it
+should expect harness fixes, then delete that block and the TODO.md entry.
+
+Why Chrome cannot stand in: with the keyboard open, iOS Safari keeps the
+LAYOUT viewport at full height and shrinks only the VISUAL viewport, then
+scrolls the page to the focused field. Chrome shrinks the layout viewport
+itself. The fixed `#bottom-nav`, the `100dvh` shell and the composer at its
+foot all follow the layout viewport, so an emulated Chrome answers a
+different question. `render.mjs`'s mid-stream viewport shrink checks reflow
+under a short viewport, which is a different claim.
+
+How it works: boots an iPhone simulator (`xcrun simctl`), starts Apple's
+`/usr/bin/safaridriver`, opens a W3C WebDriver session on the simulator's real
+Mobile Safari (`platformName: iOS`, `safari:useSimulator`), loads the chat
+page of an ALREADY-RUNNING server, measures layout + visual viewport and the
+composer/Send/nav/bar rects, taps the field, types, measures again, and
+screenshots before and after. No npm dependency: raw `fetch()` to the driver.
+
+One-time setup it cannot do for you: `safaridriver --enable` on the Mac, and
+in the simulator Settings > Safari > Advanced > Remote Automation = ON. The
+session error tells you this if either is missing. Point it at a server with
+`IOS_SIM_BASE` (default the daily port, 8000); it never sends a message, only
+types into the composer.
+
+The checks: keyboard really opened (visual viewport shrank -- if a WebDriver
+click does not count as a gesture on iOS, that is the reported finding, not
+a skip), field inside the visual viewport, Send inside it, no horizontal
+scroll, and a never-failing report of where the nav and top bar ended up plus
+how far the page scrolled. Those last numbers decide whether hiding the nav on
+composer focus is worth building.
+
 ## Config (env vars)
 
 | var                   | default                              | meaning |
@@ -78,6 +114,11 @@ change, re-run before diagnosing a delivery regression.
 | `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |
 | `E2E_HEADFUL`         | (unset)                              | set to any value to watch the browser (debugging) |
 | `E2E_BASE_URL`        | (unset)                              | drive an ALREADY-RUNNING server instead of spawning one. **Shares its DB.** Requires `E2E_ALLOW_SHARED_DB=1`. |
+| `IOS_SIM_BASE`        | `http://127.0.0.1:8000`              | `e2e:ios` only: the running server to load `/v3` from (read + type only, never sends) |
+| `IOS_SIM_DEVICE`      | `iPhone 15 Pro`                      | `e2e:ios` only: simulator device name; newest iOS runtime with that name wins. `IOS_SIM_UDID` bypasses the lookup |
+| `IOS_SIM_PORT`        | `4445`                               | `e2e:ios` only: safaridriver port |
+| `IOS_SIM_SHOTS`       | `<os tmpdir>/heylook-ios-sim`        | `e2e:ios` only: where before/after keyboard screenshots go (paths are printed) |
+| `IOS_SIM_KEEP`        | (unset)                              | `e2e:ios` only: leave the simulator booted afterwards |
 
 ## Layout
 

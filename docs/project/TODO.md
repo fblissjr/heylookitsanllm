@@ -3,7 +3,28 @@
 Cross-session task backlog organized by priority.
 
 *Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch);
-docs-twins entry added 2026-08-31 without a full backlog pass*
+docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
+entry added 2026-09-05*
+
+## iOS keyboard check: written, NEVER RUN (2026-09-05)
+
+- [ ] **Run `tests/e2e/ios-sim.mjs` once and make it true** (P2). v1.79.68
+  re-laid the phone chat chrome from Chrome emulation + a stub server; what
+  iOS does with the keyboard up (visual viewport shrink + page scroll, the
+  fixed bottom nav, `100dvh`) was never observed because Chrome cannot
+  reproduce it. The check exists, wired as `bun run e2e:ios` (real Mobile
+  Safari in the iOS Simulator via `safaridriver`), but was written without
+  a single run; its header and `tests/e2e/README.md` say so. Do: run
+  `safaridriver --enable` once, boot the simulator and turn on Settings >
+  Safari > Advanced > Remote Automation, start a dev server, run it. Fix the
+  harness until the checks are seen to pass AND fail for a real reason, then
+  delete the UNRUN banner from the file, the README section's first
+  paragraph, and this entry. Its "report" check prints whether the bottom
+  nav is still on screen with the keyboard up -- that number decides
+  whether hiding the nav on composer focus (log_2026-09-05) is worth
+  building. Ground truth for the exact device is the iPhone 17 Pro over
+  Web Inspector; the simulator lists 15 Pro devices (safe areas differ by a
+  few points).
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
