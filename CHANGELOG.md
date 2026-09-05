@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.69]
+
+The MLX engines are committed git pins.
+
+### Changed
+
+- **mlx-lm and mlx-vlm are pinned to exact upstream commits in
+  `pyproject.toml`** (`[tool.uv.sources]`, `rev =`), and `uv.lock` resolves
+  them from git: mlx-lm 0.32.0 at `32bb4e6`, mlx-vlm 0.7.0rc0 at `d68a25e`.
+  This drops the 2026-08-12 rule that committed dependency files point only
+  at releases. mlx-lm's newest PyPI release, 0.31.3, is from April, and the
+  server's tokenizer-wrap and detokenizer handling (v1.79.66) is written
+  against what sits on main; the ecosystem posture has said "SHA-pin rather
+  than wait for PyPI" since it was written. `mlx` itself stays a PyPI
+  release. Exact `rev`, not `branch`, so a plain `uv lock --upgrade` cannot
+  move an engine silently. The pre-commit guard still refuses a git pin by
+  default; moving one is edit the rev, relock, suite green, SHA named here,
+  commit with the override. A clone's `uv sync` now needs git and GitHub
+  reachable. Rules in CLAUDE.md and the local deps notes; the guard's
+  message says what to do on either side.
+
 ## [1.79.68]
 
 The phone chat page stops squeezing the prompt box.

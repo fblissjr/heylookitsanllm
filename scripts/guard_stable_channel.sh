@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 #
-# Pre-commit guard: the COMMITTED pyproject.toml and uv.lock must always point
-# at published releases. A git pin (a [tool.uv.sources] entry with a 40-hex
-# `rev`, a git-sourced entry in uv.lock) is a personal "run this commit today"
-# experiment -- committing one strands every cloner's `uv sync` on it.
+# Pre-commit guard: a git pin (a [tool.uv.sources] entry with a 40-hex `rev`,
+# a git-sourced entry in uv.lock) never lands in a commit by ACCIDENT.
+#
+# Since 2026-09-05 (v1.79.69) mlx-lm and mlx-vlm ARE committed git pins --
+# exact revs, because mlx-lm is release-starved. This guard did not go away
+# with the releases-only rule: it is what makes moving a pin a named act
+# (override below, SHA in CHANGELOG) and what keeps a `branch = "main"`
+# experiment in the working tree from riding along with an unrelated commit.
 #
 # uv leaves no gitignored home for this state (override-dependencies in uv.toml
 # is silently ignored -- verified on uv 0.11.32 -- and source pins always
@@ -67,9 +71,11 @@ fi
 
 if [ "$errors" -ne 0 ]; then
     echo ""
-    echo "Committed pyproject.toml/uv.lock must stay on published releases."
-    echo "Remove the [tool.uv.sources] entry, run 'uv lock', commit, then re-add the pin."
-    echo "Deliberate exception: HEYLOOK_ALLOW_CHANNEL_COMMIT=1 git commit ..."
+    echo "A git pin does not land by accident. If this commit MOVES a committed pin"
+    echo "(mlx-lm / mlx-vlm: exact rev, new SHA named in CHANGELOG):"
+    echo "    HEYLOOK_ALLOW_CHANNEL_COMMIT=1 git commit ..."
+    echo "If the pin is a working-tree experiment, unstage pyproject.toml/uv.lock"
+    echo "(or remove the entry and 'uv lock') and commit the rest."
     exit 1
 fi
 

@@ -108,6 +108,19 @@ version = { attr = "heylook_llm.__version__" }
 # mlx-lm/mlx-vlm pin). Keep equal to the [project.dependencies] floor.
 override-dependencies = ["transformers>=5.15.0"]
 
+[tool.uv.sources]
+# COMMITTED git pins (owner decision 2026-09-05). mlx-lm is release-starved:
+# PyPI's newest is 0.31.3 (April) while main carries 0.32.0 and the detokenizer
+# and tokenizer-wrap behaviour the server is now written against. Exact `rev`
+# on purpose, never `branch`: a branch pin moves under a plain `uv lock
+# --upgrade` and the manifest would stop saying what it depends on. Moving a
+# pin = edit the rev here, `uv lock --upgrade-package <name> && uv sync`, run
+# the suite, name the new SHA in CHANGELOG. The pre-commit guard still blocks
+# these by default; committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the
+# act stays deliberate. `mlx` itself is a PyPI release, not pinned here.
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "32bb4e68791c941db382d6fc8fa5b35ba9f3d98b" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "d68a25e71e842e8924a54bb3d84d3a3b4d4a2ee1" }
+
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
