@@ -1,8 +1,8 @@
 # src/heylook_llm/admin_api.py
 """Admin API endpoints for model management.
 
-All endpoints under /v1/admin/models/ -- separated from the OpenAI-compatible
-/v1/models endpoint to avoid breaking existing integrations.
+All endpoints under /v1/admin/models/ -- separated from the /v1/models list
+(OpenAI list shape) that inference clients read.
 
 ``load`` is the one lifecycle op that is NOT here: it moved to
 ``POST /v1/models/{id}/load`` (model_ops_api.py) because the admin gate

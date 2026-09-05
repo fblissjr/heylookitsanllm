@@ -4,6 +4,18 @@
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
+
+// The E2E model is whatever E2E_MODEL names, and the default (a gemma-4 VLM)
+// is not the only thing people run this against: a text-only mlx-lm entry or
+// a gguf without an mmproj has no `vision` capability, and a check that
+// assumes one then fails on the suite's assumption, not on the app -- and
+// leaves the drawer open for the next check to trip over. A check whose
+// subject IS a capability skips when the model lacks it (v1.79.67).
+async function requireCap(page, modelId, cap) {
+  const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+  const caps = models.find((m) => m.id === modelId)?.capabilities ?? [];
+  if (!caps.includes(cap)) skip(`${modelId} does not advertise ${cap}; this check needs a ${cap}-capable E2E_MODEL`);
+}
 import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
 
@@ -1051,6 +1063,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   await closeDrawer(page); // defensive: a prior failure could have left it open
 
   await suite.check('capability gating: thinking toggle and vision_tokens track the selected model', async () => {
+    await requireCap(page, config.model, 'vision');
     // Selecting a model in the chat bar is pure metadata (fillModelSelect +
     // the change listener) -- it does NOT load the model, so probing an
     // unloaded model's gating here is cheap and safe.
@@ -1126,6 +1139,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('vision_tokens control round-trips through localStorage', async () => {
+    await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
     await openDrawer(page);
     await page.waitForSelector('#set-vision_tokens', { timeout: 5000 });
@@ -1483,6 +1497,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('image attach caps at 8 with an aria-live status message', async () => {
+    await requireCap(page, config.model, 'vision');
     await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
     await page.evaluate(async () => {
       const canvas = document.createElement('canvas');
@@ -1523,6 +1538,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('pasting an image into the composer stages it', async () => {
+    await requireCap(page, config.model, 'vision');
     // The paste path is a distinct entry point from the picker (chat.js
     // paste listener filters clipboard items to image files) -- exercise it
     // with a synthetic ClipboardEvent carrying a real File.
@@ -1548,6 +1564,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('an attached image round-trips: send, persist, render, survive reload', async () => {
+    await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
     const convId = await newFreshConversation(page);
 

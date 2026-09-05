@@ -580,7 +580,7 @@ def select_reasoning_parser(
     specials the model actually emitted (v3's "Show special tokens" display
     pref, DESIGN.md §6 -- they are load-bearing signal about where in the turn
     the model is, and hiding them manufactures a class of bug). It is opt-IN
-    per request so the OpenAI-compatible surface keeps stripping by default.
+    per request so every route keeps stripping by default.
     ROUTING is unaffected either way: a routing parser still consumes its own
     structural tokens (``<think>``, harmony/gemma channel markers) because
     those are what it splits content from thinking WITH -- this switch governs

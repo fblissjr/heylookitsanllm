@@ -29,7 +29,7 @@ def thinking_for_template(msg_dict: dict, template_info=None) -> dict:
       harmony prompt is noise the model never emitted.
 
     ``template_info=None`` (no probe available) keeps the old reconstruction,
-    so the OpenAI-compatible path behaves as it always did. The ``thinking``
+    so a caller without a probe gets the pre-v1.79.63 behaviour. The ``thinking``
     key never reaches the template either way.
     """
     thinking = msg_dict.get('thinking')

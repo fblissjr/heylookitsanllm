@@ -49,7 +49,7 @@ class TestEndpointDiscovery:
         from heylook_llm.server import get_api_endpoints
 
         found = set(get_api_endpoints(self._app()))
-        assert "/v1/embeddings" in found
+        assert "/v1/data/clear" in found  # mounted on the app itself, not via a router
         assert "/v1/models" in found
 
     def test_only_v1_paths_are_reported(self):

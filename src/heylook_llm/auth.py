@@ -6,7 +6,7 @@ Two independent gates, both opt-in via env vars:
   three admin routers plus ``/v1/data/clear`` and ``/v1/cache/clear``.
   S1.6.
 - ``HEYLOOK_API_KEY`` (header ``Authorization: Bearer <value>``): gates
-  inference endpoints (chat completions, messages, embeddings, RLM,
+  inference endpoints (messages, the conversation generate route, embeddings, RLM,
   hidden-states). C1.5. Loopback traffic is exempt by default; set
   ``HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`` to close the carve-out.
 

@@ -389,7 +389,8 @@ class StreamResult:
         return self.saved_end_reason == "complete"
 
 
-def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> StreamResult:
+def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300,
+                 first_delta: "threading.Event | None" = None) -> StreamResult:
     """POST the generate stream. If stop_after_bytes is set, DISCONNECT once
     that much has arrived -- the walk-away this harness exists to check.
 
@@ -451,6 +452,8 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300) -> S
                 delta = evt.get("delta") or {}
                 piece = delta.get("text") if delta.get("type") == "text_delta" else None
                 if piece:
+                    if first_delta is not None and not res.saw_delta:
+                        first_delta.set()  # the stop check presses Stop from here, not a timer
                     res.saw_delta = True
                     res.text += piece
             if stop_after_bytes is not None and res.saw_delta and read >= stop_after_bytes:
@@ -785,21 +788,32 @@ def arm_checks(server, r, arm, model_id, load_timeout):
 
         # -- Stop keeps the partial, and only the partial --------------------
         if not r.check(f"{arm}: third user message accepted",
-                       say("Count slowly from one to two hundred, one number per line."),
+                       say("Count slowly from one to one thousand, one number per line."),
                        "append refused"):
             return
         holder = {}
+        started = threading.Event()
 
         def _run():
             # Only this thread writes holder; only the main thread reads it,
             # and only after join().
+            #
+            # Stop is pressed the moment the FIRST delta arrives, not after a
+            # fixed sleep: with a three-second timer a fast model finished
+            # first and the Stop path was skipped on that arm every run
+            # (v1.79.66), and a longer prompt did not help because a small
+            # model abbreviates a long count. The 4000-token override keeps
+            # the cap from ending the run for us. The skip branch below stays
+            # as the honest answer if the whole reply lands as one delta.
             try:
-                holder["res"] = stream_until(server, conv_id, {"mode": "append"})
+                holder["res"] = stream_until(server, conv_id,
+                                             {"mode": "append", "overrides": {"max_tokens": 4000}},
+                                             first_delta=started)
             except Exception as e:  # pragma: no cover -- transport oddities
                 holder["err"] = e
         th = threading.Thread(target=_run, daemon=True)
         th.start()
-        time.sleep(3.0)
+        started.wait(30.0)
         st, _ = call(server, "DELETE", f"/v1/conversations/{conv_id}/generate", timeout=30)
         th.join(timeout=120)
         finished_first = bool(holder.get("res") and holder["res"].ended_complete)

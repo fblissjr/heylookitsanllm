@@ -188,9 +188,16 @@ the default's spelling -- a validator that ASSIGNS derived fields must
 restore `__pydantic_fields_set__` or they leak back as "stored");
 `stale_reload_fields` on admin responses is the server-derived
 "saved-but-process-runs-old-value" truth (never rebuild it client-side).
-API routers (counts rot; the list is the point): messages, rlm, conversation, notebook,
-preset, admin, admin_ops, scan_import, jspace (Jacobian-lens interpretability), config (operational
-settings), telemetry (frontend ingestion), requests (cancellation).
+API routers (counts rot; the list is the point): messages, model_ops (load + the
+/v1/models list), monitoring (metrics, profile, capabilities, cache), embeddings,
+hidden_states, rlm, conversation, notebook, preset, admin, admin_ops, scan_import,
+jspace (Jacobian-lens interpretability), config (operational settings), telemetry
+(frontend ingestion), requests (cancellation). `api.py` is APP ASSEMBLY ONLY since
+v1.79.67 (lifespan, the MODEL_BUSY handler, CORS, router mounting, the v3 static
+server, root): every route is a `*_api.py` router, the OpenAPI narrative is
+`openapi_doc.py`, and the guards the inference routes share are `request_guards.py`
+(they were lazy in-function imports from api.py before, to dodge the cycle api.py
+creates by importing every router). A route added to api.py itself is the wrong place.
 ONE INFERENCE WIRE (v1.79.66): `/v1/messages` (Anthropic Messages-conformant plus the
 documented heylook extensions) and the conversation generate route that shares its
 grammar. The OpenAI-compatible `/v1/chat/completions` + `/v1/batch/chat/completions`

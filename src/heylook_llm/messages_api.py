@@ -33,6 +33,8 @@ from heylook_llm.schema.converters import (
     to_stop_reason,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
+from heylook_llm.logprobs import init_logprobs_collector
+from heylook_llm.request_guards import validate_request_sampler
 from heylook_llm.schema.responses import MessageResponse
 from heylook_llm.perf_collector import (
     ChunkTelemetry,
@@ -323,7 +325,6 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     # Route-boundary guard: the deep
     # SamplerNotFound fires on first generator advance and escapes as a 500.
-    from heylook_llm.api import validate_request_sampler
     validate_request_sampler(getattr(chat_request, "sampler", None))
 
     provider_get_ms = 0.0
@@ -381,8 +382,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # emits namespaced heylook_logprobs events; non-streaming lands a
     # logprobs content block. None when logprobs weren't requested or the
     # provider has no tokenizer (the factory logs that case).
-    from heylook_llm.api import _init_logprobs_collector
-    logprobs_collector = _init_logprobs_collector(
+    logprobs_collector = init_logprobs_collector(
         chat_request, provider, request_id, streaming=msg_request.stream)
 
     if msg_request.stream:

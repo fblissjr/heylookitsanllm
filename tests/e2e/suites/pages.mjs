@@ -167,7 +167,9 @@ export async function runPagesSuite({ suite, ctx, config }) {
       ta.value = 'You are a physicist.';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await waitFor(async () => (await driftText(page))?.includes('Differs'),
+    // The line reads "Prompt differs from <name> ..." since v1.79.62 (the chat
+    // suite's twin was updated then; this one still matched the old lead).
+    await waitFor(async () => /differs/i.test((await driftText(page)) ?? ''),
       { message: 'drift line did not flip after a prompt edit' });
     await waitFor(async () => (await chipText())?.includes('(edited)'),
       { message: 'notebook chip did not gain (edited) after the prompt drift' });

@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.capabilities import derived_model_facts
 from heylook_llm.providers.common.generation_gate import ModelBusyError
 
 logger = logging.getLogger(__name__)
@@ -140,3 +141,85 @@ async def load_and_warm(router, model_id: str, warm: bool):
             result["warmed"] = False
             result["warm_error"] = str(e)[:500]
     return result
+
+
+# GET /v1/models is DISCOVERY, not an operation: it was mounted on the app with
+# no API-key dependency (v3 and external clients resolve ids from it before
+# they have anything to authenticate), so it keeps its own router rather than
+# inheriting the load route's require_api_key.
+models_router = APIRouter(tags=["Models"])
+
+
+@models_router.get("/v1/models",
+    summary="List Available Models",
+    description="""
+List all language models currently available on this server.
+
+**Use this endpoint to:**
+- Discover which models are loaded and ready for inference
+- Verify a specific model is available before making requests
+- Get model IDs for use in completion requests
+
+**Returns:**
+- Model IDs. These are INSTALL-LOCAL -- the registry is override-only, so the
+  roster is whatever sits under the scanned folders on this machine. Resolve
+  them here at runtime rather than hardcoding one (this description named a
+  concrete id for years after that model was gone).
+- `provider`, `modalities`, and `capabilities` per row. Gate features on
+  `capabilities` (what this server will SERVE) rather than `modalities` (what
+  the checkpoint author declared) -- they differ on purpose.
+- The OpenAI list shape (`object: "list"`, `data: [...]`), which is what the bundled frontend and external clients read
+- Only shows models marked as `enabled: true` in models.toml
+    """,
+    response_description="List of available models (OpenAI list shape, heylook fields per row)",
+)
+def list_models(request: Request):
+    """Get the list of available models (OpenAI list shape) with capabilities.
+
+    Plain ``def`` (FastAPI threadpool), NOT ``async def``: deriving
+    capabilities reads each model dir's ``config.json`` -- the template probes
+    have always done so, and since v1.79.43 the vision capability resolves
+    through the loader router, which stats the dir too. That is the same
+    per-row filesystem cost that moved the two admin read routes off the event
+    loop; the reads are mtime/lru cached and cheap on a warm local disk, and
+    unbounded on a slow or network-mounted one.
+    """
+    router = request.app.state.router_instance
+    models_data = []
+
+    for model_id in router.list_available_models():
+        model_entry = {
+            "id": model_id,
+            "object": "model",
+            "owned_by": "user",
+        }
+
+        # Add capabilities and provider if available from config
+        model_config = router.app_config.get_model_config(model_id)
+        if model_config:
+            model_entry["provider"] = model_config.provider
+
+            # modalities = full author-declared DESCRIPTION (text/vision/audio/
+            # video); capabilities below stays gated to what the server actually
+            # SERVES (image input today) -- description != served.
+            modalities = getattr(model_config.config, "modalities", None)
+            if modalities:
+                model_entry["modalities"] = modalities
+
+            # Capabilities, the thinking default and the context window come
+            # from the ONE derivation the admin row also reads
+            # (capabilities.derived_model_facts), so a page reading either
+            # list gates on the same capabilities, labels its "model default"
+            # thinking choice with the value generation will use, and can
+            # size a prompt against the ceiling the provider enforces instead
+            # of learning it from a 400. `context_length` is null when the
+            # files do not say.
+            facts = derived_model_facts(model_config)
+            if facts.capabilities:
+                model_entry["capabilities"] = facts.capabilities
+            model_entry["thinking_default"] = facts.thinking_default
+            model_entry["context_length"] = facts.context_length
+
+        models_data.append(model_entry)
+
+    return {"object": "list", "data": models_data}

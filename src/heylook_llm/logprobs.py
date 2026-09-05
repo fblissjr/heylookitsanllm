@@ -201,3 +201,32 @@ class StreamingLogprobsCollector(LogprobsCollector):
             # Return the last added entry as a delta
             return {"content": [self.content[-1].to_dict()]}
         return None
+
+
+# The route-side factory (in api.py until v1.79.67): the ONE place a
+# request's logprobs flag turns into a collector, or into a logged None.
+from heylook_llm.diagnostic_logger import diag_event  # noqa: E402
+
+
+def init_logprobs_collector(chat_request, provider, request_id, streaming=True):
+    """Initialize logprobs collector if requested. Returns collector or None."""
+    if not chat_request.logprobs:
+        return None
+    try:
+        CollectorClass = StreamingLogprobsCollector if streaming else LogprobsCollector
+        tokenizer = provider.get_tokenizer() if provider else None
+        if tokenizer:
+            top_logprobs = chat_request.top_logprobs or 5
+            collector = CollectorClass(tokenizer, top_logprobs=top_logprobs)
+            diag_event("logprobs_init", request_id=request_id, level="debug",
+                       top_logprobs=top_logprobs, streaming=streaming)
+            return collector
+        else:
+            logging.warning("Logprobs requested but tokenizer not available from provider")
+            diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                       reason="tokenizer_not_available", streaming=streaming)
+    except Exception as e:
+        logging.warning(f"Failed to initialize logprobs collector: {e}")
+        diag_event("logprobs_init_failed", request_id=request_id, level="warn",
+                   reason=str(e), streaming=streaming)
+    return None

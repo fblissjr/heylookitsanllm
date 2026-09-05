@@ -538,7 +538,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         except ValueError as e:  # referenced blob missing = store corruption
             raise HTTPException(status_code=500, detail=str(e))
 
-        from heylook_llm.api import validate_request_sampler
+        from heylook_llm.request_guards import validate_request_sampler
         validate_request_sampler(chat_request.sampler)
 
         # -- provider + generator (same error mapping as /v1/messages) -----

@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.67]
+
+`api.py` is app assembly; the browser and smoke suites test intent, not the
+model they happen to run on.
+
+### Changed
+
+- **`api.py` holds no routes.** What the route removal left (about 1,340
+  lines) is split along the seam every other surface already used: the
+  `/v1/models` list joins the Models router beside load; system metrics,
+  the performance profile, `/v1/capabilities` and the prompt-cache routes are
+  `monitoring_api.py`; embeddings and the two hidden-state routes are
+  `embeddings_api.py` and `hidden_states_api.py`; the OpenAPI narrative and
+  examples are `openapi_doc.py`; the sampler guard the Messages and generate
+  routes share is `request_guards.py`, an ordinary import now instead of the
+  lazy in-function import the app module's cycle forced; the logprobs
+  collector factory sits with the collectors in `logprobs.py`. `api.py` is
+  the app, its lifespan, the MODEL_BUSY handler, CORS, router mounting, the
+  v3 static server and root, under 500 lines. No route path, tag, guard or
+  response changed; the schema's path set is the same 47 `/v1` paths.
+
+### Fixed
+
+- **The browser chat suite failed a text-only model on its own assumption.**
+  Five checks (capability gating, the vision_tokens control, image attach,
+  paste, and the image round trip) assumed a vision-capable `E2E_MODEL`, and
+  the first failure left the settings drawer open so the next check could
+  not focus the composer. They skip, with the reason, when the model does
+  not advertise `vision`. Run on all three engine arms through system
+  Chrome: 48/48 on the Qwen3.8-27B gguf, 48/48 on gemma-4-26B (mlx-vlm,
+  the resume half genuinely running this time), 43/43 with five skipped on
+  the text-only Qwen3.5-0.8B (mlx-lm).
+- **The smoke suite's stop check could not exercise Stop on a fast model.**
+  It pressed Stop three seconds into a 400-token run, which a small model
+  finished first every time, so the path was skipped on that arm forever,
+  and a longer prompt did not help because a small model abbreviates a long
+  count. Stop is now pressed the moment the first delta arrives, under a
+  4000-token override so the cap cannot end the run first; the skip stays
+  only as the honest answer if a whole reply lands as one delta. Verified
+  live on the fast mlx-lm model: the four stop assertions run and pass.
+- **The pages browser suite caught the split.** Its first run after the
+  move failed the perf page: the metrics route still called the collector
+  getter by its old private name, so the route raised while the schema
+  listed it and every unit and contract test stayed green. Fixed, and
+  `tests/contract/test_monitoring_routes.py` now answers each monitoring
+  route rather than trusting the schema. The suite's other miss was its
+  own: the notebook preset check matched a drift lead the bar has not
+  used since v1.79.62. Rerun 43/43 on the default model, with every page
+  covered (notebook, models, perf, explore, jspace).
+
 ## [1.79.66]
 
 One inference wire, and a continuation crash on the MLX vision pathway that a
