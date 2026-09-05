@@ -1,6 +1,6 @@
 # v3 user guide
 
-last updated: 2026-09-04
+last updated: 2026-09-05
 
 How the `/v3` UI actually behaves, written for the person using it rather than
 the person maintaining it. Where behaviour is surprising, this says so rather
@@ -217,6 +217,12 @@ what the page happens to be holding. Your prompt keystroke, your slider moves an
 your preset apply are all written to the store before the generation reads it.
 This is why a settings change takes effect on the next message with no explicit
 "apply" step.
+
+On a phone the composer is two rows: the message field spans the full width,
+and attach, thinking, prompt preview and Send sit on a row under it. The top
+bar is likewise two tiers, with Chats, the model and the gear on the first
+line and the context, Load and prompt chips on the second. The same controls
+are present as on desktop; only the arrangement changes.
 
 ### The wait before the first token
 

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.68]
+
+The phone chat page stops squeezing the prompt box.
+
+### Changed
+
+- **Phone chat chrome is tiered.** Under 768px the top bar is two tiers:
+  Chats, the model select (stretched to the rest of the line) and the gear
+  on the first, and the context size, Load and the preset and system-prompt
+  chips grouped on a second (`.chat__bar-detail`, a `display:contents`
+  wrapper on desktop). The composer is two rows: the field spans the full
+  width, and attach, thinking, prompt preview and Send sit beneath it, Send at
+  the phone touch size. Before, one wrapping flex row put the chips on line
+  two and the gear alone on a third, and the three icon buttons beside the
+  field left it a third of the screen wide. Every control is still present;
+  desktop geometry is byte-for-byte what it was (measured against HEAD).
+  Rule recorded in DESIGN.md §7. `bun run e2e:render` green.
+
 ## [1.79.67]
 
 `api.py` is app assembly; the browser and smoke suites test intent, not the

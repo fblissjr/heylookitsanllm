@@ -596,6 +596,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .chat__ctx-select { max-width: 8rem; }
 .chat__bar-spacer { flex: 1; }
 .chat__convs-toggle { display: none; }
+/* Desktop: the detail group is invisible to layout (see chat.js); the phone
+   block below turns it into the bar's second line. */
+.chat__bar-detail { display: contents; }
 
 .chat__messages {
   flex: 1;
@@ -946,14 +949,49 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
     min-height: 44px;
     padding: 0.55rem 0.9rem;
   }
-  /* The bar is a single non-wrapping flex row, so at phone widths the model
-     select plus both chips squeeze the sysprompt chip down to an ellipsis --
-     "No system prompt" collapsing to a sliver defeats the whole reason it is
-     always rendered. Let the row wrap instead: the spacer still pushes the
-     gear to the right of the first line, and the chips take a second line at
-     full width rather than becoming unreadable. */
-  .chat__bar { flex-wrap: wrap; row-gap: 0.4rem; }
+  /* Two tiers, not one wrapping row. Tier one is the controls that must be
+     one tap away at all times -- Chats, the model select (stretched to what
+     is left of the line, its desktop max-width lifted), the gear. Tier two is
+     the detail group (context size, Load, preset + system-prompt chips) on a
+     line of its own, wrapping only among themselves. A single wrapping row
+     broke wherever the widths fell: at 402pt the chips took line two and the
+     gear stranded alone on a third, 165px of header before the first
+     message. The spacer is dropped here because a flex:1 sibling would split
+     the line with the select instead of letting it fill. */
+  .chat__bar { flex-wrap: wrap; row-gap: 0.35rem; padding: 0.5rem 0.75rem; }
+  .chat__bar > select { flex: 1 1 0; min-width: 0; max-width: none; }
+  .chat__bar-spacer { display: none; }
+  .chat__bar-detail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.4rem;
+    flex: 1 0 100%;
+    min-width: 0;
+    order: 1;   /* after the gear, which follows it in DOM order */
+  }
+  .chat__ctx-select { flex: 1 1 8rem; }
   .chat__sysprompt-chip { max-width: 100%; }
+
+  /* The composer is two rows on a phone: the field spans the width, and the
+     tool buttons plus Send sit on a row beneath it. In the desktop single-row
+     shape the three 44px icon buttons and Send cost ~250px of a 402pt line
+     and left the field 147px wide -- a prompt box you could not see a
+     sentence in. Splitting the row is what phone chat clients do, and it
+     hides nothing: every button keeps its §7 touch size, and the field keeps
+     its pixel cap so the toolbar and Send stay on screen as it grows. */
+  .chat__messages { padding: 1rem 0.75rem 0.5rem; }
+  .chat__composer {
+    flex-wrap: wrap;
+    gap: 0.4rem 0.5rem;
+    padding: 0 0.75rem 0.6rem;
+  }
+  .chat__composer textarea { flex: 1 0 100%; order: -1; }
+  .chat__composer .btn--primary {
+    margin-left: auto;
+    min-height: 44px;
+    padding: 0.55rem 1.1rem;
+  }
 }
 
 /* ================= page css sections (merged from per-page builds) ================= */

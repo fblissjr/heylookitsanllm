@@ -383,13 +383,20 @@ function buildSkeleton(ctx) {
   });
 
   const thread = createEl('section', { class: 'chat__thread' }, [
+    // The bar's second tier (context size, Load, the two chips) is grouped so
+    // the phone layout can put it on its own line: on desktop the wrapper is
+    // display:contents and the bar is the flat row it always was. Without a
+    // wrapper a wrapped flex row breaks wherever the widths happen to fall,
+    // which at 402pt left the gear alone on a third row under the chips.
     createEl('header', { class: 'chat__bar' }, [
       convsToggle,
       s.modelSelect,
-      s.ctxSelect.element,
-      s.loadNowBtn,
-      s.presetChip,
-      s.sysPromptChip,
+      createEl('div', { class: 'chat__bar-detail' }, [
+        s.ctxSelect.element,
+        s.loadNowBtn,
+        s.presetChip,
+        s.sysPromptChip,
+      ]),
       createEl('div', { class: 'chat__bar-spacer' }),
       settingsBtn,
     ]),
