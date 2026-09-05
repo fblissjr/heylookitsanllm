@@ -277,13 +277,28 @@ class _FakeHfForDetok:
     eos_token_ids = {0}
     chat_template = None
     clean_up_tokenization_spaces = False
-    _pieces = {1: " need", 2: " the"}
+
+    def __init__(self):
+        self._pieces = {1: " need", 2: " the"}
 
     def get_vocab(self):
         return {"<eos>": 0}
 
     def decode(self, ids, **_kw):
         return "".join(self._pieces.get(i, "") for i in ids)
+
+    def encode(self, text, **_kw):
+        # mlx-lm 0.32's naive detokenizer probes encode/decode of "a ,b" at
+        # construction to learn whether decode drops spaces; round-trip it.
+        ids = [k for k, v in self._pieces.items() if v == text]
+        if not ids:
+            ids = [100 + len(self._pieces)]
+            self._pieces[ids[0]] = text
+        return ids
+
+    def apply_chat_template(self, *_a, **_kw):
+        # mlx-lm (0.32) probes this on the tokenizer CLASS at wrap time.
+        return ""
 
 
 class TestEnsureGenTokenizerPicksAStreamingDetokenizer:

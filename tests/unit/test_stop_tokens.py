@@ -86,6 +86,10 @@ class _FakeHfTokenizer:
     def get_vocab(self):
         return {}
 
+    def apply_chat_template(self, *_a, **_kw):
+        # mlx-lm (0.32) probes this on the tokenizer CLASS at wrap time.
+        return ""
+
 
 @pytest.mark.unit
 class TestEnsureGenTokenizer:
