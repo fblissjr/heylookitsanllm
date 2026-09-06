@@ -12,7 +12,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from heylook_llm import __version__
@@ -285,135 +285,11 @@ async def clear_all_data(request: Request):
     result = await _clear(conn)
     return result
 
-# Serve the frontend at / (v1.79.76: it moved out of apps/ to frontend/ and
-# the /v3 mount is gone -- there is no v1 or v2 left to distinguish it from).
-#
-# NO SPA FALLBACK, and that is the load-bearing part. The app routes on the
-# HASH (`#/chat`), so the server only ever sees `/` and real asset paths --
-# there are no deep server-side routes to fall back FOR. Serving index.html
-# for anything unmatched would instead destroy 404 for the whole API: a
-# typo'd `/v1/mesages` would answer 200 with a web page. So an unknown path
-# 404s, which also gives `/v3` and `/v2` their "this mount is gone" answer
-# for free. If the frontend ever moves to the History API, this decision has
-# to be revisited along with it.
-import pathlib as _pathlib
-_frontend_dir = (_pathlib.Path(__file__).resolve().parent.parent.parent / "frontend").resolve()
-if _frontend_dir.is_dir():
-    import gzip as _gzip
-    import hashlib as _hashlib
-    from email.utils import formatdate as _formatdate
-    from mimetypes import guess_type
-
-    from starlette.responses import FileResponse, Response
-
-    # v3 has no build step and no content hashes in its URLs, so a cached
-    # module can only ever be invalidated by revalidation. Without an explicit
-    # Cache-Control a browser applies HEURISTIC freshness (~10% of the file's
-    # age at cache time) and skips the request entirely -- which silently
-    # mixes module versions: frequently-edited files (chat.js) refetch while
-    # rarely-edited ones (preset-bar.js) serve stale for hours, and the new
-    # caller calls into the old module ("X is not a function"). no-cache keeps
-    # every asset revalidating, which is the property worth having.
-    #
-    # What it used to COST is the part that was wrong. Starlette's FileResponse
-    # sets an etag but has no conditional-request branch (only StaticFiles
-    # does), so every revalidation was answered with the whole file -- 427KB
-    # across 22 assets, on every load. The note here used to call that "free
-    # for a localhost frontend", which is true right up until the client is a
-    # phone: iOS Safari discards backgrounded tabs and reloads the document, so
-    # it was a half-megabyte transfer per wake-from-eviction. Answering
-    # If-None-Match makes an unchanged asset cost a header round trip and no
-    # body, with the same no-stale-module guarantee.
-    _NO_CACHE = {"Cache-Control": "no-cache"}
-    # Text assets only, and only above the size where a round trip dominates.
-    _GZIP_TYPES = (".js", ".mjs", ".css", ".html", ".json", ".svg")
-    _GZIP_MIN = 1024
-
-    def _asset_etag(stat_result) -> str:
-        """Byte-identical to starlette's FileResponse etag (responses.py)."""
-        base = f"{stat_result.st_mtime}-{stat_result.st_size}"
-        return f'"{_hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
-
-    # Compressed bytes keyed on the same (mtime, size) the etag derives from.
-    # The tree is static between edits, so this is a hit after the first
-    # request; without it every cache-missing load re-compressed ~20 assets at
-    # level 6 on the event loop -- the same loop delivering SSE tokens.
-    # Bounded by the number of gzip-eligible files in the tree (one entry each,
-    # older generations of the same path evicted on write), not by traffic.
-    _gzip_cache: dict = {}
-
-    def _file_response(path, request: Request):
-        stat_result = path.stat()
-        base_etag = _asset_etag(stat_result)
-        wants_gzip = (path.suffix in _GZIP_TYPES
-                      and stat_result.st_size >= _GZIP_MIN
-                      and "gzip" in request.headers.get("accept-encoding", ""))
-        # RFC 9110: distinct entity-tags per content-coding. One etag across
-        # both representations lets a shared cache answer an identity request
-        # with a gzip body (or 304 an identity copy against a gzip validator).
-        etag = f'{base_etag[:-1]}-gzip"' if wants_gzip else base_etag
-        # Vary on EVERY exit, not just the compressed one -- a 304 or an
-        # identity 200 stored without it is the same cache-poisoning bug.
-        headers = {**_NO_CACHE, "etag": etag, "vary": "accept-encoding"}
-
-        if etag in [t.strip().removeprefix("W/")
-                    for t in request.headers.get("if-none-match", "").split(",")]:
-            return Response(status_code=304, headers=headers)
-
-        if wants_gzip:
-            key = (str(path), stat_result.st_mtime, stat_result.st_size)
-            body = _gzip_cache.get(key)
-            if body is None:
-                body = _gzip.compress(path.read_bytes(), compresslevel=6)
-                # Evict older generations of THIS FILE, not the whole tree. The
-                # key carries mtime+size, so an edited file lands on a new key
-                # and its predecessor would otherwise linger -- that is what
-                # "one generation at a time" was reaching for. Clearing the
-                # whole dict achieved the opposite: every asset of a ~20-file
-                # page load evicted the previous one, so the cache held exactly
-                # ONE entry, nothing was ever a hit, and the level-6 compression
-                # this exists to keep off the event loop ran on every load --
-                # the same loop delivering SSE tokens.
-                for stale in [k for k in _gzip_cache if k[0] == key[0]]:
-                    del _gzip_cache[stale]
-                _gzip_cache[key] = body
-            return Response(
-                content=body,
-                media_type=guess_type(path.name)[0] or "application/octet-stream",
-                headers={
-                    **headers,
-                    "last-modified": _formatdate(stat_result.st_mtime, usegmt=True),
-                    "content-encoding": "gzip",
-                },
-            )
-        return FileResponse(path, stat_result=stat_result, headers=headers)
-
-    # Plain `def`, not `async def`: these stat, read and gzip files, all of
-    # which block. Starlette runs a sync handler in a threadpool, which is the
-    # same reason the two admin routes that read model directories are sync --
-    # the event loop here is the one delivering SSE tokens.
-    @app.get("/", include_in_schema=False)
-    def serve_frontend_index(request: Request):
-        return _file_response(_frontend_dir / "index.html", request)
-
-    @app.get("/{rest:path}", include_in_schema=False)
-    def serve_frontend_asset(request: Request, rest: str):
-        """A real file, or 404. Registered after every router, so /v1, /docs
-        and /openapi.json match first and are never reachable here."""
-        resolved = (_frontend_dir / rest).resolve()
-        # The guard is load-bearing NOW in a way it was not under apps/:
-        # `../pyproject.toml` used to resolve to a path that did not exist, so
-        # is_file() was what actually refused it. From frontend/ it resolves
-        # to the real repo-root file.
-        if resolved.is_relative_to(_frontend_dir) and resolved.is_file():
-            return _file_response(resolved, request)
-        raise HTTPException(status_code=404, detail="Not found")
-else:
-    logging.warning(
-        "Frontend directory not found at %s -- no UI will be served. Every "
-        "frontend route is skipped, the server starts clean, and / answers 404.",
-        _frontend_dir,
-    )
+# The frontend at `/`. Registered here, after every router, because the asset
+# route is a catch-all: ordering is what keeps /v1, /docs and /openapi.json
+# reachable. Mechanics and their invariants live in frontend_static.py.
+from heylook_llm.frontend_static import mount_frontend
+mount_frontend(app)
 
 
 # The generated document lives in openapi_doc.py; FastAPI caches it on the

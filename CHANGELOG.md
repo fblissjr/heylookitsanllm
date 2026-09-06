@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.77]
+
+The static file handler moves out of `api.py` into its own module.
+
+### Changed
+
+- **`frontend_static.py`** now owns serving the frontend; `api.py` calls
+  `mount_frontend(app)` and is back to wiring (425 -> 301 lines). The handler
+  was sanctioned in `api.py` -- CLAUDE.md names the static server as legitimate
+  app-assembly content -- but it was the only substantial logic in a file whose
+  job is assembly, and it carries invariants bought with real bugs (revalidate
+  always, revalidate without a body, one etag per content-coding, evict the
+  gzip cache per path) that now have a docstring of their own instead of being
+  buried mid-file. Deliberately a SEPARATE commit from the move: a rename plus
+  a path change is verifiable by eye, and folding an extraction into it would
+  have made the one commit you most want to trust the hardest to read.
+- `mount_frontend(app)` MUST be called after every router is included. The
+  asset route is a catch-all and registration order is the only thing keeping
+  `/v1`, `/docs` and `/openapi.json` reachable, so the call stays in the same
+  position the inline block occupied. Its docstring says so.
+- The gzip-cache contract check now patches `frontend_static._gzip` rather than
+  `api._gzip`, and `api.py` drops the imports the extraction orphaned.
+
+### Notes
+
+- Backend suite 1859 passed, contract mount checks 11/11.
+
 ## [1.79.76]
 
 The frontend becomes core: it lives at `frontend/` and is served at `/`.

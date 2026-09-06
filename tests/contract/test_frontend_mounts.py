@@ -131,7 +131,7 @@ def test_the_gzip_cache_survives_a_multi_asset_page_load(client):
     """
     import gzip as _real_gzip
     from unittest.mock import patch
-    import heylook_llm.api as api
+    import heylook_llm.frontend_static as fe
 
     hdrs = {"accept-encoding": "gzip"}
     assets = ["/js/app.js", "/js/api.js", "/js/utils.js"]
@@ -144,7 +144,7 @@ def test_the_gzip_cache_survives_a_multi_asset_page_load(client):
         calls.append(compresslevel)
         return _real_gzip.compress(data, compresslevel=compresslevel)
 
-    with patch.object(api._gzip, "compress", counting_compress):
+    with patch.object(fe._gzip, "compress", counting_compress):
         for a in assets:
             r = client.get(a, headers=hdrs)
             assert r.headers.get("content-encoding") == "gzip"

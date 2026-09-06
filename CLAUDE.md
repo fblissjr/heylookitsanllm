@@ -194,9 +194,12 @@ API routers (counts rot; the list is the point): messages, model_ops (load + the
 hidden_states, rlm, conversation, notebook, preset, admin, admin_ops, scan_import,
 config (operational settings), telemetry
 (frontend ingestion), requests (cancellation). `api.py` is APP ASSEMBLY ONLY since
-v1.79.67 (lifespan, the MODEL_BUSY handler, CORS, router mounting, the v3 static
-server, root): every route is a `*_api.py` router, the OpenAPI narrative is
-`openapi_doc.py`, and the guards the inference routes share are `request_guards.py`
+v1.79.67 (lifespan, the MODEL_BUSY handler, CORS, router mounting): every route is
+a `*_api.py` router, the OpenAPI narrative is `openapi_doc.py`, the static frontend
+is `frontend_static.py` (extracted v1.79.77 -- `mount_frontend(app)` MUST be called
+after every router, because the asset route is a CATCH-ALL and registration order is
+the only thing keeping `/v1`, `/docs` and `/openapi.json` reachable), root is gone
+(v1.79.76: the frontend serves `/`), and the guards the inference routes share are `request_guards.py`
 (they were lazy in-function imports from api.py before, to dodge the cycle api.py
 creates by importing every router). A route added to api.py itself is the wrong place.
 ONE INFERENCE WIRE (v1.79.66): `/v1/messages` (Anthropic Messages-conformant plus the
