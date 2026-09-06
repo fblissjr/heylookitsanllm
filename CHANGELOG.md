@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3]
+
+Redundancy found by auditing the codebase for things a future change would have
+to remember to do twice. No behaviour change; suite green.
+
+### Changed
+
+- **The severity-to-verbosity map had two copies.** `_SEVERITY_MIN_LEVEL`
+  (`error`/`warn` -> minimal, `info` -> standard, `debug` -> debug) sat
+  byte-identically in `diagnostic_logger.py` and `telemetry_api.py` with no
+  shared source, so adding a severity edited one of the two and the server-side
+  and client-submitted event surfaces would have silently disagreed about what
+  gets written. It now lives once on the spine as
+  `observability.SEVERITY_MIN_LEVEL`, beside the `_LEVEL_ORDER` vocabulary it
+  maps onto; both modules already imported `observability`, so nothing moved
+  but the constant. This is the defect class this file keeps naming -- a
+  hand-copied constant list is a defect with a delay.
+- **`db.py`'s filter-and-refuse pair was open-coded three times** (message,
+  notebook and preset updaters). Now one `_updatable(fields, allowed)` helper.
+  The allowlists themselves stay hand-written per table: those names are
+  interpolated into UPDATE statements, so being explicit IS the injection
+  guard. What was worth sharing is the refusal -- an empty result has to raise,
+  or "every key you sent was unrecognized" becomes an UPDATE that touches
+  nothing and reports success.
+
+### Fixed
+
+- **A contract pin outlived what it pinned.** `test_mlxvlm_surface.py` still
+  listed `logprobs` in the upstream `GenerationResponse` fields it guards,
+  while its own docstring says it pins "the ones `from_engine` getattrs" --
+  and `from_engine` stopped reading it when logprobs went with the token
+  explorer (v1.79.74). The pin was guarding a field nothing consumes, so an
+  upstream removal would have gone red for something heylook no longer wants.
+
 ## [2.0.2]
 
 The live coverage 2.0.0 shipped without, and the harness defect that would have

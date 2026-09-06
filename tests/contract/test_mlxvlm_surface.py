@@ -404,7 +404,11 @@ class TestGenerationResponse:
     the attr-patch mechanism itself; from_engine only reads.)"""
 
     EXPECTED_FIELDS = {
-        "text", "token", "logprobs", "from_draft", "prompt_tokens", "prompt_tps",
+        # `logprobs` was pinned here until 2026-09-06. from_engine stopped
+        # reading it when logprobs went with the token explorer (v1.79.74), so
+        # the pin guarded a field nothing consumes -- an upstream removal would
+        # have gone red for something heylook no longer wants.
+        "text", "token", "from_draft", "prompt_tokens", "prompt_tps",
         "generation_tokens", "generation_tps", "peak_memory", "finish_reason",
     }
 

@@ -48,6 +48,24 @@ _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset(
     {"title", "content", "system_prompt", "model_id", "params", "applied_preset_id"}
 )
 
+
+def _updatable(fields: dict, allowed: frozenset[str]) -> dict:
+    """Narrow an update payload to `allowed`, refusing an empty result.
+
+    The allowlists stay hand-written on purpose -- these names are interpolated
+    into UPDATE statements, so they are the injection guard and being explicit
+    IS the point. What was worth sharing is this filter-and-refuse pair, which
+    stood open-coded at the head of the message, notebook and preset updaters
+    until 2026-09-06. Refusing an empty result is the load-bearing half: it
+    turns "every key you sent was unrecognized" into a loud error instead of an
+    UPDATE that silently touches nothing and reports success.
+    """
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        raise ValueError(f"No updatable fields provided (allowed: {sorted(allowed)})")
+    return updates
+
+
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS conversations (
     id          TEXT PRIMARY KEY,
@@ -804,9 +822,7 @@ async def update_message(
     ``content`` accepts a string or a content-block list. Raises ``ValueError``
     if no recognized fields are provided.
     """
-    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_MESSAGE_FIELDS}
-    if not updates:
-        raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_MESSAGE_FIELDS)})")
+    updates = _updatable(fields, _UPDATABLE_MESSAGE_FIELDS)
 
     now = _now_iso()
     col_updates = dict(updates)
@@ -1078,9 +1094,7 @@ async def update_notebook(
 
     Allowed fields include ``params`` (per-notebook sampler settings, a JSON
     object -- same shape + shared encode/decode as conversations)."""
-    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_NOTEBOOK_FIELDS}
-    if not updates:
-        raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_NOTEBOOK_FIELDS)})")
+    updates = _updatable(fields, _UPDATABLE_NOTEBOOK_FIELDS)
 
     sql_updates = dict(updates)
     if "params" in sql_updates:
@@ -1212,9 +1226,7 @@ async def update_preset(db: Store, preset_id: str, **fields) -> dict | None:
 
     Raises ValueError on no/invalid fields, PresetNameTaken on a name collision.
     """
-    updates = {k: v for k, v in fields.items() if k in _UPDATABLE_PRESET_FIELDS}
-    if not updates:
-        raise ValueError(f"No updatable fields provided (allowed: {sorted(_UPDATABLE_PRESET_FIELDS)})")
+    updates = _updatable(fields, _UPDATABLE_PRESET_FIELDS)
     updates = _validate_preset_fields(updates)
     if "params" in updates:
         updates["params"] = orjson.dumps(updates["params"]).decode()

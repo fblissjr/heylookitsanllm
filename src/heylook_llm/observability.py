@@ -37,6 +37,24 @@ logger = logging.getLogger(__name__)
 # gates out everything without a special-case.
 _LEVEL_ORDER: dict[str, int] = {"off": 0, "minimal": 1, "standard": 2, "debug": 3}
 
+# Severity -> the verbosity a caller must be at for that severity to be
+# recorded. An error/warning is worth keeping as soon as observability is on at
+# all (minimal); info needs standard; debug needs debug. `off` still suppresses
+# everything, via _LEVEL_ORDER above.
+#
+# ONE copy, here, because both producers gate on it and they are different
+# modules: diagnostic_logger (server-side diag events) and telemetry_api
+# (events submitted by the frontend). It lived in both as a hand-copied dict
+# until 2026-09-06 -- adding a severity edited one of the two and the surfaces
+# silently disagreed about what gets written. The spine owns the level
+# vocabulary, so it owns the mapping onto it.
+SEVERITY_MIN_LEVEL: dict[str, str] = {
+    "error": "minimal",
+    "warn": "minimal",
+    "info": "standard",
+    "debug": "debug",
+}
+
 _STREAMS: dict[str, str] = {"metrics": "metrics.jsonl", "events": "events.jsonl"}
 
 # In-process cached config. Defaults match the schema default (off, ./logs):

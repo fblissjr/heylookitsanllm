@@ -18,15 +18,9 @@ import traceback
 
 from heylook_llm import observability
 
-# diag severity -> spine verbosity gate. An error/warning is worth recording as
-# soon as observability is on at all (minimal); info needs standard; debug needs
-# debug. `off` still suppresses everything (off = zero telemetry, by design).
-_SEVERITY_MIN_LEVEL = {
-    "error": "minimal",
-    "warn": "minimal",
-    "info": "standard",
-    "debug": "debug",
-}
+# diag severity -> spine verbosity gate. The mapping itself lives on the spine
+# (observability.SEVERITY_MIN_LEVEL) because telemetry_api gates client-submitted
+# events on the same table; it was duplicated here until 2026-09-06.
 
 
 def diag_event(
@@ -41,7 +35,8 @@ def diag_event(
         event_type: e.g. 'request_start', 'model_load', 'request_error'
         request_id: correlation ID from X-Request-ID header (carried as a field)
         level: SEVERITY -- 'error', 'warn', 'info', 'debug' -- carried as a field
-               and mapped to the spine verbosity gate (see _SEVERITY_MIN_LEVEL).
+               and mapped to the spine verbosity gate
+               (observability.SEVERITY_MIN_LEVEL).
         **data: key-value fields, flattened onto the record (queryable top-level).
 
     Best-effort: record_event never raises.
@@ -53,7 +48,7 @@ def diag_event(
     observability.record_event(
         event_type,
         tier="events",
-        min_level=_SEVERITY_MIN_LEVEL.get(level, "standard"),
+        min_level=observability.SEVERITY_MIN_LEVEL.get(level, "standard"),
         source="backend",
         fields=fields,
     )

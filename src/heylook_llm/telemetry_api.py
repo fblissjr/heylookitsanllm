@@ -24,8 +24,8 @@ telemetry_router = APIRouter(prefix="/v1/telemetry", tags=["Telemetry"])
 
 _MAX_BATCH = 100
 _MAX_FIELD_CHARS = 2000
-# client-event severity -> spine verbosity gate (client_error surfaces at minimal)
-_SEVERITY_MIN_LEVEL = {"error": "minimal", "warn": "minimal", "info": "standard", "debug": "debug"}
+# client-event severity -> spine verbosity gate. Shared with diagnostic_logger
+# via the spine so a new severity cannot be added to only one of them.
 _RESERVED = {"type", "level"}
 
 
@@ -62,7 +62,7 @@ async def ingest_events(payload: dict = Body(...)):
         observability.record_event(
             str(ev["type"]),
             tier="events",
-            min_level=_SEVERITY_MIN_LEVEL.get(level, "standard"),
+            min_level=observability.SEVERITY_MIN_LEVEL.get(level, "standard"),
             source="frontend-v3",
             fields=fields,
         )
