@@ -26,7 +26,10 @@ The server finds the binary there with zero config (its last-resort fallback);
 Two self-checks keep the build honest: a checkout that has gone shallow is
 repaired before building (llama.cpp stamps its build number from history
 depth, so a shallow clone mislabels every binary), and after the build the
-binary's self-reported version must match the rev that was built.
+binary's self-reported version must match the rev that was built. A configure
+that fails against a REUSED build tree is retried once with its CMakeCache.txt
+dropped -- cmake caches find_package results as paths it never re-checks, so an
+upgraded system library can break a tree whose source is fine.
 
 Examples:
   uv run scripts/build_llama.py                # newest release, build it
@@ -333,6 +336,14 @@ def libomp_flags() -> list[str]:
     ]
 
 
+def configure(cmake: str, src: Path, build_dir: Path,
+              generator: list[str], args: list[str]) -> int:
+    """cmake's configure step, reporting its exit code instead of dying on it."""
+    cmd = [cmake, "-S", str(src), "-B", str(build_dir), *generator, *args]
+    print(dim("$ " + " ".join(cmd)))
+    return subprocess.run(cmd, check=False).returncode
+
+
 def build(path: Path, args: list[str], jobs: int, clean: bool,
           *, want_openmp: bool) -> Path:
     cmake = shutil.which("cmake")
@@ -364,11 +375,49 @@ def build(path: Path, args: list[str], jobs: int, clean: bool,
     else:
         generator = ["-G", "Ninja"] if shutil.which("ninja") else []
 
-    run([cmake, "-S", str(path), "-B", str(build_dir), *generator, *args])
+    rc = configure(cmake, path, build_dir, generator, args)
+
+    # A REUSED build tree can fail to configure for reasons that have nothing to
+    # do with the source. cmake caches every find_package result as a FILEPATH
+    # and never re-checks that the file is still there, so a package manager
+    # upgrading a library out from under the tree leaves dangling paths that
+    # STILL READ AS FOUND: on 2026-09-06 homebrew replaced openssl@3 3.6.3 with
+    # 3.6.4, FindOpenSSL's REQUIRED_VARS (non-empty strings, not files) passed,
+    # its imported targets (guarded on EXISTS) were never created, and
+    # llama.cpp's vendored cpp-httplib died on `OpenSSL::SSL ... target was not
+    # found` with nothing in the message pointing at the cache.
+    #
+    # The stale state is CMakeCache.txt and nothing else, so that is all this
+    # removes -- objects, and the WORKING BINARY FROM THE LAST BUILD, survive a
+    # heal that goes on to fail. (`--clean` remains the bigger hammer, and the
+    # only one that can throw away a binary.) The generator has to be re-passed
+    # because it lived in the cache too; without it cmake would default to Make
+    # in a tree full of ninja files. Only for a REUSED tree: a fresh one that
+    # fails has a real problem, and retrying it would print the same error twice
+    # and call it hardening.
+    if rc != 0 and cached:
+        print(yellow("  configure failed against the existing build tree; "
+                     "dropping its CMakeCache.txt and configuring once more "
+                     "(a cached find_package path can outlive the file it names)"))
+        (build_dir / "CMakeCache.txt").unlink(missing_ok=True)
+        cached_gen = cached.get("CMAKE_GENERATOR")
+        generator = ["-G", cached_gen] if cached_gen else generator
+        rc = configure(cmake, path, build_dir, generator, args)
+        if rc == 0:
+            print(green("  configure succeeded on a fresh cache -- the old one "
+                        "was stale"))
+        else:
+            die(f"cmake configure failed ({rc}) with a fresh cache too, so this "
+                f"is not a stale cache -- read the cmake error above. "
+                f"`--clean` discards the whole build tree if you want to rule "
+                f"the tree out entirely.")
+    if rc != 0:
+        die(f"cmake configure failed ({rc})")
 
     # ggml only WARNS when OpenMP is missing and links the threadpool build
-    # anyway. Read back what cmake resolved and refuse to hand over a
-    # silently-downgraded binary that would poison an A/B.
+    # anyway. Read back what cmake resolved -- the POST-heal cache, since a heal
+    # rewrites it -- and refuse to hand over a silently-downgraded binary that
+    # would poison an A/B.
     effective = read_cmake_cache(build_dir)
     if want_openmp and effective.get("GGML_OPENMP_ENABLED", "OFF").upper() != "ON":
         die("--openmp was requested but cmake resolved GGML_OPENMP_ENABLED=OFF "

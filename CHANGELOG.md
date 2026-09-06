@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7]
+
+### Fixed
+
+- **`build_llama.py` died on a build tree that had gone stale under it.** cmake
+  caches every `find_package` result as a `FILEPATH` and never re-checks that
+  the file is still there. Homebrew replaced `openssl@3` 3.6.3 with 3.6.4;
+  `FindOpenSSL`'s `REQUIRED_VARS` are non-empty strings rather than files, so
+  `OpenSSL_FOUND` stayed true against three dangling paths, while its imported
+  targets (guarded on `EXISTS`) were never created -- and llama.cpp's vendored
+  cpp-httplib links `OpenSSL::SSL` on the strength of `OpenSSL_FOUND` alone.
+  Result: `target was not found`, a message naming neither OpenSSL nor the
+  cache, for a source tree that was fine. A configure that fails against a
+  REUSED tree is now retried once with `CMakeCache.txt` dropped. Only the cache
+  file goes, so objects and the last good binary survive a heal that then
+  fails, and only a reused tree is retried -- a fresh one that fails has a real
+  problem. Both halves are pinned by `tests/unit/test_build_llama_stale_cache.py`
+  against real cmake, and both assertions were run red first: pre-fix `build()`
+  dies on the same scenario, and an rmtree-flavoured heal destroys the binary
+  the second assertion says survives. A third test pins the `--openmp`
+  downgrade guard that sits directly below the configure call -- the first cut
+  of this change deleted it along with the line it replaced, and nothing said
+  so, because `want_openmp` is only ever True behind a flag no test passed.
+
 ## [2.0.6]
 
 Four defects found by an independent review of v2.0.2-2.0.5. Every one was in

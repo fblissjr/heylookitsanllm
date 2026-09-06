@@ -132,6 +132,20 @@ reads `GGML_OPENMP_ENABLED` back out of `CMakeCache.txt` after configure and
 **refuses to build** if it came back OFF. The manifest records the resolved
 cache values (`effective`), not just the requested args, for the same reason.
 
+**A configure failure is retried once with `CMakeCache.txt` dropped.** cmake
+caches every `find_package` result as a `FILEPATH` and never re-checks that the
+file is still there, so a package manager upgrading a library out from under an
+existing build tree leaves dangling paths that still read as *found*. Seen
+2026-09-06: Homebrew replaced `openssl@3` 3.6.3 with 3.6.4, `FindOpenSSL`'s
+`REQUIRED_VARS` (non-empty strings, not files) still passed, its imported
+targets (guarded on `EXISTS`) were never created, and llama.cpp's vendored
+cpp-httplib failed with `OpenSSL::SSL ... target was not found` -- a message
+that names neither OpenSSL's absence nor the cache. The source was fine; the
+tree was stale. The retry drops the cache file and nothing else, so objects and
+the last good binary survive a heal that goes on to fail, and it fires only for
+a **reused** tree: a fresh tree that fails to configure has a real problem.
+`--clean` remains the bigger hammer.
+
 Deliberately **not** set: `GGML_METAL_NDEBUG`. It compiles out load-time
 logging only -- including the "allocated size is greater than the recommended
 max working set size" warning. That is the ceiling that actually refuses loads
