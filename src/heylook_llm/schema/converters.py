@@ -20,7 +20,6 @@ from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.schema.content_blocks import (
     AudioBlock,
     ImageBlock,
-    LogprobsBlock,
     TextBlock,
     ThinkingBlock,
 )
@@ -114,8 +113,6 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         seed=request.seed,
         enable_thinking=request.thinking,
         reasoning_effort=request.reasoning_effort,
-        logprobs=request.logprobs,
-        top_logprobs=request.top_logprobs,
         sampler=request.sampler,
         vision_tokens=request.vision_tokens,
         stream_options=stream_options,
@@ -177,11 +174,6 @@ def from_openai_response_dict(
         text = message.get("content", "")
         if text:
             content_blocks.append(TextBlock(text=text))
-
-        # Logprobs
-        logprobs_data = choice.get("logprobs")
-        if logprobs_data and logprobs_data.get("content"):
-            content_blocks.append(LogprobsBlock(tokens=logprobs_data["content"]))
 
     # Usage
     usage_dict = response_dict.get("usage", {})

@@ -15,7 +15,6 @@ class ProviderCapability(BaseModel):
     supports_streaming: bool = True
     supports_vision: bool = False
     supports_thinking: bool = False
-    supports_logprobs: bool = False
     supports_hidden_states: bool = False
     supports_batch: bool = False
     supports_embeddings: bool = False

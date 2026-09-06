@@ -36,7 +36,6 @@ class TestGenerationChunkShape:
         c = GenerationChunk()
         assert c.text == ""
         assert c.token is None
-        assert c.logprobs is None
         assert c.thinking is None
         assert c.finish_reason is None
         assert c.prompt_tokens == 0
@@ -57,7 +56,6 @@ class TestGenerationChunkShape:
         engine = SimpleNamespace(
             text="tok",
             token=42,
-            logprobs="fake-array",
             finish_reason="stop",
             prompt_tokens=10,
             generation_tokens=5,
@@ -68,7 +66,6 @@ class TestGenerationChunkShape:
         c = GenerationChunk.from_engine(engine)
         assert c.text == "tok"
         assert c.token == 42
-        assert c.logprobs == "fake-array"
         assert c.finish_reason == "stop"
         assert c.prompt_tokens == 10
         assert c.generation_tokens == 5

@@ -34,7 +34,7 @@ v1.79.18). A
 cached flag fed by scroll events was tried first and rejected: pinning coalesces
 those events to a handful per generation, so it went stale whenever the viewport
 changed underneath it -- a phone keyboard, every time. Notebook's painter got the same rate
-limit and explore's thinking box now appends its delta instead of rewriting the
+limit, and the secondary panes append their deltas instead of rewriting the
 whole string per token. Its growth with response length went from superlinear to
 near-linear, which is the durable part; the measured figures live in the
 CHANGELOG entry rather than here. Previously 2026-08-17 (v1.72.0-.1): chat attachments grew a third input: drag-and-drop
@@ -138,7 +138,7 @@ js/
   document-writer.js          # the per-document write path shared by chat + notebook: system-prompt PUT chain and the keepalive ordering rule, applied_preset_id stamp
   utils.js                    # createEl/debounce/autoGrow + throttleToFrame (cheap work) and throttleToInterval (painters whose cost scales with the document)
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
-  pages/  chat.js  notebook.js  models.js  perf.js  explore.js  jspace.js
+  pages/  chat.js  notebook.js  models.js  perf.js  jspace.js
 ```
 
 Batch was dropped from v3 scope on purpose (spec §6); the backend endpoint remains.
@@ -148,7 +148,7 @@ Batch was dropped from v3 scope on purpose (spec §6); the backend endpoint rema
 **Done / SOLID**: chat (conversations CRUD, streaming w/ thinking blocks,
 edit/regenerate/delete via position truncation, stop=partial saved, status
 telemetry line, mobile drawer); shared layer (page.js, hash router, api.js,
-streaming.js, settings cascade); notebook, models, perf, explore; **images in
+streaming.js, settings cascade); notebook, models, perf; **images in
 chat** (attach incl. iPhone camera roll + paste, thumbnail strip, rendered from
 the content-block store, v1.34.20); **per-conversation system prompt + saved
 presets** (v1.34.22); **DRY shared settings drawer** (2026-07-11: chat settings
@@ -205,30 +205,27 @@ auto-appear from template detection, no `models.toml` flag needed).
 | notebook | `/v1/notebooks` CRUD, `/v1/messages` (v1.74.0, Phase 3b) |
 | models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
-| explore | `/v1/messages` **with the `heylook_logprobs` extension** (v1.74.0) |
 | jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
 | shared | `/v1/data/clear` (danger zone; presets are EXCLUDED from it -- config, not data) |
 
 Chat generates over the **conversation-scoped generate endpoint** (Messages
 SSE grammar + the `heylook_saved` extension -- v1.66.0, plan Phase 2; the
-server builds the request from the store and owns persistence). Notebook and
-explore stream `/v1/messages` since v1.74.0 (Phase 3b): logprobs ride the
-namespaced `heylook_logprobs` events, timing rides `message_stop.performance`,
-and no v3 page has spoken `/v1/chat/completions` since; the endpoint itself
-was removed in v1.79.66 (the owner's other project speaks `/v1/messages`).
+server builds the request from the store and owns persistence). Notebook
+streams `/v1/messages` since v1.74.0 (Phase 3b): timing rides
+`message_stop.performance`, and no v3 page has spoken `/v1/chat/completions`
+since; the endpoint itself was removed in v1.79.66 (the owner's other project
+speaks `/v1/messages`). The `heylook_logprobs` extension went with the token
+explorer in v1.79.74 -- it had no other consumer.
 
 ### Load-bearing contracts that MUST survive any backend change (plan guardrails)
 
-1. **Logprobs** (Token Explorer / explore.js) -- response via logprob fields on
-   the stream. Messages spec has no logprobs -> they ship as namespaced
-   extensions.
-2. **Streaming telemetry** (status line + perf) -- timing/KV fields ride
+1. **Streaming telemetry** (status line + perf) -- timing/KV fields ride
    `message_stop.performance` on both Messages-grammar wires, no opt-in flag
    (the `stream_options.include_usage` usage chunk went with the OpenAI route
    in v1.79.66).
-3. **Sampler cascade** -- v3 sends only non-null keys; **null = backend cascade**.
+2. **Sampler cascade** -- v3 sends only non-null keys; **null = backend cascade**.
    Don't make the backend require fields v3 omits.
-4. **Server-side persistence** is a product pillar (what makes iPhone+desktop
+3. **Server-side persistence** is a product pillar (what makes iPhone+desktop
    co-primary work; position-based truncation builds on it). The DuckDB store is
    that pillar.
 

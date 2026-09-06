@@ -163,8 +163,7 @@ composer focus is worth building.
   intercepted + aborted so the negative model never loads).
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
   preservation, notebook preset bar (save/drift/armed apply + the
-  applied-preset chip), explore logprob
-  chips + keyboard nav, perf no-polling proof + ranges, models list/load/unload
+  applied-preset chip), perf no-polling proof + ranges, models list/load/unload
   + HF scan, jspace Jacobian-lens workspace (lens-gated), danger-zone clear.
 
 ## Settings drawer (interaction gotcha)

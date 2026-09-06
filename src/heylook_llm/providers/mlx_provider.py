@@ -674,7 +674,6 @@ class VLMVisionStrategy:
         yield GenerationChunk(
             text=first_text,
             token=first_token_id,
-            logprobs=first_logprobs.squeeze(0),
         )
 
         # Phase 2: Continue generation using the language model wrapper

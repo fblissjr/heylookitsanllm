@@ -89,15 +89,6 @@ class MessageCreateRequest(BaseModel):
                     "low|medium|high). Absent = the template's own default.",
     )
 
-    # Logprobs
-    logprobs: Optional[bool] = Field(
-        default=None, description="Return log probabilities for output tokens"
-    )
-    top_logprobs: Optional[int] = Field(
-        default=None, ge=0, le=20,
-        description="Number of top token alternatives with log probabilities (0-20)",
-    )
-
     # heylook extensions (Phase 3b namespace) -- same semantics and bounds as
     # the internal ChatRequest, so no sampler knob exists that this wire cannot
     # reach. `sampler` is the SamplerRegistry bundle name (never a /v1/presets

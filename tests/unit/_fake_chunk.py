@@ -25,7 +25,6 @@ def fake_chunk(
     return SimpleNamespace(
         text=text,
         token=None,
-        logprobs=None,
         finish_reason=finish_reason,
         prompt_tokens=prompt_tokens,
         generation_tokens=generation_tokens,

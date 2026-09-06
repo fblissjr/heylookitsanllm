@@ -151,8 +151,8 @@ async function currentConversation(page) {
 // inter-arrival gaps.
 //
 // Measured against /v1/messages: the delivery machinery under test is shared by
-// every streaming route, and this is a wire v3 actually speaks (notebook and
-// explore) -- it used to probe /v1/chat/completions, which no page had used
+// every streaming route, and this is a wire v3 actually speaks (notebook)
+// -- it used to probe /v1/chat/completions, which no page had used
 // since v1.74.0 (the route itself was removed in v1.79.66), so the comment
 // claiming it was "the path the app uses" had quietly stopped being true. Deliberately NOT chat's own
 // /v1/conversations/{id}/generate: that path PERSISTS, and an extra assistant
@@ -231,8 +231,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     // filter to real routes (defined dataset.route) before counting.
     const routes = await page.$$eval('#nav-desktop .nav-item', (els) =>
       [...new Set(els.map((e) => e.dataset.route).filter(Boolean))]);
-    assert(routes.length === 6, `expected 6 routes, got ${routes.join(',')}`);
-    assert(['chat', 'notebook', 'explore', 'jspace', 'models', 'perf'].every((r) => routes.includes(r)),
+    assert(routes.length === 5, `expected 5 routes, got ${routes.join(',')}`);
+    assert(['chat', 'notebook', 'jspace', 'models', 'perf'].every((r) => routes.includes(r)),
       `missing route in ${routes.join(',')}`);
   });
 

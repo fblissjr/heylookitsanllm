@@ -12,8 +12,7 @@
 //   Sampling panel               -- buildSettingsPanel({caps}); 'disabled' renders
 //                                   it read-only + greedy note; 'hidden' omits it
 //   Display panel                -- buildDisplayPanel() (global, model-agnostic)
-//   ...contribution.extras()     -- page-owned trailing controls (jspace toggles,
-//                                   explore's logprobs note)
+//   ...contribution.extras()     -- page-owned trailing controls (jspace toggles)
 //
 // Focus guard (migrated from chat's old inline panel): a background/async
 // repaint must never destroy uncommitted text in a field the user is editing.
@@ -90,8 +89,8 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
   document.body.append(backdropEl, panelEl);
 
   // Escape closes. Focus lives inside the drawer while open (modal backdrop),
-  // so this never races page-level Escape handlers (jspace unpin, explore
-  // deselect), which are bound to their page roots.
+  // so this never races page-level Escape handlers (jspace unpin), which
+  // are bound to their page roots.
   document.addEventListener('keydown', (e) => {
     if (isOpen && e.key === 'Escape') close();
   });

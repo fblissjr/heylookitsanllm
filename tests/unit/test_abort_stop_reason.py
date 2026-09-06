@@ -38,7 +38,6 @@ class _Chunk:
         self.finish_reason = finish_reason
         self.thinking = None
         self.token = None
-        self.logprobs = None
 
 
 def _aborted_generator(abort_event, n=3):

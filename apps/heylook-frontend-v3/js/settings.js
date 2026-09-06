@@ -261,7 +261,7 @@ export const DISPLAY_META = {
     // any request changing shape. WHICH pages honor it is the page's own
     // `displayPrefs` declaration, not a flag here -- "no surface honors this" is
     // exactly "no page lists it", so a second gate here could only disagree with
-    // that one, silently. The token-ARRAY surfaces (explore, jspace) are the
+    // that one, silently. The token-ARRAY surfaces (jspace) are the
     // other half of "one preference, two render mechanisms" and declare nothing.
     wire: 'show_special_tokens',
     help: 'Keep the model\'s special tokens (<|im_end|>, <bos>, role markers) in '

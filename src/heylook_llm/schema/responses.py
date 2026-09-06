@@ -143,7 +143,6 @@ class MessageResponse(BaseModel):
     Content is a list of typed blocks. A simple text response is
     [TextBlock(text="...")]. A thinking model might return
     [ThinkingBlock(text="..."), TextBlock(text="...")].
-    Logprobs, if requested, appear as a LogprobsBlock at the end.
     """
     id: str = Field(..., description="Unique message ID, prefixed 'msg_'")
     type: Literal["message"] = "message"

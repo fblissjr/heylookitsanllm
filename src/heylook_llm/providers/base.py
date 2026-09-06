@@ -23,14 +23,12 @@ class GenerationChunk:
     ``text``. MLX providers never set it (their reasoning arrives inline in
     ``text`` and is split by the parser stack).
 
-    ``logprobs`` stays engine-native (mx.array on MLX; top-n dicts elsewhere);
-    logprobs.py owns the per-engine conversion. Errors are NOT chunks --
-    providers raise GenerationFailed (see below), so there is no error flag.
+    Errors are NOT chunks -- providers raise GenerationFailed (see below),
+    so there is no error flag.
     """
 
     text: str = ""
     token: Optional[int] = None
-    logprobs: Any = None
     thinking: Optional[str] = None
     finish_reason: Optional[str] = None
     prompt_tokens: int = 0
@@ -54,7 +52,6 @@ class GenerationChunk:
         return cls(
             text=getattr(r, "text", "") or "",
             token=getattr(r, "token", None),
-            logprobs=getattr(r, "logprobs", None),
             finish_reason=getattr(r, "finish_reason", None),
             prompt_tokens=getattr(r, "prompt_tokens", 0) or 0,
             generation_tokens=getattr(r, "generation_tokens", 0) or 0,

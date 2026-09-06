@@ -169,7 +169,7 @@ def infer_model_capabilities(model_config, effective_loader: str | None = None) 
     # GGUF via llama-server subprocess. Capabilities come from the entry's
     # own description (mmproj sidecar / modalities / explicit thinking flag)
     # -- no template probing (the template lives inside GGUF metadata), and
-    # NEVER hidden_states/logprobs (MLX-only surfaces). The explicit
+    # NEVER hidden_states (an MLX-only surface). The explicit
     # ModelConfig.capabilities override short-circuits this entirely.
     elif provider == "gguf":
         capabilities.append("chat")

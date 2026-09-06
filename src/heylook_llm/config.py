@@ -107,10 +107,6 @@ class ChatRequest(BaseModel):
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
-    # Logprobs support (OpenAI-compatible)
-    logprobs: Optional[bool] = Field(default=None, description="Return log probabilities for output tokens")
-    top_logprobs: Optional[int] = Field(default=None, ge=0, le=20, description="Number of top tokens with log probabilities (0-20)")
-
     # Streaming options (OpenAI-compatible)
     stream_options: Optional[Dict] = Field(default=None, description="Options for streaming: {include_usage: true} to get usage stats")
 
@@ -154,6 +150,23 @@ class ChatRequest(BaseModel):
                 "'preset' was renamed to 'sampler' (named sampler configs); "
                 "/v1/presets user presets are a separate system"
             )
+        return data
+
+    @model_validator(mode='before')
+    @classmethod
+    def reject_removed_logprobs_fields(cls, data):
+        # 2026-09-06: logprobs came out with the token explorer, its only
+        # consumer. Same reasoning as the preset guard above -- ChatRequest
+        # ignores unknown keys, so without this a client asking for logprobs
+        # would be answered as though it had not asked.
+        if isinstance(data, dict):
+            present = [k for k in ('logprobs', 'top_logprobs') if k in data]
+            if present:
+                raise ValueError(
+                    f"{', '.join(present)} is no longer supported: logprobs were "
+                    "removed with the token explorer (the only surface that read "
+                    "them) and the heylook_logprobs SSE extension is gone with them"
+                )
         return data
 
     @field_validator('messages', mode='before')

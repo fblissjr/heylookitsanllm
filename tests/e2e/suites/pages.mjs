@@ -1,5 +1,5 @@
 // Pages suite: notebook (autosave + generate-at-cursor tail preservation),
-// explore (logprob chips + keyboard nav), perf (no-polling proof + ranges),
+// perf (no-polling proof + ranges),
 // jspace (Jacobian-lens workspace strip, lens-gated), models (list/load+warm/
 // unload + folder & HF scan + danger-zone clear). Data is cleared by the
 // orchestrator before this runs; the danger-zone clear check runs LAST.
@@ -244,70 +244,6 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await armedClick(del);
     await del.dispose();
     await waitFor(async () => (await count(page, '.notebook-item')) === before - 1, { message: 'notebook not removed' });
-  });
-
-  // =========================== EXPLORE ===================================
-  await suite.check('explore page shows its prompt when idle', async () => {
-    await ctx.open('#/explore');
-    await page.waitForSelector('.explore');
-    const hint = await textOf(page, '.explore__strip .empty-state');
-    assert(hint && hint.length > 0, 'no explore empty-state hint');
-  });
-
-  await suite.check('explore model select contains the E2E model', async () => {
-    // POLL, never one-shot -- same fill-race as the chat suite's select.
-    await waitFor(async () => {
-      const opts = await page.$$eval('.explore__bar select option', (els) => els.map((e) => e.value));
-      return opts.includes(config.model);
-    }, { message: 'model never appeared in the explore select' });
-    await page.select('.explore__bar select', config.model);
-  });
-
-  await suite.check('generating produces per-token logprob chips', async () => {
-    // Waits on the FINAL 'Generate' label (idle), not a transient 'Stop' --
-    // correct even if start+finish land inside one poll interval.
-    // "Count: one two three" is a strong completion cue (unlike a
-    // conversational prompt) specifically to keep an immediate-EOS empty
-    // completion vanishingly unlikely -- checks 13-16 below all depend on
-    // this producing >=1 token (order-coupled: explore builds up one
-    // continuous result, not independent per-check state).
-    await page.click('.explore__composer textarea');
-    await page.type('.explore__composer textarea', 'Count: one two three');
-    await clickByText(page, '.explore__composer button', 'Generate');
-    await waitForLabel(page, '.explore__composer button', 'Generate', { timeout: 30000, message: 'explore generation did not finish' });
-    await waitFor(async () => (await count(page, '.explore__strip .tok')) > 0, { message: 'no token chips' });
-  });
-
-  await suite.check('clicking a token opens its detail panel', async () => {
-    await page.click('.explore__strip .tok');
-    await waitFor(async () => (await count(page, '.tok--selected')) === 1, { message: 'token not selected' });
-    const detail = await textOf(page, '.explore__detail');
-    assert(/Logprob/i.test(detail) && /Probability/i.test(detail) && /Position/i.test(detail),
-      `detail panel incomplete: "${detail?.slice(0, 80)}"`);
-  });
-
-  await suite.check('detail panel lists top alternatives', async () => {
-    const bars = await count(page, '.explore__detail .explore-bar');
-    assert(bars > 0, 'no alternative bars rendered');
-  });
-
-  await suite.check('arrow keys move the token selection', async () => {
-    await page.focus('.explore');
-    const idxOf = () => page.$$eval('.explore__strip .tok', (els) => els.findIndex((e) => e.classList.contains('tok--selected')));
-    const start = await idxOf();
-    await page.keyboard.press('ArrowRight');
-    await waitFor(async () => (await idxOf()) !== start, { message: 'ArrowRight did not move selection' });
-    const afterRight = await idxOf();
-    await page.keyboard.press('ArrowLeft');
-    await waitFor(async () => (await idxOf()) !== afterRight, { message: 'ArrowLeft did not move selection' });
-  });
-
-  await suite.check('Escape clears the selection', async () => {
-    await page.focus('.explore');
-    await page.keyboard.press('Escape');
-    await waitFor(async () => (await count(page, '.tok--selected')) === 0, { message: 'selection not cleared' });
-    const detail = await textOf(page, '.explore__detail');
-    assert(/Click a token/i.test(detail), `detail did not reset: "${detail?.slice(0, 60)}"`);
   });
 
   // ============================= PERF ====================================

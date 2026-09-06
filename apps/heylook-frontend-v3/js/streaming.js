@@ -11,8 +11,8 @@
 // - SSE comment lines (": keepalive", sent every 5s during long prefill)
 //   must be ignored, not parsed as data.
 // - Both endpoints speak the Messages event grammar (spec §4): typed
-//   `event:` lines. Extensions are namespaced: `heylook_logprobs` rides
-//   per-token on /v1/messages; `heylook_saved` is ALWAYS the last event on
+//   `event:` lines. Extensions are namespaced: `heylook_saved` is ALWAYS
+//   the last event on
 //   /generate and carries the authoritative stored rows; timing/KV telemetry
 //   rides message_stop's `performance` object. An in-band `error` event ENDS
 //   generation on /v1/messages but may PRECEDE heylook_saved on /generate --
@@ -108,15 +108,12 @@ async function streamTypedSSE(url, body, { signal, onRetryWait, onEvent }) {
   }
 }
 
-// POST /v1/messages, streaming (Phase 3b: the wire notebook and explore
-// speak; chat has its conversation-scoped sibling below).
+// POST /v1/messages, streaming (Phase 3b: the wire notebook speaks; chat
+// has its conversation-scoped sibling below).
 //
 // Callbacks:
 //   onToken(delta, full)     -- text deltas
 //   onThinking(delta, full)  -- thinking deltas
-//   onLogprobs(tokens)       -- heylook_logprobs extension: an array of
-//                               {token, logprob, top_logprobs} entries, the
-//                               same shape the OpenAI wire carried
 //   onRetryWait(sec, n)      -- 503 model_overloaded auto-retry
 //   onComplete({content, thinking, usage, performance, aborted})
 //                            -- performance is message_stop's object incl.
@@ -128,7 +125,6 @@ export async function streamMessages(body, {
   signal,
   onToken,
   onThinking,
-  onLogprobs,
   onRetryWait,
   onProgress,
   onComplete,
@@ -153,9 +149,7 @@ export async function streamMessages(body, {
             content += d.text;
             onToken?.(d.text, content);
           }
-        } else if (eventType === 'heylook_logprobs') {
-          if (data.tokens?.length) onLogprobs?.(data.tokens);
-        } else if (eventType === 'heylook_progress') {
+                } else if (eventType === 'heylook_progress') {
           if (data.prefill) onProgress?.(data.prefill);
         } else if (eventType === 'message_delta') {
           usage = data.usage ?? usage;

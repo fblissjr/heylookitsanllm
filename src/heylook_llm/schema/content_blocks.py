@@ -251,40 +251,6 @@ InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]
 # Output content blocks (appear in assistant responses)
 # ---------------------------------------------------------------------------
 
-class TokenLogprob(BaseModel):
-    """Log probability information for a single token."""
-    token: str
-    logprob: float
-    bytes: Optional[List[int]] = None
-
-
-class TopLogprob(BaseModel):
-    """A candidate token with its log probability."""
-    token: str
-    token_id: Optional[int] = None
-    logprob: float
-    bytes: Optional[List[int]] = None
-
-
-class TokenLogprobEntry(BaseModel):
-    """Full logprob entry for one generated token position."""
-    token: str
-    token_id: Optional[int] = None
-    logprob: float
-    bytes: Optional[List[int]] = None
-    top_logprobs: List[TopLogprob] = Field(default_factory=list)
-
-
-class LogprobsBlock(BaseModel):
-    """Token-level log probability data for a generation.
-
-    Returned when `logprobs: true` is set in the request. Contains per-token
-    probability information for the generated sequence.
-    """
-    type: Literal["logprobs"] = "logprobs"
-    tokens: List[TokenLogprobEntry] = Field(default_factory=list)
-
-
 class HiddenStatesBlock(BaseModel):
     """Hidden states extraction results.
 
@@ -309,4 +275,4 @@ class HiddenStatesBlock(BaseModel):
 
 
 # Union of all block types that can appear in an assistant response
-OutputContentBlock = Union[TextBlock, ThinkingBlock, LogprobsBlock, HiddenStatesBlock]
+OutputContentBlock = Union[TextBlock, ThinkingBlock, HiddenStatesBlock]

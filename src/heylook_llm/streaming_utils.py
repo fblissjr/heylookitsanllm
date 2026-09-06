@@ -92,7 +92,7 @@ KEEPALIVE_INTERVAL_S = 5.0
 # for a control event and so spoke SSE comments, is gone). Keepalive is
 # Anthropic's own `ping` event, which every Messages client already handles;
 # prefill progress is a namespaced extension event, the same shape as
-# heylook_logprobs / heylook_saved. Every SSE consume loop guards with
+# heylook_saved. Every SSE consume loop guards with
 # control_frame() BEFORE touching chunk fields -- the markers have none of
 # GenerationChunk's, and forgetting the guard is a proven failure mode
 # (/v1/messages carried the crash from its creation until 2026-08-13).

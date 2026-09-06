@@ -33,7 +33,6 @@ from heylook_llm.schema.converters import (
     to_stop_reason,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
-from heylook_llm.logprobs import init_logprobs_collector
 from heylook_llm.request_guards import validate_request_sampler
 from heylook_llm.schema.responses import MessageResponse
 from heylook_llm.perf_collector import (
@@ -299,7 +298,7 @@ Create a message using the Messages API format.
 
 Accepts typed content blocks (text, image, and audio on the gguf arm --
 MLX answers 400 for audio) and returns structured output blocks (text,
-thinking, logprobs). System prompt is a top-level parameter,
+thinking). System prompt is a top-level parameter,
 not embedded in the messages array.
 
 Supports streaming via `stream: true`, which returns Server-Sent Events
@@ -378,20 +377,13 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     # (whose raw `thinking` field is missing the whole sampler layer).
     thinking_enabled = provider.effective_thinking(chat_request) if provider else False
 
-    # Same collector the OpenAI wire uses (derived, not copied) -- streaming
-    # emits namespaced heylook_logprobs events; non-streaming lands a
-    # logprobs content block. None when logprobs weren't requested or the
-    # provider has no tokenizer (the factory logs that case).
-    logprobs_collector = init_logprobs_collector(
-        chat_request, provider, request_id, streaming=msg_request.stream)
-
     if msg_request.stream:
         # Tracking lives INSIDE the async generator, not here: the response
         # body outlives this function, so a `with` block around the return
         # would unregister before a single token was produced.
         return StreamingResponse(
             tracked_stream(
-                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), logprobs_collector=logprobs_collector),
+                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation()),
                 request_id, abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
@@ -406,7 +398,6 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
                 generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
                 provider=provider, thinking_enabled=thinking_enabled,
                 continuing=chat_request.is_continuation(),
-                logprobs_collector=logprobs_collector,
                 abort_event=abort_event,
             )
         # Echo the id the server actually tracked. This is the one path DELETE
@@ -435,7 +426,6 @@ async def _non_stream_messages(
     provider=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
-    logprobs_collector=None,
     abort_event=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
@@ -456,11 +446,6 @@ async def _non_stream_messages(
                 full_text += chunk.text
                 token_count += 1
                 telemetry.absorb(chunk)
-                if logprobs_collector is not None:
-                    tid = getattr(chunk, 'token', None)
-                    lp = getattr(chunk, 'logprobs', None)
-                    if tid is not None and lp is not None:
-                        logprobs_collector.add_token(tid, lp)
 
     generation_start = time.time()
     try:
@@ -514,11 +499,6 @@ async def _non_stream_messages(
         message["thinking"] = thinking
 
     choice: dict = {"message": message, "index": 0, "finish_reason": finish_reason}
-    # The docstring promises a logprobs output block -- before this, only the
-    # streaming path delivered it (the non-streaming collector was never
-    # wired). from_openai_response_dict turns this into a LogprobsBlock.
-    if logprobs_collector is not None and logprobs_collector.content:
-        choice["logprobs"] = logprobs_collector.to_dict()
     openai_dict = {
         "model": msg_request.model or "unknown",
         "choices": [choice],
@@ -598,7 +578,6 @@ async def _stream_messages(
     abort_event=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
-    logprobs_collector=None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -648,23 +627,6 @@ async def _stream_messages(
             if chunk_thinking:
                 for event_str in translator.process_presplit_thinking(chunk_thinking):
                     yield event_str
-
-            # Namespaced logprobs extension (Messages has no logprobs of its
-            # own -- spec §4's extension rule). One event per token, emitted
-            # BEFORE the token's text delta, carrying the same entry shape as
-            # the OpenAI wire's logprobs.content (token, logprob,
-            # top_logprobs) so a migrating consumer keeps its parser.
-            if logprobs_collector is not None:
-                chunk_logprobs = getattr(chunk, "logprobs", None)
-                chunk_token = getattr(chunk, "token", None)
-                if chunk_token is not None and chunk_logprobs is not None:
-                    # streaming path always constructs StreamingLogprobsCollector
-                    delta = logprobs_collector.add_token_and_get_delta(chunk_token, chunk_logprobs)  # type: ignore[attr-defined]
-                    if delta:
-                        yield translator._sse("heylook_logprobs", {
-                            "type": "heylook_logprobs",
-                            "tokens": delta["content"],
-                        })
 
             if not chunk.text:
                 continue

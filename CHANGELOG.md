@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.74]
+
+The Token Explorer and the logprobs plumbing behind it are removed.
+
+### Removed
+
+- **Token Explorer page and the whole logprobs path.** The page worked on MLX
+  and was silently useless on gguf: it hard-wires `logprobs: true`, and
+  llama-server emits none, so it generated and showed an empty token strip.
+  Rather than teach the server to advertise a `logprobs` capability for a page
+  that was not being used, the page goes. Gone with it: `explore.js`, its route
+  and CSS, `streaming.js`'s `heylook_logprobs` reader, `logprobs.py`, the
+  collector wiring in `messages_api.py`, `GenerationChunk.logprobs`, the vision
+  first-token logprobs, `ChatRequest`/`MessageCreateRequest.logprobs` and
+  `top_logprobs`, the `LogprobsBlock`/`LogprobsDelta`/`TopLogprob` schema types
+  and their union members, `ProviderCapability.supports_logprobs`, and the
+  `heylook_logprobs` SSE extension from the OpenAPI description.
+- Its tests go with it rather than being ported: the two logprobs classes in
+  `test_messages_stream_extensions.py`, `test_logprobs_forwarded`, the chunk
+  field assertions, and seven explore checks in the e2e pages suite. Two stale
+  `tests/README.md` entries pointing at an `integration/test_logprobs.py` that
+  does not exist went too.
+
+### Changed
+
+- **Asking for logprobs is now refused, not ignored.** `ChatRequest` ignores
+  unknown keys, so deleting the fields alone would answer a client as though it
+  had never asked. A `mode="before"` validator rejects `logprobs` and
+  `top_logprobs` with a message naming the removal -- the same shape as the
+  `preset` -> `sampler` rename guard beside it.
+
+### Notes
+
+- `GenerationChunk.token` STAYS. It looked orphaned once the logprobs block
+  went, but the streaming path passes it to the event translator.
+- `first_logprobs` in the vision prefill also feeds the sampler, so only the
+  chunk field was dropped there; the `mx.eval` beside it is left alone rather
+  than reordering MLX evaluation inside a `wired_limit` block for tidiness.
+- Backend suite green (1901 passed). `bun run e2e:render` green (107/107) --
+  its "a page that ignores the pref does not offer it" check was retargeted
+  from explore to jspace, which is the other token-array surface it names.
+- Doc cleanup here covers live descriptions only; historical narrative (the
+  Phase 3b migration record, the original page-set decision) is left as
+  history.
+
 ## [1.79.73]
 
 The frontend's vendored libraries get a pinning record and a way to notice

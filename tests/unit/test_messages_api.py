@@ -159,18 +159,6 @@ class TestToRequestConversion:
         assert isinstance(content, list)
         assert len(content) == 2
 
-    def test_logprobs_forwarded(self):
-        req = MessageCreateRequest(
-            model="test",
-            messages=[Message(role="user", content="hi")],
-            logprobs=True,
-            top_logprobs=10,
-        )
-        chat_req = to_chat_request(req)
-        assert chat_req.logprobs is True
-        assert chat_req.top_logprobs == 10
-
-
 @pytest.mark.unit
 class TestFromResponseConversion:
     def test_simple_text_response(self):

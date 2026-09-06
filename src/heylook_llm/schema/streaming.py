@@ -53,16 +53,7 @@ class ThinkingDelta(BaseModel):
     text: str = ""
 
 
-class LogprobsDelta(BaseModel):
-    """Incremental logprob data for one token position."""
-    type: Literal["logprobs_delta"] = "logprobs_delta"
-    token: str
-    token_id: Optional[int] = None
-    logprob: float
-    top_logprobs: Optional[list] = None
-
-
-ContentDelta = Union[TextDelta, ThinkingDelta, LogprobsDelta]
+ContentDelta = Union[TextDelta, ThinkingDelta]
 
 
 # ---------------------------------------------------------------------------

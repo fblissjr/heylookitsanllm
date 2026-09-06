@@ -89,7 +89,6 @@ API contract tests using FastAPI TestClient with mocked router/service. No real 
 Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 
 - **test_hidden_states_api.py** -- Hidden states endpoints (raw + structured)
-- **test_logprobs.py** -- Log probability extraction
 - **test_api_integration.py** -- API endpoint validation, MLX provider
 - **test_batch_integration.py** -- Batch text processing
 - **test_embeddings_integration.py** -- Embeddings API
@@ -114,7 +113,6 @@ Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 | Thinking Blocks | Good | unit/test_thinking_parser.py, test_thinking_roundtrip.py | 47 tests |
 | Radix Cache | Good | unit/test_radix_cache.py | 26 tests |
 | Speculative Decoding | Good | unit/test_speculative.py, test_draft_tuner.py | 27 tests |
-| Logprobs | Good | integration/test_logprobs.py | Requires server |
 | VLM Inputs | Good | unit/test_vlm_inputs.py | |
 | Abort/Cancel | Good | unit/test_abort.py | |
 | Samplers | Basic | unit/test_samplers.py | 5 tests |

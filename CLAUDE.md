@@ -239,12 +239,12 @@ drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
 - [docs/architecture/](./docs/architecture/) (config, mlx_provider, ecosystem_strategy + postmortems -- design records and invariants only; live surface = code + /openapi.json) · [docs/rlm_guide.md](./docs/rlm_guide.md) · converting checkpoints to MLX: [docs/mlx_conversion_guide.md](./docs/mlx_conversion_guide.md)
 
 **Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
-JS, no build, served at `/v3`. 6 pages (chat, notebook, models, perf, explore, jspace);
+JS, no build, served at `/v3`. 5 pages (chat, notebook, models, perf, jspace);
 chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
 server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
-position arithmetic -- notebook/explore speak `/v1/messages` since v1.74.0;
+position arithmetic -- notebook speaks `/v1/messages` since v1.74.0;
 the OpenAI-compatible route itself is gone since v1.79.66), takes image (and gguf audio) input + renders
 image content blocks out of the DuckDB store. The page is a MIRROR of the store
 with exactly two invalidation points: document select, and RESUME (`ctx.onResume` ->
@@ -320,7 +320,7 @@ chunk at a time and diffs against a whole-document render, the same technique
 and the same reason as the backend's `TestParserInvariants`. Painters whose
 cost scales with the document use
 `ctx.throttleTime` (~15/s), never `ctx.throttle` (per-frame, correct only for
-cheap work like explore's token strip). Scroll-follow is measured at the TOP of
+cheap work like a token strip). Scroll-follow is measured at the TOP of
 the painter, BEFORE it mutates -- both halves of that are load-bearing. Before
 the write the reads are cache hits (layout is still clean from the last paint)
 rather than a forced re-layout, which matters most on iOS, where
