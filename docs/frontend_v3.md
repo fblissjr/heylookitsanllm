@@ -140,7 +140,7 @@ js/
   document-writer.js          # the per-document write path shared by chat + notebook: system-prompt PUT chain and the keepalive ordering rule, applied_preset_id stamp
   utils.js                    # createEl/debounce/autoGrow + throttleToFrame (cheap work) and throttleToInterval (painters whose cost scales with the document)
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
-  pages/  chat.js  notebook.js  models.js  perf.js  jspace.js
+  pages/  chat.js  notebook.js  models.js  perf.js
 ```
 
 Batch was dropped from v3 scope on purpose (spec §6); the backend endpoint remains.
@@ -207,7 +207,6 @@ auto-appear from template detection, no `models.toml` flag needed).
 | notebook | `/v1/notebooks` CRUD, `/v1/messages` (v1.74.0, Phase 3b) |
 | models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
-| jspace | `/v1/jspace/models`, `/v1/jspace/analyze` (Jacobian-lens workspace read-out) |
 | shared | `/v1/data/clear` (danger zone; presets are EXCLUDED from it -- config, not data) |
 
 Chat generates over the **conversation-scoped generate endpoint** (Messages
@@ -292,17 +291,10 @@ on here.
   (registry-over-scan, add-by-path-anywhere, non-clobbering toml merge) makes
   this page the real model-management UI: add-by-path, edit id/tags/config,
   enable/disable, dedupe, re-scan-as-merge -- so `models.toml` becomes an
-  implementation detail, not the interface. Coupled: j-space **lens
-  management** (fit/convert + "which models have a lens") lands on the same
-  surface, since a lens is another per-model artifact
-  (`adapters/jspace/<model_id>/`). Direction captured in the plan; not yet scoped.
-- **J-space visualizer enhancements (Phase-5-ish)** -- gate cleared + items 1-2
-  shipped v1.34.36-.37 (click-to-pin readout w/ per-cell top-k via the
-  `heatmap_top_k` analyze extension; layer-range slider + aggregation view;
-  "provisional lens" badge off `/v1/jspace/models` `meta`). Remaining: live
-  streaming rows (new SSE analyze endpoint) -> steer/swap/ablate interventions
-  (needs real backend; last). Detail: `docs/jspace_integration_plan.md` Part 2
-  "Frontend visualizer" + the progress note atop `docs/jspace_visualizer_handoff.md`.
+  implementation detail, not the interface. Direction captured in the plan;
+  not yet scoped. (The j-space lens-management coupling this used to name went
+  with the feature in v1.79.75.)
+- **J-space** -- REMOVED v1.79.75, feature and page. Design docs in `docs/archive/`.
 
 ## Verifying v3 in a browser
 

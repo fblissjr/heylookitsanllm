@@ -152,7 +152,7 @@ though streaming stays in `streaming.js`, not `api.js`.
 
 ### 3d. Streaming (`streaming.js`, ~110 lines) — keep as-is conceptually
 SSE via `fetch` + `ReadableStream` (not `EventSource`). Callbacks: `onToken` (delta.content), `onThinking`
-(delta.thinking), `onLogprobs` (delta logprobs — explore only), `onComplete`, `onError`. Adds
+(delta.thinking), `onComplete`, `onError`. Adds
 `stream: true` (the `stream_options.include_usage` opt-in belonged to the OpenAI wire, removed in
 v1.79.66; Messages telemetry needs no flag). **Critical gotchas to preserve (verified against
 backend):**
@@ -279,7 +279,7 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
-  reasoning_effort?, logprobs?, top_logprobs?, sampler?, vision_tokens?,
+  reasoning_effort?, sampler?, vision_tokens?,
   show_special_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
   the rename in `messagesParams()`, settings.js, never a second bag);
@@ -323,54 +323,7 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   Anthropic are enumerated in [api_integration.md](./api_integration.md).
 - Streaming: the Messages SSE grammar (message_start / content_block_* /
   message_delta / message_stop) plus the namespaced extensions: `event:
-  heylook_logprobs` `data:{type,tokens:[{token,logprob,top_logprobs:[{token,
-  logprob}]}]}` — one per token when `logprobs:true`, the entry shape of
-  OpenAI's logprobs.content (which the removed wire carried) so a ported
-  consumer keeps its parser; and `message_stop.performance` additionally carries
-  `peak_memory_gb? / kv_cache_bytes? / queue_wait_ms? / draft_acceptance?`
-  (the heylook_saved.timing vocabulary; absent telemetry is OMITTED, never
-  null). An in-band `error` event ENDS a /v1/messages generation (unlike
-  /generate's, where heylook_saved may still follow). Two control events
-  (v1.79.65) can appear at any point after `message_start` on BOTH
-  Messages-grammar routes: `event: ping` `data:{type:"ping"}`, the
-  grammar's own keepalive, after ~5s of silence wherever it falls (the
-  comment keepalive used to stop at the first token, so a decode stall got
-  nothing); and `event: heylook_progress` `data:{type,prefill:{processed,
-  total}}`, prefill progress in prompt tokens with the cached prefix
-  excluded, one per change, from both engines (mlx-lm's progress callback
-  and llama-server's `return_progress` frames both report into the
-  request's signal channel; `streaming_utils.control_frame` is the ONE
-  table of spellings per wire), only ever before the first content block.
-- Non-streaming: content blocks incl. a `logprobs` block when requested
-  (wired v1.74.0 — the docstring promised it earlier than it existed), plus
-  a `performance` object. Since v1.79.58 BOTH modes draw from one builder
-  (`perf_collector.build_performance`) under one rule — every field present
-  is a real measurement of exactly what its name says; absent (streaming) or
-  `null` (non-streaming) means this mode or engine could not measure it. The
-  per-field account lives in `docs/api_integration.md` §3 and only there;
-  this passage previously restated it and was wrong in two ways at once
-  (it claimed `message_stop` never sends the rates, false since v1.79.54, and
-  named `total_duration_ms`, retired in .58 for having two origins).
-  The two spans are `request_duration_ms` (includes queue wait + model load)
-  and `generation_duration_ms` (excludes both). The thinking/content
-  durations remain streaming-only. The object is `null` outright when the
-  generation produced no tokens (the builder is gated on a token count), so
-  it must be null-checked. `peak_memory_gb` is MLX-only in EVERY mode —
-  `LlamaServerProvider` never sets `peak_memory`, so a gguf model reads null
-  there and always has.
-  NB every `PerformanceInfo` field is Optional since v1.79.54 and the stream
-  has sent both rates since then, so a generated client needs no hand-editing.
-  (This note previously said the opposite and survived the v1.79.58 rewrite of
-  the paragraph directly above it — the same beside-not-instead miss that
-  rewrite was correcting.)
-- Request field removed v1.79.49: `include_performance` is gone from
-  `MessageCreateRequest`. It controlled nothing — this wire returns telemetry
-  unconditionally in both modes — and unknown fields are ignored, so a client
-  still sending it is unaffected. Nothing honours it anywhere since the
-  OpenAI route, which did, was removed in v1.79.66.
-
-**Conversations** (prefix `/v1/conversations`, no auth):
-- `GET /` → `{conversations:[{id,title,model_id,applied_preset_id,created_at,updated_at,generating}], total}` — **no messages, and NO `system_prompt` or `params`** (v1.79.26, `3b44c61`). Both are unbounded and the sidebar reads neither, and the list ships on page load AND on every foreground because resume re-lists. `GET /{id}` is how you get either — a client that reads them off a list row gets `undefined`, silently. The list carries `generating`, which the single-conversation body does not; v3 reads exactly that one field off the row and everything else through the single fetch (`adoptConversationMeta`). **This spec said otherwise until 2026-08-30**: the change updated `test_conversation_api.py` and neither this line nor `tests/e2e/suites/chat.mjs`, whose two `conversations.some(c => c.system_prompt === ...)` assertions have been unsatisfiable since — a shape assumption, which is why v1.79.41's audit of every selector and clicked label in that suite reported them all resolving and was right.
+  (`heylook_logprobs` was REMOVED in v1.79.74 with the token explorer.)
   `updated_at` is a change stamp for the WHOLE conversation: every message
   write (append, edit, delete, truncate, generate commit) bumps it, not only
   metadata PUTs. Clients may skip re-fetching the body when it is unchanged
@@ -767,36 +720,8 @@ bottlenecks}` (in-memory ring buffer, lost on restart; 503/empty if analytics ex
 the bundled named-sampler registry, for scripted clients; distinct from `/v1/presets`
 (saved user prompt+sampler bundles), which is what v3's preset bar uses. `server_version`
 now reports the real package version (was hardcoded "1.0.1").
-**J-space** `GET /v1/jspace/models` → `{models:[id], meta:{[id]:{provisional,fit_date,fit_source,
-n_prompts}}, base_dir}` (models with a fitted lens; `meta` added v1.34.37 — `provisional` means the
-lens sidecar has no own-fit provenance stamp and drives the UI's "provisional lens" badge);
-`POST /v1/jspace/analyze` body `{model, prompt|messages, chat?, heatmap?, heatmap_top_k?,
-max_answer_tokens?, top_k?}` → `{answer, first_answer_token, prompt_tokens, band_layers,
-onset_strip:[{layer,entropy,top_k:[{token,logit}]}], heatmap?:[{layer,cells:[{token,entropy,top_k?}]}],
-heatmap_positions?, features, risk}`. `heatmap_top_k` (v1.34.37, default 0): when >0 each heatmap
-cell also carries `top_k:[{token,logit}]` (descending), enabling per-cell pinned readouts; 0 keeps
-the pre-extension `{token,entropy}` cell shape. Lens-gated (404 if no lens for the model).
-
----
-
-## 5. Per-page functional specs (essentials + must-preserve gotchas)
-
-Each page = `createPage({...})`. Rendering: prefer targeted updates over v2's rebuild-everything-on-every-
-state-change; but full-rebuild is acceptable where it keeps code simpler (these are small pages).
-
-### chat (v2: 815 lines → target far less once pretext + dual-path branching go)
-Conversations sidebar (list/new/select/rename-on-dblclick/delete-with-confirm); model `<select>` (persists
-`model_id` to conv, fire-and-forget); gear → sampler panel scoped to model caps. Send (Enter w/o Shift;
-auto-create conv if none, title = first 50 chars of first message); textarea auto-grow capped 200px. Stream
-assistant response (RAF-throttled DOM writes; blinking cursor; collapsible "Thinking" block above content,
-auto-open while streaming, present only if thinking text arrives). Stop (abort = normal completion, partial
-saved). On complete: persist assistant message, status line `"N tokens · X.XX GB peak · Y KV"` from
-usage/timing. Per-message actions: Edit (inline textarea → Save / Save&Regenerate / Cancel), Regenerate
-(assistant only), Delete (confirm), Copy. (Historical: this build used position-based truncation for
-edit/regenerate/delete; since v1.65–1.73 the generate saga owns truncation server-side and Delete is the
-single-row `DELETE .../messages/{msgId}`.) Near-bottom-aware auto-scroll (only if within 100px, or forced on
-send/switch/stream-start). Stale-response guard: capture `targetConvId` at stream start, bail in callbacks if
-`activeId` changed. beforeunload during stream. Remove the unused `bus.js` import (dead code in v2).
+**J-space** — REMOVED v1.79.75. The `/v1/jspace/*` routes and the page are gone;
+the design docs are in `docs/archive/`.
 
 **Model switching (added 2026-08-11, v1.57.0 -- the §15 arc of the load-options
 design doc, `internal/research/expert_offload_design_frontend.md`):** the select's
@@ -946,6 +871,11 @@ Build stable containers once and update values in place — no full-rebuild-per-
 honest version of the page; do not add auto-refresh, websockets, or live charts.
 
 ### explore / token explorer (v2: 378 lines) — power-user
+
+> REMOVED 2026-09-06 (v1.79.74). The page and the whole logprobs path are
+> gone -- it worked on MLX and was silently useless on gguf, which emits no
+> logprobs. The build spec below is kept as the record of what was built,
+> not as a description of the app.
 Model select, prompt, stream with `logprobs:true, top_logprobs:5`. Render each content token as an inline
 chip colored by `exp(logprob)` (probability→HSL red→green via `probabilityToColor`); whitespace shown as
 visible glyphs (·, ↵, →). Click a chip → detail panel: `logprob | prob%`, position, ranked bar chart of

@@ -160,7 +160,7 @@ The sampling and KV caching logic are ported directly from `mlx-lm`.
 
 ## 3. Known Issues and Trade-offs
 
-*   **First-token asymmetry for vision**: The first token in a vision request is sampled directly from VLM forward pass logits (outside `run_generation()`). Subsequent tokens go through the full generation loop. This means the first token lacks DraftTuner integration and has slightly different logprobs handling (logprobs are computed inline, not via the GenerationResponse path).
+*   **First-token asymmetry for vision**: The first token in a vision request is sampled directly from VLM forward pass logits (outside `run_generation()`). Subsequent tokens go through the full generation loop. This means the first token lacks DraftTuner integration. (It also carried a separate logprobs path until v1.79.74 removed logprobs entirely; the log-softmax there remains because the sampler needs it.)
 
 *   **No radix cache for vision**: Vision requests skip the radix-tree prompt cache because the pre-filled KV cache includes vision embeddings that can't be represented as token sequences. Each vision request does a full VLM forward pass.
 
@@ -373,34 +373,14 @@ prefix) whenever `budget_kwargs` is non-empty -- otherwise a cached
 full-budget encode could be served for a request that asked for a smaller
 one, or vice versa.
 
-## 5. Token-Level Data and Logprobs (IMPLEMENTED 2025-12-15)
+## 5. Token-Level Data and Logprobs (REMOVED v1.79.74)
 
-The MLX provider now exposes token-level data from mlx-lm's `GenerationResponse` objects, enabling OpenAI-compatible logprobs functionality.
+Logprobs were removed with the token explorer, the only surface that read
+them: `logprobs.py`, the collector wiring, `GenerationChunk.logprobs`, the
+request fields and the `heylook_logprobs` SSE extension all went. The
+section that described the implementation is gone with it rather than
+kept as a design record -- it documented a live feature, and a reader
+acting on it would send a field that now answers 422.
 
-### Implementation
-
-When `logprobs=true` is set in a request:
-- The provider yields complete `GenerationResponse` objects instead of just text
-- Each response includes `token` (int) and `logprobs` (mx.array) fields
-- The API layer processes these using collectors from `src/heylook_llm/logprobs.py`
-
-### Path-Specific Support
-
-**Text-Only Path (MLX-LM)**: Full logprobs support
-- Uses `mlx_lm.generate.stream_generate`
-- Returns `GenerationResponse` with token IDs and full-vocabulary log-softmax
-- Supports both streaming and non-streaming logprobs
-
-**Vision Path (VLMVisionStrategy, v1.18.0)**: Partial logprobs support
-- First token: logprobs computed inline from VLM forward pass output (full vocabulary log-softmax)
-- Subsequent tokens: full `GenerationResponse` logprobs via `run_generation()` (same as text path)
-- First token yields a `_VisionTokenResponse` with logprobs, not a standard `GenerationResponse`
-
-### Key Features
-
-1. **Full vocabulary access** - logprobs array contains complete log-softmax over entire vocabulary
-2. **No additional overhead** - logprobs already computed by mlx-lm during generation
-3. **Tokenizer access** - provider.processor.tokenizer used for decoding tokens
-4. **Streaming-aware** - works with both streaming and non-streaming responses
-
-For logprobs implementation details, see [logprobs.md](../../internal/backend/logprobs.md) (if it exists) or consult `src/heylook_llm/logprobs.py` directly.
+`GenerationChunk.token` survives and is still read by both streaming
+paths (it feeds the event translator); only the logprobs field went.

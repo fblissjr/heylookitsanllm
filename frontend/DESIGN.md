@@ -1,5 +1,12 @@
 # v3 design language
 
+> NOTE 2026-09-06 (v1.79.74-75): the **token explorer** and **j-space** pages
+> were removed. Rules below still cite them as examples, and those examples are
+> kept deliberately -- they are what the rule was derived from, and several
+> (the pin/detail pattern, the colour-plus-`title` rule, empty states naming the
+> path out) apply to whatever renders that shape next. Read them as worked
+> examples, not as a description of the current pages.
+
 Last updated: 2026-07-23 (§7 settings entry points: pages may add an in-context
 opener — chat's top-bar gear — alongside the two shell gears; §6 settings
 taxonomy now names the drawer's page-owned lead sections — the shared preset
@@ -58,7 +65,7 @@ Rules:
 - **Chip ink is fixed near-black** (`#1a1a1a`-class), not `--ink`: chip
   backgrounds are data, not theme, and stay light enough for dark ink at L=0.86.
 - **What t means is per-surface and must be titled** (a `title` tooltip at
-  minimum): explore chips use token probability; the jspace strip uses
+  minimum): the removed explore chips used token probability; the jspace strip used
   within-layer rank; the jspace heatmap uses normalized inverse entropy
   (low entropy = confident = green); the risk badge uses `1 − risk`.
 - Chips are `--mono`, `--text-sm` or smaller, radius 3–6px, whitespace rendered
@@ -154,7 +161,7 @@ context, it *manufactures a class of bug*.
    minefield (doubled BOS, python-vs-jinja templates, list-form templates). A
    stripped view can't show you when the prompt was malformed.
 
-Rule, across **jspace, notebook, and token explorer** (and chat where the
+Rule, across **notebook and chat** (and any future token-rendering surface, where the
 rendering path allows): show special tokens **by default**, rendered as visually
 distinct tokens (a dim/outlined chip, `--mono`, whitespace as the honest glyphs
 from §2). Collapsing them is an **opt-in toggle, default off** — never the
@@ -168,12 +175,13 @@ for the decoded-text surfaces in v1.79.6: chat and notebook send
 server skips its declared-specials strip for that request. Two invariants:
 - **Display-only.** The toggle changes rendering, never what is sent to the
   model. This keeps it from becoming a second generation-settings path.
-- **One preference, two render mechanisms.** Token-array surfaces (token
-  explorer, jspace) receive token *ids* and flag/style the special ones;
-  decoded-text surfaces (chat, notebook) render a *string*, so "show specials"
-  means *not stripping them from the decoded text*. Same switch, two code paths —
-  don't ship it as if it were uniform. Only the decoded-text half is wired
-  today; explore and jspace still ignore the pref — and say so structurally: a
+- **One preference, two render mechanisms.** A token-ARRAY surface would
+  receive token *ids* and flag/style the special ones; decoded-text surfaces
+  (chat, notebook) render a *string*, so "show specials" means *not stripping
+  them from the decoded text*. The two token-array surfaces (token explorer,
+  jspace) were removed in v1.79.74-75, so only the decoded-text half exists
+  today — but the DECLARATION mechanism it forced is still load-bearing for
+  models and perf, which honor no display prefs at all: a
   page DECLARES the display prefs it honors (`displayPrefs` on its drawer
   contribution) and passes that same array to `displayWireFields()`, so the
   drawer offers exactly the controls that page acts on. One list, both uses —

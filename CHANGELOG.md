@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.80]
+
+Documentation caught up with what the server actually serves.
+
+### Changed
+
+- **`docs/api_integration.md`** -- the client integration contract -- still
+  listed `logprobs`/`top_logprobs` under Knobs, documented `heylook_logprobs`
+  as a live SSE extension, and asserted a logprobs content block on
+  non-streaming responses. That is the doc a client author reads before
+  sending a field that now answers 422. It says so explicitly instead. Its own
+  closing paragraph warns this hand-maintained list "has been wrong before" --
+  it was again, and in the same way.
+- **`docs/architecture/mlx_provider.md` §5** documented logprobs as
+  "IMPLEMENTED" and pointed at `logprobs.py`, a deleted file. Replaced with
+  what happened, and the first-token note corrected (its log-softmax stays
+  because the sampler needs it).
+- **`docs/frontend_v3_spec.md` §4** -- the section CLAUDE.md calls the
+  authoritative API contract -- still carried the logprobs request fields, the
+  `heylook_logprobs` SSE grammar, the non-streaming block and the two
+  `/v1/jspace/*` endpoints. Fixed. The build-time spec for the explorer page is
+  annotated as removed rather than rewritten; it is the record of what was
+  built.
+- `docs/README.md` had the only broken relative link in the tracked docs
+  (pointing at a doc moved to `docs/archive/`). `docs/frontend_v3.md`,
+  `docs/project/TODO.md`, `README.md`, `PRODUCT.md` and `frontend/DESIGN.md`
+  updated; DESIGN.md gets one note at the top rather than 13 rewrites, because
+  the rules that cite the removed pages as examples are still the rules and the
+  examples are what they were derived from.
+
+### Notes
+
+- **Out of repo and NOT fixed: the `heylook-provider` skill** (v0.15.0 in the
+  plugin cache) still documents `logprobs: true` and `top_logprobs` as valid
+  request fields in its wire reference, and describes the logprobs content
+  block. It is the skill loaded when wiring a client to this server, so a
+  developer following it now gets a 422. It lives in a different repo; the
+  files are `SKILL.md`, `references/wire_reference.md` and
+  `references/gemini_migration.md`.
+- Backend 1860 passed.
+
 ## [1.79.79]
 
 Three targeted reviews of v1.79.72-78 found five real defects. All were mine.

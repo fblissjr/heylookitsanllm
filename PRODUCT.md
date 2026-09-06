@@ -1,6 +1,6 @@
 # Product
 
-Last updated: 2026-07-20 (Product Purpose: added the j-space interpretability
+Last updated: 2026-09-06 (Product Purpose: token explorer and j-space removed
 page, shipped after this doc was first written)
 
 Design context for the heylookitsanllm frontends (current build target: frontend v3,
@@ -22,9 +22,9 @@ no persuasion problem, and no second user to design for.
 ## Product Purpose
 
 A personal frontend for a local LLM server: conversations, a plain-text notebook with
-generate-at-cursor, model load/unload/import administration, on-demand system metrics, a
-token-probability explorer, and a j-space page for reading a model's internal layer-by-layer
-workspace (Jacobian-lens interpretability -- an introspection surface, not a chat feature).
+generate-at-cursor, model load/unload/import administration, and on-demand system
+metrics. (A token-probability explorer and a j-space interpretability page were
+part of this and were removed in v1.79.74-75; see the changelog.)
 Success is the owner reaching for it daily because it is faster, calmer, and more pleasant
 than any hosted alternative -- and because the whole thing stays simple enough to hold in
 one head (vanilla JS, no framework, no build step).

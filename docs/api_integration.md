@@ -404,11 +404,17 @@ more direct lever.
 ### Knobs
 
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
-`repetition_context_size`, `presence_penalty`, `seed`, `logprobs`,
-`top_logprobs`, `sampler`, `vision_tokens`, `thinking`, `reasoning_effort`,
+`repetition_context_size`, `presence_penalty`, `seed`,
+`sampler`, `vision_tokens`, `thinking`, `reasoning_effort`,
 `stream`, `stream_options`, `metadata`.
 
 Every one is optional and **absent means the server's cascade decides**.
+
+`logprobs` and `top_logprobs` were REMOVED in v1.79.74 along with the token
+explorer, the only surface that read them, and so was the
+`heylook_logprobs` SSE extension. Sending either now answers **422** naming
+the removal rather than dropping it silently -- if you are porting an older
+integration, that is the error you will see.
 `max_tokens` is deliberately optional here, unlike Anthropic's required
 field — sending a client-side default silently overrides the server's
 configured floor for the model. Omit what you do not have an opinion about.
@@ -476,11 +482,7 @@ Blocks open and close as the content type switches, so a thinking model emits
 a `thinking` block, closes it, then opens a `text` block. Key on
 `delta.type`, not on block index.
 
-Besides `heylook_progress`, two heylook extensions ride the same stream:
-`event: heylook_logprobs`
-(one per token when `logprobs: true`; entries keep the shape of OpenAI's
-`logprobs.content`, which the removed wire carried, so a ported parser keeps
-working), and extra
+Besides `heylook_progress`, one heylook extension rides the same stream: extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
 `generation_tps` (both since v1.79.54), `peak_memory_gb`, `kv_cache_bytes`,
 `queue_wait_ms`, `draft_acceptance`. Absent telemetry is **omitted, never
@@ -690,9 +692,6 @@ rather than a guarantee, for reasons the closing note gives:
 - **No `stop_sequence` field.** `message_delta.delta` carries `stop_reason`
   alone, and `message_start.message` omits both `stop_reason` and
   `stop_sequence`.
-- **`logprobs` is a content block**, not only a stream extension: a
-  non-streaming response can carry a `logprobs` block in `content` when
-  `logprobs: true` was set.
 - **`stop_sequences` is not accepted.** Anthropic takes it on the request;
   heylook's request model has no such field, so it is ignored rather than
   honoured — a port that relies on it will silently generate past the
@@ -701,13 +700,12 @@ rather than a guarantee, for reasons the closing note gives:
 - **Extensions**: twelve request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), the inspection
-  ones (`logprobs`, `top_logprobs`, `show_special_tokens`), and `sampler`,
+  ones (`show_special_tokens`), and `sampler`,
   `vision_tokens`, `reasoning_effort`, `stream_options`. All are listed
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`;
   this bullet named four of them until v1.79.41, and thirteen until
   v1.79.49 dropped `include_performance` from this wire. On the stream: a
-  `heylook_logprobs` event, a `heylook_progress` event and
-  `message_stop.performance`.
+  `heylook_progress` event and `message_stop.performance`.
 - **`message_start.usage.input_tokens` is 0.** The event is emitted before
   the first chunk is absorbed, so prompt tokens are not known yet. Anthropic
   puts input tokens there; read them off `message_delta.usage` instead.

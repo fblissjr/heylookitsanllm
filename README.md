@@ -19,7 +19,7 @@ subprocess -- one API, one UI, per-model engine choice.
 ## Features
 
 - **One inference API**: Anthropic Messages-conformant `/v1/messages` with
-  typed content blocks (text, image, thinking, logprobs, hidden states) plus
+  typed content blocks (text, image, thinking, hidden states) plus
   documented heylook extensions; `/v1/models` keeps the OpenAI-shaped list for
   discovery clients. The OpenAI-compatible `/v1/chat/completions` route was
   removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the

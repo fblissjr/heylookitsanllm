@@ -70,7 +70,7 @@ entry added 2026-09-05*
   - `/v1/embeddings` (`embeddings.py:216` -> `api.py:1826`): **500**
   - `/v1/hidden_states` (`hidden_states.py:633` -> `api.py:1928`): **500**
   - `/v1/hidden_states/structured` (`hidden_states.py:713` -> `api.py:2026`): **500**
-  - `/v1/jspace/analyze` (`jspace_api.py:80-82`): **400** -- the worst of the
+  - `/v1/jspace/analyze` (`jspace_api.py:80-82`, both REMOVED v1.79.75): **400** -- the worst of the
     set, because it tells a client its REQUEST is malformed for a transient
     self-clearing condition
   - `/v1/rlm/completions` non-streaming (`rlm.py:909` -> `:1052`): 503 with the
@@ -169,7 +169,7 @@ the rlm item remains open; the batch text is kept as record.
   wrong shape non-streaming (no `Retry-After`, no envelope); no status at all
   streaming. Both sites are commented in `rlm.py`.
 - **THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
-  calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` both pin with
+  calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` (removed v1.79.75) both pinned with
   try/finally for exactly this multi-round-over-one-model shape, and batch is
   the outlier. A pinned model cannot be evicted between groups, so the only
   surviving MODEL_BUSY is the initial `get_provider`, where nothing has been
