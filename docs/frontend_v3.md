@@ -109,7 +109,8 @@ to the internal archive on 2026-07-09.
 
 Vanilla JS, **no framework, no bundler, no build step** -- one
 `<script type="module">` bootstraps everything. Served by the FastAPI backend at
-`/` (a mount block in `src/heylook_llm/api.py`; v1.79.76 moved it off `/v3` and
+`/` (`src/heylook_llm/frontend_static.py`, extracted from api.py in v1.79.77;
+v1.79.76 moved it off `/v3` and
 dropped the SPA fallback -- hash routing means the server never sees a deep
 path, so an unknown path 404s and the API keeps its 404s).
 Source of truth for conversations/notebooks/presets is the **server-side DuckDB

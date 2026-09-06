@@ -68,6 +68,13 @@ request flows through). Run against 2.0.1, all three engine arms.
   the guard to `MessageCreateRequest` (on `ChatRequest` it was dead, since
   nothing binds it as a request body), and pydantic answers 422. Corrected
   against a live probe.
+- Two stale references found by reviewing the day's commits as a whole.
+  `docs/frontend_v3.md` still pointed at "a mount block in `api.py`" for the
+  frontend mount, which v1.79.77 extracted to `frontend_static.py` -- the one
+  file CLAUDE.md says is app-assembly only, so the pointer sent a reader
+  somewhere the code is not. And `ContentBlockInfo.type` in
+  `schema/streaming.py` still listed `"logprobs"` as a block type; that block
+  went with the token explorer in v1.79.74. Comment-only, no behaviour change.
 
 ## [2.0.1]
 

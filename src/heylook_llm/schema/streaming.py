@@ -67,7 +67,7 @@ class ContentBlockInfo(BaseModel):
     does, so a client accumulating into `content_block` has something to
     accumulate into. A thinking block carries both spellings.
     """
-    type: str  # "text", "thinking", "logprobs"
+    type: str  # "text", "thinking"
     text: str = ""
     thinking: str = ""
 
