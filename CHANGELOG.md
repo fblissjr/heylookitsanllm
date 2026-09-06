@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1]
+
+Docs correction, no behaviour change.
+
+### Fixed
+
+- **README advertised a batch endpoint that does not exist.** `/v1/batch/chat/completions`
+  went with the OpenAI wire in v1.79.66 and the feature list still offered it.
+  `apps/batch-labeler` now carries the caveat CLAUDE.md already knew about: it
+  posts to the removed route and 404s against a current server.
+- **CLAUDE.md described the frontend mount as a catch-all protected by
+  registration order.** That was written in v1.79.77 and invalidated by
+  v1.79.79, which removed the catch-all precisely because it broke the API's
+  routing. It now records the trap instead: a `/{rest:path}` route makes
+  starlette always partially match, so `redirect_slashes` dies and unknown
+  non-GET paths answer 405 rather than 404.
+- Two mechanisms from the v1.79.79 review are recorded rather than left in the
+  changelog only: the URL guard decodes entities BEFORE checking a scheme (and
+  its check must assert on the resolved protocol, not the HTML text), and
+  nothing binds `ChatRequest` as a request body any more, so a guard that
+  refuses a removed field belongs on the wire model and its test must go
+  through the route.
+
 ## [2.0.0]
 
 The API surface changed shape. Cutting a major says that once, clearly, rather

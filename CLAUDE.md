@@ -196,9 +196,8 @@ config (operational settings), telemetry
 (frontend ingestion), requests (cancellation). `api.py` is APP ASSEMBLY ONLY since
 v1.79.67 (lifespan, the MODEL_BUSY handler, CORS, router mounting): every route is
 a `*_api.py` router, the OpenAPI narrative is `openapi_doc.py`, the static frontend
-is `frontend_static.py` (extracted v1.79.77 -- `mount_frontend(app)` MUST be called
-after every router, because the asset route is a CATCH-ALL and registration order is
-the only thing keeping `/v1`, `/docs` and `/openapi.json` reachable), root is gone
+is `frontend_static.py` (extracted v1.79.77; there is deliberately NO CATCH-ALL --
+see the frontend section), root is gone
 (v1.79.76: the frontend serves `/`), and the guards the inference routes share are `request_guards.py`
 (they were lazy in-function imports from api.py before, to dodge the cycle api.py
 creates by importing every router). A route added to api.py itself is the wrong place.
@@ -210,7 +209,18 @@ routes, the route-level batch processor, the server-side image resize and the
 speak Messages; nothing else that matters spoke OpenAI). Do not re-add an OpenAI
 wire. `ChatRequest` STAYS: it is the INTERNAL request every provider takes and still
 speaks OpenAI's vocabulary (content parts, finish_reason); the rename to Anthropic's
-happens once, at the Messages boundary (`converters`). `/v1/models` keeps the OpenAI
+happens once, at the Messages boundary (`converters`). CONSEQUENCE WORTH HOLDING:
+**NOTHING BINDS `ChatRequest` AS A REQUEST BODY ANY MORE**, so a validator on it
+CANNOT SEE A CLIENT. A guard refusing a removed or renamed field belongs on
+`MessageCreateRequest`, the wire model -- pydantic's default `extra` policy is
+*ignore*, so a field the wire model does not declare is dropped in silence and
+the request succeeds. v1.79.74 put the `logprobs` refusal on `ChatRequest` and
+shipped green, because its test constructed a `ChatRequest` directly -- the one
+caller shape no wire produces -- while `POST /v1/messages {"logprobs":true}`
+answered a normal 200 (fixed v1.79.79; the `preset` rename guard had been dead
+the same way since v1.79.66). A test for such a guard MUST go through the ROUTE:
+a model-level test passes whether or not any route binds the model it tests.
+`/v1/models` keeps the OpenAI
 LIST SHAPE because v3 and external clients read `data`; that is a shape, not a wire.
 Still targeting the removed route and PENDING PORT (owner: small potatoes, port
 later): `apps/batch-labeler`, `tests/eval`, `scripts/benchmark.py`'s OpenAI arms,
@@ -244,11 +254,25 @@ drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
 
 **Frontend `frontend/`** -- the current frontend: vanilla
 JS, no build, served at `/`. 4 pages (chat, notebook, models, perf).
-THERE IS NO SPA FALLBACK: the app routes on the HASH, so the server only ever
-sees `/` and real asset paths, and an unknown path 404s. A fallback would have
-destroyed 404 for the whole API behind it (a typo'd `/v1/mesages` answering 200
-with a web page); it also gives `/v3` and `/v2` their gone-answer for free.
-Revisit only if the app ever moves to the History API;
+NO SPA FALLBACK AND NO CATCH-ALL, which are two separate decisions and both
+load-bearing. The app routes on the HASH, so the server only ever sees `/` and
+real asset paths; a FALLBACK would have destroyed 404 for the whole API behind
+it (a typo'd `/v1/mesages` answering 200 with a web page). But the first fix
+was a `/{rest:path}` route that 404s, and THAT broke routing a second way:
+matching every path means starlette always finds a PARTIAL match, so
+`redirect_slashes` never fires and a method mismatch reports 405 instead of 404.
+Measured, v1.79.79 -- `POST /v1/messages/` went from 307->200 to **405 Method
+Not Allowed**, which breaks any client that builds URLs by concatenation, and
+every unknown non-GET path answered 405. `mount_frontend` therefore registers
+the tree's REAL SHAPE (`/`, `/index.html`, `/js/*`, `/css/*`) and nothing else:
+unknown paths 404 on every method, `/v3` and `/v2` get their gone-answer for
+free, and `frontend/DESIGN.md` stops being served at the web root. A new
+TOP-LEVEL asset needs a route added there. Two more things that only became
+true when the handlers went sync (threadpool): the gzip cache must not be
+iterated while mutated (it raised `dictionary changed size` -> 500 on a static
+asset under concurrent cold load), and `resolve()` raises `ValueError` on a NUL
+byte BEFORE `is_file()` can swallow it, so `_serve` catches it -- `GET /%00`
+was a 500. Revisit the fallback only if the app ever moves to the History API;
 chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
 server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
@@ -305,7 +329,17 @@ them -- verified on 18.0.11, it emits `<a href="javascript:...">` for FOUR
 markdown spellings (inline link, image, autolink, reference link) -- so
 DOMPurify was the SOLE guard despite markdown.js's comment calling it a
 backstop. `markdown.js` now allowlists schemes in the `link`/`image` renderer
-overrides and DOMPurify is genuinely the second layer. A renderer returning
+overrides and DOMPurify is genuinely the second layer. IT DECODES HTML ENTITIES
+FIRST, and that is the whole correctness argument: the browser resolves the
+DECODED attribute, so a check on the raw text checks a different string. The
+first version tested for entities only BEFORE a literal colon and so missed
+`javascript&colon;alert(1)` -- no literal colon at all, took the
+"relative, therefore safe" early return, was emitted verbatim, and executed in
+real Chrome (v1.79.79). Decoding once matches the parser, so `&amp;#58;`
+correctly stays literal text. Its check must assert on the PROTOCOL THE BROWSER
+RESOLVES, never on the rendered HTML string: a regex for `javascript:` passes on
+`href="javascript&colon;..."`, which is how the first check was vacuous for
+exactly the vectors it was added for. A renderer returning
 `false` falls back to marked's own implementation; returning `''` does NOT (it
 drops the content silently), so the ACCEPT path is the one a wrong answer
 breaks quietly. The vendored libs are pinned by `js/vendor/vendor.json` +

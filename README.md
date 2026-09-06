@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-08-19
+Last updated: 2026-09-06
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -41,7 +41,7 @@ subprocess -- one API, one UI, per-model engine choice.
   Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
   [advanced](docs/rlm_advanced.md))
 - **Model management**: scan, import, configure, load/unload from the web UI
-  or API; batch endpoint for multi-prompt workloads
+  or API
 - **Local-only logging**: opt-in JSONL metrics/events under `logs/`
 
 ## Things to know (heylook-specific)
@@ -158,7 +158,9 @@ the SSE grammar and the error taxonomy -- the parts a schema cannot express.
 ## Related apps
 
 - [`apps/batch-labeler/`](apps/batch-labeler/) -- standalone CLI for labeling
-  image directories with VLMs
+  image directories with VLMs. **Needs a port**: it still posts to
+  `/v1/chat/completions`, removed in v1.79.66, so it 404s against a current
+  server.
 - [`apps/optloop-lib/`](apps/optloop-lib/) -- library-level benchmark harness
   for mlx-lm/mlx-vlm fork experiments ([guide](docs/optloop_guide.md))
 
