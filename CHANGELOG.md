@@ -54,15 +54,19 @@ The browser E2E harness runs per ENGINE arm, and puppeteer-core moves a major.
   venv, mlx-lm 0.32.0 and mlx-vlm 0.7.0rc0 at their committed SHAs, llama-server
   build 10826): `bun run e2e` 76/76 (chat 48, pages 28) on the default arm, and
   `E2E_ARMS=mlx-lm bun run e2e:chat` 42/42 with 6 correctly SKIPPED.
-- **`e2e:ios` is UNCOVERED, named here rather than passed over.** First run
-  ever: 3/7. The plumbing works -- it boots the simulator, drives real Mobile
-  Safari and measures -- but the software keyboard never opens, so
-  `visualViewport` never shrinks and all four keyboard checks fail together.
-  That is the file's own predicted failure mode. The Simulator's
-  hardware-keyboard default was ruled out (setting and reverting
-  `ConnectHardwareKeyboard` changed nothing). The three passing checks are
-  load-and-measure, not keyboard behaviour, so 3/7 is not partial evidence
-  about the thing the suite exists to check.
+- **`e2e:ios` ran for the first time and is now 3/3 with 4 SKIPPED**, where
+  the skip is the finding. The Simulator under safaridriver will not raise a
+  software keyboard. Measured in order: a WebDriver click left
+  `document.activeElement` at BODY; `ConnectHardwareKeyboard=false` plus a
+  reboot changed nothing (reverted); Element Send Keys DID focus the field
+  (activeElement became TEXTAREA) and `visualViewport` still never shrank. So
+  focus works and the keyboard does not exist there.
+  The four keyboard checks are gated on the ENVIRONMENT (`IOS_REAL_DEVICE=1`),
+  not on the outcome -- gating on "the viewport did not shrink" would convert a
+  real app regression into a silent skip, which is the one thing a skip must
+  never do. On a real device they run and can fail for real. What still runs in
+  the Simulator is real WebKit at iPhone size, which the Chrome 390px checks
+  only emulate; what remains uncovered is the keyboard behaviour itself.
 
 ## [1.79.77]
 

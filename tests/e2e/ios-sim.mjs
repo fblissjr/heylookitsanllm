@@ -4,25 +4,27 @@
 //   bun run e2e:ios
 //
 // ============================================================================
-// STATUS: FIRST RUN 2026-09-06 -- 3/7, and the 4 failures are ONE cause.
+// STATUS: first run 2026-09-06. 3/3 with 4 SKIPPED, and the skip is the finding.
 //
 // The plumbing works: it boots the simulator, drives real Mobile Safari, loads
-// the page and measures. What it CANNOT do is open the software keyboard --
-// `visualViewport` never shrinks, so every keyboard-up measurement is absent
-// and the four checks that depend on one fail together. That is the harness's
-// own predicted failure ("a WebDriver click may not count as a user gesture on
-// iOS"), and it is the suite's entire reason for existing.
+// the page and measures. What the Simulator will NOT do under safaridriver is
+// raise the software keyboard. Measured, in this order:
+//   1. WebDriver click      -> document.activeElement stayed BODY, no keyboard.
+//   2. ConnectHardwareKeyboard=false + reboot -> no change (reverted).
+//   3. Element Send Keys    -> activeElement became TEXTAREA, so FOCUS lands --
+//                              and visualViewport still never shrank.
+// Focus works; the keyboard does not exist there. A real device is the
+// remaining path, which is what IOS_REAL_DEVICE=1 is for.
 //
-// Ruled out: the Simulator's hardware-keyboard default. Setting
-// `defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false`
-// and rebooting the simulator changed nothing (tried 2026-09-06, reverted).
-// The remaining candidates are the ones the message names -- typing before
-// clicking, or a real device. Untried; timeboxed rather than chased.
+// The four keyboard checks are therefore gated on the ENVIRONMENT, not on the
+// outcome. Gating them on "the viewport did not shrink" would convert a real
+// app regression into a silent skip, which is the one thing a skip must never
+// do; gating on "this platform has no keyboard" cannot. On a real device they
+// run for real and fail for real.
 //
-// So this arm is UNCOVERED, not green, and gets named as such in the changelog
-// (the same rule tests/smoke uses for an arm with no model). The three checks
-// that DO pass are load-and-measure, not keyboard behaviour, so a green 3/7 is
-// not evidence about the thing this file exists to check.
+// What still runs here is real WebKit at iPhone size -- not redundant with the
+// Chrome 390px checks, which emulate. What is NOT covered is the keyboard
+// behaviour this file was written for; that needs a device.
 // ============================================================================
 //
 // Why this exists and why Chrome cannot do it. When the software keyboard
@@ -77,10 +79,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Suite, printSummary, assert, waitFor, sleep } from './lib/harness.mjs';
+import { Suite, printSummary, assert, waitFor, sleep, skip } from './lib/harness.mjs';
 
 const BASE = process.env.IOS_SIM_BASE || 'http://127.0.0.1:8000';
 const DEVICE = process.env.IOS_SIM_DEVICE || 'iPhone 15 Pro';
+// The Simulator under safaridriver focuses a field but never raises the
+// software keyboard (measured 2026-09-06: Element Send Keys sets
+// document.activeElement to TEXTAREA and visualViewport stays full height).
+// So the keyboard checks are gated on the ENVIRONMENT, not on the outcome --
+// gating on "the viewport did not shrink" would turn a real regression into
+// a silent skip, which is the one thing a skip must never do. Point this at
+// a real device (Web Inspector enabled, safaridriver over USB) to run them.
+const REAL_DEVICE = process.env.IOS_REAL_DEVICE === '1';
+const NO_KEYBOARD = 'the iOS Simulator does not raise a software keyboard under '
+  + 'safaridriver (focus lands, visualViewport never shrinks). Set IOS_REAL_DEVICE=1 '
+  + 'against a real iPhone to run this.';
 const PORT = Number(process.env.IOS_SIM_PORT || 4445);
 const SHOTS = process.env.IOS_SIM_SHOTS || path.join(os.tmpdir(), 'heylook-ios-sim');
 const KEEP = Boolean(process.env.IOS_SIM_KEEP);
@@ -259,8 +272,16 @@ async function main() {
     });
 
     await suite.check('tapping the field raises the keyboard (visual viewport shrinks)', async () => {
+      if (!REAL_DEVICE) skip(NO_KEYBOARD);
       const el = await d.find(COMPOSER);
       await d.click(el);
+      // Send keys BEFORE waiting, not after. A WebDriver click alone did not
+      // raise the keyboard on the first run (2026-09-06); WebDriver's Element
+      // Send Keys goes through the driver's own input path and focuses the
+      // element itself, which is the remaining candidate for something iOS
+      // treats as a real gesture. Typing here is not the assertion -- the
+      // viewport wait below still is; this only tries to provoke the keyboard.
+      await d.type(el, 'keyboard up');
       // Condition-wait on the thing the keyboard changes; a fixed sleep would
       // either race the animation or pad every run.
       after = await waitFor(async () => {
@@ -269,10 +290,8 @@ async function main() {
       }, { timeout: 6000, message: async () => {
         const m = await d.exec(MEASURE);
         describe('no keyboard', m);
-        return 'visual viewport never shrank: the keyboard did not open (a WebDriver click may not count as a user gesture on iOS -- try d.type() first, or a real device)';
+        return 'visual viewport never shrank: the keyboard did not open even after Element Send Keys -- the remaining candidate is a real device';
       } });
-      // Prove it is a real keyboard, not just a focus ring: typing lands.
-      await d.type(el, 'keyboard up');
       await sleep(300);   // let the field's autoGrow settle before measuring
       after = await d.exec(MEASURE);
       describe('after keyboard', after);
@@ -280,16 +299,19 @@ async function main() {
     });
 
     await suite.check('the message field is fully inside the visual viewport with the keyboard up', () => {
+      if (!REAL_DEVICE) skip(NO_KEYBOARD);
       assert(after, 'no keyboard-up measurement');
       assert(inVisual(after.textarea, after), `field ${JSON.stringify(after.textarea)} vs visual ${JSON.stringify(after.vv)}`);
     });
 
     await suite.check('Send is fully inside the visual viewport with the keyboard up', () => {
+      if (!REAL_DEVICE) skip(NO_KEYBOARD);
       assert(after, 'no keyboard-up measurement');
       assert(inVisual(after.send, after), `Send ${JSON.stringify(after.send)} vs visual ${JSON.stringify(after.vv)}`);
     });
 
     await suite.check('no horizontal scroll with the keyboard up', () => {
+      if (!REAL_DEVICE) skip(NO_KEYBOARD);
       assert(after, 'no keyboard-up measurement');
       assert(after.docScrollWidth <= after.innerWidth + 1, `scrollWidth ${after.docScrollWidth} > innerWidth ${after.innerWidth}`);
     });
