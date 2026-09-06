@@ -187,7 +187,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   // `generating` (which is c1's): the interesting state is one conversation
   // generating while the page is subscribed to a stream in the OTHER.
   const remote = { system_prompt: null, presets: [...presets], updated_at: 't1', generating: false,
-    c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0, bodyDelayMs: 0,
+    c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0, bodyDelayMs: 0, bodyReleasedAt: null,
     applied_preset_id: appliedPresetId };
   let cloneCount = 0;
   const handle = (url, method, postData) => {
@@ -416,8 +416,15 @@ async function openChat(browser, base, {
     if (store.remote.bodyDelayMs && req.method() === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(url)) {
       const ms = store.remote.bodyDelayMs;
       store.remote.bodyDelayMs = 0;   // one-shot: the retry must not also hang
-      setTimeout(() => req.respond({ status: 200, contentType: 'application/json',
-        body: JSON.stringify(store.handle(url, req.method(), req.postData())) }), ms);
+      setTimeout(() => {
+        // Stamped so a check can assert the hold was STILL HELD at the moment
+        // it opened its window. Without this the window can close early --
+        // anything that renders before the GET answers ends the wait the
+        // check uses -- and the check then passes having proved nothing.
+        store.remote.bodyReleasedAt = Date.now();
+        req.respond({ status: 200, contentType: 'application/json',
+          body: JSON.stringify(store.handle(url, req.method(), req.postData())) });
+      }, ms);
       return;
     }
     // One failed body fetch on demand (a phone waking with the radio half up).
@@ -2758,6 +2765,14 @@ async function main() {
       drip.text = 'x'.repeat(1200); drip.chunkChars = 8; drip.delayMs = 25;
       drip.omitSaved = false;
       await startSend(sup.page, 'second');
+      // The window must still be OPEN, or this proves nothing. `streaming()`
+      // going false is not evidence that run 1 is parked on the held GET: the
+      // node also disappears when anything else re-renders (refreshLoadedIds
+      // does, after its own fetch). If that fetch ever outran the hold, run 1
+      // would finish BEFORE the reset below and the check would pass green
+      // having never opened a window at all.
+      assert(sup.store.remote.bodyReleasedAt === null,
+        'the held GET answered before run 2 started -- window never opened, check is vacuous');
       // Reset the status log HERE: everything after this point belongs to run
       // 2, so anything run 1 writes shows up as a foreign entry.
       await watchStatus(sup.page);
@@ -2771,11 +2786,22 @@ async function main() {
       // would be the one carrying tokens and the assertion below would be
       // meaningless.
       assert(live, 'run 2 finished before run 1 resumed -- the window was never open, check is vacuous');
-      // Run 1's terminal vocabulary -- the completion line, the abandon note,
-      // and the recovery line (which is the one that actually lands here, and
-      // the worst of the three: it tells the reader the generation they are
-      // watching is a dead stream being recovered).
-      const TERMINAL = /recovering|Recovered|still generating|may still be|\d+ tokens|Stopped/;
+      // Run 1's terminal vocabulary. These MIRROR chat.js's GENERATING_PREFIX
+      // and MODEL_SWITCH_PREFIX (chat.js, search those names) -- they are not
+      // exported, so this is a hand-copy and has to be re-checked if either
+      // string changes. The first draft of this list got two of them wrong:
+      // lowercase `still generating` never matches 'Still generating on the
+      // server', and MODEL_SWITCH_PREFIX had no pattern at all -- which is the
+      // line a mid-stream MODEL SWITCH produces, i.e. the exact scenario the
+      // fix is about. The check was red pre-fix only because the stub happens
+      // to drive the recovery branch.
+      const TERMINAL = new RegExp([
+        'recovering', 'Recovered',                       // the recovery notice
+        'Still generating on the server',                // GENERATING_PREFIX
+        'The reply in flight keeps generating',          // MODEL_SWITCH_PREFIX
+        '\\d+ tokens',                                   // the completion line
+        'Stopped',
+      ].join('|'));
       assert(!seen.some((t) => TERMINAL.test(t)),
         `a superseded run wrote its terminal status over a live stream: ${JSON.stringify(seen)}`);
     });

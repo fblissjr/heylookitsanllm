@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 # model_id (which model produced an assistant row -- metadata only, no content).
 _SCHEMA_VERSION = 7
 
+# PUBLIC, unlike its underscore siblings, and that is the point: the
+# conversation update route needs the same set to pre-filter with, and it
+# carried a hand-written SECOND COPY of these five names until 2026-09-06.
+# Adding a field to the route's copy and not this one made the API accept it
+# and the UPDATE silently drop it -- the repo's named defect class, on the
+# widest table in the store. One name, two consumers.
+UPDATABLE_CONVERSATION_FIELDS: frozenset[str] = frozenset(
+    {"title", "model_id", "system_prompt", "params", "applied_preset_id"}
+)
+
 _UPDATABLE_MESSAGE_FIELDS: frozenset[str] = frozenset({"content", "thinking"})
 _UPDATABLE_NOTEBOOK_FIELDS: frozenset[str] = frozenset(
     {"title", "content", "system_prompt", "model_id", "params", "applied_preset_id"}
@@ -587,8 +597,10 @@ async def update_conversation(
     applied_preset_id (which preset this conversation is running; explicit
     stamp only -- see the preset-bar provenance note in the v3 spec).
     """
-    allowed = {"title", "model_id", "system_prompt", "params", "applied_preset_id"}
-    updates = {k: v for k, v in fields.items() if k in allowed}
+    # NOT routed through _updatable(): this one returns None on an empty
+    # payload where the other three raise, and the route maps None to 404.
+    # Only the SET is shared; the contract stays as it was.
+    updates = {k: v for k, v in fields.items() if k in UPDATABLE_CONVERSATION_FIELDS}
     if not updates:
         return None
 

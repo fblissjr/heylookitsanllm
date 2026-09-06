@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.6]
+
+Four defects found by an independent review of v2.0.2-2.0.5. Every one was in
+work reviewed only by its own author, which is the point.
+
+### Fixed
+
+- **The conversation update allowlist was a hand-written second copy.**
+  `db.update_conversation` held the five field names as a bare local literal
+  and `conversation_api.update_conversation` held the same five inline -- so
+  CLAUDE.md's "dynamic field names gated by `_UPDATABLE_*` frozensets" was
+  false for conversations, the widest table in the store. A field added to the
+  route's copy and not the store's is accepted by the API and silently dropped
+  by the UPDATE. Now one `db.UPDATABLE_CONVERSATION_FIELDS`, public precisely
+  because it has two consumers. Only the SET is shared: `update_conversation`
+  still returns `None` on an empty payload where the other three raise, and the
+  route still maps that to 404, so no contract moved.
+- **The new superseded-stream check was aimed at the wrong strings -- again.**
+  Its `TERMINAL` list used lowercase `still generating`, which never matches
+  `GENERATING_PREFIX` ('Still generating on the server'); had no pattern at all
+  for `MODEL_SWITCH_PREFIX` ('The reply in flight keeps generating'); and
+  carried `may still be`, which matches nothing in the file. So of the terminal
+  branches it claimed to cover it detected only the recovery line, the token
+  count and `Stopped` -- and the line it missed is the one a mid-stream **model
+  switch** produces, i.e. the scenario v2.0.5's own comment cites. It was red
+  pre-fix only because the stub happens to drive the recovery branch. This is
+  the second time in one session an assertion was pointed at a string the code
+  does not emit.
+- **That check could also go silently vacuous.** It waits for the streaming
+  node to vanish before starting run 2, but nothing in `finishGenerate` removes
+  that node until after the held GET -- it disappears early only because
+  `refreshLoadedIds` incidentally re-renders after its own fetch. Make that
+  fetch slower than the hold and run 1 finishes before the log reset, so the
+  window never opens and the check passes having proved nothing. The stub now
+  stamps `bodyReleasedAt` when it answers, and the check asserts the hold is
+  still unreleased at the moment it opens its window.
+- **The v2.0.5 comment and CLAUDE.md entry named the wrong trigger.** Both said
+  a mid-stream model switch is what reaches the window, "the other three
+  `abortStream` callers do change `activeId`". `deleteConversation` does not --
+  it aborts *before* clearing `activeId`. More importantly an abort is not
+  required at all: any ending with no usable saved rows reaches that branch,
+  including a transport death from an otherwise normal run, which is exactly
+  what the e2e check drives. Corrected in both places.
+
 ## [2.0.5]
 
 ### Fixed

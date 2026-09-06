@@ -3029,15 +3029,20 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     // `s.stream` is the load-bearing third of this guard. releaseStream nulled
     // it BEFORE the await above, so for the whole of that GET the composer
     // reads "Send" and startStream's `if (s.stream)` bar is down -- a SECOND
-    // run can be live by the time we resume, in this same conversation (a
-    // mid-stream model switch aborts without changing activeId; the other
-    // three abortStream callers do change it and are caught by the check
-    // beside this one). Everything below writes SHARED ui -- the status line,
-    // the scroll pin -- so a superseded run must stop here rather than paint
-    // its ending over a live stream. The line it actually landed was the
-    // recovery notice, which tells the reader the generation they are watching
-    // is a dead stream being recovered. Rows were never at risk: resyncMessages
-    // re-checks s.stream after its own await. The status line was.
+    // run can be live by the time we resume.
+    //
+    // This branch is reached by ANY ending that leaves no usable saved rows,
+    // and an abort is NOT required: a transport death that never delivered
+    // heylook_saved lands here from an otherwise normal run, which is what the
+    // e2e check drives. Conversation identity cannot close the window because
+    // several of those endings leave activeId untouched -- a mid-stream model
+    // switch does, and so does deleteConversation, which aborts BEFORE it
+    // clears activeId.
+    //
+    // Everything below writes SHARED ui -- the status line, the scroll pin --
+    // so a superseded run must stop here rather than paint its ending over a
+    // live stream. Rows were never at risk: resyncMessages re-checks s.stream
+    // after its own await. The status line was.
     if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;
   }
   scrollMessages(ctx);

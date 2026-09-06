@@ -283,10 +283,13 @@ AWAITS MUST RE-CHECK STREAM IDENTITY, not just conversation identity (v2.0.5):
 `finishGenerate` calls `releaseStream` FIRST, which nulls `s.stream`, so for the
 whole of the resync GET that follows a run ending without `heylook_saved` the
 composer reads "Send" and `startStream`'s `if (s.stream)` bar is down -- a second
-run can be live when the first resumes, in the SAME conversation, because a
-mid-stream model switch aborts without changing `activeId` (the other three
-`abortStream` callers do change it). The superseded run then paints its ending
-over the live one. Rows were never at risk (`resyncMessages` re-checks
+run can be live when the first resumes. That branch is reached by ANY ending
+leaving no usable saved rows and an ABORT IS NOT REQUIRED -- a transport death
+that never delivered `heylook_saved` lands there from an otherwise normal run.
+Conversation identity cannot close the window either, because several such
+endings leave `activeId` untouched: a mid-stream model switch, and
+`deleteConversation`, which aborts BEFORE it clears `activeId`. The superseded
+run then paints its ending over the live one. Rows were never at risk (`resyncMessages` re-checks
 `s.stream` after its own await); the STATUS LINE was, and the line that lands is
 the recovery notice -- it tells the reader the generation on screen is a dead
 stream being recovered. `handleStreamError` has the same shape and is safe only

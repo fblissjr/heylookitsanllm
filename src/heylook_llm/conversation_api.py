@@ -148,7 +148,10 @@ async def get_conversation(conv_id: str, request: Request):
 )
 async def update_conversation(conv_id: str, request: Request, body: ConversationUpdate):
     conn = _get_db(request)
-    kwargs = {k: getattr(body, k) for k in body.model_fields_set if k in {"title", "model_id", "system_prompt", "params", "applied_preset_id"}}
+    # The store's own set, never a second copy: a field added to one spelling
+    # and not the other is accepted here and silently dropped by the UPDATE.
+    kwargs = {k: getattr(body, k) for k in body.model_fields_set
+              if k in db.UPDATABLE_CONVERSATION_FIELDS}
     if not kwargs:
         raise HTTPException(status_code=400, detail="No fields to update")
     conv = await db.update_conversation(conn, conv_id, **kwargs)
