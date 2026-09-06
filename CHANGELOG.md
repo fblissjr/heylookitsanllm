@@ -54,6 +54,20 @@ request flows through). Run against 2.0.1, all three engine arms.
   without them generates normally. v1.79.74 shipped one of these guards green
   against a caller shape no wire produces, so the route is the only place the
   answer counts.
+- `scripts/vendor_frontend.py --check` -- marked 18.0.11 and dompurify 3.4.15,
+  both matching the manifest AND both the latest published. Named because the
+  standard asks for the answer, not just a clean exit. The pre-commit hook does
+  not cover this: it checks the vendored bytes against the manifest, while
+  `--check` asks whether upstream has moved past it -- the question that went
+  unasked while both libraries sat a major behind for five months.
+
+### Fixed (docs)
+
+- CLAUDE.md said a request sending the renamed `preset` field gets a **400**,
+  and attributed the guard to `ChatRequest`. Both were stale: v1.79.79 moved
+  the guard to `MessageCreateRequest` (on `ChatRequest` it was dead, since
+  nothing binds it as a request body), and pydantic answers 422. Corrected
+  against a live probe.
 
 ## [2.0.1]
 
