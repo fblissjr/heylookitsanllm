@@ -278,7 +278,20 @@ server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
 authoritative rows; the client's post-stream state is ADOPTION, never
 position arithmetic -- notebook speaks `/v1/messages` since v1.74.0;
-the OpenAI-compatible route itself is gone since v1.79.66), takes image (and gguf audio) input + renders
+the OpenAI-compatible route itself is gone since v1.79.66). A TERMINAL PATH THAT
+AWAITS MUST RE-CHECK STREAM IDENTITY, not just conversation identity (v2.0.5):
+`finishGenerate` calls `releaseStream` FIRST, which nulls `s.stream`, so for the
+whole of the resync GET that follows a run ending without `heylook_saved` the
+composer reads "Send" and `startStream`'s `if (s.stream)` bar is down -- a second
+run can be live when the first resumes, in the SAME conversation, because a
+mid-stream model switch aborts without changing `activeId` (the other three
+`abortStream` callers do change it). The superseded run then paints its ending
+over the live one. Rows were never at risk (`resyncMessages` re-checks
+`s.stream` after its own await); the STATUS LINE was, and the line that lands is
+the recovery notice -- it tells the reader the generation on screen is a dead
+stream being recovered. `handleStreamError` has the same shape and is safe only
+because nothing in it awaits between `releaseStream` and its writes. Chat also
+takes image (and gguf audio) input + renders
 image content blocks out of the DuckDB store. The page is a MIRROR of the store
 with exactly two invalidation points: document select, and RESUME (`ctx.onResume` ->
 `refreshAfterResume`, v1.79.2) -- nothing polls, and re-clicking the active
