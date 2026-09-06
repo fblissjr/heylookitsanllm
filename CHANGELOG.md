@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.8]
+
+Three defects behind one report of "nothing is being generated" on a gguf
+vision model. The first two were found chasing the third, and each hid the
+next: an opaque spawn failure, a silent modality loss, and a reply that was
+generated in full and then rendered as an empty bubble.
+
+### Fixed
+
+- **A models.toml entry that outlived a directory rename failed with nothing
+  to point at.** llama-server exits 1 immediately on a `-m` path that is not
+  there, and at the DEFAULT `observability_level=off` its output goes to
+  DEVNULL -- so the operator got `exited with code 1 -- output not captured`
+  and no filename. Worse, the missing file had ALREADY been noticed and thrown
+  away: `_sidecar_chat_template` stats the weights and returns None when they
+  are absent, so the three-way template ladder degraded to its bottom rung and
+  the spawn log announced a chat-template decision for a model file that did
+  not exist. `load_model` now stats `model_path`, `mmproj_path` and
+  `draft_model_path` before spawning and names the offending FIELD (an entry
+  carries four paths and only one is usually wrong), joining the
+  `chat_template_path` check that was already there and had noted in its own
+  comment that the others had none. `ModelRouter._load_config` additionally
+  warns at STARTUP for every explicit entry whose paths no longer resolve, so a
+  reorg is reported at boot rather than at the first message; discovered
+  entries are exempt because they came off the filesystem a moment earlier.
+  Warn, never raise -- one dead entry must not stop the other models serving.
+
+- **Setting a context size on a discovered vision model turned its vision
+  off.** Editing a discovery-only model materializes an entry for the edit to
+  live in, and that entry was written THIN -- identity and `model_path` only --
+  on the stated reasoning that `modalities`, `supports_thinking`,
+  `mmproj_path` and `draft_model_path` would be "re-derived at load". The
+  premise was false: `merge_discovered` SKIPS a discovered model whose resolved
+  path an explicit entry already names, so once an entry exists nothing
+  re-derives for it. A `reload?ctx_size=` therefore cost the model its
+  projector, and the next spawn carried no `--mmproj` with the projector
+  sitting unreferenced beside the weights. Materialization now writes the whole
+  derived config. A frozen copy can still go stale against a model dir edited
+  in place, which is the better failure: it is written down where it can be
+  read, diffed and deleted, rather than a modality disappearing with nothing
+  anywhere naming the loss. `test_materialized_entry_is_thin` pinned the old
+  behaviour and is replaced by one that pins the projector surviving an edit.
+
+- **A reply that was all reasoning rendered as an empty bubble.** An
+  always-reasoning model can spend its whole `max_tokens` budget in the
+  reasoning channel and return no content at all -- measured here at ~300
+  reasoning tokens for "say hello", so any smaller budget yields zero content
+  tokens, and the run still reports success. The LIVE stream box is open while
+  that arrives, but the saved row rendered its thinking COLLAPSED, so the
+  reader watched the reasoning stream in and then vanish the moment the saved
+  row replaced it. Nothing on screen said a reply had been received. A saved
+  assistant row with thinking and no content now renders its thinking box OPEN
+  -- it is the whole reply -- and the status line says the budget went to
+  reasoning and names the setting to raise; the status line is suppressed on a
+  CONTINUATION that added only reasoning, where the message already has text
+  and saying otherwise would be false. `tests/e2e/render.mjs` asserts both
+  directions of the collapsed/open default -- a check on the open case alone
+  would pass against "always open", which would bury every ordinary reply under
+  its own trace. It renders SAVED rows, so it pins the default and not the
+  live-box-to-saved-row transition the symptom was reported as.
+
 ## [2.0.7]
 
 ### Fixed

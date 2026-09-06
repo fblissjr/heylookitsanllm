@@ -217,26 +217,39 @@ class TestMaterializeOnWrite:
         with pytest.raises(ValueError, match="not found"):
             svc.toggle_enabled("ghost")
 
-    def test_materialized_entry_is_thin(self, tmp_path, store, monkeypatch):
-        """Only identity + the edited field. Derived facts re-derive at load.
+    def test_materializing_keeps_what_discovery_derived(
+            self, tmp_path, store, monkeypatch):
+        """Editing a discovered vision model must not cost it its projector.
 
-        Freezing modalities/mmproj_path here is worse than elsewhere: the
-        merge makes an explicit entry AUTHORITATIVE, so a stale copy silently
-        overrides fresh detection after an in-place re-quantize.
+        This used to write identity ONLY, on the reasoning that the derived
+        fields would re-derive at load. They do not: merge_discovered SKIPS a
+        discovered model whose resolved path an explicit entry already names,
+        so the moment an entry exists nothing re-derives for it. Setting a
+        context size on a discovered vision model therefore spawned
+        llama-server with no --mmproj and served it text-only, with the
+        projector sitting unreferenced beside the weights (2026-09-06).
+
+        The frozen copy can still go stale against a dir edited in place. That
+        is the better failure: it is written down where it can be read and
+        deleted, rather than a modality disappearing with nothing naming it.
         """
         blob = store / "found.gguf"
         blob.write_text("x")
+        mm = store / "mm.gguf"
+        mm.write_text("x")
         svc, cfg = self._service(tmp_path, store)
         self._stub_scan(monkeypatch, [dict(
             entry("found", blob), config={
                 "model_path": str(blob), "modalities": ["text", "vision"],
-                "supports_thinking": True, "mmproj_path": str(store / "mm.gguf")})])
+                "supports_thinking": True, "mmproj_path": str(mm)})])
 
         svc.toggle_enabled("found")
 
         import tomllib
         written = tomllib.loads(cfg.read_text())["models"][0]
-        assert set(written["config"]) == {"model_path"}, written["config"]
+        assert written["config"]["mmproj_path"] == str(mm), written["config"]
+        assert written["config"]["modalities"] == ["text", "vision"]
+        assert written["config"]["supports_thinking"] is True
         assert written["enabled"] is False
 
     def test_deleting_a_disabled_override_is_refused(

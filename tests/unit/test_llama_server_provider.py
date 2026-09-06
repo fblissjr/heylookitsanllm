@@ -42,6 +42,18 @@ def make_provider(**config):
     return LlamaServerProvider("test-gguf", config, False)
 
 
+def _weights(tmp_path):
+    """A model file that really exists, for tests that reach load_model().
+
+    load_model() stats every configured path before spawning, so the default
+    `/fake/model.gguf` above is deliberately unusable there -- it is fine for
+    the argv/payload tests, which never spawn.
+    """
+    path = tmp_path / "model.gguf"
+    path.write_bytes(b"GGUF")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Config plumbing
 # ---------------------------------------------------------------------------
@@ -144,7 +156,8 @@ class TestBuildArgs:
         monkeypatch.setattr(
             llama_mod.subprocess, "Popen",
             lambda *a, **k: pytest.fail("spawned despite an unreadable template"))
-        provider = make_provider(chat_template_path=str(tmp_path / "nope.jinja"))
+        provider = make_provider(model_path=str(_weights(tmp_path)),
+                                 chat_template_path=str(tmp_path / "nope.jinja"))
         with pytest.raises(FileNotFoundError, match="chat_template_path"):
             provider.load_model()
 
@@ -160,10 +173,55 @@ class TestBuildArgs:
             llama_mod.subprocess, "Popen",
             lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
                 RuntimeError("stop here -- preflight passed")))
-        provider = make_provider(chat_template_path=str(tmpl))
+        provider = make_provider(model_path=str(_weights(tmp_path)),
+                                 chat_template_path=str(tmpl))
         with pytest.raises(RuntimeError, match="preflight passed"):
             provider.load_model()
         assert spawned, "preflight rejected a template file that exists"
+
+    @pytest.mark.parametrize("field, filename", [
+        ("model_path", "gone.gguf"),
+        ("mmproj_path", "gone-mmproj.gguf"),
+        ("draft_model_path", "gone-draft.gguf"),
+    ])
+    def test_missing_configured_file_fails_before_spawn(
+            self, tmp_path, monkeypatch, field, filename):
+        # A models.toml entry outliving a directory rename. llama-server exits
+        # 1 immediately and its output is DEVNULL at the default observability
+        # level, so the operator gets `exited with code 1 -- output not
+        # captured` and nothing naming the file (2026-09-06). The error must
+        # name the FIELD, since the entry can carry four paths and only one of
+        # them is wrong.
+        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
+                            lambda self: tmp_path / "llama-server")
+        monkeypatch.setattr(
+            llama_mod.subprocess, "Popen",
+            lambda *a, **k: pytest.fail(f"spawned despite a missing {field}"))
+        cfg = {"model_path": str(_weights(tmp_path)), field: str(tmp_path / filename)}
+        provider = make_provider(**cfg)
+        with pytest.raises(FileNotFoundError, match=field):
+            provider.load_model()
+
+    def test_present_configured_files_pass_preflight(self, tmp_path, monkeypatch):
+        # Guard the guard, same reason as the template pair above: a check that
+        # rejected these fields outright would pass every case above for free.
+        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
+                            lambda self: tmp_path / "llama-server")
+        spawned = []
+        monkeypatch.setattr(
+            llama_mod.subprocess, "Popen",
+            lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
+                RuntimeError("stop here -- preflight passed")))
+        mmproj = tmp_path / "mmproj.gguf"
+        mmproj.write_bytes(b"GGUF")
+        draft = tmp_path / "draft.gguf"
+        draft.write_bytes(b"GGUF")
+        provider = make_provider(model_path=str(_weights(tmp_path)),
+                                 mmproj_path=str(mmproj),
+                                 draft_model_path=str(draft))
+        with pytest.raises(RuntimeError, match="preflight passed"):
+            provider.load_model()
+        assert spawned, "preflight rejected files that all exist"
 
     def test_absent_chat_template_leaves_the_gguf_embedded_one_in_force(self):
         # The default MUST stay "whatever the quantizer baked in". Emitting a

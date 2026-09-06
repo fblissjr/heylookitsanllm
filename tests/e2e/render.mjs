@@ -148,6 +148,17 @@ function makeMessages({ unsaved = false, withMedia = false } = {}) {
   }));
   // One assistant row with thinking, for the two-box editor checks.
   msgs[5].thinking = 'original thinking trace for message 5';
+  // An assistant row with reasoning and NO content -- what an always-reasoning
+  // model returns when the whole max_tokens budget goes to the thinking
+  // channel (measured on DeepSeek-V4-Flash-Vision-Exp: ~300 reasoning tokens
+  // for "say hello", so any smaller budget yields zero content tokens).
+  // Collapsed, it paints as an empty bubble, and since the LIVE stream box is
+  // open the reader watches the reasoning arrive and then vanish when the
+  // saved row replaces it. That is the "nothing was generated" report of
+  // 2026-09-06, and it is the whole reply, hidden.
+  msgs.push({ id: 'mthink', role: 'assistant', content: '',
+    position: msgs.length, thinking: 'reasoned the whole budget away',
+    content_blocks: null });
   if (unsaved) {
     // The shape finishStream pushes when persisting the reply FAILED: on
     // screen, no id. Served as part of the conversation so the state exists
@@ -860,6 +871,29 @@ async function main() {
       // row's worth of drift -- what this rejects is the list jumping.
       const drift = Math.abs(after.top - before.top);
       assert(drift < 600, `edit/cancel moved the view ${drift}px (from ${before.top} to ${after.top})`);
+    });
+
+    await suite.check('a reasoning-only reply opens its thinking box; a normal one stays closed', async () => {
+      // Both directions in one check, because the bug is a DEFAULT and a
+      // check on the open case alone would pass against "always open" -- which
+      // would bury every ordinary reply under its own reasoning trace.
+      const state = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('.message')];
+        const openOf = (needle) => {
+          const el = rows.find((m) => m.textContent.includes(needle));
+          const details = el?.querySelector('details.thinking');
+          return details ? details.open : null;
+        };
+        return {
+          reasoningOnly: openOf('reasoned the whole budget away'),
+          withContent: openOf('original thinking trace for message 5'),
+        };
+      });
+      assert(state.reasoningOnly === true,
+        `a reply with no content left its thinking collapsed (open=${state.reasoningOnly}) `
+        + '-- it renders as an empty bubble');
+      assert(state.withContent === false,
+        `a reply WITH content opened its thinking (open=${state.withContent})`);
     });
 
     await suite.check('the editor offers a thinking box and Save persists both', async () => {

@@ -696,23 +696,33 @@ class ModelService:
         for entry in (merged.get("models") or [])[existing:]:
             if str(entry.get("id")) != str(model_id):
                 continue
-            # THIN entry: identity only. Everything else the scanner derived
+            # Materialize the WHOLE derived config, not just identity.
+            #
+            # This used to write a thin `{id, provider, enabled, model_path}`
+            # entry, on the reasoning that everything else the scanner derived
             # (modalities, supports_thinking, mmproj_path, draft_model_path)
-            # is re-derived at load, and _create_mlx_entry states the rule --
-            # "Materializing any of these is a copy that rots when the model
-            # dir changes in place." Freezing them here would be worse than
-            # elsewhere, because the merge makes an explicit entry AUTHORITATIVE:
-            # re-quantize in place or drop in a new mmproj and the stale copy
-            # silently overrides fresh detection. The caller writes the one
-            # field it is actually setting.
-            src = entry.get("config") or {}
-            thin = {
+            # would be "re-derived at load" and a frozen copy would rot when
+            # the model dir changed in place. THE PREMISE WAS FALSE, and it
+            # cost a vision model its vision: merge_discovered SKIPS a
+            # discovered model whose resolved path an explicit entry already
+            # names ("models.toml already describes this file; it wins"), so
+            # once an entry exists nothing re-derives anything for it. Setting
+            # a context size on a discovered vision model therefore turned its
+            # vision off -- the next spawn had no --mmproj, with the projector
+            # sitting unreferenced beside the weights (measured 2026-09-06).
+            #
+            # A frozen copy CAN still go stale against a model dir edited in
+            # place. That is the strictly better failure: it is written down in
+            # models.toml where it can be read, diffed and deleted, whereas the
+            # thin entry lost a modality with nothing anywhere naming the loss.
+            src = copy.deepcopy(entry.get("config") or {})
+            materialized = {
                 "id": entry.get("id"),
                 "provider": entry.get("provider"),
                 "enabled": entry.get("enabled", True),
-                "config": {"model_path": src.get("model_path")},
+                "config": src,
             }
-            data.setdefault("models", []).append(copy.deepcopy(thin))
+            data.setdefault("models", []).append(materialized)
             logger.info(
                 "[registry] materializing discovered model %r into models.toml "
                 "so the edit has somewhere to live", model_id)

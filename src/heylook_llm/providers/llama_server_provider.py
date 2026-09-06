@@ -456,14 +456,35 @@ class LlamaServerProvider(BaseProvider):
         resolved_template, template_origin = self._resolve_chat_template()
         args = self._build_args(binary, port, resolved_template, True)
 
-        # Pre-flight the chat template override HERE, not in _build_args (which
+        # Pre-flight EVERY configured file HERE, not in _build_args (which
         # stays pure -- it is exercised by the argv/metadata drift test with
-        # paths that do not exist). Worth a check of its own even though
-        # mmproj_path has none: at observability_level=off, which is the
+        # paths that do not exist). At observability_level=off, which is the
         # DEFAULT, the subprocess's stdout goes to DEVNULL, so llama-server
-        # exiting on an unreadable template file leaves NO diagnostic anywhere.
-        # A missing file must not degrade to the embedded template either --
-        # that would silently serve a different prompt format than configured.
+        # exiting on a file that is not there leaves NO diagnostic anywhere:
+        # a models.toml entry left behind by a directory rename produced
+        # `exited with code 1 -- output not captured` and nothing else
+        # (2026-09-06). Worse, the missing file HAD already been noticed and
+        # thrown away -- _sidecar_chat_template stats the weights and returns
+        # None when they are absent, so the template ladder degraded to its
+        # bottom rung and the spawn log announced a template decision for a
+        # model file that did not exist. Stat once, here, and say which field
+        # is wrong; do not let any other probe swallow the answer first.
+        for field in ("model_path", "mmproj_path", "draft_model_path"):
+            value = self.config.get(field)
+            if value and not Path(value).expanduser().is_file():
+                raise FileNotFoundError(
+                    f"[GGUF] {self.model_id}: {field} points at {value}, "
+                    f"which is not a readable file. llama-server would exit "
+                    f"immediately with its output discarded, so the spawn is "
+                    f"refused here instead. Fix the path in models.toml, or "
+                    f"delete the entry -- a model under [scan].folders is "
+                    f"served with derived defaults and needs no entry at all."
+                )
+
+        # The template override keeps its own message: the remedy differs
+        # (removing the field is a legitimate fix, and a missing file must not
+        # degrade to the embedded template -- that would silently serve a
+        # different prompt format than configured).
         template = self.config.get("chat_template_path")
         if template and not Path(template).expanduser().is_file():
             raise FileNotFoundError(

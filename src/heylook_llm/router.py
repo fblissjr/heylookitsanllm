@@ -188,7 +188,38 @@ class ModelRouter:
         """Fold `[scan].folders` discoveries into the parsed config."""
         from heylook_llm.model_registry import discover, merge_discovered
 
+        ModelRouter._audit_configured_paths(config_data)
         return merge_discovered(config_data, discover(config_data))
+
+    @staticmethod
+    def _audit_configured_paths(config_data: dict) -> None:
+        """Name every EXPLICIT entry whose configured paths no longer resolve.
+
+        Reorganising a model directory does not touch models.toml, so a
+        hand-written entry keeps pointing at the old layout and nothing says
+        so until someone tries to chat with it -- at which point llama-server
+        exits 1 with its output discarded (see the provider's spawn pre-flight
+        for that half). Both halves shipped after a folder rename cost an
+        evening on 2026-09-06.
+
+        Only EXPLICIT entries are audited: a discovered one came off the
+        filesystem a moment ago, so it cannot be stale in this way. Warn, never
+        raise -- one dead entry must not stop the other models from serving,
+        which is the same best-effort posture discovery itself takes.
+        """
+        for entry in (config_data.get("models") or []):
+            cfg = entry.get("config") or {}
+            for field in ("model_path", "mmproj_path", "draft_model_path",
+                          "chat_template_path"):
+                value = cfg.get(field)
+                # exists(), not is_file(): an MLX model_path is a DIRECTORY.
+                if value and not Path(value).expanduser().exists():
+                    logging.warning(
+                        "[config] %s: %s points at %s, which does not exist. "
+                        "The entry will fail to load. Fix the path, or delete "
+                        "the entry -- a model under [scan].folders is served "
+                        "with derived defaults and needs no entry at all.",
+                        entry.get("id", "<unnamed>"), field, value)
 
     def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
         """Get or create a loading lock for a specific model."""

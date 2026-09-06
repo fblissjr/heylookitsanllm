@@ -1469,7 +1469,17 @@ function buildMessageEl(ctx, msg, modelNote = '') {
   bubbleChildren.push(content);
   const bubble = createEl('div', { class: 'message-bubble' }, bubbleChildren);
   const children = [];
-  if (msg.role === 'assistant' && msg.thinking) children.push(buildThinkingEl(msg.thinking));
+  // Open when there is nothing else to show. An ALWAYS-reasoning model can
+  // spend its whole max_tokens budget in the reasoning channel and return no
+  // content at all (measured on DeepSeek-V4-Flash-Vision-Exp: ~300 reasoning
+  // tokens for "say hello", so any budget under that yields zero content
+  // tokens). Collapsed, that row renders as an empty bubble -- and because the
+  // LIVE stream box is open, the reader watches the thinking arrive and then
+  // sees it vanish the moment the saved row replaces it. "Nothing generated"
+  // is what that looks like from the outside; it is the whole reply, hidden.
+  if (msg.role === 'assistant' && msg.thinking) {
+    children.push(buildThinkingEl(msg.thinking, !msg.content));
+  }
   children.push(bubble);
   // Drop disclosure: media still renders (it's in the store) but is not sent
   // to the CURRENT model (the server's _wire_content, conversation_generate_api.py,
@@ -3080,6 +3090,20 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     // the run detaches and commits, so the optimistic reading is the true one
     // far more often than not.
     if (!switchWarningOnScreen(ctx)) showStatus(ctx, abandonNote(ctx, stream));
+  } else if (!content && thinking && !stream.baseContent) {
+    // The run produced reasoning and no answer text. Say so, because the
+    // bubble itself has nothing in it and the token count alone reads as a
+    // successful reply that happens to be blank. An always-reasoning model
+    // that runs out of budget mid-thought lands here, and the remedy is a
+    // setting the reader can change, so name it. (Ordered AFTER every
+    // abnormal-ending branch above: a stopped or failed run is not this.)
+    //
+    // `baseContent` is load-bearing: `content` is THIS run's delta, so a
+    // continuation that added only reasoning to a message already full of
+    // text would otherwise be told there is no answer text, about a message
+    // that visibly has one.
+    showStatus(ctx, `Reasoning used the whole ${usage?.output_tokens ?? ''} token `
+      + `budget, so there is no answer text. Raise Max tokens and send again.`, true);
   } else if (usage || saved) {
     const timing = saved?.timing;
     const parts = [`${usage?.output_tokens ?? '?'} tokens`];

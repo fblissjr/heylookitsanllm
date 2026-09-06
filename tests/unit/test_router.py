@@ -18,6 +18,17 @@ from heylook_llm.router import ModelRouter
 from _mock_provider import MockProvider
 
 
+# The model dirs must really EXIST. _load_config audits every configured path
+# and warns about one that has gone missing (a models.toml entry outliving a
+# directory rename), and `test_valid_default_model_does_not_warn` asserts the
+# happy path logs NOTHING at WARNING. Real empty dirs keep that assertion at
+# full strength instead of narrowing it to step around a legitimate warning.
+# Directories, not files: an MLX model_path names a checkpoint DIR.
+_MODEL_ROOT = tempfile.mkdtemp(prefix="heylook-router-tests-")
+for _name in ("model1", "model2", "model3"):
+    os.makedirs(os.path.join(_MODEL_ROOT, _name), exist_ok=True)
+
+
 _BASE_TOML = textwrap.dedent("""
     default_model = "{default_model}"
     max_loaded_models = {max_loaded_models}
@@ -26,19 +37,19 @@ _BASE_TOML = textwrap.dedent("""
     id = "model1-mlx"
     provider = "mlx"
     enabled = {model1_enabled}
-    config = {{ model_path = "/fake/path/model1" }}
+    config = {{ model_path = "{model_root}/model1" }}
 
     [[models]]
     id = "model2-llama"
     provider = "mlx"
     enabled = {model2_enabled}
-    config = {{ model_path = "/fake/path/model2" }}
+    config = {{ model_path = "{model_root}/model2" }}
 
     [[models]]
     id = "model3-mlx"
     provider = "mlx"
     enabled = {model3_enabled}
-    config = {{ model_path = "/fake/path/model3" }}
+    config = {{ model_path = "{model_root}/model3" }}
 """).strip()
 
 
@@ -53,6 +64,7 @@ def _render_config(
     return _BASE_TOML.format(
         default_model=default_model,
         max_loaded_models=max_loaded_models,
+        model_root=_MODEL_ROOT,
         model1_enabled=str(model1_enabled).lower(),
         model2_enabled=str(model2_enabled).lower(),
         model3_enabled=str(model3_enabled).lower(),
