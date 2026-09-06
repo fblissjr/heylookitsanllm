@@ -8,7 +8,6 @@ import { mountSettingsDrawer } from './settings-drawer.js';
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
   notebook: { title: 'Notebook', short: 'Notes', load: () => import('./pages/notebook.js') },
-  jspace:   { title: 'J-Space', short: 'J-Space', load: () => import('./pages/jspace.js') },
   models:   { title: 'Models', short: 'Models', load: () => import('./pages/models.js'), admin: true },
   perf:     { title: 'Performance', short: 'Perf', load: () => import('./pages/perf.js'), admin: true },
 };

@@ -734,10 +734,15 @@ ordering and the sole-user/minimal-custom-code posture.
   Borrowed shape from vllm-metal's measured-overhead cache cap; ours is a
   manual knob, their auto-measurement is overkill for one box.
 
-## J-space / jlens-mlx (from jspace_integration_plan.md Part 2)
+## J-space / jlens-mlx -- REMOVED 2026-09-06 (v1.79.75)
 
-Fitting lives in the `jlens-mlx` sibling repo; this server applies. Apply feature +
-baseline fitter are GREEN (see CURRENT.md 2026-07-10).
+The whole feature came out: the v3 page, the `/v1/jspace/*` router, the
+`jspace/` package, its tests and its lens-conversion script. `jlens-mlx` is out
+of scope. The three design docs moved to `docs/archive/` and are the revival
+record; fitted lenses under `adapters/jspace/` were left on disk.
+
+Everything below is the backlog as it stood at removal, kept as the record of
+what was planned rather than as work to do.
 
 - [x] **Refit the band lens on the fixed corpus** (DONE 2026-07-12): `band-n12`/`band-n12b` were
   degenerate (mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects

@@ -180,10 +180,6 @@ app = FastAPI(
         {
             "name": "Presets",
             "description": "Saved presets: named system prompt + sampler parameter bundles"
-        },
-        {
-            "name": "JSpace",
-            "description": "Jacobian-lens interpretability: read the model's verbalizable workspace"
         }
     ]
 )
@@ -266,10 +262,6 @@ app.include_router(config_router)
 # Frontend telemetry ingestion (v3 client events -> observability events stream)
 from heylook_llm.telemetry_api import telemetry_router
 app.include_router(telemetry_router)
-
-# Import and include J-space (Jacobian lens) interpretability router
-from heylook_llm.jspace_api import jspace_router
-app.include_router(jspace_router)
 
 # Monitoring, embeddings and hidden states (in api.py itself until v1.79.67)
 from heylook_llm.monitoring_api import monitoring_router

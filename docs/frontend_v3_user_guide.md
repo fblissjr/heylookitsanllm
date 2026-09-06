@@ -368,8 +368,6 @@ always works — it leaves the model's own default alone.
   automatically.
 - **Perf** — timing and throughput for past generations.
 - **Explore** — per-token inspection of a generation.
-- **Jspace** — the Jacobian-lens interpretability view; see
-  [jspace_guide.md](./jspace_guide.md).
 
 Sampler settings are shared across pages. Display preferences (such as showing
 special tokens) are kept separately from sampler settings on purpose, so a

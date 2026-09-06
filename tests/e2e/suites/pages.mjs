@@ -1,6 +1,6 @@
 // Pages suite: notebook (autosave + generate-at-cursor tail preservation),
 // perf (no-polling proof + ranges),
-// jspace (Jacobian-lens workspace strip, lens-gated), models (list/load+warm/
+// models (list/load+warm/
 // unload + folder & HF scan + danger-zone clear). Data is cleared by the
 // orchestrator before this runs; the danger-zone clear check runs LAST.
 
@@ -625,123 +625,6 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'rows' });
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px on models page');
     await ctx.setViewport(1280, 900);
-  });
-
-  // =========================== JSPACE ====================================
-  // Lens-gated: only asserts the analyze flow when a lens for the E2E model is
-  // installed at adapters/jspace/<model_id>/ (registry default).
-  let jspaceHasLens = false;
-  await suite.check('jspace page mounts (lens model or empty-state)', async () => {
-    await ctx.open('#/jspace');
-    await page.waitForSelector('.jspace');
-    // setup() renders the select options OR the empty-state only AFTER the async
-    // /v1/jspace/models fetch resolves -- wait for one of them before asserting.
-    await waitFor(async () =>
-      (await count(page, '.jspace__bar select option')) > 0 ||
-      (await count(page, '.jspace .empty-state')) > 0,
-      { message: 'jspace models never resolved (no options and no empty-state)' });
-    const opts = await page.$$eval('.jspace__bar select option', (els) => els.map((e) => e.value));
-    jspaceHasLens = opts.includes(config.model);
-    const hasEmpty = (await count(page, '.jspace .empty-state')) > 0;
-    assert(jspaceHasLens || hasEmpty, 'jspace: neither the E2E lens model nor an empty-state');
-  });
-
-  // ORDER-COUPLED (checks below through "heatmap-off analyze"): one continuous
-  // jspace session -- pin/unpin/scope checks read the s.data from THIS
-  // Analyze call, and the heatmap-off check reuses the composer text this
-  // check types in. Do not reorder or run any of these in isolation.
-  await suite.check('jspace analyze renders the workspace strip + heatmap', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    await page.select('.jspace__bar select', config.model);
-    // The heatmap toggle is a drawer extra now; flip it on there, then close the
-    // drawer (its checked state persists) before driving the page's Analyze.
-    await openDrawer(page);
-    await page.evaluate(() => document.querySelector('#jspace-heatmap').click()); // heatmap on
-    await closeDrawer(page);
-    await page.click('.jspace__composer textarea');
-    await page.type('.jspace__composer textarea', 'The Eiffel Tower is located in the city of');
-    await clickByText(page, '.jspace__composer button', 'Analyze');
-    await waitFor(async () => (await count(page, '.jspace__strip .jspace__row')) > 0,
-      { timeout: 90000, message: 'workspace strip never rendered' });
-    assert((await count(page, '.jspace__chip')) > 0, 'no workspace chips rendered');
-    assert((await count(page, '.jspace__hcell')) > 0, 'no heatmap cells rendered');
-    assert((await count(page, '.jspace__hpos--onset')) === 1, 'answer-onset column marker missing');
-  });
-
-  await suite.check('jspace: clicking a workspace row pins the top-N readout', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    await page.click('.jspace__strip .jspace__row');
-    assert((await count(page, '.jspace__row--pinned')) === 1, 'strip row not marked pinned');
-    assert((await count(page, '.jspace__detail .jspace-bar')) > 0, 'pinned panel has no top-N bars');
-  });
-
-  await suite.check('jspace: Escape unpins the readout', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    await page.keyboard.press('Escape');
-    assert((await count(page, '.jspace__row--pinned')) === 0, 'pin survived Escape');
-    // Unpinned detail = the aggregation view, not the cell readout.
-    assert((await count(page, '.jspace__detail .jspace__agg')) === 1, 'detail panel did not reset');
-    assert((await count(page, '.jspace__detail .jspace-bar')) === 0, 'cell readout survived Escape');
-  });
-
-  await suite.check('jspace: non-onset heatmap cell pins its per-cell top-N', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    // First data row (nth-of-type 2: row 1 is the token header), first column
-    // -- not the onset column; per-cell top-k comes from heatmap_top_k.
-    await page.click('.jspace__heatmap .jspace__hrow:nth-of-type(2) .jspace__hcell');
-    assert((await count(page, '.jspace__hcell--pinned')) === 1, 'heatmap cell not marked pinned');
-    assert((await count(page, '.jspace__detail .jspace-bar')) > 0,
-      'pinned non-onset cell has no top-N bars (heatmap_top_k data missing)');
-    // Clicking the pinned cell again unpins.
-    await page.click('.jspace__hcell--pinned');
-    assert((await count(page, '.jspace__hcell--pinned')) === 0, 'cell pin did not toggle off');
-  });
-
-  await suite.check('jspace: unpinned detail panel aggregates common tokens', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    assert((await count(page, '.jspace__detail .jspace__agg-row')) > 0,
-      'aggregation list empty while unpinned');
-  });
-
-  await suite.check('jspace: layer slider slot click scopes the rows; reset restores', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    const slots = await count(page, '.jspace__slot');
-    if (slots < 2) { console.log('    (skipped: single-layer band, no slider)'); return; }
-    await page.click('.jspace__slot'); // first slot -> single-layer range
-    assert((await count(page, '.jspace__row--out')) === slots - 1,
-      'expected all but one strip row scoped out');
-    assert((await count(page, '.jspace__hrow--out')) === slots - 1,
-      'expected all but one heatmap row scoped out');
-    // Arrow-walk must respect the scope: pin the one visible row, walk, and
-    // the pin must never land on a hidden (--out) row.
-    await page.click('.jspace__row:not(.jspace__row--out)');
-    await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('ArrowDown');
-    assert((await count(page, '.jspace__row--pinned')) === 1, 'scoped pin lost during arrow walk');
-    assert((await count(page, '.jspace__row--out.jspace__row--pinned')) === 0,
-      'arrow walk moved the pin onto a scoped-out row');
-    await page.keyboard.press('Escape');
-    await clickByText(page, '.jspace__slider button', 'reset');
-    assert((await count(page, '.jspace__row--out')) === 0, 'reset did not restore the rows');
-  });
-
-  await suite.check('jspace: heatmap-off analyze renders strip-only and pins from onset_strip', async () => {
-    if (!jspaceHasLens) { console.log('    (skipped: no lens installed for the E2E model)'); return; }
-    await openDrawer(page);
-    await page.evaluate(() => document.querySelector('#jspace-heatmap').click()); // toggle heatmap back OFF
-    await closeDrawer(page);
-    await clickByText(page, '.jspace__composer button', 'Analyze');
-    await waitFor(async () => (await count(page, '.jspace__detail')) > 0 &&
-      (await count(page, '.jspace__heatmap')) === 0,
-      { timeout: 90000, message: 'heatmap-off result never rendered' });
-    assert((await count(page, '.jspace__strip .jspace__row')) > 0, 'strip missing');
-    assert((await count(page, '.jspace__detail .jspace__agg-row')) > 0,
-      'aggregation (onset_strip fallback) empty');
-    await page.click('.jspace__strip .jspace__row');
-    assert((await count(page, '.jspace__row--pinned')) === 1, 'strip row not pinned');
-    assert((await count(page, '.jspace__detail .jspace-bar')) > 0,
-      'onset pin has no bars without a heatmap');
-    await page.keyboard.press('Escape');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

@@ -80,8 +80,6 @@ const ROUTES = {
   deletePreset:      ['DELETE', (id) => `/v1/presets/${id}`],
 
   // j-space (Jacobian lens interpretability)
-  jspaceModels:      ['GET', () => '/v1/jspace/models'],
-  jspaceAnalyze:     ['POST', () => '/v1/jspace/analyze', true],
 
   // notebooks
   listNotebooks:     ['GET', () => '/v1/notebooks'],

@@ -231,8 +231,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     // filter to real routes (defined dataset.route) before counting.
     const routes = await page.$$eval('#nav-desktop .nav-item', (els) =>
       [...new Set(els.map((e) => e.dataset.route).filter(Boolean))]);
-    assert(routes.length === 5, `expected 5 routes, got ${routes.join(',')}`);
-    assert(['chat', 'notebook', 'jspace', 'models', 'perf'].every((r) => routes.includes(r)),
+    assert(routes.length === 4, `expected 4 routes, got ${routes.join(',')}`);
+    assert(['chat', 'notebook', 'models', 'perf'].every((r) => routes.includes(r)),
       `missing route in ${routes.join(',')}`);
   });
 

@@ -1,6 +1,6 @@
 # Documentation index
 
-Last updated: 2026-07-09 (jspace plan added)
+Last updated: 2026-09-06
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
@@ -17,8 +17,6 @@ Start at its [README](./architecture/README.md).
 - [project/TODO.md](./project/TODO.md) -- backlog
 
 ## Research / design
-- [jspace_guide.md](./jspace_guide.md) -- Jacobian-lens ("j-space") interpretability feature:
-  how-it-works + end-to-end tutorial (install a lens, `/v1/jspace/analyze`, the v3 J-Space page).
 - [jspace_integration_plan.md](./jspace_integration_plan.md) -- the j-space build + verifier plan
   (design rationale, phases, parity results). Lens **fitting** + the Phase-1 spike harness moved to the `jlens-mlx` sibling repo (2026-07-10).
 

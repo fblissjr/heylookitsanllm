@@ -1,13 +1,13 @@
 # Current Work
 
-Last updated: 2026-09-04. v1.79.66 on the `frontend` branch.
+Last updated: 2026-09-06. v1.79.75 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
 | Suite | Result | When |
 |---|---|---|
-| unit + contract | 1780 passed (1637 + 143) | re-run at v1.79.46 |
-| `bun run e2e:render` (model-free) | 102/102 | at v1.79.42 |
+| unit + contract | 1857 passed | at v1.79.75 |
+| `bun run e2e:render` (model-free) | 106/106 | at v1.79.75 |
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
@@ -305,10 +305,7 @@ NEXT, in order:
 4. **Frontend post-cutover spec slimming & architecture docs cleanup** (P3;
    TODO.md). Slim `docs/frontend_v3_spec.md` down to §4 (the living API contract)
    + decision records now that v2 is deleted. Trim `config.md` and `mlx_provider.md`.
-5. **J-Space visualizer next milestones** (P3, `jspace.js` / `jspace_api.py`;
-   TODO.md). Live streaming analyze endpoint (SSE) and interactive
-   steering/activation patching (porting `mlxui-core` op-semantics via forward-hooks).
-6. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
+5. **At-rest database encryption** (P3 / future state, `db.py`; TODO.md).
    Optional 1Password / `op read` integration for DuckDB file encryption.
 
 CLOSED THIS SESSION (was items 1-2): engine coverage, all phases; and the three

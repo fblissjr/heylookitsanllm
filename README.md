@@ -35,10 +35,8 @@ subprocess -- one API, one UI, per-model engine choice.
 - **Vision and audio input**: images on both APIs and in the chat UI; audio
   clips (WAV/MP3/FLAC) on GGUF models -- MLX models reject audio with a
   clear 400
-- **Logprobs and hidden states**: per-token top-K alternatives; intermediate
-  layer extraction for conditioning or research
-- **J-Space**: Jacobian-lens interpretability -- per-layer "silent workspace"
-  tokens plus a hallucination-risk signal ([guide](docs/jspace_guide.md))
+- **Hidden states**: intermediate layer extraction for conditioning or
+  research
 - **RLM**: recursive inference -- the model explores long contexts by writing
   Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
   [advanced](docs/rlm_advanced.md))
@@ -88,9 +86,8 @@ stored server-side in DuckDB (messages as content blocks; images round-trip).
 Pages: **Chat** (streaming with thinking blocks, capability-gated image/audio
 attach, per-conversation system prompt + presets, honest mid-conversation
 model switching), **Notebook** (base-model continuation), **Models** (scan,
-import, load/unload, schema-driven per-model config editor), **Performance**,
-**Token Explorer**, and **J-Space** (needs a fitted lens under
-`adapters/jspace/`).
+import, load/unload, schema-driven per-model config editor), and
+**Performance**.
 
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the backend API contract).
@@ -136,8 +133,7 @@ After hand-editing `models.toml` on a running server:
 Interactive docs at `http://localhost:8000/docs`; live schema at
 `/openapi.json`. Key endpoints: `/v1/messages` (inference),
 `/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`,
-`/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`,
-`/v1/jspace/analyze`.
+`/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`.
 
 A first call, streaming off:
 

@@ -2019,20 +2019,6 @@ async function main() {
         'the generate body still asked for special tokens after unchecking');
     });
 
-    await suite.check('a page that ignores the pref does not offer it', async () => {
-      // The drawer is an app-shell singleton rendered on every page, so a
-      // globally-`wired` pref would appear on jspace too -- which reads token
-      // ids, not this. Same lie the `wired` gate exists to prevent.
-      await disp.page.evaluate(() => { location.hash = '#/jspace'; });
-      await waitFor(async () => (await disp.page.$('.jspace, .page--jspace, main')) !== null,
-        { timeout: 5000, message: 'jspace never mounted' });
-      await openDrawer(disp.page, '.drawer-gear');
-      assert(!(await dispBox()), 'jspace offered a display pref it does not honor');
-      await closeDrawer(disp.page);
-      await disp.page.evaluate(() => { location.hash = '#/chat'; });
-      await waitFor(async () => (await disp.page.$('.chat__thread')) !== null,
-        { timeout: 5000, message: 'chat never came back' });
-    });
 
     await suite.check('the pref never rides in the sampler bag', async () => {
       // `overrides` is layered over the conversation's stored params, which is

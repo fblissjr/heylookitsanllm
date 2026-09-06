@@ -42,8 +42,7 @@ dependencies = [
     # imports torch, and without it the MLX provider will not import at all.
     # Verify by TRACING the import (a meta_path hook on "torch"), never by
     # reading dependency metadata. Also needed by four mlx-vlm per-model modules
-    # (falcon_ocr, lfm2_vl, glm_ocr, sam3d_body) and, via its own PEP 723 inline
-    # deps, by scripts/jspace_convert_lens.py.
+    # (falcon_ocr, lfm2_vl, glm_ocr, sam3d_body).
     "torch>=2.13.0",
     # Web framework + server
     "fastapi>=0.141.1",

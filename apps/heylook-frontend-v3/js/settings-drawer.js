@@ -12,7 +12,7 @@
 //   Sampling panel               -- buildSettingsPanel({caps}); 'disabled' renders
 //                                   it read-only + greedy note; 'hidden' omits it
 //   Display panel                -- buildDisplayPanel() (global, model-agnostic)
-//   ...contribution.extras()     -- page-owned trailing controls (jspace toggles)
+//   ...contribution.extras()     -- page-owned trailing controls
 //
 // Focus guard (migrated from chat's old inline panel): a background/async
 // repaint must never destroy uncommitted text in a field the user is editing.
@@ -89,8 +89,8 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
   document.body.append(backdropEl, panelEl);
 
   // Escape closes. Focus lives inside the drawer while open (modal backdrop),
-  // so this never races page-level Escape handlers (jspace unpin), which
-  // are bound to their page roots.
+  // so this never races any page-level Escape handler, which are bound to
+  // their page roots.
   document.addEventListener('keydown', (e) => {
     if (isOpen && e.key === 'Escape') close();
   });
@@ -199,7 +199,7 @@ function close() {
   // Un-seal the page BEFORE restoring focus -- the opener lives inside #app.
   if (appEl) appEl.inert = false;
   // Clear the body: open() always re-renders, so a closed drawer holds nothing.
-  // Prevents a page's contributed nodes (e.g. jspace's fixed-id toggles) from
+  // Prevents a page's contributed nodes (fixed-id toggles, say) from
   // lingering in the hidden drawer after that page unmounts (stale retention +
   // a transient duplicate-id window on re-entry).
   bodyEl.replaceChildren();

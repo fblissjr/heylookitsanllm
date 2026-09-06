@@ -164,11 +164,11 @@ composer focus is worth building.
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
   preservation, notebook preset bar (save/drift/armed apply + the
   applied-preset chip), perf no-polling proof + ranges, models list/load/unload
-  + HF scan, jspace Jacobian-lens workspace (lens-gated), danger-zone clear.
+  + HF scan, danger-zone clear.
 
 ## Settings drawer (interaction gotcha)
 
-Sampler params, presets, the per-document system-prompt editor, and jspace's
+Sampler params, presets, and the per-document system-prompt editor's
 heatmap/chat toggles all live in the **app-shell settings drawer**
 (`js/settings-drawer.js`), not inline on the page. The suites reach them via
 `openDrawer(page, gear?)` / `closeDrawer(page)` (`lib/dom.mjs`) — `gear`
@@ -179,7 +179,7 @@ while open it makes `#app` `inert` and its backdrop covers the page, so those
 helpers are deliberately defensive — they reset any leaked-open drawer, fire the
 gear's handler via `evaluate` (a real click can be intercepted by the fading
 backdrop), and wait for both the slide-in and the backdrop's *delayed* hide to
-settle. Drive settings/presets/sysprompt/jspace-toggles ONLY through these
+settle. Drive settings/presets/sysprompt controls ONLY through these
 helpers; a raw `page.click` on drawer content or on page content immediately
 after a close will flake on the transition windows.
 

@@ -261,8 +261,7 @@ export const DISPLAY_META = {
     // any request changing shape. WHICH pages honor it is the page's own
     // `displayPrefs` declaration, not a flag here -- "no surface honors this" is
     // exactly "no page lists it", so a second gate here could only disagree with
-    // that one, silently. The token-ARRAY surfaces (jspace) are the
-    // other half of "one preference, two render mechanisms" and declare nothing.
+    // that one, silently.
     wire: 'show_special_tokens',
     help: 'Keep the model\'s special tokens (<|im_end|>, <bos>, role markers) in '
         + 'its replies instead of stripping them. Display-only -- never changes '
@@ -439,7 +438,6 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
 // same array the page passes to displayWireFields(), so a checkbox rendered here
 // is a checkbox that does something -- which is the whole rule (a control that
 // silently does nothing on the page you are looking at is worse than no control).
-// Explore and jspace read token ids rather than this, so they declare nothing.
 // Returns null when the page honors none, so the drawer omits the section.
 // `notes` (key -> text) is the page's per-model disclosure for a pref that
 // cannot do anything right now -- "Show special tokens" on a gguf model,

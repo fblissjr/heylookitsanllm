@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.75]
+
+The Jacobian-lens (j-space) feature is removed entirely, frontend and backend.
+
+### Removed
+
+- **J-space, the whole feature.** The v3 page (`jspace.js`, its route and CSS),
+  the `/v1/jspace/*` router, the `src/heylook_llm/jspace/` package (analyze,
+  capture, features, lens, registry), `scripts/jspace_convert_lens.py`, its
+  OpenAPI tag, the two `api.js` route entries, four unit/contract test files
+  and eight e2e checks. `jlens-mlx` is out of scope.
+- The e2e "a page that ignores the pref does not offer it" check went too: its
+  premise was a page that reads token ids rather than decoded text, and after
+  the token explorer and jspace there is no such page. It was retargeted from
+  explore to jspace one commit earlier; retargeting it a second time at
+  something that does not fit the claim would have been worse than deleting it.
+
+### Changed
+
+- The three j-space docs moved to `docs/archive/`, the pattern this repo
+  already uses for retired subsystems. `docs/project/TODO.md`'s j-space backlog
+  is relabelled as the record of what was planned rather than work to do, and
+  the registry plan's lens-management coupling is marked void.
+- `README.md` also stopped advertising logprobs, which v1.79.74 missed.
+
+### Notes
+
+- **Fitted lenses under `adapters/jspace/` were deliberately LEFT ON DISK**
+  (~7 GB across two models). They are gitignored, expensive to refit, and
+  removing the code that reads them is not a reason to destroy them. Delete
+  them yourself if you want the space.
+- `torch` stays a dependency -- the removed script used it, but so does the
+  MLX provider's import chain.
+- Backend suite 1857 passed; `bun run e2e:render` 106/106.
+
 ## [1.79.74]
 
 The Token Explorer and the logprobs plumbing behind it are removed.

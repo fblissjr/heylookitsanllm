@@ -103,7 +103,7 @@ export async function setSettingsInput(page, label, value) {
   }, label, value);
 }
 
-// The settings/presets/sysprompt/jspace-toggles all live in the app-shell
+// The settings/presets/sysprompt controls all live in the app-shell
 // settings drawer now (js/settings-drawer.js), not inline on the page. The
 // drawer is a MODAL: while open it makes #app `inert`, and its backdrop covers
 // the page -- so a puppeteer click aimed at the (inert) sidebar gear lands on
