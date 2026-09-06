@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4]
+
+Comments only in the frontend; no behaviour change. `e2e:render` 107/107.
+
+### Changed
+
+- **Nine function names are shared between the page modules; only one is
+  actual duplication.** Each pair is now labelled at both sites so the next
+  reader does not "consolidate" two functions that merely rhyme.
+  `fillModelSelect` (chat renders residency, notebook lists ids),
+  `finishGenerate` (chat's run is server-side and owns saved-row adoption and
+  recovery; notebook's runs on `/v1/messages` and dies with its client) and
+  `buildModelRow` (perf builds a metrics row from an id, models a management
+  row from an object) are marked as unrelated. `setAppliedPreset` IS
+  duplicated -- both copies were written in the same commit, and the write
+  itself already lives once in `document-writer.js` -- and now says so.
+- **`refreshAfterResume`'s protocol is documented at both sites.** The two
+  pages share a resume skeleton (re-entrancy latch, parallel presets+list
+  fetch, held-vs-fresh `updated_at` compare, a `ctx.alive` check after each
+  await plus an identity re-check, adoption guarded on what is being typed
+  in, and the commit-the-stamp-last rule) with structurally different
+  adoption steps. Notebook's copy carried the rules with none of the
+  reasoning -- in particular the stamp rollback, which is what stops a
+  skipped adoption from becoming a permanent "unchanged". It now carries the
+  why, and both copies name the three reasons they diverge: chat's run is
+  server-side so `generating` must be re-adopted, chat has inline rename to
+  guard, and the typing guards protect different surfaces. Deliberately not
+  unified: a factory would need four injection points to share ~15 lines of
+  flow and would move the stamp rule away from both call sites.
+
 ## [2.0.3]
 
 Redundancy found by auditing the codebase for things a future change would have

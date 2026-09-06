@@ -228,6 +228,9 @@ function buildSkeleton(ctx) {
   ctx.el.append(s.rootEl);
 }
 
+// Deliberately NOT chat.js's `fillModelSelect`, which shares the name and
+// renders per-model residency. A notebook cannot load a model, so there is no
+// residency to show and this stays a plain id list.
 function fillModelSelect(ctx) {
   const s = ctx.state;
   fillOptions(s.modelSelect, s.models.map((m) => m.id));
@@ -260,6 +263,10 @@ function putSystemPrompt(ctx, docId, value, opts) {
   ctx.state.docWriter.putSystemPrompt(docId, value, opts);
 }
 
+// GENUINELY duplicated with chat.js (both written in the same commit, not
+// drifted). The WRITE is already shared -- document-writer.js owns
+// setAppliedPreset(docId, presetId); what is copied here is the state adapter
+// and the pre-create rule below. Change one, change the other.
 function setAppliedPreset(ctx, presetId) {
   const s = ctx.state;
   s.appliedPresetId = presetId;
@@ -541,6 +548,10 @@ function releaseGen(ctx, gen) {
   }
 }
 
+// Shares only a NAME with chat.js's much larger `finishGenerate`. A notebook
+// generation runs on /v1/messages and lives entirely in this client: there are
+// no server-saved rows to adopt and no detached run to recover, which is why
+// this is short and chat's is not.
 async function finishGenerate(ctx, gen, { content, aborted }) {
   const s = ctx.state;
   releaseGen(ctx, gen);
@@ -577,6 +588,27 @@ function handleGenerateError(ctx, gen, err) {
 // Re-adopt the store after the tab comes back (ctx.onResume). The page is a
 // mirror with no other invalidation: nothing polls, and the select guard
 // deliberately skips re-fetching the active notebook.
+//
+// SAME PROTOCOL as chat.js's refreshAfterResume -- shared on purpose, so a fix
+// to the skeleton belongs in both: the `resumeSync` latch (a burst of resume
+// events is one pass), the parallel presets+list fetch, the held-vs-fresh
+// `updated_at` compare that decides whether to refetch the body at all, a
+// ctx.alive check after EACH await plus an identity re-check (the user can
+// switch documents mid-fetch), and adoption guarded on what is being typed in.
+//
+// The load-bearing rule, which this copy used to carry without saying why:
+// `adopted` gates the stamp. When adoption was skipped -- the user was typing
+// in the prompt, the title or the body -- the OLD `updated_at` is written back
+// over the fresh one (below), so the next resume still sees the notebook as
+// changed and tries again. Committing the fresh stamp after skipping adoption
+// would strand that edit permanently, because nothing else ever refetches the
+// active notebook.
+//
+// Deliberately absent versus chat's copy, for structural reasons rather than
+// oversight: no `generating` re-adoption (a notebook generates on /v1/messages
+// and dies with its client -- there is no detached server run to resume into,
+// and `generating` is a conversations-only field), and no rename guard (this
+// list has no inline rename).
 async function refreshAfterResume(ctx) {
   const s = ctx.state;
   if (s.resumeSync) return;

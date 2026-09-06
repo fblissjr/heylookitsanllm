@@ -170,6 +170,8 @@ function updateModels(ctx, models) {
   }
 }
 
+// Not models.js's `buildModelRow`: that one builds a management row (load,
+// config, residency) from a model object; this builds a metrics row from an id.
 function buildModelRow(id) {
   const memEl = createEl('span', { class: 'perf-model__mem small muted' }, ['--']);
   const fillEl = createEl('div', { class: 'perf-bar__fill' });

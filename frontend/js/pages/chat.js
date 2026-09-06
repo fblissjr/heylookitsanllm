@@ -467,6 +467,11 @@ const ICON_THINK =
 // choice. Values stay bare ids; titles spell the state out for AT/hover.
 // Until the first residency fetch lands, labels are plain ids (no dot is an
 // honest "don't know", a hollow dot would be a claim).
+//
+// NOT the same function as notebook.js's `fillModelSelect` despite the shared
+// name: this one renders residency (dots + titles), notebook's is a four-line
+// wrapper over the shared `fillOptions`. Same name, different feature -- do
+// not "deduplicate" them.
 function fillModelSelect(ctx) {
   const s = ctx.state;
   const prev = s.modelSelect.value;
@@ -829,6 +834,10 @@ function putSystemPrompt(ctx, docId, value, opts) {
   ctx.state.docWriter.putSystemPrompt(docId, value, opts);
 }
 
+// GENUINELY duplicated with notebook.js (both written in the same commit, not
+// drifted). The WRITE is already shared -- document-writer.js owns
+// setAppliedPreset(docId, presetId); what is copied here is the state adapter
+// and the pre-create rule below. Change one, change the other.
 function setAppliedPreset(ctx, presetId) {
   const s = ctx.state;
   s.appliedPresetId = presetId;
@@ -2062,6 +2071,23 @@ const convListFingerprint = (convs) => JSON.stringify(convs.map((c) => [c.id, c.
 // radio half up) or one deferred adoption into a permanent "unchanged": the
 // select guard never refetches the active conversation, so nothing else
 // would ever retry.
+//
+// THIS PROTOCOL IS SHARED WITH notebook.js's refreshAfterResume, deliberately
+// and not by accident: re-entrancy latch, parallel presets+list fetch, the
+// held-vs-fresh updated_at compare, the conditional body refetch behind two
+// ctx.alive checks and an identity re-check, adoption guarded on what the user
+// is typing in, and the commit-the-stamp-last rule above. Fix a bug in that
+// skeleton in BOTH files.
+//
+// The two are NOT unified because everything around the skeleton is
+// document-shaped, not stylistic: (1) chat generates SERVER-side, so a run
+// outlives the tab and `generating` has to be re-adopted from the list row --
+// a notebook generates on /v1/messages and dies with its client, so there is
+// nothing to re-adopt and `generating` is a conversations-only field; (2) chat
+// has inline sidebar rename to guard, notebook has no rename at all; (3) the
+// typing guards protect different surfaces (message list here, title+content
+// textarea there). A factory would need four injection points to share ~15
+// lines of flow, and would move the stamp rule away from both call sites.
 async function refreshAfterResume(ctx) {
   const s = ctx.state;
   if (s.resumeSync) return; // one in flight; a burst of events is one resume
@@ -2967,6 +2993,11 @@ function releaseStream(ctx, stream) {
 // death (no heylook_saved at all -- recovery loop below) and the
 // failed/empty generation, where resync is what brings back the tail the
 // regenerate/continue mirror hid.
+//
+// Shares only a NAME with notebook.js's `finishGenerate`. Chat's run is
+// server-side (/v1/conversations/{id}/generate), so this one owns saved-row
+// adoption, stop/abandon vocabulary and the recovery retry; notebook's run is
+// client-side (/v1/messages) and its version is 24 lines with none of that.
 async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, saved }) {
   const s = ctx.state;
   releaseStream(ctx, stream);

@@ -332,6 +332,8 @@ function modelMetaLine(model) {
   return parts.join(' · ');
 }
 
+// Not perf.js's `buildModelRow`, which renders a metrics row from a bare id.
+// Same name, unrelated output.
 function buildModelRow(ctx, model) {
   const s = ctx.state;
   const busy = s.loadingIds.has(model.id);
