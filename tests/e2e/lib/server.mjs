@@ -22,6 +22,24 @@ async function fetchJson(url, opts = {}, timeoutMs = 10000) {
   }
 }
 
+/** Canonical server-side load + warm. Blocks until weights are in the LRU and
+ * a 1-token generation has run (Metal kernels JIT'd).
+ *
+ * Exported because a multi-arm run loads a model per arm, and the one thing a
+ * harness must never do is re-invent poll/warm semantics -- they are
+ * server-owned. Same call `scripts/dev_server.sh` makes.
+ */
+export async function loadAndWarm(base, modelId, { timeoutMs = 300000, note = () => '' } = {}) {
+  const url = `${base}/v1/models/${encodeURIComponent(modelId)}/load?warm=true`;
+  const { status, body } = await fetchJson(url, { method: 'POST' }, timeoutMs);
+  if (status !== 200) {
+    throw new Error(`load?warm=true returned ${status} for ${modelId}: ${JSON.stringify(body)}${note()}`);
+  }
+  if (!body?.warmed) {
+    throw new Error(`load succeeded but warm failed for ${modelId}: ${body?.warm_error}${note()}`);
+  }
+}
+
 export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) {
   const log = createWriteStream(logPath, { flags: 'a' });
   const args = [
@@ -58,15 +76,11 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
     throw new Error(`server /v1/models never listed ${modelId}; see ${logPath}`);
   })();
 
-  // Phase 2: canonical server-side load+warm. Blocks until weights are in the
-  // LRU and a 1-token generation has run (Metal kernels JIT'd).
-  await (async () => {
-    const url = `${base}/v1/models/${encodeURIComponent(modelId)}/load?warm=true`;
-    const { status, body } = await fetchJson(url, { method: 'POST' }, deadline - Date.now());
-    if (exited) throw new Error(`server exited during load/warm (code=${exited.code}); see ${logPath}`);
-    if (status !== 200) throw new Error(`load?warm=true returned ${status} for ${modelId}: ${JSON.stringify(body)}; see ${logPath}`);
-    if (!body?.warmed) throw new Error(`load succeeded but warm failed for ${modelId}: ${body?.warm_error}; see ${logPath}`);
-  })();
+  // Phase 2: canonical server-side load+warm.
+  await loadAndWarm(base, modelId, {
+    timeoutMs: deadline - Date.now(),
+    note: () => (exited ? ` (server exited, code=${exited.code}); see ${logPath}` : `; see ${logPath}`),
+  });
 
   return {
     proc,

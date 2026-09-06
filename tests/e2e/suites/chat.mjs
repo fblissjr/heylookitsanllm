@@ -225,7 +225,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   const { page } = ctx;
   await ctx.open('#/chat');
 
-  await suite.check('app boots with 6 nav routes', async () => {
+  await suite.check('app boots with 4 nav routes', async () => {
     await page.waitForSelector('#nav-desktop .nav-item');
     // The settings gear is also an #nav-desktop .nav-item but has no data-route;
     // filter to real routes (defined dataset.route) before counting.
@@ -300,6 +300,17 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('streaming delivery is not poll-quantized (client cadence)', async () => {
+    // ARM-SCOPED. What this guards is CLIENT-side and engine-independent, but
+    // it can only be MEASURED on a fast model: a natively slow one false-fails
+    // by design (see below), so running it on every arm of a matrix would
+    // manufacture a red per slow arm. It runs on the default single-arm path
+    // and on the designated fast arm; anywhere else it reports SKIPPED, never
+    // passed. Per-arm thresholds were the alternative and were rejected --
+    // there is nothing to calibrate them against, so every number would be
+    // invented per model.
+    if (config.arm && config.arm !== (process.env.E2E_CADENCE_ARM || 'mlx-vlm')) {
+      skip(`cadence is measured on one fast arm only (this is ${config.arm})`);
+    }
     // Guards the Phase 1 delivery fix. The old poll capped delivery at ~10/s
     // (~100ms gaps); the fix delivers as fast as the model decodes (~90 tok/s /
     // ~11ms on the MoE). Thresholds sit ~2-3x inside the regression signature so
@@ -1064,6 +1075,7 @@ export async function runChatSuite({ suite, ctx, config }) {
 
   await suite.check('capability gating: thinking toggle and vision_tokens track the selected model', async () => {
     await requireCap(page, config.model, 'vision');
+    await requireCap(page, config.model, 'thinking');   // it asserts on BOTH
     // Selecting a model in the chat bar is pure metadata (fillModelSelect +
     // the change listener) -- it does NOT load the model, so probing an
     // unloaded model's gating here is cheap and safe.
@@ -1162,6 +1174,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('thinking button reflects the model default and writes an explicit value', async () => {
+    await requireCap(page, config.model, 'thinking');
     // v1.79.62: thinking is a tri-state. Unset follows the server's answer
     // for the model (`thinking_default` on the /v1/models row: ON for a
     // thinking-capable model since v1.79.62), the drawer's "Model default"
@@ -1350,6 +1363,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('thinking block renders in the UI when the model produces thinking content', async () => {
+    await requireCap(page, config.model, 'thinking');
     // NO reload for the token budget: a reload's localStorage seed is dead on
     // arrival -- setup auto-selects the newest conversation and
     // hydrateDocParams replaces the seeded cache with that conversation's
@@ -1418,6 +1432,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('stop mid-thought, preview the resume, then Save & Continue resumes the same trace', async () => {
+    await requireCap(page, config.model, 'thinking');
     // v1.79.62-64 end to end through the real UI. A reply stopped inside its
     // thinking persists as a thinking-only row; the editor's Preview prompt
     // shows the engine's own render ending inside the OPEN thinking block;

@@ -32,7 +32,9 @@ not under pytest, and must not need a venv beyond the server's own).
 from __future__ import annotations
 
 import json
+import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -198,3 +200,166 @@ def format_coverage(cov: Coverage, *, spanned: list[str] | None = None,
         lines.append("  run was NARROWED explicitly; an uncovered arm below is a "
                      "choice, not a gap.")
     return "\n".join(lines)
+
+# ---------------------------------------------------------------------------
+# model choice per arm
+# ---------------------------------------------------------------------------
+#
+# Moved here from tests/smoke/run.py in v1.79.78 so the JS e2e harness can use
+# the SAME answer rather than re-deriving "which model is this arm" in another
+# language. Two implementations of that question is the hand-copied-list defect
+# this repo keeps paying for; there is one now, and the JS side shells out.
+
+
+def _post(server: str, path: str, body: dict, timeout: int = 60):
+    payload = json.dumps(body).encode()
+    try:
+        req = urllib.request.Request(
+            f"{server.rstrip('/')}{path}", data=payload, method="POST",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except Exception:
+        return None, None
+
+
+def model_size_gb(server: str, model_id: str):
+    """Measured weight size in GB, or None. NO LOAD.
+
+    ``POST /v1/admin/models/{id}/fit`` sizes a model from FILE STATS (plus a
+    vm_stat/sysctl read for the verdict, which is ignored here). The number it
+    already computes is the only real cost signal any endpoint serves, and it
+    is exactly what choosing an arm's model needs.
+    """
+    st, body = _post(server, f"/v1/admin/models/{urllib.parse.quote(model_id)}/fit",
+                     {"headroom_gb": 0})
+    if st != 200 or not isinstance(body, dict):
+        return None
+    gb = body.get("weights_gb")
+    return gb if isinstance(gb, (int, float)) else None
+
+
+def pick_models(server: str, by_arm: dict, overrides: dict, wanted, resident=frozenset()) -> dict:
+    """One model per requested arm: resident if there is one, else the SMALLEST.
+
+    Two heuristics, in that order, and the order is the point.
+
+    RESIDENT first because it costs no load at all, and on a single-slot router
+    loading something else evicts whatever the owner had running.
+
+    Otherwise the smallest by MEASURED weight size. This used to sort by
+    ``len(id)``, which is not a cost signal and never was: on this machine an
+    unnarrowed run picked gpt-oss-120b, a 27B and a 27B for the three arms.
+    That makes the release standard -- green on all three arms -- something
+    nobody would run, which is the same failure the plan is about, one level up.
+
+    Sizing is one cheap POST per candidate and only for the arms actually
+    wanted, skipped entirely for an arm with an override. Where the endpoint
+    cannot answer (older server, unreadable path) the model sorts LAST rather
+    than first: an unknown size must not win a contest about smallness.
+    ``--model ARM=ID`` remains the way to be sure.
+    """
+    chosen = {}
+    for arm in wanted:
+        if arm in overrides:
+            chosen[arm] = overrides[arm]
+            continue
+        candidates = [m for m, a in by_arm.items() if a == arm]
+        if not candidates:
+            continue
+        already = [m for m in candidates if m in resident]
+        if already:
+            chosen[arm] = sorted(already)[0]
+            continue
+        sizes = {m: model_size_gb(server, m) for m in candidates}
+        chosen[arm] = sorted(
+            candidates,
+            key=lambda m: (sizes[m] is None, sizes[m] if sizes[m] is not None else 0.0, m),
+        )[0]
+    return chosen
+
+
+def resolve_arms(server: str, wanted=None, overrides=None, *, caps_required=None) -> dict:
+    """The whole answer a harness needs, in one call.
+
+    Returns ``{arm: {"model": id, "capabilities": [...]}}`` for every arm that
+    has a model, plus the arms that have none. An arm with no model is REPORTED
+    as absent rather than omitted silently -- "served but not run" and "no model
+    of this engine exists" are different facts and must not print the same.
+
+    ``caps_required`` narrows candidates to models advertising every named
+    capability, which is how a harness asks for "the vision arm" rather than
+    "the mlx-vlm arm and hope".
+    """
+    cov = classify(server)
+    wanted = list(wanted or ARMS)
+    overrides = dict(overrides or {})
+    by_arm = dict(cov.by_engine)
+    if caps_required:
+        need = set(caps_required)
+        by_arm = {m: a for m, a in by_arm.items()
+                  if need <= set(cov.capabilities.get(m, ()))}
+    chosen = pick_models(server, by_arm, overrides, wanted, cov.resident)
+    return {
+        "arms": {
+            arm: {
+                "model": chosen[arm],
+                "capabilities": sorted(cov.capabilities.get(chosen[arm], ())),
+                "resident": chosen[arm] in cov.resident,
+            }
+            for arm in wanted if arm in chosen
+        },
+        "absent": [a for a in wanted if a not in chosen],
+        "unconfirmable": sorted(cov.unconfirmable),
+    }
+
+
+def _main(argv=None) -> int:
+    """CLI so a non-Python harness can consume the taxonomy.
+
+    `python -m helpers.engines --server URL --json` is what tests/e2e shells
+    out to; it exists so the JS side never re-implements "which engine is this
+    model", which the server answers via effective_loader.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(description="Resolve e2e/smoke arms to models.")
+    ap.add_argument("--server", required=True)
+    ap.add_argument("--arm", action="append", choices=ARMS,
+                    help="repeatable; default is every arm")
+    ap.add_argument("--model", action="append", default=[], metavar="ARM=ID",
+                    help="pin one arm's model, repeatable")
+    ap.add_argument("--cap", action="append", default=[], metavar="CAP",
+                    help="only consider models advertising this capability")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    args = ap.parse_args(argv)
+
+    overrides = {}
+    for spec in args.model:
+        arm, _, mid = spec.partition("=")
+        if arm not in ARMS or not mid:
+            print(f"bad --model {spec!r}; expected ARM=ID", file=sys.stderr)
+            return 2
+        overrides[arm] = mid
+
+    try:
+        out = resolve_arms(args.server, args.arm, overrides, caps_required=args.cap)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(out, indent=2))
+    else:
+        for arm, info in out["arms"].items():
+            resident = " (resident)" if info["resident"] else ""
+            print(f"  {arm:<8} {info['model']}{resident}")
+        for arm in out["absent"]:
+            print(f"  {arm:<8} NO MODEL -- arm is uncovered, not green")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

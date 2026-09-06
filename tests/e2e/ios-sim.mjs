@@ -4,11 +4,25 @@
 //   bun run e2e:ios
 //
 // ============================================================================
-// STATUS: WRITTEN 2026-09-05, NEVER RUN. Every step below is wired from the
-// documented safaridriver + simctl surfaces, not from a green run. Expect the
-// first run to need fixes -- treat a failure as "the harness" until a check
-// has been seen to pass and then fail for a real reason. Once it has run,
-// delete this block and the matching TODO.md entry.
+// STATUS: FIRST RUN 2026-09-06 -- 3/7, and the 4 failures are ONE cause.
+//
+// The plumbing works: it boots the simulator, drives real Mobile Safari, loads
+// the page and measures. What it CANNOT do is open the software keyboard --
+// `visualViewport` never shrinks, so every keyboard-up measurement is absent
+// and the four checks that depend on one fail together. That is the harness's
+// own predicted failure ("a WebDriver click may not count as a user gesture on
+// iOS"), and it is the suite's entire reason for existing.
+//
+// Ruled out: the Simulator's hardware-keyboard default. Setting
+// `defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool false`
+// and rebooting the simulator changed nothing (tried 2026-09-06, reverted).
+// The remaining candidates are the ones the message names -- typing before
+// clicking, or a real device. Untried; timeboxed rather than chased.
+//
+// So this arm is UNCOVERED, not green, and gets named as such in the changelog
+// (the same rule tests/smoke uses for an arm with no model). The three checks
+// that DO pass are load-and-measure, not keyboard behaviour, so a green 3/7 is
+// not evidence about the thing this file exists to check.
 // ============================================================================
 //
 // Why this exists and why Chrome cannot do it. When the software keyboard

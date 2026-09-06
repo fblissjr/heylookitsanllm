@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Browser E2E harness for the v3 frontend (puppeteer-core + system Chrome).",
+  "description": "Browser E2E harness for the frontend (puppeteer-core + system Chrome).",
   "scripts": {
     "e2e": "node run.mjs",
     "e2e:chat": "node run.mjs chat",
@@ -12,6 +12,6 @@
     "e2e:ios": "node ios-sim.mjs"
   },
   "dependencies": {
-    "puppeteer-core": "24.10.2"
+    "puppeteer-core": "25.10.0"
   }
 }

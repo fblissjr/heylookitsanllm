@@ -58,7 +58,10 @@ export async function runPagesSuite({ suite, ctx, config }) {
   });
 
   await suite.check('title autosaves and survives reload', async () => {
-    await page.click('.notebook__title', { clickCount: 3 });
+    await page.click('.notebook__title');
+    // See the note at the config-editor inputs below: puppeteer 25 changed
+    // triple-click, so select-all goes through the native input API.
+    await page.$eval('.notebook__title', (el) => el.select());
     await page.type('.notebook__title', 'Ocean Notes');
     // Outcome-based: wait for the debounced PUT to actually land server-side
     // (list view carries title) before reloading, rather than sleeping past
@@ -564,7 +567,14 @@ export async function runPagesSuite({ suite, ctx, config }) {
     };
     page.on('request', fake);
     try {
-      await input.click({ clickCount: 3 });
+      // Select-all via the native input API rather than clickCount: 3.
+      // puppeteer 25 changed triple-click semantics and the selection no
+      // longer lands, so the type() APPENDED instead of replacing and the
+      // check failed on the harness, not the app (verified: identical tree
+      // passes 28/28 on puppeteer 24.10.2). el.select() is what a real
+      // triple-click invokes natively, so this is more faithful, not less.
+      await input.click();
+      await input.evaluate((el) => el.select());
       await input.type('512');
       await clickByText(page, '.model-config .cfg-actions button', 'Save');
       await waitFor(async () => bodies.length === 1, { timeout: 10000, message: 'PATCH never sent' });
@@ -582,7 +592,8 @@ export async function runPagesSuite({ suite, ctx, config }) {
 
       // Clearing the just-saved value must re-arm Save (the rebuilt panel's
       // baseline is the response config) and send an explicit null.
-      await input2.click({ clickCount: 3 });
+      await input2.click();
+      await input2.evaluate((el) => el.select());
       await page.keyboard.press('Backspace');
       await clickByText(page, '.model-config .cfg-actions button', 'Save');
       await waitFor(async () => bodies.length === 2, { timeout: 10000, message: 'null-reset PATCH never sent' });

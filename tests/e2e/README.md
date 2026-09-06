@@ -161,6 +161,33 @@ composer focus is worth building.
   reload), and the cap-filter wire check (a value set on a capable model
   must not ride a request to a model lacking the cap -- request
   intercepted + aborted so the negative model never loads).
+### Arms (v1.79.78)
+
+One arm by default -- whatever `E2E_MODEL` is, no extra load. `E2E_ARMS=all`
+(or a comma list) resolves a model per ENGINE and loads each in turn:
+
+```bash
+E2E_ARMS=all bun run e2e          # mlx-lm, mlx-vlm, gguf
+E2E_ARMS=gguf bun run e2e:chat
+```
+
+Arms are ENGINES, not providers -- `"mlx"` is two upstream repos with separate
+release trains, so a text arm and a vision arm are different code. The mapping
+is the SERVER's (`effective_loader`), read through `tests/helpers/engines.py`,
+the same module `tests/smoke` and `tests/eval` use; the JS side shells out to
+`python -m helpers.engines --json` rather than re-deriving it. An arm with no
+model prints as UNCOVERED, never as a pass.
+
+One arm is the default because `max_loaded_models = 1`: every extra arm pays a
+full weight load plus Metal warm and evicts the previous one. Arm count is the
+cost driver, not tokens (`E2E_MAX_TOKENS` is 24).
+
+Checks that need a capability skip on an arm that lacks it and are tallied as
+SKIPPED. The cadence check is arm-scoped (`E2E_CADENCE_ARM`, default
+`mlx-vlm`): what it guards is client-side and engine-independent, but it can
+only be measured on a fast model, so running it everywhere would manufacture a
+red per slow arm.
+
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
   preservation, notebook preset bar (save/drift/armed apply + the
   applied-preset chip), perf no-polling proof + ranges, models list/load/unload

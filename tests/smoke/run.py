@@ -53,7 +53,7 @@ from typing import Any
 # inserted the rootdir for us. helpers/ is where shared test code already lives
 # (mlx_mock, sse).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from helpers.engines import ARMS, classify, format_coverage  # noqa: E402
+from helpers.engines import ARMS, classify, format_coverage, pick_models  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
 
@@ -184,65 +184,6 @@ class Report:
 # discovery: which engine is each model?  (helpers/engines.py -- shared with
 # tests/eval/run.py, because two copies of a taxonomy is one drifting copy)
 # ---------------------------------------------------------------------------
-
-
-def model_size_gb(server, model_id):
-    """Measured weight size in GB, or None. NO LOAD.
-
-    `POST /v1/admin/models/{id}/fit` sizes a model from FILE STATS (plus a
-    vm_stat/sysctl read for the verdict, which is ignored here). It exists for
-    the models page's "will this fit" panel; the number it already computes is
-    the only real cost signal any endpoint serves, and it is exactly what
-    choosing an arm's model needs.
-    """
-    st, body = call(server, "POST", f"/v1/admin/models/{urllib.parse.quote(model_id)}/fit",
-                    {"headroom_gb": 0}, timeout=60)
-    if st != 200 or not isinstance(body, dict):
-        return None
-    gb = body.get("weights_gb")
-    return gb if isinstance(gb, (int, float)) else None
-
-
-def pick_models(server, by_arm, overrides, wanted, resident=frozenset()):
-    """One model per requested arm: resident if there is one, else the SMALLEST.
-
-    Two heuristics, in that order, and the order is the point.
-
-    RESIDENT first because it costs no load at all, and on a single-slot router
-    loading something else evicts whatever the owner had running.
-
-    Otherwise the smallest by MEASURED weight size. This used to sort by
-    `len(id)`, which is not a cost signal and never was -- the docstring said as
-    much ("a short name is not a small model") and it was still wrong in
-    practice: on this machine an unnarrowed run picked gpt-oss-120b, a 27B and a
-    27B for the three arms. That makes the Phase 4 release standard -- green on
-    all three arms -- something nobody would run, which is the same failure the
-    whole plan is about, one level up.
-
-    Sizing is one cheap POST per candidate and only for the arms actually
-    wanted, skipped entirely for an arm with an override. Where the endpoint
-    cannot answer (older server, unreadable path) the model sorts LAST rather
-    than first: an unknown size must not win a contest about smallness.
-    `--model ARM=ID` remains the way to be sure.
-    """
-    chosen = {}
-    for arm in wanted:
-        if arm in overrides:
-            chosen[arm] = overrides[arm]
-            continue
-        candidates = [m for m, a in by_arm.items() if a == arm]
-        if not candidates:
-            continue
-        already = [m for m in candidates if m in resident]
-        if already:
-            chosen[arm] = sorted(already)[0]
-            continue
-        sizes = {m: model_size_gb(server, m) for m in candidates}
-        chosen[arm] = sorted(
-            candidates,
-            key=lambda m: (sizes[m] is None, sizes[m] if sizes[m] is not None else 0.0, m),
-        )[0]
-    return chosen
 
 
 # ---------------------------------------------------------------------------

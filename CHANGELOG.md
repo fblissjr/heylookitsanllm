@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.78]
+
+The browser E2E harness runs per ENGINE arm, and puppeteer-core moves a major.
+
+### Added
+
+- **Engine arms in `tests/e2e`.** `E2E_ARMS=all` (or a comma list) resolves one
+  model per engine and loads each in turn; the default stays ONE arm, because
+  `max_loaded_models = 1` makes arm count the cost driver rather than tokens.
+  The taxonomy is not reimplemented in JS: `pick_models` and `model_size_gb`
+  moved from `tests/smoke/run.py` into `tests/helpers/engines.py`, which gained
+  `resolve_arms()` and a `python -m helpers.engines --json` entry point, and the
+  harness shells out to it. One implementation of "which engine is this model",
+  shared by smoke, eval and e2e. An arm with no model prints UNCOVERED, never
+  as a pass.
+- **The run header records what produced the result**: Chrome's version and
+  puppeteer-core's, printed before the suites and available for any failure
+  report. Chrome updates itself underneath this harness and nothing recorded
+  which one ran.
+- `loadAndWarm()` is exported from `lib/server.mjs` so the arm loop reuses the
+  server-owned load+warm contract instead of a second copy of poll/warm logic.
+
+### Changed
+
+- **puppeteer-core 24.10.2 -> 25.10.0**, and it was NOT a free bump. Two pages
+  checks failed on 25 and passed on 24 against an identical tree, verified with
+  a baseline worktree at the pre-work commit (43/43 there). Cause: both used
+  `click({ clickCount: 3 })` to select-all before typing, and puppeteer 25
+  changed triple-click semantics, so the type APPENDED instead of replacing.
+  They now select through `el.select()`, the native API a real triple-click
+  invokes -- more faithful, and not dependent on click emulation. This is
+  exactly the class of thing the new version recording exists to attribute.
+- Three thinking checks and the capability-gating check gained
+  `requireCap(..., 'thinking')`. The gating check was HALF gated -- it skipped
+  when the model lacked vision, then asserted the thinking toggle was visible,
+  so a vision-capable non-thinking arm failed at the one check whose subject is
+  capability gating.
+- The cadence check is arm-scoped (`E2E_CADENCE_ARM`, default `mlx-vlm`). What
+  it guards is client-side and engine-independent, but it can only be MEASURED
+  on a fast model -- a slow one false-fails by design, so running it on every
+  arm would manufacture a red per slow arm. Per-arm thresholds were rejected:
+  nothing calibrates them, so every number would be invented.
+
+### Notes
+
+- Verified live against a server on this machine's exact environment (same
+  venv, mlx-lm 0.32.0 and mlx-vlm 0.7.0rc0 at their committed SHAs, llama-server
+  build 10826): `bun run e2e` 76/76 (chat 48, pages 28) on the default arm, and
+  `E2E_ARMS=mlx-lm bun run e2e:chat` 42/42 with 6 correctly SKIPPED.
+- **`e2e:ios` is UNCOVERED, named here rather than passed over.** First run
+  ever: 3/7. The plumbing works -- it boots the simulator, drives real Mobile
+  Safari and measures -- but the software keyboard never opens, so
+  `visualViewport` never shrinks and all four keyboard checks fail together.
+  That is the file's own predicted failure mode. The Simulator's
+  hardware-keyboard default was ruled out (setting and reverting
+  `ConnectHardwareKeyboard` changed nothing). The three passing checks are
+  load-and-measure, not keyboard behaviour, so 3/7 is not partial evidence
+  about the thing the suite exists to check.
+
 ## [1.79.77]
 
 The static file handler moves out of `api.py` into its own module.

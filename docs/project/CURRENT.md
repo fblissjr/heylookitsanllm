@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-06. v1.79.76 on the `frontend` branch.
+Last updated: 2026-09-06. v1.79.78 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
@@ -11,7 +11,9 @@ Last updated: 2026-09-06. v1.79.76 on the `frontend` branch.
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
-| `bun run e2e:chat` | 37/46 -- rot fixed, 9 behavioural left. See item 2 | at v1.79.46 |
+| `bun run e2e` | 76/76 (chat 48, pages 28) | at v1.79.78 |
+| `bun run e2e` mlx-lm arm | 42/42, 6 skipped | at v1.79.78 |
+| `bun run e2e:ios` | 3/7 UNCOVERED -- keyboard never opens | first run, v1.79.78 |
 
 NOTE ON RUNNING THE SUITE LOCALLY: `tests/contract/` opens the real
 `data/conversations.duckdb` and DuckDB takes an exclusive lock, so every
