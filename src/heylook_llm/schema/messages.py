@@ -2,11 +2,11 @@
 #
 # Message types and the core MessageCreateRequest model.
 # Inspired by Anthropic Messages API with extensions for heylookitsanllm
-# features (thinking, logprobs, hidden states, batch).
+# features (thinking, hidden states, batch).
 
 from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from heylook_llm.config import ReasoningEffort
 from heylook_llm.schema.content_blocks import InputContentBlock, TextBlock
@@ -141,6 +141,38 @@ class MessageCreateRequest(BaseModel):
     metadata: Optional[Dict[str, str]] = Field(
         default=None, description="Arbitrary metadata passed through to the response"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_request_fields(cls, data):
+        """Refuse fields that were REMOVED, rather than dropping them silently.
+
+        This has to live HERE, on the wire model, not on the internal
+        ChatRequest. `/v1/messages` is the only inference route left (the
+        OpenAI-compatible one went in v1.79.66) and it binds this model;
+        nothing binds ChatRequest as a request body any more, and converters
+        build it from explicit kwargs. A guard over there cannot see a client.
+        Pydantic's default `extra` policy is *ignore*, so without this a client
+        asking for a removed feature gets a normal 200 and no hint -- exactly
+        the "answered as though it had not asked" outcome the guard exists to
+        prevent. Found by review 2026-09-06, after v1.79.74 put it on the
+        wrong model and a test that built ChatRequest directly went green.
+        """
+        if not isinstance(data, dict):
+            return data
+        gone = [k for k in ("logprobs", "top_logprobs") if k in data]
+        if gone:
+            raise ValueError(
+                f"{', '.join(gone)} is no longer supported: logprobs were removed "
+                "with the token explorer (the only surface that read them) and the "
+                "heylook_logprobs SSE extension is gone with them"
+            )
+        if "preset" in data:
+            raise ValueError(
+                "'preset' was renamed to 'sampler' (named sampler configs); "
+                "/v1/presets user presets are a separate system"
+            )
+        return data
 
     @field_validator("messages")
     @classmethod

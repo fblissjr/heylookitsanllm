@@ -312,3 +312,21 @@ class TestNonStreamingPerformance:
         assert perf["thinking_duration_ms"] is None
         assert perf["content_duration_ms"] is None
 
+
+def test_retired_request_fields_are_refused_not_ignored(client):
+    """A removed field must be REFUSED at the wire, not silently dropped.
+
+    Route-level on purpose, and that is the whole lesson. v1.79.74 put this
+    guard on the internal ChatRequest and tested it by constructing a
+    ChatRequest directly -- green, while the real answer to a client sending
+    `logprobs` on /v1/messages was a normal 200 with the key dropped, because
+    nothing binds ChatRequest as a request body and pydantic's default extra
+    policy is *ignore*. A model-level test passes whether or not any route
+    binds the model it tests; only this shape can tell the difference.
+    """
+    body = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}
+    for field, value in (("logprobs", True), ("top_logprobs", 5), ("preset", "x")):
+        r = client.post("/v1/messages", json={**body, field: value})
+        assert r.status_code == 422, f"{field} was accepted: {r.status_code}"
+        assert field.split("_")[-1] in r.text or field in r.text, \
+            f"the {field} refusal does not name the field: {r.text[:200]}"

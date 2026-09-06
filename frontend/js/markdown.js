@@ -36,25 +36,53 @@ marked.use({ renderer: { html: ({ text }) => escapeHtml(text) } });
 // (verified on 18.0.11; returning `''` does NOT fall back -- it drops the
 // content silently, which is how the accept path could have been written
 // wrong without any test noticing).
-const SAFE_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+const SAFE_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'tel:']);
 const SAFE_IMAGE_SCHEMES = new Set(['http:', 'https:']);
 const SCHEME_RE = /^([A-Za-z][A-Za-z0-9+.-]*):/;
 
+// DECODE BEFORE CHECKING, and this is the whole correctness argument. The
+// browser resolves the DECODED attribute value, so a check that runs on the
+// raw text is checking a different string than the one that will be navigated.
+// The first version of this guard tested for entities only in the part BEFORE
+// a literal colon, which missed the case where the COLON ITSELF is an entity:
+// `javascript&colon;alert(1)` has no literal colon at all, took the
+// "no colon, therefore relative" early return, and was emitted verbatim --
+// the HTML parser then supplied the colon and it executed. Verified in real
+// Chrome by review, 2026-09-06. DOMPurify caught it, which is exactly what a
+// second layer is for, but this one claimed to be the primary and was not.
+//
+// A detached <textarea> is the standard inert decoder: its content model is
+// text (RCDATA), so assigning innerHTML parses entities and executes nothing.
+// It decodes ONCE, which is what the HTML parser does -- so `&amp;#58;`
+// correctly stays the literal text `&#58;` and reads as relative, matching
+// what the browser will conclude.
+let _decoder = null;
+function decodeEntities(raw) {
+  if (!_decoder) {
+    if (typeof document === 'undefined') return null;   // fail closed
+    _decoder = document.createElement('textarea');
+  }
+  _decoder.innerHTML = String(raw ?? '');
+  return _decoder.value;
+}
+
 function safeUrl(raw, allowed) {
-  // The HTML parser STRIPS tab, LF and CR from a URL attribute before
-  // resolving it, so a literal `jav<TAB>ascript:` is a live vector that
-  // reads as harmless here. Normalize the way the browser will.
-  const url = String(raw ?? '').replace(/[\t\n\r]/g, '').trim();
+  const decoded = decodeEntities(raw);
+  if (decoded === null) return false;
+  // Strip C0 controls and spaces: a SUPERSET of what the HTML URL parser
+  // removes (tab, LF, CR), so this can never read "relative" where the browser
+  // reads a scheme. Only the decision uses this form; a refusal re-renders the
+  // original text, and an approval hands marked the untouched href.
+  const url = decoded.replace(/[\u0000-\u0020\u007f]/g, '');
   if (url === '') return false;
-  const colon = url.indexOf(':');
-  if (colon === -1) return true;              // relative path or #anchor
   const scheme = SCHEME_RE.exec(url);
-  if (scheme) return allowed.has(`${scheme[1].toLowerCase()}:`);
-  // A colon with no parseable scheme is only safe if it cannot BECOME one
-  // once the browser entity-decodes the attribute: `java&#115;cript:` does
-  // exactly that, and reads as a relative path until it is decoded. Refuse
-  // on any escape marker rather than reimplement HTML entity decoding.
-  return !/[&%\\]/.test(url.slice(0, colon));
+  // No scheme means relative or a bare fragment, which can only resolve
+  // against our own origin -- the same conclusion the browser reaches from the
+  // same grammar. This is why the old `[&%\\]` prefix heuristic is gone: it
+  // was guarding against a decode that now happens explicitly, and it dropped
+  // ordinary relative URLs like `/search?q=a&t=1:30` on the way.
+  if (!scheme) return true;
+  return allowed.has(`${scheme[1].toLowerCase()}:`);
 }
 
 marked.use({

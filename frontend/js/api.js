@@ -79,7 +79,6 @@ const ROUTES = {
   updatePreset:      ['PUT', (id) => `/v1/presets/${id}`, true],
   deletePreset:      ['DELETE', (id) => `/v1/presets/${id}`],
 
-  // j-space (Jacobian lens interpretability)
 
   // notebooks
   listNotebooks:     ['GET', () => '/v1/notebooks'],

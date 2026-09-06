@@ -152,23 +152,6 @@ class ChatRequest(BaseModel):
             )
         return data
 
-    @model_validator(mode='before')
-    @classmethod
-    def reject_removed_logprobs_fields(cls, data):
-        # 2026-09-06: logprobs came out with the token explorer, its only
-        # consumer. Same reasoning as the preset guard above -- ChatRequest
-        # ignores unknown keys, so without this a client asking for logprobs
-        # would be answered as though it had not asked.
-        if isinstance(data, dict):
-            present = [k for k in ('logprobs', 'top_logprobs') if k in data]
-            if present:
-                raise ValueError(
-                    f"{', '.join(present)} is no longer supported: logprobs were "
-                    "removed with the token explorer (the only surface that read "
-                    "them) and the heylook_logprobs SSE extension is gone with them"
-                )
-        return data
-
     @field_validator('messages', mode='before')
     @classmethod
     def validate_messages(cls, v):

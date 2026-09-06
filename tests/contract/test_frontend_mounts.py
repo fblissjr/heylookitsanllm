@@ -46,6 +46,43 @@ def test_unknown_paths_404(client):
         assert client.get(path).status_code == 404, path
 
 
+def test_the_frontend_routes_do_not_shadow_the_api(client):
+    """One table, because the claim is a property: mounting the frontend at /
+    must not change how the API answers ANYTHING it does not serve.
+
+    A `/{rest:path}` catch-all broke exactly this and no check could see it.
+    Matching every path means starlette always finds a partial match, so
+    `redirect_slashes` never fires and a method mismatch reports 405 instead of
+    404 -- measured, not theorised: `POST /v1/messages/` went from 307->200 to
+    405 Method Not Allowed, which breaks any client that builds URLs by
+    concatenation. Serving the tree's real shape (/, /js, /css) instead keeps
+    all of it intact.
+    """
+    # A trailing slash still redirects into the real route. 405 here means the
+    # catch-all is back; the 422 is that route rejecting an empty body, which
+    # is the point -- it was REACHED.
+    assert client.post("/v1/messages/", json={}).status_code != 405
+
+    # Unknown paths are 404 on every method, not 405.
+    assert client.post("/v1/mesages", json={}).status_code == 404
+    assert client.delete("/v1/requests/definitely-not-a-request").status_code == 404
+
+    # A NUL byte is a bad path like any other, not an unhandled ValueError.
+    # resolve() raises before is_file() (which swallows it) can refuse it.
+    assert client.get("/%00").status_code == 404
+    assert client.get("/js/%00app.js").status_code == 404
+
+    # HEAD works on the entry point: uptime monitors probe with it, and
+    # FastAPI's APIRoute does not add it implicitly the way starlette's does.
+    assert client.head("/").status_code == 200
+
+    # Only the app's own asset directories are the web root. DESIGN.md sits in
+    # frontend/ and a catch-all served it at /DESIGN.md.
+    assert client.get("/DESIGN.md").status_code == 404
+    assert client.get("/js/app.js").status_code == 200
+    assert client.get("/css/app.css").status_code == 200
+
+
 def test_api_and_docs_still_win_over_the_catch_all(client):
     # The catch-all is registered after every router, so ordering alone
     # protects these. Pinned because the protection is positional, and a
@@ -74,9 +111,10 @@ def test_path_traversal_is_refused(client):
     the repo root it resolves to the REAL pyproject.toml, so the guard is now
     the only thing between this request and that file.
     """
-    r = client.get("/%2e%2e/pyproject.toml")
-    assert r.status_code == 404
-    assert "[project]" not in r.text
+    for path in ("/%2e%2e/pyproject.toml", "/js/%2e%2e/%2e%2e/pyproject.toml"):
+        r = client.get(path)
+        assert r.status_code == 404, path
+        assert "[project]" not in r.text, path
 
 
 def test_revalidation_costs_no_body(client):

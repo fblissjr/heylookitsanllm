@@ -43,7 +43,7 @@ Server version **{__version__}**. Default base URL `http://localhost:{DEFAULT_PO
 top-level `system`, typed content blocks, block-structured SSE ending at
 `message_stop` with no `[DONE]`, plus documented heylook extensions
 (`heylook_progress`, `X-Request-ID` cancellation). This
-is the wire the bundled `/v3` frontend speaks. Media blocks use Anthropic's
+is the wire the bundled frontend speaks. Media blocks use Anthropic's
 nested `source`
 (`{{"type":"image","source":{{"type":"base64","media_type":...,"data":...}}}}`);
 heylook's older flat spelling is still accepted. There is no server-side

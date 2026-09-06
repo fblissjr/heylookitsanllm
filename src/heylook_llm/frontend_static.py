@@ -94,8 +94,18 @@ def _file_response(path, request: Request):
             body = _gzip.compress(path.read_bytes(), compresslevel=6)
             # Evict older generations of THIS FILE, not the whole tree -- see
             # the module docstring for what clearing it wholesale cost.
-            for stale in [k for k in _gzip_cache if k[0] == key[0]]:
-                del _gzip_cache[stale]
+            #
+            # Snapshot the keys and pop defensively: these handlers are sync,
+            # so they run in anyio's THREADPOOL, and two threads missing on a
+            # cold cache raced here. Iterating the live dict raised
+            # "dictionary changed size during iteration" (reproduced under real
+            # uvicorn with 8 concurrent clients on a cold cache -> 500 on a
+            # static asset), and two threads evicting the same generation would
+            # double-delete. Neither could happen while this was `async def` on
+            # one loop; the sync change introduced both.
+            for stale in list(_gzip_cache):
+                if stale[0] == key[0]:
+                    _gzip_cache.pop(stale, None)
             _gzip_cache[key] = body
         return Response(
             content=body,
@@ -109,12 +119,43 @@ def _file_response(path, request: Request):
     return FileResponse(path, stat_result=stat_result, headers=headers)
 
 
-def mount_frontend(app: FastAPI) -> None:
-    """Register `/` and the asset catch-all.
+def _serve(path, request: Request):
+    """One asset, or 404. Never raises."""
+    try:
+        resolved = path.resolve()
+        # The guard is load-bearing NOW in a way it was not under apps/:
+        # `../pyproject.toml` used to resolve to a path that did not exist, so
+        # is_file() was what actually refused it. From frontend/ at the repo
+        # root it resolves to the real file. `.resolve()` follows symlinks
+        # BEFORE the check, which is the order that makes a symlink escape fail.
+        if resolved.is_relative_to(FRONTEND_DIR) and resolved.is_file():
+            return _file_response(resolved, request)
+    except (ValueError, OSError):
+        # A NUL byte in the path makes resolve() raise ValueError before
+        # is_file() (which swallows it) ever runs -- `GET /%00` was answering
+        # 500 with a traceback per request. A bad path is a 404 like any other.
+        pass
+    raise HTTPException(status_code=404, detail="Not found")
 
-    MUST be called after every router is included: the asset route is a
-    catch-all, and registration order is the only thing keeping `/v1`, `/docs`
-    and `/openapi.json` reachable.
+
+def mount_frontend(app: FastAPI) -> None:
+    """Register the frontend's routes at `/`.
+
+    NO CATCH-ALL, and that is deliberate. `@app.get("/{rest:path}")` matches
+    every path, which means starlette ALWAYS finds a partial match and so:
+    `redirect_slashes` never fires (`POST /v1/messages/` went from 307->200 to
+    405 Method Not Allowed, a real break for any client that concatenates URLs)
+    and unknown paths answer 405 instead of 404 on every non-GET method. Both
+    were measured, not theorised. Serving the tree's actual shape -- `/` plus
+    the two asset directories -- costs nothing here, because the app routes on
+    the HASH so the server only ever sees those, and it keeps the whole API's
+    404 and redirect behaviour untouched.
+
+    It also means `frontend/DESIGN.md` is no longer served at the web root,
+    which a catch-all exposed.
+
+    A new TOP-LEVEL asset (an image, a manifest) needs a route added here. That
+    is the price of not having a catch-all, and it is worth it.
     """
     if not FRONTEND_DIR.is_dir():
         # Loud, because the alternative is silence: the guard used to skip the
@@ -130,18 +171,21 @@ def mount_frontend(app: FastAPI) -> None:
     # which block. Starlette runs a sync handler in a threadpool, which is the
     # same reason the two admin routes that read model directories are sync --
     # the event loop here is the one delivering SSE tokens.
-    @app.get("/", include_in_schema=False)
+    #
+    # HEAD as well as GET: `/` is the user-facing entry point now, and uptime
+    # monitors probe with HEAD. FastAPI's APIRoute does not add it implicitly
+    # the way starlette's Route does, so it answered 405.
+    # `/index.html` as well as `/`: the catch-all served both, and dropping a
+    # URL that used to work is a change nobody asked for.
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/index.html", methods=["GET", "HEAD"], include_in_schema=False)
     def serve_frontend_index(request: Request):
-        return _file_response(FRONTEND_DIR / "index.html", request)
+        return _serve(FRONTEND_DIR / "index.html", request)
 
-    @app.get("/{rest:path}", include_in_schema=False)
-    def serve_frontend_asset(request: Request, rest: str):
-        """A real file, or 404."""
-        resolved = (FRONTEND_DIR / rest).resolve()
-        # The guard is load-bearing NOW in a way it was not under apps/:
-        # `../pyproject.toml` used to resolve to a path that did not exist, so
-        # is_file() was what actually refused it. From frontend/ at the repo
-        # root it resolves to the real file.
-        if resolved.is_relative_to(FRONTEND_DIR) and resolved.is_file():
-            return _file_response(resolved, request)
-        raise HTTPException(status_code=404, detail="Not found")
+    @app.api_route("/js/{rest:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def serve_frontend_js(request: Request, rest: str):
+        return _serve(FRONTEND_DIR / "js" / rest, request)
+
+    @app.api_route("/css/{rest:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def serve_frontend_css(request: Request, rest: str):
+        return _serve(FRONTEND_DIR / "css" / rest, request)

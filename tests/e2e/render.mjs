@@ -2019,6 +2019,28 @@ async function main() {
         'the generate body still asked for special tokens after unchecking');
     });
 
+    await suite.check('a page that ignores the pref does not offer it', async () => {
+      // The drawer is an app-shell singleton rendered on every page, so a
+      // globally-`wired` pref would appear on pages that do not honor it.
+      // Which pages honor it is each page's own `displayPrefs` declaration:
+      // chat and notebook declare it, models and perf declare nothing, and
+      // settings.js returns null for an empty honored list so the section is
+      // omitted entirely. That is the lie the `wired` gate exists to prevent.
+      //
+      // Re-pointed at #/models after jspace was removed (v1.79.79). It was
+      // deleted with jspace on the reasoning that no page ignored the pref any
+      // more, which was simply wrong -- two still do.
+      await disp.page.evaluate(() => { location.hash = '#/models'; });
+      await waitFor(async () => (await disp.page.$('.models, .page--models, main')) !== null,
+        { timeout: 5000, message: 'models never mounted' });
+      await openDrawer(disp.page, '.drawer-gear');
+      assert(!(await dispBox()), 'models offered a display pref it does not honor');
+      await closeDrawer(disp.page);
+      await disp.page.evaluate(() => { location.hash = '#/chat'; });
+      await waitFor(async () => (await disp.page.$('.chat__thread')) !== null,
+        { timeout: 5000, message: 'chat never came back' });
+    });
+
 
     await suite.check('the pref never rides in the sampler bag', async () => {
       // `overrides` is layered over the conversation's stored params, which is
@@ -2110,6 +2132,23 @@ async function main() {
         ['inline link',     '[x](javascript:alert(1))'],
         ['mixed case',      '[x](JaVaScRiPt:alert(1))'],
         ['entity-encoded',  '[x](java&#115;cript:alert(1))'],
+        // THE COLON ITSELF AS AN ENTITY. The first version of the guard tested
+        // for entities only before a LITERAL colon, so these had no colon at
+        // all, took the "relative" early return, and were emitted verbatim for
+        // the HTML parser to decode and execute. Found by review 2026-09-06,
+        // confirmed executing in real Chrome. DOMPurify caught them; the guard
+        // did not, while claiming to be the primary.
+        ['entity colon',    '[x](javascript&colon;alert(1))'],
+        ['numeric colon',   '[x](javascript&#58;alert(1))'],
+        ['hex colon',       '[x](javascript&#x3a;alert(1))'],
+        ['padded colon',    '[x](javascript&#0000058;alert(1))'],
+        ['no-semicolon',    '[x](javascript&#58alert(1))'],
+        ['entity newline',  '[x](javascript&NewLine;&colon;alert(1))'],
+        ['entity tab',      '[x](jav&Tab;ascript&colon;alert(1))'],
+        ['entity ref link', '[x][e]\\n\\n[e]: javascript&colon;alert(1)'],
+        ['entity angle',    '[x](<javascript&colon;alert(1)>)'],
+        ['entity img data', '![a](data&colon;text/html,hi)'],
+        ['entity img svg',  '![a](data&colon;image/svg+xml,<svg onload=alert(1)>)'],
         ['percent-encoded', '[x](java%73cript:alert(1))'],
         ['leading space',   '[x]( javascript:alert(1))'],
         ['vbscript',        '[x](vbscript:alert(1))'],
@@ -2119,10 +2158,27 @@ async function main() {
         ['image',           '![x](javascript:alert(1))'],
         ['image data svg',  '![x](data:image/svg+xml,<svg onload=alert(1)>)'],
       ];
+      // ASSERT ON WHAT THE BROWSER RESOLVES, not on the HTML text. A textual
+      // match cannot see this class at all: the exploit emits
+      // `href="javascript&colon;..."`, which contains no literal colon, so a
+      // regex for `javascript:` passes on the vulnerable output. The first
+      // version of this check did exactly that and was vacuous for the very
+      // vectors it was added for. Parsing and reading `protocol` is the only
+      // oracle that agrees with what a click would do.
+      const SAFE = new Set(['http:', 'https:', 'mailto:', 'tel:']);
       for (const [name, src] of vectors) {
-        const html = await render(src);
-        assert(!/(?:href|src)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/i.test(html),
-          `${name} produced a live dangerous URL: ${JSON.stringify(html)}`);
+        const protos = await md.evaluate(async (b, text) => {
+          const { renderMarkdown } = await import(`${b}/js/markdown.js`);
+          const host = document.createElement('div');
+          host.innerHTML = renderMarkdown(text);
+          return [...host.querySelectorAll('[href],[src]')].map((el) => {
+            try { return new URL(el.getAttribute('href') ?? el.getAttribute('src'), location.href).protocol; }
+            catch { return 'unparseable:'; }
+          });
+        }, base, src);
+        const bad = protos.filter((p) => !SAFE.has(p));
+        assert(bad.length === 0,
+          `${name} produced a live ${bad.join(',')} URL (resolved by the browser)`);
       }
     });
 
@@ -2133,6 +2189,12 @@ async function main() {
         ['https',      '[x](https://ok.test/p)',        'href="https://ok.test/p"'],
         ['mailto',     '[x](mailto:a@b.test)',          'href="mailto:a@b.test"'],
         ['image',      '![x](https://ok.test/a.png)',   'src="https://ok.test/a.png"'],
+        // Relative URLs carrying BOTH an & and a later colon. The first guard
+        // refused these outright -- a timestamp or ratio in a query string was
+        // enough to silently drop the link.
+        ['query+colon', '[x](/search?q=foo&t=1:30)',     'href="/search?q=foo&amp;t=1:30"'],
+        ['frag+colon',  '[x](?a=1&b=2#sec:tion)',        'href="?a=1&amp;b=2#sec:tion"'],
+        ['tel',         '[x](tel:+15551234)',            'href="tel:+15551234"'],
       ];
       for (const [name, src, want] of cases) {
         const html = await render(src);

@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.79]
+
+Three targeted reviews of v1.79.72-78 found five real defects. All were mine.
+
+### Fixed
+
+- **The "logprobs is refused" guard was unreachable.** v1.79.74 put a
+  `mode="before"` validator on `ChatRequest`, but nothing binds `ChatRequest`
+  as a request body -- `/v1/messages` binds `MessageCreateRequest`, whose
+  pydantic `extra` policy is *ignore*, so a client sending `logprobs: true` got
+  a normal 200 with the key dropped: precisely the outcome the guard was written
+  to prevent. It now lives on the wire model (with `preset`, whose guard was
+  dead for the same reason since v1.79.66) and answers 422. **The test was green
+  because it constructed a `ChatRequest` directly -- the one caller shape no
+  wire produces.** It is now a route-level contract check, the only shape that
+  can tell the difference.
+- **Data race in the gzip cache -> 500 on a static asset.** v1.79.76 made the
+  handlers sync, which moved them into anyio's threadpool, and the eviction
+  loop iterated the live dict. Reproduced under real uvicorn with concurrent
+  clients on a cold cache: `RuntimeError: dictionary changed size during
+  iteration`. Snapshot-and-pop now. The existing cache check is single-threaded
+  and structurally blind to it.
+- **The catch-all broke the API's routing semantics.** `@app.get("/{rest:path}")`
+  matches every path, so starlette always found a partial match:
+  `redirect_slashes` never fired (`POST /v1/messages/` went 307->200 to **405**,
+  a real break for any client that concatenates URLs) and unknown paths answered
+  405 instead of 404 on every non-GET method. Replaced with the tree's actual
+  shape -- `/`, `/index.html`, `/js/*`, `/css/*`. Unknown paths 404 again on
+  every method, `/DESIGN.md` is no longer served at the web root, and `HEAD /`
+  answers 200 (uptime monitors probe with it; FastAPI's APIRoute does not add
+  HEAD implicitly).
+- **`GET /%00` answered 500.** `Path.resolve()` raises `ValueError` on an
+  embedded NUL before `is_file()` (which swallows it) can refuse it. A bad path
+  is a 404 like any other now.
+- **The URL scheme guard was bypassable, and its test could not see it.**
+  `javascript&colon;alert(1)` contains no literal colon, so it took the
+  "no colon, therefore relative" early return and was emitted verbatim for the
+  HTML parser to decode -- confirmed executing in real Chrome. DOMPurify caught
+  it, which is what a second layer is for, but the guard claimed to be primary
+  and was not. It now DECODES entities before checking, the way the browser
+  does, which closes the class (entity, numeric, hex, padded, unterminated,
+  `&NewLine;`, `&Tab;`, reference links, angle form, and `data&colon;` on
+  images).
+
+### Changed
+
+- Dropping the old `[&%\]` heuristic also fixed real over-strictness it caused:
+  relative URLs carrying both an `&` and a later colon (`/search?q=foo&t=1:30`,
+  `?a=1&b=2#sec:tion`) were being silently demoted to plain text. `tel:` joins
+  the link allowlist -- the guard was stricter than DOMPurify, which permits it.
+- The e2e vector check now asserts on **the protocol the browser resolves**,
+  not on the rendered HTML text. A regex for `javascript:` passes on
+  `href="javascript&colon;..."`, so the first version was vacuous for exactly
+  the vectors it was added for. Shown red against a deliberately broken guard
+  via `E2E_V3_ROOT` before being trusted.
+- Restored the render check "a page that ignores the pref does not offer it",
+  re-pointed at `#/models`. v1.79.75 deleted it with jspace reasoning that no
+  page ignored the pref any more; models and perf still do.
+
+### Notes
+
+- Backend 1860 passed; `bun run e2e:render` 107/107.
+- Reviews also confirmed several suspicions did NOT hold: path traversal is
+  genuinely refused (including symlink and absolute-path forms), `FileResponse`
+  from a sync handler is correct, CORS `vary` is appended not clobbered, and the
+  extraction in v1.79.77 lost nothing. `GenerationChunk.token` is still read by
+  both streaming paths and stays.
+
 ## [1.79.78]
 
 The browser E2E harness runs per ENGINE arm, and puppeteer-core moves a major.

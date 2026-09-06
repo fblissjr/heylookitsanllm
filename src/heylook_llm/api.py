@@ -1,7 +1,7 @@
 # src/heylook_llm/api.py
 """App assembly (v1.79.67): the FastAPI app, its lifespan, the MODEL_BUSY
-handler, CORS, router mounting, the v3 static server and the root discovery
-payload. Every route lives in a ``*_api.py`` router; the OpenAPI narrative is
+handler, CORS, router mounting and the static frontend mount.
+Every route lives in a ``*_api.py`` router; the OpenAPI narrative is
 ``openapi_doc.py``; the route guards the inference routes share are
 ``request_guards.py``. This module used to carry the OpenAI-compatible chat
 route and half a dozen others (2,600 lines at v1.79.65); a new endpoint is a

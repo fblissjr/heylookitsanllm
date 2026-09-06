@@ -149,7 +149,7 @@ export async function streamMessages(body, {
             content += d.text;
             onToken?.(d.text, content);
           }
-                } else if (eventType === 'heylook_progress') {
+        } else if (eventType === 'heylook_progress') {
           if (data.prefill) onProgress?.(data.prefill);
         } else if (eventType === 'message_delta') {
           usage = data.usage ?? usage;

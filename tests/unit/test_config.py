@@ -96,18 +96,6 @@ class TestChatRequest:
         assert req.stream is True
         assert req.stream_options["include_usage"] is True
 
-    def test_logprobs_is_refused_not_ignored(self):
-        # Removed with the token explorer (v1.79.74). ChatRequest ignores
-        # unknown keys, so deleting the field alone would answer a client
-        # as though it had never asked -- same reasoning as the 'preset'
-        # rename guard beside it.
-        for field in ("logprobs", "top_logprobs"):
-            with pytest.raises(ValidationError):
-                ChatRequest(
-                    messages=[ChatMessage(role="user", content="hi")],
-                    **{field: True},
-                )
-
     def test_enable_thinking(self):
         req = ChatRequest(
             messages=[ChatMessage(role="user", content="hi")],
