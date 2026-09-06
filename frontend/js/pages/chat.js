@@ -206,7 +206,13 @@ export default createPage({
 });
 
 // ---------------------------------------------------------------------------
-// skeleton
+// skeleton, then the model bar
+//
+// TWO subjects, and the second is the bigger one. buildSkeleton + the icon
+// constants are DOM construction; everything from fillModelSelect onward is
+// the model/residency/capability subsystem (selection, load, switch warnings,
+// thinking + attach gating). It is filed here because the bar it drives is
+// built above, not because it is skeleton code.
 // ---------------------------------------------------------------------------
 
 function buildSkeleton(ctx) {
@@ -1852,7 +1858,14 @@ function keepRowInView(ctx, msg) {
 }
 
 // ---------------------------------------------------------------------------
-// message mutations (position-based truncation)
+// store sync + remote-generation lifecycle (and, at the end, two message
+// mutations)
+//
+// Named for what most of it does. resyncMessages/mergeServerRows/
+// adoptConversationMeta/adoptSavedRows are the store mirror; setRemoteGenerating/
+// resyncUntilSettled/stopRemote/refreshAfterResume are the half of the streaming
+// story that lives outside `send + stream` below. Only regenerate and
+// deleteMessage are truncating mutations.
 // ---------------------------------------------------------------------------
 
 // Phase 0 reconcile (plan_chat_orchestration.md): adopt the server's rows
@@ -3013,7 +3026,19 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     renderMessages(ctx);
   } else {
     serverState = await resyncMessages(ctx, stream.targetConvId);
-    if (!ctx.alive || s.activeId !== stream.targetConvId) return;
+    // `s.stream` is the load-bearing third of this guard. releaseStream nulled
+    // it BEFORE the await above, so for the whole of that GET the composer
+    // reads "Send" and startStream's `if (s.stream)` bar is down -- a SECOND
+    // run can be live by the time we resume, in this same conversation (a
+    // mid-stream model switch aborts without changing activeId; the other
+    // three abortStream callers do change it and are caught by the check
+    // beside this one). Everything below writes SHARED ui -- the status line,
+    // the scroll pin -- so a superseded run must stop here rather than paint
+    // its ending over a live stream. The line it actually landed was the
+    // recovery notice, which tells the reader the generation they are watching
+    // is a dead stream being recovered. Rows were never at risk: resyncMessages
+    // re-checks s.stream after its own await. The status line was.
+    if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;
   }
   scrollMessages(ctx);
 
@@ -3094,6 +3119,11 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   }
 }
 
+// NOTE: this is safe from the superseded-stream problem finishGenerate guards
+// against (see there) only because nothing here AWAITS between releaseStream
+// and the writes below -- s.stream is still null, so no newer run can exist.
+// Adding an await above the renderMessages/showStatus calls reintroduces it,
+// and would need the same `|| s.stream` bail.
 function handleStreamError(ctx, stream, err) {
   const s = ctx.state;
   releaseStream(ctx, stream);

@@ -6,6 +6,45 @@ Cross-session task backlog organized by priority.
 docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
 entry added 2026-09-05*
 
+## Frontend coverage gaps found mapping chat.js (2026-09-06)
+
+Surfaced by a full structural map of `frontend/js/pages/chat.js` (3078 lines).
+None is a known bug; each is a path no automated check reaches, which is what
+a future refactor would fly blind through. Listed most-worth-doing first.
+
+- [ ] **Audio attachments have no end-to-end check at all** (P2). `addFiles`
+  and `ATTACH_KINDS` are ONE shared funnel for images and audio, and every
+  image path through it is covered (cap at 8, paste, drop, refusal, resize,
+  round-trip) while no audio path is -- so the factory is half-tested and
+  reads as fully tested. The staging half is client-side and stubbable in
+  `render.mjs` (cap, chips in `renderAttachStrip`, `buildContentBlocks`);
+  the send/render half needs a gguf model, which `tests/e2e/suites/chat.mjs`
+  already has an arm for. Asymmetric coverage of a shared factory is exactly
+  the shape that let paste ship image-only while looking done.
+- [ ] **The Load / Reload button path is untested** (P3). `refreshLoadBtn`,
+  `loadModelNow`, the gguf reload-with-`ctx_size` branch, and the
+  `warm_error` / `context_running` status lines: no check references
+  `chat__load-btn`. This is the one place the chat page can spend a model
+  load, and the ctx_size branch writes config through the server.
+- [ ] **Sidebar rename is untested** (P3), including the guard in
+  `refreshAfterResume` that leaves the list alone while a rename input is
+  open. That guard exists because a WebKit rename commits against the
+  conversation object it started on and the list swapping underneath orphans
+  it -- a real bug, with nothing pinning the fix.
+- [ ] **Per-message model attribution is untested** (P3): the
+  `message-model-note` element and the `mixedModels` branch of `msgSignature`.
+- [ ] **`ABANDON_RANK` is unfalsifiable as written** (P4). Its own comment
+  says nothing reads `DELETE` today, so no observable behaviour distinguishes
+  the ranks and no check can pin them. Either give it an observable or drop
+  the rank.
+
+Two structural notes from the same pass, both already acted on: the two
+misleading section dividers were renamed (v2.0.5), and the superseded-stream
+guard in `finishGenerate` was fixed with a check that was shown red first.
+The map's conclusion on splitting the file: don't. The streaming seam alone
+needs 11 state fields and ~15 functions crossing the boundary, and would
+separate the scroll-follow rule from `paintStream`, which enforces it.
+
 ## iOS keyboard check: written, NEVER RUN (2026-09-05)
 
 - [ ] **Run `tests/e2e/ios-sim.mjs` once and make it true** (P2). v1.79.68

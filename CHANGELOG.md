@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.5]
+
+### Fixed
+
+- **A finished stream could paint its ending over a live one.**
+  `finishGenerate` calls `releaseStream` FIRST -- which nulls `s.stream` -- and
+  only then awaits the resync GET that runs when a stream ends without
+  `heylook_saved`. For the whole of that await the composer reads "Send" and
+  `startStream`'s `if (s.stream)` bar is down, so a second run can be live by
+  the time the first resumes. The guard on the far side checked conversation
+  identity, which cannot see this: a mid-stream **model switch** aborts without
+  changing `activeId` (the other three `abortStream` callers do change it and
+  were already caught). The superseded run then wrote its terminal status over
+  the live one -- in practice the recovery notice, which tells the reader the
+  generation they are watching is a dead stream being recovered. Rows were
+  never at risk: `resyncMessages` re-checks `s.stream` after its own await. The
+  status line was. Guard is now `|| s.stream`.
+  `handleStreamError` has the same shape and is safe only because nothing in it
+  awaits between `releaseStream` and its writes; it now says so, because adding
+  one would reintroduce this silently.
+- Covered by a new `e2e:render` check, `a superseded stream does not write over
+  a newer one`, which holds the body GET open (new one-shot `bodyDelayMs` stub
+  knob) and starts a second run inside the window. It was shown red against the
+  unfixed code first -- worth saying because the FIRST version of the assertion
+  passed against the bug: it looked for the completion line, and the line that
+  actually lands is the recovery one. A check aimed at the wrong string is
+  indistinguishable from a fixed bug.
+
+### Changed
+
+- **Two `chat.js` section dividers named the wrong thing**, which is how a
+  reader picks a module boundary in the wrong place. `// skeleton` also covered
+  ~285 lines of model/residency/capability logic; `// message mutations`
+  covered ~290 lines of store-mirror and remote-generation lifecycle, of which
+  exactly two declarations are message mutations. Both renamed with a note on
+  what they actually hold. Comments only.
+- `docs/project/TODO.md` records the frontend coverage gaps found while mapping
+  `chat.js`. The one worth naming here: **audio attachments have no end-to-end
+  check anywhere**, while every image path through the same shared `addFiles` /
+  `ATTACH_KINDS` funnel is covered -- so that factory is half-tested and reads
+  as fully tested.
+
 ## [2.0.4]
 
 Comments only in the frontend; no behaviour change. `e2e:render` 107/107.

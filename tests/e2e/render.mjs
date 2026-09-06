@@ -187,7 +187,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
   // `generating` (which is c1's): the interesting state is one conversation
   // generating while the page is subscribed to a stream in the OTHER.
   const remote = { system_prompt: null, presets: [...presets], updated_at: 't1', generating: false,
-    c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0,
+    c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0, bodyDelayMs: 0,
     applied_preset_id: appliedPresetId };
   let cloneCount = 0;
   const handle = (url, method, postData) => {
@@ -407,6 +407,17 @@ async function openChat(browser, base, {
       const answer = () => req.respond({ status: 404, contentType: 'application/json', body: '{}' });
       if (store.remote.stopDelayMs) setTimeout(answer, store.remote.stopDelayMs);
       else answer();
+      return;
+    }
+    // Hold the conversation-body GET open. That GET is the one finishGenerate
+    // awaits when a run ends without heylook_saved, and holding it is the only
+    // way to get a SECOND stream started inside the first one's terminal path
+    // -- the window where a superseded stream could write over a live one.
+    if (store.remote.bodyDelayMs && req.method() === 'GET' && /\/v1\/conversations\/c1(\?|$)/.test(url)) {
+      const ms = store.remote.bodyDelayMs;
+      store.remote.bodyDelayMs = 0;   // one-shot: the retry must not also hang
+      setTimeout(() => req.respond({ status: 200, contentType: 'application/json',
+        body: JSON.stringify(store.handle(url, req.method(), req.postData())) }), ms);
       return;
     }
     // One failed body fetch on demand (a phone waking with the radio half up).
@@ -2715,6 +2726,58 @@ async function main() {
       assert(seen.some((t) => /[Ss]till generating/.test(t)),
         `never said the server was still generating: ${JSON.stringify(seen)}`);
       assert(btn === 'Stop', `the composer offered "${btn}" for a run that is still going`);
+    });
+
+    await suite.check('a superseded stream does not write over a newer one', async () => {
+      // finishGenerate releases the stream FIRST (nulling s.stream) and only
+      // then awaits the resync GET. For the whole of that await the composer
+      // reads "Send" and startStream's `if (s.stream)` bar is down, so the
+      // user can launch a SECOND run inside the first one's terminal path.
+      // The guard on the far side of that await checks conversation identity;
+      // it must also check stream identity, or the finished run's status line
+      // lands on top of the live one's.
+      //
+      // Rows are safe either way -- resyncMessages re-checks s.stream after
+      // its own await -- so the status line is the whole observable, and the
+      // check has to be aimed there.
+      // Long enough to be OBSERVABLE: startSend waits to SEE a streaming node,
+      // and a stream that finishes inside one poll interval never shows one.
+      drip.text = 'x'.repeat(400);         // run 1: brief, and no heylook_saved
+      drip.chunkChars = 8; drip.delayMs = 8;
+      drip.omitSaved = true;
+      const sup = await openChat(browser, base, { dripGenerate: true });
+      await startSend(sup.page);
+      // Set AFTER the send so only the resync GET that FOLLOWS this run is
+      // held; one-shot in the stub, so the recovery retry is not also delayed.
+      sup.store.remote.bodyDelayMs = 3000;
+      await waitFor(async () => !(await streaming(sup.page)),
+        { timeout: 10000, message: 'run 1 never released its stream' });
+
+      // Run 2 must still be going when run 1's terminal path resumes, or the
+      // check proves nothing -- so make it long and slow.
+      drip.text = 'x'.repeat(1200); drip.chunkChars = 8; drip.delayMs = 25;
+      drip.omitSaved = false;
+      await startSend(sup.page, 'second');
+      // Reset the status log HERE: everything after this point belongs to run
+      // 2, so anything run 1 writes shows up as a foreign entry.
+      await watchStatus(sup.page);
+      await sleep(3200);                   // outlast the held GET
+
+      const seen = await statusLog(sup.page);
+      const live = await streaming(sup.page);
+      await sup.page.close();
+      drip.omitSaved = false;
+      // Non-vacuous: if run 2 had already finished, its OWN completion line
+      // would be the one carrying tokens and the assertion below would be
+      // meaningless.
+      assert(live, 'run 2 finished before run 1 resumed -- the window was never open, check is vacuous');
+      // Run 1's terminal vocabulary -- the completion line, the abandon note,
+      // and the recovery line (which is the one that actually lands here, and
+      // the worst of the three: it tells the reader the generation they are
+      // watching is a dead stream being recovered).
+      const TERMINAL = /recovering|Recovered|still generating|may still be|\d+ tokens|Stopped/;
+      assert(!seen.some((t) => TERMINAL.test(t)),
+        `a superseded run wrote its terminal status over a live stream: ${JSON.stringify(seen)}`);
     });
 
     await suite.check('no uncaught page errors (streaming paint)', async () => {
