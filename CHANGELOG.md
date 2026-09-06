@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0]
+
+The API surface changed shape. Cutting a major says that once, clearly, rather
+than leaving it spread across nine patch entries.
+
+This is also the release where the `frontend` branch becomes `main`: the branch
+had been the de facto mainline for months while `main` sat 147 commits stale.
+
+### Removed (the breaking part)
+
+- **`/v1/jspace/*`** and the whole Jacobian-lens feature (v1.79.75).
+- **`logprobs` and `top_logprobs`** on the request, the `logprobs` content
+  block, the `LogprobsBlock`/`LogprobsDelta` schema types and the
+  `heylook_logprobs` SSE extension (v1.79.74). Sending either field answers
+  **422** naming the removal rather than dropping it silently -- so an
+  integration built against the old wire fails loudly on upgrade, which is the
+  intended outcome. The `heylook-provider` skill was documenting them and has
+  been corrected (0.16.0).
+- **`GET /`'s discovery JSON** (v1.79.76). `/` is the frontend now;
+  `/openapi.json`, `/docs` and `/v1/capabilities` answer what it answered.
+- **The `/v3` mount** (v1.79.76). The frontend serves at `/`. `/v3` and `/v2`
+  both 404.
+
+### Changed
+
+- The frontend moved from `apps/heylook-frontend-v3/` to `frontend/` -- it is
+  core, not a sample app.
+- There is no SPA fallback, and unknown paths 404 on every method. The app
+  routes on the hash, so the server only ever sees `/` and real asset paths.
+
+### Notes
+
+- Detail for every item is in the 1.79.72 - 1.79.80 entries below, including
+  the five defects a round of targeted review found in this work and the two
+  tests that were structurally incapable of catching the bug they were written
+  for.
+- Verification at the cut: backend 1860 passed, `bun run e2e` 76/76,
+  `bun run e2e:render` 107/107, `bun run e2e:ios` 3/3 with 4 skipped (the
+  Simulator cannot raise a software keyboard; those need a real device).
+
 ## [1.79.80]
 
 Documentation caught up with what the server actually serves.
