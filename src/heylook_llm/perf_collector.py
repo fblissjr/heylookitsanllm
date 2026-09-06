@@ -321,7 +321,7 @@ class PerfCollector:
         """Build a frontend-compatible performance profile.
 
         Returns the PerformanceProfile dict shape consumed by the v3
-        performance page (apps/heylook-frontend-v3/js/pages/perf.js).
+        performance page (frontend/js/pages/perf.js).
         """
         window_seconds = _parse_time_range(time_range)
         cutoff = time.time() - window_seconds

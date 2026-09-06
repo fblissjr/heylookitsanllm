@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.76]
+
+The frontend becomes core: it lives at `frontend/` and is served at `/`.
+
+### Changed
+
+- **`apps/heylook-frontend-v3/` -> `frontend/`, and `/v3` -> `/`.** It is the
+  only frontend, so it no longer sits beside the sample apps or carries a
+  version in its URL. `<base href>` becomes `/` (changed, never deleted --
+  without the element, relative asset paths would resolve against the document
+  URL instead).
+- **The SPA fallback is GONE, and that is the point.** The app routes on the
+  HASH, so the server only ever sees `/` and real asset paths -- there are no
+  deep server-side routes to fall back FOR. Serving `index.html` for anything
+  unmatched would have destroyed 404 for the whole API behind it: a typo'd
+  `/v1/mesages` would answer 200 with a web page. An unknown path now 404s,
+  which also gives `/v3` and `/v2` their "this mount is gone" answer for free,
+  with no special-case route and no reserved-prefix guard. Revisit only if the
+  app ever moves to the History API.
+- **The static handlers are sync (`def`), not `async`.** They stat, read and
+  gzip files, all of which block; Starlette runs a sync handler in a threadpool.
+  Same reason the two admin routes that read model directories are sync -- the
+  event loop here is the one delivering SSE tokens.
+- **A missing frontend directory now says so.** The whole serving block sits
+  behind `if _frontend_dir.is_dir()`, so a wrong path meant no routes
+  registered, no error, and a server that starts clean while the UI 404s. It
+  logs a warning naming the path it looked for.
+
+### Removed
+
+- `GET /`'s discovery JSON and its `_get_api_endpoints` helper. Nothing read it
+  -- not the frontend, not a test, not the startup banner, not a script -- and
+  `/openapi.json`, `/docs` and `/v1/capabilities` all already answer that
+  question. `/` is the frontend now.
+
+### Notes
+
+- `test_path_traversal_is_refused` changed meaning and is worth knowing about:
+  under `apps/heylook-frontend-v3/`, `../pyproject.toml` resolved to a path
+  that did not exist, so `is_file()` was what refused it and the
+  `is_relative_to` guard was never doing the work. From `frontend/` at the repo
+  root it resolves to the REAL file, so that guard is now the only thing
+  between the request and it.
+- Backend suite 1859 passed; `bun run e2e:render` 106/106 against the moved
+  tree at the new mount.
+- `.gitignore`'s `apps/*/data/*`, `apps/*/test-results/` and `apps/*/coverage/`
+  patterns no longer cover the frontend. No effect today (it has none of those
+  directories and no build step), noted so it is a decision rather than an
+  oversight.
+- Historical text is left as history: the spec's "Where v3 lives" build-time
+  decision keeps its original wording under a SUPERSEDED note.
+
 ## [1.79.75]
 
 The Jacobian-lens (j-space) feature is removed entirely, frontend and backend.

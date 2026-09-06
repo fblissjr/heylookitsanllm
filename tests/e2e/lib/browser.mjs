@@ -1,5 +1,5 @@
 // System-Chrome launch via puppeteer-core (claude-in-chrome refuses localhost,
-// so puppeteer is the only path to drive /v3 against a real server). Pages are
+// so puppeteer is the only path to drive the frontend against a real server). Pages are
 // seeded with sampler settings through localStorage BEFORE the app boots, which
 // is how we cap generation length (small max_tokens = fast, deterministic runs).
 
@@ -38,7 +38,7 @@ export function createPageContext(page, { base, maxTokens }) {
     // the whole reply is thinking with no content -- the fast checks assert
     // content. The thinking checks turn it on themselves, explicitly.
     async open(hash = '#/chat', settings = { max_tokens: maxTokens, enable_thinking: false }) {
-      await page.goto(`${base}/v3/${hash}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${base}/${hash}`, { waitUntil: 'domcontentloaded' });
       await page.evaluate((key, val) => {
         localStorage.setItem(key, JSON.stringify(val));
       }, SETTINGS_KEY, settings);

@@ -53,7 +53,7 @@ class TestEndpointDiscovery:
         assert "/v1/models" in found
 
     def test_only_v1_paths_are_reported(self):
-        """`/docs`, `/openapi.json` and the `/v3` frontend mount are not API
+        """`/docs`, `/openapi.json` and the frontend at `/` are not API
         endpoints, and the banner's line says "under /v1"."""
         from heylook_llm.server import get_api_endpoints
 

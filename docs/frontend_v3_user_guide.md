@@ -2,7 +2,7 @@
 
 last updated: 2026-09-05
 
-How the `/v3` UI actually behaves, written for the person using it rather than
+How the UI actually behaves, written for the person using it rather than
 the person maintaining it. Where behaviour is surprising, this says so rather
 than smoothing it over.
 

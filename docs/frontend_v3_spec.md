@@ -4,7 +4,8 @@ Last updated: 2026-09-04 (§4: the OpenAI-compatible chat/completions and
 batch routes are removed in v1.79.66; `/v1/messages` and the generate route
 are the inference wires)
 
-> **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0) and was verified end-to-end;
+> **STATUS: BUILT.** v3 shipped at `/v3` (v1.31.0), was verified end-to-end,
+> and moved to `frontend/` served at `/` in v1.79.76;
 > graded done/not-done status lives in `docs/project/CURRENT.md`. This doc
 > remains the contract of record: §4 is kept current as the backend moves
 > (last contract updates 2026-07-06, marked "v1.31.1+" / "v1.32.0" below).
@@ -22,6 +23,11 @@ a single `<script type="module">` bootstraps everything. Source of truth for con
 server-side SQLite; the browser persists only sampler settings in localStorage.
 
 ### Where v3 lives (recommended default)
+
+> SUPERSEDED 2026-09-06 (v1.79.76): the frontend now lives at `frontend/`
+> in the repo root and is served at `/`. Both `/v2` and `/v3` 404. The
+> paragraph below is the original build-time decision, kept as the record
+> of why it was built as a sibling app first.
 
 Build in a **new sibling directory**, `apps/heylook-frontend-v3/`, served at a **new mount, `/v3`**,
 leaving `/v2` and `apps/heylook-frontend-v2/` untouched until cutover. This is reversible and lets both
@@ -546,7 +552,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
   `params`: that object is the sampler bag and everything in it reaches the
   model, so non-sampler state may never live there.
 - `params` is an open sampler-knob object; the authoritative key vocabulary is `PARAM_META` in the v3
-  settings panel (`apps/heylook-frontend-v3/js/settings.js`) — do not re-enumerate it here. A preset
+  settings panel (`frontend/js/settings.js`) — do not re-enumerate it here. A preset
   stores only the knobs it pins — absent keys stay on the null-means-cascade contract when applied.
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
@@ -990,7 +996,7 @@ How the build uses it:
   iPhone-Safari-sized viewport, not just desktop) and `/impeccable polish <page>` pre-ship. The bundled
   `detect.mjs` slop-detector can run over changed files as a cheap check between gates.
 - **Iteration**: `/impeccable live` is available for in-browser variant picking once the dev server
-  (the FastAPI backend serving `/v3`) is running.
+  (the FastAPI backend serving the frontend) is running.
 
 Still applies regardless of impeccable: single `css/app.css`, no build step; replace blocking native
 `confirm()`/`alert()` (v2 uses them in models/chat/notebook) with in-app confirm affordances where cheap —

@@ -1,5 +1,5 @@
 // E2E orchestrator: spawn heylookllm with an isolated DB, launch system Chrome,
-// run the chat + pages suites against /v3, tear everything down, exit non-zero on
+// run the chat + pages suites against the frontend, tear everything down, exit non-zero on
 // any failure.
 //
 //   bun run e2e             # both suites

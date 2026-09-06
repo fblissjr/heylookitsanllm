@@ -235,7 +235,7 @@ async function main() {
     if (!d.sid) throw new Error('no session -- nothing below can run');
 
     await suite.check('the chat page loads with its composer', async () => {
-      await d.navigate(`${BASE}/v3/#/chat`);
+      await d.navigate(`${BASE}/#/chat`);
       await waitFor(() => d.exec(`return !!document.querySelector(${JSON.stringify(COMPOSER)});`),
         { timeout: 20000, message: 'composer never appeared' });
       before = await d.exec(MEASURE);

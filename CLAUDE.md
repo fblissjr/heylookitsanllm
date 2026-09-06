@@ -5,7 +5,8 @@ conventional commits, TDD, path-privacy, docs) live in the user-level CLAUDE.md
 and still apply. Don't duplicate them here. Last verified: 2026-07-09 -->
 
 Personal MLX inference server on Apple Silicon: FastAPI backend + a vanilla-JS
-frontend (v3, served at `/v3` -- the ONLY frontend since v1.77.0).
+frontend (`frontend/`, served at `/` -- the ONLY frontend since v1.77.0;
+it moved out of `apps/` and off the `/v3` mount in v1.79.76).
 
 ## Orient first
 
@@ -238,8 +239,13 @@ Use additive `CREATE TABLE IF NOT EXISTS` only when you just need to ADD a table
 drop / recreate. RLM (`rlm.py`): recursive inference with sandboxed REPL.
 - [docs/architecture/](./docs/architecture/) (config, mlx_provider, ecosystem_strategy + postmortems -- design records and invariants only; live surface = code + /openapi.json) · [docs/rlm_guide.md](./docs/rlm_guide.md) · converting checkpoints to MLX: [docs/mlx_conversion_guide.md](./docs/mlx_conversion_guide.md)
 
-**Frontend v3 `apps/heylook-frontend-v3/`** -- the current frontend: vanilla
-JS, no build, served at `/v3`. 4 pages (chat, notebook, models, perf);
+**Frontend `frontend/`** -- the current frontend: vanilla
+JS, no build, served at `/`. 4 pages (chat, notebook, models, perf).
+THERE IS NO SPA FALLBACK: the app routes on the HASH, so the server only ever
+sees `/` and real asset paths, and an unknown path 404s. A fallback would have
+destroyed 404 for the whole API behind it (a typo'd `/v1/mesages` answering 200
+with a web page); it also gives `/v3` and `/v2` their gone-answer for free.
+Revisit only if the app ever moves to the History API;
 chat generates over `POST /v1/conversations/{id}/generate` (v1.65-66: the
 server builds the request FROM THE STORE and owns persistence incl. abort +
 disconnect; Messages SSE grammar + a final `heylook_saved` event with the
@@ -409,7 +415,7 @@ Read `js/page.js` (createPage lifecycle) before touching any page. Design system
 the load-bearing a11y/mobile-parity rules new UI MUST honor -- touch-reveal
 fallbacks (`@media (hover:none)`; hover-only affordances are unreachable on
 iPhone), the settings drawer as a **modal** (seals `#app` with `inert`, closes on
-`hashchange`), aria-live states, label association -- are [DESIGN.md](./apps/heylook-frontend-v3/DESIGN.md) §7.
+`hashchange`), aria-live states, label association -- are [DESIGN.md](./frontend/DESIGN.md) §7.
 
 (Retired frontends: `apps/heylook-frontend-v2/` + its `/v2` mount deleted at
 cutover 2026-08-18, v1.77.0; the older legacy React app 2026-07-09. Both live
@@ -541,7 +547,7 @@ in git history; a contract test pins that `/v2` stays 404.)
 - Run via `/test-suite` (backend only -- there is NO frontend unit suite: the legacy React app that carried one was deleted 2026-07-09; v3 is no-build vanilla JS checked by the opt-in browser E2E below). `tests/unit/` + `tests/contract/` are fully green (Metal-gated skips OK) -- any failure is a regression, investigate it. There is no pre-existing-failure allowlist. (No counts here on purpose: they rot; green-is-the-invariant doesn't.)
 - **Behavioral eval bank** (`tests/eval/`, opt-in): 13 tasks covering thinking split/leak, stop discipline, vision correctness, vision-token budgets. Run for changes touching templates/parsers/stop-tokens/vision -- `uv run python tests/eval/run.py --server <url> --models <ids>` against a RUNNING server (never spawns one). Unit tests cannot certify these subsystems (the 07-20 turn-overrun + thinking-leak bugs passed 1000+ of them). BUT the bank runs `stream=False`, so it structurally cannot see chunk-boundary behavior -- that class is owned by `TestParserInvariants` instead; reach for the bank for MODEL behavior, not parser plumbing.
 - **Live smoke** (`tests/smoke/`, opt-in, never spawns a server): the half the
-  browser suite cannot see. THAT suite drives real `/v3` against a STUBBED
+  browser suite cannot see. THAT suite drives the real frontend against a STUBBED
   `/v1`, which left the store's own rules and the generation lifecycle
   unverified; this one talks to a real server and no stub at all. Arms are
   ENGINES, not providers: `"mlx"` routes to TWO separate upstream repos
@@ -581,7 +587,7 @@ in git history; a contract test pins that `/v2` stays 404.)
   rather than inferred from the vision capability. eval also reports how many
   tasks ran on NO model: its `required_capabilities <= model_caps` filter is
   how a text-only `--models` list ran zero vision tasks under a full green.
-- **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB; load+warm readiness is the server-owned `POST /v1/models/{id}/load?warm=true` (same contract as `scripts/dev_server.sh` -- never hand-roll poll/warm logic in a harness). NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`, MUST run UNSANDBOXED (bun's non-interactive script shell resolves the real node binary; bare `node run.mjs` from an interactive-derived shell hits the nvm lazy-load function, which `export PATH` cannot beat -- the harness itself still executes under node by design, via the package.json scripts). Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B). A THIRD entry, `bun run e2e:render`, is model-free and server-free (real `/v3` page, stubbed `/v1`, seconds): it guards that the chat message list is RECONCILED, not rebuilt -- `.message` is `content-visibility: auto`, so a row's laid-out height lives on the NODE, and a rebuild collapses `scrollHeight` mid-tick so any pixel-based scroll aims at a list about to grow underneath. Deliberately NOT part of `bun run e2e` (whose Metal/model prerequisites it does not share). `E2E_V3_ROOT` points it at a copy of the frontend, which is how each check was shown to FAIL against a deliberately broken one. A check that reaches a LEGAL early exit before its assertion calls `skip()` (harness.mjs, v1.79.66) and is tallied as SKIPPED, never as a pass -- the chat suite's resume check hid the mlx-vlm continuation crash behind exactly such an exit. A FOURTH entry, `bun run e2e:ios` (`ios-sim.mjs`), drives REAL Mobile Safari in the iOS Simulator through Apple's `safaridriver` against an already-running server, because Chrome CANNOT see iOS keyboard behaviour: with the keyboard up iOS shrinks only the VISUAL viewport and scrolls, while Chrome shrinks the layout viewport, and the fixed bottom nav, the `100dvh` shell and the composer all follow the layout viewport -- an emulated pass proves nothing about the phone. Its run status lives in `docs/project/TODO.md` and the file's own header, not here.
+- **Browser E2E** (`tests/e2e/`, v1.34.8+): puppeteer-core + system Chrome (claude-in-chrome refuses localhost). Spawns its own server with an isolated `HEYLOOK_DB_PATH` (real data untouched); each suite clears its temp DB; load+warm readiness is the server-owned `POST /v1/models/{id}/load?warm=true` (same contract as `scripts/dev_server.sh` -- never hand-roll poll/warm logic in a harness). NOT wired into `/test-suite` (Metal/GPU-gated + slow + spawns a server) -- opt-in: `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`, MUST run UNSANDBOXED (bun's non-interactive script shell resolves the real node binary; bare `node run.mjs` from an interactive-derived shell hits the nvm lazy-load function, which `export PATH` cannot beat -- the harness itself still executes under node by design, via the package.json scripts). Carries a client-side streaming-cadence guard -- the ONLY automated check for the Phase 1 delivery fix (server telemetry can't see it); needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B). A THIRD entry, `bun run e2e:render`, is model-free and server-free (real frontend page, stubbed `/v1`, seconds): it guards that the chat message list is RECONCILED, not rebuilt -- `.message` is `content-visibility: auto`, so a row's laid-out height lives on the NODE, and a rebuild collapses `scrollHeight` mid-tick so any pixel-based scroll aims at a list about to grow underneath. Deliberately NOT part of `bun run e2e` (whose Metal/model prerequisites it does not share). `E2E_V3_ROOT` points it at a copy of the frontend, which is how each check was shown to FAIL against a deliberately broken one. A check that reaches a LEGAL early exit before its assertion calls `skip()` (harness.mjs, v1.79.66) and is tallied as SKIPPED, never as a pass -- the chat suite's resume check hid the mlx-vlm continuation crash behind exactly such an exit. A FOURTH entry, `bun run e2e:ios` (`ios-sim.mjs`), drives REAL Mobile Safari in the iOS Simulator through Apple's `safaridriver` against an already-running server, because Chrome CANNOT see iOS keyboard behaviour: with the keyboard up iOS shrinks only the VISUAL viewport and scrolls, while Chrome shrinks the layout viewport, and the fixed bottom nav, the `100dvh` shell and the composer all follow the layout viewport -- an emulated pass proves nothing about the phone. Its run status lives in `docs/project/TODO.md` and the file's own header, not here.
 - NEVER apply an MLX `sys.modules` mock at module level with `.start()`; use `with patch.dict(...)` or the `mock_mlx` fixture. A module-level start leaks mocks across the whole session and fakes ~50 "Metal context" failures (the bug that produced the old allowlist).
 - `test_mlx_provider.py` SEGFAULTS at GC teardown when run in near-ISOLATION (MLX `unload`/`__del__` flakiness) but passes clean in any multi-file batch / the full suite -- not a regression; run it batched, not alone.
 - A SEPARATE interpreter-teardown crash, `Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` (exit 134, printed AFTER the pass count), is NOT that MLX-GC class: it needs the MagicMock MLX tree, and reproduces model-free and pytest-free in a bare interpreter -- `import heylook_llm.api` under `patch.dict(sys.modules, create_mlx_module_mocks())` aborts at finalization, while the same import with real MLX exits 0 and the mock tree without that import exits 0. No stray Python thread survives the import, so the foreign thread doing it was not identified (timeboxed). Contract runs on Apple hardware no longer hit it at all since `mlx_mocks` stopped patching there (v1.77.1); it remains a residual on the mocked path.

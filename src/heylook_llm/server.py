@@ -104,7 +104,7 @@ def main():
             "SINCE v1.69.0 THIS IS RARELY WHAT YOU WANT. Anything under a "
             "[scan].folders watch folder is served with no entry at all, so "
             "the usual way to add models is to add a folder -- in models.toml, "
-            "or on the v3 Models page, or via PUT /v1/admin/models/scan-config. "
+            "or on the Models page, or via PUT /v1/admin/models/scan-config. "
             "Import remains the route for a model that lives somewhere you do "
             "not want watched, and for pinning an entry you intend to hand-edit."
         ),

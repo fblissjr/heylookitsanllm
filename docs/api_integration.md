@@ -386,7 +386,7 @@ error.
 `/v1/chat/completions` route, so as of v1.79.66 downscaling is the client's
 job on every surface: resize before sending.
 
-Do what this repo's own frontend does (`apps/heylook-frontend-v3/js/image-prep.js`):
+Do what this repo's own frontend does (`frontend/js/image-prep.js`):
 cap the longest edge around 2048px, re-encode photos as JPEG at ~0.85
 quality, keep PNG as PNG (screenshots with text show JPEG ringing, and flat
 UI colours compress well as PNG), and honour EXIF orientation — phone

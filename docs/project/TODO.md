@@ -865,7 +865,7 @@ what was planned rather than as work to do.
 - [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
   tie-aware calibrated epsilon -- turns the one-time V1/V2 parity into a wired
   regression gate.
-- [ ] **Visualizer track** (P3): gate cleared 2026-07-10 -- `apps/heylook-frontend-v3/DESIGN.md`
+- [ ] **Visualizer track** (P3): gate cleared 2026-07-10 -- `frontend/DESIGN.md`
   seeded (OKLCH strength/chip system formalized; paradigm = matrix-first, Neuronpedia-style
   layer-range slider + aggregation sidebar as the growth path). SHIPPED so far
   (v1.34.36-.37): item 1 click-to-pin readout (strip rows + heatmap cells, Esc/arrow

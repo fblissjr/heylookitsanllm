@@ -8,7 +8,7 @@ Last updated: 2026-08-26 (v1.79.9-.15. Beyond the painter below: staged
 images are capped at 2048px on the longest edge before upload and base64 is
 minted at SEND rather than held (`image-prep.js`); chat and notebook share one
 document write path (`document-writer.js`) carrying the keepalive PUT-ordering
-rule that used to live in two hand-maintained copies; `/v3` assets answer
+rule that used to live in two hand-maintained copies; frontend assets answer
 If-None-Match with a 304 and gzip text (the `no-cache` policy is unchanged --
 what changed is that revalidating no longer re-sends the file). BACKEND
 COUPLING, the reason this file exists: `GET /v1/conversations` no longer
@@ -109,14 +109,16 @@ to the internal archive on 2026-07-09.
 
 Vanilla JS, **no framework, no bundler, no build step** -- one
 `<script type="module">` bootstraps everything. Served by the FastAPI backend at
-`/v3` (a ~15-line mount block in `src/heylook_llm/api.py`, cloned from `/v2`).
+`/` (a mount block in `src/heylook_llm/api.py`; v1.79.76 moved it off `/v3` and
+dropped the SPA fallback -- hash routing means the server never sees a deep
+path, so an unknown path 404s and the API keeps its 404s).
 Source of truth for conversations/notebooks/presets is the **server-side DuckDB
 store** (`db.py`); the browser persists only sampler settings in localStorage.
 Desktop + iPhone Safari are co-primary.
 
 Read `js/page.js` (the `createPage` lifecycle) before touching any page.
 
-### Files (`apps/heylook-frontend-v3/`)
+### Files (`frontend/`)
 
 ```
 index.html
@@ -174,7 +176,7 @@ auto-appear from template detection, no `models.toml` flag needed).
   no touch fallback) -- plus aria-live status, `<label for>` association, a real
   drawer focus-trap, and the mobile settings gear (FAB -> bottom-nav item; a FAB
   collided with chat's Send). The load-bearing a11y/mobile-parity rules new UI must
-  honor are `apps/heylook-frontend-v3/DESIGN.md` §7. iPhone-17-Pro verified via
+  honor are `frontend/DESIGN.md` §7. iPhone-17-Pro verified via
   viewport + touch-media emulation (19/19), not a real device. (plan Phase 4 item 2)
 
 **Left**:

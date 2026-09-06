@@ -1,4 +1,4 @@
-// Render-layer E2E: drives the REAL /v3 chat page (real js/, real css/) against
+// Render-layer E2E: drives the REAL chat page (real js/, real css/) against
 // a STUBBED /v1 API. No server, no model, no DB -- a few seconds, and it runs
 // anywhere Chrome does.
 //
@@ -46,14 +46,14 @@ import { openDrawer, closeDrawer, clickByText } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
-  || path.join(__dirname, '..', '..', 'apps', 'heylook-frontend-v3');
+  || path.join(__dirname, '..', '..', 'frontend');
 
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
 };
 
-// --- static file server for the v3 tree ------------------------------------
+// --- static file server for the frontend tree ------------------------------------
 //
 // It also carries ONE dynamic route: a drip-fed /generate stream. puppeteer's
 // request interception can only answer a request in a single shot, so every
@@ -69,7 +69,7 @@ function serveV3() {
       await streamDrip(req, res, drip);
       return;
     }
-    let rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/v3\/?/, '');
+    let rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\//, '');
     if (rel === '' || rel === '/') rel = 'index.html';
     const file = path.join(V3_ROOT, rel);
     if (!file.startsWith(V3_ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
@@ -436,7 +436,7 @@ async function openChat(browser, base, {
     send();
   });
 
-  await page.goto(`${base}/v3/#/chat`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${base}/#/chat`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.chat__messages .message', { timeout: 15000 });
   return { page, pageErrors, reqs, store };
 }
@@ -2056,9 +2056,9 @@ async function main() {
     // both reach it; a falsy return does not fall back to marked's default
     // renderer -- verified against 18.0.11).
     const md = await browser.newPage();
-    await md.goto(`${base}/v3/`, { waitUntil: 'domcontentloaded' });
+    await md.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
     const render = (src) => md.evaluate(async (b, text) => {
-      const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+      const { renderMarkdown } = await import(`${b}/js/markdown.js`);
       return renderMarkdown(text);
     }, base, src);
 
@@ -2495,7 +2495,7 @@ async function main() {
       await sendAndWait(st.page);
       const got = await st.page.evaluate(() => { window.__lastObs.disconnect(); return window.__last; });
       const want = await st.page.evaluate(async (b, text) => {
-        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+        const { renderMarkdown } = await import(`${b}/js/markdown.js`);
         const el = document.createElement('div');
         el.innerHTML = renderMarkdown(text);
         return el.innerHTML;
@@ -2675,8 +2675,8 @@ async function main() {
     // 2026-07-23 parser bugs were invisible to example-based tests.
     await suite.check('an incrementally grown document renders identically to a whole one', async () => {
       const bad = await md.evaluate(async (b) => {
-        const { MarkdownStream } = await import(`${b}/v3/js/markdown-stream.js`);
-        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+        const { MarkdownStream } = await import(`${b}/js/markdown-stream.js`);
+        const { renderMarkdown } = await import(`${b}/js/markdown.js`);
 
         let seed = 20260826;
         const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -2772,8 +2772,8 @@ async function main() {
       // boundary. It must stay CORRECT -- the rate limit is what bounds its
       // cost, not the boundary machinery.
       const ok = await md.evaluate(async (b) => {
-        const { MarkdownStream } = await import(`${b}/v3/js/markdown-stream.js`);
-        const { renderMarkdown } = await import(`${b}/v3/js/markdown.js`);
+        const { MarkdownStream } = await import(`${b}/js/markdown-stream.js`);
+        const { renderMarkdown } = await import(`${b}/js/markdown.js`);
         const doc = 'one enormous paragraph with no blank line anywhere in it '.repeat(40).trim();
         const el = document.createElement('div');
         const ms = new MarkdownStream(el);
@@ -2793,7 +2793,7 @@ async function main() {
     // below, hand-maintained in two files and guarded in neither.
     await suite.check('a keepalive prompt write is dispatched ahead of the PUT chain', async () => {
       const out = await md.evaluate(async (b) => {
-        const { createDocumentWriter } = await import(`${b}/v3/js/document-writer.js`);
+        const { createDocumentWriter } = await import(`${b}/js/document-writer.js`);
         const calls = [];
         let releaseFirst;
         const update = (docId, body, opts) => {
@@ -2829,7 +2829,7 @@ async function main() {
       // The other half: without keepalive they must chain, or an older value
       // can land after a newer one.
       const out = await md.evaluate(async (b) => {
-        const { createDocumentWriter } = await import(`${b}/v3/js/document-writer.js`);
+        const { createDocumentWriter } = await import(`${b}/js/document-writer.js`);
         const calls = [];
         let releaseFirst;
         const update = (docId, body) => {

@@ -1,13 +1,13 @@
 # Current Work
 
-Last updated: 2026-09-06. v1.79.75 on the `frontend` branch.
+Last updated: 2026-09-06. v1.79.76 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
 
 | Suite | Result | When |
 |---|---|---|
-| unit + contract | 1857 passed | at v1.79.75 |
-| `bun run e2e:render` (model-free) | 106/106 | at v1.79.75 |
+| unit + contract | 1859 passed | at v1.79.76 |
+| `bun run e2e:render` (model-free) | 106/106 | at v1.79.76 |
 | `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
 | `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
 | `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
@@ -675,7 +675,7 @@ UPDATE 2026-07-23 (v1.39.1-.5, frontend v3 + E2E, all heylook code):
   current settings...") updates in place on prompt keystrokes and sampler
   edits, `role="status"` (v1.39.5) so the flip reaches screen readers.
 - **Shared preset bar (v1.39.3) -- notebook is no longer chat-only.** The
-  preset section was extracted to `apps/heylook-frontend-v3/js/preset-bar.js`
+  preset section was extracted to `frontend/js/preset-bar.js`
   (`createPresetBar` + a `getPrompt`/`setPrompt`/`onStatus` adapter); the
   notebook page now contributes the same bar ahead of its sysprompt section,
   identical grammar to chat. Decision: apply writes the notebook's system
@@ -746,7 +746,7 @@ entries below are unchanged from 2026-07-13):
   button are now icon buttons (`.btn--icon`, 40px touch floor, same cap-gate +
   true/unset semantics as the drawer checkbox, kept in sync via
   `onSettingsChange`); toggle state is styled off `aria-pressed`, not a class
-  (pattern recorded in `apps/heylook-frontend-v3/DESIGN.md` §7).
+  (pattern recorded in `frontend/DESIGN.md` §7).
 - **`mlx_cache_limit_gb` operational setting (v1.34.59).** Opt-in cap on MLX's
   buffer cache via `/v1/admin/config` (bounds idle RSS -- the allocator never
   returns freed buffers to the OS -- at the cost of realloc on the next spike;
@@ -1109,7 +1109,7 @@ All in the plan with full rationale; one-liners here so nothing is missed:
 3. Audit the months-old model import/config/loading system.
 4. Clean up the test suite + verify assumptions against current mlx/mlx-lm/mlx-vlm.
 
-## 1. Frontend v3 (`apps/heylook-frontend-v3/`, served at /v3; /v2 deleted in v1.77.0)
+## 1. Frontend (`frontend/`, served at /; /v3 and /v2 both gone)
 
 - **SOLID -- chat**: conversations CRUD, streaming w/ thinking blocks,
   edit/regenerate/delete via single-message delete & server-side generate,

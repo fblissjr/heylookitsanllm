@@ -12,12 +12,11 @@ import logging
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from heylook_llm import __version__
 from heylook_llm.busy_response import model_busy_response
-from heylook_llm.config import PROVIDER_CONFIG_CLASSES
 from heylook_llm.monitoring_api import get_metrics_collector
 from heylook_llm.openapi_doc import build_openapi
 from heylook_llm.perf_collector import ResourceSnapshot, get_perf_collector
@@ -286,11 +285,20 @@ async def clear_all_data(request: Request):
     result = await _clear(conn)
     return result
 
-# Serve the v3 frontend static files at /v3 (the only frontend since
-# v1.77.0 -- v2 was deleted at cutover, owner call 2026-08-18)
+# Serve the frontend at / (v1.79.76: it moved out of apps/ to frontend/ and
+# the /v3 mount is gone -- there is no v1 or v2 left to distinguish it from).
+#
+# NO SPA FALLBACK, and that is the load-bearing part. The app routes on the
+# HASH (`#/chat`), so the server only ever sees `/` and real asset paths --
+# there are no deep server-side routes to fall back FOR. Serving index.html
+# for anything unmatched would instead destroy 404 for the whole API: a
+# typo'd `/v1/mesages` would answer 200 with a web page. So an unknown path
+# 404s, which also gives `/v3` and `/v2` their "this mount is gone" answer
+# for free. If the frontend ever moves to the History API, this decision has
+# to be revisited along with it.
 import pathlib as _pathlib
-_v3_frontend_dir = _pathlib.Path(__file__).resolve().parent.parent.parent / "apps" / "heylook-frontend-v3"
-if _v3_frontend_dir.is_dir():
+_frontend_dir = (_pathlib.Path(__file__).resolve().parent.parent.parent / "frontend").resolve()
+if _frontend_dir.is_dir():
     import gzip as _gzip
     import hashlib as _hashlib
     from email.utils import formatdate as _formatdate
@@ -316,12 +324,12 @@ if _v3_frontend_dir.is_dir():
     # it was a half-megabyte transfer per wake-from-eviction. Answering
     # If-None-Match makes an unchanged asset cost a header round trip and no
     # body, with the same no-stale-module guarantee.
-    _V3_NO_CACHE = {"Cache-Control": "no-cache"}
+    _NO_CACHE = {"Cache-Control": "no-cache"}
     # Text assets only, and only above the size where a round trip dominates.
-    _V3_GZIP_TYPES = (".js", ".mjs", ".css", ".html", ".json", ".svg")
-    _V3_GZIP_MIN = 1024
+    _GZIP_TYPES = (".js", ".mjs", ".css", ".html", ".json", ".svg")
+    _GZIP_MIN = 1024
 
-    def _v3_etag(stat_result) -> str:
+    def _asset_etag(stat_result) -> str:
         """Byte-identical to starlette's FileResponse etag (responses.py)."""
         base = f"{stat_result.st_mtime}-{stat_result.st_size}"
         return f'"{_hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()}"'
@@ -332,13 +340,13 @@ if _v3_frontend_dir.is_dir():
     # level 6 on the event loop -- the same loop delivering SSE tokens.
     # Bounded by the number of gzip-eligible files in the tree (one entry each,
     # older generations of the same path evicted on write), not by traffic.
-    _v3_gzip_cache: dict = {}
+    _gzip_cache: dict = {}
 
-    def _v3_file_response(path, request: Request):
+    def _file_response(path, request: Request):
         stat_result = path.stat()
-        base_etag = _v3_etag(stat_result)
-        wants_gzip = (path.suffix in _V3_GZIP_TYPES
-                      and stat_result.st_size >= _V3_GZIP_MIN
+        base_etag = _asset_etag(stat_result)
+        wants_gzip = (path.suffix in _GZIP_TYPES
+                      and stat_result.st_size >= _GZIP_MIN
                       and "gzip" in request.headers.get("accept-encoding", ""))
         # RFC 9110: distinct entity-tags per content-coding. One etag across
         # both representations lets a shared cache answer an identity request
@@ -346,7 +354,7 @@ if _v3_frontend_dir.is_dir():
         etag = f'{base_etag[:-1]}-gzip"' if wants_gzip else base_etag
         # Vary on EVERY exit, not just the compressed one -- a 304 or an
         # identity 200 stored without it is the same cache-poisoning bug.
-        headers = {**_V3_NO_CACHE, "etag": etag, "vary": "accept-encoding"}
+        headers = {**_NO_CACHE, "etag": etag, "vary": "accept-encoding"}
 
         if etag in [t.strip().removeprefix("W/")
                     for t in request.headers.get("if-none-match", "").split(",")]:
@@ -354,7 +362,7 @@ if _v3_frontend_dir.is_dir():
 
         if wants_gzip:
             key = (str(path), stat_result.st_mtime, stat_result.st_size)
-            body = _v3_gzip_cache.get(key)
+            body = _gzip_cache.get(key)
             if body is None:
                 body = _gzip.compress(path.read_bytes(), compresslevel=6)
                 # Evict older generations of THIS FILE, not the whole tree. The
@@ -366,9 +374,9 @@ if _v3_frontend_dir.is_dir():
                 # ONE entry, nothing was ever a hit, and the level-6 compression
                 # this exists to keep off the event loop ran on every load --
                 # the same loop delivering SSE tokens.
-                for stale in [k for k in _v3_gzip_cache if k[0] == key[0]]:
-                    del _v3_gzip_cache[stale]
-                _v3_gzip_cache[key] = body
+                for stale in [k for k in _gzip_cache if k[0] == key[0]]:
+                    del _gzip_cache[stale]
+                _gzip_cache[key] = body
             return Response(
                 content=body,
                 media_type=guess_type(path.name)[0] or "application/octet-stream",
@@ -380,81 +388,32 @@ if _v3_frontend_dir.is_dir():
             )
         return FileResponse(path, stat_result=stat_result, headers=headers)
 
-    @app.get("/v3")
-    @app.get("/v3/{rest:path}")
-    async def serve_v3_frontend(request: Request, rest: str = ""):
-        """Serve the v3 frontend SPA -- all routes return index.html."""
-        if rest:
-            resolved = (_v3_frontend_dir / rest).resolve()
-            if resolved.is_relative_to(_v3_frontend_dir) and resolved.is_file():
-                return _v3_file_response(resolved, request)
-        return _v3_file_response(_v3_frontend_dir / "index.html", request)
+    # Plain `def`, not `async def`: these stat, read and gzip files, all of
+    # which block. Starlette runs a sync handler in a threadpool, which is the
+    # same reason the two admin routes that read model directories are sync --
+    # the event loop here is the one delivering SSE tokens.
+    @app.get("/", include_in_schema=False)
+    def serve_frontend_index(request: Request):
+        return _file_response(_frontend_dir / "index.html", request)
 
-
-def _get_api_endpoints():
-    """Every `/v1` endpoint, for the `GET /` discovery payload.
-
-    From the OpenAPI schema, NOT by walking ``app.routes``. This walked the
-    routes and reported 12 of 48: a router mounted with ``include_router``
-    appears there as an ``_IncludedRouter`` with no ``.path``, so everything
-    behind a router was invisible -- ``/v1/messages``, every conversation,
-    preset and notebook route, all 19 admin routes, and the cancel endpoint.
-    v1.79.45 fixed exactly this in ``server.py``'s startup banner and left
-    THIS copy, the one on the surface a client reaches first, still wrong. Two
-    walks of the same thing, one fixed, is the shape this repo keeps paying
-    for; both now read the schema, which is the surface that cannot drift from
-    what is actually served.
-    """
-    endpoints = {}
-    for path, operations in app.openapi().get("paths", {}).items():
-        if not path.startswith("/v1/"):
-            continue
-        # A path can carry several methods; the schema keys them explicitly
-        # rather than the arbitrary set-ordering the route walk picked from.
-        for method in operations:
-            if method.lower() not in ("get", "post", "put", "patch", "delete"):
-                continue  # skip `parameters`, `summary` and friends
-            name = path.replace("/v1/", "").replace("/", "_").strip("_")
-            endpoints.setdefault(name, {"method": method.upper(), "path": path})
-    return endpoints
-
-
-@app.get("/",
-    summary="Server Information",
-    description="Get server information and available endpoints",
-    tags=["Monitoring"]
-)
-async def root():
-    """Root endpoint showing server info and available APIs"""
-    from heylook_llm import __version__
-    return {
-        "name": "HeylookLLM",
-        "version": __version__,
-        "description": "Local LLM server for Apple Silicon: MLX and gguf models behind one Anthropic Messages-conformant API",
-        "documentation": {
-            "interactive": "/docs",
-            "redoc": "/redoc",
-            "openapi": "/openapi.json"
-        },
-        "endpoints": _get_api_endpoints(),
-        # Derived, not hand-listed: PROVIDER_CONFIG_CLASSES is the single
-        # source of truth for the provider set, and this key claimed MLX was
-        # the only one for the three releases since the gguf provider landed.
-        # Same staleness class as the OpenAPI header and the /v1/capabilities
-        # endpoints map, on the surface a client reaches FIRST.
-        "features": {
-            "model_providers": sorted(PROVIDER_CONFIG_CLASSES),
-            "vision_models": True,
-            "audio_input": "gguf models only",
-            "streaming": True,
-            "model_caching": "LRU (size set by max_loaded_models, default 1)"
-        },
-        "quick_start": {
-            "1": "GET /v1/models - what this server is serving right now",
-            "2": "POST /v1/messages - generate (Anthropic Messages-conformant)",
-            "3": "GET /docs - interactive API documentation"
-        }
-    }
+    @app.get("/{rest:path}", include_in_schema=False)
+    def serve_frontend_asset(request: Request, rest: str):
+        """A real file, or 404. Registered after every router, so /v1, /docs
+        and /openapi.json match first and are never reachable here."""
+        resolved = (_frontend_dir / rest).resolve()
+        # The guard is load-bearing NOW in a way it was not under apps/:
+        # `../pyproject.toml` used to resolve to a path that did not exist, so
+        # is_file() was what actually refused it. From frontend/ it resolves
+        # to the real repo-root file.
+        if resolved.is_relative_to(_frontend_dir) and resolved.is_file():
+            return _file_response(resolved, request)
+        raise HTTPException(status_code=404, detail="Not found")
+else:
+    logging.warning(
+        "Frontend directory not found at %s -- no UI will be served. Every "
+        "frontend route is skipped, the server starts clean, and / answers 404.",
+        _frontend_dir,
+    )
 
 
 # The generated document lives in openapi_doc.py; FastAPI caches it on the

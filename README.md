@@ -79,7 +79,7 @@ subprocess -- one API, one UI, per-model engine choice.
 
 ## Web UI
 
-Vanilla JS frontend at `/v3` -- no bundler, no node_modules, no build step;
+Vanilla JS frontend at `/` -- no bundler, no node_modules, no build step;
 served directly by the backend. Conversations, notebooks, and presets are
 stored server-side in DuckDB (messages as content blocks; images round-trip).
 
@@ -107,7 +107,7 @@ heylookllm import --folder /path/to/models
 heylookllm --log-level INFO             # serves API + UI on :8000
 ```
 
-Then open `http://localhost:8000/v3`.
+Then open `http://localhost:8000/`.
 
 Run it as a background service with `heylookllm service install`
 (`status|start|stop|restart|uninstall`; `--host 0.0.0.0` for LAN).

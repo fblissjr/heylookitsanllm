@@ -52,7 +52,7 @@ surfacing. Per-instance fixes cannot close a class the protocol permits.
 **Separate second track:** the "message hidden until I click Edit" symptom
 is not a saga bug -- data survives; the ROW stops painting. `.message`
 carries `content-visibility: auto` + `contain-intrinsic-size: auto 3rem`
-(`apps/heylook-frontend-v3/css/app.css` ~532) and save/regenerate swaps
+(`frontend/css/app.css` ~532) and save/regenerate swaps
 nodes via the reconciler; the hidden-until-interaction phenomenology on
 WebKit points at a skipped-content invalidation bug there. Needs a live iOS
 repro, not more code-reading (Phase 0.5 below).

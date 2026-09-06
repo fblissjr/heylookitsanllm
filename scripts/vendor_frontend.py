@@ -40,7 +40,7 @@ from typing import NoReturn
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # One constant, so the step-4 move of the frontend tree is a one-line edit
 # here rather than a hunt. Kept in sync with api.py's own frontend path.
-VENDOR_DIR = REPO_ROOT / "apps" / "heylook-frontend-v3" / "js" / "vendor"
+VENDOR_DIR = REPO_ROOT / "frontend" / "js" / "vendor"
 MANIFEST = VENDOR_DIR / "vendor.json"
 REGISTRY = "https://registry.npmjs.org"
 # Enough of the file to hold the licence banner without reading a 133KB module.
