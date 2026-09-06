@@ -1,6 +1,6 @@
 # scripts/
 
-Last updated: 2026-08-12
+Last updated: 2026-09-06
 
 Standalone developer/ops scripts. All are run with `uv run` (PEP 723 headers
 provision their own deps where noted, so they don't add anything to the project
@@ -18,6 +18,7 @@ would just create churn.
 | `benchmark.py` | HTTP benchmark against a **running** server: TTFT, generation TPS, memory; OpenAI + Messages endpoints, streaming and not. (Uses `rich`, in the dev group.) | `uv run scripts/benchmark.py [--url ...] [--model ...]` |
 | `export_openapi.py` | Exports the OpenAPI spec from the FastAPI app **without** running the server. | `uv run python scripts/export_openapi.py [--format yaml] [-o PATH] [--stats]` |
 | `jspace_convert_lens.py` | Converts a Jacobian-lens `.pt` into an mx-safetensors lens for the j-space feature. Self-contained deps via its PEP 723 header (torch, safetensors, jlens). | `uv run scripts/jspace_convert_lens.py ...` |
+| `vendor_frontend.py` | **Vendored frontend dependency manager** (marked, DOMPurify). `--verify` is offline and wired into the git hook; `--check` also reports what npm has published; `--update` installs the latest and rewrites the manifest. Stdlib only and run directly, NOT under `uv run` -- a pre-commit hook must not depend on the venv being synced. See "Vendored frontend libraries" below. | `scripts/vendor_frontend.py [--verify [--staged] \| --check \| --update [--package NAME]]` |
 | `syntax_check.py` | Fast `ast.parse` sweep over the source tree -- a cheap pre-flight for syntax errors. | `uv run python scripts/syntax_check.py` |
 
 ## Dependencies
@@ -37,6 +38,45 @@ choice: `guard_stable_channel.sh` blocks committing it, because uv honors no
 gitignored file for source pins and every pin propagates into `uv.lock`.
 `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is the deliberate-exception escape hatch
 (e.g. a reviewed, intentional git dependency).
+
+## Vendored frontend libraries
+
+The frontend has no build step, so its only two external dependencies -- `marked`
+and `DOMPurify` -- are committed files under `js/vendor/`, not lockfile entries.
+Nothing about a committed file says where it came from, so before v1.79.72 the
+only way to answer "are we current?" was to read a version banner out of a
+minified bundle and hand-check npm. They had been a major version behind for
+five months.
+
+`js/vendor/vendor.json` is now the pinning record, and `vendor_frontend.py`
+keeps it and the files honest:
+
+```bash
+scripts/vendor_frontend.py --verify    # offline: files vs manifest
+scripts/vendor_frontend.py --check     # ... plus what npm has published
+scripts/vendor_frontend.py --update    # install latest, rewrite manifest
+```
+
+The two halves are split on purpose. **Integrity is offline and fatal** -- two
+file reads and a regex, so the pre-commit hook can run it without a network and
+a mismatch blocks the commit, because the files and the record must never
+disagree. **Staleness needs the network and is only reported** -- an npm outage
+is not a broken repo, so `--check` prints what is behind and still exits 0.
+
+In the hook it runs as `--verify --staged`, reading staged blobs rather than the
+working tree: like `guard_stable_channel.sh`, it judges what is being committed,
+so a dirty checkout cannot block an unrelated commit. The hook itself lives in
+the untracked `.git/hooks/pre-commit.local`; the logic lives here, in the repo.
+
+**Release step:** run `--check` before a release and name the answer, the same
+way an uncovered `tests/smoke` arm gets named. That is the only thing that will
+tell you a vendored library has moved.
+
+Bumping is not automatic and should not be. `marked` in particular is a markdown
+parser feeding an incremental renderer, and its majors have carried real
+behavioural changes; after any update run `bun run e2e:render`, which diffs an
+incrementally-grown document against a whole-document render and carries the
+scheme-guard and raw-HTML checks.
 
 ## llama.cpp is built, not installed
 

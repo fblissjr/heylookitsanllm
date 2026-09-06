@@ -2108,6 +2108,53 @@ async function main() {
         `an autolink stopped being a link: ${JSON.stringify(link)}`);
     });
 
+    // Two checks, each carrying a TABLE rather than one check per vector --
+    // the claim is a property ("no markdown spelling yields a live href to a
+    // scheme outside the allowlist"), and a property is one claim however
+    // many rows demonstrate it.
+    //
+    // These are the ONLY checks that can see the scheme guard in markdown.js
+    // regress. Nothing else here would: marked emits `javascript:` hrefs
+    // unfiltered (verified on 18.0.11 across four markdown spellings), so a
+    // broken guard produces a page that renders and diffs identically while
+    // being live XSS. Read the guard's own comment for why it exists at the
+    // renderer rather than being left to DOMPurify.
+    await suite.check('no markdown spelling renders a dangerous URL', async () => {
+      const vectors = [
+        ['inline link',     '[x](javascript:alert(1))'],
+        ['mixed case',      '[x](JaVaScRiPt:alert(1))'],
+        ['entity-encoded',  '[x](java&#115;cript:alert(1))'],
+        ['percent-encoded', '[x](java%73cript:alert(1))'],
+        ['leading space',   '[x]( javascript:alert(1))'],
+        ['vbscript',        '[x](vbscript:alert(1))'],
+        ['data html',       '[x](data:text/html,<script>alert(1)</script>)'],
+        ['autolink',        '<javascript:alert(1)>'],
+        ['reference link',  '[x][r]\n\n[r]: javascript:alert(1)'],
+        ['image',           '![x](javascript:alert(1))'],
+        ['image data svg',  '![x](data:image/svg+xml,<svg onload=alert(1)>)'],
+      ];
+      for (const [name, src] of vectors) {
+        const html = await render(src);
+        assert(!/(?:href|src)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/i.test(html),
+          `${name} produced a live dangerous URL: ${JSON.stringify(html)}`);
+      }
+    });
+
+    await suite.check('ordinary links and images still render', async () => {
+      const cases = [
+        ['relative',   '[x](/a/b)',                     'href="/a/b"'],
+        ['anchor',     '[x](#sec)',                     'href="#sec"'],
+        ['https',      '[x](https://ok.test/p)',        'href="https://ok.test/p"'],
+        ['mailto',     '[x](mailto:a@b.test)',          'href="mailto:a@b.test"'],
+        ['image',      '![x](https://ok.test/a.png)',   'src="https://ok.test/a.png"'],
+      ];
+      for (const [name, src, want] of cases) {
+        const html = await render(src);
+        assert(html.includes(want),
+          `${name} stopped rendering (guard too strict?): ${JSON.stringify(html)}`);
+      }
+    });
+
 
     // ---- boot 10: the streaming painter is incremental --------------------
     // A streaming message used to be re-parsed WHOLE and assigned to innerHTML

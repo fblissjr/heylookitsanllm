@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.73]
+
+The frontend's vendored libraries get a pinning record and a way to notice
+drift, and marked's unfiltered URL schemes stop being DOMPurify's problem alone.
+
+### Added
+
+- **`scripts/vendor_frontend.py` + `js/vendor/vendor.json`.** The frontend has
+  no build step, so `marked` and `DOMPurify` are committed files rather than
+  lockfile entries -- and nothing could tell you they had drifted. Answering
+  "are we current?" meant reading a version banner out of a minified bundle and
+  hand-checking npm, which is why they sat a major behind for five months. The
+  manifest is now the pinning record and the script keeps both honest:
+  `--verify` is offline and fatal (two file reads and a regex, wired into
+  `pre-commit.local` as `--verify --staged` so it judges what is being
+  committed, like `guard_stable_channel.sh`, and can never break an offline
+  commit); `--check` adds "what has npm published" and only REPORTS, because a
+  registry outage is not a broken repo; `--update` installs and rewrites the
+  manifest. Stdlib only -- a hook must not depend on the venv being synced.
+  Documented in `scripts/README.md`, and a release now runs `--check` and names
+  the answer alongside the `tests/smoke` arms rule.
+
+### Fixed
+
+- **Link and image URL schemes are checked at the renderer.** marked does not
+  filter them: verified on 18.0.11, it emits `<a href="javascript:alert(1)">`
+  for four different markdown spellings -- inline link, image, autolink and
+  reference link. So `markdown.js`'s comment calling DOMPurify "the backstop
+  for link hrefs, image srcs" was aspirational; DOMPurify was the sole guard
+  between model output and a live XSS in the transcript. `markdown.js` now
+  allowlists schemes in the `link`/`image` renderer overrides, DOMPurify
+  becomes the genuine second layer, and the decision about what a rendered link
+  may point at lives in the file that owns text-to-HTML. The guard normalizes
+  the way the HTML parser does (tab, LF and CR are stripped from URL
+  attributes before resolution) and refuses a colon-bearing prefix carrying an
+  escape marker, since `java&#115;cript:` reads as a relative path until the
+  browser decodes it.
+
+### Notes
+
+- `bun run e2e:render` green (107/107), including two new checks. They are a
+  deliberate pair: `renderMarkdown` falls back to `escapeHtml` on any throw, so
+  a guard that crashed would make "no markdown spelling renders a dangerous
+  URL" pass vacuously -- "ordinary links and images still render" is what makes
+  that impossible. Each carries a table of vectors rather than one check per
+  vector: the claim is a property, and a property is one claim however many
+  rows demonstrate it.
+- A renderer returning `false` falls back to marked's own implementation;
+  returning `''` does not, it drops the content silently. The accept path
+  depends on that distinction, which is worth knowing before editing it.
+
 ## [1.79.72]
 
 The two vendored v3 frontend libraries move to current upstream releases.

@@ -291,6 +291,17 @@ drop-overlay label) is refreshed AFTER `modelSelect.value` moves, never before
 the order backwards, so every one of them described the conversation being left. Drag/drop
 is desktop-only ON PURPOSE and is not a §7 violation: it duplicates paths that
 exist on the phone rather than being the sole route to anything.
+URL SCHEMES ARE CHECKED AT THE RENDERER (v1.79.73): marked does NOT filter
+them -- verified on 18.0.11, it emits `<a href="javascript:...">` for FOUR
+markdown spellings (inline link, image, autolink, reference link) -- so
+DOMPurify was the SOLE guard despite markdown.js's comment calling it a
+backstop. `markdown.js` now allowlists schemes in the `link`/`image` renderer
+overrides and DOMPurify is genuinely the second layer. A renderer returning
+`false` falls back to marked's own implementation; returning `''` does NOT (it
+drops the content silently), so the ACCEPT path is the one a wrong answer
+breaks quietly. The vendored libs are pinned by `js/vendor/vendor.json` +
+`scripts/vendor_frontend.py` (offline integrity in pre-commit, staleness
+reported at release).
 A STREAMING message is rendered INCREMENTALLY (`markdown-stream.js`, v1.79.9)
 and this is load-bearing, not a micro-optimization: the painter used to
 re-parse the whole accumulated response through marked+DOMPurify into
@@ -556,7 +567,11 @@ in git history; a contract test pins that `/v2` stays 404.)
   a CI gate -- there is no CI here and a gate nobody can run is worse than a
   rule somebody follows): before a release touching PROVIDER, LOADER, TEMPLATE
   or LIFECYCLE code, `tests/smoke/` runs green on all three arms, and an
-  UNCOVERED arm is named in the changelog rather than passed over. Same for a
+  UNCOVERED arm is named in the changelog rather than passed over. A release
+  also runs `scripts/vendor_frontend.py --check` and NAMES the answer -- the
+  frontend's two vendored libraries have no lockfile entry, so that command is
+  the only thing that will tell you they moved (they sat a major behind for
+  five months before v1.79.72). Same for a
   Phase 3 mechanism reported uncovered -- an unmet precondition is a gap with a
   name, and the standing one is thinking DEPTH on both MLX arms (the only
   served MLX model advertising `reasoning_effort` is gpt-oss-120b).
