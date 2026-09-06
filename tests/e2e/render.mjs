@@ -2060,6 +2060,15 @@ async function main() {
     // writing `<d>tag</d>` rendered as "tag" with the tags silently gone --
     // while Copy, which reads the stored text, still showed them. Module-level
     // check (no chat page needed): renderMarkdown is the only text->HTML path.
+    //
+    // THESE ARE THE ONLY CHECKS HERE THAT CAN SEE A MARKED UPGRADE BREAK THE
+    // renderer.html OVERRIDE. The incremental-vs-whole-document diffs below
+    // are structurally blind to it: if marked stopped dispatching html tokens
+    // to markdown.js's override, BOTH arms would break identically and the
+    // diff would stay green while the v1.79.5 bug came straight back. When
+    // moving marked, assert dispatch directly (block AND inline html tokens
+    // both reach it; a falsy return does not fall back to marked's default
+    // renderer -- verified against 18.0.11).
     const md = await browser.newPage();
     await md.goto(`${base}/v3/`, { waitUntil: 'domcontentloaded' });
     const render = (src) => md.evaluate(async (b, text) => {

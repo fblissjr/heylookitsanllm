@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.72]
+
+The two vendored v3 frontend libraries move to current upstream releases.
+
+### Changed
+
+- **`marked` 17.0.6 -> 18.0.11, `DOMPurify` 3.3.3 -> 3.4.15** in
+  `apps/heylook-frontend-v3/js/vendor/` (the only external dependencies v3 has
+  -- no CDN, no fonts, no build step; the files are the npm tarballs'
+  `lib/marked.esm.js` and `dist/purify.es.mjs` verbatim). These two had no
+  pinning record anywhere, so this entry is it. marked's 18.0.x line is mostly
+  ReDoS and O(n^2)-backtracking fixes in the inline link, em/strong and HTML
+  block regexes -- directly relevant to a renderer whose cost already scales
+  with response length. Its one breaking change, "trim trailing blank lines
+  from block tokens", is a boundary-equivalence question and is exactly what
+  `render.mjs`'s incremental-vs-whole-document diff answers. DOMPurify's 3.4.x
+  run is DOM-clobbering and hook hardening; every item in it touches a surface
+  v3 does not use (no hooks, no `IN_PLACE`, no Trusted Types, no `ADD_ATTR`),
+  and because `markdown.js` escapes html tokens AT THE RENDERER, raw HTML never
+  reaches DOMPurify as markup at all -- the allow-list additions are inert here.
+- Verified: `bun run e2e:render` green (105/105) before and after the swap,
+  including the three v1.79.5 checks that pin raw HTML as SHOWN, never rendered.
+  That diff is structurally blind to a renderer-override regression (both arms
+  would break identically), so the dispatch was also probed directly against the
+  new marked: every html token, block AND inline, still reaches the
+  `renderer.html` override, and a falsy return does NOT fall back to marked's
+  default renderer (18.0.8 changed extension-returns-false fallback; the
+  override path is unaffected).
+
 ## [1.79.71]
 
 The mobile chat header stops multi-line wrapping and recovers screen real estate on iOS Safari.
