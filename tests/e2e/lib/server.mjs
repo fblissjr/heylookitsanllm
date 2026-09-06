@@ -8,7 +8,46 @@
 
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
+import { connect } from 'node:net';
 import { sleep } from './harness.mjs';
+
+/** Refuse to start when something already listens on `port`.
+ *
+ * Without this the harness silently tests the WRONG SERVER. The spawned
+ * `heylookllm` loses the bind and exits, but that takes seconds (Python
+ * import), while Phase 1's first iteration is immediate: it sees `exited`
+ * still null, fetches /v1/models from the STRANGER, finds the model listed
+ * and returns. loadAndWarm then warms the stranger and every suite runs
+ * against it. Teardown makes it self-perpetuating -- `stop()` returns early
+ * because our child really did exit, so the stranger survives to capture the
+ * next run too. An orphan from an earlier run was found squatting this port
+ * on 2026-09-06 running a build four releases stale; nothing in the output
+ * said so, and the run would have reported a full green for code that was
+ * not executing.
+ *
+ * Checked by CONNECT rather than by binding: a bind test races (we would have
+ * to release the port before the child claims it) and answers a different
+ * question -- what matters is whether a peer is there to answer, not whether
+ * the address is momentarily free.
+ */
+async function refuseIfPortBusy(port) {
+  const busy = await new Promise((resolve) => {
+    const sock = connect({ host: '127.0.0.1', port });
+    const done = (v) => { sock.destroy(); resolve(v); };
+    sock.setTimeout(2000);
+    sock.on('connect', () => done(true));
+    sock.on('timeout', () => done(false));
+    sock.on('error', () => done(false));
+  });
+  if (busy) {
+    throw new Error(
+      `port ${port} is already in use -- refusing to start.\n` +
+      `  Something is listening on 127.0.0.1:${port}. The harness would have ` +
+      `silently run every suite against THAT server instead of a fresh one.\n` +
+      `  Most likely an orphaned heylookllm from an earlier run. Find it with ` +
+      `\`lsof -nP -iTCP:${port} -sTCP:LISTEN\` and kill it, or set E2E_PORT to a free port.`);
+  }
+}
 
 async function fetchJson(url, opts = {}, timeoutMs = 10000) {
   const ctrl = new AbortController();
@@ -41,6 +80,8 @@ export async function loadAndWarm(base, modelId, { timeoutMs = 300000, note = ()
 }
 
 export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) {
+  await refuseIfPortBusy(port);
+
   const log = createWriteStream(logPath, { flags: 'a' });
   const args = [
     'run', 'heylookllm',

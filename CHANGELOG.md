@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2]
+
+The live coverage 2.0.0 shipped without, and the harness defect that would have
+faked it.
+
+### Fixed
+
+- **The browser E2E harness silently tested whatever was already on its port.**
+  `startServer` spawned `heylookllm` and then polled `/v1/models`, but a child
+  that loses the bind takes seconds to exit (Python import) while the first
+  poll is immediate: a stranger already listening answered, listed the model,
+  and readiness returned. `loadAndWarm` then warmed the stranger and every
+  suite ran against it. Teardown made it self-perpetuating -- `stop()` returns
+  early because our own child really did exit, so the squatter survived to
+  capture the next run too. An orphaned server from an earlier run was found
+  holding that port on a build four releases stale, and nothing in the output
+  said so: the run would have reported a full green for code that was not
+  executing. `tests/e2e/lib/server.mjs` now refuses to start when anything
+  answers on the port, and names how to find it. Checked by CONNECT rather than
+  by binding -- a bind test races the child for the port and answers a
+  different question. `scripts/dev_server.sh` already had this guard; e2e was
+  the one path without it.
+
+### Coverage
+
+The Phase 4 release standard, which 2.0.0 met but never ran: it touches
+provider-shared code (`providers/base.py`, `config.py`, the schema layer every
+request flows through). Run against 2.0.1, all three engine arms.
+
+- `tests/smoke/` -- contract 11/11, then 70/70 across mlx-lm, mlx-vlm and gguf.
+  Four rows report UNCOVERED rather than green: thinking depth on both MLX arms
+  (the standing gap -- the only served MLX model advertising `reasoning_effort`
+  is a 120B), the nested-image row on mlx-lm (that arm's model is text-only),
+  and the gguf thinking block. The last was chased down by hand rather than
+  filed: the same request repeated DOES return a thinking block carrying both
+  `thinking` and `text`, so the mechanism is intact and the row is
+  sampling-dependent -- the model declined to think on that one sample. A check
+  that needs the model to choose to reason can go uncovered without anything
+  being wrong, which is worth knowing before reading it as a gguf regression.
+- `tests/e2e/` -- 221/221 across all three arms, both suites. Seven skips, all
+  legitimate and all attributed: five vision checks on the text-only mlx-lm arm
+  model, and the cadence check on the two arms it is deliberately not scoped
+  to.
+- The removed-field refusals were exercised **over the wire against a real gguf
+  generation**, not only through TestClient. `logprobs`, `top_logprobs` and the
+  renamed `preset` each answer 422 naming the removal, while the same request
+  without them generates normally. v1.79.74 shipped one of these guards green
+  against a caller shape no wire produces, so the route is the only place the
+  answer counts.
+
 ## [2.0.1]
 
 Docs correction, no behaviour change.
