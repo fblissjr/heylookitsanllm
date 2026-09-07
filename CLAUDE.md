@@ -175,6 +175,21 @@ an entry on write (`update_config`/`toggle_enabled`/`bulk_set_default_sampler`) 
 editing IS the override; reads never do, or browsing the models page would grow the
 file. `remove_config` deliberately does not materialize -- the next scan would serve it
 back, so a "removed" model that reappears is worse than a clear no.
+AN EXPLICIT ENTRY RECEIVES **NONE** OF DISCOVERY'S DERIVED FIELDS, and that is the
+sharp edge of "served exactly as written": `merge_discovered` SKIPS a discovered
+model whose resolved path an entry already names, so nothing re-derives for it ever
+again. Adding ONE field means hand-writing every OTHER field that model needs.
+It bit twice on 2026-09-06 in two different mechanisms: materialization wrote a
+THIN entry (identity + `model_path`) on the stated reasoning that the rest was
+"re-derived at load", so a `reload?ctx_size=` cost a vision model its
+`mmproj_path` and the next spawn had no `--mmproj` with the projector sitting
+unreferenced beside the weights (fixed v2.0.8 -- materialization now writes the
+whole derived config, and the comment claiming otherwise had to go with it);
+and enabling `spec_type` on a text model required writing `draft_model_path`
+out longhand, because the drafter the importer would have auto-paired is not
+contributed to an entry that exists. Before adding a field to an entry, check
+what discovery WAS giving that model (`merge_discovered(data, discover(data))`)
+and carry it, or the edit is a silent capability removal.
 Router keeps `max_loaded_models=1`
 by default (LRU evict + pin + idle-unload via `idle_unload_seconds`/`unload_after_idle_seconds`);
 config in `models.toml`. Every provider-config FIELD declares when a change
@@ -297,7 +312,20 @@ run then paints its ending over the live one. Rows were never at risk (`resyncMe
 `s.stream` after its own await); the STATUS LINE was, and the line that lands is
 the recovery notice -- it tells the reader the generation on screen is a dead
 stream being recovered. `handleStreamError` has the same shape and is safe only
-because nothing in it awaits between `releaseStream` and its writes. Chat also
+because nothing in it awaits between `releaseStream` and its writes.
+THE COMPOSER BEING UNBARRED IN THAT SAME WINDOW IS CORRECT, NOT A SECOND BUG --
+it was re-raised as one on 2026-09-06 after a read of `finishGenerate` alone.
+`refuseWhileStreaming` bars a send on `s.stream` or `remoteGenerating`, and both
+are false across the resync GET; the SERVER is the arbiter instead.
+`conversation_api._refuse_while_generating` 409s every message write while a
+`_ACTIVE` claim is held (the claim is taken BEFORE the row snapshot precisely so
+a later write 409s rather than being destroyed by the positional commit), and
+chat's send catch restores the typed text AND the staged attachments on that 409
+(2026-08-13 review finding). So the two outcomes are: run still live -> 409,
+composer restored, live run untouched; run genuinely finished -> the send is
+legitimate and the `s.stream` re-check above stops the old run painting over it.
+A client-side bar would have to GUESS which, and guessing wrong blocks a send
+that should have worked. Chat also
 takes image (and gguf audio) input + renders
 image content blocks out of the DuckDB store. The page is a MIRROR of the store
 with exactly two invalidation points: document select, and RESUME (`ctx.onResume` ->
