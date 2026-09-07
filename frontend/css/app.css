@@ -593,7 +593,11 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   border-bottom: 1px solid var(--line);
 }
 .chat__bar select { max-width: 16rem; }
+.chat__ctx { display: inline-flex; align-items: center; gap: 0.25rem; }
 .chat__ctx-select { max-width: 8rem; }
+/* Narrower than the select on purpose: it holds a number, and a box the width
+   of the dropdown reads as a replacement for it rather than a companion. */
+.chat__ctx-custom { max-width: 6.5rem; }
 .chat__bar-spacer { flex: 1; }
 .chat__convs-toggle { display: none; }
 /* Desktop: the detail group is invisible to layout (see chat.js); the phone
@@ -1004,13 +1008,19 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .chat__bar-detail::-webkit-scrollbar {
     display: none;
   }
-  .chat__ctx-select {
+  .chat__ctx { flex: 0 0 auto; }
+  .chat__ctx-select,
+  .chat__ctx-custom {
     flex: 0 0 auto;
     min-height: 44px;
     max-width: 9rem;
     padding: 0.25rem 0.5rem;
     font-size: var(--text-sm);
   }
+  /* DESIGN.md §7: the custom box is a touch target like everything else on
+     this bar, and it appears BESIDE the select, so it gets its own width
+     rather than inheriting the select's. */
+  .chat__ctx-custom { max-width: 6rem; }
   .chat__load-btn {
     flex: 0 0 auto;
     min-height: 44px;

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.9]
+
+### Added
+
+- **The gguf context control takes a typed value, not just the ladder.** The
+  select offered power-of-two steps plus the model's ceiling, which cannot name
+  the size that is actually useful -- that depends on the machine and the
+  moment (what else is resident, how long the prompts run). "Custom…" now
+  reveals a number input beside the select; a committed value becomes a real
+  option, so it preselects afterwards and survives a rebuild the same way an
+  off-grid STORED value already did (`ctxStepsFor` had carried that case all
+  along). Out-of-range entries CLAMP rather than refuse -- floor 512 because
+  `GGUFModelConfig.ctx_size` is `ge=512` and anything smaller is a 422 rather
+  than a small context, ceiling the GGUF header's `context_length` -- and the
+  clamped number is written into the select, so the correction is visible and
+  what is shown is what gets sent. A silent refusal would leave the reader
+  believing they had asked for something they had not.
+
+  Mid-edit is deliberately not a choice: `changed()` and `choiceToSend()` both
+  treat the open editor as "no change", so Load/Reload does not appear for a
+  value that does not exist yet. The mounted element is now a wrapper span, so
+  the page can no longer reach for `.disabled` on it -- `setEnabled()` is the
+  replacement and chat.js uses it at both sites.
+
+  The e2e check drives real typing and a real Enter rather than a dispatched
+  event, and it ran red first for an honest reason: the box opens SEEDED with
+  the current size, so typing into it appends, and the first cut produced
+  `409650000` clamped to the ceiling -- which is indistinguishable from a
+  working clamp. Clearing before typing is now stated at the site.
+
 ## [2.0.8]
 
 Three defects behind one report of "nothing is being generated" on a gguf

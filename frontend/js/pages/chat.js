@@ -548,7 +548,7 @@ async function loadModelNow(ctx) {
   s.loadNowBtn.dataset.busy = '1';
   s.loadNowBtn.disabled = true;
   s.modelSelect.disabled = true;
-  s.ctxSelect.element.disabled = true;
+  s.ctxSelect.setEnabled(false);
   // gguf goes through the server-owned reload WITH the context choice (the
   // server persists it and skips the restart when nothing changed); every
   // other provider keeps the plain load.
@@ -578,7 +578,7 @@ async function loadModelNow(ctx) {
     delete s.loadNowBtn.dataset.busy;
     s.loadNowBtn.disabled = false;
     s.modelSelect.disabled = false;
-    s.ctxSelect.element.disabled = false;
+    s.ctxSelect.setEnabled(true);
   }
   if (!ctx.alive) return;
   await refreshLoadedIds(ctx);

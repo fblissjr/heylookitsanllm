@@ -9,13 +9,23 @@
 // sent WITH the load and persisted server-side, so the models page shows
 // the same number afterwards.
 //
+// The steps are a convenience, not the range: "Custom…" reveals a number
+// input for any value the server will accept, because the useful size is a
+// property of the machine and the moment (what else is resident, how long the
+// prompts are) and no fixed ladder can name it. A committed custom value
+// becomes a real option, so it survives a rebuild and preselects afterwards --
+// ctxStepsFor already carried the off-grid stored value for exactly this.
+//
 // createContextSelect({ currentModelId, adminRow, onChange }) -> {
-//   element        the <select> to mount (class chat__ctx-select)
+//   element        the wrapper to mount (class chat__ctx), holding the
+//                  <select class="chat__ctx-select"> and the custom input
 //   refresh()      re-read the current model's admin row and rebuild the
 //                  options if its facts moved (see the signature rule below)
 //   changed()      the chosen value differs from the model's STORED ctx_size
 //   choiceToSend() the size to send with a load: N, 0 for Auto, null when
 //                  the control does not apply to the current model
+//   setEnabled(on) enable/disable both inputs. The wrapper is a span, so the
+//                  page cannot reach for `.disabled` on the element itself.
 // }
 //   currentModelId()  the id the page's model select shows
 //   adminRow(id)      that model's /v1/admin/models row (provider gates the
@@ -29,6 +39,15 @@ import { createEl, formatTokens } from './utils.js';
 
 const CTX_MIN = 4096;
 const CTX_FALLBACK_MAX = 262144; // ceiling when the header did not say
+
+// The floor a CUSTOM value may reach -- GGUFModelConfig.ctx_size is `ge=512`,
+// so anything smaller is a 422 from the server rather than a small context.
+// Deliberately below CTX_MIN: the ladder starts at 4k because that is where
+// the useful sizes begin, not because 2k is illegal.
+const CTX_ABS_MIN = 512;
+
+// Sentinel option value. Not a number, so it can never be mistaken for a size.
+const CUSTOM = 'custom';
 
 const IDLE_TITLE = 'Context size for the next load';
 
@@ -47,12 +66,102 @@ export function ctxStepsFor(row) {
 }
 
 export function createContextSelect({ currentModelId, adminRow, onChange }) {
-  const element = createEl('select', {
-    class: 'chat__ctx-select', hidden: true,
+  const select = createEl('select', {
+    class: 'chat__ctx-select',
     title: IDLE_TITLE,
     'aria-label': 'Context size',
   });
-  element.addEventListener('change', () => onChange?.());
+  // type=number so a phone gets the numeric keypad. Kept OUT of the tab order
+  // and out of the accessibility tree while hidden by `hidden` itself, which
+  // is why it is toggled with .hidden and never with style.display.
+  const custom = createEl('input', {
+    class: 'chat__ctx-custom', hidden: true,
+    type: 'number', step: '1', inputMode: 'numeric',
+    title: 'Custom context size, in tokens',
+    'aria-label': 'Custom context size in tokens',
+  });
+  const element = createEl('span', { class: 'chat__ctx', hidden: true }, [select, custom]);
+
+  // The last value committed through the custom box but not yet stored
+  // server-side. Re-offered on rebuild: ctxStepsFor can only know the STORED
+  // value, and silently dropping a number the user typed is worse than
+  // dropping a dropdown pick they can make again in one click.
+  let pending = null;
+  // What the select showed before "Custom…" was chosen, so Escape and an
+  // unparseable entry both have somewhere to go back to.
+  let beforeCustom = '';
+
+  function ceilingFor(row) {
+    return row?.context_length || CTX_FALLBACK_MAX;
+  }
+
+  // Put `n` in the list as a real option (sorted, before "Custom…") and
+  // select it. Idempotent: an existing option is reused rather than doubled.
+  function selectValue(n, row) {
+    const value = String(n);
+    if (![...select.options].some((o) => o.value === value)) {
+      const tag = n === row?.context_length ? ' (max)' : '';
+      const option = createEl('option', { value }, [`${formatTokens(n)}${tag}`]);
+      const after = [...select.options].find(
+        (o) => o.value !== CUSTOM && o.value !== '' && Number(o.value) > n);
+      select.insertBefore(option, after ?? select.querySelector(`option[value="${CUSTOM}"]`));
+    }
+    select.value = value;
+  }
+
+  function closeCustom() {
+    custom.hidden = true;
+    custom.value = '';
+  }
+
+  function commitCustom() {
+    const row = adminRow(currentModelId());
+    const raw = Number.parseInt(custom.value, 10);
+    if (!Number.isFinite(raw)) {
+      // Nothing usable typed: put the previous choice back rather than
+      // leaving the select parked on the sentinel, which would read as a
+      // selection and make `changed()` answer about a value that is not one.
+      select.value = beforeCustom;
+      closeCustom();
+      return;
+    }
+    // CLAMP rather than refuse. The number that ends up in the select is the
+    // number that will be sent, so the correction is visible at the moment it
+    // happens -- a silent refusal would leave the reader believing they had
+    // asked for something they had not.
+    const n = Math.min(Math.max(raw, CTX_ABS_MIN), ceilingFor(row));
+    pending = n;
+    selectValue(n, row);
+    closeCustom();
+    onChange?.();
+  }
+
+  select.addEventListener('change', () => {
+    if (select.value !== CUSTOM) {
+      closeCustom();
+      onChange?.();
+      return;
+    }
+    // Opening the box decides nothing yet, so no onChange here: firing it
+    // would show Load/Reload for a value that does not exist.
+    const row = adminRow(currentModelId());
+    custom.min = String(CTX_ABS_MIN);
+    custom.max = String(ceilingFor(row));
+    custom.value = String(
+      row?.config?.ctx_size || (row?.loaded ? row.context_running : null) || CTX_MIN);
+    custom.hidden = false;
+    custom.focus();
+    custom.select();
+  });
+
+  // `change` covers blur and the phone keyboard's Done; Enter is bound too
+  // because a bare Enter in a lone number input submits nothing here and
+  // would otherwise feel dead. Escape abandons.
+  custom.addEventListener('change', commitCustom);
+  custom.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitCustom(); }
+    else if (e.key === 'Escape') { select.value = beforeCustom; closeCustom(); }
+  });
 
   function refresh() {
     const id = currentModelId();
@@ -63,7 +172,9 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
       // Forget the last gguf model's facts: a hidden control must not come
       // back describing a different model's running context.
       delete element.dataset.sig;
-      element.title = IDLE_TITLE;
+      select.title = IDLE_TITLE;
+      pending = null;
+      closeCustom();
       return;
     }
     const stored = row.config?.ctx_size ?? '';
@@ -72,16 +183,22 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
     // would throw away a choice the user just made.
     const sig = `${id}|${stored}|${row.context_length ?? ''}|${running ?? ''}`;
     if (element.dataset.sig === sig) return;
+    const modelChanged = (element.dataset.sig ?? '').split('|')[0] !== id;
+    if (modelChanged) pending = null;  // another model's number means nothing here
     element.dataset.sig = sig;
     const autoLabel = running && !stored ? `Auto (${formatTokens(running)})` : 'Auto';
     const options = [createEl('option', { value: '' }, [autoLabel])];
-    for (const n of ctxStepsFor(row)) {
+    const steps = ctxStepsFor(row);
+    if (pending && !steps.includes(pending)) steps.push(pending);
+    for (const n of steps.sort((a, b) => a - b)) {
       const tag = n === row.context_length ? ' (max)' : '';
       options.push(createEl('option', { value: String(n) }, [`${formatTokens(n)}${tag}`]));
     }
-    element.replaceChildren(...options);
-    element.value = stored ? String(stored) : '';
-    element.title = running
+    options.push(createEl('option', { value: CUSTOM }, ['Custom…']));
+    select.replaceChildren(...options);
+    select.value = stored ? String(stored) : (pending ? String(pending) : '');
+    closeCustom();
+    select.title = running
       ? `${IDLE_TITLE} — running with ${formatTokens(running)} now`
       : IDLE_TITLE;
   }
@@ -91,8 +208,10 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
   function changed() {
     const row = adminRow(currentModelId());
     if (row?.provider !== 'gguf' || element.hidden) return false;
+    // The sentinel is an open editor, not a choice.
+    if (select.value === CUSTOM) return false;
     const stored = row.config?.ctx_size ?? '';
-    return String(stored) !== element.value;
+    return String(stored) !== select.value;
   }
 
   // What to send with the load: the chosen size, 0 for Auto. Null for a model
@@ -100,8 +219,22 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
   function choiceToSend() {
     const row = adminRow(currentModelId());
     if (row?.provider !== 'gguf') return null;
-    return element.value ? Number(element.value) : 0;
+    // Same rule as changed(): mid-edit is not a choice, so send what is
+    // stored and leave the model where it is.
+    if (select.value === CUSTOM) return row.config?.ctx_size ?? 0;
+    return select.value ? Number(select.value) : 0;
   }
 
-  return { element, refresh, changed, choiceToSend };
+  function setEnabled(on) {
+    select.disabled = !on;
+    custom.disabled = !on;
+  }
+
+  // Remembered on every user interaction with the select, so the sentinel is
+  // never what Escape restores.
+  select.addEventListener('mousedown', () => { beforeCustom = select.value; });
+  select.addEventListener('keydown', () => { beforeCustom = select.value; });
+  select.addEventListener('focus', () => { beforeCustom = select.value; });
+
+  return { element, refresh, changed, choiceToSend, setEnabled };
 }

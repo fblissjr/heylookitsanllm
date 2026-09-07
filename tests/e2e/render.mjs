@@ -2022,6 +2022,59 @@ async function main() {
       assert(info.options.some((o) => /\(max\)$/.test(o)), `no ceiling offered: ${JSON.stringify(info.options)}`);
       assert(info.h >= 44, `phone touch target under 44px: ${info.h}px`);
     });
+    // The ladder is a convenience, not the range. Driven by REAL typing and a
+    // real Enter, not a dispatched change: the commit path runs off the
+    // input's own keydown, and a synthetic event aimed at a convenient node
+    // is how a check passes against a control nobody can actually operate.
+    await suite.check('a custom context size can be typed, and is clamped to the ceiling', async () => {
+      const { page } = ctxm;
+      const openCustom = async () => {
+        await page.evaluate(() => {
+          const sel = document.querySelector('.chat__ctx-select');
+          sel.value = 'custom';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await settle(page);
+      };
+      // Clear before typing: the box opens SEEDED with the current size, so
+      // typing straight into it appends. That is not a test artifact -- it is
+      // why the box is opened pre-selected for the user, and getting it wrong
+      // here produced `409650000` clamped to the ceiling, which looked exactly
+      // like a working clamp.
+      const typeCustom = async (text) => {
+        await page.focus('.chat__ctx-custom');
+        await page.evaluate(() => { document.querySelector('.chat__ctx-custom').value = ''; });
+        await page.type('.chat__ctx-custom', text);
+        await page.keyboard.press('Enter');
+        await settle(page);
+      };
+      await openCustom();
+      const box = await page.$eval('.chat__ctx-custom',
+        (el) => ({ hidden: el.hidden, min: el.min, max: el.max, h: el.getBoundingClientRect().height }));
+      assert(!box.hidden, 'choosing Custom did not reveal the input');
+      assert(box.min === '512' && box.max === '262144',
+        `custom input range wrong: ${JSON.stringify(box)}`);
+      assert(box.h >= 44, `phone touch target under 44px: ${box.h}px`);
+
+      // An off-ladder value survives as a real selection.
+      await typeCustom('50000');
+      const after = await page.$eval('.chat__ctx-select', (el) => ({
+        value: el.value,
+        hasOption: [...el.options].some((o) => o.value === '50000'),
+        customHidden: document.querySelector('.chat__ctx-custom').hidden,
+      }));
+      assert(after.value === '50000' && after.hasOption,
+        `typed value did not become the selection: ${JSON.stringify(after)}`);
+      assert(after.customHidden, 'the custom input stayed open after commit');
+
+      // Above the model's ceiling clamps DOWN, visibly -- the number left in
+      // the select is the number that will be sent.
+      await openCustom();
+      await typeCustom('99999999');
+      const clamped = await page.$eval('.chat__ctx-select', (el) => el.value);
+      assert(clamped === '262144', `expected a clamp to the 262144 ceiling, got ${clamped}`);
+    });
+
     await suite.check('no uncaught page errors (context select)', () => {
       assert(ctxm.pageErrors.length === 0, `page errors: ${ctxm.pageErrors.join(' | ')}`);
     });
