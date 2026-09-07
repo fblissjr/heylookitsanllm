@@ -35,6 +35,25 @@ def test_asset_served(client):
     assert "javascript" in r.headers["content-type"]
 
 
+def test_favicon_is_a_file_not_a_data_uri(client):
+    """The icon must be a fetchable path, and index.html must reference it.
+
+    It used to be an inline `data:image/svg+xml,...` href. A client on the
+    owner's network asked this server for `/>data:image/svg+xml,...` on every
+    page load -- the href verbatim with a `>` glued on, resolved against
+    `<base href="/">` because `>data` is not a scheme (measured 2026-09-06:
+    byte-for-byte `"/>" + href`). Our markup was well-formed, so no change to
+    it could fix their parser; removing the data URI removes what they choked
+    on. Both halves are asserted because either alone passes while broken: a
+    served file nothing links to, or a link to a path that 404s.
+    """
+    assert 'href="icon.svg"' in client.get("/").text
+    r = client.get("/icon.svg")
+    assert r.status_code == 200
+    assert "svg" in r.headers["content-type"]
+    assert "data:" not in client.get("/").text
+
+
 def test_unknown_paths_404(client):
     """No SPA fallback: this is what keeps 404 meaningful for the API.
 

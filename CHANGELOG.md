@@ -9,15 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The favicon data URI produced a recurring 404 against the server root.**
-  `frontend/index.html` carried the inline SVG icon with raw spaces and single
-  quotes in the `href`. Some clients parse that attribute loosely, stop at the
-  first space, and resolve the remainder as a RELATIVE path -- so every page
-  load from one device logged `GET /%3Edata%3Aimage/svg%2Bxml%2C%253Csvg`,
-  which decodes to `>data:image/svg+xml,%3Csvg`. Truncating the stored href at
-  its first space reproduces that string exactly (the leading `>` is a parser
-  artifact and is inference). The payload is now percent-encoded, verified to
-  decode to a byte-identical SVG, so the tab icon is unchanged.
+- **The favicon is a FILE now, killing a 404 that fired on every page load.**
+  `frontend/index.html` carried the icon as an inline
+  `data:image/svg+xml,...` href, and one client on the owner's network asked
+  this server for that href verbatim with a `>` glued on the front --
+  resolved against `<base href="/">`, because `>data` is not a scheme. The
+  first attempt blamed the raw spaces in the URI and percent-encoded them;
+  the request came back with the WHOLE encoded payload instead of a truncated
+  one, which is what identified the `>` as the actual bug and the spaces as a
+  coincidence. Measured: the logged path is byte-for-byte `"/>" + href`.
+
+  Our markup was well-formed both times, so no edit to it could fix the
+  client's parser -- the fix is to stop shipping something with a scheme and
+  quotes in it. `frontend/icon.svg` is served at `/icon.svg` (a real route:
+  there is no catch-all, so a new top-level asset needs one) and the link is
+  a plain relative path. `tests/contract/test_frontend_mounts.py` asserts both
+  halves, since either alone passes while broken -- a served file nothing
+  links to, or a link to a path that 404s -- and was run red against a
+  restored data URI.
 
 ## [2.0.10]
 
