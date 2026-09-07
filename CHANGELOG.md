@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.12]
+
+### Changed
+
+- **gguf spawns with `-ub 2048` by default; new `n_ubatch`/`n_batch` fields.**
+  Prompted by an audit of what llama-server actually runs with on the
+  192 GiB M2 Ultra. What the audit found already right, verified from a
+  verbose spawn log rather than assumed: the KV cache is **f16 for both K
+  and V** (nothing sets `cache_type_k/v`, so nothing is quantized -- the
+  fields stay available, default off); flash attention's `auto` resolves
+  to **enabled** on Metal for every model tried; `-c 0` allocates the
+  model's full training context and `--fit` reports the margin it leaves.
+  What was not: llama-server's physical prompt batch defaults to 512,
+  sized for machines where the compute buffer competes with the weights.
+  Here it does not. Measured with `llama-bench` (same binary, `-fa 1`,
+  three repeats, prompt lengths 512 and 4096, generation 128) on a dense
+  27B Q8, a 35B-A3B MoE Q4 and a dense 12B QAT Q4: 2048 is a prefill
+  gain on all three -- small on dense, large on the MoE -- generation
+  speed unchanged, and a short-prompt cost on the smallest model within
+  a few percent. Figures with their conditions are in `internal/research/`;
+  none belong in a tracked doc. `n_ubatch` is a pydantic default (so it
+  reaches argv through `model_dump()` and shows in the admin schema as
+  `advanced`), not a builder constant, and the raw-dict path the unit
+  tests use still inherits llama-server's own. `n_batch` exists because
+  llama.cpp silently CLAMPS `n_ubatch` to it; a config validator refuses
+  the pair instead of letting a setting read as applied when it is not.
+  The one entry near the Metal ceiling, DeepSeek V4 Flash at its
+  1,048,576-token slot, was spawned with the new value and kept the full
+  context, with a smaller free margin than before; `n_ubatch = 512` on
+  that entry restores it if the owner prefers the margin to the prefill.
+- **`scripts/build_llama.py` builds `llama-bench` beside `llama-server`.**
+  The build-flag review found nothing to change for this machine: Metal,
+  `-mcpu=native`, Accelerate/BLAS, embedded metallib, static binary, and
+  bf16 Metal kernels are detected at runtime (no build option remains).
+  What was missing was the instrument -- every question of the form "is
+  this spawn flag a win" is a `llama-bench` run, and it was not built.
+
 ## [2.0.11]
 
 ### Fixed

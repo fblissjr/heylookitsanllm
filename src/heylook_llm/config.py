@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # with GET /props. One source of truth for server.py argparse,
 # service_manager install defaults, and the OpenAPI servers entry.
 DEFAULT_PORT = 8000
-from typing import List, Literal, Optional, Union, Dict
+from typing import ClassVar, List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):
     url: str
@@ -809,6 +809,32 @@ class GGUFModelConfig(BaseModel):
         default=999,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngl"},
     )
+    # -ub: the PHYSICAL prompt-processing batch -- how many prompt tokens one
+    # Metal dispatch chews through. llama-server's own default is 512, sized
+    # for machines where the compute buffer competes with the weights. On a
+    # 192 GiB M2 Ultra it does not: 2048 is a prefill-throughput win on every
+    # model measured here (small on dense, large on MoE, where more tokens per
+    # expert dispatch is exactly what the GPU wants), generation speed is
+    # unchanged, and the only price is a larger compute buffer -- a few GiB
+    # at most, which matters solely for a model already at the Metal ceiling.
+    # `--fit` cannot shrink an EXPLICIT value, so near that ceiling it shrinks
+    # context instead; set 512 on that entry to get llama-server's margin
+    # back. Numbers and conditions: internal/research (2026-09-07).
+    n_ubatch: int = Field(
+        default=2048, ge=32,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ub",
+                           "ui": "advanced"},
+    )
+    # -b: the LOGICAL batch, the most tokens one llama_decode call takes.
+    # llama-server's default (2048) already equals our n_ubatch default and
+    # a value above it buys nothing with -np 1, so None inherits it. It is a
+    # field at all because llama.cpp silently CLAMPS n_ubatch to n_batch --
+    # the validator below turns that clamp into a load-time refusal.
+    n_batch: Optional[int] = Field(
+        default=None, ge=32,
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-b",
+                           "ui": "advanced"},
+    )
     # Draft-model GPU offload (-ngld). Its own knob because the pair can exceed
     # the GPU budget when the target alone does not: on a 192 GiB M2 Ultra the
     # Metal residency recommendation is ~161 GiB, so a 144 GiB target plus a
@@ -902,6 +928,24 @@ class GGUFModelConfig(BaseModel):
     # see ChatRequest.reasoning_effort for why the Literal is a union.
     reasoning_effort: Optional[ReasoningEffort] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+
+    # llama-server's default logical batch, the ceiling n_ubatch is clamped to
+    # when n_batch is not set. Named so the validator's message can say it.
+    LLAMA_DEFAULT_N_BATCH: ClassVar[int] = 2048
+
+    @model_validator(mode="after")
+    def _ubatch_within_batch(self):
+        # llama_context takes min(n_batch, n_ubatch) WITHOUT a word, so an
+        # n_ubatch above the logical batch is a setting that reads as applied
+        # and is not. Refuse it here, where the models.toml author sees it.
+        ceiling = self.n_batch if self.n_batch is not None else self.LLAMA_DEFAULT_N_BATCH
+        if self.n_ubatch > ceiling:
+            raise ValueError(
+                f"n_ubatch={self.n_ubatch} exceeds n_batch={ceiling}"
+                f"{' (llama-server default)' if self.n_batch is None else ''}; "
+                f"llama.cpp would silently clamp it. Raise n_batch or lower n_ubatch."
+            )
+        return self
 
 
 # Single source of truth for which providers exist and which config class

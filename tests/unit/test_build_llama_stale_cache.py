@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-from build_llama import build, read_cmake_cache  # noqa: E402
+from build_llama import TARGETS, build, read_cmake_cache  # noqa: E402
 
 pytestmark = pytest.mark.skipif(shutil.which("cmake") is None,
                                 reason="cmake not installed")
@@ -31,8 +31,10 @@ project(stale C)
 if(DEFINED CACHED_LIB AND NOT EXISTS "${CACHED_LIB}")
   message(FATAL_ERROR "cached path is gone: ${CACHED_LIB}")
 endif()
-add_executable(llama-server main.c)
-"""
+""" + "".join(f"add_executable({t} main.c)\n" for t in TARGETS)
+# One stand-in executable per REAL target, derived from the script's own
+# list: the build step asks for every target by name, so a stand-in that
+# defined only llama-server went red the day llama-bench joined the list.
 
 
 @pytest.fixture

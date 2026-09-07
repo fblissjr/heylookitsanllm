@@ -38,6 +38,8 @@ SAMPLE_VALUES = {
     "cpu_moe_draft": True,  # bare flag, like cpu_moe
     "cache_type_k": "q8_0",
     "cache_type_v": "q8_0",
+    "n_ubatch": 1024,
+    "n_batch": 4096,
 }
 
 

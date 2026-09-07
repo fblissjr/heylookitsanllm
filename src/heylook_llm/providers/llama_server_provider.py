@@ -380,6 +380,13 @@ class LlamaServerProvider(BaseProvider):
         ]
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
+        # Batch sizing. `is not None`: the pydantic default (2048, see the
+        # config field) arrives through model_dump(), while the RAW dicts the
+        # unit tests build carry nothing and must inherit llama-server's own.
+        if cfg.get("n_batch") is not None:
+            args += ["-b", str(cfg["n_batch"])]
+        if cfg.get("n_ubatch") is not None:
+            args += ["-ub", str(cfg["n_ubatch"])]
         if cfg.get("mmproj_path"):
             args += ["--mmproj", cfg["mmproj_path"]]
         # Absent -> llama-server uses the template embedded in the GGUF, which

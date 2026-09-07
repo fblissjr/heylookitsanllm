@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Clone and build llama-server (llama.cpp). Nothing else.
+"""Clone and build llama-server (llama.cpp), plus llama-bench beside it.
 
 `uv sync` cannot build C++, so this is the one explicit step behind the gguf
 provider. It never touches pyproject.toml or uv.lock -- it clones llama.cpp
@@ -54,7 +54,11 @@ from pathlib import Path
 from typing import NoReturn
 
 GIT_URL = "https://github.com/ggml-org/llama.cpp"
-TARGETS = ["llama-server"]
+# llama-bench rides along: it is the instrument every "is this flag a win"
+# question about the server gets answered with (controlled prompt/gen length,
+# repeats, std dev, one process), and it builds in seconds against the
+# server's objects. The server never calls it.
+TARGETS = ["llama-server", "llama-bench"]
 HOME_SUBDIR = (".heylook", "llama.cpp")
 
 # ANSI helpers (skip when not a tty).

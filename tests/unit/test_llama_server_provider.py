@@ -20,6 +20,7 @@ import io
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -138,8 +139,28 @@ class TestBuildArgs:
         # Every one of these has a llama-server default worth inheriting; a
         # provider that always passes a value silently overrides upstream.
         args = self._args()
-        for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm"):
+        for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm", "-b", "-ub"):
             assert flag not in args
+
+    def test_validated_config_spawns_with_the_ubatch_default(self):
+        # The 2048 default lives on the pydantic model, and the provider gets
+        # model_dump() in production -- so the DEFAULT must reach argv through
+        # that path, while a raw dict (above) inherits llama-server's 512.
+        cfg = GGUFModelConfig(model_path="/fake/model.gguf").model_dump()
+        args = make_provider(**cfg)._build_args(Path("/bin/llama-server"), 1234)
+        pairs = list(zip(args, args[1:]))
+        assert ("-ub", "2048") in pairs
+        assert "-b" not in args  # n_batch None = llama-server's own 2048
+
+    def test_ubatch_above_batch_is_refused_not_clamped(self):
+        # llama_context takes min(n_batch, n_ubatch) silently; the config
+        # must not validate a value the process would quietly ignore.
+        with pytest.raises(ValueError, match="clamp"):
+            GGUFModelConfig(model_path="/fake/model.gguf", n_ubatch=4096)
+        with pytest.raises(ValueError, match="clamp"):
+            GGUFModelConfig(model_path="/fake/model.gguf", n_ubatch=4096, n_batch=2048)
+        ok = GGUFModelConfig(model_path="/fake/model.gguf", n_ubatch=4096, n_batch=4096)
+        assert ok.n_ubatch == 4096
 
     def test_chat_template_override_reaches_argv(self):
         args = self._args(chat_template_path="/tmp/qwen38-official.jinja")
