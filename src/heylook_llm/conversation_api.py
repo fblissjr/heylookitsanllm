@@ -31,9 +31,13 @@ def _refuse_while_generating(conv_id: str) -> None:
     """
     from heylook_llm.conversation_generate_api import _ACTIVE
     if conv_id in _ACTIVE:
+        # Reaches a PERSON: v3 surfaces this verbatim as "Send failed: ...".
+        # So no HTTP verb, no route, and no "mutate" -- the route is in
+        # OpenAPI for the clients that need it, and a reader who just pressed
+        # Send needs to know what to do, not which endpoint to call.
         raise HTTPException(status_code=409, detail=(
-            "A generation is streaming into this conversation -- wait for it "
-            "or stop it (DELETE .../generate) before mutating messages"))
+            "A reply is still being generated in this conversation. Wait for "
+            "it to finish, or stop it first."))
 
 conversation_router = APIRouter(
     prefix="/v1/conversations",

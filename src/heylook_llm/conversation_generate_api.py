@@ -436,8 +436,12 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         return JSONResponse(
             status_code=409,
             content={"error": {
-                "message": "A generation is already streaming into this conversation. "
-                           "Stop it (DELETE .../generate) or wait for it to finish.",
+                # Same rule as the CRUD gate's twin in conversation_api: this
+                # string can reach a person, so it carries no verb and no
+                # route. `code` is what a program should key on, and it is
+                # what the test asserts.
+                "message": "A reply is already being generated in this "
+                           "conversation. Wait for it to finish, or stop it first.",
                 "type": "invalid_request_error",
                 "code": "generation_in_progress",
             }},

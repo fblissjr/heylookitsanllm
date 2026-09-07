@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.10]
+
+### Changed
+
+- **The two "already generating" 409s no longer speak HTTP at the reader.**
+  Both messages told the user to "Stop it (DELETE .../generate)", and the CRUD
+  gate's added "before mutating messages". v3 surfaces the CRUD one verbatim as
+  `Send failed: ...`, so a person who pressed Send while a reply was still
+  streaming got an HTTP verb, a route and the word "mutate". Both now say what
+  to do and nothing about endpoints -- the route is in OpenAPI for clients that
+  need it, and `code: "generation_in_progress"` is what a program keys on (and
+  what the test asserts; neither message was pinned anywhere).
+
 ## [2.0.9]
 
 ### Added
