@@ -78,8 +78,13 @@ PL
     chown root:wheel "$PLIST"; chmod 644 "$PLIST"
     launchctl bootout system "$PLIST" 2>/dev/null || true
     launchctl bootstrap system "$PLIST"
-    echo "installed $PLIST (applies iogpu.wired_limit_mb=${mb} at every boot, and now):"
-    sysctl -n iogpu.wired_limit_mb
+    # bootstrap returns before the job has run, so a readback here races it
+    # (it printed 0 on 2026-09-07 while the value applied a moment later).
+    # Apply directly for THIS boot; the daemon covers the next ones.
+    sysctl -w iogpu.wired_limit_mb="$mb" >/dev/null
+    echo "installed $PLIST (re-applies iogpu.wired_limit_mb=${mb} at every boot); now:"
+    sysctl iogpu.wired_limit_mb
+    echo "restart heylookllm (and reload any resident gguf model) to size against the new ceiling."
     ;;
   uninstall)
     need_root uninstall
