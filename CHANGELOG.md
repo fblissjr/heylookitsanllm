@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.11]
+
+### Fixed
+
+- **The favicon data URI produced a recurring 404 against the server root.**
+  `frontend/index.html` carried the inline SVG icon with raw spaces and single
+  quotes in the `href`. Some clients parse that attribute loosely, stop at the
+  first space, and resolve the remainder as a RELATIVE path -- so every page
+  load from one device logged `GET /%3Edata%3Aimage/svg%2Bxml%2C%253Csvg`,
+  which decodes to `>data:image/svg+xml,%3Csvg`. Truncating the stored href at
+  its first space reproduces that string exactly (the leading `>` is a parser
+  artifact and is inference). The payload is now percent-encoded, verified to
+  decode to a byte-identical SVG, so the tab icon is unchanged.
+
 ## [2.0.10]
 
 ### Changed
