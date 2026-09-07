@@ -104,6 +104,45 @@ def reclaimable_gb() -> Optional[float]:
     return (psutil.virtual_memory().total - anonymous - wired) / GB
 
 
+# Working-set headroom (Metal working set minus sized weights + sidecars)
+# below which a gguf spawn is "at the ceiling". Calibrated on DeepSeek V4
+# Flash at its 1M-token slot, 2026-09-07: the f16 MLA KV took ~7 GiB, the
+# compute buffer at n_ubatch 2048 ~9.5 GiB, llama's --fit margin 1-2 GiB.
+# The 0731 text model (23.5 GiB headroom) ran at 2048 with ~5 GiB to spare;
+# the Vision Q4 (16.0 GiB) loaded, then died in the first decode with a Metal
+# kIOGPUCommandBufferCallbackErrorOutOfMemory -- llama's own pre-flight had
+# passed it. So 24: above it the larger micro-batch is safe on the biggest
+# thing served here; below it heylook inherits llama-server's 512 and the
+# fit panel suggests the sysctl that would lift the ceiling.
+THIN_HEADROOM_GB = 24.0
+
+# What a suggested wired limit must leave for the OS and everything that is
+# not the model. 192 GiB minus this is the most the suggestion will ask for.
+OS_RESERVE_GB = 12.0
+
+
+def total_ram_gb() -> Optional[float]:
+    """`hw.memsize`, or None if unreadable."""
+    try:
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                             capture_output=True, text=True, timeout=5)
+        return int(out.stdout.strip()) / GB if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def suggest_wired_limit_mb(size_gb: float, need_gb: float) -> int:
+    """The `iogpu.wired_limit_mb` value that would give this model a
+    comfortable working set: enough for weights + THIN_HEADROOM_GB (KV,
+    compute buffer, fit margin) plus 8 GiB, never closer than OS_RESERVE_GB
+    to total RAM. Only ever suggested while the sysctl is at its OS default."""
+    target = max(need_gb, size_gb + THIN_HEADROOM_GB) + 8.0
+    total = total_ram_gb()
+    if total:
+        target = min(target, total - OS_RESERVE_GB)
+    return int(target * 1024)
+
+
 def usable_gb() -> float:
     """The figure to gate on: reclaimable where measurable, else conservative."""
     reclaimable = reclaimable_gb()
@@ -257,6 +296,10 @@ class FitReport:
     verdict: str                         # worst of lines: "pass" | "warn" | "fail"
     lines: list[FitLine] = field(default_factory=list)
     sizing_notes: list[str] = field(default_factory=list)
+    # kv_headroom_gb < THIN_HEADROOM_GB: the gguf provider will inherit
+    # llama-server's micro-batch instead of the larger auto default, and a
+    # decode-time Metal OOM is a real possibility at full context.
+    headroom_thin: bool = False
     # All numbers above are measured (file sizes, device properties, vm_stat).
     # Flips to True the day a component is approximated (e.g. expert-offload
     # deltas); the UI renders estimates in a different visual register.
@@ -318,6 +361,7 @@ def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
     working_set_gb = max_buffer_gb = None
     sysctl_wired_mb = sysctl_suggest_mb = None
     kv_headroom_gb = None
+    headroom_thin = False
     if metal:
         working_set_gb = metal["working_set_gb"]
         max_buffer_gb = metal["max_buffer_gb"]
@@ -331,8 +375,12 @@ def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
             note="hard limit, MLX refuses above it" if hard_working_set
             else "advisory for llama.cpp -- it loads past it and degrades into paging",
         ))
-        if not ws_ok and sysctl_wired_mb == 0:
-            sysctl_suggest_mb = int((need + 8) * 1024)
+        headroom_thin = kv_headroom_gb < THIN_HEADROOM_GB
+        # Thin headroom is a reason to suggest the sysctl too, not just an
+        # outright overflow: a model can pass this table and still OOM in
+        # its first decode (DeepSeek V4 Flash Vision, 2026-09-07).
+        if sysctl_wired_mb == 0 and (not ws_ok or headroom_thin):
+            sysctl_suggest_mb = suggest_wired_limit_mb(size_gb, need)
         if size_gb > max_buffer_gb:
             lines.append(FitLine(
                 ceiling="metal_max_buffer",
@@ -360,6 +408,7 @@ def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
         verdict=verdict,
         lines=lines,
         sizing_notes=list(sizing_notes or []),
+        headroom_thin=headroom_thin,
     )
 
 

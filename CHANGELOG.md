@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.13]
+
+### Changed
+
+- **gguf's micro-batch is AUTO, not a fixed 2048, and the fit panel says
+  when the ceiling is the reason.** v2.0.12's default was live-checked on
+  the two DeepSeek V4 Flash entries and it broke one of them: the text
+  model ran at 2048 with a few GiB of Metal working set to spare, the
+  Vision Q4 loaded, had its context shrunk by `--fit`, and then died in
+  its FIRST decode with a Metal `kIOGPUCommandBufferCallbackErrorOutOfMemory`
+  -- llama's own memory pre-flight had passed it (and, per its log, skips
+  the draft model entirely). Same model at 512: fine. So `n_ubatch` is now
+  `None` = auto: the provider sizes the model the way the admin fit panel
+  does (`ram_fit`, weights + sidecars against the live Metal working set)
+  and spawns with 2048 only when the headroom clears
+  `ram_fit.THIN_HEADROOM_GB`, otherwise inheriting llama-server's own
+  default, logging which and why at every spawn. The threshold is
+  calibrated on those two spawns and commented at its definition. A stored
+  `n_ubatch` still wins both ways. Because the guard reads the same
+  ceiling `--fit` does, raising `iogpu.wired_limit_mb` flips the big
+  models to 2048 by itself.
+- **The fit report carries `headroom_thin`, and suggests the sysctl for it.**
+  `sysctl_suggest_mb` used to be set only when weights + headroom
+  OVERFLOWED the working set; a model can pass that and still OOM in
+  decode. It is now set while the sysctl is at its OS default and either
+  condition holds, sized as weights + the headroom threshold + 8 GiB and
+  never within 12 GiB of total RAM. The Configure panel names both
+  consequences of thin headroom (llama's 512 micro-batch, possible OOM)
+  and shows the `sudo sysctl` line. Spec §4 updated.
+- **`scripts/gpu_wired_limit.sh`** reads, raises, or persists the limit
+  (a LaunchDaemon, since the sysctl resets at reboot). Root-only by
+  nature, so heylook prints the value and this applies it.
+
+### Fixed
+
+- **A llama-server error inside the stream became an empty, successful
+  reply.** llama-server answers 200 and then reports a decode failure as
+  a `data: {"error": ...}` frame. The adapter looked for `choices`, found
+  none, skipped it, and the run ended as a clean `end_turn` with zero
+  tokens -- the chat showed nothing and `/v1/messages` returned an empty
+  content list. The frame now raises `GenerationFailed`, and for
+  "Compute error." the message says what that is on Metal, the model's
+  measured working-set headroom, and the sysctl that lifts it -- the
+  subprocess log holding the real OOM line is DEVNULL at the default
+  observability level, so this message is the only place a reader sees it.
+- **`load?warm=true` reported `warmed` on a zero-token generation.** The
+  warm consumed an empty stream and called it a success, so the dev server
+  and the E2E harness handed over a model that could not decode. A warm
+  that produces nothing is now `warm_error`.
+
 ## [2.0.12]
 
 ### Changed

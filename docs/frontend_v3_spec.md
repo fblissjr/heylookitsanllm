@@ -582,7 +582,7 @@ load-time discovery. This is the primary "add models" flow; scan+import is the f
 for a folder you do not want watched.
 `POST /{id}/fit` (added v1.60.0) body `{config_overrides?:{key: value|null}, headroom_gb?:8}` →
 `{weights_gb, headroom_gb, reclaimable_gb, working_set_gb?, max_buffer_gb?,
-sysctl_wired_mb?, sysctl_suggest_mb?, kv_headroom_gb?, hard_working_set,
+sysctl_wired_mb?, sysctl_suggest_mb?, kv_headroom_gb?, headroom_thin, hard_working_set,
 verdict:"pass"|"warn"|"fail", lines:[{ceiling,verdict,need_gb,have_gb,note}],
 sizing_notes:[], estimated}` — the server-computed memory-fit verdict
 (`heylook_llm.ram_fit`, same computation as `scripts/ram_report.py`). The UI
@@ -591,9 +591,12 @@ candidate (unsaved) edits over the stored config, `null` = reset-to-default
 (the PATCH spelling); read-only, ignores sizing-irrelevant keys.
 `hard_working_set` carries the engine asymmetry (provider-derived: over the
 Metal working set is FAIL for MLX, WARN for gguf, which loads past it and
-degrades into paging). `sysctl_suggest_mb` is non-null ONLY when over the
-working set while `iogpu.wired_limit_mb` is at its OS default — show the
-sysctl hint iff present. 404 unknown id; 422 `{field:"model_path",...}` when
+degrades into paging). `sysctl_suggest_mb` is non-null ONLY while `iogpu.wired_limit_mb` is at its
+OS default AND the working set is exceeded or `headroom_thin` is true — show
+the sysctl hint iff present. `headroom_thin` (v2.0.13) = working-set headroom
+under `ram_fit.THIN_HEADROOM_GB`: the gguf provider then spawns with
+llama-server's own micro-batch rather than its 2048 auto value, and a
+decode-time Metal OOM at full context is possible; the panel says both. 404 unknown id; 422 `{field:"model_path",...}` when
 the (overridden) path does not exist. All numbers are measured today;
 `estimated` flips when any component becomes an approximation and estimates
 must render in a different visual register (design doc §5).

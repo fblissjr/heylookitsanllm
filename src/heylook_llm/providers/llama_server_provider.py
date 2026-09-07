@@ -45,7 +45,7 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, Generator, Optional
 
-from .. import observability
+from .. import observability, ram_fit
 from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
 from .common.generation_gate import get_process_gate
@@ -354,10 +354,56 @@ class LlamaServerProvider(BaseProvider):
 
         return str(sidecar), "sidecar"
 
+    # The micro-batch AUTO resolves to when the working set allows it. Why
+    # 2048 and why not always: GGUFModelConfig.n_ubatch.
+    AUTO_UBATCH = 2048
+
+    def _working_set_headroom_gb(self) -> Optional[float]:
+        """Metal working set minus this model's sized weights + sidecars, via
+        the SAME sizing the admin fit panel shows. None when there is no
+        ceiling to read (no Metal, sizing failed) -- never raises, because a
+        sizing hiccup must not refuse a spawn."""
+        try:
+            return ram_fit.fit_for_config(
+                dict(self.config), hard_working_set=False).kv_headroom_gb
+        except Exception:  # noqa: BLE001 -- best-effort by design
+            logging.debug(f"[GGUF] {self.model_id}: fit sizing failed",
+                          exc_info=True)
+            return None
+
+    def _auto_ubatch(self) -> Optional[int]:
+        """AUTO_UBATCH when the headroom clears ram_fit.THIN_HEADROOM_GB,
+        else None (inherit llama-server's default). Logged at spawn either
+        way, because the answer moves with the sysctl and with what else
+        sits in the model dir, and a spawn that quietly ran at 512 would be
+        indistinguishable from one that quietly ran at 2048."""
+        if self.config.get("n_ubatch") is not None:
+            return None  # explicit wins; _build_args reads it directly
+        headroom = self._working_set_headroom_gb()
+        if headroom is None:
+            logging.info(f"[GGUF] {self.model_id}: n_ubatch auto -> "
+                         f"llama-server default (no Metal ceiling to size against)")
+            return None
+        if headroom >= ram_fit.THIN_HEADROOM_GB:
+            logging.info(f"[GGUF] {self.model_id}: n_ubatch auto -> "
+                         f"{self.AUTO_UBATCH} (working-set headroom {headroom:.1f} GiB)")
+            return self.AUTO_UBATCH
+        logging.info(
+            f"[GGUF] {self.model_id}: n_ubatch auto -> llama-server default "
+            f"(working-set headroom {headroom:.1f} GiB < "
+            f"{ram_fit.THIN_HEADROOM_GB:.0f}; raise iogpu.wired_limit_mb to lift it)")
+        return None
+
     def _build_args(self, binary: Path, port: int,
                     chat_template: Optional[str] = None,
-                    template_resolved: bool = False) -> list:
+                    template_resolved: bool = False,
+                    auto_ubatch: Optional[int] = None) -> list:
         """Build the spawn argv.
+
+        ``auto_ubatch`` is what ``_auto_ubatch`` resolved for a config that
+        leaves n_ubatch unset; a stored n_ubatch always wins over it. It is a
+        parameter so this builder stays PURE (the argv/metadata drift test
+        calls it with paths that do not exist and must not size anything).
 
         ``chat_template``/``template_resolved`` let ``load_model`` resolve the
         template ONCE and hand the answer down. Without that, argv and the
@@ -380,13 +426,14 @@ class LlamaServerProvider(BaseProvider):
         ]
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
-        # Batch sizing. `is not None`: the pydantic default (2048, see the
-        # config field) arrives through model_dump(), while the RAW dicts the
-        # unit tests build carry nothing and must inherit llama-server's own.
+        # Batch sizing. `is not None` throughout: an unset field inherits
+        # llama-server's own default, and for n_ubatch "unset" means the
+        # auto answer load_model resolved (None = inherit, again).
         if cfg.get("n_batch") is not None:
             args += ["-b", str(cfg["n_batch"])]
-        if cfg.get("n_ubatch") is not None:
-            args += ["-ub", str(cfg["n_ubatch"])]
+        ubatch = cfg["n_ubatch"] if cfg.get("n_ubatch") is not None else auto_ubatch
+        if ubatch is not None:
+            args += ["-ub", str(ubatch)]
         if cfg.get("mmproj_path"):
             args += ["--mmproj", cfg["mmproj_path"]]
         # Absent -> llama-server uses the template embedded in the GGUF, which
@@ -459,9 +506,11 @@ class LlamaServerProvider(BaseProvider):
         binary = self._resolve_binary()
         host = self.config.get("host", "127.0.0.1")
         port = int(self.config.get("port") or 0) or self._free_port()
-        # ONE resolution for both argv and the log below.
+        # ONE resolution for both argv and the log below. argv itself is
+        # built AFTER the file pre-flight: the auto micro-batch sizes the
+        # model's files against the Metal ceiling, and a missing file must
+        # fail with the message that names the field, not inside sizing.
         resolved_template, template_origin = self._resolve_chat_template()
-        args = self._build_args(binary, port, resolved_template, True)
 
         # Pre-flight EVERY configured file HERE, not in _build_args (which
         # stays pure -- it is exercised by the argv/metadata drift test with
@@ -502,6 +551,9 @@ class LlamaServerProvider(BaseProvider):
                 f"else the template embedded in the GGUF) -- removing it no "
                 f"longer means the embedded template unconditionally."
             )
+
+        args = self._build_args(binary, port, resolved_template, True,
+                                auto_ubatch=self._auto_ubatch())
 
         # Say which template is in force, every spawn. A sidecar is discovered
         # from the filesystem, so the answer can change without models.toml
@@ -979,6 +1031,14 @@ class LlamaServerProvider(BaseProvider):
                 raise GenerationFailed(
                     f"Malformed SSE frame from llama-server: {e}"
                 )
+            # A mid-stream failure arrives as `data: {"error": {...}}`, not
+            # as an HTTP status -- the headers were 200 before decode ran.
+            # Without this the frame has no `choices`, _frame_to_chunk
+            # returns None, the stream ends, and the client gets a clean
+            # end_turn with zero tokens (DeepSeek V4 Flash Vision, Metal OOM,
+            # 2026-09-07: "Compute error." became an empty reply).
+            if isinstance(frame, dict) and "error" in frame:
+                raise GenerationFailed(self._describe_engine_error(frame["error"]))
             self._report_prefill_progress(frame.get("prompt_progress"), abort_event)
             chunk = self._frame_to_chunk(frame)
             if chunk is None:
@@ -995,6 +1055,39 @@ class LlamaServerProvider(BaseProvider):
                     and not chunk.prompt_tokens and not chunk.generation_tokens:
                 continue  # the delta was pure echo -- nothing to emit
             yield chunk
+
+    def _describe_engine_error(self, err) -> str:
+        """llama-server's error, plus what it most likely means HERE.
+
+        Its "Compute error." is ggml's `llama_decode` returning -3, and on
+        Metal the cause underneath is almost always the GPU working set
+        running out (`kIOGPUCommandBufferCallbackErrorOutOfMemory` in the
+        subprocess log -- which at the default observability level is
+        DEVNULL, so this message is the only place the reader will ever see
+        it). Sizing the model against the live ceiling says whether that
+        reading is plausible and what to do; the fit panel shows the same.
+        """
+        msg = err.get("message") if isinstance(err, dict) else None
+        msg = str(msg or err)
+        if "compute error" not in msg.lower():
+            return f"llama-server error for '{self.model_id}': {msg}"
+        text = (f"llama-server compute error for '{self.model_id}' -- on Metal "
+                f"this is almost always the GPU working set running out "
+                f"(Insufficient Memory) at decode time")
+        try:
+            report = ram_fit.fit_for_config(dict(self.config), hard_working_set=False)
+        except Exception:  # noqa: BLE001
+            report = None
+        if report is not None and report.kv_headroom_gb is not None:
+            text += (f"; this model has {report.kv_headroom_gb:.1f} GiB of "
+                     f"working-set headroom for KV + compute at "
+                     f"{report.working_set_gb:.0f} GiB")
+            if report.sysctl_suggest_mb:
+                text += (f". Raise the ceiling: sudo sysctl "
+                         f"iogpu.wired_limit_mb={report.sysctl_suggest_mb} "
+                         f"(scripts/gpu_wired_limit.sh persists it)")
+            text += ", or lower ctx_size / n_ubatch on this model"
+        return text + "."
 
     @staticmethod
     def _report_prefill_progress(progress, abort_event) -> None:

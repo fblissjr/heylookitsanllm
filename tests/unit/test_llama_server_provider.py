@@ -142,15 +142,36 @@ class TestBuildArgs:
         for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm", "-b", "-ub"):
             assert flag not in args
 
-    def test_validated_config_spawns_with_the_ubatch_default(self):
-        # The 2048 default lives on the pydantic model, and the provider gets
-        # model_dump() in production -- so the DEFAULT must reach argv through
-        # that path, while a raw dict (above) inherits llama-server's 512.
-        cfg = GGUFModelConfig(model_path="/fake/model.gguf").model_dump()
-        args = make_provider(**cfg)._build_args(Path("/bin/llama-server"), 1234)
-        pairs = list(zip(args, args[1:]))
-        assert ("-ub", "2048") in pairs
+    @staticmethod
+    def _spawn_args(monkeypatch, headroom, **config):
+        # The seam _auto_ubatch reads; the real one sizes files against the
+        # live Metal ceiling, which a unit test must not depend on.
+        monkeypatch.setattr(LlamaServerProvider, "_working_set_headroom_gb",
+                            lambda self: headroom)
+        p = make_provider(**config)
+        return p._build_args(Path("/bin/llama-server"), 1234,
+                             auto_ubatch=p._auto_ubatch())
+
+    def test_auto_ubatch_is_2048_with_headroom(self, monkeypatch):
+        args = self._spawn_args(monkeypatch, 40.0)
+        assert ("-ub", "2048") in list(zip(args, args[1:]))
         assert "-b" not in args  # n_batch None = llama-server's own 2048
+
+    def test_auto_ubatch_inherits_llama_default_at_the_ceiling(self, monkeypatch):
+        # DeepSeek V4 Flash Vision, 2026-09-07: 16 GiB of headroom loaded at
+        # 2048 and died in the first decode with a Metal OOM. Below the
+        # threshold the flag must be ABSENT, not 512 -- llama-server's own
+        # default is the thing being inherited.
+        args = self._spawn_args(monkeypatch, 16.0)
+        assert "-ub" not in args
+
+    def test_auto_ubatch_inherits_when_no_ceiling_is_readable(self, monkeypatch):
+        assert "-ub" not in self._spawn_args(monkeypatch, None)
+
+    def test_stored_ubatch_wins_over_auto_both_ways(self, monkeypatch):
+        pairs = lambda a: list(zip(a, a[1:]))
+        assert ("-ub", "512") in pairs(self._spawn_args(monkeypatch, 40.0, n_ubatch=512))
+        assert ("-ub", "4096") in pairs(self._spawn_args(monkeypatch, 16.0, n_ubatch=4096))
 
     def test_ubatch_above_batch_is_refused_not_clamped(self):
         # llama_context takes min(n_batch, n_ubatch) silently; the config
@@ -602,6 +623,39 @@ class TestSSEAdapter:
         p = make_provider()
         chunks = list(p._stream_chunks(_stream_bytes(*CANNED), abort_event=Abort()))
         assert len(chunks) < 6  # cut short, never reached the end of the stream
+
+    def test_error_frame_raises_instead_of_ending_cleanly(self, monkeypatch):
+        # llama-server reports a decode failure INSIDE the stream (the HTTP
+        # status was already 200): `data: {"error": {...}}`. It has no
+        # `choices`, so the adapter used to skip it and the stream ended as a
+        # zero-token end_turn -- an empty reply for what was a Metal OOM.
+        from heylook_llm.providers.base import GenerationFailed
+        p = make_provider()
+        monkeypatch.setattr(llama_mod.ram_fit, "fit_for_config",
+                            lambda cfg, **kw: pytest.fail("no sizing for a non-compute error"))
+        with pytest.raises(GenerationFailed, match="template"):
+            list(p._stream_chunks(_stream_bytes(
+                'data: {"error":{"code":500,"message":"template failed","type":"server_error"}}'),
+                abort_event=None))
+
+    def test_compute_error_names_the_metal_ceiling_and_the_sysctl(self, monkeypatch):
+        # "Compute error." is all llama-server says; the ggml OOM line is in a
+        # log that is DEVNULL by default. The message the reader gets must
+        # carry the headroom and the remedy the fit panel would show.
+        from heylook_llm.providers.base import GenerationFailed
+        from types import SimpleNamespace
+        monkeypatch.setattr(llama_mod.ram_fit, "fit_for_config",
+                            lambda cfg, **kw: SimpleNamespace(
+                                kv_headroom_gb=16.0, working_set_gb=161.3,
+                                sysctl_suggest_mb=177458))
+        p = make_provider()
+        with pytest.raises(GenerationFailed) as ei:
+            list(p._stream_chunks(_stream_bytes(
+                'data: {"error":{"code":500,"message":"Compute error.","type":"server_error"}}'),
+                abort_event=None))
+        text = str(ei.value)
+        assert "working set" in text and "16.0 GiB" in text
+        assert "iogpu.wired_limit_mb=177458" in text
 
     def test_malformed_frame_raises_generation_failed(self):
         from heylook_llm.providers.base import GenerationFailed

@@ -125,12 +125,24 @@ async def load_and_warm(router, model_id: str, warm: bool):
         )
 
         def _consume() -> None:
+            # A warm that yields NOTHING is not a warm. An engine that fails
+            # in its first decode without raising (the shape an unhandled
+            # engine error frame had until v2.0.13) would otherwise report
+            # "warmed" and hand a dead model to whoever polled for readiness.
             gen = provider.create_chat_completion(warm_request)
+            produced = 0
             try:
-                for _ in gen:
-                    pass
+                for chunk in gen:
+                    if getattr(chunk, "text", None) or getattr(chunk, "thinking", None) \
+                            or getattr(chunk, "generation_tokens", 0):
+                        produced += 1
             finally:
                 gen.close()
+            if not produced:
+                raise RuntimeError(
+                    "warm generation produced no tokens -- the engine answered "
+                    "without generating; check the model's memory headroom "
+                    "(Configure panel) and the server log")
 
         start = time.time()
         try:

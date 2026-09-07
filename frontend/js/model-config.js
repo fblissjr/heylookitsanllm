@@ -280,15 +280,28 @@ function buildFitMeter({ model, overrides, onGate }) {
           + `this; Metal stops guaranteeing residency and you degrade into paging.`);
     }
     if (buf) pieces.push(`Weights exceed the ${gib(buf.have_gb)} per-allocation cap — ${buf.note}.`);
+    // Server-derived (ram_fit.THIN_HEADROOM_GB): the model fits, but KV +
+    // compute at full context have little room. Two consequences the reader
+    // should hear before Load: heylook spawns with llama-server's own
+    // micro-batch (slower prefill), and a decode-time Metal OOM is possible.
+    if (r.headroom_thin && r.kv_headroom_gb != null) {
+      pieces.push(`Thin headroom: ${gib(r.kv_headroom_gb)} left for KV + compute. `
+        + `Spawns with llama-server's default micro-batch (512) instead of 2048; `
+        + `a Metal out-of-memory at full context is possible.`);
+    }
 
     verdictEl.className = `cfg-fit__verdict cfg-fit__verdict--${r.verdict}`;
     verdictEl.replaceChildren(
-      r.verdict === 'pass' ? 'Fits.' : pieces.join(' '),
-      // Server-gated actionability: non-null ONLY over the working set while
-      // iogpu.wired_limit_mb is at its OS default. Present -> show verbatim.
+      pieces.length ? pieces.join(' ') : 'Fits.',
+      // Server-gated actionability: non-null ONLY while iogpu.wired_limit_mb
+      // is at its OS default AND either the working set is exceeded or the
+      // headroom is thin. Present -> show verbatim.
       ...(r.sysctl_suggest_mb != null ? [createEl('div', { class: 'cfg-fit__sysctl' }, [
-        'Raise it (resets on reboot): ',
+        'Raise the GPU wired limit: ',
         createEl('code', {}, [`sudo sysctl iogpu.wired_limit_mb=${r.sysctl_suggest_mb}`]),
+        ' (resets at reboot; ',
+        createEl('code', {}, ['scripts/gpu_wired_limit.sh install']),
+        ' persists it). Restart the server afterwards so it sizes against the new ceiling.',
       ])] : []),
     );
     // Only a FAIL gates Load (gguf's over-WS is a warn by design), and a

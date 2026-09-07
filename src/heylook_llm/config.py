@@ -811,22 +811,26 @@ class GGUFModelConfig(BaseModel):
     )
     # -ub: the PHYSICAL prompt-processing batch -- how many prompt tokens one
     # Metal dispatch chews through. llama-server's own default is 512, sized
-    # for machines where the compute buffer competes with the weights. On a
-    # 192 GiB M2 Ultra it does not: 2048 is a prefill-throughput win on every
-    # model measured here (small on dense, large on MoE, where more tokens per
-    # expert dispatch is exactly what the GPU wants), generation speed is
-    # unchanged, and the only price is a larger compute buffer -- a few GiB
-    # at most, which matters solely for a model already at the Metal ceiling.
-    # `--fit` cannot shrink an EXPLICIT value, so near that ceiling it shrinks
-    # context instead; set 512 on that entry to get llama-server's margin
-    # back. Numbers and conditions: internal/research (2026-09-07).
-    n_ubatch: int = Field(
-        default=2048, ge=32,
+    # for machines where the compute buffer competes with the weights.
+    # None = AUTO, resolved at spawn by the provider (`_auto_ubatch`): 2048
+    # when the model's Metal working-set headroom (ram_fit, weights + sidecars
+    # against the live ceiling) clears THIN_HEADROOM_GB, else llama-server's
+    # own default. 2048 is a prefill-throughput win on every model measured
+    # here (small on dense, large on MoE), generation speed unchanged, and the
+    # price is a larger compute buffer -- ~7 GiB more on DeepSeek V4 Flash,
+    # which is exactly what pushed its Vision variant into a decode-time
+    # Metal OOM at the OS-default wired limit. llama's `--fit` cannot shrink
+    # an explicit value and did not catch that case, so the guard is ours,
+    # reads the same ceiling `--fit` does, and flips to 2048 by itself once
+    # iogpu.wired_limit_mb is raised. A stored value always wins, both ways.
+    # Numbers and conditions: internal/research (2026-09-07).
+    n_ubatch: Optional[int] = Field(
+        default=None, ge=32,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ub",
                            "ui": "advanced"},
     )
     # -b: the LOGICAL batch, the most tokens one llama_decode call takes.
-    # llama-server's default (2048) already equals our n_ubatch default and
+    # llama-server's default (2048) already equals the auto micro-batch and
     # a value above it buys nothing with -np 1, so None inherits it. It is a
     # field at all because llama.cpp silently CLAMPS n_ubatch to n_batch --
     # the validator below turns that clamp into a load-time refusal.
@@ -939,7 +943,7 @@ class GGUFModelConfig(BaseModel):
         # n_ubatch above the logical batch is a setting that reads as applied
         # and is not. Refuse it here, where the models.toml author sees it.
         ceiling = self.n_batch if self.n_batch is not None else self.LLAMA_DEFAULT_N_BATCH
-        if self.n_ubatch > ceiling:
+        if self.n_ubatch is not None and self.n_ubatch > ceiling:
             raise ValueError(
                 f"n_ubatch={self.n_ubatch} exceeds n_batch={ceiling}"
                 f"{' (llama-server default)' if self.n_batch is None else ''}; "
@@ -1441,6 +1445,11 @@ class FitResponse(BaseModel):
     # this is non-null.
     sysctl_suggest_mb: Optional[int] = None
     kv_headroom_gb: Optional[float] = None   # working set minus weights
+    # kv_headroom_gb under ram_fit.THIN_HEADROOM_GB: the gguf provider spawns
+    # with llama-server's own micro-batch rather than the larger auto value,
+    # and a decode-time Metal OOM at full context is a live possibility. The
+    # UI says so; sysctl_suggest_mb carries the remedy while it applies.
+    headroom_thin: bool = False
     hard_working_set: bool
     verdict: str                             # pass | warn | fail (worst line)
     lines: List[FitLineResponse] = Field(default_factory=list)
