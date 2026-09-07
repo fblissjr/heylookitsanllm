@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.14]
+
+### Changed
+
+- **`LLAMA_ARG_LOG_FILE` is stripped from llama-server's environment at
+  spawn.** heylook already owned where the gguf subprocess's output goes --
+  `observability_level = "off"` (the default) sends it to `DEVNULL` so
+  nothing reaches disk -- but that switch had one bypass. `LLAMA_ARG_LOG_FILE`
+  in the environment makes llama-server open a log file itself, so `off`
+  would still have written one; and llama.cpp's logger sends output to a set
+  file *instead of* stdout rather than in addition to it
+  (`common/log.cpp`: `if (!fcur) { fcur = stdout; }`), so the variable would
+  also have diverted the stream heylook does capture when the level is raised.
+  The provider now removes it from the child's environment and logs at
+  WARNING that it did, naming the variable and its value. Every *other*
+  `LLAMA_ARG_*` is still surfaced and never scrubbed -- those are behaviour
+  knobs someone may be setting deliberately, and the standing objection to
+  stripping is that it is invisible, which the log line answers. This closes
+  the whole env-borne write surface rather than part of it: of llama.cpp's
+  three disk-writing options, only `--log-file` carries a `.set_env`;
+  `--log-prompts-dir` (prompt TEXT) and `--slot-save-path` (KV cache) are
+  CLI-only and heylook passes neither. There is no shell-level equivalent to
+  reach for -- llama.cpp has no negative form of the variable, and an `unset`
+  in a profile covers an interactive shell while missing every other spawn
+  path. Documented in `docs/wiki/llama_server_build_and_spawn.md` §3.2.
+
 ## [2.0.13]
 
 ### Changed

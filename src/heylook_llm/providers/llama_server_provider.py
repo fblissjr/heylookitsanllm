@@ -88,6 +88,16 @@ atexit.register(_kill_orphans)
 # read longer than that; 120s means "server wedged", not "model is slow".
 _SSE_READ_TIMEOUT_S = 120.0
 
+# The ONE env var that lets llama-server write a file on its OWN, routing
+# around heylook's file-logging master switch -- removed from the child's
+# environment at spawn (see load_model). It is the whole env-borne write
+# surface: of llama.cpp's three options that write to disk, only --log-file
+# carries a `.set_env` (common/arg.cpp); --log-prompts-dir (prompt TEXT) and
+# --slot-save-path (KV cache) are CLI-only, so they cannot arrive this way and
+# heylook passes neither. Every OTHER LLAMA_ARG_* is a behaviour knob someone
+# may be setting deliberately -- those are warned about, never removed.
+_ENV_STRIPPED_AT_SPAWN = ("LLAMA_ARG_LOG_FILE",)
+
 # cascade key -> llama-server request key
 _PAYLOAD_KEY_MAP = (
     ("temperature", "temperature"),
@@ -592,10 +602,34 @@ class LlamaServerProvider(BaseProvider):
         # A CLI arg WINS over its env var (llama.cpp warns and overrides), so
         # anything heylook passes is safe -- but a flag we DON'T pass is set
         # silently, and then the running process differs from what models.toml
-        # and the admin API say it is. Surface it rather than stripping the
-        # env: someone may be using it deliberately, and quietly changing the
+        # and the admin API say it is. Surface those rather than stripping the
+        # env: someone may be using one deliberately, and quietly changing the
         # child's environment would be its own invisible behaviour.
-        llama_env = sorted(k for k in os.environ if k.startswith("LLAMA_ARG_"))
+        #
+        # ONE of them is removed instead of reported, because it does not merely
+        # change behaviour -- it defeats the switch above. LLAMA_ARG_LOG_FILE
+        # makes llama-server open its own log file, so observability_level=off
+        # would still put a file on disk; and a file sink REPLACES stdout in
+        # llama.cpp's logger rather than adding to it (common/log.cpp:
+        # `if (!fcur) { fcur = stdout; }`), so it would ALSO divert the stream
+        # heylook does capture when the level is raised. heylook owns where this
+        # subprocess's output goes, and "off" has to mean nothing on disk. The
+        # removal is LOGGED, which is what keeps the reasoning above intact: the
+        # objection to stripping is that it is invisible, not that it is wrong.
+        child_env = os.environ.copy()
+        for key in _ENV_STRIPPED_AT_SPAWN:
+            stripped = child_env.pop(key, None)
+            if stripped is not None:
+                logging.warning(
+                    f"[GGUF] {key}={stripped!r} was set in the environment and "
+                    f"has been REMOVED from llama-server's environment. It "
+                    f"would make the subprocess write its own log file "
+                    f"regardless of observability_level, and divert the output "
+                    f"heylook captures into that file. heylook owns this "
+                    f"subprocess's log destination."
+                )
+
+        llama_env = sorted(k for k in child_env if k.startswith("LLAMA_ARG_"))
         if llama_env:
             logging.warning(
                 f"[GGUF] {', '.join(llama_env)} set in the environment. Flags "
@@ -610,6 +644,7 @@ class LlamaServerProvider(BaseProvider):
             stdout=log_stdout,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            env=child_env,
             start_new_session=True,  # own process group: unload kills the whole tree
         )
         self._register_proc(self._proc)

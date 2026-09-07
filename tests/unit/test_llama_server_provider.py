@@ -285,6 +285,51 @@ class TestBuildArgs:
 
 
 # ---------------------------------------------------------------------------
+# Spawn environment
+# ---------------------------------------------------------------------------
+
+class TestSpawnEnvironment:
+    """heylook owns where llama-server's output goes.
+
+    `observability_level = off` (the default) sends the subprocess's stdout to
+    DEVNULL, so nothing reaches disk. `LLAMA_ARG_LOG_FILE` in the environment
+    defeats that: llama-server opens its own file, and llama.cpp's logger sends
+    output to a set file INSTEAD of stdout (common/log.cpp), so the variable
+    both writes a file heylook did not sanction and diverts the stream heylook
+    captures when the level IS raised. It is the only env-borne write of the
+    three disk-writing options -- --log-prompts-dir and --slot-save-path carry
+    no `.set_env` -- so removing it closes the whole surface.
+    """
+
+    def test_the_log_file_var_is_stripped_and_its_siblings_are_not(
+            self, tmp_path, monkeypatch):
+        # One test, two halves, because either alone passes for a wrong reason:
+        # a provider that forgot `env=` entirely inherits os.environ and fails
+        # the first half; a provider that wiped LLAMA_ARG_* wholesale (or passed
+        # a bare env) passes the first half and fails the second. The siblings
+        # are behaviour knobs someone may be setting on purpose -- they get the
+        # warning, not the scrub.
+        monkeypatch.setenv("LLAMA_ARG_LOG_FILE", str(tmp_path / "sneaky.log"))
+        monkeypatch.setenv("LLAMA_ARG_CACHE_RAM", "4096")
+        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
+                            lambda self: tmp_path / "llama-server")
+        seen = {}
+
+        def fake_popen(*a, **k):
+            seen.update(k)
+            raise RuntimeError("stop here -- spawned")
+
+        monkeypatch.setattr(llama_mod.subprocess, "Popen", fake_popen)
+        provider = make_provider(model_path=str(_weights(tmp_path)))
+        with pytest.raises(RuntimeError, match="spawned"):
+            provider.load_model()
+
+        child_env = seen["env"]  # absent key = the provider never passed one
+        assert "LLAMA_ARG_LOG_FILE" not in child_env
+        assert child_env.get("LLAMA_ARG_CACHE_RAM") == "4096"
+
+
+# ---------------------------------------------------------------------------
 # Sleep/wake timeout
 # ---------------------------------------------------------------------------
 
