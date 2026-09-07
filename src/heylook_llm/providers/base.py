@@ -41,7 +41,9 @@ class GenerationChunk:
     queue_wait_ms: float = 0.0
     # Spec-decode acceptance, CUMULATIVE running totals for the request
     # (llama-server reports them on the final timings frame; MLX stamps the
-    # running counters on every chunk). ChunkTelemetry latches the max.
+    # running counters on every chunk). How a consumer folds them across
+    # chunks is perf_collector.ChunkTelemetry.absorb()'s call, not this
+    # field's -- see the rule stated there.
     draft_tokens: int = 0
     draft_accepted: int = 0
 

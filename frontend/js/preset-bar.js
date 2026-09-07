@@ -675,10 +675,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     // Re-aiming disarms -- for HONESTY, not safety (the `target` callbacks
     // above already make a stale arm refuse to fire). A button still reading
     // "Overwrite prompt?" while aimed at a preset you just switched away from
-    // is a lie. Each control disarms only the buttons IT re-aims: the select
-    // moves all three, the name box moves Save alone -- disarming Apply from
-    // the name box silently cancelled an apply the user was part-way through
-    // confirming, just because they started typing a save-as name.
+    // is a lie. The select is the only control that re-aims, so it is the only
+    // one that disarms. The name box deliberately disarms NOTHING: Save as new
+    // is never armed, and reaching over to disarm Apply from here silently
+    // cancelled an apply the user was part-way through confirming, just
+    // because they started typing a save-as name.
     select.addEventListener('change', () => {
       applyBtn.disarm(); updateBtn.disarm(); delBtn.disarm();
       pick(select.value || null);
@@ -687,9 +688,6 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       paintPreview();
       updateDrift();
     });
-    // The name box no longer re-aims anything: it feeds Save as new, which
-    // is never armed. Nothing to disarm here.
-
     // .preset-drift is the E2E hook; styling rides the shared settings-note.
     // role=status: the line flips live (Matches/Differs) -- announced, not
     // just shown (DESIGN.md §7).

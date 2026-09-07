@@ -1,18 +1,28 @@
 # Documentation index
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
 tree. The project's nav hub for agents is the root [CLAUDE.md](../CLAUDE.md).
 
 ## Architecture reference
-[architecture/](./architecture/) -- backend design records + invariants (config
-history, provider mechanisms, MLX ecosystem posture, crash postmortems).
-Start at its [README](./architecture/README.md).
+These two overlap in subject and differ in kind. Read the wiki to learn how a
+subsystem works; read `architecture/` for why a specific decision was made and
+what must not be broken. Neither is the live API surface -- that is the code
+plus `/openapi.json`.
+
+- [wiki/](./wiki/README.md) -- **engineering wiki**: how the system works end to
+  end (architecture, backend, frontend, providers, the llama-server build/spawn
+  deep dive, performance). Explanatory and self-contained; carries no throughput
+  or model-quality figures (see its principle 6).
+- [architecture/](./architecture/) -- backend design records + invariants (config
+  history, provider mechanisms, MLX ecosystem posture, crash postmortems).
+  Narrower and decision-shaped. Start at its [README](./architecture/README.md).
 
 ## Project -- roadmap / status / backlog
-- [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-5)
+- [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-7; Phase 0 is the
+  decisions block, and the 2026-07-28 re-plan re-cut Phases 1-5 into Waves 1-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
 

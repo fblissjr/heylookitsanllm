@@ -1,7 +1,9 @@
 # src/heylook_llm/api.py
 """App assembly (v1.79.67): the FastAPI app, its lifespan, the MODEL_BUSY
 handler, CORS, router mounting and the static frontend mount.
-Every route lives in a ``*_api.py`` router; the OpenAPI narrative is
+Every route lives in a ``*_api.py`` router except ``/v1/data/clear`` below,
+``rlm.py``'s own router, and the asset routes ``frontend_static.py`` registers;
+the OpenAPI narrative is
 ``openapi_doc.py``; the route guards the inference routes share are
 ``request_guards.py``. This module used to carry the OpenAI-compatible chat
 route and half a dozen others (2,600 lines at v1.79.65); a new endpoint is a
@@ -270,7 +272,22 @@ app.include_router(embeddings_router)
 from heylook_llm.hidden_states_api import hidden_states_router
 app.include_router(hidden_states_router)
 
-# Data management
+# Data management.
+#
+# THE ONE ROUTE DECLARED INLINE HERE, deliberately -- the module docstring's
+# rule has this as its named exception. It fits no existing router and making
+# one for a single handler was judged more ceremony than it buys: it is not
+# conversation CRUD (it deletes notebooks too), not admin model management,
+# not config. That mismatch is the actual reason it is homeless, and moving it
+# into conversation_api.py would not fix it -- it would just hide a
+# notebook-deleting route under a conversations prefix.
+#
+# Two things follow, both worth knowing before "tidying" this away:
+#   - test_startup_banner.py PINS the placement ("mounted on the app itself,
+#     not via a router"), so moving it is a test change, not a pure refactor.
+#   - presets and settings deliberately SURVIVE it (db.clear_all_data) -- they
+#     are configuration, not data, the same split the schema-bump drop list
+#     makes. The frontend's Danger zone and the E2E harness both call it.
 from heylook_llm.auth import require_admin_token
 
 @app.post("/v1/data/clear",
@@ -285,9 +302,9 @@ async def clear_all_data(request: Request):
     result = await _clear(conn)
     return result
 
-# The frontend at `/`. Registered here, after every router, because the asset
-# route is a catch-all: ordering is what keeps /v1, /docs and /openapi.json
-# reachable. Mechanics and their invariants live in frontend_static.py.
+# The frontend at `/`. Registration order is NOT load-bearing: there is no
+# catch-all, and the two path params are scoped under /js/ and /css/, so no
+# asset route can shadow the API. Mechanics + invariants: frontend_static.py.
 from heylook_llm.frontend_static import mount_frontend
 mount_frontend(app)
 
