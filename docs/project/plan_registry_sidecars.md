@@ -421,6 +421,15 @@ leftover rather than the norm.
   same commit as the behaviour, or they become the stale claims this repo keeps
   naming.
 
+## Postmortem
+
+The session that produced this plan is written up in
+`internal/postmortems/2026-09-08_session_sampler-defaults-and-the-registry-plan.md`
+(local, gitignored). Relevant to a reader of this plan: the same failure this
+plan names — answering locally a question another function owns — was committed
+repeatedly while writing it, including two claims that reached this document and
+had to be corrected.
+
 ## Sizing, honestly
 
 Materially larger than a session: a new config surface, a migration of existing
