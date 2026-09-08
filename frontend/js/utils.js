@@ -320,8 +320,11 @@ const RETIRED_KEYS = [
 // swept. The parked system-prompt draft is authored text the user cannot get
 // back -- chat.js parks it precisely because a reload used to eat it -- so
 // deleting it on the one boot that follows an upgrade would be the exact harm
-// the key exists to prevent, plus the follow-on it names (a blank box, then a
-// Save writing null over a good stored preset prompt).
+// the key exists to prevent. (chat.js's comment names a further follow-on, a
+// Save storing null over a good preset prompt. That one is GUARDED now:
+// `wouldOverwritePresetPrompt` returns true for any blanking write, so it arms
+// a confirm rather than happening quietly. The lost draft is the real harm
+// here; do not restate the follow-on as if it were still silent.)
 const MOVED_KEYS = [
   ['heylook.v3.chat.draft-prompt', 'heylook.chat.draft-prompt'],
 ];

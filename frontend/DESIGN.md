@@ -215,7 +215,10 @@ distinctly: **page-owned lead sections** (`sections()` — chat and notebook eac
 contribute the shared preset bar, `preset-bar.js`, plus their own system-prompt
 editor), **generation params** (samplers — the existing `settings.js` store)
 and **per-page extras**
-(`extras()` — jspace's heatmap/chat toggles, explore's logprobs note). Sections
+(`extras()` — a page-owned toggle or note that does not compose the
+document; the two examples this named, jspace's heatmap toggles and
+explore's logprobs note, went with those pages in v1.79.74-75, so the
+contract currently has no live consumer). Sections
 render first, extras last; both are page-owned, but a section composes the
 document (prompt/preset), while an extra is a toggle or note that doesn't.
 

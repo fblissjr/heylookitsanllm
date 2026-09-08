@@ -84,13 +84,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The browser E2E harness seeds DOCUMENTS, not localStorage.** It capped
-  generation length through the key that no longer persists. The replacement is
-  not a workaround: the document was already the authoritative half, which is
-  why `chat.mjs` carries a check named for it. `ctx.open()` and
-  `newFreshConversation` PUT params directly, so a failed seed is an HTTP error
-  rather than a silently ignored cache write, and `ctx.readSettings()` reads the
-  document. `render.mjs` clears `heylook.`-prefixed storage per boot -- every
+- **The browser E2E harness seeds the PANEL through the drawer.** It capped
+  generation length through the localStorage key that no longer persists. The
+  first replacement seeded the DOCUMENT and was wrong, because the panel is
+  upstream of everything: a generation sends `overrides` from the panel which
+  the server layers ON TOP of stored params, a new conversation is created from
+  `snapshotSettings()`, and `bindDocumentParams` PUTs the whole panel snapshot --
+  so a document seeded behind the panel's back was beaten on the wire and then
+  erased, and at the first `open()` of a cleared run there was no document to
+  seed at all. `ctx.open()` drives the real controls, which is what the
+  localStorage seed did; `ctx.readSettings()` resolves the ACTIVE conversation
+  by id (position is not identity -- the sidebar renders the client's array
+  while the API orders by updated_at) and throws instead of returning an empty
+  bag, which two absence assertions were passing against for free.
+  `render.mjs` clears `heylook.`-prefixed storage per boot -- every
   boot shares one browser profile, and the new remembered-conversation key
   leaked across them, failing two checks that never mention storage because both
   were looking at the wrong conversation. Confirmed by control: green with the

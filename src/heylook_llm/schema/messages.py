@@ -137,13 +137,21 @@ class MessageCreateRequest(BaseModel):
                 "with the token explorer (the only surface that read them) and the "
                 "heylook_logprobs SSE extension is gone with them"
             )
-        if "show_special_tokens" in data:
+        # Only a TRUTHY value is refused, which is where this differs from the
+        # `logprobs` guard above: any logprobs value asked for a capability that
+        # is gone, but `show_special_tokens: false` asked for exactly what the
+        # server now always does. Refusing it would 422 the one client shape
+        # that needed no change at all, with a message telling it the behaviour
+        # it requested is the behaviour in force. Loud beats silent only when
+        # the client would otherwise be answered as though it had not asked.
+        if data.get("show_special_tokens"):
             raise ValueError(
-                "show_special_tokens was removed in v2.0.38: it was a per-BROWSER "
-                "display pref that decided what the conversation store PERSISTED, "
-                "so the same conversation continued from two devices accumulated "
-                "rows of two kinds with nothing recording which was which. "
-                "Declared specials are now always stripped. See "
+                "show_special_tokens=true is no longer supported: it was a "
+                "per-BROWSER display pref that decided what the conversation "
+                "store PERSISTED, so the same conversation continued from two "
+                "devices accumulated rows of two kinds with nothing recording "
+                "which was which. Declared specials are now always stripped, so "
+                "sending false (or omitting it) is what this server does. See "
                 "docs/project/TODO.md for the design a correct version would take"
             )
         if "preset" in data or "sampler" in data:

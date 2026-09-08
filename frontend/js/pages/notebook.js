@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { messagesParams, snapshotSettings, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
+import { messagesParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -410,7 +410,9 @@ async function selectNotebook(ctx, id) {
     s.systemPrompt = nb.system_prompt ?? '';
     s.appliedPresetId = nb.applied_preset_id ?? null;
     s.modelId = nb.model_id ?? '';
-    hydrateDocParams(nb);  // sampler panel <- this notebook (silent, no re-PUT)
+    // sampler panel <- this notebook (silent, no re-PUT)
+    const lostNb = unrepresentableNote(hydrateDocParams(nb), 'notebook');
+    if (lostNb) showStatus(ctx, lostNb, true);
     s.dirty = false;
     populateFields(ctx);
     // an open drawer shows the previous notebook's params/sysprompt otherwise

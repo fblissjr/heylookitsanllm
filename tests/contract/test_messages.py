@@ -146,6 +146,86 @@ class TestMessagesStreaming:
                 assert "type" in parsed
 
 
+class TestDeclaredSpecialsAreStrippedOnThisWire:
+    """The strip on `/v1/messages`, pinned at the ROUTE.
+
+    It is unconditional since v2.0.38 removed `show_special_tokens`, and that is
+    exactly why this class had to survive the removal rather than go with it:
+    delete the flag's tests and the SURVIVING behaviour is unpinned, so dropping
+    `strip_specials` from messages_api's two `select_reasoning_parser` calls --
+    or `StripSpecials` ceasing to compose -- would leak raw control tokens into
+    both the streamed text and the non-streaming body with every contract test
+    green.
+
+    The fixture is the load-bearing half. conftest's FakeProvider returns
+    ``template_info() -> None``, i.e. a pass-through parser with NO declared
+    specials, so on that path nothing is ever stripped and the strip is
+    UNOBSERVABLE -- an assertion against it would pass whether or not the
+    handler strips anything. These swap in a provider that declares and emits
+    one.
+    """
+
+    SPECIAL = "<|im_end|>"
+
+    @pytest.fixture
+    def declaring_model(self, mock_router):
+        """Point one model id at a provider that declares + emits a special.
+
+        The router fixture is session-scoped, so the swap is undone after the
+        test or every later test would inherit this provider."""
+        from helpers.mlx_mock import FakeChunk
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+        special = TestDeclaredSpecialsAreStrippedOnThisWire.SPECIAL
+        model_id = "test-mlx-model"
+        # Subclass the fixture's OWN provider class rather than importing it:
+        # the contract conftest is not importable by name (bare `conftest`
+        # resolves to tests/conftest.py), and inheriting from whatever the
+        # router hands out keeps this in step with that fake.
+        base = type(mock_router.get_provider(model_id))
+
+        class DeclaringProvider(base):
+            def template_info(self):
+                return ModelTemplateInfo(
+                    chat_template="",
+                    special_tokens=frozenset([special]),
+                    template_source="jinja",
+                )
+
+            def create_chat_completion(self, request, abort_event=None):
+                yield FakeChunk("Hello", token_id=1)
+                yield FakeChunk(f" world{special}", token_id=2)
+
+        previous = mock_router.providers.get(model_id)
+        mock_router.providers[model_id] = DeclaringProvider(model_id)
+        try:
+            yield model_id
+        finally:
+            if previous is None:
+                mock_router.providers.pop(model_id, None)
+            else:
+                mock_router.providers[model_id] = previous
+
+    def _body(self, model, **extra):
+        return {"model": model, "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 128, **extra}
+
+    def test_streaming_strips(self, client, declaring_model):
+        resp = client.post("/v1/messages", json=self._body(declaring_model, stream=True))
+        assert resp.status_code == 200
+        text = streamed_text(resp.text)
+        assert self.SPECIAL not in text, f"a declared special reached the stream: {text!r}"
+        assert "Hello world" in text, "the strip ate the surrounding text too"
+
+    def test_non_streaming_strips(self, client, declaring_model):
+        resp = client.post("/v1/messages", json=self._body(declaring_model))
+        assert resp.status_code == 200
+        text = "".join(b.get("text", "") for b in resp.json()["content"]
+                       if b["type"] == "text")
+        assert self.SPECIAL not in text, f"a declared special reached the body: {text!r}"
+        assert "Hello world" in text, "the strip ate the surrounding text too"
+
+
 class TestNonStreamingPerformance:
     """What a NON-STREAMING client can actually read off `performance`.
 
@@ -244,7 +324,7 @@ def test_retired_request_fields_are_refused_not_ignored(client):
     # it silently ignored -- the same failure `preset` is here for.
     # `show_special_tokens` joined in v2.0.38: it was a per-BROWSER display pref
     # that decided what the conversation store PERSISTED, so a client still
-    # sending it must be told rather than quietly get stripped text.
+    # asking to KEEP them must be told rather than quietly get stripped text.
     for field, value in (("logprobs", True), ("top_logprobs", 5),
                          ("preset", "x"), ("sampler", "balanced"),
                          ("show_special_tokens", True)):
@@ -252,3 +332,10 @@ def test_retired_request_fields_are_refused_not_ignored(client):
         assert r.status_code == 422, f"{field} was accepted: {r.status_code}"
         assert field.split("_")[-1] in r.text or field in r.text, \
             f"the {field} refusal does not name the field: {r.text[:200]}"
+
+    # ...but `show_special_tokens: false` asked for exactly what the server now
+    # always does, so refusing it would break the one client shape that needed
+    # no change. The guard is on the VALUE, not the key's presence.
+    r = client.post("/v1/messages", json={**body, "show_special_tokens": False})
+    assert r.status_code != 422, \
+        "show_special_tokens=false was refused, but it requests current behaviour"

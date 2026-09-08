@@ -459,7 +459,18 @@ truncate→stream→persist sequences):**
     row that is persisted (v2.0.38 removed the `show_special_tokens` field that
     could keep them — see the Messages section above). Unlike the Messages
     wire this route does not 422 a client that still sends it: the field is
-    simply not declared, and the route has one client. `_strip_history_specials`
+    simply not declared, so pydantic's default `extra="ignore"` drops it and the
+    request succeeds. That is DELIBERATE and it is the opposite call from
+    `/v1/messages`, for a reason worth keeping. `/v1/messages` is a public wire
+    with clients nobody here ships, so being told beats being ignored. This route
+    has exactly ONE client (`streamGenerate`, called only from `chat.js`), and
+    the client that would still be sending the field is a TAB OPEN ACROSS THE
+    UPGRADE — assets are served `no-cache` and revalidate, so stale JS does not
+    come from the HTTP cache, but a backgrounded tab keeps the modules it
+    already loaded (the same fact `ctx.onResume` exists for). For that tab a 422
+    means every generate fails until it is reloaded; ignoring the field means
+    specials stop being kept and chat keeps working. Refusing loudly is right
+    where the sender can fix it; here it only breaks the one client we ship. `_strip_history_specials`
     still runs on REPLAY and is not redundant with the generation-side strip —
     `content` is user-updatable, so an edited assistant row can carry a control
     token that must not re-enter a prompt.

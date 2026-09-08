@@ -52,14 +52,6 @@ function emptySettings() {
 // and they are NOT the backend's validation range: `max_tokens` caps at 65536
 // here while a gguf model can hold a context far past that, so a stored 100000
 // is legal, useful, and something the panel has no business rejecting.
-//
-// Rejecting it was worse than useless, because a dropped key does not stay
-// dropped: `snapshotSettings()` omits nulls, so the next panel edit PUTs a bag
-// without it and the stored value is ERASED from the document or preset, with
-// nothing on screen having said so. A filter meant to stop a bad value reaching
-// the wire would have silently destroyed a good one. Structural checks have no
-// such failure mode -- a string where a number belongs, or a NaN, is garbage
-// under every backend range.
 function valid(key, v) {
   if (v === null || v === undefined) return false;   // absent IS the cascade
   const meta = PARAM_META[key];
@@ -71,20 +63,52 @@ function valid(key, v) {
   return true;
 }
 
-// The "only known keys, everything else null" invariant in one place --
-// every hydration funnels through it.
+// THE STORE IS THE SOURCE OF TRUTH, so this function may not quietly disagree
+// with it (owner rule). What it CAN do is fail to represent something, and the
+// difference is the whole design here: anything it could not take is REPORTED,
+// never swallowed.
 //
-// It filters KEYS and, since v2.0.38, the SHAPE of values -- localStorage was
-// never the only source, since `presets.params` and a document's stored
-// `params` hydrate this same panel through this same function. What it cannot
-// do is decide a number is out of range: see `valid()` for why that filter was
-// removed rather than tuned. A value the BACKEND refuses still returns a 422
-// that names the field but not where it was stored; that is the honest limit
-// of a client-side check, and destroying the value is not a better answer.
+// That matters because a value dropped here does not stay dropped -- it is
+// destroyed. `snapshotSettings()` emits only the keys the panel holds, and
+// `bindDocumentParams` PUTs that whole snapshot, so the next knob you touch
+// writes a bag with the dropped key MISSING and the stored value is gone from
+// DuckDB. A filter meant to keep a bad value off the wire silently deletes it
+// from the record instead. Two ways that happens, and both are reported:
+//
+//   unusable -- a known key whose value this panel cannot represent at all
+//               (a string where a number belongs, a NaN). Rare, and garbage
+//               under any backend range.
+//   unknown  -- a key the panel has no control for. NOT harmless: it is real
+//               stored state that the next params PUT will erase, and the
+//               silence is what makes that invisible.
+//
+// Callers surface these (hydrateDocParams -> the page's status line). Reporting
+// rather than repairing is the point: the panel is a VIEW, and a view that
+// edits the record to fit itself is the bug this comment exists to prevent.
 function mergeKnown(src) {
   const out = emptySettings();
-  for (const k of Object.keys(out)) if (k in src && valid(k, src[k])) out[k] = src[k];
-  return out;
+  const unusable = [];
+  const unknown = [];
+  for (const [k, v] of Object.entries(src ?? {})) {
+    if (!(k in out)) { unknown.push(k); continue; }
+    if (v === null || v === undefined) continue;      // absent = cascade
+    if (valid(k, v)) out[k] = v;
+    else unusable.push(k);
+  }
+  return { values: out, unusable, unknown };
+}
+
+// The one spelling of "the store holds sampler state this panel cannot show".
+// It lives HERE, beside the function that decides what was lost, rather than in
+// each page: it was briefly a copy in chat.js and notebook.js, which is the
+// duplication this repo keeps paying for. Returns null when nothing was lost,
+// so a caller is one `if` away from its own status line -- the pages disagree
+// about how to SHOW a message, and only about that.
+export function unrepresentableNote(report, noun) {
+  const lost = [...(report?.unusable ?? []), ...(report?.unknown ?? [])];
+  if (!lost.length) return null;
+  return `This ${noun} stores settings this panel cannot show (${lost.join(', ')}). `
+    + 'Changing a setting here will drop them.';
 }
 
 // NOT persisted, deliberately (v2.0.38). The panel is a VIEW of a document:
@@ -141,8 +165,10 @@ export function snapshotSettings() {
 // conversation's stored params, so loading a conversation doesn't immediately
 // PUT its own params straight back.
 export function applySettings(params, { silent = false } = {}) {
-  cache = mergeKnown(params);
+  const { values, unusable, unknown } = mergeKnown(params);
+  cache = values;
   if (!silent) fireSettingsChange();
+  return { unusable, unknown };
 }
 
 // Request-body params: the snapshot minus the knobs that are only
@@ -231,8 +257,12 @@ export function bindDocumentParams({ activeId, updateDoc, onError, onHide, delay
 
 // Load a document's stored params into the panel WITHOUT firing listeners, so
 // selecting/loading a doc doesn't immediately PUT its own params back.
+// Returns what the panel could NOT take from the document, so the page can say
+// so. An empty array from both is the normal case; a non-empty one is stored
+// state the next params PUT will erase, which the user has a right to know
+// BEFORE they touch a knob.
 export function hydrateDocParams(doc) {
-  applySettings(doc?.params ?? {}, { silent: true });
+  return applySettings(doc?.params ?? {}, { silent: true });
 }
 
 // ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
+import { samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -1072,6 +1072,15 @@ function renderConvList(ctx) {
     const del = armedConfirm(delBtn, () => deleteConversation(ctx, conv.id));
     const item = createEl('div', {
       class: `conv-item${conv.id === s.activeId ? ' conv-item--active' : ''}`,
+      // The row names its record. Nothing in the app reads it -- the click
+      // handler closes over `conv` -- but a row that says only "I am active"
+      // forces anyone outside to identify it by POSITION, and position is not
+      // identity here: the sidebar renders the client's locally-mutated array
+      // (unshift on create, filter on delete) while the API orders by
+      // updated_at, so the two diverge the moment a params PUT bumps a
+      // conversation. The E2E harness mapped index onto the API list and read
+      // the wrong conversation for it.
+      dataset: { id: conv.id },
     }, [title, ren, copy, del]);
     item.addEventListener('click', () => {
       selectConversation(ctx, conv.id);
@@ -1182,6 +1191,16 @@ async function deleteConversation(ctx, convId) {
   s.composerDrafts.delete(convId);  // its unsent text goes with it
   if (s.activeId === convId) {
     abortStream(ctx, ABANDON.DELETE);
+    // Clear the composer BEFORE activeId goes. This function nulls activeId and
+    // then selects another conversation, so a non-empty textarea would be
+    // stashed under NO_DOC on the way through and ADOPTED by whichever
+    // conversation opens next -- the deleted conversation's message reappearing
+    // in someone else's composer, which is precisely the bug per-conversation
+    // drafts exist to prevent, reintroduced by the orphan-adoption path added
+    // to fix a different one. Its draft is already gone from the Map above.
+    s.textarea.value = '';
+    autoGrow(s.textarea);
+    s.composerDrafts.delete(NO_DOC);
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
@@ -2107,7 +2126,9 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
   const s = ctx.state;
   if (!keepPrompt) s.systemPrompt = conv.system_prompt ?? null;
   s.appliedPresetId = conv.applied_preset_id ?? null;
-  hydrateDocParams(conv);  // sampler panel <- this conversation (silent, no re-PUT)
+  // sampler panel <- this conversation (silent, no re-PUT)
+  const lostParams = unrepresentableNote(hydrateDocParams(conv), 'conversation');
+  if (lostParams) showStatus(ctx, lostParams, true);
   setRemoteGenerating(ctx, Boolean(conv.generating));
 }
 
