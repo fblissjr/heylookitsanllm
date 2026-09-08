@@ -306,7 +306,13 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
 
   const syncDirty = () => {
     const body = eol(area.value);
-    saveBtn.disabled = busy || body === eol(serverText) || !body.trim();
+    // `!loaded` is the half that survives a failed load. The box is re-enabled
+    // there so the user can reach and clear their own draft, but Save must stay
+    // off: `serverText` is still '' because render() never ran, so any typed
+    // text differs from it and would arm a PUT of that fragment as the model's
+    // ENTIRE template -- the bug the disable was added for, reachable again the
+    // moment the box is editable.
+    saveBtn.disabled = busy || !loaded || body === eol(serverText) || !body.trim();
     // Keep only genuinely unsaved text; a pristine panel must not resurrect
     // a stale body over a template someone changed elsewhere.
     if (body === eol(serverText)) delete draft[TMPL_DRAFT];
@@ -359,6 +365,18 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     } catch (e) {
       loaded = false; // let the next open retry
       say(`Could not read the template: ${e.message}`, 'error');
+      // Show the draft and let it be edited. `render()` never ran, so without
+      // this the box stays EMPTY and DISABLED while `draft[TMPL_DRAFT]` still
+      // holds text: unreachable, uneditable, and still arming the leave-site
+      // guard -- with no way for the user to see it or clear it. Save stays
+      // disabled (`serverText` is still '' and syncDirty has no baseline to
+      // compare against, so a blind overwrite is not on offer), which is the
+      // half of the disable that was load-bearing. Re-enabling only the box
+      // keeps the fix for typing over a template that never loaded, and drops
+      // the part that trapped the user's own text behind a failed fetch.
+      area.value = draft[TMPL_DRAFT] ?? '';
+      area.disabled = false;
+      syncDirty();
     }
   }
 

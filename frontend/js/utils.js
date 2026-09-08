@@ -314,10 +314,28 @@ const RETIRED_KEYS = [
   'heylook-v3-settings',    // sampler bag: de-persisted in v2.0.38
   'heylook-v3-display',     // display prefs: removed with show_special_tokens
   'heylook-v3-scan-paths',  // one-off scan paths: no longer remembered
-  'heylook.v3.chat.draft-prompt',  // renamed into the heylook. namespace
+];
+
+// Keys that were RENAMED, not retired: [old, new]. These must be MOVED, never
+// swept. The parked system-prompt draft is authored text the user cannot get
+// back -- chat.js parks it precisely because a reload used to eat it -- so
+// deleting it on the one boot that follows an upgrade would be the exact harm
+// the key exists to prevent, plus the follow-on it names (a blank box, then a
+// Save writing null over a good stored preset prompt).
+const MOVED_KEYS = [
+  ['heylook.v3.chat.draft-prompt', 'heylook.chat.draft-prompt'],
 ];
 
 export function sweepRetiredStorage() {
+  for (const [from, to] of MOVED_KEYS) {
+    try {
+      const held = localStorage.getItem(from);
+      // Never overwrite a value already under the new name: a second boot must
+      // not resurrect an older draft over one written since.
+      if (held !== null && localStorage.getItem(to) === null) localStorage.setItem(to, held);
+      if (held !== null) localStorage.removeItem(from);
+    } catch { /* storage unavailable -- nothing to move */ }
+  }
   for (const key of RETIRED_KEYS) {
     try { localStorage.removeItem(key); } catch { /* nothing to do */ }
   }

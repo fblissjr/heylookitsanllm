@@ -218,13 +218,12 @@ after a close will flake on the transition windows.
 
 ## Notes / gotchas
 
-- Generation length is capped by seeding the active DOCUMENT's `params` with
-  `max_tokens` before the app boots (`ctx.open()` PUTs, then reloads so the page
-  hydrates the panel from it; `newFreshConversation` seeds each conversation it
-  creates). It seeded `localStorage['heylook-v3-settings']` until v2.0.38, which
-  stopped persisting the sampler panel — but the document was already the
-  authoritative half, so this seeds the same thing directly and a failed seed is
-  now an HTTP error rather than a silently ignored cache write.
+- Generation length is capped by seeding the sampler PANEL through the drawer
+  after boot (`ctx.open()`; `ctx.seedPanel()` is the primitive). It wrote
+  `localStorage['heylook-v3-settings']` until v2.0.38 stopped persisting the
+  panel. The first replacement PUT the document instead and was wrong — see the
+  gotcha below; the panel is what the old seed primed and what everything
+  downstream inherits from.
 - The stop-mid-stream checks reopen with `max_tokens: 400` so there is time to
   click Stop before the generation finishes.
 - The danger-zone clear check runs LAST in the pages suite; it wipes the
@@ -263,12 +262,16 @@ after a close will flake on the transition windows.
   on a normal `stop`). Unrouted text now goes to content. Tolerating empty
   replies stays right (a model really can EOS immediately), but treat a
   *rising* rate as a bug signal, not as model noise.
-- **Per-document params beat the localStorage seed after any reload.** Setup
-  auto-selects the newest conversation and `hydrateDocParams` replaces the
-  seeded settings cache with that conversation's stored `params` — so
-  `ctx.open('#/chat', { max_tokens: N })` does NOT control generations on
-  existing conversations, and a debounced params PUT killed by a reload can
-  resurrect stale settings (both seen live 2026-07-23). To control settings
-  for a generation: seed a fresh conversation, then set values through the
-  drawer panel (which PUTs to that conversation), and end checks by waiting
-  for the params PUT to land server-side, not just for localStorage.
+- **The PANEL is upstream of everything; seed it, not a document.** A new
+  conversation is created with `params: snapshotSettings()` (the panel), a
+  generation sends `overrides` from the panel which the server layers ON TOP of
+  the stored params, and `bindDocumentParams` PUTs the whole panel snapshot. So
+  a document seeded behind the panel's back is beaten on the wire and then
+  erased by the next panel edit — and at the first `open()` of a cleared run
+  there is no document to seed at all. `ctx.open()` sets the panel through the
+  real drawer for this reason; `ctx.seedPanel()` is the primitive and throws if
+  a control is missing rather than seeding nothing. Selecting a conversation
+  still REPLACES the panel from that conversation's stored `params`
+  (`hydrateDocParams`, seen live 2026-07-23), so to control one generation:
+  make a fresh conversation, then set values through the drawer, and end the
+  check by waiting for the params PUT to land server-side.

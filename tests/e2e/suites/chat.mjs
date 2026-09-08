@@ -1,6 +1,6 @@
 // Chat suite: the most-verified surface. Covers streaming, position-based
 // edit/regenerate/delete truncation, stop=partial-saved, post-abort health,
-// settings + the document params seed, conversation CRUD, and a 390px
+// settings + the panel seed, conversation CRUD, and a 390px
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
@@ -104,7 +104,7 @@ async function conversationStateById(page, id) {
 // round-trip check read an old text conversation and found 0 image blocks).
 // created_at is immutable, so the newest-created conversation is always the
 // one New just made.
-async function newFreshConversation(page, ctx) {
+async function newFreshConversation(page) {
   await clickByText(page, '.chat__convs-head button', 'New');
   // The conv-item paints at the START of selectConversation; its async
   // hydrate is still in flight then, and hydrateDocParams silently resets
@@ -121,12 +121,11 @@ async function newFreshConversation(page, ctx) {
       (a, b) => (a && a.created_at > b.created_at ? a : b), null)?.id ?? null;
   });
   assert(id, 'could not resolve the fresh conversation id server-side');
-  // Cap this conversation's generations. A new conversation takes
-  // `params: snapshotSettings()`, and since v2.0.38 nothing persists the panel
-  // across a reload, so the first one of a run would otherwise start empty and
-  // generate at the model's own max_tokens. Seeded on the DOCUMENT, which is
-  // what the server layers a generation over -- the panel need not agree.
-  await ctx.seedParams('conversations', id);
+  // Nothing to seed here: a new conversation is created with
+  // `params: snapshotSettings()`, so it INHERITS whatever ctx.open() put in the
+  // panel. Seeding the document instead was wrong twice over -- the panel is
+  // sent as `overrides` and layered on top, so it would have won anyway, and
+  // the next panel edit PUTs the whole snapshot and would have erased the seed.
   return id;
 }
 
@@ -505,7 +504,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // as the same mechanism spelled by hand -- the panel PUT is what makes the
     // raise visible in the drawer too. Big enough that a fast model is still
     // mid-stream when Stop lands.
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', '4000');
     await closeDrawer(page);
@@ -564,7 +563,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // So the cap is the stop-test one, not 4000 -- large enough to still
     // be streaming when the reload lands, small enough that the run
     // finishes inside this check's window instead of 45s later.
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await closeDrawer(page);
@@ -726,7 +725,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('a settings edit writes through to the document', async () => {
     // What bindDocumentParams exists to provide, asserted where it lands. This
     // read localStorage until v2.0.38; the document is the stronger claim,
-    // because it is what the server layers the next generation over.
+    // because it is where a panel edit has to LAND to outlive the page.
     await setSettingsInput(page, 'Temperature', '0.42');
     await waitFor(async () => {
       const s = await ctx.readSettings();
@@ -936,7 +935,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // as the drifted panel. Server-side assertions: the stamp is written at
     // create, not inferred client-side.
     await closeDrawer(page); // the drawer is modal; the New button lives in #app
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     const conv = await page.evaluate(async (id) =>
       await (await fetch(`/v1/conversations/${id}`)).json(), convId);
     assert(conv.applied_preset_id, 'new conversation was not stamped with the preset');
@@ -1194,7 +1193,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // state -- each tap writes an explicit true/false to the conversation's
     // params, which is what generate builds from.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     await page.waitForSelector(THINK_BTN, { timeout: 5000 });
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const def = models.find((m) => m.id === config.model)?.thinking_default;
@@ -1273,7 +1272,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // special tokens highlighted. Persists nothing; needs the model resident
     // (it is -- the harness loaded it).
     await page.select(MODEL_SELECT, config.model);
-    await newFreshConversation(page, ctx);
+    await newFreshConversation(page);
     await page.type(COMPOSER, 'draft text for the preview');
     await page.click('.chat__composer button[aria-label="Preview prompt"]');
     await page.waitForSelector('.chat__prompt-preview .prompt-preview__text', { timeout: 20000 });
@@ -1309,7 +1308,7 @@ export async function runChatSuite({ suite, ctx, config }) {
 
     // arm the pin: thinking ON while the capable model is selected
     await page.select(MODEL_SELECT, config.model);
-    await newFreshConversation(page, ctx);
+    await newFreshConversation(page);
     await waitFor(async () => page.evaluate(() =>
       document.querySelector('.chat__composer button[aria-label="Toggle thinking"]')?.hidden === false),
     { message: 'thinking toggle never visible on the capable model' });
@@ -1382,7 +1381,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // 2026-07-23), so a raise has to land on THIS conversation's params. The
     // panel PUT does that and shows it in the drawer.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await closeDrawer(page);
@@ -1450,7 +1449,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // Save & Continue resumes THAT trace -- prefix exactly once, then more,
     // with the seam space intact -- instead of starting a second thought.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await page.evaluate(() => {
@@ -1592,7 +1591,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('an attached image round-trips: send, persist, render, survive reload', async () => {
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
 
     await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
     await page.evaluate(async () => {
@@ -1648,7 +1647,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // until this check -- run it on a gguf model or it proves the weaker half.
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page, ctx);
+    const convId = await newFreshConversation(page);
 
     await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
     await page.evaluate(async () => {

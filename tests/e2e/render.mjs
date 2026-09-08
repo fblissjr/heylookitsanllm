@@ -558,9 +558,13 @@ async function openChat(browser, base, {
     send();
   });
 
-  // Each boot must start like a FRESH browser. Every page here shares one
-  // browser profile and origin, so whatever the app keeps in localStorage leaks
-  // from one boot into the next. Since v2.0.38 chat REMEMBERS the conversation
+  // Clear the app's OWN browser-local state between boots. Not a fresh browser
+  // -- sessionStorage, cookies and IndexedDB are untouched, and so is the bare
+  // `browser.newPage()` further down that boots the app for the markdown check.
+  // What it covers is the `heylook.` namespace, which is where this app keeps
+  // everything it stores; a future key written outside it would leak the same
+  // way. Every page here shares one browser profile and origin, so whatever the
+  // app keeps in localStorage leaks from one boot into the next. Since v2.0.38 chat REMEMBERS the conversation
   // you were last in, which landed later boots on a conversation an earlier boot
   // had selected instead of the newest one -- correct in the product, wrong
   // here, and it failed two checks that never mention storage ("no thinking

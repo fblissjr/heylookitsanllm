@@ -63,18 +63,33 @@ const STICK_SLACK_PX = 100;
 // these -- it is the same carve-out the system-prompt box already has (the page
 // is a mirror of the store, and a mirror must not overwrite text the user is
 // still typing). Nothing here reaches the server.
+// Text typed with no conversation open has no owner yet, exactly like the
+// system prompt beside it -- and it is keyed here rather than dropped, because
+// the alternative is that clicking New eats what you just typed. That is what
+// the first version did: stash returned early with no activeId, restore then
+// blanked the box unconditionally, and the text was gone. Before any of this
+// the textarea was simply never cleared, so it survived by accident.
+const NO_DOC = Symbol('composer draft with no conversation yet');
+
 function stashComposerDraft(ctx) {
   const s = ctx.state;
-  if (!s.activeId || !s.textarea) return;
+  if (!s.textarea) return;
+  const key = s.activeId ?? NO_DOC;
   const text = s.textarea.value;
-  if (text) s.composerDrafts.set(s.activeId, text);
-  else s.composerDrafts.delete(s.activeId);
+  if (text) s.composerDrafts.set(key, text);
+  else s.composerDrafts.delete(key);
 }
 
 function restoreComposerDraft(ctx) {
   const s = ctx.state;
   if (!s.textarea) return;
-  s.textarea.value = (s.activeId && s.composerDrafts.get(s.activeId)) || '';
+  const own = s.activeId ? s.composerDrafts.get(s.activeId) : undefined;
+  // The no-owner draft is ADOPTED by the first conversation that opens with
+  // nothing of its own, then dropped -- one conversation gets it, not every
+  // one you visit afterwards.
+  const orphan = own === undefined ? s.composerDrafts.get(NO_DOC) : undefined;
+  if (orphan !== undefined) s.composerDrafts.delete(NO_DOC);
+  s.textarea.value = own ?? orphan ?? '';
   autoGrow(s.textarea);
 }
 
@@ -2848,6 +2863,12 @@ async function send(ctx) {
       s.appliedPresetId = conv.applied_preset_id ?? null;
       s.conversations.unshift(conv);
       s.activeId = conv.id;
+      // Every other activeId move goes through selectConversation, which is
+      // where the remembered id is written. This branch does not, so without
+      // this the conversation you START by typing and sending is the one case
+      // the restore never learns about -- masked by the fallback landing on
+      // conversations[0], which is the same row right up until it is not.
+      lsWrite(LAST_CONV_KEY, conv.id);
       s.messages = [];
       if (s.systemPrompt !== promptBeforeCreate) {
         // prompt changed while the create was in flight -- it has a home now

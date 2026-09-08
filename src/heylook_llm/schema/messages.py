@@ -98,10 +98,6 @@ class MessageCreateRequest(BaseModel):
                     "model's processor supports",
     )
 
-    # Display honesty (DESIGN.md §6): the server strips the specials a model
-    # DECLARES (`special: true` in its tokenizer files) out of the text it
-    # returns, as a guard against fast-detokenizer leaks. That guard also
-    # deletes a special the model wrote deliberately -- and those say where in
     # NO `include_performance` here, deliberately (removed v1.79.49). This wire
     # returns telemetry UNCONDITIONALLY in both modes -- streaming emits
     # `message_stop.performance`, non-streaming carries a `performance` object

@@ -45,22 +45,26 @@ function emptySettings() {
   return Object.fromEntries(Object.keys(PARAM_META).map((k) => [k, null]));
 }
 
-// Is `v` a usable value for `key`, per the bounds PARAM_META already declares?
-// null/undefined always pass -- that IS the cascade. Anything else that fails
-// becomes null rather than riding to the wire, because the alternative is a 422
-// from the backend with nothing on screen pointing at the stored bag that
-// caused it. Dropping to null is visible: the field falls back to showing its
-// placeholder, which is the panel's own spelling of "the model decides".
+// Is `v` a STRUCTURALLY usable value for `key`? Type and shape only.
+//
+// It deliberately does NOT range-check against PARAM_META's min/max. Those are
+// input-widget hints -- step, slider bounds, what a sane number looks like --
+// and they are NOT the backend's validation range: `max_tokens` caps at 65536
+// here while a gguf model can hold a context far past that, so a stored 100000
+// is legal, useful, and something the panel has no business rejecting.
+//
+// Rejecting it was worse than useless, because a dropped key does not stay
+// dropped: `snapshotSettings()` omits nulls, so the next panel edit PUTs a bag
+// without it and the stored value is ERASED from the document or preset, with
+// nothing on screen having said so. A filter meant to stop a bad value reaching
+// the wire would have silently destroyed a good one. Structural checks have no
+// such failure mode -- a string where a number belongs, or a NaN, is garbage
+// under every backend range.
 function valid(key, v) {
-  if (v === null || v === undefined) return false;
+  if (v === null || v === undefined) return false;   // absent IS the cascade
   const meta = PARAM_META[key];
   if (!meta) return false;
-  if (meta.type === 'number') {
-    if (typeof v !== 'number' || !Number.isFinite(v)) return false;
-    if (meta.min !== undefined && v < meta.min) return false;
-    if (meta.max !== undefined && v > meta.max) return false;
-    return true;
-  }
+  if (meta.type === 'number') return typeof v === 'number' && Number.isFinite(v);
   if (meta.type === 'tristate') return v === true || v === false;
   if (meta.type === 'select') return meta.options.includes(v);
   if (meta.type === 'checkbox') return typeof v === 'boolean';
@@ -70,12 +74,13 @@ function valid(key, v) {
 // The "only known keys, everything else null" invariant in one place --
 // every hydration funnels through it.
 //
-// It filters KEYS and, since v2.0.38, VALUES. The key filter alone was not
-// enough and localStorage was never the only source: `presets.params` and a
-// document's stored `params` are server-side bags that hydrate this same panel
-// through this same function, so a value that has gone out of range (a bound
-// tightened, a field's meaning changed, a bag hand-edited) reached the wire and
-// came back a 422 that named the field but not where the value was stored.
+// It filters KEYS and, since v2.0.38, the SHAPE of values -- localStorage was
+// never the only source, since `presets.params` and a document's stored
+// `params` hydrate this same panel through this same function. What it cannot
+// do is decide a number is out of range: see `valid()` for why that filter was
+// removed rather than tuned. A value the BACKEND refuses still returns a 422
+// that names the field but not where it was stored; that is the honest limit
+// of a client-side check, and destroying the value is not a better answer.
 function mergeKnown(src) {
   const out = emptySettings();
   for (const k of Object.keys(out)) if (k in src && valid(k, src[k])) out[k] = src[k];
