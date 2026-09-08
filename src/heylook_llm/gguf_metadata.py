@@ -208,6 +208,43 @@ _SPEC_TYPE_BY_PREFIX = (
 _CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
 
 
+# The GGUF spec's "Recommended Sampler Parameters" block. Converters write it
+# from the HF repo's generation_config.json (gguf-py/gguf/metadata.py), which
+# is the SAME source the MLX side reads off disk -- so this is the gguf
+# spelling of the existing vendor layer, not a new concept.
+#
+# Only the three keys the vendor layer takes are read. The spec also defines
+# min_p, xtc_*, penalty_*, mirostat* and a sampler `sequence`; none of the
+# files here carry them, because generation_config.json does not.
+_VENDOR_SAMPLING_KEYS = {
+    "temperature": "general.sampling.temp",
+    "top_p": "general.sampling.top_p",
+    "top_k": "general.sampling.top_k",
+}
+
+
+def vendor_sampling(primary: Path) -> dict[str, Any]:
+    """The model's own recommended decode settings, from the GGUF header.
+
+    llama.cpp reads these itself at load (`common_init_sampler_from_model`)
+    for any key not set on the CLI -- but heylook sends every one of them
+    explicitly on every request, so the baked-in values never survived to the
+    sampler. That silently contradicted the file: a Qwen3.6 GGUF asks for
+    top_k 20 and gemma-4 for 64, while heylook's floor sends 0.
+
+    Best-effort like its MLX sibling: an unreadable header, a missing key or a
+    non-numeric value yields {} / is dropped, because a vendor hint must never
+    block a load.
+    """
+    found = safe_read_metadata(primary, set(_VENDOR_SAMPLING_KEYS.values()))
+    out: dict[str, Any] = {}
+    for our_key, gguf_key in _VENDOR_SAMPLING_KEYS.items():
+        value = found.get(gguf_key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[our_key] = value
+    return out
+
+
 def chat_template(primary: Path) -> Optional[str]:
     """The chat template EMBEDDED in the GGUF header, or None if it has none.
 

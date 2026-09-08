@@ -14,9 +14,12 @@
 #   heylook's parser stack is pass-through (never re-parse another engine's
 #   output).
 # - Sampler cascade IS MLX's: the shared samplers.resolve_effective_sampling
-#   (floor -> thinking anti-loop overlay -> model fields -> default_sampler
-#   -> request.sampler -> explicit request fields). No vendor layer passed:
-#   GGUF dirs carry no generation_config.json.
+#   (floor -> VENDOR -> thinking anti-loop overlay -> model fields ->
+#   default_sampler -> request.sampler -> explicit request fields).
+#   The vendor layer comes from the GGUF HEADER (v2.0.22), not from a
+#   generation_config.json -- a gguf dir carries no such file, but the
+#   converter writes those very values into `general.sampling.*`, so the
+#   layer has the same source and the same meaning as MLX's.
 #   max_tokens is ALWAYS sent (llama-server's default is unlimited).
 # - -np 1 by OUR choice (full context per slot, matches heylook's
 #   serialized semantics) -- not a compat requirement.
@@ -153,6 +156,11 @@ class LlamaServerProvider(BaseProvider):
         self._proc: Optional[subprocess.Popen] = None
         self._log_handle = None
         self._base_url: Optional[str] = None
+        # The model's own recommended decode settings, read from the GGUF
+        # header once and cached. None = not read yet (the file cannot change
+        # under a loaded model, and re-reading per request would stat a
+        # multi-GB file on the hot path).
+        self._vendor_sampling: Optional[Dict] = None
         # The context the RUNNING process was sized to, read from /props once
         # it is ready. Config carries what was ASKED (`ctx_size`, absent =
         # llama-server's own model-derived, memory-fitted default); this is
@@ -873,13 +881,26 @@ class LlamaServerProvider(BaseProvider):
             out["reasoning_content"] = thinking
         return out
 
+    def _vendor_defaults(self) -> Dict:
+        """The GGUF header's recommended sampling, cached per provider.
+
+        Read lazily rather than at load so a provider built without one (the
+        unit tests, the argv drift test) still resolves a cascade.
+        """
+        if self._vendor_sampling is None:
+            from .. import gguf_metadata
+            self._vendor_sampling = gguf_metadata.vendor_sampling(
+                Path(str(self.config.get("model_path") or "")))
+        return self._vendor_sampling
+
     def _build_payload(self, request: ChatRequest) -> dict:
         # The shared cascade (samplers.resolve_effective_sampling) -- ONE
         # implementation with MLX, not a mirror. No vendor layer: GGUF dirs
         # ship no generation_config.json. Keys llama-server doesn't take
         # (vision_tokens etc.) are dropped below by _PAYLOAD_KEY_MAP.
         merged = resolve_effective_sampling(
-            request, self.config, thinking_capable=self.thinking_capable)
+            request, self.config, vendor=self._vendor_defaults(),
+            thinking_capable=self.thinking_capable)
 
         payload = {
             "model": self.model_id,

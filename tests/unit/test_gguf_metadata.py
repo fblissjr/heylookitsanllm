@@ -327,3 +327,78 @@ class TestContextLength:
             ("gemma4.block_count", U32, 60),
         ])
         assert context_length(f) == 262144
+
+
+@pytest.mark.unit
+class TestVendorSampling:
+    """The model's own recommended decode settings, from the GGUF header.
+
+    heylook sends every sampler key on every request, so before v2.0.22 the
+    values llama.cpp reads out of this block never survived to the sampler --
+    the server sent top_k 0 at models whose own files ask for 20 or 64. These
+    check that the layer arrives AND that it stays a layer: anything above it
+    in the cascade still wins.
+    """
+
+    def test_the_headers_recommendation_reaches_the_wire(self, tmp_path):
+        from heylook_llm.gguf_metadata import vendor_sampling
+        from heylook_llm.providers.llama_server_provider import _PAYLOAD_KEY_MAP
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "qwen3"),
+            ("general.sampling.temp", F32, 0.5),
+            ("general.sampling.top_p", F32, 0.8),
+            ("general.sampling.top_k", I32, 20),
+        ])
+        vendor = vendor_sampling(f)
+        assert vendor == {"temperature": pytest.approx(0.5),
+                          "top_p": pytest.approx(0.8), "top_k": 20}
+
+        merged = resolve_effective_sampling(
+            _BareRequest(), {"model_path": str(f)}, vendor=vendor)
+        sent = {dst: merged.get(src) for src, dst in _PAYLOAD_KEY_MAP
+                if merged.get(src) is not None}
+        # The point of the layer: what the file asks for is what goes out.
+        assert sent["top_k"] == 20
+        assert sent["temperature"] == pytest.approx(0.5)
+
+    def test_an_explicit_value_still_beats_the_header(self, tmp_path):
+        """It raises the floor; it does not overrule anyone.
+
+        models.toml, a named sampler and the request all sit above it, and a
+        vendor hint that could not be overridden would be a worse default than
+        the one it replaced.
+        """
+        from heylook_llm.gguf_metadata import vendor_sampling
+        from heylook_llm.samplers import resolve_effective_sampling
+
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "qwen3"),
+            ("general.sampling.top_k", I32, 20),
+        ])
+        merged = resolve_effective_sampling(
+            _BareRequest(), {"model_path": str(f), "top_k": 7},
+            vendor=vendor_sampling(f))
+        assert merged["top_k"] == 7
+
+    def test_a_model_with_no_recommendation_contributes_nothing(self, tmp_path):
+        """Absent keys must yield {}, not zeros.
+
+        A vendor layer that invented values would be worse than none: it would
+        overwrite the floor with numbers no one chose.
+        """
+        from heylook_llm.gguf_metadata import vendor_sampling
+
+        f = write_gguf(tmp_path / "m.gguf", [("general.architecture", STR, "qwen3")])
+        assert vendor_sampling(f) == {}
+        assert vendor_sampling(tmp_path / "missing.gguf") == {}
+
+
+class _BareRequest:
+    """A request that names nothing -- the case the cascade's defaults are for."""
+    sampler = None
+    enable_thinking = None
+
+    def model_dump(self, **kwargs):
+        return {}

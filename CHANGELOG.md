@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.23]
+
+### Changed
+
+- **gguf models now decode with the settings their own file recommends.**
+  The GGUF spec has a "Recommended Sampler Parameters" block that converters
+  write from the HF repo's `generation_config.json`, and llama.cpp reads it at
+  load for any key not set on the CLI. heylook sends every sampler key
+  explicitly on every request, so those values never survived to the sampler:
+  the server sent `top_k 0` at models whose own headers ask for 20 (Qwen3.6)
+  and 64 (gemma-4). `gguf_metadata.vendor_sampling()` now supplies the
+  cascade's vendor layer for gguf, the same layer MLX has always had from
+  `generation_config.json`.
+
+  **This changes output for any gguf model that was running on the defaults.**
+  It remains a layer: models.toml fields, named samplers and request fields
+  all still win, and a model whose header carries no recommendation
+  contributes nothing rather than zeros.
+
+  The old comment said gguf passes no vendor layer because a gguf dir ships no
+  `generation_config.json`. That was true and the wrong conclusion -- the
+  values had moved into the header. Only the three keys the vendor layer takes
+  are read; the spec's `min_p`, penalties and mirostat entries are absent from
+  real files because `generation_config.json` has no such fields, so a
+  publisher's documented `min_p` still reaches nothing automatically.
+
 ## [2.0.22]
 
 ### Added

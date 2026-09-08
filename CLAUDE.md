@@ -683,6 +683,23 @@ in git history; a contract test pins that `/v2` stays 404.)
 
 - New endpoint or changed response model: module with `APIRouter(tags=["Name"])`, add the tag to `openapi_tags` + `app.include_router()` in `api.py`. (The OpenAPI drift guard -- `generated-api.ts` / `scripts/check_openapi_sync.sh` / the pre-commit block / `/openapi-regen` -- was retired 2026-07-09 with the legacy React app that consumed the generated TS types; v3 hand-writes `api.js`. The live schema stays at `/openapi.json` and `/docs`.)
 - Removing a provider/feature: grep the repo, then check `config.py` (Literal+Union), `router.py`, `api.py`, README/ARCHITECTURE, `pyproject.toml` extras, frontend type unions, test fixtures.
+- THE VENDOR SAMPLING LAYER EXISTS ON BOTH ENGINES (v2.0.23). It sits directly above
+  `GLOBAL_SAMPLER_FLOOR`, so models.toml fields, named samplers and request fields all
+  still win. Each engine reads the same values from where its models keep them: MLX from
+  the model dir's `generation_config.json` (`samplers.load_vendor_sampling`), gguf from
+  the GGUF header's `general.sampling.*` (`gguf_metadata.vendor_sampling`), which
+  converters write FROM that same generation_config.json. gguf went without it until
+  v2.0.23 on the stated reasoning that a gguf dir ships no generation_config.json --
+  true, and the wrong conclusion: the values had moved into the header, and because
+  heylook sends every sampler key EXPLICITLY on every request, llama.cpp's own read of
+  that block (`common_init_sampler_from_model`, which fills any key not set on the CLI)
+  was overridden every time. The server was sending `top_k 0` at models whose own files
+  ask for 20 (Qwen3.6) and 64 (gemma-4). Only the three keys the layer takes are read:
+  the spec also defines min_p, xtc, penalties, mirostat and a sampler `sequence`, but
+  real files carry none of them because generation_config.json has no such fields -- so
+  a publisher's DOCUMENTED min_p or repeat penalty reaches nothing automatically, and
+  neither does a thinking-vs-instruct split, since a GGUF holds one set of values and
+  publishers document two.
 - TWO named-bundle systems, one word each -- don't conflate or re-alias: **samplers** = bundled TOMLs `src/heylook_llm/data/samplers/` via `SamplerRegistry` (`samplers.py`), resolved in the provider cascade (`thinking` auto-applies for `enable_thinking` models; `vlm-*` encode mlx-vlm's ignored-param subset), reachable as `ChatRequest.sampler` / models.toml `default_sampler` / `/v1/admin/models/samplers`, discoverable via `/v1/capabilities.samplers`; roster is exact-pinned by `test_sampler_registry.py` (a new sampler must name its consumer). **Presets** = `/v1/presets` DuckDB prompt+sampler bundles (v3's preset bar -- shared `preset-bar.js`, chat + notebook, client-expanded) -- "preset" means ONLY this system now. Retired names for the registry: "profile" (collides with `/v1/performance/profile`) and "preset" (collided with the above; a request sending `preset` gets a 422 naming the rename, not a silent drop -- the guard is on `MessageCreateRequest` (on `ChatRequest` it was dead, and pydantic answers 422, not the 400 this line claimed until it was live-checked in v2.0.2)). CLI `--preset`/`--profile` survive only as aliases for `--sampler` on import. Details: `docs/architecture/config.md`. Which preset a document is RUNNING is `applied_preset_id` on conversations/notebooks (schema v6) -- written on explicit Apply/Update/Save-as-new only; a document whose state merely matches a preset is labelled by live client-side matching and never stamped (storing a derived association can bind stale state to the wrong document).
 - A document's `params` is the SAMPLER BAG and everything in it reaches the model -- non-sampler state may never be stashed there (v3 keeps display prefs in a separate store for exactly this reason, and preset provenance got its own column rather than a params key). The same rule is why `samplerParams(caps)` filters capability-gated keys at the wire.
 - A HAND-COPIED CONSTANT LIST IS A DEFECT WITH A DELAY, not a style issue. This repo

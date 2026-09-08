@@ -238,10 +238,17 @@ GLOBAL_SAMPLER_FLOOR = {
     'presence_penalty': 0.0,
 }
 
-# Vendor layer: a model dir's generation_config.json carries the vendor's
-# recommended decode settings (gemma-4: 1.0/64/0.95; Qwen3 thinking models:
-# 0.6/20/0.95). Providers overlay it directly above the floor, so models.toml
-# fields, samplers, and request fields all still override it.
+# Vendor layer: the model's OWN recommended decode settings, overlaid directly
+# above the floor so models.toml fields, samplers and request fields all still
+# override it. Each engine reads the same values from where its models keep
+# them: MLX from the model dir's generation_config.json (`load_vendor_sampling`
+# below), gguf from the `general.sampling.*` block in the GGUF header
+# (`gguf_metadata.vendor_sampling`), which converters write FROM that same
+# generation_config.json. One concept, two spellings on disk -- gguf went
+# without it until v2.0.22 on the reasoning that a gguf dir ships no
+# generation_config.json, which is true and was the wrong conclusion: the
+# values had moved into the header, and heylook was sending top_k 0 at models
+# whose own files asked for 20 (Qwen3.6) and 64 (gemma-4).
 VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
 
