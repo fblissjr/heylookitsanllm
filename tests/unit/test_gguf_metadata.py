@@ -32,50 +32,9 @@ from heylook_llm.gguf_metadata import (
     supports_thinking,
 )
 
-# GGUFValueType codes (gguf.constants)
-U32, I32, F32, BOOL, STR, ARRAY, U64 = 4, 5, 6, 7, 8, 9, 10
-
-
-def _str(s: str) -> bytes:
-    raw = s.encode()
-    return struct.pack("<Q", len(raw)) + raw
-
-
-def _value(vtype: int, value) -> bytes:
-    if vtype == STR:
-        return _str(value)
-    if vtype == BOOL:
-        return struct.pack("<?", value)
-    if vtype == U32:
-        return struct.pack("<I", value)
-    if vtype == I32:
-        return struct.pack("<i", value)
-    if vtype == F32:
-        return struct.pack("<f", value)
-    if vtype == U64:
-        return struct.pack("<Q", value)
-    if vtype == ARRAY:
-        elem_type, items = value
-        body = b"".join(_value(elem_type, i) for i in items)
-        return struct.pack("<IQ", elem_type, len(items)) + body
-    raise AssertionError(f"unhandled type {vtype}")
-
-
-def write_gguf(path, kvs, *, version=3, tensor_count=0, magic=b"GGUF"):
-    """Write a GGUF file that is header-only: valid KV section, no tensors.
-
-    kvs: list of (key, vtype, value). Order matters -- the reader walks
-    sequentially, so tests can place a target key after a value it must skip.
-    """
-    out = bytearray(magic)
-    out += struct.pack("<I", version)
-    out += struct.pack("<QQ", tensor_count, len(kvs))
-    for key, vtype, value in kvs:
-        out += _str(key)
-        out += struct.pack("<I", vtype)
-        out += _value(vtype, value)
-    path.write_bytes(bytes(out))
-    return path
+from helpers.gguf import (  # noqa: E402
+    U32, I32, F32, BOOL, STR, ARRAY, U64, write_gguf,
+)
 
 
 @pytest.mark.unit

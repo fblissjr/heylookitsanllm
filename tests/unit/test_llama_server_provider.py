@@ -641,19 +641,58 @@ class TestPayload:
         payload = p._build_payload(req(enable_thinking=True, presence_penalty=0.3))
         assert payload["presence_penalty"] == 0.3
 
-    def test_the_vendor_layer_overlays_the_floor(self):
+    def test_the_vendor_layer_reaches_the_payload(self, tmp_path):
         """What replaced the named-sampler layers: the model's OWN published
-        settings. The floor is only reached where the model says nothing, so
-        this is the layer that has to actually reach the wire."""
-        p = make_provider()
-        payload = p._build_payload(req())
-        assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
+        settings, and this pins that they reach the REQUEST BODY.
 
-        from heylook_llm.samplers import resolve_effective_sampling
-        merged = resolve_effective_sampling(
-            req(), {"model_path": "x"}, vendor={"temperature": 0.31, "top_k": 64})
-        assert merged["temperature"] == 0.31, "vendor did not beat the floor"
-        assert merged["top_k"] == 64
+        Through `_build_payload`, against a provider pointed at a real GGUF
+        whose header carries `general.sampling.*`. Both halves are the fix for
+        a check that could not fail. The version this replaces asserted the
+        FLOOR value against `make_provider()`, whose model_path does not exist
+        -- so `vendor_sampling` returned nothing and the assertion held whether
+        or not the provider consulted the vendor layer at all. Its second half
+        called `resolve_effective_sampling` directly with a literal vendor
+        dict, which exercises samplers.py and never the provider. Deleting the
+        provider's `vendor=` argument entirely left the whole suite green.
+
+        The reporting side of this layer already had a guard
+        (`test_vendor_layer_reaches_the_report_on_every_engine`); generation,
+        which is the side the original bug was on, had none.
+        """
+        from helpers.gguf import write_gguf, STR, F32, I32
+
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "qwen3"),
+            ("general.sampling.temp", F32, 0.5),
+            ("general.sampling.top_p", F32, 0.8),
+            ("general.sampling.top_k", I32, 20),
+        ])
+        p = make_provider(model_path=str(f))
+        payload = p._build_payload(req())
+        assert payload["temperature"] == pytest.approx(0.5), \
+            "the header's temperature did not reach the payload"
+        assert payload["top_p"] == pytest.approx(0.8)
+        assert payload["top_k"] == 20, (
+            "top_k is the one that bit: heylook sends every sampler key "
+            "explicitly, so llama.cpp's own read of this block is overridden "
+            "on every request and a missing layer silently sent the floor")
+
+        # Still a LAYER: the request outranks it.
+        explicit = p._build_payload(req(temperature=0.1))
+        assert explicit["temperature"] == pytest.approx(0.1)
+
+    def test_the_floor_applies_only_where_the_header_is_silent(self, tmp_path):
+        """The other half of "layer": a key the model does not publish still
+        gets the floor, rather than being dropped."""
+        from helpers.gguf import write_gguf, STR, F32
+
+        f = write_gguf(tmp_path / "m.gguf", [
+            ("general.architecture", STR, "qwen3"),
+            ("general.sampling.temp", F32, 0.5),
+        ])
+        payload = make_provider(model_path=str(f))._build_payload(req())
+        assert payload["temperature"] == pytest.approx(0.5)
+        assert payload["top_p"] == GLOBAL_SAMPLER_FLOOR["top_p"]
 
     def test_enable_thinking_maps_to_chat_template_kwargs(self):
         p = make_provider()

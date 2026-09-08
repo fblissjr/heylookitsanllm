@@ -191,7 +191,10 @@ class ModelRouter:
         ModelRouter._audit_configured_paths(config_data)
         return merge_discovered(config_data, discover(config_data))
 
-    _paths_audited = False
+    # Last audit report emitted, so a reload re-reports only on CHANGE.
+    # `None` (never audited) is deliberately distinct from `""` (audited,
+    # nothing wrong) -- otherwise the first clean audit looks like a repeat.
+    _paths_audited_report: "str | None" = None
 
     @staticmethod
     def _audit_configured_paths(config_data: dict) -> None:
@@ -229,20 +232,28 @@ class ModelRouter:
         general "what would this edit change" answer is ever wanted, it belongs
         in a diff over the merge, not in an existence check.
         """
-        if ModelRouter._paths_audited:
-            return
-        ModelRouter._paths_audited = True
-
         FIELDS = ("model_path", "mmproj_path", "draft_model_path",
                   "chat_template_path")
         entries = config_data.get("models") or []
         # Which resolved paths more than one entry claims -- see the docstring.
+        # RESOLVED, matching the merge: `merge_discovered` matches an entry to a
+        # discovered model on `Path(...).resolve()`, so answering "does another
+        # entry claim this" on `expanduser()` alone predicts a DIFFERENT
+        # relation than the one the reader is about to act on. Two spellings of
+        # one directory -- a modelzoo vendor symlink and the real path -- are
+        # the case this repo has already hit, and expanduser reports them as
+        # unrelated. Falls back to expanduser for a path that cannot resolve.
+        def _identity(value: str) -> str:
+            try:
+                return str(Path(value).expanduser().resolve())
+            except OSError:
+                return str(Path(value).expanduser())
+
         claimed: dict[str, int] = {}
         for entry in entries:
             value = (entry.get("config") or {}).get("model_path")
             if value:
-                claimed[str(Path(value).expanduser())] = \
-                    claimed.get(str(Path(value).expanduser()), 0) + 1
+                claimed[_identity(value)] = claimed.get(_identity(value), 0) + 1
 
         dead: list[str] = []
         for entry in entries:
@@ -253,7 +264,7 @@ class ModelRouter:
             if not missing:
                 continue
             model_path = cfg.get("model_path")
-            shared = model_path and claimed.get(str(Path(model_path).expanduser()), 0) > 1
+            shared = model_path and claimed.get(_identity(model_path), 0) > 1
             note = (" -- another entry also claims this model_path, so removing "
                     "this one leaves that one serving it"
                     if shared else
@@ -261,6 +272,18 @@ class ModelRouter:
             dead.append(f"  - {entry.get('id', '<unnamed>')}: "
                         f"{', '.join(missing)} does not exist{note}")
 
+        # REPORT ON CHANGE, not once per process. The original silenced every
+        # repeat because a warning that repeats unchanged is one people learn to
+        # scroll past -- true, and it also silenced a warning that CHANGED. An
+        # admin edit writing a bad path after startup goes through reload_config
+        # -> _load_config -> here, and was then never reported for the life of
+        # the process. Keyed on the report text, so a fixed entry going quiet
+        # and a newly-broken one speaking up both work, while a reload that
+        # changes nothing stays silent.
+        report = "\n".join(dead)
+        if report == ModelRouter._paths_audited_report:
+            return
+        ModelRouter._paths_audited_report = report
         if not dead:
             return
         logging.warning(
@@ -268,8 +291,8 @@ class ModelRouter:
             "exist and will fail to load:\n%s\n"
             "Fix the path, or delete the entry -- a model under [scan].folders "
             "is served with derived defaults and needs no entry at all. This "
-            "is reported once per process, not on every reload.",
-            "\n".join(dead))
+            "is reported again only when it changes.",
+            report)
 
     def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
         """Get or create a loading lock for a specific model."""

@@ -619,18 +619,18 @@ def sampler_summary_from_request(request: Any) -> dict:
     # missed on the way in: two requests at "low" and "xhigh" produced
     # identical summaries while their token counts and latency differed by a
     # lot, and the one field that explained the difference was the absent one.
-    # DERIVED, never hand-copied: this list drifted from its source while it
-    # was one (it had gained the RETIRED `preset` -- which config.py 422s, so
-    # the getattr was permanently None -- lost the current `sampler`, and never
-    # picked up `vision_tokens`). The same defect in
-    # conversation_generate_api.py was fixed the same way; this sibling was
-    # missed. `sampler` is the named-bundle field, not a REQUEST_SAMPLER_FIELDS
-    # member, so it is appended explicitly.
+    # DERIVED, never hand-copied, and nothing is appended beside it. This list
+    # drifted from its source while it was one: it had gained the RETIRED
+    # `preset` -- a permanently-None getattr, since nothing binds that field --
+    # and never picked up `vision_tokens`. It then kept an appended `sampler`
+    # for exactly as long, past the removal of the named-bundle system in
+    # v2.0.30, which is the same defect a second time in the same statement
+    # that describes it. An append here is a field the cascade does not know
+    # about; if one is ever needed, add it to REQUEST_SAMPLER_FIELDS instead.
     from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
 
-    fields = REQUEST_SAMPLER_FIELDS + ("sampler",)
     result: dict[str, Any] = {}
-    for name in fields:
+    for name in REQUEST_SAMPLER_FIELDS:
         value = getattr(request, name, None)
         if value is not None:
             result[name] = value
