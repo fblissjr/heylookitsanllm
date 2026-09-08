@@ -233,8 +233,12 @@ class MLXEmbeddingProvider(BaseProvider):
         # Convert to Python lists
         return embeddings.tolist()
 
-    def unload(self):
-        """Release model resources."""
+    def unload(self, *, drain: bool = True):
+        """Release model resources.
+
+        `drain` is accepted for the BaseProvider contract and ignored: this
+        provider runs no generation gate and has no in-flight work to wait on.
+        """
         if self.model is not None:
             self.model = None
             self.tokenizer = None

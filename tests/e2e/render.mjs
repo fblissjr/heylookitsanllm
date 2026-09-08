@@ -418,6 +418,10 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
 // - caps is the stub model's capability list. Attachment staging is gated on
 //   it, so the drop/paste checks need a vision model and the refusal check
 //   needs the text-only default.
+// Every page context openChat has handed out, for the one error check at the
+// foot of the run. Pages close; these arrays outlive them.
+const PAGE_CONTEXTS = [];
+
 async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
   secondModel = null, withMedia = false, dripGenerate = false, presets = [], appliedPresetId = null,
@@ -514,6 +518,20 @@ async function openChat(browser, base, {
 
   await page.goto(`${base}/#/chat`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.chat__messages .message', { timeout: 15000 });
+  // EVERY context is registered, so one check at the end can speak for all of
+  // them. Eighteen separate `no uncaught page errors (...)` checks used to do
+  // this one context at a time, and between them they caught none of the
+  // twenty defects a mutation audit planted (2026-09-08) -- while three
+  // contexts had their errors asserted nowhere at all. One check covers more
+  // and cannot be forgotten by the next person who calls openChat.
+  //
+  // The stack line is the label: it names the openChat call site without
+  // asking 30-odd call sites to pass a name they would then have to keep
+  // accurate.
+  const openedAt = (new Error().stack || '').split('\n')
+    .map((l) => (l.match(/render\.mjs:(\d+):/) || [])[1])
+    .filter(Boolean)[1] ?? '?';
+  PAGE_CONTEXTS.push({ openedAt, pageErrors });
   return { page, pageErrors, reqs, store };
 }
 
@@ -839,9 +857,6 @@ async function main() {
       assert(labels.includes('Edit'), `saved row did not regain normal actions (got ${JSON.stringify(labels)})`);
     });
 
-    await suite.check('no uncaught page errors (unsaved boot)', () => {
-      assert(un.pageErrors.length === 0, `page errors: ${un.pageErrors.join(' | ')}`);
-    });
     await un.page.close();
 
     // ---- boot 2: scroll pins + thinking editor + reconcile ----------------
@@ -1003,9 +1018,6 @@ async function main() {
       assert(painted.visible !== 'hidden', 'the saved row is visibility:hidden');
     });
 
-    await suite.check('no uncaught page errors', () => {
-      assert(pageErrors.length === 0, `page errors: ${pageErrors.join(' | ')}`);
-    });
     await page.close();
 
     // ---- boot 2b: regenerate + continue adoption --------------------------
@@ -1095,9 +1107,6 @@ async function main() {
       assert(survivors.tail, 'Delete took the rest of the thread with it -- the truncation behavior is back');
     });
 
-    await suite.check('no uncaught page errors (regenerate + continue)', () => {
-      assert(gen.pageErrors.length === 0, `page errors: ${gen.pageErrors.join(' | ')}`);
-    });
     await gen.page.close();
 
     // ---- boot 2c: schema-v7 media rows render from the blob endpoint ------
@@ -1257,9 +1266,6 @@ async function main() {
         `the editor withheld Attach on a USER row under a vision model (got ${has.user})`);
     });
 
-    await suite.check('no uncaught page errors (media rows)', () => {
-      assert(med.pageErrors.length === 0, `page errors: ${med.pageErrors.join(' | ')}`);
-    });
     await med.page.close();
 
     // ---- boot 3: loud guard during the pre-first-token window -------------
@@ -1285,9 +1291,6 @@ async function main() {
         !document.querySelector('.message--streaming')),
       { message: 'the delayed stream never completed' });
     });
-    await suite.check('no uncaught page errors (slow stream)', () => {
-      assert(slow.pageErrors.length === 0, `page errors: ${slow.pageErrors.join(' | ')}`);
-    });
     await slow.page.close();
 
     // ---- boot 4: residency lands AFTER first paint ------------------------
@@ -1309,9 +1312,6 @@ async function main() {
       await send(late.page, 'new message');
       const after = await scroll(late.page);
       assert(atBottom(after), `send left the view at ${after.top} of ${after.height} (bottom is ${after.height - after.client})`);
-    });
-    await suite.check('no uncaught page errors (late residency)', () => {
-      assert(late.pageErrors.length === 0, `page errors: ${late.pageErrors.join(' | ')}`);
     });
     await late.page.close();
 
@@ -1411,9 +1411,6 @@ async function main() {
       await settle(page);
       const chip = await page.$eval('.chat__sysprompt-chip', (el) => el.title);
       assert(chip.includes('Set after an outage.'), `prompt not adopted on the retry (chip title: ${JSON.stringify(chip)})`);
-    });
-    await suite.check('no uncaught page errors (resume)', () => {
-      assert(resumed.pageErrors.length === 0, `page errors: ${resumed.pageErrors.join(' | ')}`);
     });
     await resumed.page.close();
 
@@ -1847,9 +1844,6 @@ async function main() {
         `the arm outlived its window and still reads ${JSON.stringify(await saveLabel())}`);
     });
 
-    await suite.check('no uncaught page errors (preset guard)', () => {
-      assert(guard.pageErrors.length === 0, `page errors: ${guard.pageErrors.join(' | ')}`);
-    });
     await guard.page.close();
 
     // ---- boot 4d: the select reports what the document is running ---------
@@ -1876,9 +1870,6 @@ async function main() {
       const body = await stamped.page.$eval('.drawer--open .preset-preview__body', (el) => el.textContent);
       assert(body.includes('STAMPED PRESET PROMPT'),
         `the preview shows ${JSON.stringify(body.slice(0, 60))}`);
-    });
-    await suite.check('no uncaught page errors (stamped select)', () => {
-      assert(stamped.pageErrors.length === 0, `page errors: ${stamped.pageErrors.join(' | ')}`);
     });
     await stamped.page.close();
 
@@ -1923,9 +1914,6 @@ async function main() {
         `the residency render ate the draft (textarea now holds ${JSON.stringify(after.value)})`);
       assert(after.buttons.includes('Save & Continue'),
         `the editor was not repaired: buttons are ${JSON.stringify(after.buttons)}`);
-    });
-    await suite.check('no uncaught page errors (editor repair)', () => {
-      assert(dur.pageErrors.length === 0, `page errors: ${dur.pageErrors.join(' | ')}`);
     });
     await dur.page.close();
 
@@ -2008,9 +1996,6 @@ async function main() {
       await closeDrawer(mob.page);
     });
 
-    await suite.check('no uncaught page errors (mobile)', () => {
-      assert(mob.pageErrors.length === 0, `page errors: ${mob.pageErrors.join(' | ')}`);
-    });
     await mob.page.close();
 
     // ---- boot 7: drag/drop + paste attachment staging ---------------------
@@ -2133,9 +2118,6 @@ async function main() {
         `a within-cap image was re-encoded (base64 is ${ratio.toFixed(2)}x the source, expected ~1.33x)`);
     });
 
-    await suite.check('no uncaught page errors (attach staging)', () => {
-      assert(vis.pageErrors.length === 0, `page errors: ${vis.pageErrors.join(' | ')}`);
-    });
     await vis.page.close();
 
     // Text-only model: refusing at STAGING time is the point -- a silently
@@ -2158,9 +2140,6 @@ async function main() {
       assert(!r.defaultPrevented,
         'the paste was cancelled on a model that stages nothing -- the text was eaten too');
       assert((await thumbCount(txt.page)) === 0, 'a text-only model staged an image');
-    });
-    await suite.check('no uncaught page errors (text-only drop)', () => {
-      assert(txt.pageErrors.length === 0, `page errors: ${txt.pageErrors.join(' | ')}`);
     });
     await txt.page.close();
 
@@ -2219,9 +2198,6 @@ async function main() {
         `switching away from a thinking model said ${JSON.stringify(status)}`);
       assert(!(await page.$('.chat__switch-warning')),
         'losing thinking raised a blocking warning -- it should disclose, not gate');
-    });
-    await suite.check('no uncaught page errors (thinking loss)', () => {
-      assert(think.pageErrors.length === 0, `page errors: ${think.pageErrors.join(' | ')}`);
     });
     await think.page.close();
 
@@ -2308,14 +2284,8 @@ async function main() {
       assert(clamped === '262144', `expected a clamp to the 262144 ceiling, got ${clamped}`);
     });
 
-    await suite.check('no uncaught page errors (context select)', () => {
-      assert(ctxm.pageErrors.length === 0, `page errors: ${ctxm.pageErrors.join(' | ')}`);
-    });
     await ctxm.page.close();
 
-    await suite.check('no uncaught page errors (conversation switch)', () => {
-      assert(two.pageErrors.length === 0, `page errors: ${two.pageErrors.join(' | ')}`);
-    });
     await two.page.close();
 
     // ---- boot 9: the "Show special tokens" display pref reaches the wire --
@@ -2391,9 +2361,6 @@ async function main() {
         'the display pref was merged into overrides');
     });
 
-    await suite.check('no uncaught page errors (display pref)', () => {
-      assert(disp.pageErrors.length === 0, `page errors: ${disp.pageErrors.join(' | ')}`);
-    });
     // setDisplayPref PERSISTS, and every boot in this run shares one browser
     // profile and origin -- leaving it unchecked would silently seed every
     // later boot with a non-default pref (code review finding, 2026-08-23).
@@ -3103,19 +3070,22 @@ async function main() {
       // would be the one carrying tokens and the assertion below would be
       // meaningless.
       assert(live, 'run 2 finished before run 1 resumed -- the window was never open, check is vacuous');
-      // Run 1's terminal vocabulary. These MIRROR chat.js's GENERATING_PREFIX
-      // and MODEL_SWITCH_PREFIX (chat.js, search those names) -- they are not
-      // exported, so this is a hand-copy and has to be re-checked if either
-      // string changes. The first draft of this list got two of them wrong:
-      // lowercase `still generating` never matches 'Still generating on the
-      // server', and MODEL_SWITCH_PREFIX had no pattern at all -- which is the
-      // line a mid-stream MODEL SWITCH produces, i.e. the exact scenario the
-      // fix is about. The check was red pre-fix only because the stub happens
-      // to drive the recovery branch.
+      // Run 1's terminal vocabulary, READ FROM chat.js rather than restated.
+      // This was a hand-copy and it was wrong twice: once lowercased, so it
+      // matched nothing, and once missing MODEL_SWITCH_PREFIX entirely --
+      // which is the line a mid-stream MODEL SWITCH produces, i.e. the exact
+      // scenario this check is for. Both times the check stayed green. The
+      // page has already loaded chat.js, so `import()` returns the cached
+      // module rather than re-evaluating it.
+      const prefixes = await md.evaluate(async (b) => {
+        const m = await import(`${b}/js/pages/chat.js`);
+        return [m.GENERATING_PREFIX, m.MODEL_SWITCH_PREFIX];
+      }, base);
+      assert(prefixes.every(Boolean),
+        `chat.js stopped exporting the status prefixes: ${JSON.stringify(prefixes)}`);
       const TERMINAL = new RegExp([
         'recovering', 'Recovered',                       // the recovery notice
-        'Still generating on the server',                // GENERATING_PREFIX
-        'The reply in flight keeps generating',          // MODEL_SWITCH_PREFIX
+        ...prefixes.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
         '\\d+ tokens',                                   // the completion line
         'Stopped',
       ].join('|'));
@@ -3353,6 +3323,20 @@ async function main() {
         `after the first clone settled a later tap issued ${clones() - 1} more, expected 1`);
     });
     await cl.page.close();
+
+    // LAST, and deliberately: every context above has been exercised and
+    // closed by now, and the arrays outlive their pages. This replaces the
+    // per-context canaries -- it covers the contexts they covered plus the
+    // ones nobody remembered to assert on.
+    await suite.check('no page anywhere threw an uncaught error', () => {
+      const bad = PAGE_CONTEXTS.filter((c) => c.pageErrors.length > 0);
+      assert(bad.length === 0, bad.map(
+        (c) => `page opened at render.mjs:${c.openedAt}: ${c.pageErrors.join(' | ')}`).join('\n    '));
+      // Guard the guard: if openChat ever stops registering, this check goes
+      // quietly vacuous and takes the suite's only error coverage with it.
+      assert(PAGE_CONTEXTS.length > 20,
+        `only ${PAGE_CONTEXTS.length} page contexts registered -- openChat is no longer recording them`);
+    });
   } finally {
     await browser.close();
     server.close();

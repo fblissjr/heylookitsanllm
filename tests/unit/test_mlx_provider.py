@@ -726,6 +726,61 @@ class TestGetMetrics:
 
 
 @pytest.mark.unit
+class TestCollectionDoesNotBlock:
+    """A destructor must not wait, and must not tear down live GPU state.
+
+    `BaseProvider.__del__` used to run the full `unload()`, whose drain loop
+    polls for up to 30s. Anything collected while its active counter was
+    non-zero therefore stalled whatever thread the GC fired on -- in the suite
+    that was ~29s of a 65s run from one leaked counter, and in the server it
+    would land on whichever thread GC chose, including one delivering tokens.
+
+    Nothing here asserts the counter is ever non-zero in production; a running
+    generation holds a reference, so it should not be. This pins what happens
+    if that assumption is ever wrong, which is the case a destructor cannot
+    afford to get wrong.
+    """
+
+    def test_collection_with_traffic_returns_at_once(self, mock_mlx_provider):
+        import time as _time
+        mock_mlx_provider.model = create_mock_model()
+        mock_mlx_provider._active_generations = 3
+        try:
+            started = _time.perf_counter()
+            mock_mlx_provider.__del__()
+            elapsed = _time.perf_counter() - started
+            # Two orders of magnitude under the 30s cap: this is asserting
+            # "did not wait", not a latency budget.
+            assert elapsed < 1.0, (
+                f"__del__ blocked for {elapsed:.1f}s with generations in flight -- "
+                "the drain loop is running in a destructor again"
+            )
+            # And it declined to tear down rather than freeing weights
+            # mid-decode, which is the fault the drain loop exists to prevent.
+            # `unload()` ends in `del self.model`, so the attribute surviving
+            # is the observable. `_strategies` is NOT: it is empty on a
+            # provider that never loaded, so asserting on it passes whether or
+            # not anything was torn down -- which is how the first version of
+            # this check failed for the wrong reason.
+            assert hasattr(mock_mlx_provider, "model"), (
+                "__del__ tore down a provider that still had generations in "
+                "flight -- skipping the wait must mean leaving it alone, not "
+                "releasing resources out from under a live decode"
+            )
+        finally:
+            mock_mlx_provider._active_generations = 0
+
+    def test_a_quiet_provider_still_unloads_on_collection(self, mock_mlx_provider):
+        """The refusal is conditional. With nothing in flight -- the normal
+        case -- collection must still release the model, or the change trades
+        a stall for a leak."""
+        mock_mlx_provider.model = create_mock_model()
+        mock_mlx_provider._active_generations = 0
+        mock_mlx_provider.__del__()
+        assert not hasattr(mock_mlx_provider, "model")
+
+
+@pytest.mark.unit
 class TestClearCache:
     def test_clear_cache_calls_manager(self, mock_mlx_provider):
         mock_mlx_provider.model = create_mock_model()

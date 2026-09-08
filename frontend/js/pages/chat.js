@@ -2078,8 +2078,15 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // could never be cleared and the page went on claiming a reply was coming for
 // an idle conversation. A shared prefix plus one predicate means a new
 // wording cannot come apart from its own eraser.
-const GENERATING_PREFIX = 'Still generating on the server';
-const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
+// EXPORTED so the browser check can read them rather than restate them.
+// tests/e2e/render.mjs's superseded-stream check needs this vocabulary, and
+// while these were module-private it carried a hand-copy that was wrong twice
+// -- once lowercased so it matched nothing, once missing MODEL_SWITCH_PREFIX
+// entirely, which is the line the scenario the check is FOR actually
+// produces. A hand-copied constant is a defect with a delay; this repo
+// already derives rather than copies everywhere else it can.
+export const GENERATING_PREFIX = 'Still generating on the server';
+export const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
 const isGeneratingNote = (text) =>
   text.startsWith(GENERATING_PREFIX) || text.startsWith(MODEL_SWITCH_PREFIX);
 

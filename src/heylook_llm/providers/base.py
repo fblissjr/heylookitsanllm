@@ -282,8 +282,15 @@ class BaseProvider(ABC):
             return processor.tokenizer
         return processor if hasattr(processor, 'decode') else None
 
-    def unload(self):
-        """Optional method to explicitly release resources."""
+    def unload(self, *, drain: bool = True):
+        """Optional method to explicitly release resources.
+
+        `drain` is the CALLER saying whether it can afford to wait for
+        in-flight work. Every deliberate teardown can, and must: releasing
+        weights mid-decode faults Metal. `__del__` cannot -- see below.
+        Implementations with nothing to wait for accept the argument and
+        ignore it.
+        """
         pass
 
     def warmup(self) -> None:
@@ -300,4 +307,18 @@ class BaseProvider(ABC):
         """
 
     def __del__(self):
-        self.unload()
+        # A DESTRUCTOR MUST NOT WAIT. This ran the full teardown, drain loop
+        # and all, and MLXProvider's loop polls for up to 30s -- so a provider
+        # collected while its active counter was non-zero stalled whatever
+        # thread the GC happened to fire on. It was measured doing exactly
+        # that in the test suite (from a counter one test forgot to reset),
+        # but the hazard is here, not there: in the server, GC fires on any
+        # thread, including one delivering tokens.
+        #
+        # `drain=False` does NOT mean "tear down faster". It means "you are a
+        # destructor: if there is live work, leave everything alone and say
+        # so". Being collected mid-generation is a bug in its own right -- a
+        # running generation holds a reference -- so the provider that reports
+        # it is telling you something worth reading, and holding the resources
+        # is strictly better than faulting Metal to release them.
+        self.unload(drain=False)

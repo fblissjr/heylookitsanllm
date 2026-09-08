@@ -69,6 +69,20 @@ def _mlx_provider_source() -> str:
     return _MLX_PROVIDER_SRC.read_text()
 
 
+# The SECOND call site. Per-message media attribution moved into vlm_inputs.py
+# in v2.0.18, and the source-text pin below stayed pointed at mlx_provider.py
+# alone -- so the file that actually decides how images are attributed was not
+# pinned to the library surface this module exists to track. Both files call
+# apply_chat_template today; only one was watched.
+_VLM_INPUTS_SRC = Path(
+    __file__
+).parent.parent.parent / "src" / "heylook_llm" / "providers" / "common" / "vlm_inputs.py"
+
+
+def _vlm_inputs_source() -> str:
+    return _VLM_INPUTS_SRC.read_text()
+
+
 # ---------------------------------------------------------------------------
 # Anti-contamination guard
 # ---------------------------------------------------------------------------
@@ -220,6 +234,27 @@ class TestApplyChatTemplate:
         # traceability, not a library-compat check -- that's the test above).
         src = _mlx_provider_source()
         assert "num_images=num_images, return_messages=True" in src
+
+    def test_the_media_attribution_call_site_is_pinned_too(self):
+        """vlm_inputs.py is where per-message media attribution lives.
+
+        It builds the BLOCK-form content mlx-vlm counts markers in, then calls
+        apply_chat_template itself -- so a signature change there breaks image
+        placement, which is the failure this module is for. It was unpinned
+        while mlx_provider.py's call was pinned, found by audit 2026-09-08.
+        """
+        src = _vlm_inputs_source()
+        # The kwargs THIS call site actually uses. It does not pass
+        # return_messages -- that belongs to mlx_provider.py's call, and
+        # asserting it here failed on first run, which is the useful kind of
+        # red: the pin has to describe the call that exists.
+        assert "num_images=len(images)" in src, (
+            "vlm_inputs.py no longer passes num_images to apply_chat_template "
+            "-- if the media-attribution call moved again, move this pin with it"
+        )
+        assert "reasoning_effort=reasoning_effort" in src, (
+            "vlm_inputs.py stopped forwarding reasoning_effort to the template"
+        )
 
 
 # ---------------------------------------------------------------------------

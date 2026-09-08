@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.28]
+
+### Fixed
+
+- **`BaseProvider.__del__` no longer waits, and no longer tears down live GPU
+  state.** It ran the full `unload()`, and `MLXProvider`'s drain loop polls
+  until in-flight work clears or a 30s cap expires -- so a provider collected
+  while its active counter was non-zero stalled whatever thread the GC fired
+  on. A test leaking that counter is what surfaced it, but the hazard is in
+  the provider: in the server, GC fires on any thread, including one
+  delivering tokens.
+
+  `unload(drain=...)` is now the caller saying whether it can afford to wait.
+  Every deliberate teardown can and does; `__del__` passes `drain=False`,
+  which means "if there is live work, leave everything alone and warn" --
+  NOT "tear down faster". Skipping the wait to free weights anyway would
+  release them mid-decode, which is the Metal fault the loop exists to
+  prevent. Being collected mid-generation is a bug in itself (a running
+  generation holds a reference), so the warning names it as a leaked counter
+  or dropped reference rather than a teardown to tune.
+
+  Pinned by two checks: collection with traffic returns at once and leaves the
+  model loaded, and collection with nothing in flight still unloads -- so the
+  fix cannot decay into a leak. Verified red against the old destructor, where
+  the first blocks for the full cap.
+
+### Changed
+
+- **The browser suite's per-context page-error checks are one check.** Each
+  asserted that one page context threw nothing; between them they caught none
+  of the defects a mutation audit planted, while three contexts were asserted
+  on nowhere. `openChat` now registers every context, and one check at the
+  foot of the run speaks for all of them, naming the `render.mjs` line each
+  offending page was opened at. It also asserts contexts were registered at
+  all, so it cannot go quietly vacuous. Verified against a copy of the
+  frontend that throws on every chat page.
+
+- **The superseded-stream check reads `chat.js`'s status prefixes instead of
+  restating them.** `GENERATING_PREFIX` and `MODEL_SWITCH_PREFIX` are exported
+  now. The hand-copy was wrong twice -- once lowercased so it matched nothing,
+  once missing the model-switch line entirely, which is what the scenario the
+  check exists for actually produces -- and stayed green both times.
+
+- **`test_mlxvlm_surface.py` pins `vlm_inputs.py`'s call site too.** Per-message
+  media attribution moved there in v2.0.18 while the source-text pin stayed on
+  `mlx_provider.py`, so the file that decides how images are attributed was not
+  watched against the library surface. Verified red against a renamed kwarg.
+
 ## [2.0.27]
 
 ### Fixed
