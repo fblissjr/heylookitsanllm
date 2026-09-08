@@ -101,6 +101,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.22]
 
+### Verified
+
+- `tests/smoke/` green on all three engine arms against an isolated live
+  server (mlx-lm `Qwen3.5-0.8B-MLX-8bit-textonly`, mlx-vlm
+  `google_gemma_4-E4B-it-bf16-mlx`, gguf
+  `google_gemma-4-E4B-it-qat-q4_0-gguf`): 70/70. Four mechanisms reported
+  UNCOVERED rather than passed, and none is new here -- thinking DEPTH on both
+  MLX arms (no served MLX model advertises `reasoning_effort`, the standing
+  gap), the nested-image row on mlx-lm (a text-only model cannot cover it),
+  and the thinking block on mlx-vlm (that model returned none for the probe
+  prompt).
+- The override itself checked end to end on a live server, on BOTH engines:
+  a written override reaches the REAL rendered prompt (`POST
+  /v1/conversations/{id}/prompt`, which is llama-server's `/apply-template` on
+  gguf and the same `build_prompt` generation uses on MLX), and deleting it
+  restores the vendor template byte-identically. The `stale` signal was walked
+  through all four of its states -- loaded-and-untouched `false`, edited-while-
+  loaded `true`, after-reload `false`, unloaded `null`.
+
 ### Added
 
 - **The chat template is visible, and overridable, per model.** Until now the
