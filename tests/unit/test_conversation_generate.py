@@ -700,14 +700,16 @@ class TestClaimLeaks:
 
 
 @pytest.mark.unit
-class TestShowSpecialTokens:
-    """v3's "Show special tokens" display pref on the wire (DESIGN.md §6).
+class TestDeclaredSpecialsAreAlwaysStripped:
+    """Declared specials never reach the stream, the store, or the next prompt.
 
-    The server strips a model's DECLARED specials before the text is streamed
-    and before it is persisted, so "show them" has to be asked for per request.
-    Both halves matter: a reply is stored exactly as it was parsed, so the
-    streamed deltas and the saved row must agree -- one parser built two ways
-    would put markers on screen that the row does not have (or the reverse).
+    v2.0.38 removed the `show_special_tokens` request field that could keep
+    them, so the first two are now unconditional. The replay guard below is
+    NOT redundant with that: `_UPDATABLE_MESSAGE_FIELDS` lets a user EDIT an
+    assistant row, so a control token can still enter the store by hand, and
+    the store IS the request. That is why these two seed their rows through
+    the store rather than by generating them -- generation can no longer
+    produce a row carrying a special, but an edit can.
     """
 
     SPECIAL = "<|im_end|>"
@@ -721,12 +723,12 @@ class TestShowSpecialTokens:
 
         class DeclaringProvider(FakeProvider):
             def __init__(self):
-                super().__init__(chunks=("Hello", f" world{TestShowSpecialTokens.SPECIAL}"))
+                super().__init__(chunks=("Hello", f" world{TestDeclaredSpecialsAreAlwaysStripped.SPECIAL}"))
 
             def template_info(self):
                 return ModelTemplateInfo(
                     chat_template="",
-                    special_tokens=frozenset([TestShowSpecialTokens.SPECIAL]),
+                    special_tokens=frozenset([TestDeclaredSpecialsAreAlwaysStripped.SPECIAL]),
                     template_source="jinja",
                 )
 
@@ -743,20 +745,10 @@ class TestShowSpecialTokens:
         await app.state.db.close()
 
     @pytest.mark.asyncio
-    async def test_asking_keeps_them_on_screen_and_in_the_row(self, ctx_specials):
-        client, store, _ = ctx_specials
-        conv, _ = await make_conv(store, ("user", "q"))
-        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "append", "show_special_tokens": True})
-        assert res.status_code == 200
-        assert self.SPECIAL in streamed_text(res.text)
-        saved = saved_event(res.text)["messages"][-1]
-        assert saved["content"] == f"Hello world{self.SPECIAL}"
-
-    @pytest.mark.asyncio
-    async def test_default_strips_both(self, ctx_specials):
-        """Opt-IN: a body that says nothing gets today's behavior, streamed
-        and stored."""
+    async def test_generation_strips_from_both_the_stream_and_the_row(self, ctx_specials):
+        """The stream and the saved row must agree: a reply is persisted exactly
+        as it was parsed, so one parser built two ways would put markers on
+        screen that the row does not have (or the reverse)."""
         client, store, _ = ctx_specials
         conv, _ = await make_conv(store, ("user", "q"))
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
@@ -766,36 +758,21 @@ class TestShowSpecialTokens:
         assert saved_event(res.text)["messages"][-1]["content"] == "Hello world"
 
     @pytest.mark.asyncio
-    async def test_it_never_reaches_the_model(self, ctx_specials):
-        """It is a display pref: it must not land in the request the provider
-        is driven with (params is the sampler bag -- CLAUDE.md)."""
-        client, store, provider = ctx_specials
-        conv, _ = await make_conv(store, ("user", "q"))
-        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "append", "show_special_tokens": True})
-        assert res.status_code == 200
-        dumped = provider.last_request.model_dump()
-        assert "show_special_tokens" not in dumped
-        assert not any("special" in k for k in dumped)
+    async def test_stored_specials_do_not_come_back_as_prompt(self, ctx_specials):
+        """The store IS the request, so a row that CARRIES a special is replayed
+        into the next turn's prompt -- and a fast tokenizer encodes a declared
+        special's string as the real control token, putting a turn boundary
+        inside prior assistant content (code review finding, 2026-08-23).
 
-    @pytest.mark.asyncio
-    async def test_kept_specials_do_not_come_back_as_prompt(self, ctx_specials):
-        """The store IS the request, so a row recorded WITH specials is
-        replayed into the next turn's prompt -- and a fast tokenizer encodes a
-        declared special's string as the real control token, putting a turn
-        boundary inside prior assistant content. Display state must not reach
-        the model: the replay strips (code review finding, 2026-08-23)."""
+        Seeded through the store, which is the reachable path since v2.0.38:
+        generation always strips now, but `content` is user-updatable, so an
+        edited assistant row can still carry one."""
         client, store, provider = ctx_specials
-        conv, _ = await make_conv(store, ("user", "q1"))
-        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "append", "show_special_tokens": True})
-        assert res.status_code == 200
-        stored = saved_event(res.text)["messages"][-1]["content"]
-        assert self.SPECIAL in stored, "precondition: the row must carry a special"
+        conv, _ = await make_conv(store, ("user", "q1"),
+                                  ("assistant", f"Hello world{self.SPECIAL}"))
 
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "append", "user_content": "q2",
-                                      "show_special_tokens": True})
+                                json={"mode": "append", "user_content": "q2"})
         assert res.status_code == 200
         replayed = [m for m in provider.last_request.messages if m.role == "assistant"]
         assert replayed, "the second turn replayed no assistant history"
@@ -806,18 +783,16 @@ class TestShowSpecialTokens:
     async def test_continue_prefill_never_ends_in_a_control_token(self, ctx_specials):
         """Worst case of the same bug: in continue mode the anchor row rides as
         the FINAL message with continue_final_message=True, so an unstripped
-        row would make the prefill end on a turn boundary."""
+        row would make the prefill end on a turn boundary. Seeded through the
+        store for the same reason as its sibling above."""
         client, store, provider = ctx_specials
-        conv, _ = await make_conv(store, ("user", "q1"))
-        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "append", "show_special_tokens": True})
-        assert res.status_code == 200
-        anchor = saved_event(res.text)["messages"][-1]
+        conv, rows = await make_conv(store, ("user", "q1"),
+                                     ("assistant", f"Hello world{self.SPECIAL}"))
+        anchor = rows[-1]
         assert self.SPECIAL in anchor["content"], "precondition: anchor carries a special"
 
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
-                                json={"mode": "continue", "message_id": anchor["id"],
-                                      "show_special_tokens": True})
+                                json={"mode": "continue", "message_id": anchor["id"]})
         assert res.status_code == 200
         req = provider.last_request
         assert req.continue_final_message is True

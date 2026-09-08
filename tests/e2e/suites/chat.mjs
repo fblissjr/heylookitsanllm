@@ -1,6 +1,6 @@
 // Chat suite: the most-verified surface. Covers streaming, position-based
 // edit/regenerate/delete truncation, stop=partial-saved, post-abort health,
-// settings + the localStorage sampler seed, conversation CRUD, and a 390px
+// settings + the document params seed, conversation CRUD, and a 390px
 // mobile pass. Data is cleared by the orchestrator before this runs.
 
 import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
@@ -104,7 +104,7 @@ async function conversationStateById(page, id) {
 // round-trip check read an old text conversation and found 0 image blocks).
 // created_at is immutable, so the newest-created conversation is always the
 // one New just made.
-async function newFreshConversation(page) {
+async function newFreshConversation(page, ctx) {
   await clickByText(page, '.chat__convs-head button', 'New');
   // The conv-item paints at the START of selectConversation; its async
   // hydrate is still in flight then, and hydrateDocParams silently resets
@@ -121,6 +121,12 @@ async function newFreshConversation(page) {
       (a, b) => (a && a.created_at > b.created_at ? a : b), null)?.id ?? null;
   });
   assert(id, 'could not resolve the fresh conversation id server-side');
+  // Cap this conversation's generations. A new conversation takes
+  // `params: snapshotSettings()`, and since v2.0.38 nothing persists the panel
+  // across a reload, so the first one of a run would otherwise start empty and
+  // generate at the model's own max_tokens. Seeded on the DOCUMENT, which is
+  // what the server layers a generation over -- the panel need not agree.
+  await ctx.seedParams('conversations', id);
   return id;
 }
 
@@ -494,11 +500,12 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.select(MODEL_SELECT, config.model);
     // Phase 2: generation params come from the CONVERSATION's params bag
     // (the server builds the request from the store), so the budget must be
-    // raised through the panel on a fresh conversation -- a localStorage
-    // seed alone never reaches the store (same trap documented on the
-    // thinking-block check below). Big enough that a fast model is still
+    // raised through the panel on a fresh conversation. Since v2.0.38 the
+    // harness seeds the document directly, so this is no longer a trap so much
+    // as the same mechanism spelled by hand -- the panel PUT is what makes the
+    // raise visible in the drawer too. Big enough that a fast model is still
     // mid-stream when Stop lands.
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', '4000');
     await closeDrawer(page);
@@ -557,7 +564,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // So the cap is the stop-test one, not 4000 -- large enough to still
     // be streaming when the reload lands, small enough that the run
     // finishes inside this check's window instead of 45s later.
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await closeDrawer(page);
@@ -690,8 +697,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
   });
 
-  await suite.check('the DOCUMENT\'s params win over the localStorage seed', async () => {
-    // This asserted that `ctx.open()`'s localStorage seed showed in the panel,
+  await suite.check('the DOCUMENT\'s params win over the seeded panel', async () => {
+    // This asserted that `ctx.open()`'s seed showed in the panel,
     // which stopped being true at v1.65-66: chat hydrates the panel from the
     // conversation (`hydrateDocParams` -> `applySettings(doc.params)`), and
     // `mergeKnown` rebuilds from empty, so adopting a document REPLACES the
@@ -700,7 +707,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     //
     // The rule worth having is the one that replaced it, and it is stronger:
     // the document is authoritative for sampler params, so a page load that
-    // re-seeds localStorage must STILL show the conversation's value.
+    // seeds nothing must STILL show the conversation's own value.
     const conv = await currentConversation(page);
     assert(conv?.id, 'no conversation to seed params on');
     await page.evaluate(async (id) => {
@@ -710,18 +717,21 @@ export async function runChatSuite({ suite, ctx, config }) {
         body: JSON.stringify({ params: { max_tokens: 4321 } }),
       });
     }, conv.id);
-    await ctx.open();            // reload; re-seeds localStorage with config.maxTokens
+    await ctx.open('#/chat', null);  // reload, seeding NOTHING over the 4321 above
     await openDrawer(page, '.chat__settings-btn');
     await waitFor(async () => (await settingsInputValue(page, 'Max tokens')) === '4321',
       { message: `panel did not adopt the document's max_tokens (seed was ${config.maxTokens})` });
   });
 
-  await suite.check('settings edit writes through to localStorage', async () => {
+  await suite.check('a settings edit writes through to the document', async () => {
+    // What bindDocumentParams exists to provide, asserted where it lands. This
+    // read localStorage until v2.0.38; the document is the stronger claim,
+    // because it is what the server layers the next generation over.
     await setSettingsInput(page, 'Temperature', '0.42');
     await waitFor(async () => {
       const s = await ctx.readSettings();
       return s.temperature === 0.42;
-    }, { message: 'temperature not saved to localStorage' });
+    }, { message: 'temperature never reached the conversation\'s params' });
     // restore so it doesn't leak into later generations
     await setSettingsInput(page, 'Temperature', '');
   });
@@ -926,7 +936,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // as the drifted panel. Server-side assertions: the stamp is written at
     // create, not inferred client-side.
     await closeDrawer(page); // the drawer is modal; the New button lives in #app
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     const conv = await page.evaluate(async (id) =>
       await (await fetch(`/v1/conversations/${id}`)).json(), convId);
     assert(conv.applied_preset_id, 'new conversation was not stamped with the preset');
@@ -1042,7 +1052,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   // ---- capability gating, thinking wiring, image attach/round-trip --------
-  // The mobile check's ctx.open() reload just above reset localStorage settings
+  // The mobile check's ctx.open() reload just above reset the active document
   // to the default seed (small max_tokens, no thinking/temperature overrides)
   // and the viewport back to desktop, so this section starts from a clean
   // baseline. Every check here that GENERATES seeds its own fresh conversation
@@ -1150,7 +1160,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await count(page, '.chat__switch-warning')) === 0, 'warning still up after Cancel');
   });
 
-  await suite.check('vision_tokens control round-trips through localStorage', async () => {
+  await suite.check('vision_tokens control round-trips through the document', async () => {
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
     await openDrawer(page);
@@ -1161,15 +1171,17 @@ export async function runChatSuite({ suite, ctx, config }) {
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await waitFor(async () => (await ctx.readSettings()).vision_tokens === 512,
-      { message: 'vision_tokens=512 never landed in localStorage' });
+      { message: 'vision_tokens=512 never reached the document' });
     // clear back to the cascade default so it doesn't leak into later generations
     await page.evaluate(() => {
       const el = document.querySelector('#set-vision_tokens');
       el.value = '';
       el.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await waitFor(async () => (await ctx.readSettings()).vision_tokens === null,
-      { message: 'vision_tokens never cleared back to null (cascade)' });
+    // ABSENT, not null: snapshotSettings() omits a null key entirely, which is
+    // how "use the cascade" is spelled on the wire and in the store.
+    await waitFor(async () => !('vision_tokens' in (await ctx.readSettings())),
+      { message: 'vision_tokens never cleared back to the cascade (still stored)' });
     await closeDrawer(page);
   });
 
@@ -1182,7 +1194,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // state -- each tap writes an explicit true/false to the conversation's
     // params, which is what generate builds from.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     await page.waitForSelector(THINK_BTN, { timeout: 5000 });
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const def = models.find((m) => m.id === config.model)?.thinking_default;
@@ -1261,7 +1273,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // special tokens highlighted. Persists nothing; needs the model resident
     // (it is -- the harness loaded it).
     await page.select(MODEL_SELECT, config.model);
-    await newFreshConversation(page);
+    await newFreshConversation(page, ctx);
     await page.type(COMPOSER, 'draft text for the preview');
     await page.click('.chat__composer button[aria-label="Preview prompt"]');
     await page.waitForSelector('.chat__prompt-preview .prompt-preview__text', { timeout: 20000 });
@@ -1297,7 +1309,7 @@ export async function runChatSuite({ suite, ctx, config }) {
 
     // arm the pin: thinking ON while the capable model is selected
     await page.select(MODEL_SELECT, config.model);
-    await newFreshConversation(page);
+    await newFreshConversation(page, ctx);
     await waitFor(async () => page.evaluate(() =>
       document.querySelector('.chat__composer button[aria-label="Toggle thinking"]')?.hidden === false),
     { message: 'thinking toggle never visible on the capable model' });
@@ -1359,19 +1371,18 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'false',
       { message: 'thinking toggle did not disarm' });
     await waitFor(async () => (await ctx.readSettings()).enable_thinking !== true,
-      { message: 'enable_thinking still true in localStorage after restore' });
+      { message: 'enable_thinking still true in the document after restore' });
   });
 
   await suite.check('thinking block renders in the UI when the model produces thinking content', async () => {
     await requireCap(page, config.model, 'thinking');
-    // NO reload for the token budget: a reload's localStorage seed is dead on
-    // arrival -- setup auto-selects the newest conversation and
-    // hydrateDocParams replaces the seeded cache with that conversation's
-    // stored params (per-document params win by design; seen live
-    // 2026-07-23). Instead, seed a fresh conversation and raise Max tokens
-    // through the PANEL, which PUTs to that conversation's params for real.
+    // Raise the budget through the PANEL on a fresh conversation rather than
+    // by reopening: per-document params win by design (hydrateDocParams
+    // replaces the cache from the conversation being selected; seen live
+    // 2026-07-23), so a raise has to land on THIS conversation's params. The
+    // panel PUT does that and shows it in the drawer.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await closeDrawer(page);
@@ -1439,7 +1450,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // Save & Continue resumes THAT trace -- prefix exactly once, then more,
     // with the seam space intact -- instead of starting a second thought.
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
     await page.evaluate(() => {
@@ -1581,7 +1592,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('an attached image round-trips: send, persist, render, survive reload', async () => {
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
 
     await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
     await page.evaluate(async () => {
@@ -1637,7 +1648,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // until this check -- run it on a gguf model or it proves the weaker half.
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, ctx);
 
     await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
     await page.evaluate(async () => {

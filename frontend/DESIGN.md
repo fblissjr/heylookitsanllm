@@ -167,63 +167,54 @@ distinct tokens (a dim/outlined chip, `--mono`, whitespace as the honest glyphs
 from §2). Collapsing them is an **opt-in toggle, default off** — never the
 default, never unconditional stripping.
 
-**Realized as ONE global display toggle**, not a per-page control — it lives in
-the shared settings drawer and every token-rendering surface reads it (the
-canonical cross-cutting display pref; see the settings taxonomy below). Wired
-for the decoded-text surfaces in v1.79.6: chat and notebook send
-`show_special_tokens` on the wire (`displayWireFields()`, settings.js) and the
-server skips its declared-specials strip for that request. Two invariants:
-- **Display-only.** The toggle changes rendering, never what is sent to the
-  model. This keeps it from becoming a second generation-settings path.
-- **One preference, two render mechanisms.** A token-ARRAY surface would
-  receive token *ids* and flag/style the special ones; decoded-text surfaces
-  (chat, notebook) render a *string*, so "show specials" means *not stripping
-  them from the decoded text*. The two token-array surfaces (token explorer,
-  jspace) were removed in v1.79.74-75, so only the decoded-text half exists
-  today — but the DECLARATION mechanism it forced is still load-bearing for
-  models and perf, which honor no display prefs at all: a
-  page DECLARES the display prefs it honors (`displayPrefs` on its drawer
-  contribution) and passes that same array to `displayWireFields()`, so the
-  drawer offers exactly the controls that page acts on. One list, both uses —
-  declaring a pref and sending it cannot come apart, and there is no second
-  registry-level flag to disagree with it.
-- **It is an MLX-only lever, and the help text says so.** The strip lives in
-  heylook's own reasoning parser, and the gguf provider routes to a
-  pass-through (`template_info()` is None: llama-server pre-splits reasoning
-  and re-parsing another engine's output is the documented trap), so heylook
-  never strips a gguf reply. Verified live on the *same model* in both
-  packagings, gemma-4-E4B MLX vs its q4_0 GGUF: with the pref off, MLX returned
-  `STARTEND` where gguf returned `START<mask>END`. Default-on hides the
-  asymmetry — both show — so it only surfaces if someone turns it off and
-  expects stripping. Not worth "fixing" by teaching heylook to strip gguf
-  output: that would add hiding where none exists, against this section.
-- **Kept markers must never re-enter a prompt.** The store IS the request on
-  chat, so an unstripped assistant row would be replayed into the next turn --
-  and a fast tokenizer matches a declared special's *string* and encodes the
-  real control token, putting a turn boundary inside prior assistant content
-  (worst case: `continue`, whose prefill would end on one). The server therefore
-  strips declared specials out of replayed ASSISTANT text
-  (`_strip_history_specials`), which is what makes the "display-only" invariant
-  above true rather than aspirational. User-authored text is left alone.
-  Notebook is the deliberate exception and differs in kind: the reply lands in
-  the document body, which is raw, visible, editable text the user is composing,
-  and *what you see is what is sent* is that surface's contract — mangling it
-  silently would be the bigger lie. Caveat stated in the drawer help text.
-- **On the decoded-text surfaces it is a GENERATION-time switch, and the help
-  text says so.** The strip runs server-side before the text is streamed *and*
-  before it is persisted, so there is no stripped-vs-raw copy to toggle between
-  afterwards: a reply generated with the pref on keeps its specials in the
-  stored row forever, and one generated with it off never recorded them. That is
-  the honest shape (the row holds what the model produced), and it is what makes
-  the edit rule below reachable at all — but it means flipping the toggle
-  changes the *next* reply, never the thread already on screen.
+**The toggle was REMOVED in v2.0.38; the principle above stands and is unmet.**
+It shipped in v1.79.6 as one global display pref that chat and notebook sent on
+the wire, and the server then skipped its declared-specials strip. The reason it
+had to go is that it was never display-only in the way this section requires: the
+strip ran before the text was streamed AND before it was persisted, so a
+per-BROWSER preference decided what the conversation store recorded. The same
+conversation continued from a phone and a desktop accumulated rows of two kinds,
+permanently, with nothing on the row saying which. Specials are stripped
+unconditionally now, which is the OPPOSITE of what this section asks for, and
+that is the honest state to record rather than paper over.
 
-The shared settings drawer therefore holds four kinds of thing, and the drawer's
+What a correct version looks like, deferred rather than rejected: keep the store
+always UNSTRIPPED and strip at READ, so the choice is a real render-time one and
+applies to replies that already exist -- which the removed pref could never do,
+as its own help text had to admit. The design and its three traps (a strip-set
+cache needing its own file stamp, the nullable and sometimes co-written
+`model_id` on a row, and under- vs over-stripping) are in
+`docs/project/TODO.md`.
+
+Three things that outlived the toggle and are still load-bearing:
+- **It was an MLX-only lever.** The strip lives in heylook's own reasoning
+  parser, and the gguf provider routes to a pass-through (`template_info()` is
+  None: llama-server pre-splits reasoning and re-parsing another engine's output
+  is the documented trap), so heylook never strips a gguf reply. Verified live on
+  the *same model* in both packagings, gemma-4-E4B MLX vs its q4_0 GGUF. Any
+  future version inherits this asymmetry; do not "fix" it by teaching heylook to
+  strip gguf output, which would add hiding where none exists, against this
+  section.
+- **Kept markers must never re-enter a prompt.** The store IS the request on
+  chat, so an assistant row carrying a special is replayed into the next turn --
+  and a fast tokenizer matches a declared special's *string* and encodes the real
+  control token, putting a turn boundary inside prior assistant content (worst
+  case: `continue`, whose prefill would end on one). `_strip_history_specials`
+  strips replayed ASSISTANT text and did NOT go with the toggle: `content` is
+  user-updatable, so an edited row can still carry one. User-authored text is
+  left alone.
+- **A page declares what it honors.** The `displayPrefs` mechanism went with the
+  pref, since nothing else used it -- but the rule it encoded is the one to
+  rebuild against: a page declares the display prefs it honors and passes that
+  same array to the wire, one list and both uses, so offering a control and
+  acting on it cannot come apart.
+
+The shared settings drawer therefore holds three kinds of thing, and the drawer's
 `registerSettings(contribution)` contract (`settings-drawer.js`) models them
 distinctly: **page-owned lead sections** (`sections()` — chat and notebook each
 contribute the shared preset bar, `preset-bar.js`, plus their own system-prompt
-editor), **generation params** (samplers — the existing `settings.js` store),
-**global display prefs** (show-special-tokens), and **per-page extras**
+editor), **generation params** (samplers — the existing `settings.js` store)
+and **per-page extras**
 (`extras()` — jspace's heatmap/chat toggles, explore's logprobs note). Sections
 render first, extras last; both are page-owned, but a section composes the
 document (prompt/preset), while an extra is a toggle or note that doesn't.

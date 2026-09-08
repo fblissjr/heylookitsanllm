@@ -4,7 +4,8 @@ Cross-session task backlog organized by priority.
 
 *Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch);
 docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
-entry added 2026-09-05*
+entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
+header; frontend/backend state-boundary section added 2026-09-08*
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 
@@ -70,25 +71,149 @@ The map's conclusion on splitting the file: don't. The streaming seam alone
 needs 11 state fields and ~15 functions crossing the boundary, and would
 separate the scroll-follow rule from `paintStream`, which enforces it.
 
-## iOS keyboard check: written, NEVER RUN (2026-09-05)
+## Frontend/backend state boundary (2026-09-08) -- DONE except the device pass
 
-- [ ] **Run `tests/e2e/ios-sim.mjs` once and make it true** (P2). v1.79.68
-  re-laid the phone chat chrome from Chrome emulation + a stub server; what
-  iOS does with the keyboard up (visual viewport shrink + page scroll, the
-  fixed bottom nav, `100dvh`) was never observed because Chrome cannot
-  reproduce it. The check exists, wired as `bun run e2e:ios` (real Mobile
-  Safari in the iOS Simulator via `safaridriver`), but was written without
-  a single run; its header and `tests/e2e/README.md` say so. Do: run
-  `safaridriver --enable` once, boot the simulator and turn on Settings >
-  Safari > Advanced > Remote Automation, start a dev server, run it. Fix the
-  harness until the checks are seen to pass AND fail for a real reason, then
-  delete the UNRUN banner from the file, the README section's first
-  paragraph, and this entry. Its "report" check prints whether the bottom
-  nav is still on screen with the keyboard up -- that number decides
-  whether hiding the nav on composer focus (log_2026-09-05) is worth
-  building. Ground truth for the exact device is the iPhone 17 Pro over
-  Web Inspector; the simulator lists 15 Pro devices (safe areas differ by a
-  few points).
+From an audit of what the frontend keeps client-side versus what the server
+stores. Two rules sorted every finding, and the audit found both broken in
+opposite directions:
+
+1. **A client-local value may decide what you SEE. It may never decide what the
+   server STORES.** The twin of the rule `params` already has.
+2. **Per-browser state belongs per-browser; per-document state belongs on the
+   document.** Place-keeping was stored nowhere at all.
+
+Net effect: `settings.js` now touches no browser storage, and the app is down to
+two browser-local keys (the parked system-prompt draft and which conversation
+this browser is looking at), both behind one `heylook.` namespace and one
+wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
+
+- [x] **The chat-template textarea was live before it had a baseline -- DONE**
+  (`194cabf`, found and fixed in a parallel session). It could PUT a typed
+  fragment as a model's entire chat template after a failed load. Its comment
+  covers a case worth knowing: a REJECTED save deliberately leaves the box
+  enabled, because that path never re-renders and the repair belongs in the box
+  you typed into.
+- [x] **`show_special_tokens` REMOVED -- DONE v2.0.38.** Owner call: remove
+  rather than fix, until there is a plan to do it right. It was a per-BROWSER
+  display pref that decided what the conversation store PERSISTED, so the same
+  conversation continued from two devices accumulated rows of two kinds with
+  nothing recording which. It was the only `DISPLAY_META` entry, so the whole
+  display-pref layer went with it (store, wire helper, drawer panel, both pages'
+  declarations, the `heylook-v3-display` key). A client still sending it on
+  `/v1/messages` gets a 422 naming the removal, guarded on `MessageCreateRequest`
+  and tested THROUGH the route; the generate route simply does not declare it.
+  `_strip_history_specials` STAYS and is not redundant -- `content` is
+  user-updatable, so an edited assistant row can still carry a control token
+  that must not re-enter a prompt, which is how its two tests now seed.
+  **THE DESIGN FOR A CORRECT VERSION, deferred not rejected:** store always
+  UNSTRIPPED and strip at READ (`GET /v1/conversations/{id}` takes the flag,
+  `specials_stripper` does the work), which makes the choice genuinely
+  render-time and applies it to replies that already exist -- the wart the
+  removed pref's own help text had to admit. Three traps, each verified while
+  scoping this:
+  (a) the strip SET costs a parse of the model's `tokenizer.json`, which is
+  large, so it needs a cached probe beside `capabilities.py`'s two -- with its
+  OWN stamp, because `_TEMPLATE_SOURCE_FILES` omits `tokenizer.json` while the
+  strip set reads both files; keying it on `_template_stamp` would be the named
+  subset-of-a-list defect in the one function that has already shipped a cache
+  bug twice (uncached v1.71.0, stale-keyed until v2.0.22).
+  (b) `model_id` on a row is nullable AND sometimes co-written: `_persist_result`
+  stamps a FRESH assistant row only, and a continuation keeps the anchor's stamp
+  because the merged row had two authors. So: strip per row against its own
+  model's set, and do NOT strip where the id is absent.
+  (c) under-stripping is the safe direction (it shows a marker that should have
+  been hidden, which §6's default already accepts); stripping against a union of
+  the conversation's models would OVER-strip and delete real text.
+  The parser-level `strip_specials=False` knob is kept deliberately for this --
+  it is the seam that design needs. `tests/unit/test_reasoning_parser.py`
+  says so, and says to delete the knob with the design if it is abandoned.
+- [x] **Composer text is per-conversation -- DONE.** `s.composerDrafts`, a Map
+  for the life of the mount, swapped in `selectConversation` beside
+  `clearPendingAttachments`. The defect fixed is a WRONG ACTION, not lost work:
+  text typed in one conversation followed you to another and Send put it there,
+  while its attachments did not follow. Not stored -- re-typable text is not
+  worth a key that needs collecting on delete. `refreshAfterResume` cannot
+  disturb it by construction: it never moves `activeId` and never touches the
+  textarea.
+- [x] **The sampler bag is no longer persisted -- DONE.** `settings.js` holds it
+  in memory. The panel is a VIEW of a document, overwritten by
+  `hydrateDocParams` on every select, so the stored copy's only durable job was
+  seeding the next new document -- already lost across a reload the moment
+  `conversations[0]` hydrated. The cross-page carry (chat and notebook share the
+  module cache within a session) SURVIVES by decision; `documentScopeNote` now
+  states it rather than the code hiding it. Scoping the cache per page was
+  priced and declined.
+- [x] **Active conversation id restored -- DONE.** The one place adding a
+  browser-local key is right. Degrades silently to the newest conversation when
+  the id is missing, unreadable or gone -- which on a phone is the COMMON path,
+  since iOS evicts script-writable storage.
+- [x] **`mergeKnown` range-checks values -- DONE.** Against the min/max
+  `PARAM_META` already declares, for every source: `presets.params` and a
+  document's `params` hydrate the same panel through the same function, so
+  de-persisting localStorage removed one source, not the class. An out-of-range
+  value becomes null (the cascade), which the panel shows as its placeholder,
+  rather than riding to the wire and returning a 422 that names the field but
+  not where the value was stored.
+- [x] **`heylook-v3-scan-paths` deleted; keys renamed -- DONE.** A one-off scan
+  is by definition the thing you are not doing again; a folder worth re-scanning
+  belongs in the watch list, which is server config and reaches every browser.
+  Remaining keys live under one `heylook.` prefix behind `lsRead`/`lsWrite` in
+  `utils.js`, and `sweepRetiredStorage()` clears the retired names at boot --
+  stale keys are not clearable by hand on a phone, which decided it.
+- [x] **The e2e harness seeds DOCUMENTS, not localStorage -- DONE.** It capped
+  generation length by seeding `heylook-v3-settings` before boot. That is gone,
+  and the replacement is not a workaround: the document was ALREADY the
+  authoritative half (`chat.mjs`'s "the DOCUMENT's params win" check exists
+  because someone found that out), so `ctx.open()` and `newFreshConversation`
+  PUT params directly and a failed seed is now an HTTP error instead of a
+  silently ignored cache write. `ctx.readSettings()` reads the document too,
+  which is the stronger assertion. `settings: null` means reload-and-seed-
+  nothing, distinct from `{}` which would erase.
+- [x] **`render.mjs` resets browser storage per boot -- DONE, and it caught a
+  real one.** Every boot shares one browser profile, so the new
+  remembered-conversation key leaked across them and landed later boots on an
+  earlier boot's conversation. It failed two checks that never mention storage
+  ("no thinking control on a thinking-capable model"; a composer reading Send
+  for a generating conversation) because both were looking at the wrong
+  conversation. Confirmed by control: green with the restore disabled, those
+  two red with it enabled, green again with the per-boot sweep. The sweep is a `heylook.` prefix
+  match in `evaluateOnNewDocument`, so no future key needs remembering there.
+
+- [ ] **Verify the batch on the iPhone 17 Pro** (P2). THE ONE THING NOT DONE --
+  it needs the physical device. `bun run e2e:render` is green and real WebKit at
+  phone size is available in the simulator, but neither can raise the software
+  keyboard (see the entry below). Three of the changes above have device-only
+  risk. The composer Map is the sharp one: swapping textarea content plus
+  `autoGrow` while the keyboard is up is exactly where iOS keeps the LAYOUT
+  viewport and shrinks only the VISUAL one, and restoring text into a focused
+  field can move the caret and scroll. The active-conversation restore needs its
+  evicted-storage path walked rather than assumed. And the models page's
+  unsaved-template warning rides `createUnloadGuard`, which binds `beforeunload`
+  ALONE while the codebase binds both spellings everywhere else (`ctx.onHide`)
+  precisely because one is not enough here -- so whether that dialog fires on the
+  phone at all is unknown and worth one check while the device is attached.
+  Do it in one sitting with the iOS entry below.
+
+## iOS keyboard check: RUN, keyboard still uncovered (2026-09-05, updated 2026-09-06)
+
+- [ ] **Run the keyboard half on a real device** (P2). The harness itself is
+  no longer unrun: `tests/e2e/ios-sim.mjs` first ran 2026-09-06 and its own
+  header carries the result and the method. What it established is a NEGATIVE
+  worth keeping -- the Simulator will not raise the software keyboard under
+  `safaridriver` (WebDriver click leaves activeElement on BODY;
+  ConnectHardwareKeyboard=false changes nothing; Element Send Keys DOES focus
+  the field and the visual viewport still never shrinks). Focus works, the
+  keyboard does not exist there. The four keyboard checks are therefore gated
+  on the ENVIRONMENT, not on the outcome, so they skip loudly rather than
+  passing vacuously, and `IOS_REAL_DEVICE=1` runs them for real. What still
+  runs in the simulator is real WebKit at phone size, which the Chrome 390px
+  checks only emulate. LEFT TO DO: attach the iPhone 17 Pro over Web Inspector
+  and run with `IOS_REAL_DEVICE=1`; the "report" check prints whether the
+  bottom nav is still on screen with the keyboard up, which decides whether
+  hiding the nav on composer focus (log_2026-09-05) is worth building. The
+  simulator lists 15 Pro devices, so safe areas differ by a few points from
+  the real target anyway. This is the same device pass the state-boundary
+  section above depends on -- do them in one sitting.
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 

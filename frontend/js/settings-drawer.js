@@ -11,7 +11,6 @@
 //                                   system-prompt editor)
 //   Sampling panel               -- buildSettingsPanel({caps}); 'disabled' renders
 //                                   it read-only + greedy note; 'hidden' omits it
-//   Display panel                -- buildDisplayPanel() (global, model-agnostic)
 //   ...contribution.extras()     -- page-owned trailing controls
 //
 // Focus guard (migrated from chat's old inline panel): a background/async
@@ -22,7 +21,7 @@
 // the old rebuildSettingsPanel(), which was always unguarded.
 
 import { createEl } from './utils.js';
-import { buildSettingsPanel, buildDisplayPanel } from './settings.js';
+import { buildSettingsPanel } from './settings.js';
 
 let mounted = false;
 let panelEl = null;   // the slide-over <aside>
@@ -117,11 +116,6 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //                                           its own thing; null says nothing
 //   sections?():Node[]                   -- lead sections (rendered first)
 //   extras?():  Node[]                   -- trailing controls (rendered last)
-//   displayPrefs?: string[]              -- DISPLAY_META keys this page honors;
-//                                           omitted = no Display panel here
-//   displayNotes?(): {key: text}         -- per-model disclosure under a
-//                                           display pref that does nothing
-//                                           on the current model
 //   modelDefaults?(): {key: value}       -- what the current model resolves
 //                                           an UNSET sampler key to (today:
 //                                           enable_thinking); labels the
@@ -138,7 +132,7 @@ export function registerSettings(contribution) {
   return () => {
     if (current === contribution) {
       current = null;
-      if (isOpen) render(); // no page contribution -> no Display panel either
+      if (isOpen) render(); // no page contribution -> an empty drawer, not a stale one
     }
   };
 }
@@ -233,10 +227,6 @@ function render() {
     }
     children.push(panel);
   }
-
-  // null unless THIS page declared a display pref it honors (see buildDisplayPanel)
-  const displayPanel = buildDisplayPanel(current?.displayPrefs, current?.displayNotes?.() ?? {});
-  if (displayPanel) children.push(displayPanel);
 
   if (current?.extras) children.push(...current.extras());
 

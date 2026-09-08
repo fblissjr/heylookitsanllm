@@ -129,8 +129,8 @@ js/
   page.js                   # createPage lifecycle (READ FIRST)
   api.js                    # table-generated endpoint wrappers
   streaming.js              # Messages-grammar SSE over /v1/messages + /v1/conversations/{id}/generate (ping keepalive + heylook_progress ignored/routed, reader.cancel, abort-as-completion, 503 retry, in-band error events)
-  settings.js               # sampler store + global display-pref store (buildDisplayPanel/getDisplayPref/setDisplayPref; displayWireFields() = display prefs that ride the WIRE, never the sampler bag -- show_special_tokens); null = backend-cascade; snapshotSettings()/applySettings()
-  settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/display/extras)
+  settings.js               # sampler store, IN-MEMORY since v2.0.38 (the panel is a view of a document; nothing persists it). null = backend-cascade; mergeKnown() filters unknown keys AND out-of-range values from every source; snapshotSettings()/applySettings(). The global display-pref store went with show_special_tokens
+  settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/extras)
   preset-bar.js             # shared drawer section (createPresetBar): select is inert but FOLLOWS the document's applied_preset_id until an explicit pick; TWO writes and the BUTTON picks the target -- Save overwrites the selected preset (armed; the only overwrite path; labelled Update until v1.79.62), Save as new creates under the typed name and REFUSES a name in use (never armed). Apply is armed too but overwrites the recoverable side. Read-only preview of the selected preset's own prompt, drift line naming which half moved; used by chat + notebook
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; used by chat + notebook
   context-select.js         # chat's context-size select for the NEXT gguf load (createContextSelect): power-of-two steps up to the header's ceiling, Auto = llama-server's own sizing, rebuilt only when the model's facts move so a fresh pick survives a residency refresh
@@ -184,8 +184,9 @@ auto-appear from template detection, no `models.toml` flag needed).
 - **NOT DONE -- cutover**: retiring v2 & promoting v3 is deliberately open until
   the owner has lived in `/v3` daily. Nothing blocks it. (plan Phase 3; the older
   legacy React app was already deleted in v1.34.25)
-- Small backlog: `show_special_tokens` render-consumer wiring (pref exists but
-  gated `wired:false` until a surface honors it); `enable_thinking` tri-state.
+- Small backlog: `enable_thinking` tri-state. (`show_special_tokens` was
+  removed in v2.0.38 -- a per-browser pref that decided what the store
+  persisted; the design for a correct version is in TODO.md.)
   (TODO.md) (The "panel drifted from preset" indicator shipped in v1.39.2 --
   live drift line + explicit armed Apply, selection inert, apply a copy -- and
   v1.39.3 extracted the bar to the shared `preset-bar.js` and gave notebook

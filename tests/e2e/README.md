@@ -32,7 +32,7 @@ bun run e2e          # both server-driven suites (chat + pages)
 bun run e2e:chat     # chat suite only
 bun run e2e:pages    # pages suite only
 bun run e2e:render   # render suite -- no server, no model, ~70s
-bun run e2e:ios      # iOS Simulator keyboard check -- real WebKit; UNRUN, see below
+bun run e2e:ios      # iOS Simulator keyboard check -- real WebKit; keyboard needs a device, see below
 ```
 
 Exit code is non-zero if any check fails.
@@ -69,12 +69,18 @@ shader JIT compilation and the streaming-cadence guard can read low (seen:
 full speed). If ONLY the cadence guard fails right after an mlx/model
 change, re-run before diagnosing a delivery regression.
 
-## iOS Simulator keyboard check (`e2e:ios`) -- WRITTEN, NEVER RUN
+## iOS Simulator keyboard check (`e2e:ios`) -- RUNS; the keyboard needs a device
 
 `ios-sim.mjs` is the only entry that can see what iOS does with the software
-keyboard, and it was written on 2026-09-05 without being run (no simulator
-session was opened that day). Its header says so; the first person to run it
-should expect harness fixes, then delete that block and the TODO.md entry.
+keyboard. It first ran on 2026-09-06 and the plumbing works: it boots the
+simulator, drives real Mobile Safari and measures. What it established is a
+negative -- the Simulator will not raise the software keyboard under
+`safaridriver`, by three separate routes (the file's header records them).
+Focus lands; the keyboard does not exist there. The four keyboard checks are
+therefore gated on the ENVIRONMENT rather than on the outcome, so they skip
+loudly instead of passing vacuously, and `IOS_REAL_DEVICE=1` runs them for
+real against an attached phone. What the simulator still gives you is real
+WebKit at phone size, which the Chrome 390px checks only emulate.
 
 Why Chrome cannot stand in: with the keyboard open, iOS Safari keeps the
 LAYOUT viewport at full height and shrinks only the VISUAL viewport, then
@@ -212,9 +218,13 @@ after a close will flake on the transition windows.
 
 ## Notes / gotchas
 
-- Generation length is capped by seeding `localStorage['heylook-v3-settings']`
-  with `max_tokens` BEFORE the app boots (settings.js reads localStorage once at
-  module import, so changes need a fresh load — the `ctx.open()` helper reloads).
+- Generation length is capped by seeding the active DOCUMENT's `params` with
+  `max_tokens` before the app boots (`ctx.open()` PUTs, then reloads so the page
+  hydrates the panel from it; `newFreshConversation` seeds each conversation it
+  creates). It seeded `localStorage['heylook-v3-settings']` until v2.0.38, which
+  stopped persisting the sampler panel — but the document was already the
+  authoritative half, so this seeds the same thing directly and a failed seed is
+  now an HTTP error rather than a silently ignored cache write.
 - The stop-mid-stream checks reopen with `max_tokens: 400` so there is time to
   click Stop before the generation finishes.
 - The danger-zone clear check runs LAST in the pages suite; it wipes the

@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.38]
+
+### Removed
+
+- **`show_special_tokens`, and with it the display-preference layer.** The pref
+  was documented as display-only and was not: the strip ran before the text was
+  streamed AND before it was persisted, so a per-BROWSER value decided what the
+  conversation store recorded. The same conversation continued from a phone and
+  a desktop accumulated rows of two kinds, permanently, with nothing on the row
+  saying which. Owner call: remove it now rather than fix it, until there is a
+  plan to do it right. It was the only `DISPLAY_META` entry, so the store, the
+  wire helper, the drawer's Display panel, both pages' declarations and the
+  `heylook-v3-display` key went with it. Blast radius was always MLX-only --
+  `LlamaServerProvider` sets no `_template_info`, so gguf declares no specials
+  and the feature was inert there (verified on the deepseek vision q4 model,
+  whose directory carries no tokenizer files at all).
+
+  A request still sending it to `/v1/messages` gets a 422 naming the removal.
+  That guard is on `MessageCreateRequest`, the WIRE model, and its test drives
+  the route -- a guard on `ChatRequest` would be dead, since nothing binds it as
+  a request body and pydantic's default `extra` policy is *ignore*. The generate
+  route simply stops declaring the field. `_strip_history_specials` STAYS and is
+  not redundant with the now-unconditional generation-side strip: `content` is
+  user-updatable, so an edited assistant row can still carry a control token
+  that must not re-enter a prompt, and its two tests seed through the store for
+  exactly that reason.
+
+  The design a correct version would take -- store unstripped, strip at READ, so
+  the choice applies to replies that already exist -- is recorded in
+  `docs/project/TODO.md` with the three traps found while scoping it. The
+  parser-level `strip_specials=False` knob is kept as that seam, and says so.
+  DESIGN.md section 6 now records that its own principle is unmet rather than
+  papering over it.
+
+- **The sampler bag is no longer persisted in the browser.** The panel is a VIEW
+  of a document: `hydrateDocParams` overwrote the stored copy on every select,
+  so its only durable job was seeding the next new document -- and that was
+  already lost across a reload the moment `conversations[0]` hydrated. The
+  cross-page seed (chat and notebook share the module cache within a session)
+  survives by decision, and `documentScopeNote` now states it instead of the
+  code hiding it. `heylook-v3-scan-paths` went too: a one-off scan is the thing
+  you are not doing again, and a folder worth re-scanning belongs in the watch
+  list, which is server config and reaches every browser.
+
+  `settings.js` now touches no browser storage at all, and the app is down to
+  two browser-local keys behind one `heylook.` namespace and one wrapper.
+
+### Added
+
+- **Chat remembers which conversation you were looking at.** The one place in
+  this app where adding a browser-local key is right rather than the thing to
+  remove: which conversation THIS browser is on is genuinely per-browser, and
+  two devices on different conversations is correct. Degrades silently to the
+  newest conversation when the id is missing, unreadable or gone -- the common
+  path on a phone, since iOS evicts script-writable storage.
+
+- **Composer text is per-conversation.** A Map for the life of the mount,
+  swapped in `selectConversation` beside `clearPendingAttachments`. What this
+  fixes is a wrong ACTION rather than lost work: the textarea was never cleared
+  on a switch, so text typed in one conversation followed you to another and
+  Send put it there -- while its attachments, which were already
+  conversation-scoped, did not follow. Deliberately not stored.
+
+- **`sweepRetiredStorage()`** clears retired key names at boot. Stale keys are
+  not clearable by hand on a phone, which is what decided it.
+
+### Fixed
+
+- **A hydrated sampler bag is range-checked, not just key-filtered.**
+  `mergeKnown` dropped unknown keys and validated nothing else, so a value gone
+  out of range rode to the wire and came back a 422 that named the field but not
+  where the value was stored. It now checks against the bounds `PARAM_META`
+  already declares, for EVERY source -- `presets.params` and a document's
+  `params` hydrate the same panel through the same function, so de-persisting
+  localStorage removed one source, not the class. An invalid value becomes null,
+  which the panel shows as its placeholder.
+
+### Changed
+
+- **The browser E2E harness seeds DOCUMENTS, not localStorage.** It capped
+  generation length through the key that no longer persists. The replacement is
+  not a workaround: the document was already the authoritative half, which is
+  why `chat.mjs` carries a check named for it. `ctx.open()` and
+  `newFreshConversation` PUT params directly, so a failed seed is an HTTP error
+  rather than a silently ignored cache write, and `ctx.readSettings()` reads the
+  document. `render.mjs` clears `heylook.`-prefixed storage per boot -- every
+  boot shares one browser profile, and the new remembered-conversation key
+  leaked across them, failing two checks that never mention storage because both
+  were looking at the wrong conversation. Confirmed by control: green with the
+  restore disabled, those two red with it enabled, green again with the sweep.
+
 ## [2.0.37]
 
 ### Fixed

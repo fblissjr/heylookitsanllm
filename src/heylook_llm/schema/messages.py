@@ -102,26 +102,6 @@ class MessageCreateRequest(BaseModel):
     # DECLARES (`special: true` in its tokenizer files) out of the text it
     # returns, as a guard against fast-detokenizer leaks. That guard also
     # deletes a special the model wrote deliberately -- and those say where in
-    # the turn the model is, which is the thing an interpretability surface
-    # exists to show. Opt IN to keep them: false -- the default, and what every
-    # existing consumer sends by omitting the field -- strips, as before.
-    # Deliberately NOT tri-state: nothing distinguishes absent from false, and a
-    # third state no branch reads is one every future call site has to re-derive
-    # as meaningless. Affects the text returned (and, on the
-    # conversation surface, the text PERSISTED), never what is sent to the
-    # model and never generation itself.
-    show_special_tokens: bool = Field(
-        default=False,
-        description="Return the model's declared special tokens instead of "
-                    "stripping them (e.g. <|im_end|>, <bos>). Display-only: "
-                    "changes the text you get back, never the generation. "
-                    "Text you send is never altered either way -- but text you "
-                    "send BACK carries whatever you kept, so a client that "
-                    "replays a reply verbatim is replaying control-token "
-                    "strings (the conversation surface strips those on replay; "
-                    "see conversation_generate_api._strip_history_specials).",
-    )
-
     # NO `include_performance` here, deliberately (removed v1.79.49). This wire
     # returns telemetry UNCONDITIONALLY in both modes -- streaming emits
     # `message_stop.performance`, non-streaming carries a `performance` object
@@ -160,6 +140,15 @@ class MessageCreateRequest(BaseModel):
                 f"{', '.join(gone)} is no longer supported: logprobs were removed "
                 "with the token explorer (the only surface that read them) and the "
                 "heylook_logprobs SSE extension is gone with them"
+            )
+        if "show_special_tokens" in data:
+            raise ValueError(
+                "show_special_tokens was removed in v2.0.38: it was a per-BROWSER "
+                "display pref that decided what the conversation store PERSISTED, "
+                "so the same conversation continued from two devices accumulated "
+                "rows of two kinds with nothing recording which was which. "
+                "Declared specials are now always stripped. See "
+                "docs/project/TODO.md for the design a correct version would take"
             )
         if "preset" in data or "sampler" in data:
             raise ValueError(

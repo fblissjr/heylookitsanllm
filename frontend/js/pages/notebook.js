@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { messagesParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
+import { messagesParams, snapshotSettings, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -23,12 +23,6 @@ import { createDocumentWriter } from '../document-writer.js';
 // Match chat's streaming repaint rate: one paint per animation frame is up to
 // 120/s on a ProMotion phone and nobody reads at that rate.
 const PAINT_INTERVAL_MS = 66;
-
-// The display prefs this page HONORS -- one array, two uses: it declares what the
-// drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
-// the wire (displayWireFields). Same list for both, so offering a control and
-// sending it cannot come apart.
-const DISPLAY_PREFS = ['show_special_tokens'];
 
 export default createPage({
   async setup(ctx) {
@@ -101,7 +95,6 @@ export default createPage({
       scope: () => documentScopeNote('notebook', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],
       onOpen: s.presetBar.onDrawerOpen,
-      displayPrefs: DISPLAY_PREFS,
     });
     ctx.onTeardown(unregisterSettings);
     // Per-NOTEBOOK sampler settings via the SAME shared binding chat uses --
@@ -500,8 +493,6 @@ function startGenerate(ctx) {
     system: s.systemPrompt || undefined,
     messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
     ...messagesParams(notebookCaps(ctx)),
-    // Display pref, not a sampler -- spread AFTER the bag and never inside it.
-    ...displayWireFields(DISPLAY_PREFS),
   }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },

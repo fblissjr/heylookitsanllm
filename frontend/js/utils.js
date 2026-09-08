@@ -279,3 +279,46 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, 
   btn.disarm = disarm;
   return btn;
 }
+
+
+// ---------------------------------------------------------------------------
+// Browser-local storage. ONE wrapper, because every raw call needs the same
+// try/catch: Safari throws on access in private mode, quota is finite, and iOS
+// EVICTS script-writable storage for a site the user has not visited lately.
+// Everything stored here must therefore be a convenience whose loss changes
+// nothing important -- per-document state lives on the document, on the server.
+//
+// The `heylook.` prefix is one namespace so a stale-key sweep is a prefix match.
+// It replaced two spellings (`heylook-v3-*` dashes, `heylook.v3.*` dots) in
+// v2.0.38: "v3" stopped meaning anything when the frontend left that mount in
+// v1.79.76, and no single prefix reached both.
+// ---------------------------------------------------------------------------
+
+const LS_PREFIX = 'heylook.';
+
+export function lsRead(key) {
+  try { return localStorage.getItem(LS_PREFIX + key); } catch { return null; }
+}
+
+export function lsWrite(key, value) {
+  try {
+    if (value === null || value === undefined || value === '') localStorage.removeItem(LS_PREFIX + key);
+    else localStorage.setItem(LS_PREFIX + key, value);
+  } catch { /* private mode / quota -- in-memory only, by contract above */ }
+}
+
+// Keys this app used to write and no longer reads. Swept once at boot so a
+// long-lived browser does not carry them forever -- there is no way for the
+// user to clear one by hand on a phone, which is the case that decided it.
+const RETIRED_KEYS = [
+  'heylook-v3-settings',    // sampler bag: de-persisted in v2.0.38
+  'heylook-v3-display',     // display prefs: removed with show_special_tokens
+  'heylook-v3-scan-paths',  // one-off scan paths: no longer remembered
+  'heylook.v3.chat.draft-prompt',  // renamed into the heylook. namespace
+];
+
+export function sweepRetiredStorage() {
+  for (const key of RETIRED_KEYS) {
+    try { localStorage.removeItem(key); } catch { /* nothing to do */ }
+  }
+}

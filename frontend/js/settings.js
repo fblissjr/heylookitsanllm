@@ -5,8 +5,6 @@
 
 import { createEl } from './utils.js';
 
-const STORAGE_KEY = 'heylook-v3-settings';
-
 export const PARAM_META = {
   temperature:             { label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05, section: 'core' },
   max_tokens:              { label: 'Max tokens', type: 'number', min: 1, max: 65536, step: 1, section: 'core' },
@@ -47,33 +45,54 @@ function emptySettings() {
   return Object.fromEntries(Object.keys(PARAM_META).map((k) => [k, null]));
 }
 
+// Is `v` a usable value for `key`, per the bounds PARAM_META already declares?
+// null/undefined always pass -- that IS the cascade. Anything else that fails
+// becomes null rather than riding to the wire, because the alternative is a 422
+// from the backend with nothing on screen pointing at the stored bag that
+// caused it. Dropping to null is visible: the field falls back to showing its
+// placeholder, which is the panel's own spelling of "the model decides".
+function valid(key, v) {
+  if (v === null || v === undefined) return false;
+  const meta = PARAM_META[key];
+  if (!meta) return false;
+  if (meta.type === 'number') {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+    if (meta.min !== undefined && v < meta.min) return false;
+    if (meta.max !== undefined && v > meta.max) return false;
+    return true;
+  }
+  if (meta.type === 'tristate') return v === true || v === false;
+  if (meta.type === 'select') return meta.options.includes(v);
+  if (meta.type === 'checkbox') return typeof v === 'boolean';
+  return true;
+}
+
 // The "only known keys, everything else null" invariant in one place --
-// load() and applySettings() both funnel through it.
+// every hydration funnels through it.
+//
+// It filters KEYS and, since v2.0.38, VALUES. The key filter alone was not
+// enough and localStorage was never the only source: `presets.params` and a
+// document's stored `params` are server-side bags that hydrate this same panel
+// through this same function, so a value that has gone out of range (a bound
+// tightened, a field's meaning changed, a bag hand-edited) reached the wire and
+// came back a 422 that named the field but not where the value was stored.
 function mergeKnown(src) {
   const out = emptySettings();
-  for (const k of Object.keys(out)) if (k in src) out[k] = src[k];
+  for (const k of Object.keys(out)) if (k in src && valid(k, src[k])) out[k] = src[k];
   return out;
 }
 
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? mergeKnown(JSON.parse(raw)) : emptySettings();
-  } catch {
-    return emptySettings();
-  }
-}
-
-let cache = load();
-let saveTimer = null;
-
-function scheduleSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cache)); }
-    catch { /* storage full/unavailable -- settings stay in-memory */ }
-  }, 300);
-}
+// NOT persisted, deliberately (v2.0.38). The panel is a VIEW of a document:
+// `hydrateDocParams` overwrites it on every document select, so a stored copy
+// was overwritten before anyone could read it in every case but one -- seeding
+// the NEXT new document when none is open. Keeping that seed across a reload
+// was the entire durable behaviour, and it was already lost the moment a reload
+// with any conversation present hydrated conversations[0] over it. What the
+// stored copy DID do was cross surfaces: chat and notebook share this module,
+// so the last-hydrated document's params seeded the other page's next new
+// document, per-browser and invisibly. In-memory keeps that within a session
+// (documentScopeNote says so) instead of making it durable.
+let cache = emptySettings();
 
 export function getSetting(key) { return cache[key]; }
 
@@ -92,7 +111,6 @@ function fireSettingsChange() {
 
 export function setSetting(key, value) {
   cache[key] = value;
-  scheduleSave();
   fireSettingsChange();
 }
 
@@ -119,7 +137,6 @@ export function snapshotSettings() {
 // PUT its own params straight back.
 export function applySettings(params, { silent = false } = {}) {
   cache = mergeKnown(params);
-  scheduleSave();
   if (!silent) fireSettingsChange();
 }
 
@@ -150,33 +167,6 @@ export function samplerParams(caps = null) {
 export function messagesParams(caps = null) {
   const { enable_thinking, ...out } = samplerParams(caps);
   if (enable_thinking !== undefined) out.thinking = enable_thinking;
-  return out;
-}
-
-// Display prefs that ride the WIRE rather than the renderer. `show_special_tokens`
-// is one: the server strips a model's declared specials before the text is
-// streamed AND before it is persisted, so "show" cannot be a render-time choice
-// on these surfaces -- the client has to ask for the unstripped text.
-//
-// Kept OUT of samplerParams/messagesParams on purpose: those are the sampler bag,
-// everything in them reaches the model, and a document's stored `params` is that
-// same bag (CLAUDE.md). This is display state, so it is spread in beside the bag
-// at the two send sites, never merged into it.
-//
-// Takes the PAGE'S OWN declared list -- the same array it hands the drawer as
-// `displayPrefs` -- so declaring a pref and sending it cannot come apart.
-// Hardcoding the body here instead let a page offer a checkbox it never sent
-// (and would have sent a second pref from every caller regardless of what that
-// caller claimed to honor). Keys with no `wire` spelling in DISPLAY_META are
-// render-time prefs and are skipped: a page may honor those without any request
-// changing shape. Explore speaks the same wire but declares nothing -- it is a
-// token-ARRAY surface (§6's other mechanism: flag specials by token id).
-export function displayWireFields(prefs = []) {
-  const out = {};
-  for (const key of prefs) {
-    const wire = DISPLAY_META[key]?.wire;
-    if (wire) out[wire] = getDisplayPref(key) === true;
-  }
   return out;
 }
 
@@ -238,69 +228,6 @@ export function bindDocumentParams({ activeId, updateDoc, onError, onHide, delay
 // selecting/loading a doc doesn't immediately PUT its own params back.
 export function hydrateDocParams(doc) {
   applySettings(doc?.params ?? {}, { silent: true });
-}
-
-// ---------------------------------------------------------------------------
-// Global display preferences -- render toggles, NOT sampler params. Kept in a
-// SEPARATE store (own key, own cache) from PARAM_META so a display flag can
-// never leak into samplerParams()/snapshotSettings() and reach the model. These
-// are the cross-cutting "how do we render tokens" prefs every surface reads
-// (DESIGN.md §6). Display-only, by contract.
-// ---------------------------------------------------------------------------
-
-const DISPLAY_STORAGE_KEY = 'heylook-v3-display';
-
-export const DISPLAY_META = {
-  show_special_tokens: {
-    label: 'Show special tokens',
-    type: 'checkbox',
-    default: true,   // honesty-first: shown by default (DESIGN.md §6)
-    // The request field this pref rides on (v1.79.6): the DECODED-TEXT surfaces
-    // (chat, notebook) send it and the server then skips its declared-specials
-    // strip (DESIGN.md §6). Absent `wire` = a render-time pref, honored without
-    // any request changing shape. WHICH pages honor it is the page's own
-    // `displayPrefs` declaration, not a flag here -- "no surface honors this" is
-    // exactly "no page lists it", so a second gate here could only disagree with
-    // that one, silently.
-    wire: 'show_special_tokens',
-    help: 'Keep the model\'s special tokens (<|im_end|>, <bos>, role markers) in '
-        + 'its replies instead of stripping them. Display-only -- never changes '
-        + 'what is sent to the model. Applies to replies generated from now on: '
-        + 'chat stores a reply exactly as it was parsed, so this cannot add '
-        + 'markers to (or remove them from) a reply that already exists. '
-        + 'gguf models are never stripped, so turning this off does nothing there. '
-        + 'Chat strips the markers back out when it replays a reply as history, so '
-        + 'they never re-enter a prompt; notebook writes the reply into the document, '
-        + 'where they are ordinary text you can see and edit -- and send.',
-  },
-};
-
-function loadDisplay() {
-  const out = Object.fromEntries(Object.entries(DISPLAY_META).map(([k, m]) => [k, m.default]));
-  try {
-    const raw = localStorage.getItem(DISPLAY_STORAGE_KEY);
-    if (raw) {
-      const saved = JSON.parse(raw);
-      for (const k of Object.keys(out)) if (typeof saved[k] === 'boolean') out[k] = saved[k];
-    }
-  } catch { /* fall back to defaults */ }
-  return out;
-}
-
-let displayCache = loadDisplay();
-
-export function getDisplayPref(key) { return displayCache[key]; }
-
-// Stored only. A display pref reaches the model on the NEXT generation
-// (displayWireFields puts it on the wire), so there is nothing to re-render
-// when one flips -- which is what each pref's own help text says. An
-// onDisplayChange subscription mechanism used to live here promising live
-// re-render; it never had a subscriber, so the notify loop always ran over an
-// empty set and the promise was never kept.
-export function setDisplayPref(key, value) {
-  displayCache[key] = value;
-  try { localStorage.setItem(DISPLAY_STORAGE_KEY, JSON.stringify(displayCache)); }
-  catch { /* in-memory only */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -389,10 +316,16 @@ function bindControl(key, meta, lookup = () => null) {
 // Nothing on screen said which, and selecting a document silently replaces
 // every value in the panel -- the root of the "did my settings just change?"
 // confusion (v3 user guide, rough edges).
+// The no-document half is deliberately explicit about TWO things the panel used
+// to leave unsaid: the values are a seed rather than saved state, and the seed
+// is whatever was last loaded ANYWHERE -- chat and notebook share one in-memory
+// cache, so a notebook's params seed a new conversation. Naming it is the
+// chosen answer; scoping the cache per page was priced and declined (it threads
+// a scope through every accessor and the drawer).
 export function documentScopeNote(noun, hasActive) {
   return hasActive
     ? `Applies to this ${noun} — changes save as you make them.`
-    : `Defaults for new ${noun}s.`;
+    : `Seeds the next ${noun} you start, from whatever was last open. Not saved anywhere yet.`;
 }
 
 // `scope` is a resolved string (see documentScopeNote) or null for a surface
@@ -520,35 +453,3 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   ]);
 }
 
-// Display-prefs section (the second section-kind, alongside Sampling and
-// per-page extras). Model-agnostic, so no capability gating -- but NOT
-// page-agnostic: `honored` is the PAGE's list of pref keys it actually reads
-// (drawer contribution `displayPrefs`), and that ONE list is the gate. It is the
-// same array the page passes to displayWireFields(), so a checkbox rendered here
-// is a checkbox that does something -- which is the whole rule (a control that
-// silently does nothing on the page you are looking at is worse than no control).
-// Returns null when the page honors none, so the drawer omits the section.
-// `notes` (key -> text) is the page's per-model disclosure for a pref that
-// cannot do anything right now -- "Show special tokens" on a gguf model,
-// where llama-server never emits them, so a ticked box that changes nothing
-// otherwise reads as a broken one. The pref stays editable: it is global.
-export function buildDisplayPanel(honored = [], notes = {}) {
-  const rows = Object.entries(DISPLAY_META).filter(
-    ([key]) => honored.includes(key)
-  ).map(([key, meta]) => {
-    const box = createEl('input', { id: `disp-${key}`, type: 'checkbox', checked: getDisplayPref(key) === true });
-    box.addEventListener('change', () => setDisplayPref(key, box.checked));
-    return createEl('div', { class: 'settings-row' }, [
-      createEl('label', { for: `disp-${key}`, title: meta.help || '' }, [
-        meta.label,
-        notes[key] ? createEl('span', { class: 'settings-row__note muted small' }, [notes[key]]) : null,
-      ]),
-      box,
-    ]);
-  });
-  if (!rows.length) return null;
-  return createEl('div', { class: 'settings-panel' }, [
-    createEl('h3', {}, ['Display']),
-    ...rows,
-  ]);
-}

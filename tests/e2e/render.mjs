@@ -558,6 +558,27 @@ async function openChat(browser, base, {
     send();
   });
 
+  // Each boot must start like a FRESH browser. Every page here shares one
+  // browser profile and origin, so whatever the app keeps in localStorage leaks
+  // from one boot into the next. Since v2.0.38 chat REMEMBERS the conversation
+  // you were last in, which landed later boots on a conversation an earlier boot
+  // had selected instead of the newest one -- correct in the product, wrong
+  // here, and it failed two checks that never mention storage ("no thinking
+  // control on a thinking-capable model", and a composer reading Send for a
+  // generating conversation) because both were simply looking at the wrong
+  // conversation. The removed show_special_tokens boot cleared its own key by
+  // hand for this same reason; a prefix sweep is what the `heylook.` namespace
+  // is FOR, so no future key needs remembering here.
+  // evaluateOnNewDocument runs before any page script, so this beats the app's
+  // own first read rather than racing it.
+  await page.evaluateOnNewDocument(() => {
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith('heylook.')) localStorage.removeItem(k);
+      }
+    } catch { /* storage unavailable -- nothing stored, nothing to clear */ }
+  });
+
   await page.goto(`${base}/#/chat`, { waitUntil: 'domcontentloaded' });
   // This wait cannot, on its own, tell apart the two ways a run fails before
   // any check runs -- and both surface identically as a bare selector timeout
@@ -2343,85 +2364,6 @@ async function main() {
     await ctxm.page.close();
 
     await two.page.close();
-
-    // ---- boot 9: the "Show special tokens" display pref reaches the wire --
-    // DESIGN.md §6. The strip is server-side (before the text is streamed AND
-    // before it is persisted), so the pref can only work by being ASKED FOR on
-    // the generate body -- a toggle that flips a local flag and sends nothing
-    // would look identical in the drawer and do nothing at all.
-    const disp = await openChat(browser, base);
-    const dispBox = () => disp.page.$('.drawer--open #disp-show_special_tokens');
-
-    await suite.check('the display toggle is offered and defaults to shown', async () => {
-      await openDrawer(disp.page);
-      const box = await dispBox();
-      assert(box, 'no Show special tokens control in the drawer');
-      assert(await (await box.getProperty('checked')).jsonValue(),
-        'the toggle defaults to OFF -- DESIGN.md §6 says shown by default');
-      await closeDrawer(disp.page);
-    });
-
-    const sentFlag = async (text) => {
-      const before = disp.reqs.length;
-      await send(disp.page, text);
-      const post = await waitFor(
-        () => disp.reqs.slice(before).find((r) => r.method === 'POST' && r.url.includes('/generate')),
-        { timeout: 5000, interval: 50, message: 'send made no generate POST' });
-      return JSON.parse(post.postData).show_special_tokens;
-    };
-
-    await suite.check('generate asks for the specials while the toggle is on', async () => {
-      assert((await sentFlag('with specials')) === true,
-        'the generate body did not ask for special tokens');
-    });
-
-    await suite.check('unchecking it asks for the strip instead', async () => {
-      await openDrawer(disp.page);
-      await (await dispBox()).click();
-      await closeDrawer(disp.page);
-      assert((await sentFlag('without specials')) === false,
-        'the generate body still asked for special tokens after unchecking');
-    });
-
-    await suite.check('a page that ignores the pref does not offer it', async () => {
-      // The drawer is an app-shell singleton rendered on every page, so a
-      // globally-`wired` pref would appear on pages that do not honor it.
-      // Which pages honor it is each page's own `displayPrefs` declaration:
-      // chat and notebook declare it, models and perf declare nothing, and
-      // settings.js returns null for an empty honored list so the section is
-      // omitted entirely. That is the lie the `wired` gate exists to prevent.
-      //
-      // Re-pointed at #/models after jspace was removed (v1.79.79). It was
-      // deleted with jspace on the reasoning that no page ignored the pref any
-      // more, which was simply wrong -- two still do.
-      await disp.page.evaluate(() => { location.hash = '#/models'; });
-      await waitFor(async () => (await disp.page.$('.models, .page--models, main')) !== null,
-        { timeout: 5000, message: 'models never mounted' });
-      await openDrawer(disp.page, '.drawer-gear');
-      assert(!(await dispBox()), 'models offered a display pref it does not honor');
-      await closeDrawer(disp.page);
-      await disp.page.evaluate(() => { location.hash = '#/chat'; });
-      await waitFor(async () => (await disp.page.$('.chat__thread')) !== null,
-        { timeout: 5000, message: 'chat never came back' });
-    });
-
-
-    await suite.check('the pref never rides in the sampler bag', async () => {
-      // `overrides` is layered over the conversation's stored params, which is
-      // the sampler bag -- a display pref landing there would be persisted as
-      // generation state and would reach the model.
-      const post = [...disp.reqs].reverse()
-        .find((r) => r.method === 'POST' && r.url.includes('/generate'));
-      const body = JSON.parse(post.postData);
-      assert(!('show_special_tokens' in (body.overrides ?? {})),
-        'the display pref was merged into overrides');
-    });
-
-    // setDisplayPref PERSISTS, and every boot in this run shares one browser
-    // profile and origin -- leaving it unchecked would silently seed every
-    // later boot with a non-default pref (code review finding, 2026-08-23).
-    await disp.page.evaluate(() => localStorage.removeItem('heylook-v3-display'));
-    await disp.page.close();
 
     // ---- boot 9: raw HTML in model text is SHOWN, never rendered ---------
     // marked passes raw HTML through and DOMPurify then deletes any tag

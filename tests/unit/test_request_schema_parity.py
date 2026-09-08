@@ -55,11 +55,6 @@ MESSAGES_ONLY = {
     "system": "top-level on Messages; a system ROLE in the message array internally",
     "thinking": "the Messages spelling of enable_thinking (see WIRE_ALIASES)",
     "metadata": "Anthropic passthrough; the provider request has no use for it",
-    "show_special_tokens": (
-        "v1.79.6 display pref: it steers the route's parser (strip_specials) "
-        "and is deliberately never forwarded to the provider request "
-        "(DESIGN.md §6)."
-    ),
 }
 
 # Shared fields whose SHAPE legitimately differs -- the wire's own message and

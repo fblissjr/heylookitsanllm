@@ -564,12 +564,16 @@ class TestStripTokensDefense:
         assert "<|reserved_200000|>" not in content
 
 
-class TestShowSpecialTokensOptOut:
-    """``strip_specials=False`` -- v3's "Show special tokens" display pref
-    (DESIGN.md §6). The strip is a GUARD against detokenizer leaks; it also
-    deletes a special the model wrote on purpose, and those say where in the
-    turn the model is. Opt-in per request, so every other consumer keeps the
-    guard."""
+class TestStripSpecialsOptOut:
+    """``strip_specials=False`` composes no filter at all.
+
+    NO PRODUCTION CALLER passes False since v2.0.38, which removed the
+    `show_special_tokens` request field this served. The parser-level knob is
+    kept deliberately and these pin it: it is the seam a correct version of
+    that feature needs -- storing the model's output UNSTRIPPED and stripping
+    at READ instead, so the toggle applies to replies that already exist
+    (design + its three traps in docs/project/TODO.md). Delete the knob and
+    these together if that design is ever abandoned."""
 
     def test_declared_specials_survive_when_not_stripping(self):
         from heylook_llm.reasoning_parser import select_reasoning_parser

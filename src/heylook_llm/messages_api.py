@@ -461,7 +461,7 @@ async def _non_stream_messages(
             # Read off the request, not threaded as a kwarg: both handlers
             # already carry msg_request, and a second spelling of a request
             # field is a place for it to drift.
-            strip_specials=not msg_request.show_special_tokens,
+            strip_specials=True,
         ),
     )
 
@@ -583,7 +583,7 @@ async def _stream_messages(
             provider.template_info() if provider else None,
             thinking_enabled=thinking_enabled,
             continuing=continuing,
-            strip_specials=not msg_request.show_special_tokens,
+            strip_specials=True,
         ),
     )
 

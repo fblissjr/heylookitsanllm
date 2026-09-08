@@ -420,11 +420,6 @@ integration, that is the error you will see.
 field — sending a client-side default silently overrides the server's
 configured floor for the model. Omit what you do not have an opinion about.
 
-**One request flag is NOT part of that cascade** — `show_special_tokens` is a
-plain boolean defaulting to `false`, so absent means `false` permanently and
-no server-side config influences it. It is listed apart from the knobs above
-because "omit it and the server decides" is the wrong mental model for it.
-
 (`include_performance` used to be named here too. It was removed from this
 wire in v1.79.49 because it controlled nothing: Messages returns telemetry
 unconditionally in both modes. Sending it is harmless — unknown fields are
@@ -694,14 +689,14 @@ rather than a guarantee, for reasons the closing note gives:
   honoured — a port that relies on it will silently generate past the
   sequence you meant to stop at. (This is separate from the response-side
   omission above.)
-- **Extensions**: twelve request fields have no Anthropic equivalent —
+- **Extensions**: some request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
-  `repetition_context_size`, `presence_penalty`, `seed`), the inspection
-  ones (`show_special_tokens`), and
+  `repetition_context_size`, `presence_penalty`, `seed`), plus
   `vision_tokens`, `reasoning_effort`, `stream_options`. All are listed
-  under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`;
-  this bullet named four of them until v1.79.41, and thirteen until
-  v1.79.49 dropped `include_performance` from this wire. On the stream: a
+  under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`,
+  which is the only list that cannot go stale — this bullet carried a COUNT
+  and was wrong twice (v1.79.41, then v1.79.49 dropping
+  `include_performance`); `show_special_tokens` left it in v2.0.38. On the stream: a
   `heylook_progress` event and `message_stop.performance`.
 - **`message_start.usage.input_tokens` is 0.** The event is emitted before
   the first chunk is absorbed, so prompt tokens are not known yet. Anthropic

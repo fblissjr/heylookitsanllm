@@ -2,7 +2,7 @@
 // without a bundler). Nav (desktop sidebar + mobile bottom bar) is generated
 // from ROUTES, so nav-active bookkeeping lives here, not in pages.
 
-import { createEl } from './utils.js';
+import { createEl, sweepRetiredStorage } from './utils.js';
 import { mountSettingsDrawer } from './settings-drawer.js';
 
 const ROUTES = {
@@ -11,6 +11,8 @@ const ROUTES = {
   models:   { title: 'Models', short: 'Models', load: () => import('./pages/models.js'), admin: true },
   perf:     { title: 'Performance', short: 'Perf', load: () => import('./pages/perf.js'), admin: true },
 };
+
+sweepRetiredStorage();
 
 const main = document.getElementById('main');
 const navDesktop = document.getElementById('nav-desktop');

@@ -284,21 +284,23 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
-  reasoning_effort?, vision_tokens?,
-  show_special_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
+  reasoning_effort?, vision_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
   the rename in `messagesParams()`, settings.js, never a second bag);
   `vision_tokens` is a heylook extension with ChatRequest semantics; a
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
-  removal rather than a silent drop. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
+  removal rather than a silent drop, and one sending `show_special_tokens`
+  gets the same treatment for the v2.0.38 removal (below). `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
-  `show_special_tokens` (v1.79.6) is the one field here that is NOT a
-  generation knob: it returns the model's declared special tokens instead of
-  stripping them (DESIGN.md §6). Opt-IN — absent/false is the pre-1.79.6
-  behavior, so no existing consumer changes. Notebook sends it from the
-  global display pref (`displayWireFields()`, settings.js); explore speaks
-  this same wire and deliberately does not, being a token-ARRAY surface.
+  `show_special_tokens` was REMOVED in v2.0.38 and is a 422, not a silent
+  drop. It was a per-BROWSER display pref that decided what the conversation
+  store PERSISTED, so the same conversation continued from two devices
+  accumulated rows of two kinds with nothing on the row recording which was
+  which. Declared specials are now always stripped. The design a correct
+  version would take — store unstripped, strip at READ so the choice applies
+  to replies that already exist — is in `docs/project/TODO.md` with its three
+  traps; it was deferred, not rejected.
 - **Anthropic conformance (v1.79.39-40):** media blocks accept Anthropic's
   NESTED `source` object (`{type:"image",source:{type:"base64",media_type,data}}`)
   as well as the original flat `source_type` form -- the flat one was the only
@@ -395,7 +397,7 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 Phase 1; the server-side saga that replaces the client-orchestrated
 truncate→stream→persist sequences):**
 - `POST /{id}/generate` `{mode:"append"|"regenerate"|"continue",
-  message_id?, user_content?, overrides?, show_special_tokens?}` → SSE stream.
+  message_id?, user_content?, overrides?}` → SSE stream.
   - The server builds the provider request FROM THE STORE: the conversation's
     `system_prompt`, `params` (sampler bag, cap-gated keys dropped for the
     target model), `model_id`, and message rows (media blocks the model can't
@@ -453,14 +455,14 @@ truncate→stream→persist sequences):**
     commit truncates by position in its own transaction, and rows appended
     mid-stream by another client would be silently destroyed at that
     commit. Metadata PUTs (title/prompt/params) stay open.
-  - `show_special_tokens` (v1.79.6) is a DISPLAY pref, not a sampler, and is
-    top-level for that reason — putting it in `overrides` would layer it into
-    the conversation's stored `params`, which is the sampler bag and reaches
-    the model. It selects the response parser: with it on, the declared
-    specials the model emits are neither stripped from the stream NOR from
-    the row that is PERSISTED, so it decides what this reply records, not how
-    an existing reply renders. v3 sends it on every generate from the global
-    display pref (`displayWireFields()`, settings.js).
+  - Declared specials are ALWAYS stripped here, from the stream and from the
+    row that is persisted (v2.0.38 removed the `show_special_tokens` field that
+    could keep them — see the Messages section above). Unlike the Messages
+    wire this route does not 422 a client that still sends it: the field is
+    simply not declared, and the route has one client. `_strip_history_specials`
+    still runs on REPLAY and is not redundant with the generation-side strip —
+    `content` is user-updatable, so an edited assistant row can carry a control
+    token that must not re-enter a prompt.
   - v3 sends `overrides: {model, ...panel snapshot}` on every generate
     (v1.67.0): the store is the request's BASE, but panel writes to it are
     debounced/async — overrides carry the user's live intent past that

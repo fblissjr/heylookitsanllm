@@ -116,8 +116,7 @@ function buildScanControls(ctx) {
   // WATCH FOLDERS -- server config ([scan].folders in models.toml), not a
   // browser preference. Everything under one of these is served with no
   // entry, so this list is the primary way to add models; the one-off scan
-  // below is for a folder you do NOT want watched. It used to be a
-  // localStorage string that only ever fed a throwaway scan.
+  // below is for a folder you do NOT want watched.
   s.foldersInput = createEl('textarea', {
     id: 'scan-folders',
     class: 'input',
@@ -131,14 +130,17 @@ function buildScanControls(ctx) {
   // effect, and it must reach a screen reader (DESIGN.md §7).
   s.foldersNote = createEl('div', { class: 'muted small', role: 'status' }, ['']);
 
+  // NOT remembered between sessions (v2.0.38 dropped the localStorage key).
+  // A one-off scan is by definition the thing you are not doing again -- a
+  // folder worth re-scanning belongs in the watch list above, which is server
+  // config and reaches every browser. Persisting it made the leftover path
+  // feel like the primary one.
   s.pathsInput = createEl('input', {
     id: 'scan-paths',
     type: 'text',
     class: 'input',
     placeholder: 'modelzoo/gguf, modelzoo',
-    value: loadScanPaths(),
   });
-  s.pathsInput.addEventListener('change', () => saveScanPaths(s.pathsInput.value));
 
   s.hfBox = createEl('input', { id: 'scan-hf', type: 'checkbox', checked: true });
 
@@ -216,18 +218,6 @@ async function saveWatchFolders(ctx) {
   if (!ctx.alive) return;
   s.savingFolders = false;
   s.foldersSaveBtn.disabled = false;
-}
-
-const SCAN_PATHS_KEY = 'heylook-v3-scan-paths';
-
-function loadScanPaths() {
-  try { return localStorage.getItem(SCAN_PATHS_KEY) || ''; }
-  catch { return ''; }
-}
-
-function saveScanPaths(value) {
-  try { localStorage.setItem(SCAN_PATHS_KEY, value); }
-  catch { /* private mode / quota -- scanning still works, it just won't stick */ }
 }
 
 function parsePaths(raw) {
@@ -602,8 +592,6 @@ async function handleScan(ctx) {
     showError(ctx, 'Nothing to scan: add a folder or enable the HuggingFace cache.');
     return;
   }
-  saveScanPaths(s.pathsInput.value);
-
   s.scanning = true;
   s.scanBtn.disabled = true;
   s.scanBtn.textContent = 'Scanning…';

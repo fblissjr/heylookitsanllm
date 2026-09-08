@@ -24,13 +24,13 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { samplerParams, displayWireFields, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
+import { samplerParams, snapshotSettings, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -40,14 +40,15 @@ import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.j
 
 // A system prompt typed before any conversation exists has no owner: the
 // server has nothing to attach it to, so it lived in page state alone and a
-// reload -- or a trip to another page -- silently ate it. Sampler params in
-// the same window survive, because settings.js parks them in localStorage,
-// which is exactly why "everything else loads fine, just not the prompt".
-// Park the draft the same way until a conversation adopts it (both create
-// paths clear it). The follow-on this prevents is the worse half: with the
+// reload -- or a trip to another page -- silently ate it. Park it in the
+// browser until a conversation adopts it (both create paths clear it).
+// It is the ONE thing here that survives a reload without a document, and
+// deliberately so: it is authored text the user cannot get back. Sampler
+// params in that same window do NOT survive any more (v2.0.38) -- they are
+// re-typable numbers with a visible default, which is the whole difference. The follow-on this prevents is the worse half: with the
 // box silently blank, a Save onto an existing preset name stored null over a
 // good prompt.
-const DRAFT_PROMPT_KEY = 'heylook.v3.chat.draft-prompt';
+const DRAFT_PROMPT_KEY = 'chat.draft-prompt';
 
 // How often a streaming message repaints. One paint per animation frame is up
 // to 120/s on a ProMotion phone; nobody reads at that rate, and every paint
@@ -57,23 +58,40 @@ const PAINT_INTERVAL_MS = 66;
 // How close to the tail still counts as "following along".
 const STICK_SLACK_PX = 100;
 
-// The display prefs this page HONORS -- one array, two uses: it declares what the
-// drawer may offer (registerSettings `displayPrefs`) and it selects what goes on
-// the wire (displayWireFields). Same list for both, so offering a control and
-// sending it cannot come apart.
-const DISPLAY_PREFS = ['show_special_tokens'];
-
-
-function readDraftPrompt() {
-  try { return localStorage.getItem(DRAFT_PROMPT_KEY) || null; } catch { return null; }
+// Composer draft swap. Keyed on the conversation, so an unsent message stays
+// with the conversation it was meant for. `refreshAfterResume` must NOT touch
+// these -- it is the same carve-out the system-prompt box already has (the page
+// is a mirror of the store, and a mirror must not overwrite text the user is
+// still typing). Nothing here reaches the server.
+function stashComposerDraft(ctx) {
+  const s = ctx.state;
+  if (!s.activeId || !s.textarea) return;
+  const text = s.textarea.value;
+  if (text) s.composerDrafts.set(s.activeId, text);
+  else s.composerDrafts.delete(s.activeId);
 }
 
-function writeDraftPrompt(value) {
-  try {
-    if (value) localStorage.setItem(DRAFT_PROMPT_KEY, value);
-    else localStorage.removeItem(DRAFT_PROMPT_KEY);
-  } catch { /* storage full/unavailable -- the draft stays in memory only */ }
+function restoreComposerDraft(ctx) {
+  const s = ctx.state;
+  if (!s.textarea) return;
+  s.textarea.value = (s.activeId && s.composerDrafts.get(s.activeId)) || '';
+  autoGrow(s.textarea);
 }
+
+function readDraftPrompt() { return lsRead(DRAFT_PROMPT_KEY); }
+function writeDraftPrompt(value) { lsWrite(DRAFT_PROMPT_KEY, value); }
+
+// WHICH conversation this browser is looking at. Genuinely per-browser state --
+// two devices sitting on different conversations is correct, not drift -- and
+// the one place in this app where ADDING a browser-local key is the right
+// answer rather than the thing to remove. Everything about the conversation
+// itself still lives on the server.
+//
+// A convenience, never a guarantee: it degrades to the newest conversation when
+// the id is missing, unreadable, or names a conversation that is gone. iOS
+// evicts script-writable storage for a site left alone long enough, so the
+// degrade path is the COMMON one on a phone, not an edge case.
+const LAST_CONV_KEY = 'chat.last-conversation';
 
 export default createPage({
   async setup(ctx) {
@@ -87,6 +105,15 @@ export default createPage({
     s.stream = null;      // { controller, targetConvId, content, thinking, els, retries }
     s.editingId = null;
     s.msgNodes = new Map(); // renderMessages: message key -> { node, sig }
+    // Composer text, per conversation, for the life of the MOUNT. Not stored:
+    // typed-but-unsent text is re-typable and short-lived, and parking it in
+    // the browser would grow a key needing collection every time a conversation
+    // is deleted. What this fixes is not lost text but a WRONG ACTION -- the
+    // textarea was never cleared on a switch, so text typed in one conversation
+    // followed you to another and Send put it there. Attachments were already
+    // conversation-scoped (clearPendingAttachments), so the two halves of one
+    // unsent message disagreed: the words followed, the pictures did not.
+    s.composerDrafts = new Map();
 
     buildSkeleton(ctx);
     // Shared preset bar (preset-bar.js), adapted to the active conversation.
@@ -131,21 +158,11 @@ export default createPage({
       scope: () => documentScopeNote('conversation', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), buildPromptSection(ctx).element],
       onOpen: s.presetBar.onDrawerOpen,
-      displayPrefs: DISPLAY_PREFS,
       // What the server resolves an UNSET thinking to for this model (the
       // admin row's thinking_default) -- labels the tri-state's "Model
       // default (on|off)". Null until the admin rows land.
       modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
       samplerDefaults: () => currentModelRow(ctx)?.sampler_defaults ?? null,
-      // A ticked "Show special tokens" on a gguf model changes nothing:
-      // llama-server never emits them (the reasoning split and the stop
-      // token happen inside it). Say so under the box rather than let the
-      // tick look broken -- the pref is global and stays editable.
-      displayNotes: () => (currentProvider(ctx) === 'gguf'
-        ? { show_special_tokens: `No effect on ${s.modelSelect.value}: llama-server never `
-            + 'emits special tokens, so there is nothing to show or strip. Use Preview '
-            + 'prompt to see the markers the template puts around each turn.' }
-        : {}),
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -192,7 +209,10 @@ export default createPage({
     refreshLoadedIds(ctx);
 
     if (s.conversations.length) {
-      await selectConversation(ctx, s.conversations[0].id);
+      const remembered = lsRead(LAST_CONV_KEY);
+      const target = s.conversations.some((c) => c.id === remembered)
+        ? remembered : s.conversations[0].id;
+      await selectConversation(ctx, target);
     } else if (!convList.failed) {
       // Genuinely no conversation owns a prompt -- restore the parked draft
       // so it survives reloads and page trips (the drawer reads
@@ -1144,6 +1164,7 @@ async function deleteConversation(ctx, convId) {
   }
   if (!ctx.alive) return;
   s.conversations = s.conversations.filter((c) => c.id !== convId);
+  s.composerDrafts.delete(convId);  // its unsent text goes with it
   if (s.activeId === convId) {
     abortStream(ctx, ABANDON.DELETE);
     s.activeId = null;
@@ -1229,7 +1250,13 @@ async function selectConversation(ctx, convId) {
     ? (s.conversations.find((c) => c.id === s.stream.targetConvId)?.title || 'That conversation')
     : null;
   if (s.stream) abortStream(ctx, ABANDON.CONVERSATION);
+  // Park the outgoing conversation's composer text and adopt the incoming
+  // one's, BEFORE activeId moves -- the draft belongs to the conversation it
+  // was typed in, the same rule clearPendingAttachments enforces just below.
+  stashComposerDraft(ctx);
   s.activeId = convId;
+  lsWrite(LAST_CONV_KEY, convId);
+  restoreComposerDraft(ctx);
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
@@ -2786,6 +2813,7 @@ async function send(ctx) {
 
   const title = (text || (audio.length ? 'Audio message' : 'Image message')).slice(0, 50);
   s.textarea.value = '';
+  s.composerDrafts.delete(s.activeId);  // sent: no longer an unsent draft
   autoGrow(s.textarea);
   s.pendingImages = [];
   s.pendingAudio = [];
@@ -2976,11 +3004,8 @@ function startStream(ctx, opts = {}) {
   // expressed by absence and only the PUT can spell that (overrides
   // cannot un-set a stored key).
   const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) };
-  // displayWireFields() is spread in BESIDE overrides, never into it: overrides
-  // is the sampler bag the server layers over the document's stored params, and
-  // a display pref landing in there would be persisted as generation state.
   const launch = () => streamGenerate(stream.targetConvId,
-    { mode, message_id: messageId, overrides, ...displayWireFields(DISPLAY_PREFS) }, {
+    { mode, message_id: messageId, overrides }, {
     signal: controller.signal,
     onToken: (_, full) => { firstDelta(); stream.sawEvent = true; stream.content = full; stream.contentDirty = true; if (ctx.alive) s.paint(); },
     onThinking: (_, full) => { firstDelta(); stream.sawEvent = true; stream.thinking = full; stream.thinkingDirty = true; if (ctx.alive) s.paint(); },

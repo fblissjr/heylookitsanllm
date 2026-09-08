@@ -146,92 +146,6 @@ class TestMessagesStreaming:
                 assert "type" in parsed
 
 
-class TestShowSpecialTokens:
-    """`show_special_tokens` on the ROUTE (v1.79.6, DESIGN.md §6).
-
-    The default FakeProvider returns ``template_info() -> None``, i.e. a
-    pass-through parser with no declared specials -- nothing is ever stripped
-    on that path, so the flag is UNOBSERVABLE through it and a green suite
-    would say nothing about whether the handlers read it. These tests swap in
-    a provider that DECLARES a special and emits one.
-    """
-
-    SPECIAL = "<|im_end|>"
-
-    @pytest.fixture
-    def declaring_model(self, mock_router):
-        """Point one model id at a provider that declares + emits a special.
-
-        The router fixture is session-scoped, so the swap is undone after the
-        test or every later test would inherit this provider."""
-        from helpers.mlx_mock import FakeChunk
-        from heylook_llm.providers.common.template_info import ModelTemplateInfo
-
-        special = TestShowSpecialTokens.SPECIAL
-        model_id = "test-mlx-model"
-        # Subclass the fixture's OWN provider class rather than importing it:
-        # the contract conftest is not importable by name (bare `conftest`
-        # resolves to tests/conftest.py), and inheriting from whatever the
-        # router hands out keeps this in step with that fake.
-        base = type(mock_router.get_provider(model_id))
-
-        class DeclaringProvider(base):
-            def template_info(self):
-                return ModelTemplateInfo(
-                    chat_template="",
-                    special_tokens=frozenset([special]),
-                    template_source="jinja",
-                )
-
-            def create_chat_completion(self, request, abort_event=None):
-                yield FakeChunk("Hello", token_id=1)
-                yield FakeChunk(f" world{special}", token_id=2)
-
-        previous = mock_router.providers.get(model_id)
-        mock_router.providers[model_id] = DeclaringProvider(model_id)
-        try:
-            yield model_id
-        finally:
-            if previous is None:
-                mock_router.providers.pop(model_id, None)
-            else:
-                mock_router.providers[model_id] = previous
-
-    def test_streaming_keeps_them_when_asked(self, client, declaring_model):
-        """The path notebook actually takes."""
-        resp = client.post("/v1/messages", json={
-            "model": declaring_model,
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128, "stream": True,
-            "show_special_tokens": True,
-        })
-        assert resp.status_code == 200
-        assert self.SPECIAL in streamed_text(resp.text)
-
-    def test_streaming_strips_by_default(self, client, declaring_model):
-        resp = client.post("/v1/messages", json={
-            "model": declaring_model,
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128, "stream": True,
-        })
-        assert resp.status_code == 200
-        text = streamed_text(resp.text)
-        assert self.SPECIAL not in text
-        assert "Hello world" in text
-
-    def test_non_streaming_honors_it_too(self, client, declaring_model):
-        for flag in (True, False):
-            resp = client.post("/v1/messages", json={
-                "model": declaring_model,
-                "messages": [{"role": "user", "content": "Hello"}],
-                "max_tokens": 128,
-                "show_special_tokens": flag,
-            })
-            assert resp.status_code == 200
-            text = "".join(b.get("text", "") for b in resp.json()["content"]
-                           if b["type"] == "text")
-            assert (self.SPECIAL in text) is flag
-
 class TestNonStreamingPerformance:
     """What a NON-STREAMING client can actually read off `performance`.
 
@@ -328,8 +242,12 @@ def test_retired_request_fields_are_refused_not_ignored(client):
     # `sampler` joined this list in v2.0.30: named sampler bundles were
     # removed, so a client still sending one must be told rather than have
     # it silently ignored -- the same failure `preset` is here for.
+    # `show_special_tokens` joined in v2.0.38: it was a per-BROWSER display pref
+    # that decided what the conversation store PERSISTED, so a client still
+    # sending it must be told rather than quietly get stripped text.
     for field, value in (("logprobs", True), ("top_logprobs", 5),
-                         ("preset", "x"), ("sampler", "balanced")):
+                         ("preset", "x"), ("sampler", "balanced"),
+                         ("show_special_tokens", True)):
         r = client.post("/v1/messages", json={**body, field: value})
         assert r.status_code == 422, f"{field} was accepted: {r.status_code}"
         assert field.split("_")[-1] in r.text or field in r.text, \
