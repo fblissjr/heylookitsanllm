@@ -1085,12 +1085,6 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('capability gating: thinking toggle and vision_tokens track the selected model', async () => {
     await requireCap(page, config.model, 'vision');
     await requireCap(page, config.model, 'thinking');   // it asserts on BOTH
-    // Selecting a model in the chat bar is pure metadata (fillModelSelect +
-    // the change listener) -- it does NOT load the model, so probing an
-    // unloaded model's gating here is cheap and safe.
-    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
-    const hasCap = (m, cap) => (m.capabilities ?? []).includes(cap);
-
     await page.select(MODEL_SELECT, config.model);
     const posThinkHidden = await page.$eval(THINK_BTN, (b) => b.hidden);
     assert(posThinkHidden === false, `thinking toggle hidden for ${config.model} (expected thinking-capable per E2E config)`);
@@ -1100,15 +1094,31 @@ export async function runChatSuite({ suite, ctx, config }) {
     const [min, max] = await page.$eval('#set-vision_tokens', (el) => [el.min, el.max]);
     assert(min === '16' && max === '16384', `#set-vision_tokens min/max = ${min}/${max}, expected 16/16384`);
     await closeDrawer(page);
+  });
 
+  // SPLIT from the check above, and not cosmetically. The negative half needs a
+  // model this server does not always have, while the positive half asserts
+  // unconditionally -- so sharing one check meant the only report available for
+  // a missing negative model was a bare `return`, which `suite.check` tallies as
+  // a PASS. On a single-model machine the whole thing went green having asserted
+  // half of what its name claims. skip() could not live in the shared body
+  // either: it would discard the positive half's three real assertions and
+  // report SKIPPED, which is the opposite lie. The log-and-return sites in this
+  // file predate skip() (added v1.79.66); they were never migrated.
+  await suite.check('capability gating: a model LACKING a cap hides its control', async () => {
+    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const hasCap = (m, cap) => (m.capabilities ?? []).includes(cap);
+    // Selecting a model in the chat bar is pure metadata (fillModelSelect +
+    // the change listener) -- it does NOT load the model, so probing an
+    // unloaded model's gating here is cheap and safe.
     // Prefer a model missing BOTH caps for the strongest negative signal;
     // fall back to one missing either.
     const negative = models.find((m) => m.id !== config.model && !hasCap(m, 'thinking') && !hasCap(m, 'vision'))
       ?? models.find((m) => m.id !== config.model && (!hasCap(m, 'thinking') || !hasCap(m, 'vision')));
 
     if (!negative) {
-      console.log('      no model in /v1/models lacks thinking and/or vision -- skipping the negative half of this check');
-      return;
+      skip('no served model lacks thinking and/or vision, so the negative half '
+         + 'has nothing to select -- register one to cover it');
     }
     const negCaps = negative.capabilities ?? [];
     console.log(`      negative model: ${negative.id} (capabilities: ${negCaps.join(', ') || 'none'})`);
@@ -1143,8 +1153,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const other = models.find((m) => m.id !== config.model);
     if (!other) {
-      console.log('      only one model configured -- skipping');
-      return;
+      skip('only one model configured, so there is nothing to switch TO -- '
+         + 'this check needs a second served model');
     }
     await page.select(MODEL_SELECT, other.id);
     if ((await count(page, '.chat__switch-warning')) === 0) {
@@ -1302,8 +1312,8 @@ export async function runChatSuite({ suite, ctx, config }) {
     const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
     const negative = models.find((m) => m.id !== config.model && !(m.capabilities ?? []).includes('thinking'));
     if (!negative) {
-      console.log('      no non-thinking model registered -- skipping the cap-filter wire check');
-      return;
+      skip('no served model lacks the thinking capability, so the cap filter has '
+         + 'no negative model to be exercised against');
     }
 
     // arm the pin: thinking ON while the capable model is selected
