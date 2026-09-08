@@ -20,22 +20,22 @@ tool for doubt, not a step to institutionalise, and it must not become one.
 
 ## Where this starts
 
-Observed 2026-09-08 at `f3af1c4`, re-derived at `7abced7`. Only `scripts/`
-and `docs/` changed between them, so the suite rows still hold without a
-re-run; the table says how each was established rather than asking you to
+First observed 2026-09-08 at `f3af1c4`; every row below re-derived at
+`5398efa`. The table says how each was established rather than asking you to
 trust it:
 
 | | |
 |---|---|
 | Unpushed commits on `main` | a day's worth, from THREE sessions |
-| Versions written today | 2.0.19 through 2.0.28, sequential, no gaps |
+| Versions written today | sequential, no gaps, `__version__` agreeing with the top section |
 | `__version__` vs top changelog section | agree |
 | Working tree | clean except `uv.lock`, which the owner has claimed |
 | `uv lock --check` | resolves clean |
 | Backend + render suites | green |
-| `tests/smoke/` since provider code changed | **not run** |
+| `tests/smoke/` since provider code changed | run, green on every arm (`f2e5511`) |
 
-The last row is the one that matters. Everything else is tidy-up.
+Every row now holds. Phases 1 through 3 are done; what remains is Phase 4's
+standing list and Phase 5's protocol, neither of which is work.
 
 ## Phase 1 — settle the working tree
 
@@ -123,11 +123,23 @@ changelog entry.
 
 ## Phase 3 — make the changelog true
 
-**Precondition met 2026-09-08.** `CHANGELOG.md` is clean and Phase 2's smoke
-result has landed in it (`f2e5511`), so this phase can start. The precondition
-is recorded because it nearly was not: the file was dirty in another session's
-tree, and auditing an artifact while someone writes it produces findings about
-a draft. If it goes dirty again, wait rather than audit.
+**DONE 2026-09-08 (`36bf548`).** Every count, status and attribution in this
+session's entries was re-derived by running a command whose output is the
+claim. It found one defect and one attribution gap, both since fixed:
+
+- An entry claimed the browser suite's per-context page-error checks had
+  become one check. They became two -- one was deliberately kept because it
+  drives a streamed message before asserting, and the entry never said so.
+- An entry presented a subagent's instrumented figures beside first-hand
+  measurements with nothing distinguishing them. It now says which is which
+  and points at the audit doc, where every claim carries that label.
+
+Counts were deleted rather than corrected throughout, per the owner's rule.
+Other sessions' entries were reported on and left untouched by request.
+
+The precondition is kept on the record because it nearly was not met: the file
+was dirty in another session's tree, and auditing an artifact while someone
+writes it produces findings about a draft. If it goes dirty again, wait.
 
 The day's version sections were written by three sessions, partly from a
 subagent's report, partly from measurements taken mid-session. It is the
@@ -142,9 +154,12 @@ exactly that before.
    measurement worth keeping goes where its conditions travel with it
    (`internal/research/`), not into a sentence. Entries written earlier today
    predate that rule and carry counts in prose.
-3. Fix the one stale claim already known: `tests/e2e/render.mjs`'s own header
-   still describes the suite as taking "a few seconds". The README was
-   corrected; the file's own comment was not.
+3. ~~Fix the stale claim in `tests/e2e/render.mjs`'s own header.~~ Done. Worth
+   recording HOW it went: this phase named that one line explicitly, the audit
+   ran, and the line was still there afterwards. A named task in a written
+   plan was skipped by the person who wrote the plan, and only a re-derivation
+   of the plan's own claims caught it. Checking a plan against reality is not
+   bureaucracy when the plan is a day old and three sessions are moving.
 
 **Done when** every claim in the day's entries is either re-derived or deleted.
 
@@ -167,8 +182,24 @@ Standing open, with the reason to leave each alone:
   objects' behaviour, so removing the patch breaks tests rather than revealing
   drift.
 - **Most of the backend suite unprobed** — deliberate. See the opening section.
+- **A `models.toml` prune** — BLOCKED, and deliberately so. The startup report
+  names entries whose paths no longer resolve, but the command it would point
+  at does not exist. A prune has to reason about what an edit does to the
+  SERVED SET, and entries match discovery on resolved path while the served
+  unit is an id: two entries can claim one path, so an entry that reads as
+  redundant can take a model with it. That needs a diff over the merge, owned
+  by another session and not yet authorised by its owner. Do not write one on
+  top of an existence check.
 
 **Done when** nothing new has been added to this list.
+
+One honest exception to record rather than hide: a startup report for stale
+`models.toml` entries was built during this consolidation (`5398efa`), at the
+owner's request. It is new work, in a plan whose first line says it is not
+more work. It was read-only, it closed a standing annoyance, and its own
+scope was cut when the trap above surfaced — the destructive half was declined
+rather than deferred. That is the shape an exception should have; a second one
+without that shape means the plan has stopped being a plan.
 
 ## Phase 5 — the protocol that stops today recurring
 
@@ -235,3 +266,8 @@ changelog. Every claim in the day's changelog entries re-derived or deleted.
 The audits' open lists accurate and not duplicated. Then stop — and if the next
 session wants to extend coverage, it aims at something it doubts, one defect at
 a time.
+
+**Status 2026-09-08 at `5398efa`: Phases 1, 2 and 3 are done.** What is left is
+Phase 4's list, which is a list rather than a task, and Phase 5's protocol,
+which is rules rather than work. By its own definition this plan is finished;
+the remaining entries are for whoever picks up the blocked prune.

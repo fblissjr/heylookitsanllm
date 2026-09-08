@@ -1,6 +1,6 @@
 // Render-layer E2E: drives the REAL chat page (real js/, real css/) against
-// a STUBBED /v1 API. No server, no model, no DB -- a few seconds, and it runs
-// anywhere Chrome does.
+// a STUBBED /v1 API. No server, no model, no DB, and it runs anywhere Chrome
+// does. Not instant -- see tests/e2e/README.md for what it costs.
 //
 //   bun run e2e:render
 //
