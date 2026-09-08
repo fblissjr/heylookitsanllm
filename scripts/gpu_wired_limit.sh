@@ -85,45 +85,75 @@ plist_mb() {
   field "$(cat "$PLIST")" 'iogpu\.wired_limit_mb=([0-9]+)'
 }
 
-# Wait for the job to have RUN, not merely to have been accepted: `bootstrap`
-# returns first. Bounded, and a timeout is reported rather than retried.
-await_run() {
-  local i out
-  for i in $(seq 1 20); do
-    out=$(daemon_print)
-    [ -n "$(field "$out" 'runs = ([0-9]+)')" ] && { echo "$out"; return 0; }
-    sleep 0.1
-  done
-  echo "$out"
-  return 1
-}
-
-# The four states worth telling apart. File existence alone cannot: a plist
-# that launchd rejected looks identical to a working one on disk, and that is
-# exactly the failure this reports.
-daemon_report() {
-  local out runs code loaded_mb disk_mb
-  out=$(daemon_print); disk_mb=$(plist_mb)
+# ONE interpreter of launchd's record, because `status` and `install` asking
+# the same question two different ways is how the first version of this got it
+# wrong in both places at once. Echoes exactly one of:
+#
+#   absent        no plist, no job
+#   unloaded      plist on disk, launchd has no such job (the silent one)
+#   pending       loaded, no exit code recorded YET -- it may still be running
+#   ok            loaded, last run exited 0
+#   failed <code> loaded, last run exited non-zero
+#
+# Keyed on `last exit code`, which launchd writes when the job EXITS. `runs`
+# is written when it is SPAWNED, and the window between the two is real: the
+# first version polled `runs`, sampled inside that window, read an empty exit
+# code, and reported a healthy install as "FAILED (exit ?)" -- the same race
+# the sysctl readback lost, moved one field over. An unknown is `pending`, and
+# `pending` is NEVER rendered as a failure.
+daemon_state() {
+  local out code
+  out=$(daemon_print)
   if [ -z "$out" ]; then
-    if [ -f "$PLIST" ]; then
-      echo "boot daemon           plist on disk but NOT loaded -- launchd has no such job."
-      echo "                      It will not survive a reboot. Re-run: sudo $0 install ${disk_mb:-}"
-    else
-      echo "boot daemon           not installed (a set value is lost at reboot)"
-    fi
+    [ -f "$PLIST" ] && echo "unloaded" || echo "absent"
     return
   fi
-  runs=$(field "$out" 'runs = ([0-9]+)')
   code=$(field "$out" 'last exit code = ([0-9]+)')
-  loaded_mb=$(field "$out" 'iogpu\.wired_limit_mb=([0-9]+)')
-  if [ -z "${runs:-}" ]; then
-    echo "boot daemon           loaded, has not run yet (value ${loaded_mb:-?} MB)"
-  elif [ "${code:-1}" != "0" ]; then
-    echo "boot daemon           loaded but its last run FAILED (exit ${code}); the value"
-    echo "                      will not come back at reboot. Check: launchctl print system/${LABEL}"
+  if [ -z "$code" ]; then
+    echo "pending"
+  elif [ "$code" = "0" ]; then
+    echo "ok"
   else
-    echo "boot daemon           loaded, ran ok (applies ${loaded_mb:-?} MB at boot)"
+    echo "failed $code"
   fi
+}
+
+# `bootstrap` returns before the job has run, so settle rather than sample.
+# A timeout stays `pending` -- "could not confirm" is its own answer and must
+# not be dressed up as either success or failure.
+await_settled() {
+  local i state
+  for i in $(seq 1 30); do
+    state=$(daemon_state)
+    [ "$state" = "pending" ] || { echo "$state"; return 0; }
+    sleep 0.1
+  done
+  echo "pending"
+}
+
+# The states worth telling apart, rendered once. File existence alone cannot:
+# a plist launchd rejected looks identical on disk to a working one, and that
+# is exactly what this reports.
+daemon_report() {
+  local state loaded_mb disk_mb out
+  state=$(daemon_state); out=$(daemon_print); disk_mb=$(plist_mb)
+  loaded_mb=$(field "$out" 'iogpu\.wired_limit_mb=([0-9]+)')
+  case "$state" in
+    absent)
+      echo "boot daemon           not installed (a set value is lost at reboot)"
+      return ;;
+    unloaded)
+      echo "boot daemon           plist on disk but NOT loaded -- launchd has no such job."
+      echo "                      It will not survive a reboot. Re-run: sudo $0 install ${disk_mb:-}"
+      return ;;
+    pending)
+      echo "boot daemon           loaded, run not finished yet (applies ${loaded_mb:-?} MB at boot)" ;;
+    ok)
+      echo "boot daemon           loaded, ran ok (applies ${loaded_mb:-?} MB at boot)" ;;
+    failed*)
+      echo "boot daemon           loaded but its last run FAILED (exit ${state#failed }); the value"
+      echo "                      will not come back at reboot. Check: launchctl print system/${LABEL}" ;;
+  esac
   if [ -n "${disk_mb:-}" ] && [ -n "${loaded_mb:-}" ] && [ "$disk_mb" != "$loaded_mb" ]; then
     echo "                      NOTE: plist on disk says ${disk_mb} MB -- edited since it was"
     echo "                      loaded. Re-run: sudo $0 install ${disk_mb}"
@@ -174,23 +204,29 @@ PL
       echo "  reboot. The plist is on disk; 'sudo $0 uninstall' removes it." >&2
       exit 1
     fi
-    out=$(await_run) || {
-      echo "" >&2
-      echo "warning: the job loaded but had not run after 2s. This boot is set;" >&2
-      echo "  check it before relying on the next one: $0 status" >&2
-      exit 1
-    }
-    code=$(field "$out" 'last exit code = ([0-9]+)')
-    if [ "${code:-1}" != "0" ]; then
-      echo "" >&2
-      echo "error: the boot job ran and FAILED (exit ${code:-?}). This boot is set," >&2
-      echo "  but the value will not come back at reboot." >&2
-      echo "  Detail: launchctl print system/${LABEL}" >&2
-      exit 1
-    fi
-    echo ""
-    echo "installed $PLIST -- verified: the job ran and exited 0, so ${mb} MB"
-    echo "comes back at every boot. 'sudo $0 uninstall' removes it."
+    state=$(await_settled)
+    case "$state" in
+      ok)
+        echo ""
+        echo "installed $PLIST -- verified: the job ran and exited 0, so ${mb} MB"
+        echo "comes back at every boot. 'sudo $0 uninstall' removes it."
+        ;;
+      pending)
+        # Not a failure and not a success. Say so.
+        echo ""
+        echo "installed $PLIST, but its first run had not finished after 3s, so this"
+        echo "cannot confirm it works. This boot IS set (${mb} MB). Check before"
+        echo "relying on the next one: $0 status"
+        exit 1
+        ;;
+      *)
+        echo "" >&2
+        echo "error: the boot job ran and FAILED (exit ${state#failed }). This boot is" >&2
+        echo "  set (${mb} MB), but the value will not come back at reboot." >&2
+        echo "  Detail: launchctl print system/${LABEL}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   uninstall)
     need_root uninstall

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.17]
+
+### Fixed
+
+- **v2.0.16's `install` reported a healthy daemon as `FAILED (exit ?)`.**
+  Same race it had just fixed, moved one field over: launchd records `runs`
+  when a job is SPAWNED and `last exit code` when it EXITS, and the new
+  check polled for `runs`. It therefore sampled inside the window between
+  the two, read an empty exit code, and `${code:-1}` turned that unknown
+  into a failure -- the `?` in the message was the tell. `status` a moment
+  later said `ran ok`, because by then the exit had been recorded; the same
+  bug was latent there for a job caught mid-run.
+  - The wait now settles on `last exit code`, which is the completion
+    signal, and an unconfirmed run is its own outcome (`pending`) that is
+    never rendered as failure: `install` says it could not confirm and
+    points at `status`, exit 1, rather than claiming the job failed.
+  - `status` and `install` now share ONE classifier (`daemon_state`:
+    absent / unloaded / pending / ok / failed N). Each interpreting
+    launchd's fields on its own is why one bug landed in both places at
+    once.
+
 ## [2.0.16]
 
 ### Fixed
