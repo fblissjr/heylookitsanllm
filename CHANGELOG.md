@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.31]
+
+### Fixed
+
+- **`effective_loader_for_config` refuses an unresolved capability declaration
+  instead of answering from its absence.** It reports which mlx engine will
+  load a model, and the `auto` rule reads the model's declaration.
+  `MLXModelConfig` always supplies one -- but `merge_discovered` returns RAW
+  dicts and derivation happens at validation, so a config taken straight from
+  the merge declares nothing. It answered anyway: the text loader, for every
+  model, vision ones included, with no exception and no log line. A confident
+  wrong answer indistinguishable from a real one, and two sessions were caught
+  by it the day this was written.
+
+  It matters past a wrong count. Anything comparing a served set before and
+  after a config edit calls this per model, so an unvalidated snapshot on
+  either side reports engine changes that never happened -- from a tool whose
+  entire value is being trusted about what an edit does.
+
+  The guard fires only where the answer would depend on the declaration: an
+  explicit `loader` wins outright, so an absent declaration is harmless there,
+  and the legacy `vision` bool still counts as a declaration. It raises rather
+  than warns, because this runs per row of `GET /v1/admin/models`, where a
+  warning is either noise or filtered.
+
+  The docstring is corrected in the same change. It claimed agreement with the
+  loaded provider BY CONSTRUCTION; that holds only for a validated config, and
+  the precondition had gone unsaid.
+
+  Worth keeping: the first version of the check tested
+  `_modalities_of(config) is None`, and that helper never returns `None` -- it
+  falls back to the legacy bool. It would have shipped as dead code reading as
+  a guard, in the change whose whole subject is answers that cannot be wrong
+  because they are never computed. Caught by running it, which is the only
+  thing that catches this class.
+
 ## [2.0.30]
 
 ### Removed
