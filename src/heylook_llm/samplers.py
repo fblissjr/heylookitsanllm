@@ -187,13 +187,18 @@ def sampler_defaults(model_config: dict, *, thinking_capable: bool,
     to generate to find out what temperature they are running is the
     complaint this closes.
 
-    Keyed by the THINKING SWITCH, ``{"off": {...}, "on": {...}}``, because
-    the anti-loop overlay fires off that switch (thinking.toml sets
-    presence_penalty) while the panel's thinking control is live and
-    independent. Reporting one state's numbers while the user has selected
-    the other would put a WRONG number on screen, which is worse than the
-    "auto" it replaces. Two dict merges and no I/O, so the honest shape is
-    also the cheap one.
+    Keyed by the THINKING SWITCH, ``{"off": {...}, "on": {...}}``. That shape
+    was earned: the anti-loop overlay moved ``presence_penalty`` off the
+    switch while the panel's thinking control is live and independent, so
+    reporting one state while the user had selected the other put a WRONG
+    number on screen.
+
+    THE OVERLAY IS GONE (v2.0.32), so the two states are now IDENTICAL in
+    every key but ``enable_thinking`` itself -- measured, not assumed. Nothing
+    in the cascade reads the thinking switch any more except the line that
+    sets that key. The shape is retained pending a decision to collapse it;
+    it is two dict merges and no I/O, so it is cheap, but it is no longer
+    carrying information and should not be defended as if it were.
 
     ``vendor`` must be passed exactly as the model's own PROVIDER passes it
     at generation time -- MLX from the model dir's generation_config.json

@@ -172,11 +172,14 @@ is the admin row's `thinking_default` and must stay the cascade's own answer, ne
 re-derivation. `samplers.sampler_defaults()` (v2.0.21) is its SIBLING under the same rule
 and reports EVERY key: `{"off": {...}, "on": {...}}` on the admin row and `/v1/models`,
 which v3 prints as the placeholder in a blank sampler field so "auto" stops hiding the
-number in force. Still keyed by the thinking switch and reported as both states, even
-though no sampler value moves off it any more (the anti-loop overlay went in v2.0.32):
-a model config or a future layer may key on it again, and the panel's thinking control
-is live and independent, so reporting one state while the user has selected the other
-would put a wrong number on screen -- worse than the "auto" it replaces.
+number in force. Still `{"off": ..., "on": ...}`, and that shape is now VESTIGIAL: the
+anti-loop overlay that moved `presence_penalty` off the thinking switch went in v2.0.32,
+and the two states are measurably identical in every key but `enable_thinking` itself.
+Nothing in the cascade reads the switch except the line that sets that key, and there is
+no mechanism by which a models.toml field varies with it. `settings.js`'s `thinkingOn()`
+-- whose cap gate cites the presence-penalty case in its own comment -- therefore cannot
+change a number on screen. Retained pending a decision to collapse it to one bag; do not
+defend it as load-bearing.
 It takes each engine's VENDOR layer exactly where that engine's provider takes it, and
 `capabilities._vendor_sampling_pairs` is the ONE place naming which engine reads what:
 MLX `load_vendor_sampling` (generation_config.json), gguf `gguf_metadata.vendor_sampling`

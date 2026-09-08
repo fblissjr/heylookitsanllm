@@ -552,11 +552,12 @@ value): `{"off": {...}, "on": {...}}` — what EVERY sampler key resolves to for
 that says nothing, from the same cascade (`samplers.sampler_defaults`, sibling of
 `thinking_default` and bound by the same never-re-derive rule). Keys are a subset of
 `REQUEST_SAMPLER_FIELDS`; a key the cascade does not set is absent, and the UI falls back
-to the word "auto" for it. KEYED BY THE THINKING SWITCH: no sampler value moves off that
-switch since v2.0.32 (the anti-loop overlay is gone), but a model config can key on it and
-the panel's thinking control is live and independent — reporting one state while the user
-has selected the other would put a wrong number on screen, which is worse than the "auto"
-it replaces.
+to the word "auto" for it. KEYED BY THE THINKING SWITCH, and that key is now VESTIGIAL:
+since v2.0.32 removed the anti-loop overlay, the two bags are identical in every key but
+`enable_thinking` itself, and no mechanism exists by which a models.toml field varies with
+the switch. The shape earned itself when `presence_penalty` did move off it — reporting one
+state while the user had the other selected put a wrong number on screen — and is retained
+pending a decision to collapse it to a single bag.
 Each engine's vendor layer is included exactly where that engine's provider includes it
 — MLX from `generation_config.json`, gguf from the GGUF header's `general.sampling.*` —
 so a gemma row and a Qwen3.6 gguf row each report their own top-k rather than the
