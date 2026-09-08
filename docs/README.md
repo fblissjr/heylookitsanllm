@@ -1,6 +1,6 @@
 # Documentation index
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
@@ -19,6 +19,19 @@ plus `/openapi.json`.
 - [architecture/](./architecture/) -- backend design records + invariants (config
   history, provider mechanisms, MLX ecosystem posture, crash postmortems).
   Narrower and decision-shaped. Start at its [README](./architecture/README.md).
+
+## Test audits
+Dated evidence records, not living documents: what was measured, on what commit,
+and by what method. Each is a snapshot -- re-derive before trusting a figure.
+They exist because a green suite proves only what its checks can actually fail
+on, and both of these found checks that could not.
+
+- [testing/audit_2026-09-08_render_suite.md](./testing/audit_2026-09-08_render_suite.md)
+  -- mutation audit of `tests/e2e/render.mjs` via `E2E_V3_ROOT`; carries the
+  repeatable method
+- [testing/audit_2026-09-08_backend_suite.md](./testing/audit_2026-09-08_backend_suite.md)
+  -- runtime + mutation audit of `tests/unit/` + `tests/contract/`; claims are
+  marked verified-here vs reported
 
 ## Project -- roadmap / status / backlog
 - [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-7; Phase 0 is the

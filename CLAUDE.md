@@ -743,6 +743,9 @@ in git history; a contract test pins that `/v2` stays 404.)
 
 ## Tests
 
+- **Audits of these suites** (dated evidence records, method + findings + what
+  each cannot see): `docs/testing/`. Read before concluding a suite covers
+  something -- both audits found checks that could not fail at all.
 - **There is NO "make it fail first" rule here, and adding one back is a
   regression.** Write the check, run the suite, move on. A deliberate red
   (mutate the code, confirm the check goes red, restore) is a TOOL you may
