@@ -84,14 +84,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The browser suite's per-context page-error checks are one check.** Each
-  asserted that one page context threw nothing; between them they caught none
-  of the defects a mutation audit planted, while three contexts were asserted
-  on nowhere. `openChat` now registers every context, and one check at the
-  foot of the run speaks for all of them, naming the `render.mjs` line each
-  offending page was opened at. It also asserts contexts were registered at
-  all, so it cannot go quietly vacuous. Verified against a copy of the
-  frontend that throws on every chat page.
+- **The browser suite's per-context page-error checks collapse into one that
+  speaks for every context.** Each asserted that one page context threw
+  nothing, they caught none of the defects a mutation audit planted, and some
+  contexts were asserted on nowhere. `openChat` now registers every context it
+  hands out, and one check at the foot of the run covers all of them, naming
+  the `render.mjs` line each offending page was opened at. It also asserts
+  that contexts were registered, so it cannot go quietly vacuous. Verified
+  against a copy of the frontend that throws on every chat page.
+
+  One per-context check is deliberately KEPT: `no uncaught page errors
+  (streaming paint)` drives a full streamed message before asserting, so
+  deleting it would have removed an exercise rather than a duplicate
+  assertion.
 
 - **The superseded-stream check reads `chat.js`'s status prefixes instead of
   restating them.** `GENERATING_PREFIX` and `MODEL_SWITCH_PREFIX` are exported
@@ -176,14 +181,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The route/schema conformance check now reaches every served route
-  instead of one in forty-six.** `test_all_routes_have_schema_entries` walked
+  instead of almost none.** `test_all_routes_have_schema_entries` walked
   `app.routes` directly, and that was measured decorative, not suspected: a
   route added with `include_in_schema=False` -- the exact defect it names --
-  was planted and it stayed green. `app.routes` holds 4 Routes, 6 APIRoutes
-  and 17 `_IncludedRouter` entries, and an `_IncludedRouter` has no `.path`,
-  so the loop saw ONE `/v1` path while the schema published 46. It is the same
-  blind spot `test_startup_banner.py` commemorates as a shipped bug (the
-  banner printed 12 of 48) -- the broken walk outlived the fix, one module
+  was planted and it stayed green. Most entries in `app.routes` are
+  `_IncludedRouter` objects with no `.path`, so the loop saw a single `/v1`
+  path while the schema published the whole surface. It is the same blind spot
+  `test_startup_banner.py` commemorates as a shipped bug -- the broken walk outlived the fix, one module
   away, in a contract test.
 
   Replaced with a walk that recurses through `original_router` and compares
@@ -191,7 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is deliberately NOT the oracle: it reads `app.openapi()`, so comparing it to
   the schema compares the schema to itself, which is why nothing caught the
   planted route. (That does not make the banner test decorative -- reverting
-  `get_api_endpoints` to the old walk turns three of its tests red. It simply
+  `get_api_endpoints` to the old walk turns its tests red. It simply
   never claimed to catch a hidden route.) Verified: green normally, red on the
   planted route and naming it.
 
@@ -206,10 +210,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `test_endpoint_count` asserted `>= 10` against roughly 46 published
-  operations, so three-quarters of the API could be deleted under it. Its own
+- `test_endpoint_count` asserted a floor far below the number of operations
+  actually published, so most of the API could be deleted under it. Its own
   docstring called it a sanity check, and `test_core_endpoints_in_schema`
-  above it names seven specific paths.
+  above it names specific paths instead.
 
 ## [2.0.25]
 
@@ -261,19 +265,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   garbage-collected, `BaseProvider.__del__` calls `unload()`, whose drain loop
   polls `time.sleep(0.1)` until the active count reaches zero or a 30s cap
   expires -- and nothing is generating, so the counter never falls and the
-  whole cap burns. Measured: 289 sleeps totalling ~29s, all from that one
-  destructor. The test now restores the counter in a `finally`.
+  whole cap burns. The test now restores the counter in a `finally`.
 
   Worth holding onto is WHY nobody found it from the suite's own output:
   `--durations` cannot see one second of it. The stall happens inside
   `__del__` during garbage collection, outside every phase pytest times, so
-  `tests/unit/test_mlx_provider.py` reported 2.5s across its 80 duration
-  entries while actually taking 33.5s -- 53% of the clock in a file holding 4%
-  of the tests, and the slowest test pytest would name ran 1.02s. Duration
-  triage is structurally blind to teardown and GC work; when a suite's
-  reported times do not add up to its wall clock, that gap is the finding.
-  Verified in isolation (33.51s -> 3.29s on that file, CPU 10% -> 90%) and on
-  the full suite (64.56s -> 35.20s, 1934 passed).
+  the file's duration entries summed to a small fraction of its own wall time
+  while it dominated the run. Duration triage is structurally blind to
+  teardown and GC work; when a suite's reported times do not add up to its
+  wall clock, that gap is the finding.
+
+  Attribution, since this entry mixes two sources: the sleep-call
+  instrumentation and the duration-vs-wall-clock breakdown were REPORTED by a
+  subagent and not re-derived here. The before/after timings were measured
+  directly, in isolation and on the full suite. Both, with conditions
+  attached, are in `docs/testing/audit_2026-09-08_backend_suite.md`, which
+  marks every claim verified-here or reported.
 
   Also worth flagging beyond the tests: a destructor that can block for 30
   seconds is a production hazard, not only a test-runtime one -- GC can fire
@@ -442,14 +449,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`bun run e2e:render` runs in ~70s instead of ~112s, with one more check
-  than before.** Measured, not estimated: the suite already prints per-check
-  timings, and nine checks of 114 held 65% of the wall clock while 67 of them
-  held 2.7s between them. No check's subject changes; the timer coverage that
+- **`bun run e2e:render` runs in roughly a third less time, with one more
+  check than before.** Figures and method:
+  `docs/testing/audit_2026-09-08_render_suite.md`. Measured, not estimated: the suite already prints per-check
+  timings, and a handful of checks held most of the wall clock while the
+  majority held almost none between them. No check's subject changes; the timer coverage that
   was incidental to five of them becomes one check of its own.
 
-  Five preset-guard checks opened with `sleep(8200)` -- 41 seconds, 39% of the
-  whole suite -- purely to wait out `armedConfirm`'s 8s timer so each started
+  A group of preset-guard checks opened with `sleep(8200)` -- the single
+  largest cost in the suite -- purely to wait out `armedConfirm`'s 8s timer so each started
   from a known-disarmed state. `armedConfirm` exposes `disarm` on the button
   node for exactly that, so they now call a `resetArms()` helper that disarms
   every control in the section (Apply, Save and Del each own a timer; the old
@@ -457,15 +465,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   others armed). The timer's own coverage was incidental to five checks about
   something else; it is now one named check that spends the 8.2s deliberately.
   That check was run against a deliberately lengthened timeout and was the
-  only one of the 115 to go red, which also establishes that nothing else in
+  only check to go red, which also establishes that nothing else in
   the suite still leans on the timer.
 
 - **The streaming stub's cadence is declared per check rather than inherited.**
   `drip` is one mutable object shared by every streaming check, so a check
   setting only the fields it cared about picked up the rest from whoever ran
   last. `no uncaught page errors (streaming paint)` set `text` alone and so
-  ran at the 4-char/25ms cadence a mid-stream-interaction check had chosen --
-  four seconds to prove something about page errors. `setDrip()` restores
+  ran at the slow cadence a mid-stream-interaction check had chosen, paying
+  seconds to prove something about page errors. `setDrip()` restores
   every field from one `DRIP_DEFAULTS` before applying overrides, which also
   retires the hand-written "put it back for the next check" lines that used to
   trail these checks (one of which was resetting a field two checks after it
@@ -474,7 +482,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it up from the check above.
 
 - One check's drip was genuinely slower than its arrangement needs and was
-  retimed: `a Stop that lands after the run finished` (6.1s -> 2.1s). Its
+  retimed: `a Stop that lands after the run finished`. Its
   requirement -- the Stop lands inside the stream -- fails loudly if the
   margin is ever wrong, because the button is gone once the stream ends.
   The checks whose comments say the slowness is load-bearing (`a stream that
