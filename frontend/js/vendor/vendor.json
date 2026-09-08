@@ -2,7 +2,7 @@
   "_comment": "Pinning record for the frontend's only external dependencies. The files beside this manifest are npm tarball contents, byte-for-byte. Managed by scripts/vendor_frontend.py -- do not hand-edit either the files or the versions here; they are checked against each other in pre-commit.",
   "packages": {
     "marked": {
-      "version": "18.0.11",
+      "version": "18.0.12",
       "source": "lib/marked.esm.js",
       "dest": "marked.esm.js",
       "banner_re": "marked v(\\d+\\.\\d+\\.\\d+)"
