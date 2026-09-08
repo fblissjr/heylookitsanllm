@@ -226,6 +226,20 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 // rebuild -- this file's own header states that is what `draft` is for, and
 // keeping the textarea in closure state meant clicking Load after typing a
 // 300-line template silently discarded it and re-collapsed the section.
+//
+// It is deliberately PAGE-SCOPED, and the scope is wider than a reload:
+// `s.configDrafts` is built fresh on every mount, so an in-app hash
+// navigation discards an unsaved body exactly as a reload does, unwarned in
+// both cases (`beforeunload` cannot see a hashchange at all).
+// The tempting precedent is chat.js parking its system prompt in
+// localStorage, and it does NOT transfer. That draft is typed before a
+// conversation exists, so the parking is a bridge to adoption, not a
+// durability feature; a template body has a home from the first keystroke,
+// one enabled button away. Storing it would also go STALE: render() refetches
+// `override_template` from the server, and `draft[TMPL_DRAFT] ?? serverText`
+// lets a stored body win over a template that changed on disk -- including
+// one another session wrote. An in-memory draft can only ever be as old as
+// the page, which is the property you want here.
 const TMPL_DRAFT = '__chat_template_body';
 const TMPL_OPEN = '__chat_template_open';
 
