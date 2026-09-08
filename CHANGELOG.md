@@ -39,16 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   22s wall, ending with one model resident, so at least two evictions ran to
   completion.
 
-  What that evidence is and is not. The warning is a plain `logging.warning`
-  in `mlx_provider`, NOT observability-gated, and WARNING does reach that log
-  (three startup config warnings are in it), so the channel was live and its
-  silence is real. But the warning is guarded by `if active or waiting`, so
-  silence means EITHER no provider was collected believing it was generating
-  (the wanted answer) OR `__del__` never ran on a provider with work in flight.
-  This run cannot separate those. The evictions were confirmed from residency,
-  not from log lines, because at `observability_level=off` no INFO reaches the
-  log at all -- there were no eviction lines to be missing. Same silence, three
-  different reasons for it.
+  What that evidence is and is not -- three claims, deliberately kept apart:
+
+  1. **The guarded branch behaves correctly when reached** is NOT established
+     by this run, and does not need to be: `TestCollectionDoesNotBlock`
+     drives `__del__()` with the active counter at 3 and asserts it returns
+     without waiting and without tearing down, verified red against the old
+     destructor (30.16s, the full cap).
+  2. **No provider was collected mid-generation during the live run** is what
+     the smoke silence says. It is real signal because the channel was shown
+     live first: the warning is a plain `logging.warning` in `mlx_provider`,
+     not observability-gated, and WARNING demonstrably reaches that log
+     (three startup config warnings are in it). What this run CANNOT separate
+     is whether the branch was reached and stayed quiet, or never reached --
+     the guard is `if active or waiting`.
+  3. **Deliberate teardown still completes** comes from residency, not from
+     log lines: at `observability_level=off` no INFO reaches the log at all,
+     so the absent eviction lines were never going to be there and their
+     silence carries nothing.
 
 ### Fixed
 

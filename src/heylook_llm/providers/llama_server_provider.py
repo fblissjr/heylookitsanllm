@@ -368,8 +368,11 @@ class LlamaServerProvider(BaseProvider):
         ladder a spawn would walk. ``log=False`` for that caller: the media
         refusal below is a SPAWN warning, and emitting it from a read-only
         route made merely opening the template panel log as though a load had
-        been refused -- three times per save-and-confirm cycle, which makes
-        the real one indistinguishable from the noise. A second implementation for previewing is
+        been refused. Once per REQUEST, so on every panel open, every save
+        and every revert -- which makes the real one indistinguishable
+        from the noise. ("Three times per save-and-confirm cycle" is what
+        this said until it was counted: `_template_view` runs once per
+        route, so opening and saving is two, and only a revert makes three.) A second implementation for previewing is
         the defect this repo keeps naming: it agrees on the day it is written
         and silently diverges after.
 
