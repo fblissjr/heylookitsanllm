@@ -184,6 +184,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Three consecutive runs: 115/115 each. Per-check diff against the baseline:
   the only checks that moved by more than 200ms are the seven changed here.
 
+### Added
+
+- **A check that can actually see `markdown.js`'s LINK scheme guard.** Deleting
+  that guard outright left the suite 115/115 green: DOMPurify strips the href
+  and the existing oracle, which asserts on the RESOLVED PROTOCOL, comes back
+  clean. It only went red once DOMPurify was removed as well -- so the check
+  whose comment calls it "the ONLY checks that can see the scheme guard in
+  markdown.js regress" was reading the second layer, for links, the whole
+  time. (The IMAGE half was genuinely covered; deleting that one does go red.)
+  The two layers refuse DIFFERENTLY -- the guard drops the anchor and keeps
+  the label, DOMPurify keeps the anchor and strips the attribute -- so "no
+  anchor at all" is a property only the guard satisfies. Verified both ways:
+  green on the real tree, red against a copy with the link guard bypassed.
+
 ### Fixed
 
 - **`the reset button says it clears overrides` was a race, not an oracle.**

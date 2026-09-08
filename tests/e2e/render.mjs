@@ -2520,6 +2520,32 @@ async function main() {
       }
     });
 
+    // THE SHAPE OF THE REFUSAL, not just the resolved protocol -- and this is
+    // the only check that can see markdown.js's LINK guard at all. The
+    // protocol oracle above cannot: with that guard deleted outright the
+    // suite stayed 115/115, because DOMPurify strips the href and the
+    // resolved protocol comes back clean. Measured 2026-09-08 against a copy
+    // of the frontend with `safeUrl` bypassed for links; the check only went
+    // red when DOMPurify was removed TOO, i.e. it was reading the second
+    // layer the whole time while its comment claimed to be the primary. (The
+    // IMAGE half was genuinely covered -- deleting that one does go red.)
+    //
+    // The two layers refuse differently, which is what makes this decidable:
+    // the guard drops the ANCHOR and keeps the label (`parseInline`), while
+    // DOMPurify keeps the anchor and strips the attribute. So "no anchor at
+    // all" is a property only the guard satisfies. Do not weaken this to an
+    // href/protocol assertion -- that is the vacuous version.
+    await suite.check('a refused URL leaves no anchor, not a stripped one', async () => {
+      const shape = await md.evaluate(async (b, text) => {
+        const { renderMarkdown } = await import(`${b}/js/markdown.js`);
+        const host = document.createElement('div');
+        host.innerHTML = renderMarkdown(text);
+        return { html: host.innerHTML, anchors: host.querySelectorAll('a').length };
+      }, base, '[x](javascript:alert(1))');
+      assert(shape.anchors === 0,
+        `a refused link left ${shape.anchors} anchor(s) -- DOMPurify caught it, the guard did not: ${shape.html}`);
+    });
+
     await suite.check('ordinary links and images still render', async () => {
       const cases = [
         ['relative',   '[x](/a/b)',                     'href="/a/b"'],
